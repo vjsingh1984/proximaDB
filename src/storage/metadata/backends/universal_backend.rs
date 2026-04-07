@@ -392,7 +392,7 @@ impl UniversalMetadataBackend {
             let final_sequence = self.sequence.load(Ordering::SeqCst);
 
             // Check if we should create a checkpoint after recovery
-            // TODO: Temporarily disabled to debug startup hang
+            // Deferred: Temporarily disabled to debug startup hang
             // self.maybe_checkpoint_at_restart().await?;
             debug!("⏭️ Skipping checkpoint at restart to debug startup issue");
 
@@ -404,7 +404,7 @@ impl UniversalMetadataBackend {
         let max_sequence = self.recover_from_operations().await?;
 
         // Check if we should create a checkpoint after recovery
-        // TODO: Temporarily disabled to debug startup hang
+        // Deferred: Temporarily disabled to debug startup hang
         // self.maybe_checkpoint_at_restart().await?;
         debug!("⏭️ Skipping checkpoint at restart to debug startup issue");
 
@@ -535,13 +535,11 @@ impl UniversalMetadataBackend {
                     .name
                     .strip_prefix("op_")
                     .and_then(|s| s.strip_suffix(".oplog"))
+                    && let Ok(sequence) = seq_str.parse::<u64>()
+                    && sequence > after_sequence
                 {
-                    if let Ok(sequence) = seq_str.parse::<u64>() {
-                        if sequence > after_sequence {
-                            let op_path = ops_dir.join(&entry.name);
-                            incremental_ops.push((sequence, op_path));
-                        }
-                    }
+                    let op_path = ops_dir.join(&entry.name);
+                    incremental_ops.push((sequence, op_path));
                 }
             }
         }
@@ -585,10 +583,10 @@ impl UniversalMetadataBackend {
             }
             Some("Delete") => {
                 // collection_id is the name, need to get UUID first
-                if let Some(collection_id) = op_json["collection_id"].as_str() {
-                    if let Some(uuid) = self.index.get_uuid_by_name(collection_id) {
-                        self.index.remove_collection(&uuid);
-                    }
+                if let Some(collection_id) = op_json["collection_id"].as_str()
+                    && let Some(uuid) = self.index.get_uuid_by_name(collection_id)
+                {
+                    self.index.remove_collection(&uuid);
                 }
             }
             _ => {
@@ -661,7 +659,6 @@ impl UniversalMetadataBackend {
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
             skip_uuid_subdir: true, // Skip UUID subdirectory to prevent orphaned directories
-            ..Default::default()
         };
 
         debug!("📁 Staging config:");
@@ -883,14 +880,14 @@ impl UniversalMetadataBackend {
     /// Check if snapshot is needed after successful operation
     async fn check_snapshot_trigger(&self) -> Result<()> {
         let ops_count = self.ops_since_snapshot.fetch_add(1, Ordering::SeqCst) + 1;
-        if ops_count >= self.config.snapshot_threshold {
-            if let Some(manager) = self.snapshot_manager.lock().await.as_ref() {
-                let fs = self.get_fs()?;
-                if let Err(e) = manager.create_snapshot(&self.index, &*fs).await {
-                    warn!("📸 Snapshot creation failed: {}", e);
-                } else {
-                    self.ops_since_snapshot.store(0, Ordering::SeqCst);
-                }
+        if ops_count >= self.config.snapshot_threshold
+            && let Some(manager) = self.snapshot_manager.lock().await.as_ref()
+        {
+            let fs = self.get_fs()?;
+            if let Err(e) = manager.create_snapshot(&self.index, &*fs).await {
+                warn!("📸 Snapshot creation failed: {}", e);
+            } else {
+                self.ops_since_snapshot.store(0, Ordering::SeqCst);
             }
         }
         Ok(())
@@ -1075,8 +1072,7 @@ impl UniversalMetadataBackend {
             collection_id: record
                 .config
                 .as_ref()
-                .map(|c| c.name.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
+                .map_or_else(|| "unknown".to_string(), |c| c.name.clone()),
             collection_data: Some(record.clone()),
         };
 
@@ -1143,7 +1139,7 @@ impl UniversalMetadataBackend {
                     tx.register_rollback(
                         "secondary_index",
                         RollbackAction::RemoveFromSecondaryIndex {
-                            name: record.config.as_ref().map(|c| c.name.clone()).clone(),
+                            name: record.config.as_ref().map(|c| c.name.clone()),
                             uuid: record.id.clone(),
                         },
                     )
@@ -1284,7 +1280,6 @@ impl UniversalMetadataBackend {
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
             skip_uuid_subdir: true, // Skip UUID subdirectory to prevent orphaned directories
-            ..Default::default()
         };
 
         // Begin atomic operation
@@ -1679,10 +1674,10 @@ impl SnapshotManager {
         let archive_dir = self.base_path.join("archive");
 
         // Get all snapshots from current directory (except snapshot.meta)
-        let current_entries = match fs.list(&current_dir.to_string_lossy()).await {
-            Ok(entries) => entries,
-            Err(_) => vec![],
-        };
+        let current_entries = fs
+            .list(&current_dir.to_string_lossy())
+            .await
+            .unwrap_or_default();
 
         // Archive timestamped snapshots
         for entry in current_entries {
@@ -1781,7 +1776,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_universal_backend_basic_operations() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .context("Failed to create temp directory")
+            .expect("TempDir::new should not fail in test");
         let config = UniversalMetadataConfig {
             storage_url: format!("file://{}", temp_dir.path().to_string_lossy()),
             compression: true,
@@ -1789,11 +1786,17 @@ mod tests {
             ..Default::default()
         };
 
-        let fs_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let fs_factory = Arc::new(
+            FilesystemFactory::create(Default::default())
+                .await
+                .context("Failed to create filesystem factory")
+                .expect("FilesystemFactory::create should not fail in test"),
+        );
 
         let backend = UniversalMetadataBackend::new(config, fs_factory)
             .await
-            .unwrap();
+            .context("Failed to create backend")
+            .expect("UniversalMetadataBackend::new should not fail in test");
 
         // Test create collection
         let collection_config = CollectionConfig {
@@ -1831,26 +1834,74 @@ mod tests {
             storage_assignment: None,
         };
 
-        backend.upsert_collection_proto(&collection).await.unwrap();
+        backend
+            .upsert_collection_proto(&collection)
+            .await
+            .context("Failed to upsert collection")
+            .expect("upsert_collection_proto should not fail in test");
 
         // Test get collection
-        let collection = backend.get_collection("test_collection").await.unwrap();
+        let collection = backend
+            .get_collection("test_collection")
+            .await
+            .context("Failed to get collection")
+            .expect("get_collection should not fail in test");
         assert!(collection.is_some());
-        let collection = collection.unwrap();
-        assert_eq!(collection.config.as_ref().unwrap().name, "test_collection");
-        assert_eq!(collection.config.as_ref().unwrap().dimension, 128);
+        let collection = collection.expect("Collection should exist");
+        assert_eq!(
+            collection
+                .config
+                .as_ref()
+                .expect("Collection config should exist")
+                .name,
+            "test_collection"
+        );
+        assert_eq!(
+            collection
+                .config
+                .as_ref()
+                .expect("Collection config should exist")
+                .dimension,
+            128
+        );
 
         // Test list collections
-        let collections = backend.list_collections().await.unwrap();
+        let collections = backend
+            .list_collections()
+            .await
+            .context("Failed to list collections")
+            .expect("list_collections should not fail in test");
         assert_eq!(collections.len(), 1);
 
         // Test collection exists
-        assert!(backend.collection_exists("test_collection").await.unwrap());
-        assert!(!backend.collection_exists("nonexistent").await.unwrap());
+        assert!(
+            backend
+                .collection_exists("test_collection")
+                .await
+                .context("Failed to check collection existence")
+                .expect("collection_exists should not fail in test")
+        );
+        assert!(
+            !backend
+                .collection_exists("nonexistent")
+                .await
+                .context("Failed to check collection existence")
+                .expect("collection_exists should not fail in test")
+        );
 
         // Test delete collection
-        backend.delete_collection("test_collection").await.unwrap();
-        assert!(!backend.collection_exists("test_collection").await.unwrap());
+        backend
+            .delete_collection("test_collection")
+            .await
+            .context("Failed to delete collection")
+            .expect("delete_collection should not fail in test");
+        assert!(
+            !backend
+                .collection_exists("test_collection")
+                .await
+                .context("Failed to verify collection deletion")
+                .expect("collection_exists should not fail in test")
+        );
     }
 }
 
@@ -1863,14 +1914,23 @@ mod integration_tests {
     #[tokio::test]
     async fn test_atomic_operation_path_handling() {
         // Test that atomic operations don't duplicate paths
-        let temp_dir = TempDir::new().unwrap();
-        let metadata_url = format!("file://{}", temp_dir.path().to_str().unwrap());
+        let temp_dir = TempDir::new()
+            .context("Failed to create temp directory")
+            .expect("TempDir::new should not fail in test");
+        let metadata_url = format!(
+            "file://{}",
+            temp_dir
+                .path()
+                .to_str()
+                .expect("Temp directory path should be valid UTF-8")
+        );
 
         let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
         let fs_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
-                .unwrap(),
+                .context("Failed to create filesystem factory")
+                .expect("FilesystemFactory::create should not fail in test"),
         );
         let config = UniversalMetadataConfig {
             storage_url: metadata_url.clone(),
@@ -1884,7 +1944,8 @@ mod integration_tests {
 
         let backend = UniversalMetadataBackend::new(config, fs_factory)
             .await
-            .unwrap();
+            .context("Failed to create backend")
+            .expect("UniversalMetadataBackend::new should not fail in test");
 
         // Create a test collection using proper proto structure
 
@@ -1917,17 +1978,21 @@ mod integration_tests {
             }),
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("System time should be valid")
                 .as_secs() as i64,
             updated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("System time should be valid")
                 .as_secs() as i64,
             storage_assignment: None,
         };
 
         // Store the collection
-        backend.upsert_collection_proto(&collection).await.unwrap();
+        backend
+            .upsert_collection_proto(&collection)
+            .await
+            .context("Failed to upsert collection")
+            .expect("upsert_collection_proto should not fail in test");
 
         // Verify the staging directory structure
         let current_staging = temp_dir.path().join("current").join("__staging");
@@ -1937,7 +2002,12 @@ mod integration_tests {
         );
 
         // Verify no duplicated paths
-        let duplicated_path = temp_dir.path().join(temp_dir.path().file_name().unwrap());
+        let duplicated_path = temp_dir.path().join(
+            temp_dir
+                .path()
+                .file_name()
+                .expect("Temp directory path should have a file name"),
+        );
         assert!(
             !duplicated_path.exists(),
             "Should not create duplicated directory structure"
@@ -1959,7 +2029,8 @@ mod integration_tests {
         let fs_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
                 .await
-                .unwrap(),
+                .context("Failed to create filesystem factory")
+                .expect("FilesystemFactory::create should not fail in test"),
         );
         let config = UniversalMetadataConfig {
             storage_url: metadata_url.clone(),
@@ -1973,7 +2044,8 @@ mod integration_tests {
 
         let backend = UniversalMetadataBackend::new_for_testing(config, fs_factory)
             .await
-            .unwrap();
+            .context("Failed to create backend")
+            .expect("UniversalMetadataBackend::new_for_testing should not fail in test");
 
         // Store a collection using proper proto structure
         let collection = crate::proto::proximadb_v1::Collection {
@@ -2005,16 +2077,20 @@ mod integration_tests {
             }),
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("System time should be valid")
                 .as_secs() as i64,
             updated_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("System time should be valid")
                 .as_secs() as i64,
             storage_assignment: None,
         };
 
-        backend.upsert_collection_proto(&collection).await.unwrap();
+        backend
+            .upsert_collection_proto(&collection)
+            .await
+            .context("Failed to upsert collection")
+            .expect("upsert_collection_proto should not fail in test");
 
         // Verify correct path structure
         assert!(std::path::Path::new(test_dir).join("current").exists());

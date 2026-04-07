@@ -62,6 +62,12 @@ impl FlushHandlerFactory {
             super::compaction_utils::StorageEngineType::RAPTOR => {
                 Box::new(RaptorFlushHandler::new())
             }
+            // TST does not have a dedicated shared flush handler in this layer yet.
+            // Use the SST adapter as the safest fallback until the time-series path is
+            // fully productized through the generic compaction pipeline.
+            super::compaction_utils::StorageEngineType::TST => {
+                Box::new(SstFlushHandlerAdapter::new())
+            }
         }
     }
 }

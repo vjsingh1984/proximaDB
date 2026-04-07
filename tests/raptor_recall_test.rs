@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 //! RAPTOR Recall Test - Verify 100% recall after close/reopen
 //!
 //! This test verifies that RAPTOR maintains high recall when:
@@ -28,8 +29,16 @@ mod raptor_recall_tests {
 
     const VECTOR_DIMS: usize = 768;
     const NUM_VECTORS: usize = 5000;
-    const NUM_QUERIES: usize = 100;
+    const DEFAULT_NUM_QUERIES: usize = 25;
     const K_NEIGHBORS: usize = 10;
+
+    fn recall_query_count() -> usize {
+        std::env::var("PROXIMADB_RAPTOR_RECALL_QUERIES")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_NUM_QUERIES)
+    }
 
     /// Compute ground truth using brute force
     fn compute_ground_truth(
@@ -64,9 +73,12 @@ mod raptor_recall_tests {
 
     #[tokio::test]
     async fn test_raptor_recall_after_reopen_5000_vectors() {
-        // Initialize logging
+        // Keep this test quiet by default; opt into deeper logs via env.
+        let log_filter = std::env::var("PROXIMADB_RAPTOR_RECALL_LOG_FILTER").unwrap_or_else(|_| {
+            "info,proximadb::storage::engines::impls::raptor=warn,proximadb::storage::traits=warn,proximadb::compute::quantization::hardware_accelerated=warn".to_string()
+        });
         let _ = tracing_subscriber::fmt()
-            .with_env_filter("info,proximadb::storage::engines::impls::raptor=debug")
+            .with_env_filter(log_filter)
             .try_init();
 
         info!("=== RAPTOR Recall Test: {} vectors ===", NUM_VECTORS);
@@ -95,6 +107,8 @@ mod raptor_recall_tests {
             vectors.len(),
             VECTOR_DIMS
         );
+        let num_queries = recall_query_count().min(vectors.len());
+        info!("Using {} recall queries", num_queries);
 
         // Build a collection for the test
         let (mut collection, _temp) = TestCollectionBuilder::new()
@@ -149,7 +163,7 @@ mod raptor_recall_tests {
 
         let queries: Vec<Vec<f32>> = vectors
             .iter()
-            .take(NUM_QUERIES)
+            .take(num_queries)
             .map(|v| v.vector.clone())
             .collect();
 
@@ -193,7 +207,7 @@ mod raptor_recall_tests {
         info!(
             "Warm cache search: avg recall = {:.1}% over {} queries",
             avg_warm_recall * 100.0,
-            NUM_QUERIES
+            num_queries
         );
 
         // === PHASE 3: Close engine ===

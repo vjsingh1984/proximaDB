@@ -13,6 +13,9 @@ use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::compute::clustering::hilbert_curve::{HilbertCurve, HilbertPoint};
 
 /// Implementation of ProximaBlockQuantization for HELIX engine
+///
+/// HELIX-specific implementation that applies Hilbert curve clustering
+/// for spatial locality optimization during flush operations.
 #[async_trait]
 impl ProximaBlockQuantization for HelixEngine {
     fn engine_profile(&self) -> EngineProfile {

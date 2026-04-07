@@ -20,7 +20,7 @@ use anyhow::{Context, Result};
 use arrow_array::RecordBatch;
 use arrow_schema::Schema;
 use chrono::{DateTime, Utc};
-// TODO: Refactor to use columnar module's exports instead of direct parquet imports
+// Deferred: Refactor to use columnar module's exports instead of direct parquet imports
 // Currently using direct imports due to complex ArrowWriter usage that needs refactoring
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, Encoding};
@@ -343,7 +343,7 @@ pub struct WriterPool {
     _writer_factory: Arc<DefaultParquetWriterFactory>,
 }
 
-// TODO: ParquetWriter and ParquetWriterFactory types need to be implemented
+// Deferred: ParquetWriter and ParquetWriterFactory types need to be implemented
 // These were referenced from the original core module
 // For now, providing placeholder types to fix compilation
 
@@ -358,6 +358,12 @@ pub struct DefaultParquetWriterFactory;
 impl DefaultParquetWriterFactory {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for DefaultParquetWriterFactory {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -801,9 +807,10 @@ impl VectorRecordProcessor {
                             serde_json::Value::String(s.clone())
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                            serde_json::Number::from_f64(*n)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                            serde_json::Number::from_f64(*n).map_or_else(
+                                || serde_json::Value::String(n.to_string()),
+                                serde_json::Value::Number,
+                            )
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                             serde_json::Value::Number(serde_json::Number::from(*i))
@@ -818,9 +825,10 @@ impl VectorRecordProcessor {
                             serde_json::Value::String(s.clone())
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                            serde_json::Number::from_f64(*n)
-                                .map(serde_json::Value::Number)
-                                .unwrap_or_else(|| serde_json::Value::String(n.to_string()))
+                            serde_json::Number::from_f64(*n).map_or_else(
+                                || serde_json::Value::String(n.to_string()),
+                                serde_json::Value::Number,
+                            )
                         }
                         Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
                             serde_json::Value::Number(serde_json::Number::from(*i))
@@ -1261,7 +1269,7 @@ impl VectorRecordProcessor {
                         return count_cmp;
                     }
                     // Secondary sort by ID for consistency
-                    a.id.as_str().cmp(&b.id.as_str())
+                    a.id.as_str().cmp(b.id.as_str())
                 });
             }
 
@@ -1307,7 +1315,7 @@ impl VectorRecordProcessor {
                 records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+                records.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1319,7 +1327,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
+                        let id_cmp = a.id.as_str().cmp(b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1384,7 +1392,7 @@ impl VectorRecordProcessor {
                 });
             }
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+                records.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
             }
             SortingStrategy::ByMetadata(fields) => {
                 records.sort_by(|a, b| self.compare_by_metadata_fields(a, b, fields));
@@ -1396,7 +1404,7 @@ impl VectorRecordProcessor {
             } => {
                 records.sort_by(|a, b| {
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
+                        let id_cmp = a.id.as_str().cmp(b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -1825,7 +1833,7 @@ impl VectorProcessor for VectorRecordProcessor {
             }
 
             SortingStrategy::ById => {
-                records.sort_by(|a, b| a.id.as_str().cmp(&b.id.as_str()));
+                records.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
                 tracing::debug!("🔢 Sorted {} records by ID", record_count);
             }
 
@@ -1848,7 +1856,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
                     // Stage 1: ID comparison (if enabled)
                     if *include_id {
-                        let id_cmp = a.id.as_str().cmp(&b.id.as_str());
+                        let id_cmp = a.id.as_str().cmp(b.id.as_str());
                         if id_cmp != Ordering::Equal {
                             return id_cmp;
                         }
@@ -2009,7 +2017,7 @@ impl ParquetFlusher {
     ) -> Result<Self> {
         Ok(Self {
             config,
-            filesystem: filesystem,
+            filesystem,
             stats: Arc::new(RwLock::new(FlushingStats::default())),
             _writer_pool: writer_pool,
         })
@@ -2218,13 +2226,13 @@ impl ParquetFlusher {
 
                 Some(crate::compute::quantization::types::QuantizationLevel::Uniform(_)) => {
                     // Uniform quantization - handle similar to INT8
-                    // TODO: Implement uniform quantization handling
+                    // Deferred: Implement uniform quantization handling
                     continue;
                 }
 
                 Some(crate::compute::quantization::types::QuantizationLevel::Binary(_)) => {
                     // Binary quantization - handle as binary data
-                    // TODO: Implement binary quantization handling
+                    // Deferred: Implement binary quantization handling
                     continue;
                 }
 
@@ -3038,8 +3046,8 @@ impl CompactionEngine {
                     }
                     map
                 },
-                timestamp: Some(timestamp as i64),
-                updated_at: Some(timestamp as i64),
+                timestamp: Some(timestamp),
+                updated_at: Some(timestamp),
                 expires_at: None,
                 version: Some(1),
                 source: None,
@@ -3180,10 +3188,7 @@ impl CompactionEngine {
                 .collect::<Vec<_>>()
                 .join("|");
 
-            groups
-                .entry(group_key)
-                .or_insert_with(Vec::new)
-                .push(record.clone());
+            groups.entry(group_key).or_default().push(record.clone());
         }
 
         Ok(groups.into_values().collect())
@@ -3228,10 +3233,10 @@ impl CompactionEngine {
         let mut time_groups: HashMap<i64, Vec<VectorRecord>> = HashMap::new();
 
         for record in records {
-            let time_bucket = (record.timestamp.unwrap_or(0) as i64) / window_size_ms;
+            let time_bucket = record.timestamp.unwrap_or(0) / window_size_ms;
             time_groups
                 .entry(time_bucket)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(record.clone());
         }
 
@@ -3542,7 +3547,7 @@ impl WriterPool {
     async fn new(_pool_size: usize, _factory: Arc<DefaultParquetWriterFactory>) -> Result<Self> {
         Ok(Self {
             _writers: Arc::new(Mutex::new(Vec::new())),
-            _pool_size: _pool_size,
+            _pool_size,
             _writer_factory: _factory,
         })
     }

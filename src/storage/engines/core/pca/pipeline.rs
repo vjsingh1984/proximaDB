@@ -204,7 +204,10 @@ impl BlockInfo {
     /// Get centroid (computes if necessary)
     pub fn get_centroid(&mut self) -> &[f32] {
         self.compute_centroid();
-        self.centroid.as_ref().unwrap()
+        match self.centroid.as_ref() {
+            Some(centroid) => centroid,
+            None => &self.vectors[0],
+        }
     }
 }
 

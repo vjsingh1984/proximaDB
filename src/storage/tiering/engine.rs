@@ -255,14 +255,13 @@ impl TieringPolicyEngine {
                 .with_size(pattern.total_bytes);
 
             // Evaluate policies
-            if let Some(action) = self.evaluate_item(&policies, &metadata).await {
-                if let Some(task) = self
+            if let Some(action) = self.evaluate_item(&policies, &metadata).await
+                && let Some(task) = self
                     .create_migration_task(&collection, &id, &metadata, action)
                     .await
-                {
-                    tasks.push(task);
-                    migrations_triggered += 1;
-                }
+            {
+                tasks.push(task);
+                migrations_triggered += 1;
             }
         }
 
@@ -307,10 +306,10 @@ impl TieringPolicyEngine {
                 continue;
             }
 
-            if let Some(ref tenant) = metadata.tenant_id {
-                if !policy.applies_to_tenant(tenant) {
-                    continue;
-                }
+            if let Some(ref tenant) = metadata.tenant_id
+                && !policy.applies_to_tenant(tenant)
+            {
+                continue;
             }
 
             // Evaluate rules
@@ -434,13 +433,12 @@ impl TieringPolicyEngine {
                 .with_access_count(pattern.access_count)
                 .with_size(pattern.total_bytes);
 
-            if let Some(action) = self.evaluate_item(&policies, &metadata).await {
-                if let Some(task) = self
+            if let Some(action) = self.evaluate_item(&policies, &metadata).await
+                && let Some(task) = self
                     .create_migration_task(collection, &id, &metadata, action)
                     .await
-                {
-                    tasks.push(task);
-                }
+            {
+                tasks.push(task);
             }
         }
 

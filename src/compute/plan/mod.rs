@@ -77,6 +77,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::ops::Not;
 
 use serde::{Deserialize, Serialize};
 
@@ -134,6 +135,7 @@ impl ComputePlan {
         tables
     }
 
+    /// Recursively collect all table names referenced by the given plan node.
     fn collect_tables(&self, node: &PlanNode, tables: &mut Vec<String>) {
         match node {
             PlanNode::TableScan { table, .. } => {
@@ -174,6 +176,7 @@ impl ComputePlan {
         self.check_vector_ops(&self.root)
     }
 
+    /// Recursively check whether any node in the subtree is a vector scan.
     fn check_vector_ops(&self, node: &PlanNode) -> bool {
         match node {
             PlanNode::VectorScan { .. } => true,
@@ -196,6 +199,7 @@ impl ComputePlan {
         self.check_graph_ops(&self.root)
     }
 
+    /// Recursively check whether any node in the subtree is a graph scan.
     fn check_graph_ops(&self, node: &PlanNode) -> bool {
         match node {
             PlanNode::GraphScan { .. } => true,
@@ -926,11 +930,19 @@ impl Expr {
     }
 
     /// Logical NOT
-    pub fn not(self) -> Self {
+    pub fn logical_not(self) -> Self {
         Self::Unary {
             op: UnaryOp::Not,
             expr: Box::new(self),
         }
+    }
+}
+
+impl Not for Expr {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        self.logical_not()
     }
 }
 

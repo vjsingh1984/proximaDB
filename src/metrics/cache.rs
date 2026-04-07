@@ -55,7 +55,7 @@ pub struct MemoryMetrics {
 }
 
 /// Eviction metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EvictionMetrics {
     pub total_evictions: u64,
     pub lru_evictions: u64,
@@ -356,19 +356,6 @@ impl Default for MemoryMetrics {
             used_bytes: 0,
             fragmentation_ratio: 0.0,
             allocation_failures: 0,
-        }
-    }
-}
-
-impl Default for EvictionMetrics {
-    fn default() -> Self {
-        Self {
-            total_evictions: 0,
-            lru_evictions: 0,
-            lfu_evictions: 0,
-            arc_evictions: 0,
-            memory_pressure_evictions: 0,
-            ttl_evictions: 0,
         }
     }
 }

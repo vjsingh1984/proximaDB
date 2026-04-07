@@ -153,12 +153,13 @@ impl SemanticCache {
         let hash = self.hash_question(question, collection);
         let cache = self.cache.read().await;
 
-        if let Some(entry) = cache.get(&hash) {
-            if entry.valid && !self.is_expired(&entry.response) {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                stats.hits += 1;
-                return Some(entry.response.clone());
-            }
+        if let Some(entry) = cache.get(&hash)
+            && entry.valid
+            && !self.is_expired(&entry.response)
+        {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            stats.hits += 1;
+            return Some(entry.response.clone());
         }
 
         // For semantic similarity matching, we'd search the cache collection
@@ -337,7 +338,7 @@ mod tests {
     #[tokio::test]
     async fn test_semantic_cache_initialization() {
         let config = SemanticCacheConfig::default();
-        let cache = SemanticCache::new(config).unwrap();
+        let cache = SemanticCache::new(config).expect("Failed to create semantic cache for test");
         let result = cache.initialize().await;
         assert!(result.is_ok());
     }
@@ -345,8 +346,11 @@ mod tests {
     #[tokio::test]
     async fn test_semantic_cache_store_and_lookup() {
         let config = SemanticCacheConfig::default();
-        let cache = SemanticCache::new(config).unwrap();
-        cache.initialize().await.unwrap();
+        let cache = SemanticCache::new(config).expect("Failed to create semantic cache for test");
+        cache
+            .initialize()
+            .await
+            .expect("Failed to initialize semantic cache for test");
 
         let question = "What is ProximaDB?";
         let collection = "docs";
@@ -366,13 +370,16 @@ mod tests {
         cache
             .store(question, collection, embedding.clone(), response)
             .await
-            .unwrap();
+            .expect("Failed to store response in semantic cache");
 
         // Lookup
         let cached = cache.lookup(question, collection, &embedding).await;
         assert!(cached.is_some());
         assert_eq!(
-            cached.unwrap().response.answer,
+            cached
+                .expect("Cached response should exist")
+                .response
+                .answer,
             "ProximaDB is a vector database"
         );
     }
@@ -380,8 +387,11 @@ mod tests {
     #[tokio::test]
     async fn test_semantic_cache_invalidate() {
         let config = SemanticCacheConfig::default();
-        let cache = SemanticCache::new(config).unwrap();
-        cache.initialize().await.unwrap();
+        let cache = SemanticCache::new(config).expect("Failed to create semantic cache for test");
+        cache
+            .initialize()
+            .await
+            .expect("Failed to initialize semantic cache for test");
 
         let question = "Test question here";
         let collection = "test";
@@ -400,7 +410,7 @@ mod tests {
         cache
             .store(question, collection, embedding.clone(), response)
             .await
-            .unwrap();
+            .expect("Failed to store response in semantic cache");
 
         // Invalidate
         cache.invalidate(question, collection).await;
@@ -413,8 +423,11 @@ mod tests {
     #[tokio::test]
     async fn test_semantic_cache_hit_rate() {
         let config = SemanticCacheConfig::default();
-        let cache = SemanticCache::new(config).unwrap();
-        cache.initialize().await.unwrap();
+        let cache = SemanticCache::new(config).expect("Failed to create semantic cache for test");
+        cache
+            .initialize()
+            .await
+            .expect("Failed to initialize semantic cache for test");
 
         // Initial hit rate should be 0
         let rate = cache.hit_rate().await;
@@ -438,7 +451,7 @@ mod tests {
         cache
             .store(question, collection, embedding.clone(), response)
             .await
-            .unwrap();
+            .expect("Failed to store response in semantic cache");
 
         // This should be a hit
         let _ = cache.lookup(question, collection, &embedding).await;
@@ -451,8 +464,11 @@ mod tests {
     #[tokio::test]
     async fn test_semantic_cache_clear() {
         let config = SemanticCacheConfig::default();
-        let cache = SemanticCache::new(config).unwrap();
-        cache.initialize().await.unwrap();
+        let cache = SemanticCache::new(config).expect("Failed to create semantic cache for test");
+        cache
+            .initialize()
+            .await
+            .expect("Failed to initialize semantic cache for test");
 
         let question = "Clear test question";
         let collection = "test";
@@ -471,7 +487,7 @@ mod tests {
         cache
             .store(question, collection, embedding, response)
             .await
-            .unwrap();
+            .expect("Failed to store response in semantic cache");
         assert_eq!(cache.size().await, 1);
 
         cache.clear().await;

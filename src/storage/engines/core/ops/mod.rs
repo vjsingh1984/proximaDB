@@ -1,3 +1,28 @@
+//! Common operations for all storage engines
+//!
+//! This module provides shared infrastructure and utilities used across all
+//! storage engine implementations (SST, SWIFT, VIPER, NOVA, RAPTOR, HELIX).
+//!
+//! ## Module Organization
+//!
+//! - **`compression_adapter`**: Unified compression interface with 13 algorithms
+//! - **`compression_common`**: Shared compression utilities and configuration
+//! - **`performance_optimization`**: Universal optimization for all engines
+//! - **`proximacodec`**: Modern unified encoding/decoding architecture
+//! - **`simd_decode`**: SIMD-accelerated decode pipeline
+//! - **`simd_config`**: SIMD configuration system
+//! - **`zero_copy_reader_integration`**: Zero-copy I/O utilities
+//!
+//! ## Data Types
+//!
+//! - **`FilterableColumn`**: Column configuration for metadata filtering
+//! - **`ColumnData`**: Type-safe column data types
+//!
+//! ## Migration Notes
+//!
+//! The old `ProximaEncoder`/`ProximaDecoder` modules have been replaced by
+//! the new `ProximaCodec` API. See `proximacodec` module for details.
+
 // Common Storage Engine Infrastructure
 // Shared capabilities and abstractions for all storage engines (SST, SWIFT, VIPER, NOVA)
 
@@ -58,6 +83,7 @@ pub mod proximacodec;
 /// See: src/storage/engines/core/ops/proximacodec/
 ///
 /// Modules are kept as .obsolete for reference but not compiled:
+///
 /// - proximaencoder.obsolete/
 /// - unified_proxima_simd.obsolete/
 // pub mod proximaencoder;  // OBSOLETE - use proximacodec instead
@@ -124,7 +150,7 @@ pub mod proxima_tensor_encoding;
 
 // Zero-copy I/O system moved to core/io/zero_copy
 // Import from there: use crate::storage::engines::core::io::zero_copy::*;
-// TODO: Create these modules when needed:
+// Deferred: Create these modules when needed:
 // pub mod validation_common;
 // pub mod statistics_common;
 // pub mod batch_common;
@@ -432,7 +458,7 @@ pub struct IndexMaintenanceConfig {
 }
 
 /// Universal schema configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UniversalSchemaConfig {
     /// Core vector schema
     pub vector_schema: VectorSchemaConfig,
@@ -519,7 +545,7 @@ pub trait UniversalEngineCapabilities {
     /// Get performance characteristics
     fn get_performance_profile(&self) -> PerformanceProfile;
 
-    // TODO: Restore when ResourceRequirements is available
+    // Deferred: Restore when ResourceRequirements is available
     // fn get_resource_requirements(&self) -> ResourceRequirements;
 }
 
@@ -599,7 +625,7 @@ pub trait UniversalEngineOperations {
     ) -> Result<Vec<VectorRecord>>;
 
     /// Batch operations
-    // TODO: Restore when BatchResult is available
+    // Deferred: Restore when BatchResult is available
     // async fn batch_insert(&self, vectors: Vec<VectorRecord>) -> Result<BatchResult>;
     async fn batch_search(
         &self,
@@ -611,7 +637,7 @@ pub trait UniversalEngineOperations {
     /// Administrative operations
     async fn optimize(&self) -> Result<()>;
     async fn compact(&self) -> Result<()>;
-    // TODO: Restore when UniversalStatistics is available
+    // Deferred: Restore when UniversalStatistics is available
     // async fn get_statistics(&self) -> Result<UniversalStatistics>;
     async fn health_check(&self) -> Result<HealthStatus>;
 }
@@ -764,16 +790,6 @@ impl Default for IndexMaintenanceConfig {
             rebuild_threshold: 0.7,
             maintenance_interval_ms: 300000, // 5 minutes
             background_maintenance: true,
-        }
-    }
-}
-
-impl Default for UniversalSchemaConfig {
-    fn default() -> Self {
-        Self {
-            vector_schema: VectorSchemaConfig::default(),
-            metadata_schema: MetadataSchemaConfig::default(),
-            evolution: SchemaEvolutionConfig::default(),
         }
     }
 }

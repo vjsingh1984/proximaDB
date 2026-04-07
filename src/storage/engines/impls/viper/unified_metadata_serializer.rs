@@ -17,6 +17,10 @@ use std::fmt::Debug;
 use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 
 /// VIPER-specific metadata for caching
+///
+/// Cached metadata structure for VIPER Parquet files that includes
+/// row group information, column statistics, cluster metadata, and
+/// cached Parquet footer for efficient querying.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViperCachedMetadata {
     /// File path
@@ -86,6 +90,12 @@ pub struct ViperMetadataSerializer;
 impl ViperMetadataSerializer {
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for ViperMetadataSerializer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

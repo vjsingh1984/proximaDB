@@ -24,8 +24,8 @@
 //! - ✅ **Backend Detection**: Complete - Integrated with HardwareBackend
 //! - ✅ **GPU Kernel Architecture**: Complete - All 4 backends with kernel dispatch
 //! - ✅ **Memory Utilities**: Complete - GpuBatchConfig and GpuBuffer infrastructure
-//! - ⏳ **Real GPU Compilation**: TODO - Kernels use CPU fallback until real GPU compilation added
-//! - ⏳ **VectorMemoryPool Integration**: TODO - Integrate with memory pooling system
+//! - ⏳ **Real GPU Compilation**: DEFERRED - Kernels use CPU fallback until real GPU compilation added
+//! - ⏳ **VectorMemoryPool Integration**: DEFERRED - Integrate with memory pooling system
 //!
 //! ## GPU Kernel Implementation
 //!

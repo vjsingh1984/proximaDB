@@ -258,7 +258,7 @@ impl StreamingRowGroupProcessor {
                     .await
                     .map_err(|e| anyhow!("Semaphore error: {}", e))?;
                 // Reserve memory
-                let _memory_reservation = {
+                {
                     let mut tracker = memory_tracker.write().await;
                     tracker.reserve_memory(
                         &format!("rg_{}", task.row_group_id),
@@ -512,7 +512,7 @@ impl StreamingRowGroupProcessor {
         }
 
         // Sort by cost (ascending)
-        row_group_costs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        row_group_costs.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         Ok(row_group_costs.into_iter().map(|(id, _)| id).collect())
     }
 
@@ -587,6 +587,7 @@ impl MemoryTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(dead_code)]
     fn test_streaming_config_defaults() {
         let config = StreamingConfig::default();
         assert_eq!(config.max_memory_bytes, 512 * 1024 * 1024);

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tracing::trace;
+use tracing::{trace, warn};
 
 use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::traits::{
@@ -383,16 +383,38 @@ impl MetadataSerializer for SwiftMetadataSerializer {
 
         // 1. Deserialize global header manually
         let global = SwiftGlobalHeader {
-            file_size: u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap()),
-            num_segments: u32::from_le_bytes(data[offset + 8..offset + 12].try_into().unwrap()),
-            index_offset: u32::from_le_bytes(data[offset + 12..offset + 16].try_into().unwrap()),
-            index_size: u32::from_le_bytes(data[offset + 16..offset + 20].try_into().unwrap()),
-            total_records: u64::from_le_bytes(data[offset + 20..offset + 28].try_into().unwrap()),
-            min_timestamp: u64::from_le_bytes(data[offset + 28..offset + 36].try_into().unwrap()),
-            max_timestamp: u64::from_le_bytes(data[offset + 36..offset + 44].try_into().unwrap()),
+            file_size: u64::from_le_bytes(data[offset..offset + 8].try_into().map_err(|_| {
+                ProximaDBError::InvalidInput("Invalid byte slice size for file_size".into())
+            })?),
+            num_segments: u32::from_le_bytes(data[offset + 8..offset + 12].try_into().map_err(
+                |_| ProximaDBError::InvalidInput("Invalid byte slice size for num_segments".into()),
+            )?),
+            index_offset: u32::from_le_bytes(data[offset + 12..offset + 16].try_into().map_err(
+                |_| ProximaDBError::InvalidInput("Invalid byte slice size for index_offset".into()),
+            )?),
+            index_size: u32::from_le_bytes(data[offset + 16..offset + 20].try_into().map_err(
+                |_| ProximaDBError::InvalidInput("Invalid byte slice size for index_size".into()),
+            )?),
+            total_records: u64::from_le_bytes(data[offset + 20..offset + 28].try_into().map_err(
+                |_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for total_records".into())
+                },
+            )?),
+            min_timestamp: u64::from_le_bytes(data[offset + 28..offset + 36].try_into().map_err(
+                |_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for min_timestamp".into())
+                },
+            )?),
+            max_timestamp: u64::from_le_bytes(data[offset + 36..offset + 44].try_into().map_err(
+                |_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for max_timestamp".into())
+                },
+            )?),
             compression_ratio: data[offset + 44],
             format_version: data[offset + 45],
-            reserved: data[offset + 46..offset + 52].try_into().unwrap(),
+            reserved: data[offset + 46..offset + 52].try_into().map_err(|_| {
+                ProximaDBError::InvalidInput("Invalid byte slice size for reserved".into())
+            })?,
         };
         offset += 52; // Size of SwiftGlobalHeader
 
@@ -417,24 +439,62 @@ impl MetadataSerializer for SwiftMetadataSerializer {
             }
 
             let segment = SwiftSegmentHeader {
-                offset: u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap()),
+                offset: u64::from_le_bytes(data[offset..offset + 8].try_into().map_err(|_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for offset".into())
+                })?),
                 compressed_size: u32::from_le_bytes(
-                    data[offset + 8..offset + 12].try_into().unwrap(),
+                    data[offset + 8..offset + 12].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for compressed_size".into(),
+                        )
+                    })?,
                 ),
                 uncompressed_size: u32::from_le_bytes(
-                    data[offset + 12..offset + 16].try_into().unwrap(),
+                    data[offset + 12..offset + 16].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for uncompressed_size".into(),
+                        )
+                    })?,
                 ),
                 record_count: u32::from_le_bytes(
-                    data[offset + 16..offset + 20].try_into().unwrap(),
+                    data[offset + 16..offset + 20].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for record_count".into(),
+                        )
+                    })?,
                 ),
                 bloom_offset: u32::from_le_bytes(
-                    data[offset + 20..offset + 24].try_into().unwrap(),
+                    data[offset + 20..offset + 24].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for bloom_offset".into(),
+                        )
+                    })?,
                 ),
-                bloom_size: u32::from_le_bytes(data[offset + 24..offset + 28].try_into().unwrap()),
-                min_id_hash: u64::from_le_bytes(data[offset + 28..offset + 36].try_into().unwrap()),
-                max_id_hash: u64::from_le_bytes(data[offset + 36..offset + 44].try_into().unwrap()),
+                bloom_size: u32::from_le_bytes(data[offset + 24..offset + 28].try_into().map_err(
+                    |_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for bloom_size".into(),
+                        )
+                    },
+                )?),
+                min_id_hash: u64::from_le_bytes(
+                    data[offset + 28..offset + 36].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for min_id_hash".into(),
+                        )
+                    })?,
+                ),
+                max_id_hash: u64::from_le_bytes(
+                    data[offset + 36..offset + 44].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for max_id_hash".into(),
+                        )
+                    })?,
+                ),
                 priority: data[offset + 44],
-                reserved: data[offset + 45..offset + 52].try_into().unwrap(),
+                reserved: data[offset + 45..offset + 52].try_into().map_err(|_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for reserved".into())
+                })?,
             };
             segments.push(segment);
             offset += 52; // Size of SwiftSegmentHeader
@@ -481,10 +541,10 @@ impl MetadataSerializer for SwiftMetadataSerializer {
     }
 
     fn can_skip_file(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> bool {
-        let swift_metadata = metadata
-            .as_any()
-            .downcast_ref::<SwiftMetadata>()
-            .expect("Invalid metadata type for SWIFT serializer");
+        let Some(swift_metadata) = metadata.as_any().downcast_ref::<SwiftMetadata>() else {
+            warn!("Invalid metadata type for SWIFT serializer in can_skip_file; cannot skip");
+            return false;
+        };
 
         match &query_context.query_type {
             QueryType::IdLookup => {
@@ -528,10 +588,12 @@ impl MetadataSerializer for SwiftMetadataSerializer {
         metadata: &dyn EngineMetadata,
         query_context: &QueryContext,
     ) -> Option<Vec<DataRange>> {
-        let swift_metadata = metadata
-            .as_any()
-            .downcast_ref::<SwiftMetadata>()
-            .expect("Invalid metadata type for SWIFT serializer");
+        let Some(swift_metadata) = metadata.as_any().downcast_ref::<SwiftMetadata>() else {
+            warn!(
+                "Invalid metadata type for SWIFT serializer in get_required_ranges; falling back to full read"
+            );
+            return None;
+        };
 
         let required_segments = swift_metadata.get_required_segments(query_context);
 
@@ -560,34 +622,46 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_metadata_serialization() {
-        let _temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().expect("Failed to create temp directory");
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
+        let filesystem = Arc::new(
+            FilesystemFactory::create(config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         // Test serialization
         let serialized = serializer
             .serialize_metadata("/test/file.swift", "test_collection")
-            .unwrap();
+            .expect("Failed to serialize metadata");
         assert!(!serialized.is_empty());
 
         // Test deserialization
-        let metadata = serializer.deserialize_metadata(&serialized).unwrap();
+        let metadata = serializer
+            .deserialize_metadata(&serialized)
+            .expect("Failed to deserialize metadata");
         assert_eq!(metadata.file_size(), 1024 * 1024);
         assert!(metadata.memory_footprint() > 0);
     }
 
     #[tokio::test]
     async fn test_swift_id_lookup_optimization() {
-        let _temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().expect("Failed to create temp directory");
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
+        let filesystem = Arc::new(
+            FilesystemFactory::create(config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
             .serialize_metadata("/test/file.swift", "test_collection")
-            .unwrap();
-        let metadata = serializer.deserialize_metadata(&serialized).unwrap();
+            .expect("Failed to serialize metadata");
+        let metadata = serializer
+            .deserialize_metadata(&serialized)
+            .expect("Failed to deserialize metadata");
 
         // Test ID lookup with non-existent ID
         let mut query_context = QueryContext::default();
@@ -606,15 +680,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_segment_optimization() {
-        let _temp_dir = TempDir::new().unwrap();
+        let _temp_dir = TempDir::new().expect("Failed to create temp directory");
         let config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(FilesystemFactory::create(config).await.unwrap());
+        let filesystem = Arc::new(
+            FilesystemFactory::create(config)
+                .await
+                .expect("Failed to create filesystem"),
+        );
         let serializer = SwiftMetadataSerializer::new(filesystem.clone());
 
         let serialized = serializer
             .serialize_metadata("/test/file.swift", "test_collection")
-            .unwrap();
-        let metadata = serializer.deserialize_metadata(&serialized).unwrap();
+            .expect("Failed to serialize metadata");
+        let metadata = serializer
+            .deserialize_metadata(&serialized)
+            .expect("Failed to deserialize metadata");
 
         let mut query_context = QueryContext::default();
         query_context.query_type = QueryType::IdLookup;
@@ -643,7 +723,7 @@ mod tests {
 impl Clone for SwiftMetadata {
     fn clone(&self) -> Self {
         Self {
-            global: self.global.clone(),
+            global: self.global,
             segments: self.segments.clone(),
             variable_data: self.variable_data.clone(),
             global_bloom: parking_lot::RwLock::new(self.global_bloom.read().clone()),

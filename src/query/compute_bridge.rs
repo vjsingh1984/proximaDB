@@ -715,18 +715,12 @@ impl ComputeBridge {
 
     /// Create plan hints from execution plan
     fn create_plan_hints(&self, plan: &UnifiedExecutionPlan) -> PlanHints {
-        let mut hints = PlanHints::default();
-
-        // Set parallelism from execution plan
-        hints.parallelism = Some(plan.parallelism.vector_parallelism);
-
-        // Set memory budget
-        hints.memory_budget = Some(plan.resource_allocation.memory_budget_mb as u64 * 1024 * 1024);
-
-        // Set timeout
-        hints.timeout_ms = Some(self.config.compute_timeout_ms);
-
-        hints
+        PlanHints {
+            parallelism: Some(plan.parallelism.vector_parallelism),
+            memory_budget: Some(plan.resource_allocation.memory_budget_mb as u64 * 1024 * 1024),
+            timeout_ms: Some(self.config.compute_timeout_ms),
+            ..Default::default()
+        }
     }
 
     /// Get bridge statistics

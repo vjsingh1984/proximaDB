@@ -49,6 +49,12 @@ impl RaptorUnifiedMetadataSerializer {
     }
 }
 
+impl Default for RaptorUnifiedMetadataSerializer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngineMetadataSerializer for RaptorUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
         // Try to downcast to RaptorCachedMetadata

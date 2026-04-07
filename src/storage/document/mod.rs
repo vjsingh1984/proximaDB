@@ -12,20 +12,95 @@
 // - Cold tier: VIPER/Parquet columnar storage
 
 pub mod aggregation;
+pub mod aggregation_extensions;
 pub mod indexes;
 pub mod query;
 pub mod service;
 pub mod storage;
 
 use anyhow::Result;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::{
-    DocumentCollectionConfig, DocumentContent, DocumentFilter, DocumentResult, IndexDefinition,
-    SortField, SqlObject,
+    DocumentCollectionConfig, DocumentContent, DocumentFilter, DocumentResult, DocumentUpdate,
+    IndexDefinition, SortField, SqlObject,
 };
 
 pub use self::service::DocumentService;
+
+// ---------------------------------------------------------------------------
+// DocumentStorageEngine trait -- the contract for document-native storage
+// ---------------------------------------------------------------------------
+
+/// Storage engine trait for document data model.
+///
+/// Unlike `UnifiedStorageEngine` (which is vector-centric and returns
+/// `OptimizedSearchRecord`), this trait operates on `DocumentRecord` natively.
+/// CEDAR implements this trait. DocumentService delegates to it.
+#[async_trait]
+pub trait DocumentStorageEngine: Send + Sync {
+    /// Engine identity
+    fn engine_name(&self) -> &'static str;
+
+    /// Insert a document. Returns the stored record with version=1.
+    async fn insert_document(
+        &self,
+        collection: &str,
+        doc: DocumentRecord,
+    ) -> Result<DocumentRecord>;
+
+    /// Get a document by ID. Returns None if not found.
+    async fn get_document(&self, collection: &str, id: &str) -> Result<Option<DocumentRecord>>;
+
+    /// Update a document by ID. Returns the updated record with incremented version.
+    async fn update_document(
+        &self,
+        collection: &str,
+        id: &str,
+        updates: Vec<DocumentUpdate>,
+    ) -> Result<DocumentRecord>;
+
+    /// Delete a document by ID. Returns true if the document existed.
+    async fn delete_document(&self, collection: &str, id: &str) -> Result<bool>;
+
+    /// Query documents with filters, projection, sort, and pagination.
+    async fn query_documents(
+        &self,
+        collection: &str,
+        params: DocumentQueryParams,
+    ) -> Result<DocumentQueryResult>;
+
+    /// Scan all documents in a collection (with optional limit).
+    async fn scan_documents(
+        &self,
+        collection: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<DocumentRecord>>;
+
+    /// Run an aggregation pipeline.
+    async fn aggregate(
+        &self,
+        collection: &str,
+        pipeline: Vec<crate::proto::proximadb_v1::AggregationStage>,
+    ) -> Result<AggregateResult>;
+
+    /// Create a secondary index on a field.
+    async fn create_index(&self, collection: &str, index_def: IndexDefinition) -> Result<()>;
+
+    /// Flush in-memory data to persistent storage.
+    async fn flush(&self, collection: &str) -> Result<FlushToStorageResult>;
+
+    /// Compact on-disk files (merge, deduplicate, reclaim space).
+    async fn compact(&self, collection: &str) -> Result<FlushToStorageResult>;
+
+    /// Get document count for a collection.
+    async fn document_count(&self, collection: &str) -> Result<u64>;
+
+    /// Collect engine-specific metrics.
+    async fn collect_metrics(&self) -> Result<HashMap<String, serde_json::Value>>;
+}
 
 /// Document record with ID, version, and content
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,12 +150,27 @@ impl DocumentRecord {
 
     /// Convert to proto DocumentContent
     pub fn to_proto_content(&self) -> DocumentContent {
+        self.to_proto_content_with_paths(&[])
+    }
+
+    /// Convert to proto DocumentContent with indexed paths
+    pub fn to_proto_content_with_paths(&self, indexed_paths: &[String]) -> DocumentContent {
         DocumentContent {
             document: Some(self.document.clone()),
             schema_id: self.schema_id.clone(),
-            indexed_paths: vec![], // TODO: populate from collection config
+            indexed_paths: indexed_paths.to_vec(),
             document_type: self.document_type.clone(),
         }
+    }
+
+    /// Convert to proto DocumentContent with collection config
+    pub fn to_proto_content_from_config(
+        &self,
+        config: &DocumentCollectionConfig,
+    ) -> DocumentContent {
+        let indexed_paths: Vec<String> =
+            config.indexes.iter().map(|idx| idx.path.clone()).collect();
+        self.to_proto_content_with_paths(&indexed_paths)
     }
 
     /// Convert to proto DocumentResult
@@ -196,6 +286,7 @@ pub struct AggregateResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::{DocIndexType, IndexDefinition};
 
     #[test]
     fn test_document_record_new() {
@@ -218,5 +309,87 @@ mod tests {
         let collection = DocumentCollection::new("test".to_string(), config);
         assert_eq!(collection.name, "test");
         assert_eq!(collection.document_count, 0);
+    }
+
+    #[test]
+    fn test_to_proto_content_default() {
+        let doc = DocumentRecord::new(
+            "doc1".to_string(),
+            SqlObject::default(),
+            "test_collection".to_string(),
+        );
+        let content = doc.to_proto_content();
+        assert!(content.document.is_some());
+        assert!(content.indexed_paths.is_empty());
+        assert!(content.schema_id.is_none());
+    }
+
+    #[test]
+    fn test_to_proto_content_with_paths() {
+        let doc = DocumentRecord::new(
+            "doc1".to_string(),
+            SqlObject::default(),
+            "test_collection".to_string(),
+        );
+        let paths = vec!["$.user.email".to_string(), "$.user.name".to_string()];
+        let content = doc.to_proto_content_with_paths(&paths);
+        assert_eq!(content.indexed_paths, paths);
+    }
+
+    #[test]
+    fn test_to_proto_content_from_config() {
+        let doc = DocumentRecord::new(
+            "doc1".to_string(),
+            SqlObject::default(),
+            "test_collection".to_string(),
+        );
+
+        let mut config = DocumentCollectionConfig {
+            name: "test".to_string(),
+            ..Default::default()
+        };
+
+        config.indexes = vec![
+            IndexDefinition {
+                path: "$.user.email".to_string(),
+                index_type: DocIndexType::Btree as i32,
+                unique: true,
+                ..Default::default()
+            },
+            IndexDefinition {
+                path: "$.user.name".to_string(),
+                index_type: DocIndexType::Hash as i32,
+                unique: false,
+                ..Default::default()
+            },
+        ];
+
+        let content = doc.to_proto_content_from_config(&config);
+        assert_eq!(content.indexed_paths.len(), 2);
+        assert_eq!(content.indexed_paths[0], "$.user.email");
+        assert_eq!(content.indexed_paths[1], "$.user.name");
+    }
+
+    #[test]
+    fn test_from_proto() {
+        let proto_content = DocumentContent {
+            document: Some(SqlObject::default()),
+            schema_id: Some("schema123".to_string()),
+            indexed_paths: vec!["$.field1".to_string()],
+            document_type: Some("user".to_string()),
+        };
+
+        let doc = DocumentRecord::from_proto(
+            "doc1".to_string(),
+            proto_content,
+            "test_collection".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(doc.id, "doc1");
+        assert_eq!(doc.version, 1);
+        assert_eq!(doc.collection_id, "test_collection");
+        assert_eq!(doc.schema_id, Some("schema123".to_string()));
+        assert_eq!(doc.document_type, Some("user".to_string()));
     }
 }

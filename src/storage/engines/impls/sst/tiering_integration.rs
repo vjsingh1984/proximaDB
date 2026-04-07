@@ -461,7 +461,7 @@ impl SstTieringIntegration {
 }
 
 // ============================================================================
-// TODO: Future Integration Points
+// Deferred: Future Integration Points
 // ============================================================================
 //
 // The following integration points are documented for future implementation:

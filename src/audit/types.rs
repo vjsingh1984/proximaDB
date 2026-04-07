@@ -9,54 +9,87 @@ use std::collections::HashMap;
 /// Comprehensive audit event structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
+    /// Unique identifier for this audit event
     pub event_id: String,
+    /// Timestamp when the event occurred (UTC)
     pub timestamp: DateTime<Utc>,
+    /// Category of audit event (authentication, data access, etc.)
     pub event_type: AuditEventType,
+    /// Identifier of the user who triggered the event, if applicable
     pub user_id: Option<String>,
+    /// Resource that was acted upon
     pub resource: AuditResource,
+    /// Specific action that was performed on the resource
     pub action: String,
+    /// Outcome of the action (success, failure, or partial)
     pub result: AuditResult,
+    /// Additional structured metadata associated with this event
     pub details: HashMap<String, serde_json::Value>,
+    /// Source IP address of the request, if available
     pub ip_address: Option<String>,
+    /// HTTP User-Agent header from the request, if available
     pub user_agent: Option<String>,
+    /// Correlation ID of the originating request, if available
     pub request_id: Option<String>,
+    /// Tenant context in which the event occurred, if applicable
     pub tenant_id: Option<String>,
+    /// Session identifier for grouping related events
     pub session_id: Option<String>,
+    /// Computed risk score in the range [0.0, 1.0]; higher means riskier
     pub risk_score: Option<f64>,
 }
 
 /// Types of audit events
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuditEventType {
+    /// User login, logout, token issuance, or credential verification
     Authentication,
+    /// Access-control decisions such as permission checks and role evaluation
     Authorization,
+    /// Read operations against stored data (queries, exports, views)
     DataAccess,
+    /// Write operations that create, update, or delete stored data
     DataModification,
+    /// Changes to system or tenant configuration settings
     SystemConfiguration,
+    /// Security-relevant actions such as alerts, policy violations, or anomalies
     SecurityEvent,
+    /// Compliance-framework-related events (SOC2, GDPR, HIPAA controls)
     ComplianceEvent,
+    /// Performance metrics and SLA-related events
     PerformanceEvent,
+    /// Tenant lifecycle operations (create, update, suspend, delete)
     TenantManagement,
+    /// External API calls made to or from the system
     APIAccess,
 }
 
 /// Resource being audited
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditResource {
-    pub resource_type: String, // "collection", "vector", "tenant", "user", "system"
+    /// Category of the resource (e.g., "collection", "vector", "tenant", "user", "system")
+    pub resource_type: String,
+    /// Unique identifier of the resource within its type
     pub resource_id: String,
+    /// Optional parent resource for hierarchical resource trees (e.g., tenant -> collection -> vector)
     pub parent_resource: Option<Box<AuditResource>>,
 }
 
 /// Result of the audited operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditResult {
+    /// The operation completed successfully without errors or warnings
     Success,
+    /// The operation failed; includes an error code and human-readable message
     Failure {
+        /// Machine-readable error code (e.g., "AUTH_FAILED", "PERMISSION_DENIED")
         error_code: String,
+        /// Human-readable description of the failure reason
         error_message: String,
     },
+    /// The operation completed with non-fatal warnings
     Partial {
+        /// List of warning messages describing partial failure conditions
         warnings: Vec<String>,
     },
 }
@@ -64,34 +97,53 @@ pub enum AuditResult {
 /// Security alert generated from audit analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityAlert {
+    /// Unique identifier for this security alert
     pub alert_id: String,
+    /// Timestamp when the alert was detected (UTC)
     pub timestamp: DateTime<Utc>,
+    /// Category of security threat that triggered the alert
     pub alert_type: SecurityAlertType,
+    /// Severity level used for prioritizing alert response
     pub severity: SecurityAlertSeverity,
+    /// Human-readable explanation of why the alert was generated
     pub description: String,
+    /// Identifier of the user associated with the suspicious activity, if known
     pub user_id: Option<String>,
+    /// Source IP address associated with the suspicious activity, if known
     pub ip_address: Option<String>,
+    /// ID of the audit event that triggered this alert
     pub related_event_id: String,
 }
 
 /// Types of security alerts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SecurityAlertType {
+    /// Unusual authentication patterns such as repeated failures or logins from unexpected locations
     SuspiciousAuthActivity,
+    /// Attempt by a user from one tenant to access resources belonging to another tenant
     CrossTenantAccess,
+    /// Attempt to gain higher privileges than those currently assigned
     PrivilegeEscalation,
+    /// Suspected large-scale extraction of sensitive data outside normal usage patterns
     DataExfiltration,
+    /// API access attempted without valid credentials or from an unauthorized source
     UnauthorizedAPIAccess,
+    /// Repeated rapid authentication attempts indicating a brute-force password attack
     BruteForceAttack,
+    /// Data access volume or patterns that deviate significantly from the user's baseline
     AnomalousDataAccess,
 }
 
 /// Security alert severity levels
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SecurityAlertSeverity {
+    /// Informational; minimal risk, no immediate action required
     Low,
+    /// Notable anomaly; should be reviewed during normal operations
     Medium,
+    /// Significant threat; requires prompt investigation
     High,
+    /// Immediate threat to security or compliance; requires urgent response
     Critical,
 }
 
@@ -154,7 +206,7 @@ impl AuditEvent {
 
     /// Set risk score
     pub fn with_risk_score(mut self, risk_score: f64) -> Self {
-        self.risk_score = Some(risk_score.max(0.0).min(1.0));
+        self.risk_score = Some(risk_score.clamp(0.0, 1.0));
         self
     }
 }
@@ -456,7 +508,10 @@ mod tests {
         assert_eq!(child.resource_id, "my-collection");
         assert!(child.parent_resource.is_some());
 
-        let parent_ref = child.parent_resource.as_ref().unwrap();
+        let parent_ref = child
+            .parent_resource
+            .as_ref()
+            .expect("parent_resource should be Some in with_parent test");
         assert_eq!(parent_ref.resource_type, "tenant");
         assert_eq!(parent_ref.resource_id, "tenant-123");
     }
@@ -470,9 +525,15 @@ mod tests {
             .with_parent(collection);
 
         assert_eq!(vector.resource_type, "vector");
-        let parent = vector.parent_resource.as_ref().unwrap();
+        let parent = vector
+            .parent_resource
+            .as_ref()
+            .expect("parent_resource should be Some in nested hierarchy test");
         assert_eq!(parent.resource_type, "collection");
-        let grandparent = parent.parent_resource.as_ref().unwrap();
+        let grandparent = parent
+            .parent_resource
+            .as_ref()
+            .expect("grandparent resource should be Some in nested hierarchy test");
         assert_eq!(grandparent.resource_type, "tenant");
     }
 
@@ -598,62 +659,73 @@ mod tests {
 
     #[test]
     fn test_audit_event_type_from_str() {
-        assert_eq!(
-            "authentication".parse::<AuditEventType>().unwrap(),
-            AuditEventType::Authentication
-        );
-        assert_eq!(
-            "authorization".parse::<AuditEventType>().unwrap(),
-            AuditEventType::Authorization
-        );
-        assert_eq!(
-            "data_access".parse::<AuditEventType>().unwrap(),
-            AuditEventType::DataAccess
-        );
-        assert_eq!(
-            "data_modification".parse::<AuditEventType>().unwrap(),
-            AuditEventType::DataModification
-        );
-        assert_eq!(
-            "system_configuration".parse::<AuditEventType>().unwrap(),
-            AuditEventType::SystemConfiguration
-        );
-        assert_eq!(
-            "security_event".parse::<AuditEventType>().unwrap(),
-            AuditEventType::SecurityEvent
-        );
-        assert_eq!(
-            "compliance_event".parse::<AuditEventType>().unwrap(),
-            AuditEventType::ComplianceEvent
-        );
-        assert_eq!(
-            "performance_event".parse::<AuditEventType>().unwrap(),
-            AuditEventType::PerformanceEvent
-        );
-        assert_eq!(
-            "tenant_management".parse::<AuditEventType>().unwrap(),
-            AuditEventType::TenantManagement
-        );
-        assert_eq!(
-            "api_access".parse::<AuditEventType>().unwrap(),
-            AuditEventType::APIAccess
-        );
+        let parse_result = "authentication"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse authentication event type");
+        assert_eq!(parse_result, AuditEventType::Authentication);
+
+        let parse_result = "authorization"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse authorization event type");
+        assert_eq!(parse_result, AuditEventType::Authorization);
+
+        let parse_result = "data_access"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse data_access event type");
+        assert_eq!(parse_result, AuditEventType::DataAccess);
+
+        let parse_result = "data_modification"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse data_modification event type");
+        assert_eq!(parse_result, AuditEventType::DataModification);
+
+        let parse_result = "system_configuration"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse system_configuration event type");
+        assert_eq!(parse_result, AuditEventType::SystemConfiguration);
+
+        let parse_result = "security_event"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse security_event event type");
+        assert_eq!(parse_result, AuditEventType::SecurityEvent);
+
+        let parse_result = "compliance_event"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse compliance_event event type");
+        assert_eq!(parse_result, AuditEventType::ComplianceEvent);
+
+        let parse_result = "performance_event"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse performance_event event type");
+        assert_eq!(parse_result, AuditEventType::PerformanceEvent);
+
+        let parse_result = "tenant_management"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse tenant_management event type");
+        assert_eq!(parse_result, AuditEventType::TenantManagement);
+
+        let parse_result = "api_access"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse api_access event type");
+        assert_eq!(parse_result, AuditEventType::APIAccess);
     }
 
     #[test]
     fn test_audit_event_type_from_str_case_insensitive() {
-        assert_eq!(
-            "AUTHENTICATION".parse::<AuditEventType>().unwrap(),
-            AuditEventType::Authentication
-        );
-        assert_eq!(
-            "Authentication".parse::<AuditEventType>().unwrap(),
-            AuditEventType::Authentication
-        );
-        assert_eq!(
-            "DATA_ACCESS".parse::<AuditEventType>().unwrap(),
-            AuditEventType::DataAccess
-        );
+        let parse_result = "AUTHENTICATION"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse AUTHENTICATION (uppercase)");
+        assert_eq!(parse_result, AuditEventType::Authentication);
+
+        let parse_result = "Authentication"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse Authentication (mixed case)");
+        assert_eq!(parse_result, AuditEventType::Authentication);
+
+        let parse_result = "DATA_ACCESS"
+            .parse::<AuditEventType>()
+            .expect("Failed to parse DATA_ACCESS (uppercase)");
+        assert_eq!(parse_result, AuditEventType::DataAccess);
     }
 
     #[test]

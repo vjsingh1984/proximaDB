@@ -79,16 +79,22 @@ pub struct UnifiedOptimizerConfig {
 /// Unified cost weights - CONSOLIDATED
 #[derive(Debug, Clone)]
 pub struct UnifiedCostWeights {
-    // From search optimizer
+    /// Weight factor for I/O cost in the search optimizer
     pub io_weight: f64,
+    /// Weight factor for CPU cost in the search optimizer
     pub cpu_weight: f64,
+    /// Weight factor for memory cost in the search optimizer
     pub memory_weight: f64,
+    /// Weight factor for accuracy in the search optimizer
     pub accuracy_weight: f64,
+    /// Weight factor for latency in the search optimizer
     pub latency_weight: f64,
 
-    // From metadata filtering
+    /// Weight factor for filter selectivity in the metadata filtering optimizer
     pub selectivity_weight: f64,
+    /// Weight factor for index efficiency in the metadata filtering optimizer
     pub index_efficiency_weight: f64,
+    /// Weight factor for filter complexity in the metadata filtering optimizer
     pub filter_complexity_weight: f64,
 }
 
@@ -113,8 +119,9 @@ pub struct UnifiedQueryContext<'a> {
     /// Available files
     pub available_files: Vec<String>,
 
-    /// Dataset statistics
+    /// Total number of vectors in the dataset
     pub total_vectors: usize,
+    /// Total number of metadata columns in the dataset
     pub total_columns: usize,
 
     /// Query vectors (if applicable)
@@ -124,90 +131,150 @@ pub struct UnifiedQueryContext<'a> {
 /// Unified metadata filter (consolidated from Universal Metadata Filtering)
 #[derive(Debug, Clone)]
 pub struct UnifiedMetadataFilter {
+    /// List of filter conditions to apply
     pub conditions: Vec<FilterCondition>,
+    /// Logical operator combining the conditions
     pub logic: FilterLogic,
+    /// Hints for the optimizer to improve filter execution
     pub optimization_hints: FilterOptimizationHints,
 }
 
+/// Individual metadata filter condition for query optimization
 #[derive(Debug, Clone)]
 pub enum FilterCondition {
+    /// Exact equality match on a column value
     Equals {
+        /// Column name to filter on
         column: String,
+        /// Value to match against
         value: serde_json::Value,
     },
+    /// Not-equal comparison on a column value
     NotEquals {
+        /// Column name to filter on
         column: String,
+        /// Value that should not match
         value: serde_json::Value,
     },
+    /// Range filter between min and max values
     Range {
+        /// Column name to filter on
         column: String,
+        /// Minimum value (inclusive)
         min: serde_json::Value,
+        /// Maximum value (inclusive)
         max: serde_json::Value,
     },
+    /// Greater-than comparison
     GreaterThan {
+        /// Column name to filter on
         column: String,
+        /// Lower bound (exclusive)
         value: serde_json::Value,
     },
+    /// Greater-than-or-equal comparison
     GreaterThanOrEqual {
+        /// Column name to filter on
         column: String,
+        /// Lower bound (inclusive)
         value: serde_json::Value,
     },
+    /// Less-than comparison
     LessThan {
+        /// Column name to filter on
         column: String,
+        /// Upper bound (exclusive)
         value: serde_json::Value,
     },
+    /// Less-than-or-equal comparison
     LessThanOrEqual {
+        /// Column name to filter on
         column: String,
+        /// Upper bound (inclusive)
         value: serde_json::Value,
     },
+    /// Membership test against a set of values
     In {
+        /// Column name to filter on
         column: String,
+        /// Set of allowed values
         values: Vec<serde_json::Value>,
     },
+    /// Exclusion test against a set of values
     NotIn {
+        /// Column name to filter on
         column: String,
+        /// Set of excluded values
         values: Vec<serde_json::Value>,
     },
+    /// Null check on a column
     IsNull {
+        /// Column name to check for null
         column: String,
     },
+    /// Pattern matching using SQL LIKE syntax
     Like {
+        /// Column name to filter on
         column: String,
+        /// LIKE pattern with `%` and `_` wildcards
         pattern: String,
     },
+    /// Containment check for array or JSON columns
     Contains {
+        /// Column name to filter on
         column: String,
+        /// Value that must be contained
         value: serde_json::Value,
     },
+    /// Prefix match on string columns
     StartsWith {
+        /// Column name to filter on
         column: String,
+        /// Required prefix string
         prefix: String,
     },
+    /// Suffix match on string columns
     EndsWith {
+        /// Column name to filter on
         column: String,
+        /// Required suffix string
         suffix: String,
     },
+    /// Between filter (inclusive range)
     Between {
+        /// Column name to filter on
         column: String,
+        /// Minimum value (inclusive)
         min: serde_json::Value,
+        /// Maximum value (inclusive)
         max: serde_json::Value,
     },
+    /// Not-null check on a column
     IsNotNull {
+        /// Column name to check for non-null
         column: String,
     },
 }
 
+/// Logical operator for combining multiple filter conditions
 #[derive(Debug, Clone)]
 pub enum FilterLogic {
+    /// All conditions must be true
     And,
+    /// At least one condition must be true
     Or,
+    /// Negate the combined conditions
     Not,
 }
 
+/// Hints to guide the filter optimizer for better execution plans
 #[derive(Debug, Clone, Default)]
 pub struct FilterOptimizationHints {
+    /// Expected fraction of rows that will pass the filter (0.0 to 1.0)
     pub expected_selectivity: Option<f64>,
+    /// Name of the preferred index to use for this filter
     pub preferred_index: Option<String>,
+    /// Whether parallel execution is permitted
     pub allow_parallel: bool,
 }
 
@@ -218,7 +285,9 @@ pub struct FilterOptimizationHints {
 /// Index strategy for query execution
 #[derive(Debug, Clone)]
 pub struct IndexStrategy {
+    /// Type of index to use for the query
     pub index_type: Index,
+    /// Additional parameters for the index lookup
     pub params: HashMap<String, serde_json::Value>,
 }
 
@@ -252,35 +321,49 @@ pub struct UnifiedExecutionPlan {
 pub enum ExecutionStep {
     /// Metadata filtering step
     MetadataFilter {
+        /// Filter conditions to evaluate
         conditions: Vec<FilterCondition>,
+        /// Method used to execute the filter
         execution_method: FilterExecutionMethod,
+        /// Expected fraction of rows passing the filter
         estimated_selectivity: f64,
+        /// Estimated computational cost of this step
         estimated_cost: f64,
     },
 
     /// Vector search step
     VectorSearch {
+        /// Method used to execute the vector search
         execution_method: SearchExecutionMethod,
+        /// Optional quantization strategy to reduce memory and compute
         quantization_strategy: Option<QuantizationStrategy>,
+        /// Number of candidate vectors to evaluate
         candidates: usize,
     },
 
     /// Combined filter+search (optimized)
     CombinedFilterSearch {
+        /// Filter operations pushed down to storage or index level
         filter_pushdown: Vec<FilterPushdownOperation>,
+        /// Method used for the vector search portion
         search_method: SearchExecutionMethod,
+        /// Configuration for early termination of the combined search
         early_termination: EarlyTerminationConfig,
     },
 
     /// Index lookup (shared by both)
     IndexLookup {
+        /// Type of index to query
         index_type: Index,
+        /// Parameters for the index lookup
         lookup_params: IndexLookupParams,
     },
 
     /// Bloom filter check (shared)
     BloomFilterCheck {
+        /// Type of bloom filter to apply
         filter_type: BloomFilter,
+        /// Expected false positive rate of the bloom filter
         expected_false_positive_rate: f64,
     },
 }
@@ -496,17 +579,17 @@ impl UnifiedQueryOptimizer {
         Option<crate::query::rl_planner::PlannerState>,
         Option<ExecutionAction>,
     ) {
-        if let Some(rl_planner) = get_rl_planner() {
-            if rl_planner.is_enabled() {
-                let state = rl_planner.extract_state(context);
-                let action = rl_planner.select_action(&state).await;
-                trace!(
-                    "🎯 RL planner selected action for collection {}: {}",
-                    context.collection.id,
-                    action.describe()
-                );
-                return (Some(state), Some(action));
-            }
+        if let Some(rl_planner) = get_rl_planner()
+            && rl_planner.is_enabled()
+        {
+            let state = rl_planner.extract_state(context);
+            let action = rl_planner.select_action(&state).await;
+            trace!(
+                "🎯 RL planner selected action for collection {}: {}",
+                context.collection.id,
+                action.describe()
+            );
+            return (Some(state), Some(action));
         }
         (None, None)
     }
@@ -515,46 +598,44 @@ impl UnifiedQueryOptimizer {
     fn apply_rl_action_to_plan(&self, action: &ExecutionAction, plan: &mut UnifiedExecutionPlan) {
         // Modify execution steps based on RL action
         for step in &mut plan.execution_steps {
-            match step {
-                ExecutionStep::VectorSearch {
-                    execution_method,
-                    candidates,
-                    ..
-                } => {
-                    // Apply index strategy from action
-                    if let Some(ref strategy) = action.index_strategy {
-                        *execution_method = match strategy {
-                            crate::query::rl_planner::IndexStrategy::HNSW { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::HNSW,
-                                }
+            if let ExecutionStep::VectorSearch {
+                execution_method,
+                candidates,
+                ..
+            } = step
+            {
+                // Apply index strategy from action
+                if let Some(ref strategy) = action.index_strategy {
+                    *execution_method = match strategy {
+                        crate::query::rl_planner::IndexStrategy::HNSW { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::HNSW,
                             }
-                            crate::query::rl_planner::IndexStrategy::IVF { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::IVF,
-                                }
+                        }
+                        crate::query::rl_planner::IndexStrategy::IVF { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::IVF,
                             }
-                            crate::query::rl_planner::IndexStrategy::LSH { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::LSH,
-                                }
+                        }
+                        crate::query::rl_planner::IndexStrategy::LSH { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::LSH,
                             }
-                            crate::query::rl_planner::IndexStrategy::DirectScan => {
-                                SearchExecutionMethod::DirectFP32
-                            }
-                            _ => execution_method.clone(),
-                        };
-                    }
-
-                    // Apply search mode expansion factor
-                    if let crate::query::rl_planner::SearchModeAction::Approximate {
-                        expansion_factor,
-                    } = &action.search_mode
-                    {
-                        *candidates = (*candidates as f32 * expansion_factor) as usize;
-                    }
+                        }
+                        crate::query::rl_planner::IndexStrategy::DirectScan => {
+                            SearchExecutionMethod::DirectFP32
+                        }
+                        _ => execution_method.clone(),
+                    };
                 }
-                _ => {}
+
+                // Apply search mode expansion factor
+                if let crate::query::rl_planner::SearchModeAction::Approximate {
+                    expansion_factor,
+                } = &action.search_mode
+                {
+                    *candidates = (*candidates as f32 * expansion_factor) as usize;
+                }
             }
         }
 
@@ -763,20 +844,32 @@ pub struct CostContext {
 /// Operation types for cost calculation
 #[derive(Debug, Clone)]
 pub enum OperationType {
+    /// Vector similarity search operation
     VectorSearch {
+        /// Number of nearest neighbors to return
         top_k: usize,
+        /// Whether to use quantized vectors for faster search
         use_quantization: bool,
     },
+    /// Metadata filtering operation
     MetadataFilter {
+        /// Number of filter conditions to apply
         filter_count: usize,
+        /// Expected fraction of rows passing the filter
         selectivity: f64,
     },
+    /// Index construction operation
     IndexBuild {
+        /// Type of index to build (e.g., HNSW, IVF)
         index_type: String,
+        /// Number of vectors to index
         vector_count: usize,
     },
+    /// Storage compaction operation
     CompactionOperation {
+        /// Number of files to compact
         file_count: usize,
+        /// Total size of files to compact in megabytes
         total_size_mb: f64,
     },
 }
@@ -860,11 +953,15 @@ struct FilterAnalysis {
     best_index: Option<String>,
 }
 
-/// Operation types for cost calculation
+/// High-level operation types for unified cost calculation
 pub enum Operation {
+    /// Metadata filtering operation
     MetadataFilter(FilterOperation),
+    /// Vector similarity search operation
     VectorSearch(SearchOperation),
+    /// Index-based lookup operation
     IndexLookup(IndexOperation),
+    /// Combined filter and search operation
     Combined(CombinedOperation),
 }
 
@@ -898,103 +995,154 @@ pub struct CombinedOperation {
 /// Search execution methods
 #[derive(Debug, Clone)]
 pub enum SearchExecutionMethod {
+    /// Full-precision float32 brute-force search
     DirectFP32,
-    Progressive { stages: Vec<ProgressiveStage> },
-    QuantizedOnly { quantization_type: QuantizationType },
-    IndexBased { index_type: Index },
+    /// Multi-stage progressive refinement search
+    Progressive {
+        /// Ordered stages from coarse to fine
+        stages: Vec<ProgressiveStage>,
+    },
+    /// Search using only quantized representations
+    QuantizedOnly {
+        /// Type of quantization to use
+        quantization_type: QuantizationType,
+    },
+    /// Search using a pre-built index
+    IndexBased {
+        /// Type of index to query
+        index_type: Index,
+    },
 }
 
 /// Filter execution methods
 #[derive(Debug, Clone)]
 pub enum FilterExecutionMethod {
+    /// Use an index to evaluate the filter
     IndexLookup,
+    /// Scan rows sequentially and evaluate the filter
     SequentialScan,
+    /// Use bitmap index scan for the filter
     BitmapScan,
+    /// Full table scan with no optimizations
     FullScan,
-    ParallelScan { num_threads: usize },
+    /// Parallel scan across multiple threads
+    ParallelScan {
+        /// Number of threads to use for parallel scanning
+        num_threads: usize,
+    },
 }
 
 /// Progressive search stages
 #[derive(Debug, Clone)]
 pub struct ProgressiveStage {
+    /// Search algorithm used in this stage
     pub algorithm: SearchAlgorithm,
+    /// Number of candidates to retain from this stage
     pub candidates: usize,
 }
 
 /// Search algorithms
 #[derive(Debug, Clone)]
 pub enum SearchAlgorithm {
+    /// Binary code filtering for fast approximate elimination
     BinaryFilter,
+    /// Search using quantized vector representations
     QuantizedSearch,
+    /// Exact brute-force distance computation
     ExactSearch,
 }
 
 /// Quantization types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QuantizationType {
+    /// 1-bit binary quantization
     Binary,
+    /// 8-bit integer quantization
     INT8,
+    /// Product quantization with 4-bit sub-quantizers
     PQ4,
+    /// Product quantization with 8-bit sub-quantizers
     PQ8,
 }
 
 /// Index types
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Index {
+    /// Hierarchical Navigable Small World graph index
     HNSW,
+    /// Inverted File index for partitioned search
     IVF,
+    /// Locality-Sensitive Hashing index
     LSH,
+    /// B-tree index for ordered range queries
     BTree,
+    /// Hash index for exact equality lookups
     Hash,
 }
 
 /// Index lookup parameters
 #[derive(Debug, Clone)]
 pub struct IndexLookupParams {
+    /// HNSW ef_search parameter controlling search breadth
     pub ef_search: Option<usize>,
+    /// IVF nprobe parameter controlling number of partitions to search
     pub nprobe: Option<usize>,
+    /// Query vector for similarity search
     pub query_vector: Option<Vec<f32>>,
+    /// Number of nearest neighbors to return
     pub top_k: usize,
+    /// Optional filter to apply during index lookup
     pub filter: Option<FilterExpression>,
 }
 
 /// Bloom filter types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum BloomFilter {
+    /// Standard bloom filter with fixed false positive rate
     Standard,
+    /// Hierarchical bloom filter with multiple levels
     Hierarchical,
+    /// Counting bloom filter that supports deletions
     Counting,
 }
 
 /// Filter pushdown operations
 #[derive(Debug, Clone)]
 pub enum FilterPushdownOperation {
+    /// Push filter evaluation down to the storage engine layer
     StorageLevel {
+        /// Filter condition to push down
         filter: FilterCondition,
+        /// Estimated fraction of rows eliminated by this pushdown
         estimated_reduction: f64,
     },
+    /// Push filter evaluation down to the index layer
     IndexLevel {
+        /// Filter condition to push down
         filter: FilterCondition,
+        /// Name of the index to use, if known
         index_name: Option<String>,
     },
 }
 
 /// Optimization goals
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum OptimizationGoal {
+    /// Maximize search recall at the expense of speed
     MaximizeRecall,
+    /// Maximize query throughput and speed
     MaximizeSpeed,
+    /// Minimize memory usage during query execution
     MinimizeMemory,
+    /// Minimize end-to-end query latency
     MinimizeLatency,
+    /// Maximize queries processed per second
     MaximizeThroughput,
+    /// Balance speed, recall, and resource usage (default)
+    #[default]
     Balanced,
+    /// Balance speed and recall without strict resource constraints
     BalancedSpeedRecall,
-}
-
-impl Default for OptimizationGoal {
-    fn default() -> Self {
-        OptimizationGoal::Balanced
-    }
 }
 
 impl std::fmt::Display for OptimizationGoal {
@@ -1022,97 +1170,148 @@ enum QueryComplexity {
 /// Resource allocation
 #[derive(Debug, Clone)]
 pub struct ResourceAllocation {
+    /// Maximum memory budget in megabytes
     pub memory_budget_mb: usize,
+    /// Number of CPU cores allocated for the query
     pub cpu_cores: usize,
+    /// Number of I/O threads allocated for the query
     pub io_threads: usize,
 }
 
 /// Unified performance estimate
 #[derive(Debug, Clone)]
 pub struct UnifiedPerformanceEstimate {
+    /// Estimated query latency in milliseconds
     pub estimated_latency_ms: u32,
+    /// Estimated peak memory usage in megabytes
     pub estimated_memory_mb: usize,
+    /// Estimated number of I/O operations
     pub estimated_io_ops: usize,
+    /// Estimated search recall (0.0 to 1.0)
     pub estimated_recall: f32,
+    /// Estimated search precision (0.0 to 1.0)
     pub estimated_precision: f32,
 }
 
 /// Parallelism configuration
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ParallelismConfig {
+    /// Number of files to process in parallel
     pub file_parallelism: usize,
+    /// Number of vector batches to process in parallel
     pub vector_parallelism: usize,
+    /// Number of filter evaluations to run in parallel
     pub filter_parallelism: usize,
+    /// Whether to use SIMD instructions for distance computation
     pub use_simd: bool,
 }
 
 /// Fallback strategies
 #[derive(Debug, Clone)]
 pub struct FallbackStrategy {
+    /// Condition that triggers this fallback
     pub trigger_condition: TriggerCondition,
+    /// Alternative execution plan to use when triggered
     pub fallback_plan: Box<UnifiedExecutionPlan>,
 }
 
 /// Trigger conditions for fallbacks
 #[derive(Debug, Clone)]
 pub enum TriggerCondition {
-    MemoryPressure { threshold_mb: usize },
-    LatencyExceeded { threshold_ms: u32 },
-    QualityBelowThreshold { min_recall: f32 },
+    /// Trigger when memory usage exceeds the threshold
+    MemoryPressure {
+        /// Memory threshold in megabytes
+        threshold_mb: usize,
+    },
+    /// Trigger when query latency exceeds the threshold
+    LatencyExceeded {
+        /// Latency threshold in milliseconds
+        threshold_ms: u32,
+    },
+    /// Trigger when search quality falls below the threshold
+    QualityBelowThreshold {
+        /// Minimum acceptable recall
+        min_recall: f32,
+    },
 }
 
 /// File metadata
 #[derive(Debug, Clone)]
 pub struct FileMetadata {
+    /// Path to the data file
     pub file_path: String,
+    /// Size of the file in bytes
     pub size_bytes: u64,
+    /// Compression algorithm used, if any
     pub compression_algorithm: Option<CompressionAlgorithm>,
+    /// Whether the file contains quantized vector columns
     pub has_quantized_columns: bool,
+    /// Unix timestamp of last access
     pub last_accessed: i64,
 }
 
 /// Column metadata
 #[derive(Debug, Clone)]
 pub struct ColumnMetadata {
+    /// Name of the metadata column
     pub column_name: String,
+    /// Statistical summary of the column's values
     pub statistics: ColumnStatistics,
+    /// Indexes available on this column
     pub indexes: Vec<IndexInfo>,
 }
 
 /// Column data types
 #[derive(Debug, Clone)]
 pub enum ColumnData {
+    /// 64-bit integer column
     Integer,
+    /// 64-bit floating point column
     Float,
+    /// UTF-8 string column
     String,
+    /// Boolean column
     Boolean,
+    /// Timestamp column
     Timestamp,
+    /// JSON document column
     Json,
 }
 
 /// Column statistics
 #[derive(Debug, Clone)]
 pub struct ColumnStatistics {
+    /// Number of distinct values in the column
     pub distinct_count: usize,
+    /// Number of null values in the column
     pub null_count: usize,
+    /// Minimum value observed, if available
     pub min_value: Option<serde_json::Value>,
+    /// Maximum value observed, if available
     pub max_value: Option<serde_json::Value>,
 }
 
 /// Index information
 #[derive(Debug, Clone)]
 pub struct IndexInfo {
+    /// Name identifier of the index
     pub index_name: String,
+    /// Type of the index
     pub index_type: Index,
+    /// Estimated selectivity when using this index (0.0 to 1.0)
     pub selectivity: f64,
 }
 
 /// Index capabilities
 #[derive(Debug, Clone)]
 pub struct IndexCapabilities {
+    /// Whether the index supports range queries
     pub supports_range_queries: bool,
+    /// Whether the index supports equality lookups
     pub supports_equality: bool,
+    /// Whether the index supports prefix-based searches
     pub supports_prefix_search: bool,
+    /// Average time for a single lookup in milliseconds
     pub average_lookup_time_ms: f64,
 }
 
@@ -1140,46 +1339,62 @@ struct StrategyPerformance {
 /// Cache configuration
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
+    /// Maximum number of collections to cache metadata for
     pub max_collections: usize,
+    /// Maximum number of files to cache per collection
     pub max_files_per_collection: usize,
+    /// Time-to-live for cached entries in seconds
     pub ttl_seconds: u64,
 }
 
 /// Filter optimizer configuration
 #[derive(Debug, Clone)]
 pub struct FilterOptimizerConfig {
+    /// Whether to push predicates down to storage and index layers
     pub enable_predicate_pushdown: bool,
+    /// Whether to automatically select the best index for filters
     pub enable_index_selection: bool,
+    /// Maximum number of filter conditions before simplification
     pub max_filter_complexity: usize,
 }
 
 /// Search optimizer configuration
 #[derive(Debug, Clone)]
 pub struct SearchOptimizerConfig {
+    /// Whether to use multi-stage progressive search refinement
     pub enable_progressive_search: bool,
+    /// Whether to use quantized vectors for faster search
     pub enable_quantization: bool,
+    /// Maximum number of candidates to evaluate during search
     pub max_candidates: usize,
 }
 
 /// Quantization strategy
 #[derive(Debug, Clone)]
 pub struct QuantizationStrategy {
+    /// Type of quantization to apply
     pub quantization_type: QuantizationType,
+    /// Whether to use two-stage search (quantized then exact)
     pub use_two_stage: bool,
+    /// Multiplier for candidate count in quantized search
     pub candidate_multiplier: usize,
 }
 
 /// Performance estimate for query execution
 #[derive(Debug, Clone)]
 pub struct PerformanceEstimate {
+    /// Expected query latency in milliseconds
     pub expected_latency_ms: f64,
+    /// Expected throughput in operations per second
     pub expected_throughput_ops_per_sec: f64,
+    /// Confidence score for this estimate (0.0 to 1.0)
     pub confidence_score: f64,
 }
 
 /// Fallback strategies configuration
 #[derive(Debug, Clone)]
 pub struct FallbackStrategies {
+    /// Ordered list of fallback strategy names to try
     pub fallback_strategies: Vec<String>,
 }
 
@@ -1514,8 +1729,9 @@ impl UnifiedQueryOptimizer {
             .collection
             .stats
             .as_ref()
-            .map(|s| s.vector_count as usize)
-            .unwrap_or(context.total_vectors.max(10000));
+            .map_or(context.total_vectors.max(10000), |s| {
+                s.vector_count as usize
+            });
 
         // Analyze filters and compute selectivity
         let (filters, combined_selectivity) = if let Some(filter_expr) = context.filter_params {
@@ -1544,8 +1760,7 @@ impl UnifiedQueryOptimizer {
                 .collection
                 .config
                 .as_ref()
-                .map(|c| c.dimension as usize)
-                .unwrap_or(128);
+                .map_or(128, |c| c.dimension as usize);
 
             // Base cost: O(n * d) for exhaustive search, reduced by quantization
             let base_search_cost = (dataset_size as f64 * dimension as f64) / 1_000_000.0;
@@ -1574,8 +1789,7 @@ impl UnifiedQueryOptimizer {
             .collection
             .config
             .as_ref()
-            .map(|c| c.dimension as usize)
-            .unwrap_or(128);
+            .map_or(128, |c| c.dimension as usize);
         let bytes_per_vector = dimension * 4; // FP32
         let estimated_memory_mb = (dataset_size * bytes_per_vector) as f64 / (1024.0 * 1024.0);
 
@@ -1761,7 +1975,7 @@ impl UnifiedQueryOptimizer {
             match step {
                 ExecutionStep::VectorSearch { candidates, .. } => {
                     // Vector search needs more memory and CPU
-                    memory_budget_mb += (*candidates as usize * 4) / 1024; // 4 bytes per float
+                    memory_budget_mb += (*candidates * 4) / 1024; // 4 bytes per float
                     cpu_cores = cpu_cores.max(available_cores / 2);
                 }
                 ExecutionStep::CombinedFilterSearch { .. } => {
@@ -2218,6 +2432,7 @@ impl Default for UnifiedOptimizerConfig {
 }
 
 impl UnifiedCostModel {
+    /// Create a new unified cost model with default strategies and hardware detection.
     pub fn new() -> Self {
         let mut strategies: HashMap<String, Box<dyn CostStrategy>> = HashMap::new();
         strategies.insert("default".to_string(), Box::new(DefaultCostStrategy));
@@ -2227,6 +2442,12 @@ impl UnifiedCostModel {
             historical_costs: Arc::new(parking_lot::RwLock::new(HashMap::new())),
             hardware: crate::core::hardware_capabilities::get_hardware_capabilities(),
         }
+    }
+}
+
+impl Default for UnifiedCostModel {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

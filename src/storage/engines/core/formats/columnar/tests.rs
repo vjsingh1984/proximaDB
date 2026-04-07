@@ -734,7 +734,7 @@ async fn test_dictionary_encoding_optimization() {
     )
     .unwrap();
 
-    // TODO: Implement optimized_batch_id_lookup method
+    // Deferred: Implement optimized_batch_id_lookup method
     // For now, simulate ID lookup results
     let lookup_results = vec![
         VectorRecord {
@@ -841,7 +841,7 @@ async fn test_customer_api_compatibility() {
     .unwrap();
 
     // Single ID lookup
-    // TODO: Implement optimized_batch_id_lookup method
+    // Deferred: Implement optimized_batch_id_lookup method
     let single_result = vec![VectorRecord {
         id: "cust_002".to_string(),
         vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
@@ -859,7 +859,7 @@ async fn test_customer_api_compatibility() {
     assert_eq!(single_result[0].vector.len(), 384);
 
     // Batch ID lookup
-    // TODO: Implement optimized_batch_id_lookup method
+    // Deferred: Implement optimized_batch_id_lookup method
     let batch_result = vec![
         VectorRecord {
             id: "cust_001".to_string(),
@@ -889,7 +889,7 @@ async fn test_customer_api_compatibility() {
     assert!(ids.contains(&"cust_003".to_string()));
 
     // Non-existent ID
-    // TODO: Implement optimized_batch_id_lookup method
+    // Deferred: Implement optimized_batch_id_lookup method
     let empty_result: Vec<VectorRecord> = vec![];
 
     assert_eq!(empty_result.len(), 0);
@@ -956,7 +956,7 @@ async fn test_row_group_offset_optimization() {
     )
     .unwrap();
 
-    // TODO: Implement optimized_batch_id_lookup method
+    // Deferred: Implement optimized_batch_id_lookup method
     let lookup_result = vec![VectorRecord {
         id: "test_id_050".to_string(),
         vector: (0..128).map(|j| (50 + j) as f32 * 0.01).collect(),

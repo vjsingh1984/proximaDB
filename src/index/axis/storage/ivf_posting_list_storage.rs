@@ -32,21 +32,26 @@ use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstab
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
-// Type alias for compatibility
+/// Type alias for [`PostingListEntry`] for compatibility
 pub type PostingEntry = PostingListEntry;
 
 /// Posting list entry
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PostingListEntry {
+    /// External identifier of the vector belonging to this cluster
     pub vector_id: String,
+    /// Pre-computed distance from this vector to its cluster centroid
     pub distance_to_centroid: f32,
 }
 
 /// Complete posting list for a cluster
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PostingList {
+    /// Index of the IVF cluster this posting list belongs to
     pub cluster_id: usize,
+    /// Ordered list of vector entries assigned to this cluster
     pub entries: Vec<PostingListEntry>,
+    /// Timestamp of the most recent access, used for LRU eviction
     pub last_accessed: std::time::SystemTime,
 }
 
@@ -54,26 +59,35 @@ pub struct PostingList {
 pub enum PostingListStorage {
     /// In-memory storage with bincode serialization
     Memory {
-        cache: Arc<dashmap::DashMap<usize, Vec<u8>>>, // cluster_id -> bincode bytes
+        /// Map from cluster ID to bincode-encoded posting list bytes
+        cache: Arc<dashmap::DashMap<usize, Vec<u8>>>,
     },
     /// SST-based disk storage
     SstDisk {
+        /// Filesystem root path for SST files
         base_path: String,
+        /// Collection identifier used to scope file paths
         collection_id: String,
     },
     /// VIPER-based disk storage
     ViperDisk {
+        /// Filesystem root path for Parquet/VIPER files
         base_path: String,
+        /// Collection identifier used to scope file paths
         collection_id: String,
     },
     /// Cloud storage (S3, etc.) using SST format
     CloudSst {
+        /// S3 bucket name
         bucket: String,
+        /// Collection identifier used to scope object keys
         collection_id: String,
     },
     /// Cloud storage using VIPER format
     CloudViper {
+        /// S3 bucket name
         bucket: String,
+        /// Collection identifier used to scope object keys
         collection_id: String,
     },
 }
@@ -151,9 +165,10 @@ impl PostingListStorage {
                     base_path, collection_id, cluster_id
                 );
 
-                let mut config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                config.default_fs = Some(path.clone());
+                let config = crate::storage::persistence::filesystem::FilesystemConfig {
+                    default_fs: Some(path.clone()),
+                    ..Default::default()
+                };
                 let filesystem = Arc::new(
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -193,7 +208,7 @@ impl PostingListStorage {
                             timestamp: Some(
                                 std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap()
+                                    .unwrap_or_default()
                                     .as_secs() as i64,
                             ),
                             updated_at: None,
@@ -206,7 +221,7 @@ impl PostingListStorage {
 
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
-                let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
+                let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
                     .write_sorted_records(sorted_records_iter, record_count)
                     .await?;
@@ -285,9 +300,10 @@ impl PostingListStorage {
                     base_path, collection_id, cluster_id
                 );
 
-                let mut config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                config.default_fs = Some(path.clone());
+                let config = crate::storage::persistence::filesystem::FilesystemConfig {
+                    default_fs: Some(path.clone()),
+                    ..Default::default()
+                };
                 let filesystem = Arc::new(
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -311,7 +327,7 @@ impl PostingListStorage {
                 // Note: SSTable reader doesn't have scan method currently,
                 // so we would need to implement batch reading or iterate through known keys
                 // For now, returning empty as a placeholder
-                // TODO: Implement proper posting list storage backend
+                // Deferred: Implement proper posting list storage backend
 
                 if entries.is_empty() {
                     Ok(None)
@@ -350,7 +366,9 @@ impl PostingListStorage {
 /// Storage engine type for posting lists
 #[derive(Debug, Clone, Copy)]
 pub enum StorageEngineType {
+    /// Sorted String Table engine — optimised for bloom-filter lookups
     SST,
+    /// VIPER columnar engine — optimised for analytical scans (Parquet)
     VIPER,
 }
 
@@ -375,6 +393,10 @@ pub struct TieredPostingListManager {
 }
 
 impl TieredPostingListManager {
+    /// Create a new tiered posting list manager.
+    ///
+    /// Providing `disk_path` enables the NVMe/SSD tier and `cloud_bucket`
+    /// enables the cloud tier.  Either may be `None` to disable that tier.
     pub fn new(
         collection_id: String,
         engine_type: StorageEngineType,
@@ -432,30 +454,30 @@ impl TieredPostingListManager {
         }
 
         // Try disk if available
-        if let Some(ref disk) = self.disk_storage {
-            if let Some(list) = disk.get(cluster_id).await? {
-                // Promote to memory
-                self.memory_storage.put(cluster_id, list.clone()).await?;
-                self.access_tracker
-                    .insert(cluster_id, std::time::SystemTime::now());
-                info!("Promoted posting list {} from disk to memory", cluster_id);
-                return Ok(Some(list));
-            }
+        if let Some(ref disk) = self.disk_storage
+            && let Some(list) = disk.get(cluster_id).await?
+        {
+            // Promote to memory
+            self.memory_storage.put(cluster_id, list.clone()).await?;
+            self.access_tracker
+                .insert(cluster_id, std::time::SystemTime::now());
+            info!("Promoted posting list {} from disk to memory", cluster_id);
+            return Ok(Some(list));
         }
 
         // Try cloud if available
-        if let Some(ref cloud) = self.cloud_storage {
-            if let Some(list) = cloud.get(cluster_id).await? {
-                // Promote to memory (and optionally disk)
-                self.memory_storage.put(cluster_id, list.clone()).await?;
-                if let Some(ref disk) = self.disk_storage {
-                    disk.put(cluster_id, list.clone()).await?;
-                }
-                self.access_tracker
-                    .insert(cluster_id, std::time::SystemTime::now());
-                info!("Promoted posting list {} from cloud to mem", cluster_id);
-                return Ok(Some(list));
+        if let Some(ref cloud) = self.cloud_storage
+            && let Some(list) = cloud.get(cluster_id).await?
+        {
+            // Promote to memory (and optionally disk)
+            self.memory_storage.put(cluster_id, list.clone()).await?;
+            if let Some(ref disk) = self.disk_storage {
+                disk.put(cluster_id, list.clone()).await?;
             }
+            self.access_tracker
+                .insert(cluster_id, std::time::SystemTime::now());
+            info!("Promoted posting list {} from cloud to mem", cluster_id);
+            return Ok(Some(list));
         }
 
         Ok(None)

@@ -490,8 +490,8 @@ mod tests {
         // Linear sequence: constant delta, zero double delta (32+ values)
         let values: Vec<i32> = (0..32).map(|i| 100 + i * 10).collect();
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode linear values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode linear values");
 
         assert_eq!(values, decoded);
 
@@ -507,8 +507,9 @@ mod tests {
         // double deltas: 2, 2, 2, 2... (constant)
         let values: Vec<i32> = (0..32).map(|i| i * i).collect();
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode quadratic values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("Failed to decode quadratic values");
 
         assert_eq!(values, decoded);
     }
@@ -523,8 +524,9 @@ mod tests {
             ts += 1000; // Constant increment
         }
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("Failed to encode timestamp values");
+        let decoded =
+            decode_i64(&encoded, values.len()).expect("Failed to decode timestamp values");
 
         assert_eq!(values, decoded);
 
@@ -543,8 +545,8 @@ mod tests {
         // Use values with consistent bit-pattern deltas (32+ values)
         let values: Vec<f32> = (0..32).map(|i| 100.0 + i as f32 * 0.5).collect();
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode f32 values");
 
         assert_eq!(values.len(), decoded.len());
         // DoubleDelta on f32 may have minor precision loss due to bit-level delta encoding
@@ -558,8 +560,8 @@ mod tests {
     fn test_double_delta_i64_roundtrip() {
         let values: Vec<i64> = (0..32).map(|i| 1000 + i * 10).collect();
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("Failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -567,10 +569,10 @@ mod tests {
     #[test]
     fn test_double_delta_empty() {
         let values: Vec<i32> = vec![];
-        let encoded = encode_i32(&values).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode empty values");
         assert!(encoded.is_empty());
 
-        let decoded = decode_i32(&encoded, 0).unwrap();
+        let decoded = decode_i32(&encoded, 0).expect("Failed to decode empty values");
         assert!(decoded.is_empty());
     }
 
@@ -578,8 +580,8 @@ mod tests {
     fn test_double_delta_single_value() {
         let values = vec![42i32];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode single value");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode single value");
 
         assert_eq!(values, decoded);
     }
@@ -588,8 +590,8 @@ mod tests {
     fn test_double_delta_two_values() {
         let values = vec![10i32, 20];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode two values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode two values");
 
         assert_eq!(values, decoded);
     }
@@ -602,8 +604,8 @@ mod tests {
             95, 125, 155, 85, 145, 65, 185, 105, 135, 165, 45, 195, 115,
         ];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode random values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode random values");
 
         assert_eq!(values, decoded);
     }
@@ -618,8 +620,8 @@ mod tests {
             values.push(temp);
         }
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode sensor data");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode sensor data");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -633,8 +635,8 @@ mod tests {
         // All same value - ultimate compression
         let values = vec![42i32; 100];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode constant values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode constant values");
 
         assert_eq!(values, decoded);
 
@@ -652,8 +654,9 @@ mod tests {
         // Delta between i32::MAX and i32::MIN is 2^32, which exceeds i32 range
         let values = vec![i32::MIN, i32::MAX, i32::MIN, i32::MAX];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 extreme values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("Failed to decode i32 extreme values");
 
         assert_eq!(values, decoded, "Failed to roundtrip i32 extremes");
     }
@@ -668,8 +671,9 @@ mod tests {
             f32::from_bits(i32::MAX as u32), // Back to positive
         ];
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 extreme bit patterns");
+        let decoded =
+            decode_f32(&encoded, values.len()).expect("Failed to decode f32 extreme bit patterns");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -697,8 +701,9 @@ mod tests {
             i32::MIN,
         ];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode maximum delta sequence");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("Failed to decode maximum delta sequence");
 
         assert_eq!(values, decoded, "Failed to handle large delta transitions");
     }
@@ -715,8 +720,9 @@ mod tests {
             f32::MIN,
         ];
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 special values");
+        let decoded =
+            decode_f32(&encoded, values.len()).expect("Failed to decode f32 special values");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -736,8 +742,9 @@ mod tests {
         // Test i64 values across full range
         let values = vec![i64::MIN, i64::MIN / 2, 0i64, i64::MAX / 2, i64::MAX, 0];
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("Failed to encode i64 full range values");
+        let decoded =
+            decode_i64(&encoded, values.len()).expect("Failed to decode i64 full range values");
 
         assert_eq!(values, decoded, "Failed to handle i64 extremes");
     }
@@ -757,8 +764,9 @@ mod tests {
             i32::MAX,
         ];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode alternating extremes");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("Failed to decode alternating extremes");
 
         assert_eq!(values, decoded, "Failed to handle alternating extremes");
     }

@@ -323,88 +323,70 @@ impl CompiledFilter {
 
             CompiledFilter::Equals { field, value } => metadata
                 .get(field)
-                .map(|v| Self::values_equal(v, value))
-                .unwrap_or(false),
+                .is_some_and(|v| Self::values_equal(v, value)),
 
             CompiledFilter::NotEquals { field, value } => {
                 metadata
                     .get(field)
-                    .map(|v| !Self::values_equal(v, value))
-                    .unwrap_or(true) // Field not present is "not equal"
+                    .is_none_or(|v| !Self::values_equal(v, value)) // Field not present is "not equal"
             }
 
-            CompiledFilter::GreaterThan { field, value } => metadata
-                .get(field)
-                .map(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Greater))
-                .unwrap_or(false),
+            CompiledFilter::GreaterThan { field, value } => metadata.get(field).is_some_and(|v| {
+                Self::compare_values(v, value) == Some(std::cmp::Ordering::Greater)
+            }),
 
-            CompiledFilter::GreaterThanOrEqual { field, value } => metadata
-                .get(field)
-                .map(|v| {
+            CompiledFilter::GreaterThanOrEqual { field, value } => {
+                metadata.get(field).is_some_and(|v| {
                     let ord = Self::compare_values(v, value);
                     ord == Some(std::cmp::Ordering::Greater)
                         || ord == Some(std::cmp::Ordering::Equal)
                 })
-                .unwrap_or(false),
+            }
 
             CompiledFilter::LessThan { field, value } => metadata
                 .get(field)
-                .map(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Less))
-                .unwrap_or(false),
+                .is_some_and(|v| Self::compare_values(v, value) == Some(std::cmp::Ordering::Less)),
 
-            CompiledFilter::LessThanOrEqual { field, value } => metadata
-                .get(field)
-                .map(|v| {
+            CompiledFilter::LessThanOrEqual { field, value } => {
+                metadata.get(field).is_some_and(|v| {
                     let ord = Self::compare_values(v, value);
                     ord == Some(std::cmp::Ordering::Less) || ord == Some(std::cmp::Ordering::Equal)
                 })
-                .unwrap_or(false),
+            }
 
             CompiledFilter::Contains { field, substring } => metadata
                 .get(field)
                 .and_then(|v| v.as_str())
-                .map(|s| s.contains(substring))
-                .unwrap_or(false),
+                .is_some_and(|s| s.contains(substring)),
 
             CompiledFilter::StartsWith { field, prefix } => metadata
                 .get(field)
                 .and_then(|v| v.as_str())
-                .map(|s| s.starts_with(prefix))
-                .unwrap_or(false),
+                .is_some_and(|s| s.starts_with(prefix)),
 
             CompiledFilter::EndsWith { field, suffix } => metadata
                 .get(field)
                 .and_then(|v| v.as_str())
-                .map(|s| s.ends_with(suffix))
-                .unwrap_or(false),
+                .is_some_and(|s| s.ends_with(suffix)),
 
             CompiledFilter::Like { field, pattern } => metadata
                 .get(field)
                 .and_then(|v| v.as_str())
-                .map(|s| Self::like_match(s, pattern))
-                .unwrap_or(false),
+                .is_some_and(|s| Self::like_match(s, pattern)),
 
             CompiledFilter::In { field, values } => metadata
                 .get(field)
-                .map(|v| values.iter().any(|val| Self::values_equal(v, val)))
-                .unwrap_or(false),
+                .is_some_and(|v| values.iter().any(|val| Self::values_equal(v, val))),
 
             CompiledFilter::NotIn { field, values } => metadata
                 .get(field)
-                .map(|v| !values.iter().any(|val| Self::values_equal(v, val)))
-                .unwrap_or(true),
+                .is_none_or(|v| !values.iter().any(|val| Self::values_equal(v, val))),
 
-            CompiledFilter::Between { field, min, max } => metadata
-                .get(field)
-                .map(|v| {
-                    Self::compare_values(v, min)
-                        .map(|o| o != std::cmp::Ordering::Less)
-                        .unwrap_or(false)
-                        && Self::compare_values(v, max)
-                            .map(|o| o != std::cmp::Ordering::Greater)
-                            .unwrap_or(false)
-                })
-                .unwrap_or(false),
+            CompiledFilter::Between { field, min, max } => metadata.get(field).is_some_and(|v| {
+                Self::compare_values(v, min).is_some_and(|o| o != std::cmp::Ordering::Less)
+                    && Self::compare_values(v, max)
+                        .is_some_and(|o| o != std::cmp::Ordering::Greater)
+            }),
 
             CompiledFilter::IsNull { field } => {
                 !metadata.contains_key(field) || metadata.get(field) == Some(&Value::Null)
@@ -512,8 +494,7 @@ pub fn evaluate_filter_strings(
     UnifiedFilterEvaluator::new(Some(expr))
         .ok()
         .flatten()
-        .map(|evaluator| evaluator.evaluate_strings(metadata))
-        .unwrap_or(false)
+        .is_some_and(|evaluator| evaluator.evaluate_strings(metadata))
 }
 
 /// Check if a field is filterable based on collection configuration

@@ -262,8 +262,7 @@ impl TantivyLogIndex {
 
         // Add severity
         let severity_str = Severity::try_from(log.severity)
-            .map(|s| format!("{:?}", s))
-            .unwrap_or_else(|_| "UNKNOWN".to_string());
+            .map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s));
         doc.add_text(self.severity_field, &severity_str);
 
         // Build combined all-text field
@@ -286,11 +285,17 @@ impl TantivyLogIndex {
         doc.add_text(self.all_text_field, &all_text);
 
         // Add to index
-        let writer = self.writer.write().unwrap();
+        let writer = self
+            .writer
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire writer lock: {}", e))?;
         writer.add_document(doc)?;
 
         // Update count
-        let mut count = self.doc_count.write().unwrap();
+        let mut count = self
+            .doc_count
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire doc_count lock: {}", e))?;
         *count += 1;
 
         Ok(())
@@ -298,7 +303,10 @@ impl TantivyLogIndex {
 
     /// Index multiple log entries in batch
     pub fn index_logs(&self, logs: &[(String, LogEntry)]) -> Result<usize> {
-        let writer = self.writer.write().unwrap();
+        let writer = self
+            .writer
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire writer lock: {}", e))?;
         let mut indexed = 0;
 
         for (log_id, log) in logs {
@@ -316,8 +324,7 @@ impl TantivyLogIndex {
             }
 
             let severity_str = Severity::try_from(log.severity)
-                .map(|s| format!("{:?}", s))
-                .unwrap_or_else(|_| "UNKNOWN".to_string());
+                .map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s));
             doc.add_text(self.severity_field, &severity_str);
 
             // Build all-text
@@ -343,7 +350,10 @@ impl TantivyLogIndex {
         }
 
         // Update count
-        let mut count = self.doc_count.write().unwrap();
+        let mut count = self
+            .doc_count
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire doc_count lock: {}", e))?;
         *count += indexed as u64;
 
         Ok(indexed)
@@ -351,11 +361,17 @@ impl TantivyLogIndex {
 
     /// Commit pending changes to the index
     pub fn commit(&self) -> Result<()> {
-        let mut writer = self.writer.write().unwrap();
+        let mut writer = self
+            .writer
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire writer lock: {}", e))?;
         writer.commit()?;
 
         // Reload reader to see newly committed documents
-        let reader = self.reader.read().unwrap();
+        let reader = self
+            .reader
+            .read()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire reader lock: {}", e))?;
         reader.reload()?;
 
         Ok(())
@@ -364,10 +380,16 @@ impl TantivyLogIndex {
     /// Delete a log entry from the index
     pub fn delete_log(&self, log_id: &str) -> Result<()> {
         let term = Term::from_field_text(self.id_field, log_id);
-        let writer = self.writer.write().unwrap();
+        let writer = self
+            .writer
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire writer lock: {}", e))?;
         writer.delete_term(term);
 
-        let mut count = self.doc_count.write().unwrap();
+        let mut count = self
+            .doc_count
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire doc_count lock: {}", e))?;
         if *count > 0 {
             *count -= 1;
         }
@@ -379,7 +401,10 @@ impl TantivyLogIndex {
     pub fn delete_before(&self, timestamp_ns: i64) -> Result<u64> {
         // Note: Tantivy doesn't support range delete directly
         // We need to search and delete individually
-        let reader = self.reader.read().unwrap();
+        let reader = self
+            .reader
+            .read()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire reader lock: {}", e))?;
         let searcher = reader.searcher();
 
         // Find all docs before timestamp
@@ -391,22 +416,28 @@ impl TantivyLogIndex {
 
         let top_docs = searcher.search(&query, &TopDocs::with_limit(100_000))?;
 
-        let writer = self.writer.write().unwrap();
+        let writer = self
+            .writer
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire writer lock: {}", e))?;
         let mut deleted = 0u64;
 
         for (_score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
-            if let Some(id_value) = doc.get_first(self.id_field) {
-                if let Some(id) = id_value.as_str() {
-                    let term = Term::from_field_text(self.id_field, id);
-                    writer.delete_term(term);
-                    deleted += 1;
-                }
+            if let Some(id_value) = doc.get_first(self.id_field)
+                && let Some(id) = id_value.as_str()
+            {
+                let term = Term::from_field_text(self.id_field, id);
+                writer.delete_term(term);
+                deleted += 1;
             }
         }
 
         // Update count
-        let mut count = self.doc_count.write().unwrap();
+        let mut count = self
+            .doc_count
+            .write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire doc_count lock: {}", e))?;
         *count = count.saturating_sub(deleted);
 
         Ok(deleted)
@@ -449,7 +480,10 @@ impl TantivyLogIndex {
         let final_query = self.build_filtered_query(text_query, options)?;
 
         // Execute search
-        let reader = self.reader.read().unwrap();
+        let reader = self
+            .reader
+            .read()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire reader lock: {}", e))?;
         let searcher = reader.searcher();
         let limit = if options.limit > 0 {
             options.limit
@@ -477,15 +511,15 @@ impl TantivyLogIndex {
                 .unwrap_or(0);
 
             // Apply time filter (post-filter for accuracy)
-            if let Some(start) = options.start_time_ns {
-                if timestamp_ns < start {
-                    continue;
-                }
+            if let Some(start) = options.start_time_ns
+                && timestamp_ns < start
+            {
+                continue;
             }
-            if let Some(end) = options.end_time_ns {
-                if timestamp_ns > end {
-                    continue;
-                }
+            if let Some(end) = options.end_time_ns
+                && timestamp_ns > end
+            {
+                continue;
             }
 
             results.push(LogSearchResult {
@@ -543,12 +577,10 @@ impl TantivyLogIndex {
         if options.start_time_ns.is_some() || options.end_time_ns.is_some() {
             let start = options
                 .start_time_ns
-                .map(std::ops::Bound::Included)
-                .unwrap_or(std::ops::Bound::Unbounded);
+                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included);
             let end = options
                 .end_time_ns
-                .map(std::ops::Bound::Included)
-                .unwrap_or(std::ops::Bound::Unbounded);
+                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Included);
 
             let range_query =
                 tantivy::query::RangeQuery::new_i64_bounds("timestamp_ns".to_string(), start, end);
@@ -556,15 +588,23 @@ impl TantivyLogIndex {
         }
 
         if clauses.len() == 1 {
-            Ok(clauses.pop().unwrap().1)
+            Ok(clauses
+                .pop()
+                .ok_or_else(|| anyhow::anyhow!("Failed to pop query from clauses"))?
+                .1)
         } else {
             Ok(Box::new(BooleanQuery::new(clauses)))
         }
     }
 
     /// Get document count
+    ///
+    /// unwrap_or_else is acceptable here: This is a simple getter that returns u64 (not Result).
+    /// Recovering from poisoned lock via into_inner() is valid for non-critical read operations.
+    /// If the lock is poisoned (thread panicked while holding), we recover the inner value
+    /// rather than failing the entire operation.
     pub fn doc_count(&self) -> u64 {
-        *self.doc_count.read().unwrap()
+        *self.doc_count.read().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Get namespace name
@@ -648,14 +688,14 @@ mod tests {
     fn test_index_creation() {
         let index = TantivyLogIndex::new("test_ns");
         assert!(index.is_ok());
-        let index = index.unwrap();
+        let index = index.expect("Failed to create index");
         assert_eq!(index.namespace(), "test_ns");
         assert_eq!(index.doc_count(), 0);
     }
 
     #[test]
     fn test_index_single_log() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let (id, log) = make_log(
             "log1",
             "Connection timeout error",
@@ -668,12 +708,12 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(index.doc_count(), 1);
 
-        index.commit().unwrap();
+        index.commit().expect("Failed to commit");
     }
 
     #[test]
     fn test_index_batch_logs() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![
             make_log("log1", "Error occurred", "api", Severity::Error, 1000),
             make_log("log2", "Request completed", "web", Severity::Info, 2000),
@@ -688,15 +728,15 @@ mod tests {
 
         let result = index.index_logs(&logs);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 3);
+        assert_eq!(result.expect("Failed to get result"), 3);
         assert_eq!(index.doc_count(), 3);
 
-        index.commit().unwrap();
+        index.commit().expect("Failed to commit");
     }
 
     #[test]
     fn test_search_simple() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![
             make_log(
                 "log1",
@@ -721,12 +761,14 @@ mod tests {
             ),
         ];
 
-        index.index_logs(&logs).unwrap();
-        index.commit().unwrap();
+        index.index_logs(&logs).expect("Failed to index logs");
+        index.commit().expect("Failed to commit");
 
         // Search for "connection"
         let options = LogSearchOptions::with_limit(10);
-        let results = index.search("connection", &options).unwrap();
+        let results = index
+            .search("connection", &options)
+            .expect("Failed to search");
 
         assert_eq!(results.len(), 2);
         // Both log1 and log3 contain "connection"
@@ -734,26 +776,26 @@ mod tests {
 
     #[test]
     fn test_search_with_service_filter() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![
             make_log("log1", "Error in api service", "api", Severity::Error, 1000),
             make_log("log2", "Error in web service", "web", Severity::Error, 2000),
             make_log("log3", "Error in api gateway", "api", Severity::Error, 3000),
         ];
 
-        index.index_logs(&logs).unwrap();
-        index.commit().unwrap();
+        index.index_logs(&logs).expect("Failed to index logs");
+        index.commit().expect("Failed to commit");
 
         // Search for "error" with service filter
         let options = LogSearchOptions::with_limit(10).service("api");
-        let results = index.search("error", &options).unwrap();
+        let results = index.search("error", &options).expect("Failed to search");
 
         assert_eq!(results.len(), 2);
     }
 
     #[test]
     fn test_search_with_time_range() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![
             make_log("log1", "Old error message", "api", Severity::Error, 1000),
             make_log("log2", "Recent error message", "api", Severity::Error, 5000),
@@ -766,12 +808,12 @@ mod tests {
             ),
         ];
 
-        index.index_logs(&logs).unwrap();
-        index.commit().unwrap();
+        index.index_logs(&logs).expect("Failed to index logs");
+        index.commit().expect("Failed to commit");
 
         // Search with time range
         let options = LogSearchOptions::with_limit(10).time_range(4000, 11000);
-        let results = index.search("error", &options).unwrap();
+        let results = index.search("error", &options).expect("Failed to search");
 
         assert_eq!(results.len(), 2);
         // Should find log2 and log3
@@ -779,7 +821,7 @@ mod tests {
 
     #[test]
     fn test_search_phrase() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![
             make_log(
                 "log1",
@@ -804,12 +846,14 @@ mod tests {
             ),
         ];
 
-        index.index_logs(&logs).unwrap();
-        index.commit().unwrap();
+        index.index_logs(&logs).expect("Failed to index logs");
+        index.commit().expect("Failed to commit");
 
         // Search for exact phrase
         let options = LogSearchOptions::with_limit(10);
-        let results = index.search_phrase("connection timeout", &options).unwrap();
+        let results = index
+            .search_phrase("connection timeout", &options)
+            .expect("Failed to search phrase");
 
         // Only log1 has exact phrase "connection timeout"
         assert!(results.len() >= 1);
@@ -817,19 +861,21 @@ mod tests {
 
     #[test]
     fn test_search_with_severity_filter() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![
             make_log("log1", "Application started", "api", Severity::Info, 1000),
             make_log("log2", "Application error", "api", Severity::Error, 2000),
             make_log("log3", "Application warning", "api", Severity::Warn, 3000),
         ];
 
-        index.index_logs(&logs).unwrap();
-        index.commit().unwrap();
+        index.index_logs(&logs).expect("Failed to index logs");
+        index.commit().expect("Failed to commit");
 
         // Search for "application" with severity filter
         let options = LogSearchOptions::with_limit(10).severity(Severity::Error);
-        let results = index.search("application", &options).unwrap();
+        let results = index
+            .search("application", &options)
+            .expect("Failed to search");
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "log2");
@@ -837,20 +883,20 @@ mod tests {
 
     #[test]
     fn test_delete_log() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![
             make_log("log1", "First message", "api", Severity::Info, 1000),
             make_log("log2", "Second message", "api", Severity::Info, 2000),
         ];
 
-        index.index_logs(&logs).unwrap();
-        index.commit().unwrap();
+        index.index_logs(&logs).expect("Failed to index logs");
+        index.commit().expect("Failed to commit");
 
         assert_eq!(index.doc_count(), 2);
 
         // Delete one log
-        index.delete_log("log1").unwrap();
-        index.commit().unwrap();
+        index.delete_log("log1").expect("Failed to delete log");
+        index.commit().expect("Failed to commit");
 
         assert_eq!(index.doc_count(), 1);
     }
@@ -865,7 +911,7 @@ mod tests {
             },
         );
 
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![
             make_log_with_fields(
                 "log1",
@@ -878,12 +924,14 @@ mod tests {
             make_log("log2", "Another request", "api", Severity::Info, 2000),
         ];
 
-        index.index_logs(&logs).unwrap();
-        index.commit().unwrap();
+        index.index_logs(&logs).expect("Failed to index logs");
+        index.commit().expect("Failed to commit");
 
         // Search for request_id value (indexed in _all field)
         let options = LogSearchOptions::with_limit(10);
-        let results = index.search("req-12345", &options).unwrap();
+        let results = index
+            .search("req-12345", &options)
+            .expect("Failed to search");
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "log1");
@@ -907,7 +955,7 @@ mod tests {
 
     #[test]
     fn test_empty_search_results() {
-        let index = TantivyLogIndex::new("test_ns").unwrap();
+        let index = TantivyLogIndex::new("test_ns").expect("Failed to create index");
         let logs = vec![make_log(
             "log1",
             "Connection error",
@@ -916,12 +964,14 @@ mod tests {
             1000,
         )];
 
-        index.index_logs(&logs).unwrap();
-        index.commit().unwrap();
+        index.index_logs(&logs).expect("Failed to index logs");
+        index.commit().expect("Failed to commit");
 
         // Search for non-existent term
         let options = LogSearchOptions::with_limit(10);
-        let results = index.search("nonexistent_term_xyz", &options).unwrap();
+        let results = index
+            .search("nonexistent_term_xyz", &options)
+            .expect("Failed to search");
 
         assert!(results.is_empty());
     }

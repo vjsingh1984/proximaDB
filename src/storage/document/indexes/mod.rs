@@ -8,6 +8,7 @@
 
 pub mod array_index;
 pub mod fulltext;
+pub mod geo_index;
 pub mod path_index;
 
 use std::collections::HashMap;
@@ -31,7 +32,10 @@ enum IndexType {
     // Hash and Geo are future implementations
 }
 
+use self::geo_index::GeoIndex;
+
 /// Collection index set - all indexes for a single collection
+#[derive(Default)]
 struct CollectionIndexes {
     /// Path-based B+ tree indexes
     path_indexes: HashMap<String, PathIndex>,
@@ -39,16 +43,8 @@ struct CollectionIndexes {
     array_indexes: HashMap<String, ArrayIndex>,
     /// Full-text search index (single per collection)
     fulltext_index: Option<FullTextIndex>,
-}
-
-impl Default for CollectionIndexes {
-    fn default() -> Self {
-        Self {
-            path_indexes: HashMap::new(),
-            array_indexes: HashMap::new(),
-            fulltext_index: None,
-        }
-    }
+    /// Geospatial indexes by path
+    geo_indexes: HashMap<String, GeoIndex>,
 }
 
 /// Index manager for document collections
@@ -106,8 +102,10 @@ impl IndexManager {
                 }
             }
             DocIndexType::Geo => {
-                // TODO: Implement geospatial index
-                return Err(anyhow!("Geo index not yet implemented"));
+                let index = GeoIndex::new(&definition.path);
+                collection_indexes
+                    .geo_indexes
+                    .insert(definition.path.clone(), index);
             }
             DocIndexType::Unspecified => {
                 return Err(anyhow!("Unspecified index type"));
@@ -178,12 +176,12 @@ impl IndexManager {
         let indexes = self.indexes.read().await;
         if let Some(collection_indexes) = indexes.get(collection) {
             // Remove from path indexes
-            for (_, index) in &collection_indexes.path_indexes {
+            for index in collection_indexes.path_indexes.values() {
                 index.remove(id)?;
             }
 
             // Remove from array indexes
-            for (_, index) in &collection_indexes.array_indexes {
+            for index in collection_indexes.array_indexes.values() {
                 index.remove(id)?;
             }
 
@@ -204,10 +202,10 @@ impl IndexManager {
         condition: &PathQueryCondition,
     ) -> Result<Vec<String>> {
         let indexes = self.indexes.read().await;
-        if let Some(collection_indexes) = indexes.get(collection) {
-            if let Some(index) = collection_indexes.path_indexes.get(path) {
-                return index.query(condition);
-            }
+        if let Some(collection_indexes) = indexes.get(collection)
+            && let Some(index) = collection_indexes.path_indexes.get(path)
+        {
+            return index.query(condition);
         }
         Ok(vec![])
     }
@@ -220,10 +218,10 @@ impl IndexManager {
         value: &IndexValue,
     ) -> Result<Vec<String>> {
         let indexes = self.indexes.read().await;
-        if let Some(collection_indexes) = indexes.get(collection) {
-            if let Some(index) = collection_indexes.array_indexes.get(path) {
-                return index.query_contains(value);
-            }
+        if let Some(collection_indexes) = indexes.get(collection)
+            && let Some(index) = collection_indexes.array_indexes.get(path)
+        {
+            return index.query_contains(value);
         }
         Ok(vec![])
     }
@@ -236,10 +234,10 @@ impl IndexManager {
         limit: usize,
     ) -> Result<Vec<(String, f32)>> {
         let indexes = self.indexes.read().await;
-        if let Some(collection_indexes) = indexes.get(collection) {
-            if let Some(ref ft_index) = collection_indexes.fulltext_index {
-                return ft_index.search(query, limit);
-            }
+        if let Some(collection_indexes) = indexes.get(collection)
+            && let Some(ref ft_index) = collection_indexes.fulltext_index
+        {
+            return ft_index.search(query, limit);
         }
         Ok(vec![])
     }

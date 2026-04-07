@@ -40,18 +40,18 @@ pub enum EngineSpecificConfig {
 }
 
 /// SST engine compaction configuration
+///
+/// Configures compaction behavior for the SST (Sorted String Table) storage engine,
+/// including bloom filter optimization and file sizing parameters.
 #[derive(Debug, Clone)]
 pub struct SstCompactionConfig {
-    /// Enable bloom filter merging during compaction
+    /// Enable bloom filter merging during compaction for improved query performance
     pub merge_bloom_filters: bool,
-
-    /// Three-stage filter optimization
+    /// Enable three-stage filter optimization for reduced false positives
     pub use_three_stage_filter: bool,
-
-    /// Block size for SST files (in KB)
+    /// Block size for SST files in kilobytes
     pub block_size_kb: usize,
-
-    /// Maximum file size for L0 (in MB)
+    /// Maximum file size for L0 files in megabytes
     pub max_l0_file_size_mb: usize,
 }
 
@@ -67,18 +67,18 @@ impl Default for SstCompactionConfig {
 }
 
 /// VIPER engine compaction configuration
+///
+/// Configures compaction behavior for the VIPER (Parquet-based) storage engine,
+/// optimizing columnar storage for analytical workloads.
 #[derive(Debug, Clone)]
 pub struct ViperCompactionConfig {
-    /// Use columnar optimization during compaction
+    /// Enable columnar optimization during compaction operations
     pub columnar_optimization: bool,
-
-    /// Row group size for Parquet files
+    /// Row group size for Parquet files (affects compression and query performance)
     pub row_group_size: usize,
-
-    /// Enable dictionary encoding
+    /// Enable dictionary encoding for string columns
     pub dictionary_encoding: bool,
-
-    /// Compression codec for Parquet
+    /// Compression codec to use for Parquet files (e.g., "zstd", "snappy", "gzip")
     pub compression_codec: String,
 }
 
@@ -94,18 +94,18 @@ impl Default for ViperCompactionConfig {
 }
 
 /// NOVA engine compaction configuration
+///
+/// Configures compaction behavior for the NOVA streaming engine,
+/// optimizing for high-velocity write workloads.
 #[derive(Debug, Clone)]
 pub struct NovaCompactionConfig {
-    /// Enable hierarchical compaction
+    /// Enable hierarchical compaction for better read/write balance
     pub hierarchical_compaction: bool,
-
-    /// Use zone maps for filtering
+    /// Use zone maps for efficient data filtering during queries
     pub use_zone_maps: bool,
-
-    /// Quantization level for compacted data
+    /// Quantization level to apply during compaction (e.g., "pq8", "sq8")
     pub quantization_level: String,
-
-    /// Streaming buffer size (in MB)
+    /// Streaming buffer size in megabytes for write operations
     pub streaming_buffer_mb: usize,
 }
 
@@ -223,6 +223,7 @@ impl EngineCompactionConfig {
             StorageEngineType::RAPTOR => {
                 EngineSpecificConfig::RAPTOR(RaptorCompactionConfig::default())
             }
+            StorageEngineType::TST => EngineSpecificConfig::VIPER(ViperCompactionConfig::default()),
         };
 
         Self {

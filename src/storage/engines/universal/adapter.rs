@@ -570,12 +570,12 @@ impl UniversalDistanceAdapter {
             ));
         }
 
-        if let Some(threshold) = request.quality_threshold {
-            if threshold < 0.0 || threshold > 1.0 {
-                return Err(AdapterError::Configuration(
-                    "Quality threshold must be between 0.0 and 1.0".to_string(),
-                ));
-            }
+        if let Some(threshold) = request.quality_threshold
+            && !(0.0..=1.0).contains(&threshold)
+        {
+            return Err(AdapterError::Configuration(
+                "Quality threshold must be between 0.0 and 1.0".to_string(),
+            ));
         }
 
         Ok(())
@@ -587,7 +587,7 @@ impl UniversalDistanceAdapter {
         _storage_format: &StorageFormat,
     ) -> AdapterResult<Vec<CandidateVector>> {
         // For now, return candidates as-is
-        // TODO: Implement format conversion logic
+        // Deferred: Implement format conversion logic
         Ok(candidates.to_vec())
     }
 

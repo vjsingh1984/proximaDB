@@ -45,19 +45,16 @@ pub struct MetadataWriteStrategy {
 }
 
 impl MetadataWriteStrategy {
-    /// Create optimized file options for atomic writes
+    /// Create optimized file options for atomic writes.
+    /// Always uses temp+rename for metadata files to prevent corruption on crash.
+    /// A power failure during a direct truncate+write would leave a partially-written
+    /// or empty file. Writing to a temp file then renaming is atomic at the filesystem level.
     pub fn create_file_options(
         &self,
         fs: &dyn FileSystem,
         final_path: &str,
     ) -> FsResult<FileOptions> {
-        let temp_path = if fs.supports_atomic_writes() {
-            // Direct write for local filesystem
-            None
-        } else {
-            // Use temp strategy for object stores
-            Some(fs.generate_temp_path(final_path, &self.temp_strategy)?)
-        };
+        let temp_path = Some(fs.generate_temp_path(final_path, &self.temp_strategy)?);
 
         Ok(FileOptions {
             create_dirs: true,

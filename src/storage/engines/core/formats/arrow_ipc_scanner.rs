@@ -415,7 +415,7 @@ fn batch_to_vector_records(batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
             } else {
                 Vec::new()
             },
-            timestamp: Some(0), // TODO: Extract from timestamp column if present
+            timestamp: Some(0), // Deferred: Extract from timestamp column if present
             updated_at: None,
             expires_at: None,
             version: None,
@@ -447,7 +447,7 @@ fn deserialize_metadata(array: &ArrayRef, row: usize) -> Result<Vec<crate::proto
         let json_value: serde_json::Value = serde_json::from_str(json_str)?;
         json_to_metadata_items(&json_value)
     } else {
-        // TODO: Handle native Arrow types (List, Map)
+        // Deferred: Handle native Arrow types (List, Map)
         Ok(Vec::new())
     }
 }

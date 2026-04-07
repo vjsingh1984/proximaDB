@@ -10,7 +10,9 @@ use std::marker::PhantomData;
 /// Generic configuration wrapper that implements BaseConfig
 #[derive(Debug, Clone)]
 pub struct GenericConfig<T> {
+    /// The wrapped configuration data
     pub data: T,
+    /// Mapping of validation rule names to error messages
     pub validation_rules: HashMap<String, String>,
     _phantom: PhantomData<T>,
 }
@@ -19,6 +21,7 @@ impl<T> GenericConfig<T>
 where
     T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
+    /// Create a new generic config wrapping the given data
     pub fn new(data: T) -> Self {
         Self {
             data,
@@ -27,6 +30,7 @@ where
         }
     }
 
+    /// Attach validation rules to this configuration
     pub fn with_validation(mut self, rules: HashMap<String, String>) -> Self {
         self.validation_rules = rules;
         self
@@ -52,12 +56,19 @@ where
 /// Generic metadata wrapper that implements BaseMetadata
 #[derive(Debug, Clone)]
 pub struct GenericMetadata<T> {
+    /// Unique identifier
     pub id: String,
+    /// The wrapped metadata payload
     pub data: T,
+    /// Monotonically increasing version number
     pub version: u64,
+    /// Creation timestamp
     pub timestamp: DateTime<Utc>,
+    /// Last modification timestamp
     pub updated_at: DateTime<Utc>,
+    /// Arbitrary string tags for categorization
     pub tags: Vec<String>,
+    /// Arbitrary JSON key-value properties
     pub properties: HashMap<String, serde_json::Value>,
 }
 
@@ -65,6 +76,7 @@ impl<T> GenericMetadata<T>
 where
     T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
+    /// Create metadata with the given ID and data, setting version to 1 and timestamps to now
     pub fn new(id: String, data: T) -> Self {
         let now = Utc::now();
         Self {
@@ -78,11 +90,13 @@ where
         }
     }
 
+    /// Attach tags to this metadata entry
     pub fn with_tags(mut self, tags: Vec<String>) -> Self {
         self.tags = tags;
         self
     }
 
+    /// Attach properties to this metadata entry
     pub fn with_properties(mut self, properties: HashMap<String, serde_json::Value>) -> Self {
         self.properties = properties;
         self
@@ -113,9 +127,13 @@ where
 /// Generic statistics wrapper that implements BaseStats
 #[derive(Debug, Clone)]
 pub struct GenericStats<T> {
+    /// The wrapped statistics payload
     pub data: T,
+    /// When these statistics were last updated
     pub timestamp: DateTime<Utc>,
+    /// Number of collections contributing to these statistics
     pub collection_count: u64,
+    /// Number of times these statistics have been reset
     pub reset_count: u64,
 }
 
@@ -123,6 +141,7 @@ impl<T> GenericStats<T>
 where
     T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
+    /// Create a new statistics wrapper with a single collection count
     pub fn new(data: T) -> Self {
         Self {
             data,
@@ -132,6 +151,7 @@ where
         }
     }
 
+    /// Replace the underlying statistics data and update the timestamp
     pub fn update_data(&mut self, data: T) {
         self.data = data;
         self.timestamp = Utc::now();
@@ -161,10 +181,15 @@ where
 /// Generic result wrapper that implements BaseResult
 #[derive(Debug, Clone)]
 pub struct GenericResult<T> {
+    /// Whether the operation completed successfully
     pub success: bool,
+    /// The result payload (present on success)
     pub data: Option<T>,
+    /// Machine-readable error code (present on failure)
     pub error_code: Option<String>,
+    /// Wall-clock processing time in microseconds
     pub processing_time_us: Option<u64>,
+    /// Additional key-value metadata about the result
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
@@ -172,6 +197,7 @@ impl<T> GenericResult<T>
 where
     T: Debug + Clone + Serialize + for<'de> Deserialize<'de> + Send + Sync,
 {
+    /// Create a successful result wrapping the given data
     pub fn success(data: T) -> Self {
         Self {
             success: true,
@@ -183,6 +209,7 @@ where
         }
     }
 
+    /// Create a failed result with no data
     pub fn error() -> Self {
         Self {
             success: false,
@@ -193,11 +220,13 @@ where
         }
     }
 
+    /// Attach processing time metadata to this result
     pub fn with_processing_time(mut self, time_us: u64) -> Self {
         self.processing_time_us = Some(time_us);
         self
     }
 
+    /// Attach an error code to this result
     pub fn with_error_code(mut self, code: String) -> Self {
         self.error_code = Some(code);
         self

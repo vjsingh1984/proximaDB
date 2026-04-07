@@ -12,19 +12,31 @@
 
 use super::CompressionAlgorithm;
 
-// Compression format markers - used in all storage engines
+/// Byte marker for uncompressed data blocks
 pub const MARKER_UNCOMPRESSED: u8 = 0x02;
+/// Byte marker for Zstandard compressed data
 pub const MARKER_ZSTD: u8 = 0x03;
+/// Byte marker for LZ4 compressed data
 pub const MARKER_LZ4: u8 = 0x04;
+/// Byte marker for Snappy compressed data
 pub const MARKER_SNAPPY: u8 = 0x05;
+/// Byte marker for Gzip compressed data
 pub const MARKER_GZIP: u8 = 0x06;
+/// Byte marker for Brotli compressed data
 pub const MARKER_BROTLI: u8 = 0x07;
+/// Byte marker for Bzip2 compressed data
 pub const MARKER_BZIP2: u8 = 0x08;
+/// Byte marker for Deflate compressed data
 pub const MARKER_DEFLATE: u8 = 0x09;
+/// Byte marker for XZ/LZMA2 compressed data
 pub const MARKER_XZ: u8 = 0x0A;
+/// Byte marker for Zlib compressed data
 pub const MARKER_ZLIB: u8 = 0x0B;
+/// Byte marker for LZ4 high-compression data
 pub const MARKER_LZ4HC: u8 = 0x0C;
+/// Byte marker for LZMA compressed data
 pub const MARKER_LZMA: u8 = 0x0D;
+/// Byte marker for LZO compressed data
 pub const MARKER_LZO: u8 = 0x0E;
 
 /// Get compression marker for algorithm

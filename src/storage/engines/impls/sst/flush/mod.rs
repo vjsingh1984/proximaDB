@@ -87,7 +87,7 @@ impl SstEngine {
         }
 
         // Extract storage URL from parameters
-        let collection_storage_url = Self::get_collection_storage_url_from_params(&params)?;
+        let collection_storage_url = Self::get_collection_storage_url_from_params(params)?;
         let collection_id = params
             .collection_id
             .as_ref()
@@ -117,7 +117,7 @@ impl SstEngine {
 
         // Generate SSTable filename with appropriate extension based on block format
         let codec = FilenameCodec::new();
-        let block_format = BlockFormat::from_str(&self.config().block_format);
+        let block_format = BlockFormat::parse_block_format(&self.config().block_format);
         let file_extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",
@@ -140,7 +140,7 @@ impl SstEngine {
                 sorted_tuples,
                 &collection_storage_url,
                 &sst_filename,
-                &params,
+                params,
                 block_format,
             )
             .await?;
@@ -245,7 +245,6 @@ impl SstEngine {
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
             skip_uuid_subdir: true,
-            ..Default::default()
         };
 
         tracing::debug!(storage_url = %storage_url, filename = %filename, "Starting flush operation");

@@ -5,19 +5,28 @@ use serde::{Deserialize, Serialize};
 /// Cluster assignment for a vector
 #[derive(Debug, Clone)]
 pub struct ClusterAssignment {
+    /// Unique identifier of the assigned vector.
     pub vector_id: u32,
+    /// Identifier of the cluster this vector belongs to.
     pub cluster_id: u32,
+    /// Similarity score between the vector and its cluster centroid.
     pub similarity: f32,
 }
 
 /// What kind of data are we indexing?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Data {
-    /// Dense vectors (fixed dimension, most elements non-zero)
-    DenseVector { dimension: usize },
+    /// Dense vectors (fixed dimension, most elements non-zero).
+    DenseVector {
+        /// Dimensionality of the dense vector space.
+        dimension: usize,
+    },
 
-    /// Sparse vectors (many zero elements, variable dimension)
-    SparseVector { max_dimension: usize },
+    /// Sparse vectors (many zero elements, variable dimension).
+    SparseVector {
+        /// Maximum dimension of the sparse vector space.
+        max_dimension: usize,
+    },
 
     /// Metadata fields for filtering
     Metadata,
@@ -32,87 +41,148 @@ pub enum Data {
 /// How do we index the data?
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum IndexAlgorithm {
-    /// Hierarchical Navigable Small World - for dense vectors
+    /// Hierarchical Navigable Small World - for dense vectors.
     HNSW {
-        m: u32,               // Number of bi-directional links
-        ef_construction: u32, // Size of dynamic candidate list
-        ef_search: u32,       // Size of dynamic candidate list during search
-        max_elements: usize,  // Maximum number of elements
+        /// Number of bi-directional links per node (M parameter).
+        m: u32,
+        /// Size of the dynamic candidate list during construction.
+        ef_construction: u32,
+        /// Size of the dynamic candidate list during search.
+        ef_search: u32,
+        /// Maximum number of elements the index can hold.
+        max_elements: usize,
     },
 
-    /// Inverted File Index - for dense vectors with clustering
+    /// Inverted File Index - for dense vectors with clustering.
     IVF {
-        nlist: u32,                             // Number of clusters
-        nprobe: u32,                            // Number of clusters to search
-        quantizer: Option<Box<IndexAlgorithm>>, // Optional quantization
+        /// Number of Voronoi cells (clusters) to partition the space.
+        nlist: u32,
+        /// Number of clusters to probe during search.
+        nprobe: u32,
+        /// Optional sub-quantizer for compressed vector storage.
+        quantizer: Option<Box<IndexAlgorithm>>,
     },
 
-    /// Product Quantization - for compressed dense vectors
+    /// Product Quantization - for compressed dense vectors.
     PQ {
-        m: u32,            // Number of subquantizers
-        nbits: u32,        // Number of bits per subquantizer
-        train_size: usize, // Number of vectors for training
+        /// Number of subquantizers (splits the vector into m subspaces).
+        m: u32,
+        /// Number of bits per subquantizer code.
+        nbits: u32,
+        /// Number of training vectors for codebook construction.
+        train_size: usize,
     },
 
-    /// Locality Sensitive Hashing - for approximate search
+    /// Locality Sensitive Hashing - for approximate search.
     LSH {
-        n_projections: u32, // Number of hash functions
-        n_hash_tables: u32, // Number of hash tables
-        hash_width: f32,    // Width of hash buckets
+        /// Number of hash functions (projections) per table.
+        n_projections: u32,
+        /// Number of independent hash tables.
+        n_hash_tables: u32,
+        /// Width of hash buckets for quantizing projections.
+        hash_width: f32,
     },
 
-    /// BTree - for exact metadata indexing
-    BTree { max_keys_per_node: usize },
+    /// BTree - for exact metadata indexing.
+    BTree {
+        /// Maximum number of keys per B-tree node.
+        max_keys_per_node: usize,
+    },
 
-    /// Inverted Index - for full-text search
+    /// Inverted Index - for full-text search.
     InvertedIndex {
+        /// Text analysis pipeline configuration.
         analyzer: TextAnalyzer,
+        /// Whether to store term positions for phrase queries.
         enable_positions: bool,
     },
 
-    /// Skip List - for sorted data
-    SkipList { max_level: u32, probability: f32 },
+    /// Skip List - for sorted data.
+    SkipList {
+        /// Maximum level of the skip list hierarchy.
+        max_level: u32,
+        /// Probability of promoting a node to the next level.
+        probability: f32,
+    },
 
-    /// Bloom Filter - for membership testing
+    /// Bloom Filter - for membership testing.
     BloomFilter {
+        /// Expected number of elements for sizing the filter.
         expected_elements: usize,
+        /// Target false positive rate (e.g. 0.01 for 1%).
         false_positive_rate: f64,
     },
 
-    /// Annoy (Approximate Nearest Neighbors Oh Yeah) - for fast tree-based search
+    /// Annoy (Approximate Nearest Neighbors Oh Yeah) - for fast tree-based search.
     Annoy {
-        n_trees: u32,       // Number of trees to build
-        search_k: i32,      // Number of nodes to inspect (-1 = auto)
-        max_leaf_size: u32, // Maximum number of descendants in a leaf
+        /// Number of random projection trees to build.
+        n_trees: u32,
+        /// Number of nodes to inspect during search (-1 for auto).
+        search_k: i32,
+        /// Maximum number of descendants in a leaf node.
+        max_leaf_size: u32,
     },
 
-    /// Global ID Index - for O(1) vector ID to storage location mapping
+    /// Enhanced Dense Retrieval - late interaction with query and document expansion.
+    EDR {
+        /// Number of query vectors for expansion.
+        num_query_expansions: usize,
+        /// Number of document vectors per document.
+        num_document_vectors: usize,
+        /// Maximum number of results to return.
+        top_k: usize,
+        /// Whether to use query expansion.
+        enable_query_expansion: bool,
+        /// Whether to use document expansion.
+        enable_document_expansion: bool,
+    },
+
+    /// Global ID Index - for O(1) vector ID to storage location mapping.
     GlobalId {
-        cache_size: usize,         // Maximum number of cached entries
-        persistence_enabled: bool, // Enable persistence for recovery
+        /// Maximum number of entries to keep in the LRU cache.
+        cache_size: usize,
+        /// Whether to persist the index to disk for crash recovery.
+        persistence_enabled: bool,
     },
 }
 
 /// Text analysis configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextAnalyzer {
+    /// Tokenizer that splits text into tokens.
     pub tokenizer: Tokenizer,
+    /// Ordered list of filters applied to each token.
     pub filters: Vec<TokenFilter>,
+    /// Optional language code for language-specific analysis.
     pub language: Option<String>,
 }
 
+/// Tokenizer strategy for splitting text into tokens.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Tokenizer {
+    /// Split tokens on whitespace boundaries only.
     Whitespace,
+    /// Standard Unicode-aware tokenizer with punctuation handling.
     Standard,
-    NGram { min: usize, max: usize },
+    /// Character n-gram tokenizer with configurable window size.
+    NGram {
+        /// Minimum n-gram length.
+        min: usize,
+        /// Maximum n-gram length.
+        max: usize,
+    },
 }
 
+/// Token filter applied after tokenization for normalization and enrichment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TokenFilter {
+    /// Convert all tokens to lowercase.
     Lowercase,
+    /// Remove common stopwords from the token stream.
     Stopwords,
+    /// Apply stemming to reduce tokens to their root form.
     Stemmer,
+    /// Expand tokens using a synonym mapping table.
     Synonyms(Vec<(String, String)>),
 }
 
@@ -159,6 +229,7 @@ impl IndexSpecification {
                 | IndexAlgorithm::PQ { .. }
                 | IndexAlgorithm::LSH { .. }
                 | IndexAlgorithm::Annoy { .. }
+                | IndexAlgorithm::EDR { .. }
         )
     }
 
@@ -196,6 +267,7 @@ pub struct IndexSelectionStrategy {
     pub routing_rules: Vec<RoutingRule>,
 }
 
+/// Rule mapping query characteristics to the indexes that should service them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutingRule {
     /// Condition for using this rule
@@ -208,6 +280,7 @@ pub struct RoutingRule {
     pub combination: ResultCombination,
 }
 
+/// Predicate for conditional index routing based on query properties.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum QueryCondition {
     /// Always apply this rule
@@ -225,12 +298,15 @@ pub enum QueryCondition {
     /// Text query present
     HasTextQuery,
 
-    /// Combine conditions
+    /// Logical AND of multiple conditions.
     And(Vec<QueryCondition>),
+    /// Logical OR of multiple conditions.
     Or(Vec<QueryCondition>),
+    /// Logical negation of a condition.
     Not(Box<QueryCondition>),
 }
 
+/// Strategy for combining results from multiple indexes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ResultCombination {
     /// Use first index results only
@@ -280,15 +356,20 @@ pub struct AxisConfig {
 /// Performance thresholds for monitoring
 #[derive(Debug, Clone)]
 pub struct PerformanceThresholds {
+    /// Maximum acceptable query latency in milliseconds.
     pub max_latency_ms: u64,
+    /// Minimum acceptable recall rate (0.0 to 1.0).
     pub min_recall: f32,
+    /// Maximum acceptable memory usage ratio (0.0 to 1.0).
     pub max_memory_usage: f64,
 }
 
 /// Strategy configuration
 #[derive(Debug, Clone)]
 pub struct StrategyConfig {
+    /// Whether to use ML models for adaptive index selection.
     pub use_ml_models: bool,
+    /// Minimum dataset size before ML-based strategy kicks in.
     pub min_training_size: usize,
 }
 
@@ -304,7 +385,9 @@ impl Default for StrategyConfig {
 /// Migration configuration
 #[derive(Debug, Clone)]
 pub struct MigrationConfig {
+    /// Minimum performance improvement ratio to trigger a migration.
     pub improvement_threshold: f32,
+    /// Maximum number of index migrations running simultaneously.
     pub max_concurrent_migrations: usize,
 }
 
@@ -344,49 +427,73 @@ impl Default for AxisConfig {
 /// Migration decision for index transitions
 #[derive(Debug, Clone)]
 pub struct MigrationDecision {
+    /// Current index algorithm being migrated from.
     pub from_algorithm: IndexAlgorithm,
+    /// Target index algorithm to migrate to.
     pub to_algorithm: IndexAlgorithm,
+    /// Reason triggering this migration decision.
     pub reason: MigrationReason,
+    /// Estimated computational cost of the migration.
     pub estimated_cost: f64,
+    /// Priority level for scheduling the migration.
     pub priority: MigrationPriority,
 }
 
 /// Reasons for migration
 #[derive(Debug, Clone)]
 pub enum MigrationReason {
+    /// Query latency or throughput degradation.
     Performance,
+    /// Memory usage exceeding configured thresholds.
     Memory,
+    /// Dataset size growth requiring a different index structure.
     DataGrowth,
+    /// Shift in query patterns favoring a different algorithm.
     QueryPatternChange,
 }
 
 /// Migration priority levels
 #[derive(Debug, Clone)]
 pub enum MigrationPriority {
+    /// Background migration with no urgency.
     Low,
+    /// Standard priority for routine optimizations.
     Medium,
+    /// Elevated priority due to noticeable performance impact.
     High,
+    /// Immediate migration required to restore service quality.
     Critical,
 }
 
 /// Alert threshold configuration
 #[derive(Debug, Clone)]
 pub struct AlertThresholds {
+    /// Warning threshold for query latency in milliseconds.
     pub latency_ms: u64,
+    /// Warning threshold for memory usage ratio (0.0 to 1.0).
     pub memory_usage: f64,
+    /// Warning threshold for error rate ratio (0.0 to 1.0).
     pub error_rate: f64,
+    /// Critical alert threshold for query latency in milliseconds.
     pub max_query_latency_ms: u64,
+    /// Minimum acceptable query throughput (queries per second).
     pub min_query_throughput: f64,
+    /// Critical alert threshold for error rate ratio.
     pub max_error_rate: f64,
 }
 
 /// Monitoring configuration
 #[derive(Debug, Clone)]
 pub struct MonitoringConfig {
+    /// Whether monitoring is active.
     pub enabled: bool,
+    /// Interval in seconds between health checks.
     pub interval_seconds: u64,
+    /// Interval in seconds between metrics collection cycles.
     pub metrics_interval_seconds: u64,
+    /// Warning-level thresholds for monitored metrics.
     pub thresholds: AlertThresholds,
+    /// Critical-level thresholds that trigger alerts.
     pub alert_thresholds: AlertThresholds,
 }
 

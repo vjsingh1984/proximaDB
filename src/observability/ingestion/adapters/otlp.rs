@@ -486,15 +486,19 @@ impl OtlpAdapter {
         }
     }
 
-    /// Start gRPC server
+    /// Start gRPC server on the configured bind address (default OTLP gRPC port: 4317)
     async fn start_grpc(&self) -> Result<()> {
-        // Note: gRPC OTLP requires additional proto definitions
-        // For now, we support HTTP/JSON which is the most common OTLP transport
-        tracing::info!(
-            "OTLP gRPC adapter: HTTP/JSON transport recommended on port {}",
-            self.config.bind_address
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        *self.shutdown_tx.lock().await = Some(shutdown_tx);
+
+        let service = super::otlp_grpc::OtlpGrpcService::new(
+            self.observability_service.clone(),
+            self.namespace.clone(),
         );
-        Ok(())
+
+        service
+            .serve_with_shutdown(self.config.bind_address, shutdown_rx)
+            .await
     }
 
     /// Start HTTP server for OTLP trace ingestion
@@ -677,7 +681,7 @@ mod tests {
     #[test]
     fn test_otlp_adapter_creation() {
         let (tx, _rx) = mpsc::channel(100);
-        let config = AdapterConfig::new("127.0.0.1:4318".parse().unwrap(), tx);
+        let _config = AdapterConfig::new("127.0.0.1:4318".parse().unwrap(), tx);
 
         // Create a mock ObservabilityService - in real tests this would be a test double
         // For now, just test the adapter structure

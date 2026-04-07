@@ -27,6 +27,9 @@ pub struct ViperMetadataCollector {
 }
 
 /// Configuration for VIPER metadata collection
+///
+/// Controls what statistics are computed during Parquet writes for
+/// efficient row group pruning during search.
 #[derive(Debug, Clone)]
 pub struct ViperCollectorConfig {
     /// Whether to compute centroids
@@ -232,10 +235,10 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
                     }
 
                     // Update statistics
-                    if let Some(ref mut builder) = self.current_row_group {
-                        if let Some(dim) = self.dimension {
-                            builder.update(float_array, dim, self.config.sample_rate);
-                        }
+                    if let Some(ref mut builder) = self.current_row_group
+                        && let Some(dim) = self.dimension
+                    {
+                        builder.update(float_array, dim, self.config.sample_rate);
                     }
                 }
             }
@@ -252,10 +255,10 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
                     }
                 }
 
-                if let Some(ref mut builder) = self.current_row_group {
-                    if let Some(dim) = self.dimension {
-                        builder.update(float_array, dim, self.config.sample_rate);
-                    }
+                if let Some(ref mut builder) = self.current_row_group
+                    && let Some(dim) = self.dimension
+                {
+                    builder.update(float_array, dim, self.config.sample_rate);
                 }
             }
         }

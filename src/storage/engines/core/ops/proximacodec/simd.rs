@@ -640,7 +640,7 @@ fn bitpack_i64_to_bytes(values: &[i64], bits: u8) -> Result<Vec<u8>> {
 
     // Calculate output size
     let total_bits = values.len() * bits as usize;
-    let byte_count = (total_bits + 7) / 8;
+    let byte_count = total_bits.div_ceil(8);
     let mut result = vec![0u8; byte_count];
 
     let mask = if bits == 32 {
@@ -1047,6 +1047,7 @@ pub fn simd_frame_of_reference_decode_f32(
 /// # Arguments
 /// * `values` - Input f32 values
 /// * `bits` - Bit width after zigzag encoding (1-32)
+///
 /// Zigzag encoding - delegates to baseline
 ///
 /// **Why no SIMD?** Zigzag transformation is simple bit manipulation:
@@ -1584,9 +1585,11 @@ pub fn simd_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Resu
     let mut first_deltas: Vec<i64> = Vec::with_capacity(count - 1);
     first_deltas.push(first_delta);
 
-    for i in 2..double_deltas.len() {
-        let prev_delta = first_deltas.last().unwrap();
-        let dd = double_deltas[i];
+    for dd in double_deltas.iter().skip(2) {
+        // Safe: first_deltas always has at least one element (first_delta pushed above)
+        let prev_delta = *first_deltas
+            .last()
+            .expect("first_deltas should have at least one element");
         first_deltas.push(prev_delta + dd);
     }
 
@@ -1729,7 +1732,7 @@ mod tests {
         let result = simd_delta_encode_f32(&values, base);
         assert!(result.is_ok());
 
-        let deltas = result.unwrap();
+        let deltas = result.unwrap_or_else(|e| panic!("Failed to encode deltas: {}", e));
         println!("   Input: {:?}", values);
         println!("   Output deltas: {} values", deltas.len());
         assert_eq!(deltas.len(), values.len());
@@ -1751,7 +1754,7 @@ mod tests {
         let result = simd_delta_encode_f32(&values, base);
         assert!(result.is_ok());
 
-        let deltas = result.unwrap();
+        let deltas = result.unwrap_or_else(|e| panic!("Failed to encode deltas: {}", e));
         println!("   Input: {} vectors", values.len());
         println!("   Output: {} deltas", deltas.len());
         assert_eq!(deltas.len(), values.len());
@@ -1774,7 +1777,7 @@ mod tests {
         let result = simd_delta_encode_f32(&values, base);
         assert!(result.is_ok());
 
-        let deltas = result.unwrap();
+        let deltas = result.unwrap_or_else(|e| panic!("Failed to encode deltas: {}", e));
         println!("   Input: {:?}", values);
         println!("   Base: {}", base);
         println!("   Output: {} deltas", deltas.len());
@@ -1795,7 +1798,7 @@ mod tests {
         let result = simd_bitpack_encode_f32(&values, bits);
         assert!(result.is_ok());
 
-        let packed = result.unwrap();
+        let packed = result.unwrap_or_else(|e| panic!("Failed to encode bitpack: {}", e));
         println!("   Input: {} values", values.len());
         println!("   Bit width: {}", bits);
         println!("   Output: {} bytes", packed.len());
@@ -1814,7 +1817,7 @@ mod tests {
         let result = simd_bitpack_encode_f32(&values, bits);
         assert!(result.is_ok());
 
-        let packed = result.unwrap();
+        let packed = result.unwrap_or_else(|e| panic!("Failed to encode bitpack: {}", e));
         println!("   Input: {} values", values.len());
         println!("   Bit width: {}", bits);
         println!("   Output: {} bytes", packed.len());
@@ -1834,7 +1837,8 @@ mod tests {
             let result = simd_bitpack_encode_f32(&values, bits);
             assert!(result.is_ok(), "Failed for bit width {}", bits);
 
-            let packed = result.unwrap();
+            let packed = result
+                .unwrap_or_else(|e| panic!("Failed to encode bitpack for width {}: {}", bits, e));
             let expected_bits = values.len() * bits as usize;
             let expected_bytes = (expected_bits + 7) / 8;
 
@@ -1870,7 +1874,8 @@ mod tests {
             let base = 0.0;
 
             // SIMD encode
-            let simd_result = simd_delta_encode_f32(values, base).unwrap();
+            let simd_result = simd_delta_encode_f32(values, base)
+                .unwrap_or_else(|e| panic!("Failed to encode delta for test case {}: {}", i, e));
 
             // Verify deltas match expected formula: value[i] - base
             let base_bits = base.to_bits() as i32 as i64;
@@ -1894,7 +1899,8 @@ mod tests {
     #[test]
     fn test_delta_encode_empty() {
         let values: Vec<f32> = vec![];
-        let result = simd_delta_encode_f32(&values, 0.0).unwrap();
+        let result = simd_delta_encode_f32(&values, 0.0)
+            .unwrap_or_else(|e| panic!("Failed to encode empty delta: {}", e));
         assert!(result.is_empty());
     }
 
@@ -1902,7 +1908,8 @@ mod tests {
     fn test_delta_encode_single_value() {
         let values = vec![42.0f32];
         let base = 10.0;
-        let result = simd_delta_encode_f32(&values, base).unwrap();
+        let result = simd_delta_encode_f32(&values, base)
+            .unwrap_or_else(|e| panic!("Failed to encode single value delta: {}", e));
         assert_eq!(result.len(), 1);
 
         let expected = (42.0f32.to_bits() as i32 as i64) - (10.0f32.to_bits() as i32 as i64);
@@ -1921,7 +1928,8 @@ mod tests {
 
         // Test different bit widths
         for bits in [1, 2, 4, 8, 16, 32] {
-            let result = simd_bitpack_encode_f32(&values, bits).unwrap();
+            let result = simd_bitpack_encode_f32(&values, bits)
+                .unwrap_or_else(|e| panic!("Failed to encode bitpack for width {}: {}", bits, e));
 
             // Verify output size
             let expected_bytes = (values.len() * bits as usize + 7) / 8;
@@ -1947,17 +1955,20 @@ mod tests {
     fn test_bitpack_encode_edge_cases() {
         // Single value
         let single = vec![42.0f32];
-        let result = simd_bitpack_encode_f32(&single, 8).unwrap();
+        let result = simd_bitpack_encode_f32(&single, 8)
+            .unwrap_or_else(|e| panic!("Failed to encode single value bitpack: {}", e));
         assert_eq!(result.len(), 1); // 8 bits = 1 byte
 
         // Two values with 1-bit width
         let two_vals = vec![0.0, 1.0];
-        let result = simd_bitpack_encode_f32(&two_vals, 1).unwrap();
+        let result = simd_bitpack_encode_f32(&two_vals, 1)
+            .unwrap_or_else(|e| panic!("Failed to encode two values bitpack: {}", e));
         assert_eq!(result.len(), 1); // 2 bits = 1 byte (rounded up)
 
         // Maximum bit width (32 bits)
         let max_width = vec![123.456f32, 789.012];
-        let result = simd_bitpack_encode_f32(&max_width, 32).unwrap();
+        let result = simd_bitpack_encode_f32(&max_width, 32)
+            .unwrap_or_else(|e| panic!("Failed to encode max width bitpack: {}", e));
         assert_eq!(result.len(), 8); // 2 values × 32 bits = 64 bits = 8 bytes
     }
 
@@ -2006,13 +2017,17 @@ mod tests {
 
             let scheme = ProximaScheme::Delta { base: base_i64 };
             println!("   Scheme: {:?}", scheme);
-            let baseline_encoded = codec.encode(values, scheme.clone()).unwrap();
+            let baseline_encoded = codec
+                .encode(values, scheme.clone())
+                .unwrap_or_else(|e| panic!("Failed to encode baseline for test case {}: {}", i, e));
             println!("   Encoded {} bytes", baseline_encoded.len());
 
             // 2. Decode with baseline
-            let baseline_decoded: Vec<f32> = codec.decode(&baseline_encoded).unwrap();
+            let baseline_decoded: Vec<f32> = codec
+                .decode(&baseline_encoded)
+                .unwrap_or_else(|e| panic!("Failed to decode baseline for test case {}: {}", i, e));
             println!("   Decoded {} values", baseline_decoded.len());
-            if baseline_decoded.len() > 0 {
+            if !baseline_decoded.is_empty() {
                 println!(
                     "   First decoded value: {} (bits: 0x{:08X})",
                     baseline_decoded[0],
@@ -2061,10 +2076,20 @@ mod tests {
         for (i, (values, bits)) in test_cases.iter().enumerate() {
             // 1. Encode with baseline (ProximaCodec)
             let scheme = ProximaScheme::BitPacked { bits: *bits };
-            let baseline_encoded = codec.encode(values, scheme.clone()).unwrap();
+            let baseline_encoded = codec.encode(values, scheme.clone()).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to encode baseline bitpack for test case {}: {}",
+                    i, e
+                )
+            });
 
             // 2. Decode with baseline
-            let baseline_decoded: Vec<f32> = codec.decode(&baseline_encoded).unwrap();
+            let baseline_decoded: Vec<f32> = codec.decode(&baseline_encoded).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to decode baseline bitpack for test case {}: {}",
+                    i, e
+                )
+            });
 
             // 3. Verify round-trip correctness
             assert_eq!(
@@ -2105,7 +2130,12 @@ mod tests {
 
             // Delta encoding
             let start = std::time::Instant::now();
-            let delta_result = simd_delta_encode_f32(&values, 0.0).unwrap();
+            let delta_result = simd_delta_encode_f32(&values, 0.0).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to encode delta for performance test size {}: {}",
+                    size, e
+                )
+            });
             let delta_time = start.elapsed();
 
             assert_eq!(delta_result.len(), size);
@@ -2118,7 +2148,12 @@ mod tests {
 
             // BitPacked encoding
             let start = std::time::Instant::now();
-            let bitpack_result = simd_bitpack_encode_f32(&values, 16).unwrap();
+            let bitpack_result = simd_bitpack_encode_f32(&values, 16).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to encode bitpack for performance test size {}: {}",
+                    size, e
+                )
+            });
             let bitpack_time = start.elapsed();
 
             assert!(!bitpack_result.is_empty());

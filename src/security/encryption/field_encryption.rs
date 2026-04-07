@@ -155,11 +155,11 @@ impl FieldEncryption {
             let prk = hkdf_salt.extract(b"blind-index-key-material");
 
             let mut key_bytes = [0u8; 32];
-            prk.expand(&[b"blind-index"], HKDF_SHA256)
-                .map_err(|_| {
-                    FieldEncryptionError::EncryptionFailed("HKDF expansion failed".into())
-                })?
-                .fill(&mut key_bytes)
+            let info: &[&[u8]] = &[b"blind-index"];
+            let hkdf = prk.expand(info, HKDF_SHA256).map_err(|_| {
+                FieldEncryptionError::EncryptionFailed("HKDF expansion failed".into())
+            })?;
+            hkdf.fill(&mut key_bytes)
                 .map_err(|_| FieldEncryptionError::EncryptionFailed("HKDF fill failed".into()))?;
 
             Some(hmac::Key::new(HMAC_SHA256, &key_bytes))
@@ -183,11 +183,10 @@ impl FieldEncryption {
     ) -> Result<EncryptedField, FieldEncryptionError> {
         // Get field settings or use defaults
         let settings = self.config.field_settings.get(field_name);
-        let encryption_type = settings
-            .map(|s| s.encryption_type)
-            .unwrap_or(self.config.default_type);
+        let encryption_type =
+            settings.map_or_else(|| self.config.default_type, |s| s.encryption_type);
 
-        let key_id = settings.map(|s| s.key_id.as_str()).unwrap_or("default");
+        let key_id = settings.map_or("default", |s| s.key_id.as_str());
 
         // Serialize value to bytes
         let plaintext = serde_json::to_vec(value)
@@ -205,15 +204,13 @@ impl FieldEncryption {
         };
 
         // Generate blind index if enabled
-        let blind_index = if settings
-            .map(|s| s.blind_index)
-            .unwrap_or(self.config.enable_blind_indexes)
-        {
-            let truncate = settings.and_then(|s| s.blind_index_bytes);
-            self.generate_blind_index(value, truncate)?
-        } else {
-            None
-        };
+        let blind_index =
+            if settings.map_or_else(|| self.config.enable_blind_indexes, |s| s.blind_index) {
+                let truncate = settings.and_then(|s| s.blind_index_bytes);
+                self.generate_blind_index(value, truncate)?
+            } else {
+                None
+            };
 
         Ok(EncryptedField {
             ciphertext: base64::Engine::encode(
@@ -436,7 +433,7 @@ impl FieldEncryption {
     ) -> Result<HashMap<String, EncryptedField>, FieldEncryptionError> {
         let mut encrypted_fields = HashMap::new();
 
-        for (field_name, _settings) in &self.config.field_settings {
+        for field_name in self.config.field_settings.keys() {
             if let Some(value) = metadata.remove(field_name) {
                 let encrypted = self.encrypt_field(field_name, &value)?;
                 encrypted_fields.insert(field_name.clone(), encrypted);
@@ -481,13 +478,16 @@ mod tests {
     use crate::security::encryption::key_store::KeyStoreConfig;
 
     fn setup() -> (Arc<KeyStore>, FieldEncryption) {
-        let key_store = Arc::new(KeyStore::new(KeyStoreConfig::default()).unwrap());
+        let key_store = Arc::new(
+            KeyStore::new(KeyStoreConfig::default())
+                .expect("KeyStore initialization should succeed in tests"),
+        );
         key_store
             .create_key("default", "Default encryption key")
-            .unwrap();
+            .expect("Key creation should succeed in tests");
         key_store
             .create_key("ssn-key", "SSN encryption key")
-            .unwrap();
+            .expect("Key creation should succeed in tests");
 
         let config = EncryptionConfig {
             enabled: true,
@@ -505,7 +505,8 @@ mod tests {
             blind_index_salt: Some("test-salt".to_string()),
         };
 
-        let encryption = FieldEncryption::new(Arc::clone(&key_store), config).unwrap();
+        let encryption = FieldEncryption::new(Arc::clone(&key_store), config)
+            .expect("FieldEncryption initialization should succeed in tests");
         (key_store, encryption)
     }
 
@@ -514,12 +515,16 @@ mod tests {
         let (_, encryption) = setup();
 
         let value = serde_json::json!("secret-value");
-        let encrypted = encryption.encrypt_field("random_field", &value).unwrap();
+        let encrypted = encryption
+            .encrypt_field("random_field", &value)
+            .expect("Encryption should succeed");
 
         assert_eq!(encrypted.encryption_type, EncryptionType::Randomized);
         assert!(encrypted.nonce.is_some());
 
-        let decrypted = encryption.decrypt_field(&encrypted).unwrap();
+        let decrypted = encryption
+            .decrypt_field(&encrypted)
+            .expect("Decryption should succeed");
         assert_eq!(decrypted, value);
     }
 
@@ -528,8 +533,12 @@ mod tests {
         let (_, encryption) = setup();
 
         let value = serde_json::json!("123-45-6789");
-        let encrypted1 = encryption.encrypt_field("ssn", &value).unwrap();
-        let encrypted2 = encryption.encrypt_field("ssn", &value).unwrap();
+        let encrypted1 = encryption
+            .encrypt_field("ssn", &value)
+            .expect("Encryption should succeed");
+        let encrypted2 = encryption
+            .encrypt_field("ssn", &value)
+            .expect("Encryption should succeed");
 
         assert_eq!(encrypted1.encryption_type, EncryptionType::Deterministic);
         assert!(encrypted1.nonce.is_none());
@@ -537,7 +546,9 @@ mod tests {
         // Deterministic encryption should produce same ciphertext
         assert_eq!(encrypted1.ciphertext, encrypted2.ciphertext);
 
-        let decrypted = encryption.decrypt_field(&encrypted1).unwrap();
+        let decrypted = encryption
+            .decrypt_field(&encrypted1)
+            .expect("Decryption should succeed");
         assert_eq!(decrypted, value);
     }
 
@@ -546,8 +557,12 @@ mod tests {
         let (_, encryption) = setup();
 
         let value = serde_json::json!("secret");
-        let encrypted1 = encryption.encrypt_field("random_field", &value).unwrap();
-        let encrypted2 = encryption.encrypt_field("random_field", &value).unwrap();
+        let encrypted1 = encryption
+            .encrypt_field("random_field", &value)
+            .expect("Encryption should succeed");
+        let encrypted2 = encryption
+            .encrypt_field("random_field", &value)
+            .expect("Encryption should succeed");
 
         // Randomized encryption should produce different ciphertext
         assert_ne!(encrypted1.ciphertext, encrypted2.ciphertext);
@@ -559,16 +574,23 @@ mod tests {
         let (_, encryption) = setup();
 
         let value = serde_json::json!("123-45-6789");
-        let encrypted = encryption.encrypt_field("ssn", &value).unwrap();
+        let encrypted = encryption
+            .encrypt_field("ssn", &value)
+            .expect("Encryption should succeed");
 
         assert!(encrypted.blind_index.is_some());
-        let index = encrypted.blind_index.as_ref().unwrap();
+        let index = encrypted
+            .blind_index
+            .as_ref()
+            .expect("Blind index should be present");
 
         // Truncated to 8 bytes = 16 hex chars
         assert_eq!(index.len(), 16);
 
         // Same value should produce same blind index
-        let encrypted2 = encryption.encrypt_field("ssn", &value).unwrap();
+        let encrypted2 = encryption
+            .encrypt_field("ssn", &value)
+            .expect("Encryption should succeed");
         assert_eq!(encrypted.blind_index, encrypted2.blind_index);
     }
 
@@ -579,10 +601,14 @@ mod tests {
         let value = serde_json::json!("123-45-6789");
 
         // Encrypt the field
-        let encrypted = encryption.encrypt_field("ssn", &value).unwrap();
+        let encrypted = encryption
+            .encrypt_field("ssn", &value)
+            .expect("Encryption should succeed");
 
         // Generate search index
-        let search_index = encryption.generate_search_index(&value, Some(8)).unwrap();
+        let search_index = encryption
+            .generate_search_index(&value, Some(8))
+            .expect("Search index generation should succeed");
 
         // Should match the stored blind index
         assert_eq!(encrypted.blind_index, Some(search_index));
@@ -593,19 +619,29 @@ mod tests {
         let (key_store, encryption) = setup();
 
         let value = serde_json::json!("test");
-        let encrypted1 = encryption.encrypt_field("ssn", &value).unwrap();
+        let encrypted1 = encryption
+            .encrypt_field("ssn", &value)
+            .expect("Encryption should succeed");
 
         assert_eq!(encrypted1.key_version, 1);
 
         // Rotate key
-        key_store.rotate_key("ssn-key").unwrap();
+        key_store
+            .rotate_key("ssn-key")
+            .expect("Key rotation should succeed");
 
-        let encrypted2 = encryption.encrypt_field("ssn", &value).unwrap();
+        let encrypted2 = encryption
+            .encrypt_field("ssn", &value)
+            .expect("Encryption should succeed");
         assert_eq!(encrypted2.key_version, 2);
 
         // Both should still decrypt correctly
-        let decrypted1 = encryption.decrypt_field(&encrypted1).unwrap();
-        let decrypted2 = encryption.decrypt_field(&encrypted2).unwrap();
+        let decrypted1 = encryption
+            .decrypt_field(&encrypted1)
+            .expect("Decryption should succeed");
+        let decrypted2 = encryption
+            .decrypt_field(&encrypted2)
+            .expect("Decryption should succeed");
 
         assert_eq!(decrypted1, value);
         assert_eq!(decrypted2, value);
@@ -616,18 +652,26 @@ mod tests {
         let (key_store, encryption) = setup();
 
         let value = serde_json::json!("sensitive-data");
-        let encrypted_v1 = encryption.encrypt_field("ssn", &value).unwrap();
+        let encrypted_v1 = encryption
+            .encrypt_field("ssn", &value)
+            .expect("Encryption should succeed");
         assert_eq!(encrypted_v1.key_version, 1);
 
         // Rotate key
-        key_store.rotate_key("ssn-key").unwrap();
+        key_store
+            .rotate_key("ssn-key")
+            .expect("Key rotation should succeed");
 
         // Re-encrypt with new key
-        let encrypted_v2 = encryption.reencrypt_field("ssn", &encrypted_v1).unwrap();
+        let encrypted_v2 = encryption
+            .reencrypt_field("ssn", &encrypted_v1)
+            .expect("Re-encryption should succeed");
         assert_eq!(encrypted_v2.key_version, 2);
 
         // Verify decryption still works
-        let decrypted = encryption.decrypt_field(&encrypted_v2).unwrap();
+        let decrypted = encryption
+            .decrypt_field(&encrypted_v2)
+            .expect("Decryption should succeed");
         assert_eq!(decrypted, value);
     }
 
@@ -637,28 +681,63 @@ mod tests {
 
         // String
         let str_val = serde_json::json!("hello");
-        let encrypted = encryption.encrypt_field("field", &str_val).unwrap();
-        assert_eq!(encryption.decrypt_field(&encrypted).unwrap(), str_val);
+        let encrypted = encryption
+            .encrypt_field("field", &str_val)
+            .expect("Encryption should succeed");
+        assert_eq!(
+            encryption
+                .decrypt_field(&encrypted)
+                .expect("Decryption should succeed"),
+            str_val
+        );
 
         // Number
         let num_val = serde_json::json!(42);
-        let encrypted = encryption.encrypt_field("field", &num_val).unwrap();
-        assert_eq!(encryption.decrypt_field(&encrypted).unwrap(), num_val);
+        let encrypted = encryption
+            .encrypt_field("field", &num_val)
+            .expect("Encryption should succeed");
+        assert_eq!(
+            encryption
+                .decrypt_field(&encrypted)
+                .expect("Decryption should succeed"),
+            num_val
+        );
 
         // Boolean
         let bool_val = serde_json::json!(true);
-        let encrypted = encryption.encrypt_field("field", &bool_val).unwrap();
-        assert_eq!(encryption.decrypt_field(&encrypted).unwrap(), bool_val);
+        let encrypted = encryption
+            .encrypt_field("field", &bool_val)
+            .expect("Encryption should succeed");
+        assert_eq!(
+            encryption
+                .decrypt_field(&encrypted)
+                .expect("Decryption should succeed"),
+            bool_val
+        );
 
         // Object
         let obj_val = serde_json::json!({"nested": "value", "count": 123});
-        let encrypted = encryption.encrypt_field("field", &obj_val).unwrap();
-        assert_eq!(encryption.decrypt_field(&encrypted).unwrap(), obj_val);
+        let encrypted = encryption
+            .encrypt_field("field", &obj_val)
+            .expect("Encryption should succeed");
+        assert_eq!(
+            encryption
+                .decrypt_field(&encrypted)
+                .expect("Decryption should succeed"),
+            obj_val
+        );
 
         // Array
         let arr_val = serde_json::json!([1, 2, 3, "four"]);
-        let encrypted = encryption.encrypt_field("field", &arr_val).unwrap();
-        assert_eq!(encryption.decrypt_field(&encrypted).unwrap(), arr_val);
+        let encrypted = encryption
+            .encrypt_field("field", &arr_val)
+            .expect("Encryption should succeed");
+        assert_eq!(
+            encryption
+                .decrypt_field(&encrypted)
+                .expect("Decryption should succeed"),
+            arr_val
+        );
     }
 
     #[test]
@@ -671,7 +750,9 @@ mod tests {
             ("age".to_string(), serde_json::json!(30)),
         ]);
 
-        let encrypted = encryption.encrypt_record_metadata(&mut metadata).unwrap();
+        let encrypted = encryption
+            .encrypt_record_metadata(&mut metadata)
+            .expect("Encryption should succeed");
 
         // Only ssn should be encrypted (it's in field_settings)
         assert!(encrypted.contains_key("ssn"));
@@ -691,11 +772,17 @@ mod tests {
         let mut metadata: HashMap<String, serde_json::Value> =
             HashMap::from([("ssn".to_string(), serde_json::json!("123-45-6789"))]);
 
-        let encrypted = encryption.encrypt_record_metadata(&mut metadata).unwrap();
-        let decrypted = encryption.decrypt_record_metadata(&encrypted).unwrap();
+        let encrypted = encryption
+            .encrypt_record_metadata(&mut metadata)
+            .expect("Encryption should succeed");
+        let decrypted = encryption
+            .decrypt_record_metadata(&encrypted)
+            .expect("Decryption should succeed");
 
         assert_eq!(
-            decrypted.get("ssn").unwrap(),
+            decrypted
+                .get("ssn")
+                .expect("SSN should be present in decrypted metadata"),
             &serde_json::json!("123-45-6789")
         );
     }

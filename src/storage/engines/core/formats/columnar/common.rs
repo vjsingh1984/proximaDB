@@ -23,7 +23,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Common configuration for VIPER and NOVA engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CommonColumnarConfig {
     /// Base columnar configuration
     pub base_config: ColumnarConfig,
@@ -96,7 +96,7 @@ pub struct CompressionLevels {
 }
 
 /// Serialization optimization configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SerializationOptimizationConfig {
     /// Memory pool configuration
     pub memory_pools: MemoryPoolConfig,
@@ -275,7 +275,7 @@ pub struct HardwareAccelerationConfig {
 }
 
 /// Engine-specific optimizations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EngineOptimizations {
     /// VIPER-specific optimizations
     pub viper_optimizations: ViperOptimizations,
@@ -537,7 +537,7 @@ impl CommonColumnarOperations {
 
         // Initialize serializer
         let serialization_config = ColumnarSerializationConfig {
-            dimension: 768, // TODO: Make configurable
+            dimension: 768, // Deferred: Make configurable
             quantization: config.base_config.quantization.clone().into(),
             compression: config.serialization_config.to_serialization_compression(),
             memory_optimization: config.serialization_config.to_memory_optimization(),
@@ -639,8 +639,7 @@ impl CommonColumnarOperations {
         let serialization_time = start_time.elapsed().as_secs_f64() * 1000.0;
         let bytes_processed = records
             .first()
-            .map(|r| records.len() * r.vector.len() * 4)
-            .unwrap_or(0);
+            .map_or(0, |r| records.len() * r.vector.len() * 4);
 
         // Update metrics
         self.performance_monitor
@@ -711,20 +710,20 @@ impl CommonColumnarOperations {
         // Check cache first
         {
             let mut cache = self.metadata_cache.write().await;
-            if let Some(cached) = cache.file_metadata.get_mut(&path_str) {
-                if !self.is_cache_expired(cached) {
-                    cached.last_accessed = std::time::Instant::now();
-                    cached.access_count += 1;
+            if let Some(cached) = cache.file_metadata.get_mut(&path_str)
+                && !self.is_cache_expired(cached)
+            {
+                cached.last_accessed = std::time::Instant::now();
+                cached.access_count += 1;
 
-                    let metadata = cached.metadata.clone();
-                    let schema = cached.schema.clone();
-                    let compression_metadata = cached.compression_metadata.clone();
+                let metadata = cached.metadata.clone();
+                let schema = cached.schema.clone();
+                let compression_metadata = cached.compression_metadata.clone();
 
-                    cache.hits += 1;
+                cache.hits += 1;
 
-                    debug!("File metadata cache hit for: {}", path_str);
-                    return Ok((metadata, schema, compression_metadata));
-                }
+                debug!("File metadata cache hit for: {}", path_str);
+                return Ok((metadata, schema, compression_metadata));
             }
         }
 
@@ -979,18 +978,6 @@ impl CompressionStrategy {
 }
 
 // Default implementations
-impl Default for CommonColumnarConfig {
-    fn default() -> Self {
-        Self {
-            base_config: ColumnarConfig::default(),
-            schema_config: SchemaGenerationConfig::default(),
-            serialization_config: SerializationOptimizationConfig::default(),
-            // distance_config removed
-            engine_optimizations: EngineOptimizations::default(),
-            monitoring_config: MonitoringConfig::default(),
-        }
-    }
-}
 
 // Implement Default for all the nested config structs...
 impl Default for SchemaGenerationConfig {
@@ -1021,17 +1008,6 @@ impl Default for CompressionLevels {
             quantized_vectors: Some(3), // LZ4 level 3
             metadata_columns: Some(9),  // High compression for metadata
             id_columns: Some(6),
-        }
-    }
-}
-
-impl Default for SerializationOptimizationConfig {
-    fn default() -> Self {
-        Self {
-            memory_pools: MemoryPoolConfig::default(),
-            simd_settings: SIMDOptimizationSettings::default(),
-            batch_processing: BatchProcessingConfig::default(),
-            zero_copy_optimization: ZeroCopyConfig::default(),
         }
     }
 }
@@ -1162,16 +1138,6 @@ impl Default for HardwareAccelerationConfig {
             gpu_threshold: 10000,
             enable_cpu_simd: true,
             enable_custom_instructions: true,
-        }
-    }
-}
-
-impl Default for EngineOptimizations {
-    fn default() -> Self {
-        Self {
-            viper_optimizations: ViperOptimizations::default(),
-            nova_optimizations: NovaOptimizations::default(),
-            shared_optimizations: SharedOptimizations::default(),
         }
     }
 }
@@ -1393,7 +1359,7 @@ pub fn map_core_to_parquet_compression(
         CompressionAlgorithm::Xz | CompressionAlgorithm::Lzma => {
             // XZ and LZMA provide high compression, map to ZSTD with high level
             let high_level = level.unwrap_or(9).max(9);
-            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level as i32)?)
+            Compression::ZSTD(parquet::basic::ZstdLevel::try_new(high_level)?)
         }
         CompressionAlgorithm::Bzip2 => {
             // BZip2 provides good compression, map to Brotli

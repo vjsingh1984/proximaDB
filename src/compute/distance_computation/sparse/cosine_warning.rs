@@ -101,6 +101,7 @@ impl Default for CosineWarningConfig {
 
 /// Cosine sparsity checker
 pub struct CosineSparsityChecker {
+    /// Configuration controlling warning thresholds and fallback behavior
     config: CosineWarningConfig,
 }
 

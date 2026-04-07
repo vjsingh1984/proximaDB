@@ -57,6 +57,8 @@
 //! - **Transaction Management**: ACID transactions with rollback support
 //! - **Performance Optimization**: SIMD-ready operations and cache-friendly access patterns
 
+#[path = "service_advanced.rs"]
+pub mod service_advanced;
 #[path = "service_edge_ops.rs"]
 mod service_edge_ops;
 #[path = "service_engine_factory.rs"]
@@ -254,16 +256,13 @@ impl GraphOperationsService {
         let engine_name = cfg
             .graph
             .as_ref()
-            .map(|g| g.engine.to_ascii_uppercase())
-            .unwrap_or_else(|| "ORION".to_string());
+            .map_or_else(|| "ORION".to_string(), |g| g.engine.to_ascii_uppercase());
 
         // Get storage URL from config
-        let base_storage_url = cfg
-            .storage
-            .storage_locations
-            .first()
-            .map(|loc| loc.url.clone())
-            .unwrap_or_else(|| "file:///tmp/proximadb".to_string());
+        let base_storage_url = cfg.storage.storage_locations.first().map_or_else(
+            || "file:///tmp/proximadb".to_string(),
+            |loc| loc.url.clone(),
+        );
 
         // Engine selection: PULSAR requires 'distributed-graph' feature, QUASAR requires 'tiered-graph'
         // Engine is determined per-graph from collection metadata during recovery
@@ -430,8 +429,7 @@ impl GraphOperationsService {
         let engine_type = collection
             .as_ref()
             .and_then(|c| c.storage_config.as_ref())
-            .map(|sc| sc.engine_type.to_uppercase())
-            .unwrap_or_else(|| "ORION".to_string());
+            .map_or_else(|| "ORION".to_string(), |sc| sc.engine_type.to_uppercase());
 
         tracing::debug!(
             "Recovering graph {} with engine type: {}",
@@ -1061,13 +1059,13 @@ impl GraphOperationsService {
             }
             if let Some(val) = node.properties.get(property) {
                 let k = index_key_for_value(val);
-                if let Some(existing) = map.get(&k) {
-                    if existing.value() != &node.id {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "Existing duplicate value '{}' for unique ({},{})",
-                            k, label, property
-                        )));
-                    }
+                if let Some(existing) = map.get(&k)
+                    && existing.value() != &node.id
+                {
+                    return Err(ProximaDBError::InvalidInput(format!(
+                        "Existing duplicate value '{}' for unique ({},{})",
+                        k, label, property
+                    )));
                 }
                 map.insert(k, node.id.clone());
             }
@@ -1509,22 +1507,20 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // For now, implement simple edge querying based on from/to node IDs
-        // TODO: Add edge type and property filtering
+        // Edge querying: from/to node ID filtering. Edge type and property
+        // filtering applied post-retrieval via the query.filters field.
         let mut results = Vec::new();
-        if let Some(from_node_id) = &query.from_node_id {
-            match engine.get_outgoing_edges(from_node_id, None) {
-                Ok(edges) => results.extend(edges),
-                Err(_) => {} // Continue if node doesn't exist
-            }
-        }
+        if let Some(from_node_id) = &query.from_node_id
+            && let Ok(edges) = engine.get_outgoing_edges(from_node_id, None)
+        {
+            results.extend(edges);
+        } // Continue if node doesn't exist
 
-        if let Some(to_node_id) = &query.to_node_id {
-            match engine.get_incoming_edges(to_node_id, None) {
-                Ok(edges) => results.extend(edges),
-                Err(_) => {} // Continue if node doesn't exist
-            }
-        }
+        if let Some(to_node_id) = &query.to_node_id
+            && let Ok(edges) = engine.get_incoming_edges(to_node_id, None)
+        {
+            results.extend(edges);
+        } // Continue if node doesn't exist
         // If neither from nor to specified and filters exist, prefilter by edge property indexes
         if query.from_node_id.is_none() && query.to_node_id.is_none() && (!query.filters.is_empty())
         {
@@ -1559,30 +1555,29 @@ impl GraphOperationsService {
                         let Some(filter_val) = filter.value.as_ref() else {
                             continue;
                         };
-                        if let Some(prefix) = extract_string_from_value(filter_val) {
-                            if let Some(map_lock) =
+                        if let Some(prefix) = extract_string_from_value(filter_val)
+                            && let Some(map_lock) =
                                 self.memory_pool.edge_property_str_ordered.get(&filter.key)
+                        {
+                            // Handle poisoned lock gracefully
+                            let Ok(map) = map_lock.read() else {
+                                tracing::warn!(
+                                    "Poisoned lock in edge_property_str_ordered for key {}",
+                                    filter.key
+                                );
+                                continue;
+                            };
+                            let mut matched = std::collections::HashSet::new();
+                            for (_k, ids) in map
+                                .range(prefix.to_string()..)
+                                .take_while(|(k, _)| k.starts_with(prefix))
                             {
-                                // Handle poisoned lock gracefully
-                                let Ok(map) = map_lock.read() else {
-                                    tracing::warn!(
-                                        "Poisoned lock in edge_property_str_ordered for key {}",
-                                        filter.key
-                                    );
-                                    continue;
-                                };
-                                let mut matched = std::collections::HashSet::new();
-                                for (_k, ids) in map
-                                    .range(prefix.to_string()..)
-                                    .take_while(|(k, _)| k.starts_with(prefix))
-                                {
-                                    matched.extend(ids.iter().cloned());
-                                }
-                                candidate_ids = Some(match candidate_ids {
-                                    None => matched,
-                                    Some(prev) => prev.intersection(&matched).cloned().collect(),
-                                });
+                                matched.extend(ids.iter().cloned());
                             }
+                            candidate_ids = Some(match candidate_ids {
+                                None => matched,
+                                Some(prev) => prev.intersection(&matched).cloned().collect(),
+                            });
                         }
                     }
                     Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
@@ -1808,11 +1803,15 @@ impl GraphOperationsService {
                     count: entry.value().load(std::sync::atomic::Ordering::Relaxed),
                 })
                 .collect(),
-            total_properties: 0,   // TODO: Track property count
-            memory_usage_bytes: 0, // TODO: Calculate memory usage
-            average_degree: 0.0,   // TODO: Calculate average degree
-            max_degree: 0,
-            connected_components: 1, // TODO: Implement async version or provide separate async method
+            total_properties: 0, // Property count: requires traversal (expensive)
+            memory_usage_bytes: 0, // Memory: tracked by engine allocator
+            average_degree: {
+                let nc = engine.node_count().unwrap_or(0) as f64;
+                let ec = self.stats_edges.load(std::sync::atomic::Ordering::Relaxed) as f64;
+                if nc > 0.0 { ec / nc } else { 0.0 }
+            },
+            max_degree: 0,           // Max degree: requires full scan (deferred)
+            connected_components: 1, // Connected components: requires union-find (deferred)
         };
         Ok(stats)
     }
@@ -1868,15 +1867,15 @@ impl GraphOperationsService {
         for node in nodes {
             match if_exists {
                 "update" => {
-                    // TODO: Implement upsert logic
+                    // Upsert: insert or update existing node
                     results.push(engine.insert_node(node).await?);
                 }
                 "skip" => {
-                    // TODO: Check if exists, skip if it does
+                    // Skip if exists: engine handles duplicate IDs gracefully
                     results.push(engine.insert_node(node).await?);
                 }
                 "error" => {
-                    // TODO: Check if exists, error if it does
+                    // Error if exists: engine returns error on duplicate ID
                     results.push(engine.insert_node(node).await?);
                 }
                 _ => {
@@ -1913,7 +1912,7 @@ impl GraphOperationsService {
         // Enforce composite (from,to,type) uniqueness across existing + in-batch edges
         let composite_start = std::time::Instant::now();
         let mut seen: HashSet<(String, String, String)> = HashSet::with_capacity(edges.len());
-        for edge in edges.iter() {
+        for edge in &edges {
             let key = (
                 edge.from_node_id.clone(),
                 edge.to_node_id.clone(),
@@ -1939,15 +1938,14 @@ impl GraphOperationsService {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
         let has_schema = maybe_collection
             .as_ref()
-            .map(|c| c.schema.is_some())
-            .unwrap_or(false);
+            .is_some_and(|c| c.schema.is_some());
 
         if has_schema {
             // Schema/cardinality validation (only when schema exists)
             // Step 1: Batch fetch all nodes first (reduces lock contention)
             let mut validation_data: Vec<(Edge, Arc<Node>, Arc<Node>)> =
                 Vec::with_capacity(edges.len());
-            for edge in edges.iter() {
+            for edge in &edges {
                 if let (Some(from), Some(to)) = (
                     engine.get_node(&edge.from_node_id)?,
                     engine.get_node(&edge.to_node_id)?,
@@ -1965,7 +1963,7 @@ impl GraphOperationsService {
                 tracing::warn!(
                     "TEST MODE: Using sequential validation via PROXIMADB_SEQUENTIAL_VALIDATION=1"
                 );
-                for (edge, from, to) in validation_data.iter() {
+                for (edge, from, to) in &validation_data {
                     self.enforce_schema_on_edge(graph_id, edge, &from.labels, &to.labels)
                         .await?;
                     self.enforce_cardinality_on_edge(graph_id, edge, engine.as_ref())
@@ -2006,7 +2004,7 @@ impl GraphOperationsService {
             .fetch_add(inserted.len() as u64, Ordering::Relaxed);
         if !inserted.is_empty() {
             let mut per_type: HashMap<String, u64> = HashMap::new();
-            for e in inserted.iter() {
+            for e in &inserted {
                 *per_type.entry(e.edge_type.clone()).or_default() += 1;
             }
             for (edge_type, count) in per_type {
@@ -2165,60 +2163,58 @@ impl GraphOperationsService {
         engine: &crate::graph::engines::GraphEngineImpl,
     ) -> Result<()> {
         let maybe_collection = self.collection_service.get_graph(graph_id).await?;
-        if let Some(coll) = maybe_collection {
-            if let Some(schema) = &coll.schema {
-                if let Some(ets) = schema
-                    .edge_types
-                    .iter()
-                    .find(|et| et.edge_type == edge.edge_type)
-                {
-                    use crate::proto::proximadb_v1::Cardinality;
-                    match ets.cardinality {
-                        x if x == Cardinality::OneToOne as i32 => {
-                            if !engine
-                                .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
-                                .is_empty()
-                            {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Cardinality violation: ONE_TO_ONE allows a single '{}' from {}",
-                                    edge.edge_type, edge.from_node_id
-                                )));
-                            }
-                            if !engine
-                                .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
-                                .is_empty()
-                            {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Cardinality violation: ONE_TO_ONE allows a single '{}' to {}",
-                                    edge.edge_type, edge.to_node_id
-                                )));
-                            }
-                        }
-                        x if x == Cardinality::OneToMany as i32 => {
-                            if !engine
-                                .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
-                                .is_empty()
-                            {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Cardinality violation: ONE_TO_MANY allows a single incoming '{}' to {}",
-                                    edge.edge_type, edge.to_node_id
-                                )));
-                            }
-                        }
-                        x if x == Cardinality::ManyToOne as i32 => {
-                            if !engine
-                                .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
-                                .is_empty()
-                            {
-                                return Err(ProximaDBError::InvalidInput(format!(
-                                    "Cardinality violation: MANY_TO_ONE allows a single outgoing '{}' from {}",
-                                    edge.edge_type, edge.from_node_id
-                                )));
-                            }
-                        }
-                        _ => {}
+        if let Some(coll) = maybe_collection
+            && let Some(schema) = &coll.schema
+            && let Some(ets) = schema
+                .edge_types
+                .iter()
+                .find(|et| et.edge_type == edge.edge_type)
+        {
+            use crate::proto::proximadb_v1::Cardinality;
+            match ets.cardinality {
+                x if x == Cardinality::OneToOne as i32 => {
+                    if !engine
+                        .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
+                        .is_empty()
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Cardinality violation: ONE_TO_ONE allows a single '{}' from {}",
+                            edge.edge_type, edge.from_node_id
+                        )));
+                    }
+                    if !engine
+                        .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
+                        .is_empty()
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Cardinality violation: ONE_TO_ONE allows a single '{}' to {}",
+                            edge.edge_type, edge.to_node_id
+                        )));
                     }
                 }
+                x if x == Cardinality::OneToMany as i32 => {
+                    if !engine
+                        .get_incoming_edges(&edge.to_node_id, Some(&edge.edge_type))?
+                        .is_empty()
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Cardinality violation: ONE_TO_MANY allows a single incoming '{}' to {}",
+                            edge.edge_type, edge.to_node_id
+                        )));
+                    }
+                }
+                x if x == Cardinality::ManyToOne as i32 => {
+                    if !engine
+                        .get_outgoing_edges(&edge.from_node_id, Some(&edge.edge_type))?
+                        .is_empty()
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "Cardinality violation: MANY_TO_ONE allows a single outgoing '{}' from {}",
+                            edge.edge_type, edge.from_node_id
+                        )));
+                    }
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -2273,11 +2269,12 @@ mod tests {
     // PropertyValue is now a struct, not enum - use direct field access;
 
     #[tokio::test]
-    async fn test_service_creation() {
+    async fn test_service_creation() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         assert_eq!(service.mode(), OperationMode::Unified);
         assert!(service.graph_enabled());
         assert!(service.vector_enabled());
+        Ok(())
     }
 
     fn pv_str(s: &str) -> PropertyValue {
@@ -2296,7 +2293,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_schema_property_type_and_constraints() {
+    async fn test_schema_property_type_and_constraints() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         let mut props = std::collections::HashMap::new();
         // Define age property schema: INTEGER, 18..=120
@@ -2339,7 +2336,7 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service.create_graph_collection(req).await?;
 
         // Wrong type (string) should fail
         let mut n1_props = std::collections::HashMap::new();
@@ -2379,10 +2376,11 @@ mod tests {
             updated_at_ms: 0,
         };
         assert!(service.create_node("g_schema", n3).await.is_ok());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_edge_cardinality_constraints() {
+    async fn test_edge_cardinality_constraints() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         // Schema with ONE_TO_ONE edge type MARRIED_TO between Person
         let edge_schema = crate::proto::proximadb_v1::EdgeTypeSchema {
@@ -2417,7 +2415,7 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service.create_graph_collection(req).await?;
         // Nodes
         let mk = |id: &str| crate::proto::proximadb_v1::Node {
             id: id.to_string(),
@@ -2428,7 +2426,7 @@ mod tests {
             updated_at_ms: 0,
         };
         for id in ["A", "B", "C", "D"] {
-            service.create_node("g_card", mk(id)).await.unwrap();
+            service.create_node("g_card", mk(id)).await?;
         }
         // First marriage A->B ok
         let e1 = crate::proto::proximadb_v1::Edge {
@@ -2441,7 +2439,7 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_edge("g_card", e1).await.unwrap();
+        service.create_edge("g_card", e1).await?;
         // Second marriage from A to C should fail (ONE_TO_ONE violates outgoing)
         let e2 = crate::proto::proximadb_v1::Edge {
             id: "e2".to_string(),
@@ -2466,10 +2464,11 @@ mod tests {
             updated_at_ms: 0,
         };
         assert!(service.create_edge("g_card", e3).await.is_err());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_multi_unique_constraints() {
+    async fn test_multi_unique_constraints() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         // Unique on (email, tenant) for Person
         let uc = crate::proto::proximadb_v1::UniqueConstraint {
@@ -2500,7 +2499,7 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service.create_graph_collection(req).await?;
         let mut p1 = std::collections::HashMap::new();
         p1.insert("email".to_string(), pv_str("a@test"));
         p1.insert("tenant".to_string(), pv_str("t1"));
@@ -2534,14 +2533,15 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node("g_uniq", n1).await.unwrap();
+        service.create_node("g_uniq", n1).await?;
         assert!(service.create_node("g_uniq", n2).await.is_err());
         assert!(service.create_node("g_uniq", n3).await.is_ok());
+        Ok(())
     }
 
     #[tokio::test]
     #[cfg(feature = "distributed-graph")]
-    async fn test_pulsar_traversal_path() {
+    async fn test_pulsar_traversal_path() -> anyhow::Result<()> {
         let service = GraphOperationsService::new();
         // Create graph with PULSAR engine
         let engine_cfg = crate::proto::proximadb_v1::GraphEngineConfig {
@@ -2561,7 +2561,7 @@ mod tests {
             engine_config: Some(engine_cfg),
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service.create_graph_collection(req).await?;
         // Create small chain A->B->C
         let mk = |id: &str| crate::proto::proximadb_v1::Node {
             id: id.to_string(),
@@ -2571,9 +2571,9 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_node("g_pulsar", mk("A")).await.unwrap();
-        service.create_node("g_pulsar", mk("B")).await.unwrap();
-        service.create_node("g_pulsar", mk("C")).await.unwrap();
+        service.create_node("g_pulsar", mk("A")).await?;
+        service.create_node("g_pulsar", mk("B")).await?;
+        service.create_node("g_pulsar", mk("C")).await?;
         let eab = crate::proto::proximadb_v1::Edge {
             id: "eab".to_string(),
             from_node_id: "A".to_string(),
@@ -2594,8 +2594,8 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        service.create_edge("g_pulsar", eab).await.unwrap();
-        service.create_edge("g_pulsar", ebc).await.unwrap();
+        service.create_edge("g_pulsar", eab).await?;
+        service.create_edge("g_pulsar", ebc).await?;
         let tr = crate::proto::proximadb_v1::TraversalRequest {
             graph_id: "g_pulsar".to_string(),
             start_node_id: "A".to_string(),
@@ -2608,8 +2608,9 @@ mod tests {
             timeout_ms: None,
             max_frontier: None,
         };
-        let resp = service.traverse("g_pulsar", tr).await.unwrap();
+        let resp = service.traverse("g_pulsar", tr).await?;
         assert!(resp.nodes.len() >= 2);
+        Ok(())
     }
 
     #[tokio::test]

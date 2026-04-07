@@ -33,13 +33,14 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{
     SearchQuery, VectorBatchRequest, VectorRecord, VectorSearchRequest,
@@ -80,35 +81,45 @@ fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::S
 }
 
 /// Convert SqlValue back to JSON for responses
-fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
+fn sql_value_to_json(
+    value: &crate::proto::proximadb_v1::SqlValue,
+) -> Result<serde_json::Value, ApiError> {
     use crate::proto::proximadb_v1::sql_value::Value;
 
-    match value.value.as_ref() {
+    Ok(match value.value.as_ref() {
         Some(Value::NullValue(_)) => serde_json::Value::Null,
         Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
         Some(Value::NumberValue(f)) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .ok_or_else(|| {
+                ApiError::Internal(format!(
+                    "Failed to convert f64 to serde_json::Number: {}",
+                    f
+                ))
+            })?,
         Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
         Some(Value::BytesValue(b)) => serde_json::Value::Array(
             b.iter()
                 .map(|x| serde_json::Value::Number((*x as u64).into()))
                 .collect(),
         ),
-        Some(Value::ArrayValue(arr)) => {
-            serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
-        }
+        Some(Value::ArrayValue(arr)) => serde_json::Value::Array(
+            arr.values
+                .iter()
+                .map(sql_value_to_json)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
         Some(Value::ObjectValue(obj)) => {
             let map: serde_json::Map<String, serde_json::Value> = obj
                 .fields
                 .iter()
-                .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                .collect();
+                .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
+                .collect::<Result<_, ApiError>>()?;
             serde_json::Value::Object(map)
         }
         None => serde_json::Value::Null,
-    }
+    })
 }
 
 /// Convert a JSON value to a FilterClause value
@@ -122,10 +133,8 @@ fn json_to_filter_clause_value(
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Some(Value::IntValue(i))
-            } else if let Some(f) = n.as_f64() {
-                Some(Value::DoubleValue(f))
             } else {
-                None
+                n.as_f64().map(Value::DoubleValue)
             }
         }
         serde_json::Value::Bool(b) => Some(Value::BoolValue(*b)),
@@ -449,6 +458,7 @@ pub struct InsertError {
 pub async fn insert_records(
     Path(collection): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(request): Json<InsertRecordsRequest>,
 ) -> ApiResult<Json<InsertRecordsResponse>> {
     info!(
@@ -470,7 +480,10 @@ pub async fn insert_records(
         ));
     }
 
-    let validate_schema = request.validate_schema.unwrap_or(true);
+    let validate_schema = request.validate_schema.unwrap_or_else(|| {
+        debug!("No schema validation preference provided, defaulting to true");
+        true
+    });
     debug!(
         "Schema validation: {}",
         if validate_schema {
@@ -496,10 +509,11 @@ pub async fn insert_records(
         }
 
         // Generate ID if not provided
-        let record_id = record
-            .id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let record_id = record.id.clone().unwrap_or_else(|| {
+            let new_id = uuid::Uuid::new_v4().to_string();
+            debug!("Generated new UUID for record: {}", new_id);
+            new_id
+        });
 
         // Convert typed_fields to metadata for backward compatibility with v1 storage
         let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
@@ -568,7 +582,7 @@ pub async fn insert_records(
 
     match state
         .unified_handlers
-        .handle_vector_batch_v1(batch_request)
+        .handle_vector_batch_v1_for_tenant(batch_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
@@ -722,6 +736,7 @@ pub struct TypedSearchResponse {
 pub async fn search_with_typed_filters(
     Path(collection): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(request): Json<TypedSearchRequest>,
 ) -> ApiResult<Json<TypedSearchResponse>> {
     let start_time = std::time::Instant::now();
@@ -789,7 +804,10 @@ pub async fn search_with_typed_filters(
         }
     }
 
-    let include_text = request.include_text.unwrap_or(false);
+    let include_text = request.include_text.unwrap_or_else(|| {
+        debug!("No include_text preference provided, defaulting to false");
+        false
+    });
     debug!(
         "Include TEXT fields: {}, filters: {:?}",
         include_text,
@@ -844,14 +862,17 @@ pub async fn search_with_typed_filters(
     // Execute search via unified handlers
     match state
         .unified_handlers
-        .handle_vector_search_v1(search_request)
+        .handle_vector_search_v1_for_tenant(search_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
             let latency_ms = start_time.elapsed().as_millis() as u64;
 
-            // resp.results is Option<SearchResult> - unwrap it
-            let search_result = resp.results.unwrap_or_default();
+            // resp.results is Option<SearchResult> - use default if None
+            let search_result = resp.results.unwrap_or_else(|| {
+                debug!("Search response contains no results, using default");
+                Default::default()
+            });
 
             // Convert results to TypedSearchResult format
             // search_result.results is Vec<SearchVectorRecord>
@@ -863,13 +884,16 @@ pub async fn search_with_typed_filters(
                     let typed_fields: HashMap<String, serde_json::Value> = r
                         .metadata
                         .iter()
-                        .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                        .collect();
+                        .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
+                        .collect::<Result<_, ApiError>>()?;
 
-                    TypedSearchResult {
+                    Ok(TypedSearchResult {
                         id: r.id.clone(),
                         score: r.score as f32,
-                        vector: if request.include_vector.unwrap_or(false) {
+                        vector: if request.include_vector.unwrap_or_else(|| {
+                            debug!("No include_vector preference provided, defaulting to false");
+                            false
+                        }) {
                             Some(r.vector.clone())
                         } else {
                             None
@@ -882,9 +906,9 @@ pub async fn search_with_typed_filters(
                             None
                         },
                         metadata: None, // Legacy metadata is converted to typed_fields
-                    }
+                    })
                 })
-                .collect();
+                .collect::<Result<_, ApiError>>()?;
 
             let total_matches = search_result.total_found as u64;
             let response = TypedSearchResponse {
@@ -965,6 +989,7 @@ pub struct RecordV2Response {
 pub async fn get_record_v2(
     Path((collection_id, record_id)): Path<(String, String)>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Query(params): Query<GetRecordV2Query>,
 ) -> ApiResult<Json<RecordV2Response>> {
     debug!(
@@ -984,18 +1009,33 @@ pub async fn get_record_v2(
         ));
     }
 
-    let include_vector = params.include_vector.unwrap_or(true);
-    let include_text = params.include_text.unwrap_or(false);
+    let include_vector = params.include_vector.unwrap_or_else(|| {
+        debug!("No include_vector preference provided, defaulting to true");
+        true
+    });
+    let include_text = params.include_text.unwrap_or_else(|| {
+        debug!("No include_text preference provided, defaulting to false");
+        false
+    });
 
     // Get vector via unified handlers
     match state
         .unified_handlers
-        .handle_vector_v1(&collection_id, &record_id, include_vector, true)
+        .handle_vector_v1_for_tenant(
+            &collection_id,
+            &record_id,
+            include_vector,
+            true,
+            Some(&tenant.tenant_id),
+        )
         .await
     {
         Ok(resp) => {
-            // resp.results is Option<SearchResult>, unwrap then access Vec<SearchVectorRecord>
-            let search_result = resp.results.unwrap_or_default();
+            // resp.results is Option<SearchResult>, use default if None
+            let search_result = resp.results.unwrap_or_else(|| {
+                debug!("Get vector response contains no results, using default");
+                Default::default()
+            });
             let result = search_result
                 .results
                 .first()
@@ -1005,8 +1045,8 @@ pub async fn get_record_v2(
             let typed_fields: HashMap<String, serde_json::Value> = result
                 .metadata
                 .iter()
-                .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                .collect();
+                .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
+                .collect::<Result<_, ApiError>>()?;
 
             let response = RecordV2Response {
                 id: result.id.clone(),
@@ -1067,11 +1107,12 @@ mod tests {
             "validate_schema": true
         }"#;
 
-        let request: InsertRecordsRequest = serde_json::from_str(json).unwrap();
+        let request: InsertRecordsRequest = serde_json::from_str(json)
+            .expect("Failed to deserialize InsertRecordsRequest from test JSON");
         assert_eq!(request.records.len(), 1);
         assert_eq!(request.records[0].id, Some("doc_1".to_string()));
         assert_eq!(request.records[0].vector.len(), 3);
-        assert!(request.validate_schema.unwrap());
+        assert_eq!(request.validate_schema, Some(true));
     }
 
     #[test]
@@ -1086,12 +1127,13 @@ mod tests {
             "include_text": true
         }"#;
 
-        let request: TypedSearchRequest = serde_json::from_str(json).unwrap();
+        let request: TypedSearchRequest = serde_json::from_str(json)
+            .expect("Failed to deserialize TypedSearchRequest from test JSON");
         assert_eq!(request.vector.len(), 3);
         assert_eq!(request.top_k, 10);
-        assert!(request.include_text.unwrap());
+        assert_eq!(request.include_text, Some(true));
 
-        let filters = request.filters.unwrap();
+        let filters = request.filters.as_ref().expect("filters should be Some");
         assert_eq!(filters.len(), 2);
         assert_eq!(filters[0].field, "category");
         assert_eq!(filters[0].op, "eq");
@@ -1106,7 +1148,8 @@ mod tests {
             "value_upper": 500
         }"#;
 
-        let filter: TypedFilter = serde_json::from_str(json).unwrap();
+        let filter: TypedFilter =
+            serde_json::from_str(json).expect("Failed to deserialize TypedFilter from test JSON");
         assert_eq!(filter.op, "between");
         assert!(filter.value_upper.is_some());
     }
@@ -1122,7 +1165,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].field, "status");
         assert_eq!(clauses[0].op, ComparisonOp::Eq as i32);
@@ -1159,7 +1203,8 @@ mod tests {
             },
         ];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 4);
         assert_eq!(clauses[0].op, ComparisonOp::Gt as i32);
         assert_eq!(clauses[1].op, ComparisonOp::Gte as i32);
@@ -1178,7 +1223,8 @@ mod tests {
             value_upper: Some(serde_json::json!(500)),
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         // between is converted to two clauses: gte and lte
         assert_eq!(clauses.len(), 2);
         assert_eq!(clauses[0].field, "price");
@@ -1211,7 +1257,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
     }
@@ -1227,7 +1274,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
         // Verify the value is prefixed with ^
@@ -1249,7 +1297,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::Contains as i32);
         // Verify the value is suffixed with $
@@ -1271,7 +1320,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::In as i32);
         // Verify the value is a JSON array string
@@ -1297,7 +1347,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::In as i32);
         if let Some(Value::StringValue(s)) = &clauses[0].value {
@@ -1333,7 +1384,8 @@ mod tests {
             value_upper: None,
         }];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 1);
         assert_eq!(clauses[0].op, ComparisonOp::Ne as i32);
     }
@@ -1363,7 +1415,8 @@ mod tests {
             },
         ];
 
-        let clauses = convert_typed_filters_to_clauses(&filters).unwrap();
+        let clauses = convert_typed_filters_to_clauses(&filters)
+            .expect("Failed to convert typed filters to clauses");
         assert_eq!(clauses.len(), 3);
         assert_eq!(clauses[0].op, ComparisonOp::Eq as i32);
         assert_eq!(clauses[1].op, ComparisonOp::Lt as i32);
@@ -1401,5 +1454,841 @@ mod tests {
         // Object returns None (not directly supported)
         let object_val = json_to_filter_clause_value(&serde_json::json!({"key": "value"}));
         assert!(object_val.is_none());
+    }
+
+    // =========================================================================
+    // Tests for json_to_sql_value
+    // =========================================================================
+
+    #[test]
+    fn test_json_to_sql_value_null() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        let val = json_to_sql_value(&serde_json::json!(null));
+        assert!(matches!(val.value, Some(Value::NullValue(0))));
+    }
+
+    #[test]
+    fn test_json_to_sql_value_bool() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        let val = json_to_sql_value(&serde_json::json!(true));
+        assert!(matches!(val.value, Some(Value::BoolValue(true))));
+
+        let val = json_to_sql_value(&serde_json::json!(false));
+        assert!(matches!(val.value, Some(Value::BoolValue(false))));
+    }
+
+    #[test]
+    fn test_json_to_sql_value_integer() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        let val = json_to_sql_value(&serde_json::json!(42));
+        assert!(matches!(val.value, Some(Value::Int64Value(42))));
+
+        let val = json_to_sql_value(&serde_json::json!(-100));
+        assert!(matches!(val.value, Some(Value::Int64Value(-100))));
+    }
+
+    #[test]
+    fn test_json_to_sql_value_float() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        let val = json_to_sql_value(&serde_json::json!(3.14));
+        match val.value {
+            Some(Value::NumberValue(f)) => assert!((f - 3.14).abs() < f64::EPSILON),
+            other => panic!("Expected NumberValue, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_value_string() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        let val = json_to_sql_value(&serde_json::json!("hello world"));
+        match val.value {
+            Some(Value::StringValue(ref s)) => assert_eq!(s, "hello world"),
+            other => panic!("Expected StringValue, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_value_array() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        let val = json_to_sql_value(&serde_json::json!([1, "two", true]));
+        match val.value {
+            Some(Value::ArrayValue(ref arr)) => {
+                assert_eq!(arr.values.len(), 3);
+                assert!(matches!(arr.values[0].value, Some(Value::Int64Value(1))));
+                assert!(matches!(arr.values[1].value, Some(Value::StringValue(_))));
+                assert!(matches!(arr.values[2].value, Some(Value::BoolValue(true))));
+            }
+            other => panic!("Expected ArrayValue, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_value_object() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        let val = json_to_sql_value(&serde_json::json!({"key": "value", "num": 42}));
+        match val.value {
+            Some(Value::ObjectValue(ref obj)) => {
+                assert_eq!(obj.fields.len(), 2);
+                assert!(obj.fields.contains_key("key"));
+                assert!(obj.fields.contains_key("num"));
+            }
+            other => panic!("Expected ObjectValue, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_value_nested_array() {
+        use crate::proto::proximadb_v1::sql_value::Value;
+        let val = json_to_sql_value(&serde_json::json!([[1, 2], [3, 4]]));
+        match val.value {
+            Some(Value::ArrayValue(ref arr)) => {
+                assert_eq!(arr.values.len(), 2);
+                // Each element should be an ArrayValue
+                assert!(matches!(arr.values[0].value, Some(Value::ArrayValue(_))));
+            }
+            other => panic!("Expected nested ArrayValue, got {:?}", other),
+        }
+    }
+
+    // =========================================================================
+    // Tests for sql_value_to_json (the v2 records version)
+    // =========================================================================
+
+    #[test]
+    fn test_sql_value_to_json_null() {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+        let sv = SqlValue {
+            value: Some(Value::NullValue(0)),
+        };
+        let result = sql_value_to_json(&sv).expect("Should convert null");
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn test_sql_value_to_json_bool() {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+        let sv = SqlValue {
+            value: Some(Value::BoolValue(true)),
+        };
+        let result = sql_value_to_json(&sv).expect("Should convert bool");
+        assert_eq!(result, serde_json::json!(true));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_int64() {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+        let sv = SqlValue {
+            value: Some(Value::Int64Value(999)),
+        };
+        let result = sql_value_to_json(&sv).expect("Should convert int64");
+        assert_eq!(result, serde_json::json!(999));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_number() {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+        let sv = SqlValue {
+            value: Some(Value::NumberValue(2.718)),
+        };
+        let result = sql_value_to_json(&sv).expect("Should convert number");
+        assert!((result.as_f64().expect("Should be f64") - 2.718).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_sql_value_to_json_string() {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+        let sv = SqlValue {
+            value: Some(Value::StringValue("test_str".to_string())),
+        };
+        let result = sql_value_to_json(&sv).expect("Should convert string");
+        assert_eq!(result, serde_json::json!("test_str"));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_bytes() {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+        let sv = SqlValue {
+            value: Some(Value::BytesValue(vec![0, 1, 255])),
+        };
+        let result = sql_value_to_json(&sv).expect("Should convert bytes");
+        assert_eq!(result, serde_json::json!([0, 1, 255]));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_array() {
+        use crate::proto::proximadb_v1::{SqlArray, SqlValue, sql_value::Value};
+        let sv = SqlValue {
+            value: Some(Value::ArrayValue(SqlArray {
+                values: vec![
+                    SqlValue {
+                        value: Some(Value::Int64Value(1)),
+                    },
+                    SqlValue {
+                        value: Some(Value::Int64Value(2)),
+                    },
+                ],
+            })),
+        };
+        let result = sql_value_to_json(&sv).expect("Should convert array");
+        assert_eq!(result, serde_json::json!([1, 2]));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_object() {
+        use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value};
+        let mut fields = HashMap::new();
+        fields.insert(
+            "name".to_string(),
+            SqlValue {
+                value: Some(Value::StringValue("alice".to_string())),
+            },
+        );
+        let sv = SqlValue {
+            value: Some(Value::ObjectValue(SqlObject { fields })),
+        };
+        let result = sql_value_to_json(&sv).expect("Should convert object");
+        assert_eq!(result["name"], serde_json::json!("alice"));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_none_value() {
+        use crate::proto::proximadb_v1::SqlValue;
+        let sv = SqlValue { value: None };
+        let result = sql_value_to_json(&sv).expect("Should convert None to null");
+        assert!(result.is_null());
+    }
+
+    #[test]
+    fn test_sql_value_to_json_nan_returns_error() {
+        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
+        let sv = SqlValue {
+            value: Some(Value::NumberValue(f64::NAN)),
+        };
+        let result = sql_value_to_json(&sv);
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Tests for json_to_sql_value -> sql_value_to_json roundtrip
+    // =========================================================================
+
+    #[test]
+    fn test_json_sql_value_roundtrip_string() {
+        let original = serde_json::json!("roundtrip_test");
+        let sql_val = json_to_sql_value(&original);
+        let result = sql_value_to_json(&sql_val).expect("Roundtrip should succeed");
+        assert_eq!(original, result);
+    }
+
+    #[test]
+    fn test_json_sql_value_roundtrip_integer() {
+        let original = serde_json::json!(42);
+        let sql_val = json_to_sql_value(&original);
+        let result = sql_value_to_json(&sql_val).expect("Roundtrip should succeed");
+        assert_eq!(original, result);
+    }
+
+    #[test]
+    fn test_json_sql_value_roundtrip_bool() {
+        let original = serde_json::json!(true);
+        let sql_val = json_to_sql_value(&original);
+        let result = sql_value_to_json(&sql_val).expect("Roundtrip should succeed");
+        assert_eq!(original, result);
+    }
+
+    #[test]
+    fn test_json_sql_value_roundtrip_null() {
+        let original = serde_json::json!(null);
+        let sql_val = json_to_sql_value(&original);
+        let result = sql_value_to_json(&sql_val).expect("Roundtrip should succeed");
+        assert_eq!(original, result);
+    }
+
+    #[test]
+    fn test_json_sql_value_roundtrip_nested_object() {
+        let original = serde_json::json!({"a": 1, "b": "two", "c": [true, null]});
+        let sql_val = json_to_sql_value(&original);
+        let result = sql_value_to_json(&sql_val).expect("Roundtrip should succeed");
+        assert_eq!(original, result);
+    }
+
+    // =========================================================================
+    // Tests for unsupported filter operators
+    // =========================================================================
+
+    #[test]
+    fn test_convert_unsupported_filter_operator() {
+        let filters = vec![TypedFilter {
+            field: "x".to_string(),
+            op: "regex".to_string(),
+            value: serde_json::json!(".*"),
+            value_upper: None,
+        }];
+
+        let result = convert_typed_filters_to_clauses(&filters);
+        assert!(result.is_err());
+        let err_msg = format!("{:?}", result.err().expect("Should be error"));
+        assert!(err_msg.contains("Unsupported"));
+    }
+
+    #[test]
+    fn test_convert_starts_with_non_string_error() {
+        let filters = vec![TypedFilter {
+            field: "name".to_string(),
+            op: "starts_with".to_string(),
+            value: serde_json::json!(123),
+            value_upper: None,
+        }];
+
+        let result = convert_typed_filters_to_clauses(&filters);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_convert_ends_with_non_string_error() {
+        let filters = vec![TypedFilter {
+            field: "name".to_string(),
+            op: "ends_with".to_string(),
+            value: serde_json::json!(true),
+            value_upper: None,
+        }];
+
+        let result = convert_typed_filters_to_clauses(&filters);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_convert_empty_filters_returns_empty() {
+        let filters: Vec<TypedFilter> = vec![];
+        let clauses =
+            convert_typed_filters_to_clauses(&filters).expect("Empty filters should succeed");
+        assert!(clauses.is_empty());
+    }
+
+    // ============================================================
+    // json_to_sql_value / sql_value_to_json conversion tests
+    // ============================================================
+
+    #[test]
+    fn test_json_to_sql_null() {
+        let sv = json_to_sql_value(&serde_json::Value::Null);
+        assert!(matches!(
+            sv.value,
+            Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_))
+        ));
+    }
+
+    #[test]
+    fn test_json_to_sql_bool() {
+        let sv = json_to_sql_value(&serde_json::json!(true));
+        assert!(matches!(
+            sv.value,
+            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
+                true
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_json_to_sql_integer() {
+        let sv = json_to_sql_value(&serde_json::json!(42));
+        assert!(matches!(
+            sv.value,
+            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(42))
+        ));
+    }
+
+    #[test]
+    fn test_json_to_sql_float() {
+        let sv = json_to_sql_value(&serde_json::json!(3.14));
+        if let Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) = sv.value {
+            assert!((f - 3.14).abs() < 1e-10);
+        } else {
+            panic!("Expected NumberValue");
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_string() {
+        let sv = json_to_sql_value(&serde_json::json!("hello"));
+        assert!(matches!(
+            sv.value,
+            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(_))
+        ));
+    }
+
+    #[test]
+    fn test_json_to_sql_array() {
+        let sv = json_to_sql_value(&serde_json::json!([1, 2, 3]));
+        if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(arr)) = sv.value {
+            assert_eq!(arr.values.len(), 3);
+        } else {
+            panic!("Expected ArrayValue");
+        }
+    }
+
+    #[test]
+    fn test_json_to_sql_object() {
+        let sv = json_to_sql_value(&serde_json::json!({"key": "val"}));
+        if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(obj)) = sv.value {
+            assert!(obj.fields.contains_key("key"));
+        } else {
+            panic!("Expected ObjectValue");
+        }
+    }
+
+    #[test]
+    fn test_sql_to_json_roundtrip_null() {
+        let sv = json_to_sql_value(&serde_json::Value::Null);
+        let json = sql_value_to_json(&sv).unwrap();
+        assert!(json.is_null());
+    }
+
+    #[test]
+    fn test_sql_to_json_roundtrip_bool() {
+        let original = serde_json::json!(false);
+        let sv = json_to_sql_value(&original);
+        let json = sql_value_to_json(&sv).unwrap();
+        assert_eq!(json, original);
+    }
+
+    #[test]
+    fn test_sql_to_json_roundtrip_integer() {
+        let original = serde_json::json!(12345);
+        let sv = json_to_sql_value(&original);
+        let json = sql_value_to_json(&sv).unwrap();
+        assert_eq!(json, original);
+    }
+
+    #[test]
+    fn test_sql_to_json_roundtrip_string() {
+        let original = serde_json::json!("test_value");
+        let sv = json_to_sql_value(&original);
+        let json = sql_value_to_json(&sv).unwrap();
+        assert_eq!(json, original);
+    }
+
+    #[test]
+    fn test_sql_to_json_roundtrip_array() {
+        let original = serde_json::json!(["a", "b", "c"]);
+        let sv = json_to_sql_value(&original);
+        let json = sql_value_to_json(&sv).unwrap();
+        assert_eq!(json, original);
+    }
+
+    #[test]
+    fn test_sql_to_json_roundtrip_nested_object() {
+        let original = serde_json::json!({"nested": {"deep": true}});
+        let sv = json_to_sql_value(&original);
+        let json = sql_value_to_json(&sv).unwrap();
+        assert_eq!(json, original);
+    }
+
+    #[test]
+    fn test_sql_to_json_none_value() {
+        use crate::proto::proximadb_v1::SqlValue;
+        let sv = SqlValue { value: None };
+        let json = sql_value_to_json(&sv).unwrap();
+        assert!(json.is_null());
+    }
+
+    // ============================================================
+    // json_to_filter_clause_value tests
+    // ============================================================
+
+    #[test]
+    fn test_filter_clause_string() {
+        let val = json_to_filter_clause_value(&serde_json::json!("active"));
+        assert!(val.is_some());
+    }
+
+    #[test]
+    fn test_filter_clause_integer() {
+        let val = json_to_filter_clause_value(&serde_json::json!(42));
+        assert!(val.is_some());
+    }
+
+    #[test]
+    fn test_filter_clause_float() {
+        let val = json_to_filter_clause_value(&serde_json::json!(3.14));
+        assert!(val.is_some());
+    }
+
+    #[test]
+    fn test_filter_clause_bool() {
+        let val = json_to_filter_clause_value(&serde_json::json!(true));
+        assert!(val.is_some());
+    }
+
+    #[test]
+    fn test_filter_clause_array_unsupported() {
+        let val = json_to_filter_clause_value(&serde_json::json!([1, 2]));
+        assert!(val.is_none());
+    }
+
+    #[test]
+    fn test_filter_clause_null_unsupported() {
+        let val = json_to_filter_clause_value(&serde_json::Value::Null);
+        assert!(val.is_none());
+    }
+
+    // ============================================================
+    // V2 Record Request Parsing
+    // ============================================================
+
+    #[test]
+    fn test_v2_record_request_parsing() {
+        let json = r#"{
+            "records": [
+                {
+                    "id": "rec_001",
+                    "vector": [0.1, 0.2, 0.3, 0.4],
+                    "typed_fields": {
+                        "name": "Widget",
+                        "price": 29.99,
+                        "in_stock": true,
+                        "quantity": 42
+                    },
+                    "text_fields": [
+                        {
+                            "name": "description",
+                            "content": "A high-quality widget for all purposes",
+                            "storage_hint": "adaptive"
+                        }
+                    ],
+                    "metadata": {
+                        "source": "api_test"
+                    }
+                },
+                {
+                    "vector": [0.5, 0.6, 0.7, 0.8],
+                    "typed_fields": {
+                        "name": "Gadget"
+                    }
+                }
+            ],
+            "validate_schema": false
+        }"#;
+
+        let request: InsertRecordsRequest =
+            serde_json::from_str(json).expect("Failed to parse V2 record request");
+
+        assert_eq!(request.records.len(), 2);
+        assert_eq!(request.validate_schema, Some(false));
+
+        // First record has all fields
+        let rec0 = &request.records[0];
+        assert_eq!(rec0.id, Some("rec_001".to_string()));
+        assert_eq!(rec0.vector.len(), 4);
+        assert!(rec0.typed_fields.is_some());
+        let typed = rec0
+            .typed_fields
+            .as_ref()
+            .expect("typed_fields should be Some");
+        assert_eq!(typed.get("name"), Some(&serde_json::json!("Widget")));
+        assert_eq!(typed.get("price"), Some(&serde_json::json!(29.99)));
+        assert_eq!(typed.get("in_stock"), Some(&serde_json::json!(true)));
+        assert_eq!(typed.get("quantity"), Some(&serde_json::json!(42)));
+
+        let text_fields = rec0
+            .text_fields
+            .as_ref()
+            .expect("text_fields should be Some");
+        assert_eq!(text_fields.len(), 1);
+        assert_eq!(text_fields[0].name, "description");
+        assert_eq!(text_fields[0].storage_hint, Some("adaptive".to_string()));
+
+        let metadata = rec0.metadata.as_ref().expect("metadata should be Some");
+        assert_eq!(metadata.get("source"), Some(&serde_json::json!("api_test")));
+
+        // Second record has auto-generated ID (None)
+        let rec1 = &request.records[1];
+        assert!(rec1.id.is_none());
+        assert_eq!(rec1.vector.len(), 4);
+        assert!(rec1.text_fields.is_none());
+        assert!(rec1.metadata.is_none());
+    }
+
+    // ============================================================
+    // V2 Record Response Serialization
+    // ============================================================
+
+    #[test]
+    fn test_v2_record_response_serialization() {
+        let response = InsertRecordsResponse {
+            inserted_count: 3,
+            failed_count: 1,
+            errors: vec![InsertError {
+                index: 2,
+                id: Some("bad_rec".to_string()),
+                error: "Vector cannot be empty".to_string(),
+            }],
+            inserted_ids: vec!["id_1".to_string(), "id_2".to_string(), "id_3".to_string()],
+        };
+
+        let json_str =
+            serde_json::to_string(&response).expect("Failed to serialize InsertRecordsResponse");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("Failed to parse serialized response");
+
+        assert_eq!(parsed["inserted_count"], 3);
+        assert_eq!(parsed["failed_count"], 1);
+        assert_eq!(
+            parsed["inserted_ids"]
+                .as_array()
+                .expect("Expected array")
+                .len(),
+            3
+        );
+
+        let errors = parsed["errors"].as_array().expect("Expected errors array");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["index"], 2);
+        assert_eq!(errors[0]["id"], "bad_rec");
+        assert_eq!(errors[0]["error"], "Vector cannot be empty");
+    }
+
+    // ============================================================
+    // V2 Batch Request Parsing
+    // ============================================================
+
+    #[test]
+    fn test_v2_batch_request_parsing() {
+        // A batch with multiple records of varying completeness
+        let json = r#"{
+            "records": [
+                {"vector": [0.1, 0.2], "typed_fields": {"a": 1}},
+                {"vector": [0.3, 0.4], "typed_fields": {"b": 2}},
+                {"vector": [0.5, 0.6], "typed_fields": {"c": 3}},
+                {"vector": [0.7, 0.8]}
+            ]
+        }"#;
+
+        let request: InsertRecordsRequest =
+            serde_json::from_str(json).expect("Failed to parse batch request");
+
+        assert_eq!(request.records.len(), 4);
+        // validate_schema defaults to None when omitted
+        assert!(request.validate_schema.is_none());
+
+        // All records should have valid vectors
+        for rec in &request.records {
+            assert_eq!(rec.vector.len(), 2);
+        }
+
+        // Only first three have typed_fields
+        assert!(request.records[0].typed_fields.is_some());
+        assert!(request.records[1].typed_fields.is_some());
+        assert!(request.records[2].typed_fields.is_some());
+        assert!(request.records[3].typed_fields.is_none());
+    }
+
+    // ============================================================
+    // V2 Search Request Parsing
+    // ============================================================
+
+    #[test]
+    fn test_v2_search_request_parsing() {
+        let json = r#"{
+            "vector": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "top_k": 25,
+            "filters": [
+                {"field": "category", "op": "eq", "value": "electronics"},
+                {"field": "price", "op": "gte", "value": 10.0},
+                {"field": "price", "op": "lte", "value": 1000.0},
+                {"field": "brand", "op": "in", "value": ["Apple", "Samsung"]},
+                {"field": "description", "op": "contains", "value": "wireless"}
+            ],
+            "include_text": true,
+            "include_vector": false
+        }"#;
+
+        let request: TypedSearchRequest =
+            serde_json::from_str(json).expect("Failed to parse V2 search request");
+
+        assert_eq!(request.vector.len(), 5);
+        assert_eq!(request.top_k, 25);
+        assert_eq!(request.include_text, Some(true));
+        assert_eq!(request.include_vector, Some(false));
+
+        let filters = request.filters.as_ref().expect("filters should be Some");
+        assert_eq!(filters.len(), 5);
+
+        // Verify filter field names and operators
+        assert_eq!(filters[0].field, "category");
+        assert_eq!(filters[0].op, "eq");
+        assert_eq!(filters[1].field, "price");
+        assert_eq!(filters[1].op, "gte");
+        assert_eq!(filters[2].field, "price");
+        assert_eq!(filters[2].op, "lte");
+        assert_eq!(filters[3].field, "brand");
+        assert_eq!(filters[3].op, "in");
+        assert!(filters[3].value.is_array());
+        assert_eq!(filters[4].field, "description");
+        assert_eq!(filters[4].op, "contains");
+
+        // Verify no filters have value_upper unless between
+        for filter in filters {
+            assert!(filter.value_upper.is_none());
+        }
+    }
+
+    // ============================================================
+    // V2 Schema Request Parsing
+    // ============================================================
+
+    #[test]
+    fn test_v2_schema_request_parsing() {
+        // Test that UpdateSchemaRequest deserializes correctly
+        // UpdateSchemaRequest uses #[serde(flatten)] on SchemaDefinition
+        let json = r#"{
+            "columns": [
+                {
+                    "name": "category",
+                    "data_type": "text",
+                    "nullable": true,
+                    "indexed": true,
+                    "filterable": true
+                },
+                {
+                    "name": "price",
+                    "data_type": "float",
+                    "nullable": false,
+                    "filterable": true
+                },
+                {
+                    "name": "embedding",
+                    "data_type": "vector",
+                    "vector_dimension": 768
+                }
+            ],
+            "enforcement": "hybrid",
+            "allow_additional_fields": true,
+            "force": false
+        }"#;
+
+        let request: super::super::schema::UpdateSchemaRequest =
+            serde_json::from_str(json).expect("Failed to parse schema update request");
+
+        assert_eq!(request.schema.columns.len(), 3);
+        assert_eq!(request.schema.enforcement, Some("hybrid".to_string()));
+        assert_eq!(request.schema.allow_additional_fields, Some(true));
+        assert_eq!(request.force, Some(false));
+
+        // Verify column details
+        let col0 = &request.schema.columns[0];
+        assert_eq!(col0.name, "category");
+        assert_eq!(col0.data_type, "text");
+        assert_eq!(col0.nullable, Some(true));
+        assert_eq!(col0.indexed, Some(true));
+
+        let col1 = &request.schema.columns[1];
+        assert_eq!(col1.name, "price");
+        assert_eq!(col1.data_type, "float");
+        assert_eq!(col1.nullable, Some(false));
+
+        let col2 = &request.schema.columns[2];
+        assert_eq!(col2.name, "embedding");
+        assert_eq!(col2.data_type, "vector");
+        assert_eq!(col2.vector_dimension, Some(768));
+    }
+
+    // ============================================================
+    // V2 Error Response Format
+    // ============================================================
+
+    #[test]
+    fn test_v2_error_response_format() {
+        // Verify InsertError and InsertRecordsResponse serialization
+        // when all records fail
+        let response = InsertRecordsResponse {
+            inserted_count: 0,
+            failed_count: 2,
+            errors: vec![
+                InsertError {
+                    index: 0,
+                    id: Some("rec_a".to_string()),
+                    error: "Vector cannot be empty".to_string(),
+                },
+                InsertError {
+                    index: 1,
+                    id: None,
+                    error: "Dimension mismatch: expected 768, got 128".to_string(),
+                },
+            ],
+            inserted_ids: vec![],
+        };
+
+        let json_str =
+            serde_json::to_string(&response).expect("Failed to serialize error response");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("Failed to parse serialized error response");
+
+        assert_eq!(parsed["inserted_count"], 0);
+        assert_eq!(parsed["failed_count"], 2);
+        assert!(
+            parsed["inserted_ids"]
+                .as_array()
+                .expect("Expected array")
+                .is_empty()
+        );
+
+        let errors = parsed["errors"].as_array().expect("Expected errors array");
+        assert_eq!(errors.len(), 2);
+
+        // First error has an id
+        assert_eq!(errors[0]["index"], 0);
+        assert_eq!(errors[0]["id"], "rec_a");
+        assert!(
+            errors[0]["error"]
+                .as_str()
+                .expect("Expected string")
+                .contains("empty")
+        );
+
+        // Second error has null id
+        assert_eq!(errors[1]["index"], 1);
+        assert!(errors[1]["id"].is_null());
+        assert!(
+            errors[1]["error"]
+                .as_str()
+                .expect("Expected string")
+                .contains("Dimension mismatch")
+        );
+
+        // Also verify the search response serializes correctly
+        let search_resp = TypedSearchResponse {
+            results: vec![TypedSearchResult {
+                id: "doc_1".to_string(),
+                score: 0.95,
+                vector: None,
+                typed_fields: {
+                    let mut m = HashMap::new();
+                    m.insert("category".to_string(), serde_json::json!("test"));
+                    m
+                },
+                text_fields: None,
+                metadata: None,
+            }],
+            total_matches: Some(100),
+            latency_ms: 5,
+            request_id: "req-123".to_string(),
+        };
+
+        let search_json =
+            serde_json::to_string(&search_resp).expect("Failed to serialize search response");
+        let search_parsed: serde_json::Value =
+            serde_json::from_str(&search_json).expect("Failed to parse serialized search response");
+
+        assert_eq!(
+            search_parsed["results"]
+                .as_array()
+                .expect("Expected array")
+                .len(),
+            1
+        );
+        assert_eq!(search_parsed["total_matches"], 100);
+        assert_eq!(search_parsed["latency_ms"], 5);
+        assert_eq!(search_parsed["request_id"], "req-123");
     }
 }

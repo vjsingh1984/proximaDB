@@ -237,8 +237,8 @@ impl CollectionPartition {
                     let sequence = batch
                         .timestamp
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis() as u64;
+                        .map(|duration| duration.as_millis() as u64)
+                        .unwrap_or(0);
                     let version = vector_record.version;
 
                     // Check if this is a newer version (prioritize version number over timestamp)
@@ -267,7 +267,7 @@ impl CollectionPartition {
         // Check the latest record we found
         if let Some((record, _, _)) = latest_record {
             // Check if it's expired (logical delete) - convert current_time to seconds
-            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
             let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
 
             if is_expired.unwrap_or(false) {
@@ -335,8 +335,8 @@ impl CollectionPartition {
                 let sequence = batch
                     .timestamp
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or(0);
                 let version = vector_record.version;
 
                 if !vector_record.id.is_empty() {
@@ -365,7 +365,7 @@ impl CollectionPartition {
                     }
                 } else {
                     // No ID - include directly if not expired
-                    let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+                    let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
                     let is_expired = vector_record
                         .expires_at
                         .map(|expires| expires < current_time_secs);
@@ -381,7 +381,7 @@ impl CollectionPartition {
         let mut vectors = Vec::new();
 
         for (_, (record, _, _)) in id_to_latest {
-            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
             let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
 
             if !is_expired.unwrap_or(false) {
@@ -456,8 +456,8 @@ impl CollectionPartition {
                 let sequence = wal_batch
                     .timestamp
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
+                    .map(|duration| duration.as_millis() as u64)
+                    .unwrap_or(0);
                 let version = vector_record.version;
 
                 if !vector_record.id.is_empty() {
@@ -481,11 +481,11 @@ impl CollectionPartition {
                     if is_newer {
                         // Skip tombstones (empty vector + expires_at in past or 0) - they mark deletions
                         // and should not be included in search results
-                        let current_time_secs = (current_time / 1_000_000) as i64;
+                        let current_time_secs = current_time / 1_000_000;
                         let is_tombstone = vector_record.vector.is_empty()
                             && vector_record
                                 .expires_at
-                                .map_or(false, |e| e <= current_time_secs);
+                                .is_some_and(|e| e <= current_time_secs);
                         if is_tombstone {
                             // Remove any previous version from results (tombstone shadows it)
                             id_to_latest.remove(vector_id);
@@ -519,7 +519,7 @@ impl CollectionPartition {
                         continue;
                     }
 
-                    let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+                    let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
                     let is_expired = vector_record
                         .expires_at
                         .map(|expires| expires < current_time_secs);
@@ -542,7 +542,7 @@ impl CollectionPartition {
         let latest_versions_count = id_to_latest.len();
 
         for (id, (score, vector_record, _, _)) in id_to_latest {
-            let current_time_secs = (current_time / 1_000_000) as i64; // Convert microseconds to seconds
+            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
             let is_expired = vector_record
                 .expires_at
                 .map(|expires| expires < current_time_secs);
@@ -687,7 +687,7 @@ impl GlobalPartitionedMemtable {
             for batch in partition.wal_batches.values() {
                 // With CompactBatchId, we don't track individual sequences
                 // Just return the first vector as a placeholder
-                // TODO: Implement proper sequence tracking if needed
+                // Deferred: Implement proper sequence tracking if needed
                 if let Some(vector) = batch.vector_records.first() {
                     return Ok(Some(vector.clone()));
                 }
@@ -905,10 +905,10 @@ impl GlobalPartitionedMemtable {
 
             // Secondary: Efficiency score (highest first)
             let efficiency_cmp = b.efficiency_score.partial_cmp(&a.efficiency_score);
-            if let Some(cmp) = efficiency_cmp {
-                if cmp != std::cmp::Ordering::Equal {
-                    return cmp;
-                }
+            if let Some(cmp) = efficiency_cmp
+                && cmp != std::cmp::Ordering::Equal
+            {
+                return cmp;
             }
 
             // Tertiary: Age score (oldest first)
@@ -1029,7 +1029,7 @@ impl GlobalPartitionedMemtable {
         F: FnOnce(&mut MemtableMetrics),
     {
         let mut metrics = self.metrics.write().await;
-        updater(&mut *metrics);
+        updater(&mut metrics);
         Ok(())
     }
 
@@ -1090,39 +1090,39 @@ impl GlobalPartitionedMemtable {
     /// Remove a specific batch from a collection (for atomic rollback)
     pub async fn remove_batch(&self, collection_id: &str, batch_id: &str) -> Result<()> {
         let mut collections = self.collections.write().await;
-        if let Some(partition) = collections.get_mut(collection_id) {
-            if let Some(removed_batch) = partition.wal_batches.remove(batch_id) {
-                // Update partition stats
-                partition.vector_count = partition
-                    .vector_count
-                    .saturating_sub(removed_batch.vector_records.len());
-                partition.total_size = partition
-                    .total_size
-                    .saturating_sub(removed_batch.total_size_bytes);
-                partition.batch_count = partition.batch_count.saturating_sub(1);
+        if let Some(partition) = collections.get_mut(collection_id)
+            && let Some(removed_batch) = partition.wal_batches.remove(batch_id)
+        {
+            // Update partition stats
+            partition.vector_count = partition
+                .vector_count
+                .saturating_sub(removed_batch.vector_records.len());
+            partition.total_size = partition
+                .total_size
+                .saturating_sub(removed_batch.total_size_bytes);
+            partition.batch_count = partition.batch_count.saturating_sub(1);
 
-                // Remove from vector index
-                for vector_record in removed_batch.vector_records.iter() {
-                    if !vector_record.id.is_empty() {
-                        partition.vector_id_index.remove(&vector_record.id);
-                    }
+            // Remove from vector index
+            for vector_record in removed_batch.vector_records.iter() {
+                if !vector_record.id.is_empty() {
+                    partition.vector_id_index.remove(&vector_record.id);
                 }
-
-                // Update global metrics
-                let mut metrics = self.metrics.write().await;
-                metrics.entry_count = metrics
-                    .entry_count
-                    .saturating_sub(removed_batch.vector_records.len());
-
-                tracing::debug!(
-                    "🗑️ Removed batch {} from collection {} ({} vectors)",
-                    batch_id,
-                    collection_id,
-                    removed_batch.vector_records.len()
-                );
-
-                return Ok(());
             }
+
+            // Update global metrics
+            let mut metrics = self.metrics.write().await;
+            metrics.entry_count = metrics
+                .entry_count
+                .saturating_sub(removed_batch.vector_records.len());
+
+            tracing::debug!(
+                "🗑️ Removed batch {} from collection {} ({} vectors)",
+                batch_id,
+                collection_id,
+                removed_batch.vector_records.len()
+            );
+
+            return Ok(());
         }
 
         Err(anyhow::anyhow!(
@@ -1177,10 +1177,9 @@ impl GlobalPartitionedMemtable {
     /// Get stats for a specific collection
     pub async fn stats(&self, collection_id: &str) -> (usize, usize) {
         let collections = self.collections.read().await;
-        collections
-            .get(collection_id)
-            .map(|partition| (partition.vector_count, partition.total_size))
-            .unwrap_or((0, 0))
+        collections.get(collection_id).map_or((0, 0), |partition| {
+            (partition.vector_count, partition.total_size)
+        })
     }
 
     /// List all collection IDs

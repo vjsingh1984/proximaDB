@@ -63,7 +63,7 @@ impl<const DIM: usize, const SUBVECTORS: usize> CompileTimeQuantization
         let mut output = [0u8; SUBVECTORS];
         let subvector_size = DIM / SUBVECTORS;
 
-        for i in 0..SUBVECTORS {
+        for (i, out_val) in output.iter_mut().enumerate() {
             let start = i * subvector_size;
             let end = ((i + 1) * subvector_size).min(N);
 
@@ -73,7 +73,7 @@ impl<const DIM: usize, const SUBVECTORS: usize> CompileTimeQuantization
                 let subvec_mean = subvec_sum / (end - start) as f32;
 
                 // Quantize to 4 bits (0-15)
-                output[i] = ((subvec_mean + 1.0) * 7.5).round().clamp(0.0, 15.0) as u8;
+                *out_val = ((subvec_mean + 1.0) * 7.5).round().clamp(0.0, 15.0) as u8;
             }
         }
 

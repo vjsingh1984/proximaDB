@@ -79,9 +79,7 @@ impl InMemorySchemaRegistry {
 impl SchemaRegistry for InMemorySchemaRegistry {
     async fn register_schema(&self, collection_id: &str, schema: ProximaSchema) -> Result<()> {
         let mut schemas = self.schemas.write().await;
-        let collection_schemas = schemas
-            .entry(collection_id.to_string())
-            .or_insert_with(HashMap::new);
+        let collection_schemas = schemas.entry(collection_id.to_string()).or_default();
 
         // Check for duplicate version
         if collection_schemas.contains_key(&schema.version) {
@@ -353,10 +351,9 @@ impl SchemaRegistry for PersistentSchemaRegistry {
                 .get_schema(collection_id, version)
                 .await?
                 .is_none()
+                && let Some(schema) = self.load_schema(collection_id, version).await?
             {
-                if let Some(schema) = self.load_schema(collection_id, version).await? {
-                    self.cache.register_schema(collection_id, schema).await.ok();
-                }
+                self.cache.register_schema(collection_id, schema).await.ok();
             }
         }
 

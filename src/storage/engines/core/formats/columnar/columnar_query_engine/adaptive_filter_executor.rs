@@ -19,7 +19,7 @@ pub struct BranchedFilterExecutor {
     reader: UnifiedColumnarReader,
 }
 
-// TODO: Fix API incompatibilities after module restructuring
+// Disabled: API incompatibilities after module restructuring
 #[allow(dead_code)]
 impl BranchedFilterExecutor {
     /// Create new executor with filterable columns
@@ -28,7 +28,7 @@ impl BranchedFilterExecutor {
         _file_paths: Vec<String>,
         _dimension: usize,
     ) -> Result<Self> {
-        // TODO: Fix API incompatibilities after module restructuring
+        // Disabled: API incompatibilities after module restructuring
         // Temporarily return error to avoid complex API fixes
         Err(anyhow::anyhow!(
             "BranchedFilterExecutor temporarily disabled due to API changes"
@@ -36,20 +36,20 @@ impl BranchedFilterExecutor {
     }
 
     /// Execute query with branched filtering
-    /// TODO: Complete implementation after UnifiedColumnarReader API is finalized
+    /// Deferred: pending UnifiedColumnarReader API finalization
     pub async fn execute(
         &self,
         _filters: &[MetadataFilter],
         _allow_slow_queries: bool,
     ) -> Result<Vec<VectorRecord>> {
-        // TODO: Re-enable after API compatibility issues resolved
+        // Disabled pending API compatibility resolution
         Err(anyhow::anyhow!(
             "BranchedFilterExecutor temporarily disabled due to API changes"
         ))
     }
 
     /// Execute fast path with column projection
-    /// TODO: Re-implement when UnifiedColumnarReader API is ready
+    /// Deferred: pending UnifiedColumnarReader API
     #[allow(dead_code)]
     async fn execute_fast_path(
         &self,
@@ -62,7 +62,7 @@ impl BranchedFilterExecutor {
     }
 
     /// Execute slow path with full scan
-    /// TODO: Re-implement when UnifiedColumnarReader API is ready
+    /// Deferred: pending UnifiedColumnarReader API
     #[allow(dead_code)]
     async fn execute_slow_path(
         &self,
@@ -75,7 +75,7 @@ impl BranchedFilterExecutor {
     }
 
     /// Execute mixed path with pushdown and post-filtering
-    /// TODO: Re-implement when UnifiedColumnarReader API is ready
+    /// Deferred: pending UnifiedColumnarReader API
     #[allow(dead_code)]
     async fn execute_mixed_path(
         &self,
@@ -89,7 +89,7 @@ impl BranchedFilterExecutor {
     }
 
     /// Apply filters in memory (post-filtering)
-    /// TODO: Re-implement when filter matching logic is ready
+    /// Deferred: pending filter matching logic
     #[allow(dead_code)]
     fn apply_post_filters(
         &self,
@@ -102,7 +102,7 @@ impl BranchedFilterExecutor {
     }
 
     /// Check if a record matches a filter
-    /// TODO: Re-implement when filter matching logic is ready
+    /// Deferred: pending filter matching logic
     #[allow(dead_code)]
     fn record_matches_filter(&self, _record: &VectorRecord, _filter: &MetadataFilter) -> bool {
         false // Temporary implementation

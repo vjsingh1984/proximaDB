@@ -26,9 +26,20 @@ pub struct NotificationManager {
 impl NotificationManager {
     /// Create a new notification manager
     pub fn new() -> Self {
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap_or_else(|err| {
+                warn!(
+                    "Failed to build no-proxy reqwest client for NotificationManager; falling back to default client: {}",
+                    err
+                );
+                reqwest::Client::new()
+            });
+
         Self {
             channels: RwLock::new(HashMap::new()),
-            client: reqwest::Client::new(),
+            client,
         }
     }
 
@@ -216,13 +227,78 @@ impl NotificationManager {
         Ok(())
     }
 
-    /// Send email notification
+    /// Send email notification via SMTP
     async fn send_email(&self, config: &EmailConfig, alert: &Alert) -> Result<()> {
-        // TODO: Implement SMTP email sending
-        // For now, just log the intent
+        use lettre::{
+            Message, SmtpTransport, Transport, message::header::ContentType,
+            transport::smtp::authentication::Credentials,
+        };
+
+        // Build email message
+        let subject = format!("[ProximaDB Alert] {}", alert.name);
+        let value_str = alert
+            .value
+            .map_or("N/A".to_string(), |v| format!("{:.2}", v));
+        let threshold_str = alert
+            .threshold
+            .map_or("N/A".to_string(), |v| format!("{:.2}", v));
+        let severity_str = format_severity_from_enum(alert.severity);
+
+        let body = format!(
+            "Alert: {}\n\n\
+             Severity: {}\n\n\
+             Message: {}\n\n\
+             Value: {}\n\n\
+             Threshold: {}\n\n\
+             Source: {}\n\n\
+             Timestamp: {}",
+            alert.name,
+            severity_str,
+            alert.message,
+            value_str,
+            threshold_str,
+            alert.source,
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        );
+
+        // Send to each recipient
+        for recipient in &config.recipients {
+            let email = Message::builder()
+                .from(config.from.parse().context("Invalid from address")?)
+                .to(recipient
+                    .parse()
+                    .with_context(|| format!("Invalid recipient address: {}", recipient))?)
+                .subject(&subject)
+                .header(ContentType::TEXT_PLAIN)
+                .body(body.clone())
+                .context("Failed to build email message")?;
+
+            // Create SMTP transport
+            let smtp_addr = format!("{}:{}", config.smtp_server, config.smtp_port);
+            let creds = Credentials::new(config.username.clone(), config.password.clone());
+
+            let mailer = SmtpTransport::relay(&smtp_addr)
+                .map_err(|e| anyhow::anyhow!("Failed to create SMTP transport: {}", e))?
+                .credentials(creds)
+                .build();
+
+            // Send the email (blocking, but OK for alert notifications)
+            tokio::task::spawn_blocking(move || {
+                mailer.send(&email).context("Failed to send email via SMTP")
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to join email sending task: {}", e))?
+            .context("Failed to send email via SMTP")?;
+
+            debug!(
+                "Sent email notification to {} for alert: {}",
+                recipient, alert.name
+            );
+        }
+
         info!(
-            "Would send email to {} for alert: {}",
-            config.recipients.join(", "),
+            "Sent email notifications to {} recipients for alert: {}",
+            config.recipients.len(),
             alert.name
         );
         Ok(())
@@ -265,7 +341,13 @@ pub enum WebhookAuth {
     /// Bearer token
     Bearer(String),
     /// Basic auth
-    Basic { username: String, password: String },
+    /// Basic authentication with username and password.
+    Basic {
+        /// HTTP basic auth username.
+        username: String,
+        /// HTTP basic auth password.
+        password: String,
+    },
 }
 
 /// Slack configuration
@@ -328,6 +410,16 @@ pub struct WebhookPayload {
     pub timestamp: String,
 }
 
+/// Format severity for display
+fn format_severity_from_enum(severity: crate::observability::alerting::AlertSeverity) -> String {
+    match severity {
+        crate::observability::alerting::AlertSeverity::Critical => "Critical".to_string(),
+        crate::observability::alerting::AlertSeverity::High => "High".to_string(),
+        crate::observability::alerting::AlertSeverity::Medium => "Medium".to_string(),
+        crate::observability::alerting::AlertSeverity::Low => "Low".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -364,5 +456,71 @@ mod tests {
 
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("HighCPU"));
+    }
+
+    #[tokio::test]
+    #[ignore] // Run manually with: cargo test --lib -- --ignored test_smtp_notification
+    async fn test_smtp_notification() {
+        use crate::observability::alerting::{Alert, AlertSeverity};
+        use std::collections::HashMap;
+
+        // This test sends a real email to singhvjd@gmail.com
+        // Configure your SMTP settings before running this test
+        let manager = NotificationManager::new();
+
+        // Create email configuration
+        let email_config = EmailConfig {
+            smtp_server: std::env::var("SMTP_SERVER")
+                .unwrap_or_else(|_| "smtp.gmail.com".to_string()),
+            smtp_port: std::env::var("SMTP_PORT")
+                .unwrap_or_else(|_| "587".to_string())
+                .parse()
+                .expect("Invalid SMTP port"),
+            username: std::env::var("SMTP_USERNAME").expect("SMTP_USERNAME must be set"),
+            password: std::env::var("SMTP_PASSWORD").expect("SMTP_PASSWORD must be set"),
+            from: std::env::var("SMTP_FROM")
+                .unwrap_or_else(|_| "noreply@proximadb.test".to_string()),
+            recipients: vec!["singhvjd@gmail.com".to_string()],
+        };
+
+        // Register email channel
+        let channel = NotificationChannel::Email(email_config.clone());
+        manager
+            .register_channel("smtp_test", channel)
+            .await
+            .unwrap();
+
+        // Create a test alert
+        let mut labels = HashMap::new();
+        labels.insert("host".to_string(), "localhost".to_string());
+        labels.insert("test".to_string(), "integration".to_string());
+
+        let mut annotations = HashMap::new();
+        annotations.insert(
+            "description".to_string(),
+            "Test alert from ProximaDB".to_string(),
+        );
+
+        let alert = Alert {
+            name: "Test SMTP Alert".to_string(),
+            message: "This is a test alert from ProximaDB integration test".to_string(),
+            severity: AlertSeverity::Medium,
+            source: "integration_test".to_string(),
+            rule_id: None,
+            labels,
+            annotations,
+            value: Some(42.0),
+            threshold: Some(50.0),
+        };
+
+        // Send the notification
+        let result = manager.send(&alert).await;
+        assert!(
+            result.is_ok(),
+            "Failed to send SMTP notification: {:?}",
+            result.err()
+        );
+
+        println!("✅ Successfully sent test email to singhvjd@gmail.com");
     }
 }

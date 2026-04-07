@@ -50,9 +50,10 @@ impl Default for VectorSerializationConfig {
 }
 
 /// Compression algorithms supported for vector data
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 pub enum CompressionAlgorithm {
     /// No compression
+    #[default]
     None,
     /// Zstandard compression
     Zstd,
@@ -87,12 +88,6 @@ pub enum CompressionAlgorithm {
     /// - ID columns: GZIP (maximum compression)
     /// - Metadata columns: BROTLI (maximum compression for cold data)
     Mixed,
-}
-
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        CompressionAlgorithm::None
-    }
 }
 
 /// Vector serialization format marker
@@ -418,7 +413,7 @@ impl VectorSerializationConfig {
 
     /// Get compression ratio for a vector (compressed_size / original_size)
     pub fn compression_ratio(&self, vector: &[f32]) -> Result<f32> {
-        let original_size = vector.len() * size_of::<f32>();
+        let original_size = std::mem::size_of_val(vector);
         let compressed = self.serialize_vector(vector)?;
         Ok(compressed.len() as f32 / original_size as f32)
     }
@@ -481,11 +476,16 @@ impl VectorSerializationConfig {
 /// Analysis results for a vector
 #[derive(Debug, Clone)]
 pub struct VectorAnalysis {
+    /// Vector dimension
     pub dimension: usize,
-    pub sparsity: f32, // Ratio of zero/near-zero elements
+    /// Ratio of near-zero elements (below epsilon threshold)
+    pub sparsity: f32,
+    /// Arithmetic mean of element values
     pub mean: f32,
+    /// Variance of element values
     pub variance: f32,
-    pub zero_ratio: f32, // Ratio of exact zero elements
+    /// Ratio of exactly zero elements
+    pub zero_ratio: f32,
 }
 
 #[cfg(test)]
@@ -603,5 +603,169 @@ mod tests {
             CompressionAlgorithm::None
         );
         assert!(large_config.compression_level > small_config.compression_level);
+    }
+
+    // --- Additional tests inlined from tests/unit/serialization_compression_tests.rs ---
+
+    #[test]
+    fn test_compression_threshold_behavior() {
+        let vector_small = vec![1.0; 50]; // 200 bytes
+        let vector_large = vec![1.0; 500]; // 2000 bytes
+
+        let config = VectorSerializationConfig {
+            use_bytemuck: true,
+            compression_threshold: 256, // Threshold between small and large
+            compression_algorithm: CompressionAlgorithm::Zstd,
+            compression_level: 3,
+            adaptive_compression: false,
+        };
+
+        // Small vector should not be compressed
+        let small_serialized = config.serialize_vector(&vector_small).unwrap();
+        let header_bytes = &small_serialized[..size_of::<VectorHeader>()];
+        let small_header: &VectorHeader = from_bytes(header_bytes);
+        assert_eq!(small_header.format, SerializationFormat::RawBytemuck as u8);
+
+        // Large vector should be compressed
+        let large_serialized = config.serialize_vector(&vector_large).unwrap();
+        let large_header_bytes = &large_serialized[..size_of::<VectorHeader>()];
+        let large_header: &VectorHeader = from_bytes(large_header_bytes);
+        assert_eq!(large_header.format, SerializationFormat::ZstdBytemuck as u8);
+    }
+
+    #[test]
+    fn test_zstd_compression_effectiveness() {
+        let config = VectorSerializationConfig {
+            use_bytemuck: true,
+            compression_threshold: 100, // Low threshold to ensure compression
+            compression_algorithm: CompressionAlgorithm::Zstd,
+            compression_level: 3,
+            adaptive_compression: false,
+        };
+
+        // Test sparse vector (should compress well)
+        let sparse_vector = create_sparse_vector(1000, 0.9);
+        let serialized = config.serialize_vector(&sparse_vector).unwrap();
+        let compression_ratio = config.compression_ratio(&sparse_vector).unwrap();
+
+        // Verify round-trip
+        let deserialized = config.deserialize_vector(&serialized).unwrap();
+        assert_eq!(sparse_vector.len(), deserialized.len());
+
+        // Check values match
+        for (original, recovered) in sparse_vector.iter().zip(deserialized.iter()) {
+            assert!((original - recovered).abs() < f32::EPSILON);
+        }
+
+        // Sparse vectors should compress well (reduced threshold to 0.05 based on ZSTD variations)
+        assert!(
+            compression_ratio > 0.05,
+            "Expected good compression but got {:.3}",
+            compression_ratio
+        );
+    }
+
+    #[test]
+    fn test_corrupted_data_handling() {
+        let config = VectorSerializationConfig::default();
+        let vector = vec![1.0, 2.0, 3.0];
+        let serialized = config.serialize_vector(&vector).unwrap();
+
+        // Test 1: Empty data
+        let result = config.deserialize_vector(&[]);
+        assert!(result.is_err());
+
+        // Test 2: Corrupted header
+        let mut corrupted = serialized.clone();
+        corrupted[0] = 255; // Invalid format marker
+        let result = config.deserialize_vector(&corrupted);
+        assert!(result.is_err());
+
+        // Test 3: Truncated data
+        let truncated = &serialized[..serialized.len() / 2];
+        let result = config.deserialize_vector(truncated);
+        assert!(result.is_err());
+
+        // Test 4: Wrong checksum
+        let mut bad_checksum = serialized.clone();
+        let header_size = size_of::<VectorHeader>();
+        bad_checksum[header_size - 4] ^= 0xFF; // Corrupt checksum
+        let result = config.deserialize_vector(&bad_checksum);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        let config = VectorSerializationConfig::default();
+
+        // Single element
+        let single = vec![42.0];
+        let serialized = config.serialize_vector(&single).unwrap();
+        let deserialized = config.deserialize_vector(&serialized).unwrap();
+        assert_eq!(single, deserialized);
+
+        // Very large vector
+        let large = vec![0.1; 100_000];
+        let serialized = config.serialize_vector(&large).unwrap();
+        let deserialized = config.deserialize_vector(&serialized).unwrap();
+        assert_eq!(large.len(), deserialized.len());
+
+        // Special float values
+        let special = vec![0.0, -0.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN];
+        let serialized = config.serialize_vector(&special).unwrap();
+        let deserialized = config.deserialize_vector(&serialized).unwrap();
+
+        assert_eq!(special[0], deserialized[0]);
+        assert_eq!(special[1], deserialized[1]);
+        assert_eq!(special[2], deserialized[2]);
+        assert_eq!(special[3], deserialized[3]);
+        assert!(deserialized[4].is_nan()); // NaN comparison
+    }
+
+    #[test]
+    fn test_concurrent_serialization() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let config = Arc::new(VectorSerializationConfig::default());
+        let num_threads = 4;
+        let vectors_per_thread = 100;
+
+        let handles: Vec<_> = (0..num_threads)
+            .map(|thread_id| {
+                let config = Arc::clone(&config);
+                thread::spawn(move || {
+                    let mut results = Vec::new();
+                    for i in 0..vectors_per_thread {
+                        let vector = create_test_vector(256, 0.5);
+                        let serialized = config.serialize_vector(&vector).unwrap();
+                        let deserialized = config.deserialize_vector(&serialized).unwrap();
+                        assert_eq!(vector.len(), deserialized.len());
+                        results.push((thread_id, i, serialized.len()));
+                    }
+                    results
+                })
+            })
+            .collect();
+
+        let all_results: Vec<_> = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .flatten()
+            .collect();
+
+        assert_eq!(all_results.len(), num_threads * vectors_per_thread);
+    }
+
+    // Helper function for creating sparse vectors
+    fn create_sparse_vector(size: usize, sparsity: f32) -> Vec<f32> {
+        let mut vector = vec![0.0; size];
+        let non_zero_count = ((1.0 - sparsity) * size as f32) as usize;
+
+        for i in 0..non_zero_count {
+            vector[i] = (i as f32 + 1.0) * 0.1;
+        }
+
+        vector
     }
 }

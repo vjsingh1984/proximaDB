@@ -261,14 +261,12 @@ impl TenantAwareEntityStore {
         let entity_count = self
             .tenant_entities
             .get(tenant_id)
-            .map(|store| store.len())
-            .unwrap_or(0);
+            .map_or(0, |store| store.len());
 
         let header_count = self
             .tenant_entity_headers
             .get(tenant_id)
-            .map(|headers| headers.len())
-            .unwrap_or(0);
+            .map_or(0, |headers| headers.len());
 
         TenantEntityStats {
             tenant_id: tenant_id.to_string(),
@@ -376,6 +374,12 @@ impl EntityAuditLogger {
     }
 }
 
+impl Default for EntityAuditLogger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Simple audit event
 #[derive(Debug, Clone)]
 pub struct EntityAuditEvent {
@@ -442,7 +446,7 @@ mod tests {
         tenant_manager
             .create_tenant("test_tenant".to_string(), tenant_config)
             .await
-            .unwrap();
+            .expect("failed to create test tenant");
 
         let entity_store = TenantAwareEntityStore::new(tenant_manager);
 
@@ -478,7 +482,7 @@ mod tests {
                 &user_context,
             )
             .await
-            .unwrap();
+            .expect("failed to store entity");
 
         assert!(entity_key.contains("test_tenant"));
         assert!(entity_key.contains("test_collection"));
@@ -493,10 +497,11 @@ mod tests {
                 &user_context,
             )
             .await
-            .unwrap();
+            .expect("failed to get entity");
 
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().id, "test_entity_1");
+        let entity = retrieved.as_ref().expect("entity should exist");
+        assert_eq!(entity.id, "test_entity_1");
     }
 
     #[tokio::test]
@@ -512,7 +517,7 @@ mod tests {
         entity_store
             .store_entity("test_tenant", "test_collection", entity, &user_context)
             .await
-            .unwrap();
+            .expect("failed to store entity");
 
         // Try to access from different tenant (should fail)
         let wrong_tenant_user = UserContext {
@@ -547,7 +552,7 @@ mod tests {
         entity_store
             .store_entity("test_tenant", "test_collection", entity, &user_context)
             .await
-            .unwrap();
+            .expect("failed to store entity");
 
         // Verify entity exists
         let retrieved = entity_store
@@ -558,7 +563,7 @@ mod tests {
                 &user_context,
             )
             .await
-            .unwrap();
+            .expect("failed to get entity");
         assert!(retrieved.is_some());
 
         // Delete entity
@@ -570,7 +575,7 @@ mod tests {
                 &user_context,
             )
             .await
-            .unwrap();
+            .expect("failed to delete entity");
         assert!(deleted);
 
         // Verify entity is gone
@@ -582,7 +587,7 @@ mod tests {
                 &user_context,
             )
             .await
-            .unwrap();
+            .expect("failed to get entity");
         assert!(retrieved_after.is_none());
     }
 
@@ -600,7 +605,7 @@ mod tests {
             entity_store
                 .store_entity("test_tenant", "test_collection", entity, &user_context)
                 .await
-                .unwrap();
+                .expect("failed to store entity");
         }
 
         // List entities
@@ -612,7 +617,7 @@ mod tests {
                 &user_context,
             )
             .await
-            .unwrap();
+            .expect("failed to list entities");
 
         assert_eq!(entities.len(), 3); // Should respect limit
     }

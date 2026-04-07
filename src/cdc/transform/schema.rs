@@ -61,18 +61,27 @@ pub enum FieldTransform {
     ParseJson,
     /// Apply regex replacement
     Regex {
+        /// Regex pattern to match.
         pattern: String,
+        /// Replacement string.
         replacement: String,
     },
     /// Extract substring
-    Substring { start: usize, length: Option<usize> },
+    Substring {
+        /// Starting index (0-based).
+        start: usize,
+        /// Optional length; if None, extracts to end.
+        length: Option<usize>,
+    },
     /// Convert case
     Case(CaseTransform),
     /// Hash the value
     Hash(HashAlgorithm),
     /// Concatenate multiple fields
     Concat {
+        /// Field names to concatenate.
         fields: Vec<String>,
+        /// Separator between concatenated values.
         separator: String,
     },
     /// Extract from JSON path
@@ -265,7 +274,13 @@ impl SchemaMapper {
                             CdcError::Transform(format!("Cannot convert '{}' to number", s))
                         })?,
                     serde_json::Value::Bool(b) => {
-                        serde_json::Number::from_f64(if *b { 1.0 } else { 0.0 }).unwrap()
+                        serde_json::Number::from_f64(if *b { 1.0 } else { 0.0 }).ok_or_else(
+                            || {
+                                CdcError::Transform(
+                                    "Failed to convert boolean to number".to_string(),
+                                )
+                            },
+                        )?
                     }
                     _ => {
                         return Err(CdcError::Transform(format!(
@@ -280,7 +295,7 @@ impl SchemaMapper {
             FieldTransform::ToBool => {
                 let b = match value {
                     serde_json::Value::Bool(b) => *b,
-                    serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+                    serde_json::Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
                     serde_json::Value::String(s) => {
                         matches!(s.to_lowercase().as_str(), "true" | "1" | "yes")
                     }
@@ -353,9 +368,10 @@ impl SchemaMapper {
             FieldTransform::Substring { start, length } => {
                 if let serde_json::Value::String(s) = value {
                     let chars: Vec<char> = s.chars().collect();
-                    let end = length
-                        .map(|l| (*start + l).min(chars.len()))
-                        .unwrap_or(chars.len());
+                    let end = match length {
+                        Some(l) => (*start + l).min(chars.len()),
+                        None => chars.len(),
+                    };
                     let substring: String = chars[(*start).min(chars.len())..end].iter().collect();
                     Ok(serde_json::Value::String(substring))
                 } else {
@@ -387,18 +403,23 @@ impl SchemaMapper {
                 for part in parts {
                     match current {
                         serde_json::Value::Object(obj) => {
-                            current = obj.get(part).cloned().unwrap_or(serde_json::Value::Null);
+                            current = obj.get(part).cloned().ok_or_else(|| {
+                                CdcError::Transform(format!("Path '{}' not found in object", part))
+                            })?;
                         }
                         serde_json::Value::Array(arr) => {
-                            if let Ok(idx) = part.parse::<usize>() {
-                                current = arr.get(idx).cloned().unwrap_or(serde_json::Value::Null);
-                            } else {
-                                current = serde_json::Value::Null;
-                            }
+                            let idx = part.parse::<usize>().map_err(|_| {
+                                CdcError::Transform(format!("Invalid array index: {}", part))
+                            })?;
+                            current = arr.get(idx).cloned().ok_or_else(|| {
+                                CdcError::Transform(format!("Array index {} out of bounds", idx))
+                            })?;
                         }
                         _ => {
-                            current = serde_json::Value::Null;
-                            break;
+                            return Err(CdcError::Transform(format!(
+                                "Cannot traverse path '{}' on non-object/array value",
+                                part
+                            )));
                         }
                     }
                 }
@@ -514,7 +535,9 @@ mod tests {
     fn test_rename_field() {
         let mapper = SchemaMapper::new().rename_field("name", "full_name");
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert!(result.metadata.contains_key("full_name"));
         assert!(!result.metadata.contains_key("name"));
@@ -528,7 +551,9 @@ mod tests {
     fn test_drop_field() {
         let mapper = SchemaMapper::new().drop_field("email");
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert!(!result.metadata.contains_key("email"));
         assert!(result.metadata.contains_key("name"));
@@ -538,7 +563,9 @@ mod tests {
     fn test_drop_multiple_fields() {
         let mapper = SchemaMapper::new().drop_fields(vec!["email", "age"]);
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert!(!result.metadata.contains_key("email"));
         assert!(!result.metadata.contains_key("age"));
@@ -549,7 +576,9 @@ mod tests {
     fn test_keep_only() {
         let mapper = SchemaMapper::new().keep_only(vec!["name", "age"]);
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert!(result.metadata.contains_key("name"));
         assert!(result.metadata.contains_key("age"));
@@ -561,7 +590,9 @@ mod tests {
     fn test_with_default() {
         let mapper = SchemaMapper::new().with_default("country", serde_json::json!("USA"));
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert_eq!(
             result.metadata.get("country"),
@@ -574,9 +605,17 @@ mod tests {
         let mapper = SchemaMapper::new().map_field("age", "age_str", FieldTransform::ToString);
 
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
-        assert!(result.metadata.get("age_str").unwrap().is_string());
+        assert!(
+            result
+                .metadata
+                .get("age_str")
+                .expect("age_str should exist")
+                .is_string()
+        );
     }
 
     #[test]
@@ -591,9 +630,17 @@ mod tests {
         };
 
         let mapper = SchemaMapper::new().map_field("count", "count", FieldTransform::ToNumber);
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
-        assert!(result.metadata.get("count").unwrap().is_number());
+        assert!(
+            result
+                .metadata
+                .get("count")
+                .expect("count should exist")
+                .is_number()
+        );
     }
 
     #[test]
@@ -608,7 +655,9 @@ mod tests {
         };
 
         let mapper = SchemaMapper::new().map_field("flag", "flag", FieldTransform::ToBool);
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert_eq!(result.metadata.get("flag"), Some(&serde_json::json!(true)));
     }
@@ -622,7 +671,9 @@ mod tests {
         );
 
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert_eq!(
             result.metadata.get("name"),
@@ -639,7 +690,9 @@ mod tests {
         );
 
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert_eq!(
             result.metadata.get("name"),
@@ -659,7 +712,9 @@ mod tests {
         );
 
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert_eq!(
             result.metadata.get("initial"),
@@ -676,9 +731,17 @@ mod tests {
         );
 
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
-        assert!(result.metadata.get("email_hash").unwrap().is_string());
+        assert!(
+            result
+                .metadata
+                .get("email_hash")
+                .expect("email_hash should exist")
+                .is_string()
+        );
     }
 
     #[test]
@@ -700,7 +763,9 @@ mod tests {
             "extracted",
             FieldTransform::JsonPath("nested.value".to_string()),
         );
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert_eq!(
             result.metadata.get("extracted"),
@@ -721,7 +786,7 @@ mod tests {
             "key_1",
         );
 
-        let result = mapper.transform(event).unwrap();
+        let result = mapper.transform(event).expect("transform should succeed");
         assert_eq!(result.collection, "new_collection");
     }
 
@@ -733,7 +798,9 @@ mod tests {
             .with_default("status", serde_json::json!("active"));
 
         let state = create_test_state();
-        let result = mapper.transform_record_state(state).unwrap();
+        let result = mapper
+            .transform_record_state(state)
+            .expect("transform_record_state should succeed");
 
         assert!(result.metadata.contains_key("full_name"));
         assert!(!result.metadata.contains_key("name"));

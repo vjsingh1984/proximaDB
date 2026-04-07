@@ -55,18 +55,18 @@ pub struct MetadataWALConfig {
 impl Default for MetadataWALConfig {
     fn default() -> Self {
         // Optimized defaults for metadata workloads (different from vector write buffer)
-        let mut base_config = WALConfig::default();
-
-        // Use Avro for schema evolution (metadata schemas change more than vector schemas)
-        base_config.strategy_type = WriteBufferStrategyType::AvroBatch;
+        let mut base_config = WALConfig {
+            // Use Avro for schema evolution (metadata schemas change more than vector schemas)
+            strategy_type: WriteBufferStrategyType::AvroBatch,
+            ..Default::default()
+        };
 
         // Use B+Tree for sorted iteration and range queries on collection metadata
         // Better than ART since we need range scans for list operations
         base_config.memtable.memtable_type = MemTableType::BTree;
 
         // Separate directory from vector write buffer data
-        base_config.multi_disk.data_directories =
-            vec!["./data/metadata/write_buffer".to_string().into()];
+        base_config.multi_disk.data_directories = vec!["./data/metadata/write_buffer".to_string()];
 
         // Smaller memory limit for metadata (fewer operations than vectors)
         base_config.performance.memory_flush_size_bytes = 32 * 1024 * 1024; // 32MB size threshold
@@ -95,22 +95,35 @@ impl Default for MetadataWALConfig {
 /// Collection metadata with versioning
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VersionedCollectionMetadata {
+    /// Collection ID
     pub id: String,
+    /// Collection name
     pub name: String,
-    pub dimension: usize, // Aligned with proto
+    /// Vector dimension
+    pub dimension: usize,
+    /// Distance metric type
     pub distance_metric: String,
+    /// Indexing algorithm
     pub indexing_algorithm: String,
-    pub timestamp: u32, // Seconds since epoch (when last modified)
+    /// Last modification timestamp (seconds since epoch)
+    pub timestamp: u32,
+    /// Schema version
     pub version: Option<u32>,
+    /// Number of vectors
     pub vector_count: u64,
+    /// Total size in bytes
     pub total_size_bytes: u64,
+    /// Collection configuration
     pub config: HashMap<String, serde_json::Value>,
-
-    // Additional metadata fields
+    /// Collection description
     pub description: Option<String>,
+    /// Collection tags
     pub tags: Vec<String>,
+    /// Collection owner
     pub owner: Option<String>,
+    /// Access pattern for optimization
     pub access_pattern: AccessPattern,
+    /// Retention policy
     pub retention_policy: Option<RetentionPolicy>,
 }
 
@@ -130,8 +143,11 @@ pub enum AccessPattern {
 /// Retention policy for collections
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetentionPolicy {
+    /// Number of days to retain data
     pub retain_days: u32,
+    /// Enable automatic archiving
     pub auto_archive: bool,
+    /// Enable automatic deletion
     pub auto_delete: bool,
 }
 
@@ -166,10 +182,15 @@ impl std::fmt::Debug for MetadataWriteAheadLog {
 
 #[derive(Debug, Default, Clone)]
 pub struct MetadataStats {
+    /// Total number of collections
     pub total_collections: u64,
+    /// Cache hit count
     pub cache_hits: u64,
+    /// Cache miss count
     pub cache_misses: u64,
+    /// Total write buffer writes
     pub write_buffer_writes: u64,
+    /// Total write buffer reads
     pub write_buffer_reads: u64,
 }
 
@@ -647,14 +668,23 @@ impl MetadataWriteAheadLog {
 /// System metadata with write buffer backing
 #[derive(Debug, Clone)]
 pub struct SystemMetadata {
+    /// System version
     pub version: String,
+    /// Node ID
     pub node_id: String,
+    /// Cluster name
     pub cluster_name: String,
-    pub timestamp: u32,          // Seconds since epoch
-    pub updated_at: Option<u32>, // Seconds since epoch
+    /// Creation timestamp (seconds since epoch)
+    pub timestamp: u32,
+    /// Last update timestamp (seconds since epoch)
+    pub updated_at: Option<u32>,
+    /// Total number of collections
     pub total_collections: u64,
+    /// Total number of vectors
     pub total_vectors: u64,
+    /// Total size in bytes
     pub total_size_bytes: u64,
+    /// System configuration
     pub config: HashMap<String, serde_json::Value>,
 }
 

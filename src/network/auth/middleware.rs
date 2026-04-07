@@ -33,14 +33,18 @@ use tracing::{debug, info, warn};
 
 /// Authentication middleware state
 pub struct AuthMiddlewareState {
+    /// Shared authentication service instance
     pub auth_service: Arc<AuthService>,
 }
 
-/// Authentication error response
+/// Authentication error response returned as JSON
 #[derive(Debug, Serialize)]
 pub struct AuthErrorResponse {
+    /// Error type identifier
     pub error: String,
+    /// Human-readable error description
     pub message: String,
+    /// HTTP status code
     pub code: u16,
 }
 
@@ -103,7 +107,7 @@ pub async fn auth_middleware<B>(
         .auth_service
         .authenticate(&auth_header)
         .await
-        .map_err(|e| auth_error_to_response(e))?;
+        .map_err(auth_error_to_response)?;
 
     // Check basic permissions for the endpoint
     let required_permission = determine_required_permission(method.as_str(), path);
@@ -115,7 +119,7 @@ pub async fn auth_middleware<B>(
             .rbac
             .check_permission_with_context(&auth_result.user_id, permission, &context)
             .await
-            .map_err(|e| auth_error_to_response(e))?;
+            .map_err(auth_error_to_response)?;
     }
 
     // Add auth result to request extensions for use by handlers
@@ -306,12 +310,13 @@ fn extract_resource_id(path: &str) -> Option<String> {
 
     // Look for patterns like /collections/{id}, /vectors/{id}, etc.
     for (i, segment) in path_segments.iter().enumerate() {
-        if matches!(*segment, "collections" | "vectors" | "users" | "roles") {
-            if let Some(id) = path_segments.get(i + 1) {
-                if !id.is_empty() && *id != "search" && *id != "bulk" {
-                    return Some(id.to_string());
-                }
-            }
+        if matches!(*segment, "collections" | "vectors" | "users" | "roles")
+            && let Some(id) = path_segments.get(i + 1)
+            && !id.is_empty()
+            && *id != "search"
+            && *id != "bulk"
+        {
+            return Some(id.to_string());
         }
     }
 
@@ -382,8 +387,11 @@ fn auth_error_to_response(error: AuthError) -> (StatusCode, Json<AuthErrorRespon
 
 /// Extension trait to extract auth result from request
 pub trait RequestAuthExt {
+    /// Extract the authentication result from request extensions
     fn auth_result(&self) -> Option<&AuthResult>;
+    /// Extract the authenticated user ID
     fn user_id(&self) -> Option<&str>;
+    /// Extract the tenant ID for multi-tenant requests
     fn tenant_id(&self) -> Option<&str>;
 }
 
@@ -451,9 +459,11 @@ impl Default for MtlsConfig {
     }
 }
 
-/// mTLS authentication state
+/// mTLS authentication state shared with the middleware layer
 pub struct MtlsAuthState {
+    /// mTLS configuration
     pub config: MtlsConfig,
+    /// Shared authentication service for permission resolution
     pub auth_service: Arc<AuthService>,
 }
 
@@ -655,42 +665,39 @@ pub async fn hybrid_auth_middleware<B>(
     }
 
     // First, try mTLS authentication if configured
-    if let Some(ref mtls_state) = mtls_state {
-        if mtls_state.config.enabled {
-            if let Some(cert_info) = request.extensions().get::<ClientCertificateInfo>().cloned() {
-                if cert_info.is_valid {
-                    if let Some(cn) = &cert_info.common_name {
-                        // CN is valid, check against allowed patterns
-                        let cn_allowed = mtls_state.config.allowed_cn_patterns.is_empty()
-                            || mtls_state
-                                .config
-                                .allowed_cn_patterns
-                                .iter()
-                                .any(|p| matches_cn_pattern(cn, p));
+    if let Some(ref mtls_state) = mtls_state
+        && mtls_state.config.enabled
+        && let Some(cert_info) = request.extensions().get::<ClientCertificateInfo>().cloned()
+        && cert_info.is_valid
+        && let Some(cn) = &cert_info.common_name
+    {
+        // CN is valid, check against allowed patterns
+        let cn_allowed = mtls_state.config.allowed_cn_patterns.is_empty()
+            || mtls_state
+                .config
+                .allowed_cn_patterns
+                .iter()
+                .any(|p| matches_cn_pattern(cn, p));
 
-                        if cn_allowed {
-                            let user_id = mtls_state
-                                .config
-                                .cn_to_user_mapping
-                                .get(cn)
-                                .cloned()
-                                .unwrap_or_else(|| cn.clone());
+        if cn_allowed {
+            let user_id = mtls_state
+                .config
+                .cn_to_user_mapping
+                .get(cn)
+                .cloned()
+                .unwrap_or_else(|| cn.clone());
 
-                            let authenticated_user = MtlsAuthenticatedUser {
-                                user_id,
-                                common_name: cn.clone(),
-                                organization: cert_info.organization.clone(),
-                                certificate_fingerprint: cert_info.fingerprint.clone(),
-                                roles: mtls_state.config.default_roles.clone(),
-                                auth_method: "mtls".to_string(),
-                            };
+            let authenticated_user = MtlsAuthenticatedUser {
+                user_id,
+                common_name: cn.clone(),
+                organization: cert_info.organization.clone(),
+                certificate_fingerprint: cert_info.fingerprint.clone(),
+                roles: mtls_state.config.default_roles.clone(),
+                auth_method: "mtls".to_string(),
+            };
 
-                            request.extensions_mut().insert(authenticated_user);
-                            return Ok(next.run(request).await);
-                        }
-                    }
-                }
-            }
+            request.extensions_mut().insert(authenticated_user);
+            return Ok(next.run(request).await);
         }
     }
 
@@ -733,7 +740,7 @@ mod tests {
     use crate::network::auth::jwt::JwtService;
     use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::unified_auth::{
-        ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, SSOConfig,
+        ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
     };
     use crate::security::unified_rbac::RBACConfig;
     use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
@@ -842,6 +849,7 @@ mod tests {
                     aws_iam: None,
                     azure_ad: None,
                 },
+                mtls: MtlsConfig::default(),
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),
@@ -889,6 +897,7 @@ mod tests {
                     aws_iam: None,
                     azure_ad: None,
                 },
+                mtls: MtlsConfig::default(),
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),
@@ -915,14 +924,14 @@ mod tests {
         let coordinator = Arc::new(
             SecurityCoordinator::from_config(build_security_config_with_api_key())
                 .await
-                .unwrap(),
+                .expect("Failed to create SecurityCoordinator from config"),
         );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .header("Authorization", "Api-Key test-key")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route(
@@ -942,10 +951,15 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("Failed to read response body");
         assert_eq!(&body[..], b"ok");
     }
 
@@ -954,13 +968,13 @@ mod tests {
         let coordinator = Arc::new(
             SecurityCoordinator::from_config(build_security_config_with_api_key())
                 .await
-                .unwrap(),
+                .expect("Failed to create SecurityCoordinator from config"),
         );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route("/api/v1/search", get(|| async { "ok" }))
@@ -969,10 +983,15 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("Failed to read response body");
         assert!(String::from_utf8_lossy(&body).contains("Authorization header is required"));
     }
 
@@ -990,14 +1009,18 @@ mod tests {
             audience: cfg.authentication.jwt.audience.clone(),
             algorithm: JwtAlgorithm::HS256,
         })
-        .unwrap();
+        .expect("Failed to create JWT service");
 
         let token_pair = jwt_service
             .generate_token_pair("jwt-user", None, vec!["reader".to_string()])
             .await
-            .unwrap();
+            .expect("Failed to generate JWT token pair");
 
-        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(cfg)
+                .await
+                .expect("Failed to create SecurityCoordinator from config"),
+        );
 
         let request = Request::builder()
             .uri("/api/v1/search")
@@ -1006,7 +1029,7 @@ mod tests {
                 format!("Bearer {}", token_pair.access_token),
             )
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route(
@@ -1022,22 +1045,31 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body())
+            .await
+            .expect("Failed to read response body");
         assert!(String::from_utf8_lossy(&body).contains("jwt-user"));
     }
 
     #[tokio::test]
     async fn auth_middleware_unified_rejects_invalid_jwt() {
         let cfg = build_security_config_with_jwt();
-        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(cfg)
+                .await
+                .expect("Failed to create SecurityCoordinator from config"),
+        );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .header("Authorization", "Bearer invalid-token")
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route("/api/v1/search", get(|| async { "ok" }))
@@ -1046,7 +1078,10 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1074,15 +1109,19 @@ mod tests {
             &claims,
             &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
         )
-        .unwrap();
+        .expect("Failed to encode expired JWT token");
 
-        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(cfg)
+                .await
+                .expect("Failed to create SecurityCoordinator from config"),
+        );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .header("Authorization", format!("Bearer {}", expired_token))
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route("/api/v1/search", get(|| async { "ok" }))
@@ -1091,7 +1130,10 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1109,20 +1151,24 @@ mod tests {
             audience: cfg.authentication.jwt.audience.clone(),
             algorithm: JwtAlgorithm::HS256,
         })
-        .unwrap();
+        .expect("Failed to create JWT service with wrong issuer");
         let bad_token = bad_jwt_service
             .generate_token_pair("jwt-user", None, vec!["reader".to_string()])
             .await
-            .unwrap()
+            .expect("Failed to generate JWT token with wrong issuer")
             .access_token;
 
-        let coordinator = Arc::new(SecurityCoordinator::from_config(cfg).await.unwrap());
+        let coordinator = Arc::new(
+            SecurityCoordinator::from_config(cfg)
+                .await
+                .expect("Failed to create SecurityCoordinator from config"),
+        );
 
         let request = Request::builder()
             .uri("/api/v1/search")
             .header("Authorization", format!("Bearer {}", bad_token))
             .body(Body::empty())
-            .unwrap();
+            .expect("Failed to build test request");
 
         let app = Router::new()
             .route("/api/v1/search", get(|| async { "ok" }))
@@ -1131,7 +1177,10 @@ mod tests {
                 auth_middleware_unified,
             ));
 
-        let response = app.oneshot(request).await.unwrap();
+        let response = app
+            .oneshot(request)
+            .await
+            .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

@@ -14,9 +14,10 @@ use tracing::{debug, info, warn};
 use super::definition::{MaterializedViewError, MaterializedViewId, MaterializedViewResult};
 
 /// Refresh strategy for materialized views
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RefreshStrategy {
     /// Refresh only when explicitly requested
+    #[default]
     Manual,
 
     /// Refresh at fixed intervals
@@ -55,12 +56,6 @@ where
 {
     let secs = u64::deserialize(deserializer)?;
     Ok(Duration::from_secs(secs))
-}
-
-impl Default for RefreshStrategy {
-    fn default() -> Self {
-        RefreshStrategy::Manual
-    }
 }
 
 impl RefreshStrategy {
@@ -397,11 +392,11 @@ impl RefreshScheduler {
         let mut affected_views = Vec::new();
 
         // Find views that depend on this collection
-        for entry in self.scheduled_views.iter() {
-            if entry.dependencies.contains(&collection.to_string()) {
-                if let RefreshStrategy::OnChange { debounce } = &entry.strategy {
-                    affected_views.push((entry.view_name.clone(), *debounce));
-                }
+        for entry in &self.scheduled_views {
+            if entry.dependencies.contains(&collection.to_string())
+                && let RefreshStrategy::OnChange { debounce } = &entry.strategy
+            {
+                affected_views.push((entry.view_name.clone(), *debounce));
             }
         }
 
@@ -462,21 +457,21 @@ impl RefreshScheduler {
     pub async fn check_scheduled(&self) -> MaterializedViewResult<()> {
         let now = Utc::now();
 
-        for entry in self.scheduled_views.iter() {
-            if let Some(next_refresh) = entry.next_refresh {
-                if now >= next_refresh {
-                    let event = RefreshEvent::scheduled(&entry.view_name);
-                    if let Err(e) = self.event_tx.send(event).await {
-                        warn!(
-                            view = %entry.view_name,
-                            error = %e,
-                            "Failed to send scheduled refresh event"
-                        );
-                    } else {
-                        self.stats
-                            .scheduled_triggers
-                            .fetch_add(1, Ordering::Relaxed);
-                    }
+        for entry in &self.scheduled_views {
+            if let Some(next_refresh) = entry.next_refresh
+                && now >= next_refresh
+            {
+                let event = RefreshEvent::scheduled(&entry.view_name);
+                if let Err(e) = self.event_tx.send(event).await {
+                    warn!(
+                        view = %entry.view_name,
+                        error = %e,
+                        "Failed to send scheduled refresh event"
+                    );
+                } else {
+                    self.stats
+                        .scheduled_triggers
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
@@ -489,7 +484,7 @@ impl RefreshScheduler {
         let _now = Instant::now();
         let mut to_flush = Vec::new();
 
-        for entry in self.pending_changes.iter() {
+        for entry in &self.pending_changes {
             if entry.first_change_at.elapsed() >= entry.debounce {
                 to_flush.push((entry.key().clone(), entry.collections.clone()));
             }
@@ -707,6 +702,7 @@ mod tests {
         let before = scheduler.next_refresh_time("test_view");
         assert!(before.is_some());
 
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         scheduler.update_after_refresh("test_view");
 
         let after = scheduler.next_refresh_time("test_view");

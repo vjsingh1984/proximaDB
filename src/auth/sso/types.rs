@@ -7,29 +7,42 @@ use std::collections::HashSet;
 /// SSO token for authentication
 #[derive(Debug, Clone)]
 pub struct SSOToken {
+    /// Unique identifier for this token instance.
     pub token_id: String,
+    /// SSO provider that issued the token.
     pub provider: SSOProvider,
-    pub token_data: String, // Provider-specific token data
+    /// Provider-specific token data (e.g., JWT payload).
+    pub token_data: String,
+    /// User identifier from the SSO provider.
     pub user_id: String,
+    /// Token expiration timestamp.
     pub expires_at: DateTime<Utc>,
+    /// Token issuance timestamp.
     pub issued_at: DateTime<Utc>,
 }
 
 /// Supported SSO providers
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SSOProvider {
+    /// AWS Identity and Access Management.
     #[serde(rename = "aws_iam")]
     AWSIAM,
+    /// Microsoft Azure Active Directory.
     #[serde(rename = "azure_ad")]
     AzureAD,
+    /// Google Cloud Platform IAM.
     #[serde(rename = "google_cloud")]
     GoogleCloud,
+    /// SAML 2.0 identity provider.
     #[serde(rename = "saml")]
     SAML,
+    /// OpenID Connect provider.
     #[serde(rename = "oidc")]
     OIDC,
+    /// Okta identity provider.
     #[serde(rename = "okta")]
     Okta,
+    /// Generic/custom identity provider.
     #[serde(rename = "generic")]
     Generic,
 }
@@ -37,69 +50,99 @@ pub enum SSOProvider {
 /// SSO validation result
 #[derive(Debug, Clone)]
 pub struct SSOValidationResult {
+    /// Whether the SSO token passed validation.
     pub valid: bool,
+    /// Resolved enterprise user context from the token claims.
     pub user_context: EnterpriseUserContext,
+    /// Metadata from the identity provider about the validation.
     pub provider_metadata: ProviderMetadata,
+    /// Timestamp when validation was performed.
     pub validation_timestamp: DateTime<Utc>,
 }
 
 /// Enhanced user context for enterprise operations
 #[derive(Debug, Clone)]
 pub struct EnterpriseUserContext {
-    /// Basic user information
+    /// Unique user identifier from the identity provider.
     pub user_id: String,
+    /// User email address.
     pub email: String,
+    /// Human-readable display name.
     pub display_name: String,
 
-    /// Tenant association
+    /// Tenant the user belongs to.
     pub tenant_id: String,
+    /// Organization the user belongs to.
     pub organization_id: String,
 
-    /// Roles and permissions
+    /// Assigned role names for RBAC.
     pub roles: Vec<String>,
+    /// Granted permission strings for fine-grained access control.
     pub permissions: HashSet<String>,
 
-    /// Security context
+    /// User's security clearance level.
     pub security_clearance: SecurityClearance,
+    /// User's department within the organization.
     pub department: Option<String>,
+    /// Cost center for billing attribution.
     pub cost_center: Option<String>,
 
-    /// Session information
+    /// Active session identifier.
     pub session_id: String,
+    /// Timestamp of the initial login.
     pub login_timestamp: DateTime<Utc>,
+    /// Timestamp of the most recent activity.
     pub last_activity: DateTime<Utc>,
 
-    /// Provider-specific context
+    /// Provider-specific identity context (AWS, Azure, or generic).
     pub provider_context: ProviderUserContext,
 }
 
 /// Security clearance levels
 #[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum SecurityClearance {
+    /// Publicly accessible, no clearance required.
     Public,
+    /// Internal-only, requires organizational membership.
     Internal,
+    /// Confidential data, requires explicit clearance.
     Confidential,
+    /// Secret data, requires elevated clearance.
     Secret,
+    /// Top secret data, requires maximum clearance.
     TopSecret,
 }
 
 /// Provider-specific user context
 #[derive(Debug, Clone)]
 pub enum ProviderUserContext {
+    /// AWS IAM identity context.
     AWS {
+        /// AWS account ID.
         account_id: String,
+        /// Full IAM user ARN.
         user_arn: String,
+        /// ARN of the assumed role, if any.
         assumed_role_arn: Option<String>,
+        /// Whether MFA was used during authentication.
         mfa_authenticated: bool,
     },
+    /// Azure AD identity context.
     Azure {
+        /// Azure AD tenant identifier.
         tenant_id: String,
+        /// Azure AD object identifier.
         object_id: String,
+        /// User principal name (UPN).
         user_principal_name: String,
+        /// Azure AD group memberships.
         group_memberships: Vec<String>,
     },
+    /// Generic provider identity context.
     Generic {
+        /// Provider-specific user identifier.
         provider_user_id: String,
+        /// Arbitrary key-value attributes from the provider.
         attributes: std::collections::HashMap<String, String>,
     },
 }
@@ -107,10 +150,15 @@ pub enum ProviderUserContext {
 /// Provider metadata for audit and troubleshooting
 #[derive(Debug, Clone)]
 pub struct ProviderMetadata {
+    /// SSO provider that performed the validation.
     pub provider: SSOProvider,
+    /// Method used to validate the token (e.g., "STS_GetCallerIdentity").
     pub validation_method: String,
+    /// Token type (e.g., "Bearer", "JWT").
     pub token_type: String,
+    /// Token expiration timestamp from the provider.
     pub expires_at: DateTime<Utc>,
+    /// Extra claims from the provider for audit and troubleshooting.
     pub additional_claims: std::collections::HashMap<String, serde_json::Value>,
 }
 
@@ -386,8 +434,8 @@ mod tests {
         ];
 
         // Verify ordering
-        for i in 0..levels.len() - 1 {
-            assert!(levels[i] < levels[i + 1]);
+        for window in levels.windows(2) {
+            assert!(window[0] < window[1]);
         }
     }
 

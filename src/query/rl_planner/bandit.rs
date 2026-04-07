@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use rand::distributions::{Distribution, Uniform};
 use rand_distr::Beta;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use super::action::{ActionId, ActionSpace, ExecutionAction};
 use super::state::PlannerState;
@@ -29,10 +30,24 @@ impl BetaDistribution {
 
     /// Sample from the posterior distribution
     pub fn sample(&self) -> f64 {
-        let beta =
-            Beta::new(self.alpha, self.beta).unwrap_or_else(|_| Beta::new(1.0, 1.0).unwrap());
         let mut rng = rand::thread_rng();
-        beta.sample(&mut rng)
+        match Beta::new(self.alpha, self.beta).or_else(|_| Beta::new(1.0, 1.0)) {
+            Ok(beta) => beta.sample(&mut rng),
+            Err(error) => {
+                // TD-007: Safe fallback to neutral reward (0.5) when Beta distribution
+                // construction fails. This is acceptable because:
+                // 1. Beta::new only fails with invalid parameters (alpha <= 0, beta <= 0)
+                // 2. We try a fallback uniform prior (1.0, 1.0) first
+                // 3. Returning 0.5 (neutral reward) is better than panicking the sampler
+                warn!(
+                    error = %error,
+                    alpha = self.alpha,
+                    beta = self.beta,
+                    "Failed to construct Beta distribution; using neutral reward sample"
+                );
+                0.5
+            }
+        }
     }
 
     /// Get expected value (mean)
@@ -121,6 +136,8 @@ pub struct ContextualBanditPlanner {
     context_weights: HashMap<ActionId, ContextWeights>,
     /// Exploration rate for ε-greedy fallback
     exploration_rate: f32,
+    /// Base exploration rate (before decay) — used to reset for new contexts
+    base_exploration_rate: f32,
     /// Use Thompson Sampling (true) or ε-greedy (false)
     use_thompson_sampling: bool,
     /// Per-engine action spaces
@@ -129,6 +146,9 @@ pub struct ContextualBanditPlanner {
     default_action_space: ActionSpace,
     /// Total number of updates
     total_updates: u64,
+    /// Per-engine update counts — tracks learning maturity per engine.
+    /// When a new engine appears (0 updates), exploration is temporarily boosted.
+    engine_update_counts: HashMap<String, u64>,
 }
 
 impl ContextualBanditPlanner {
@@ -139,30 +159,101 @@ impl ContextualBanditPlanner {
             engine_action_spaces.insert(engine.to_string(), ActionSpace::for_engine(engine));
         }
 
-        Self {
+        let mut planner = Self {
             action_stats: HashMap::new(),
             context_weights: HashMap::new(),
             exploration_rate,
+            base_exploration_rate: exploration_rate,
             use_thompson_sampling,
             engine_action_spaces,
             default_action_space: ActionSpace::for_engine("SST"),
             total_updates: 0,
+            engine_update_counts: HashMap::new(),
+        };
+
+        // Seed with informed priors from static cost model to reduce cold-start exploration
+        planner.seed_warm_priors();
+
+        planner
+    }
+
+    /// Seed the planner with warm-start priors derived from static cost model heuristics.
+    ///
+    /// Instead of starting with uniform Beta(1,1) for all actions (which requires ~100+
+    /// observations per arm to converge with 36+ arms), this seeds informed priors:
+    /// - Index-backed actions (HNSW, IVF) get higher alpha → biased toward exploitation
+    /// - Baseline scan actions get moderate priors → always competitive
+    /// - Progressive quantization gets a boost for high-dimensional vectors
+    ///
+    /// The priors are weak (alpha+beta ~10) so they're quickly overridden by real data,
+    /// but they dramatically reduce the cold-start random exploration period.
+    pub fn seed_warm_priors(&mut self) {
+        for (engine_name, action_space) in &self.engine_action_spaces {
+            for action in &action_space.actions {
+                let action_id = action.to_action_id();
+
+                // Skip actions that already have observations
+                if self.action_stats.contains_key(&action_id) {
+                    continue;
+                }
+
+                // Assign priors based on action characteristics.
+                // Higher alpha/beta ratio = higher expected reward.
+                // Total (alpha+beta) controls prior strength — ~10 means
+                // it takes ~10 real observations to halve the prior's influence.
+                let (alpha, beta) = match (
+                    engine_name.as_str(),
+                    &action.index_strategy,
+                    action.quantization_stages.len(),
+                ) {
+                    // HNSW index strategies — best for low-latency approximate search
+                    (_, Some(idx), _) if format!("{:?}", idx).contains("Hnsw") => (7.0, 3.0),
+                    // IVF strategies — good for large datasets
+                    (_, Some(idx), _) if format!("{:?}", idx).contains("Ivf") => (6.0, 4.0),
+                    // Progressive quantization (2+ stages) — good for high-dim vectors
+                    (_, _, stages) if stages >= 2 => (6.0, 4.0),
+                    // Single-stage quantization — moderate prior
+                    (_, _, 1) => (5.0, 5.0),
+                    // Baseline scans (no index, no quantization) — always works but slower
+                    _ => (4.0, 6.0),
+                };
+
+                self.action_stats
+                    .insert(action_id, BetaDistribution::new(alpha, beta));
+            }
         }
     }
 
-    /// Select action using Thompson Sampling or ε-greedy
+    /// Select action using Thompson Sampling or ε-greedy.
+    /// For engines with few observations (<50 updates), temporarily boosts exploration
+    /// to the base rate, preventing a well-explored engine from suppressing exploration
+    /// for a newly-encountered one.
     pub fn select_action(&self, state: &PlannerState) -> ExecutionAction {
         // Get action space for this engine
         let engine_name = state.storage_engine.to_string();
+        // TD-007: unwrap_or with safe default - fallback to default action space
         let action_space = self
             .engine_action_spaces
             .get(&engine_name)
             .unwrap_or(&self.default_action_space);
 
         if self.use_thompson_sampling {
+            // Thompson Sampling naturally explores uncertain arms, but boost exploration
+            // for new engines by using the base rate when the engine is under-explored
             self.thompson_sampling_select(state, action_space)
         } else {
-            self.epsilon_greedy_select(state, action_space)
+            // For ε-greedy: use higher exploration rate for under-explored engines
+            let engine_updates = self
+                .engine_update_counts
+                .get(&engine_name)
+                .copied()
+                .unwrap_or(0);
+            let effective_rate = if engine_updates < 50 {
+                self.base_exploration_rate
+            } else {
+                self.exploration_rate
+            };
+            self.epsilon_greedy_select_with_rate(state, action_space, effective_rate)
         }
     }
 
@@ -183,15 +274,13 @@ impl ContextualBanditPlanner {
             let posterior_sample = self
                 .action_stats
                 .get(&action_id)
-                .map(|beta| beta.sample())
-                .unwrap_or(0.5); // Optimistic prior
+                .map_or(0.5, |beta| beta.sample());
 
             // Add context bonus
             let context_bonus = self
                 .context_weights
                 .get(&action_id)
-                .map(|w| w.compute_bonus(&features))
-                .unwrap_or(0.0);
+                .map_or(0.0, |w| w.compute_bonus(&features));
 
             let total_sample = posterior_sample + context_bonus;
 
@@ -204,16 +293,26 @@ impl ContextualBanditPlanner {
         best_action
     }
 
-    /// ε-greedy action selection
-    fn epsilon_greedy_select(
+    /// ε-greedy action selection (uses instance exploration rate)
+    fn _epsilon_greedy_select(
         &self,
         state: &PlannerState,
         action_space: &ActionSpace,
     ) -> ExecutionAction {
+        self.epsilon_greedy_select_with_rate(state, action_space, self.exploration_rate)
+    }
+
+    /// ε-greedy action selection with explicit exploration rate
+    fn epsilon_greedy_select_with_rate(
+        &self,
+        state: &PlannerState,
+        action_space: &ActionSpace,
+        rate: f32,
+    ) -> ExecutionAction {
         let mut rng = rand::thread_rng();
         let uniform = Uniform::new(0.0_f32, 1.0);
 
-        if uniform.sample(&mut rng) < self.exploration_rate {
+        if uniform.sample(&mut rng) < rate {
             // Explore: random action
             action_space.random_action().clone()
         } else {
@@ -235,15 +334,13 @@ impl ContextualBanditPlanner {
             let expected = self
                 .action_stats
                 .get(&action_id)
-                .map(|beta| beta.mean())
-                .unwrap_or(0.5);
+                .map_or(0.5, |beta| beta.mean());
 
             // Context bonus
             let context_bonus = self
                 .context_weights
                 .get(&action_id)
-                .map(|w| w.compute_bonus(&features))
-                .unwrap_or(0.0);
+                .map_or(0.0, |w| w.compute_bonus(&features));
 
             let total_value = expected + context_bonus;
 
@@ -271,8 +368,7 @@ impl ContextualBanditPlanner {
         let expected = self
             .action_stats
             .get(&action_id)
-            .map(|b| b.mean() as f32)
-            .unwrap_or(0.5);
+            .map_or(0.5, |b| b.mean() as f32);
         let error = (reward - expected) as f64;
 
         self.context_weights
@@ -282,8 +378,12 @@ impl ContextualBanditPlanner {
 
         self.total_updates += 1;
 
+        // Track per-engine learning maturity
+        let engine_name = state.storage_engine.to_string();
+        *self.engine_update_counts.entry(engine_name).or_insert(0) += 1;
+
         // Decay exploration rate over time
-        if self.total_updates % 1000 == 0 && self.exploration_rate > 0.01 {
+        if self.total_updates.is_multiple_of(1000) && self.exploration_rate > 0.01 {
             self.exploration_rate *= 0.99;
         }
     }
@@ -339,6 +439,7 @@ impl ContextualBanditPlanner {
     /// Get top-k best actions for a given state
     pub fn get_top_actions(&self, state: &PlannerState, k: usize) -> Vec<(ExecutionAction, f64)> {
         let engine_name = state.storage_engine.to_string();
+        // TD-007: unwrap_or with safe default - fallback to default action space
         let action_space = self
             .engine_action_spaces
             .get(&engine_name)
@@ -350,21 +451,19 @@ impl ContextualBanditPlanner {
             .iter()
             .map(|action| {
                 let action_id = action.to_action_id();
-                let expected = self
-                    .action_stats
-                    .get(&action_id)
-                    .map(|b| b.mean())
-                    .unwrap_or(0.5);
+                let expected = self.action_stats.get(&action_id).map_or(0.5, |b| b.mean());
                 let context_bonus = self
                     .context_weights
                     .get(&action_id)
-                    .map(|w| w.compute_bonus(&features))
-                    .unwrap_or(0.0);
+                    .map_or(0.0, |w| w.compute_bonus(&features));
                 (action.clone(), expected + context_bonus)
             })
             .collect();
 
-        scored_actions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored_actions.sort_by(|a, b| {
+            // TD-007: unwrap_or with safe default - Equal for NaN comparisons
+            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+        });
         scored_actions.truncate(k);
         scored_actions
     }

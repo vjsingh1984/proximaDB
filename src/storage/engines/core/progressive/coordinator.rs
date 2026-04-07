@@ -200,7 +200,7 @@ impl ProgressiveSearchCoordinator {
 
             // Compute distances at this stage's quantization level
             candidates = stage
-                .compute_distances(query, candidates, distance_metric.clone())
+                .compute_distances(query, candidates, distance_metric)
                 .await?;
 
             // Filter candidates for next stage
@@ -275,8 +275,8 @@ impl ProgressiveSearchCoordinator {
             return 0.0;
         }
 
-        let first = self.last_stats.first().map(|s| s.input_count).unwrap_or(0);
-        let last = self.last_stats.last().map(|s| s.output_count).unwrap_or(0);
+        let first = self.last_stats.first().map_or(0, |s| s.input_count);
+        let last = self.last_stats.last().map_or(0, |s| s.output_count);
 
         if first > 0 {
             1.0 - (last as f32 / first as f32)

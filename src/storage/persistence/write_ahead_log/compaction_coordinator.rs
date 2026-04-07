@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::impls::viper::ViperEngine;
 use crate::index::axis::AxisManager;
 use crate::storage::engines::impls::sst::SstEngine;
@@ -232,8 +232,10 @@ impl CompactionCoordinator {
     ) -> Result<()> {
         let mut states = self.collection_states.write().await;
         if !states.contains_key(collection_id) {
-            let mut state = CollectionCompactionState::default();
-            state.preferred_engine = preferred_engine.to_string();
+            let mut state = CollectionCompactionState {
+                preferred_engine: preferred_engine.to_string(),
+                ..Default::default()
+            };
 
             // Discover existing files to initialize proper state
             let existing_files = self
@@ -271,8 +273,7 @@ impl CompactionCoordinator {
         if !self
             .config
             .as_ref()
-            .map(|c| c.enable_background_compaction)
-            .unwrap_or(false)
+            .is_some_and(|c| c.enable_background_compaction)
         {
             return Ok(None);
         }
@@ -336,33 +337,31 @@ impl CompactionCoordinator {
         let state = states.get(collection_id);
 
         // Don't trigger if already in progress
-        if let Some(s) = state {
-            if s.compaction_in_progress {
-                return Ok(false);
-            }
+        if let Some(s) = state
+            && s.compaction_in_progress
+        {
+            return Ok(false);
         }
 
         // Check time constraint
-        if let Some(s) = state {
-            if let Some(last_compaction) = s.last_compaction {
-                let elapsed = Utc::now().signed_duration_since(last_compaction);
-                if elapsed.num_seconds()
-                    < self
-                        .config
+        if let Some(s) = state
+            && let Some(last_compaction) = s.last_compaction
+        {
+            let elapsed = Utc::now().signed_duration_since(last_compaction);
+            if elapsed.num_seconds()
+                < self
+                    .config
+                    .as_ref()
+                    .map_or(60, |c| c.min_compaction_interval_secs) as i64
+            {
+                debug!(
+                    "🔧 CompactionCoordinator: Too soon for compaction ({}s < {}s)",
+                    elapsed.num_seconds(),
+                    self.config
                         .as_ref()
-                        .map(|c| c.min_compaction_interval_secs)
-                        .unwrap_or(60) as i64
-                {
-                    debug!(
-                        "🔧 CompactionCoordinator: Too soon for compaction ({}s < {}s)",
-                        elapsed.num_seconds(),
-                        self.config
-                            .as_ref()
-                            .map(|c| c.min_compaction_interval_secs)
-                            .unwrap_or(60)
-                    );
-                    return Ok(false);
-                }
+                        .map_or(60, |c| c.min_compaction_interval_secs)
+                );
+                return Ok(false);
             }
         }
 
@@ -372,16 +371,14 @@ impl CompactionCoordinator {
             >= self
                 .config
                 .as_ref()
-                .map(|c| c.max_concurrent_compactions)
-                .unwrap_or(2)
+                .map_or(2, |c| c.max_concurrent_compactions)
         {
             debug!(
                 "🔧 CompactionCoordinator: Too many active compactions ({}/{})",
                 active_count,
                 self.config
                     .as_ref()
-                    .map(|c| c.max_concurrent_compactions)
-                    .unwrap_or(2)
+                    .map_or(2, |c| c.max_concurrent_compactions)
             );
             return Ok(false);
         }
@@ -389,10 +386,9 @@ impl CompactionCoordinator {
         // Also check actual file count in storage (not just tracked state)
         let preferred_engine = state
             .as_ref()
-            .map(|s| s.preferred_engine.as_str())
-            .unwrap_or("viper");
+            .map_or("viper", |s| s.preferred_engine.as_str());
         let actual_file_count = match self
-            .discover_existing_files_for_collection(collection_id, &preferred_engine)
+            .discover_existing_files_for_collection(collection_id, preferred_engine)
             .await
         {
             Ok(files) => files.len(),
@@ -408,8 +404,7 @@ impl CompactionCoordinator {
         // Use the maximum of tracked state and actual file count
         let effective_file_count = state
             .as_ref()
-            .map(|s| s.files_needing_compaction)
-            .unwrap_or(0)
+            .map_or(0, |s| s.files_needing_compaction)
             .max(actual_file_count);
 
         // Check thresholds
@@ -418,60 +413,43 @@ impl CompactionCoordinator {
                 >= self
                     .config
                     .as_ref()
-                    .map(|c| c.max_files_before_compaction)
-                    .unwrap_or(10)
+                    .map_or(10, |c| c.max_files_before_compaction)
                 || s.uncompacted_size_bytes
                     >= self
                         .config
                         .as_ref()
-                        .map(|c| c.max_size_before_compaction)
-                        .unwrap_or(1024 * 1024 * 1024)
+                        .map_or(1024 * 1024 * 1024, |c| c.max_size_before_compaction)
                 || s.flushes_since_compaction
                     >= self
                         .config
                         .as_ref()
-                        .map(|c| c.max_flushes_before_compaction)
-                        .unwrap_or(5)
+                        .map_or(5, |c| c.max_flushes_before_compaction)
         } else {
             effective_file_count
                 >= self
                     .config
                     .as_ref()
-                    .map(|c| c.max_files_before_compaction)
-                    .unwrap_or(10)
+                    .map_or(10, |c| c.max_files_before_compaction)
         };
 
         if should_compact {
             info!(
                 "🚀 CompactionCoordinator: Compaction needed for {}: files={}/{} (actual={}), size={}MB/{}MB, flushes={}/{}",
                 collection_id,
-                state
-                    .as_ref()
-                    .map(|s| s.files_needing_compaction)
-                    .unwrap_or(0),
+                state.as_ref().map_or(0, |s| s.files_needing_compaction),
                 self.config
                     .as_ref()
-                    .map(|c| c.max_files_before_compaction)
-                    .unwrap_or(10),
+                    .map_or(10, |c| c.max_files_before_compaction),
                 actual_file_count,
-                state
-                    .as_ref()
-                    .map(|s| s.uncompacted_size_bytes)
-                    .unwrap_or(0)
-                    / (1024 * 1024),
+                state.as_ref().map_or(0, |s| s.uncompacted_size_bytes) / (1024 * 1024),
                 self.config
                     .as_ref()
-                    .map(|c| c.max_size_before_compaction)
-                    .unwrap_or(1024 * 1024 * 1024)
+                    .map_or(1024 * 1024 * 1024, |c| c.max_size_before_compaction)
                     / (1024 * 1024),
-                state
-                    .as_ref()
-                    .map(|s| s.flushes_since_compaction)
-                    .unwrap_or(0),
+                state.as_ref().map_or(0, |s| s.flushes_since_compaction),
                 self.config
                     .as_ref()
-                    .map(|c| c.max_flushes_before_compaction)
-                    .unwrap_or(5)
+                    .map_or(5, |c| c.max_flushes_before_compaction)
             );
         } else if actual_file_count > 5 {
             debug!(
@@ -501,8 +479,7 @@ impl CompactionCoordinator {
             let states = self.collection_states.read().await;
             states
                 .get(&collection_id)
-                .map(|s| s.preferred_engine.clone())
-                .unwrap_or_else(|| "VIPER".to_string())
+                .map_or_else(|| "VIPER".to_string(), |s| s.preferred_engine.clone())
         };
 
         // Create compaction task
@@ -749,14 +726,14 @@ impl CompactionCoordinator {
             if let Some(state) = states.get_mut(collection_id) {
                 state.compaction_in_progress = false;
 
-                if let Ok(compaction_result) = result {
-                    if compaction_result.success {
-                        // Reset compaction metrics on success
-                        state.files_needing_compaction = 0;
-                        state.uncompacted_size_bytes = 0;
-                        state.flushes_since_compaction = 0;
-                        state.last_compaction = Some(Utc::now());
-                    }
+                if let Ok(compaction_result) = result
+                    && compaction_result.success
+                {
+                    // Reset compaction metrics on success
+                    state.files_needing_compaction = 0;
+                    state.uncompacted_size_bytes = 0;
+                    state.flushes_since_compaction = 0;
+                    state.last_compaction = Some(Utc::now());
                 }
             }
         }
@@ -769,7 +746,7 @@ impl CompactionCoordinator {
                     if compaction_result.success {
                         stats.total_compactions += 1;
                         stats.total_bytes_compacted += compaction_result.bytes_reclaimed;
-                        stats.total_files_compacted += compaction_result.files_compacted as u64;
+                        stats.total_files_compacted += compaction_result.files_compacted;
 
                         // Update average duration
                         let total_duration = stats.avg_compaction_duration_secs
@@ -908,7 +885,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compaction_coordinator() {
-        // TODO: Implement comprehensive tests
+        // Deferred: Implement comprehensive tests
         assert!(true);
     }
 

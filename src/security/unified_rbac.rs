@@ -20,19 +20,15 @@ pub use crate::storage::tenant::rbac::{
     CollectionOperation as EnhancedCollectionOperation, Permission as EnhancedPermission,
 };
 
-/// Data model enum for cross-model permission validation
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub enum DataModel {
-    Vector,
-    Document,
-    Graph,
-    Observability,
-}
+/// Data model enum for cross-model permission validation — re-exported from canonical definition
+pub use crate::query::multimodel_router::StoreType as DataModel;
 
 /// Permission cache entry with TTL
 #[derive(Debug, Clone)]
 struct PermissionCacheEntry {
+    /// Whether the permission check was allowed
     allowed: bool,
+    /// Timestamp when this cache entry was created, for TTL expiry
     cached_at: DateTime<Utc>,
 }
 
@@ -310,20 +306,20 @@ impl ConsolidatedRBACManager {
         // Check cache first
         {
             let cache = self.permission_cache.read().await;
-            if let Some(user_cache) = cache.get(user_id) {
-                if let Some(entry) = user_cache.get(permission) {
-                    let now = Utc::now();
-                    let ttl = Duration::from_secs(self.config.permission_cache_ttl_minutes * 60);
+            if let Some(user_cache) = cache.get(user_id)
+                && let Some(entry) = user_cache.get(permission)
+            {
+                let now = Utc::now();
+                let ttl = Duration::from_secs(self.config.permission_cache_ttl_minutes * 60);
 
-                    if now
-                        .signed_duration_since(entry.cached_at)
-                        .to_std()
-                        .unwrap_or(Duration::ZERO)
-                        < ttl
-                    {
-                        debug!("Cache hit for user '{}': {:?}", user_id, permission);
-                        return Ok(entry.allowed);
-                    }
+                if now
+                    .signed_duration_since(entry.cached_at)
+                    .to_std()
+                    .unwrap_or(Duration::ZERO)
+                    < ttl
+                {
+                    debug!("Cache hit for user '{}': {:?}", user_id, permission);
+                    return Ok(entry.allowed);
                 }
             }
         }
@@ -336,9 +332,7 @@ impl ConsolidatedRBACManager {
         // Update cache
         {
             let mut cache = self.permission_cache.write().await;
-            let user_cache = cache
-                .entry(user_id.to_string())
-                .or_insert_with(HashMap::new);
+            let user_cache = cache.entry(user_id.to_string()).or_default();
             user_cache.insert(
                 permission.clone(),
                 PermissionCacheEntry {
@@ -604,12 +598,11 @@ impl ConsolidatedRBACManager {
         tenant_id: Option<&str>,
     ) -> Result<Option<HashSet<UnifiedPermission>>> {
         // Check tenant-specific roles first
-        if let Some(tenant_id) = tenant_id {
-            if let Some(tenant_roles) = self.tenant_roles.get(tenant_id) {
-                if let Some(role) = tenant_roles.get(role_name) {
-                    return Ok(Some(role.permissions.clone()));
-                }
-            }
+        if let Some(tenant_id) = tenant_id
+            && let Some(tenant_roles) = self.tenant_roles.get(tenant_id)
+            && let Some(role) = tenant_roles.get(role_name)
+        {
+            return Ok(Some(role.permissions.clone()));
         }
 
         // Check system-wide roles
@@ -729,8 +722,7 @@ impl ConsolidatedRBACManager {
         let role_exists = if let Some(tenant_id) = tenant_id {
             self.tenant_roles
                 .get(tenant_id)
-                .map(|roles| roles.contains_key(role_name))
-                .unwrap_or(false)
+                .is_some_and(|roles| roles.contains_key(role_name))
         } else {
             false
         };
@@ -775,11 +767,8 @@ impl ConsolidatedRBACManager {
         permission: &UnifiedPermission,
     ) -> Result<()> {
         // Get or create user role assignment
-        let mut assignment = self
-            .user_role_assignments
-            .get(user_id)
-            .map(|a| a.clone())
-            .unwrap_or_else(|| UserRoleAssignment {
+        let mut assignment = self.user_role_assignments.get(user_id).map_or_else(
+            || UserRoleAssignment {
                 user_id: user_id.to_string(),
                 tenant_id: None,
                 roles: HashSet::new(),
@@ -787,7 +776,9 @@ impl ConsolidatedRBACManager {
                 assigned_at: Utc::now(),
                 assigned_by: "system".to_string(),
                 expires_at: None,
-            });
+            },
+            |a| a.clone(),
+        );
 
         // Add the direct permission
         assignment.direct_permissions.insert(permission.clone());
@@ -1010,5 +1001,247 @@ mod tests {
         let assignment = rbac_manager.user_role_assignments.get("test_user");
         assert!(assignment.is_some());
         assert!(assignment.unwrap().roles.contains("collection_user"));
+    }
+
+    // =========================================================================
+    // New infrastructure tests
+    // =========================================================================
+
+    #[test]
+    fn test_unified_permission_variants() {
+        // Verify that all UnifiedPermission variants can be constructed
+        // and are distinct via Debug output (compile-time + runtime check).
+        let permissions: Vec<UnifiedPermission> = vec![
+            UnifiedPermission::TenantAdmin,
+            UnifiedPermission::TenantRead,
+            UnifiedPermission::TenantWrite,
+            UnifiedPermission::DomainCreate,
+            UnifiedPermission::DomainRead("d1".into()),
+            UnifiedPermission::DomainWrite("d1".into()),
+            UnifiedPermission::DomainAdmin("d1".into()),
+            UnifiedPermission::CollectionCreate,
+            UnifiedPermission::CollectionRead("c1".into()),
+            UnifiedPermission::CollectionWrite("c1".into()),
+            UnifiedPermission::CollectionDelete("c1".into()),
+            UnifiedPermission::CollectionAdmin("c1".into()),
+            UnifiedPermission::ReadCollectionMetadata("c1".into()),
+            UnifiedPermission::UpdateCollectionMetadata("c1".into()),
+            UnifiedPermission::ListCollections,
+            UnifiedPermission::VectorInsert("c1".into()),
+            UnifiedPermission::VectorDelete("c1".into()),
+            UnifiedPermission::VectorSearch("c1".into()),
+            UnifiedPermission::VectorUpdate("c1".into()),
+            UnifiedPermission::VectorRead("c1".into()),
+            UnifiedPermission::EntityRead("e1".into()),
+            UnifiedPermission::EntityWrite("e1".into()),
+            UnifiedPermission::EntityDelete("e1".into()),
+            UnifiedPermission::GraphCreateRelations("g1".into()),
+            UnifiedPermission::GraphDeleteRelations("g1".into()),
+            UnifiedPermission::GraphTraverse("g1".into()),
+            UnifiedPermission::GraphReadRelations("g1".into()),
+            UnifiedPermission::ExecuteSqlQueries("c1".into()),
+            UnifiedPermission::ExecuteSksFunctions("c1".into()),
+            UnifiedPermission::ViewSystemMetrics,
+            UnifiedPermission::ViewSystemHealth,
+            UnifiedPermission::ConfigureSystem,
+            UnifiedPermission::AuditRead,
+            UnifiedPermission::SystemAdmin,
+            UnifiedPermission::RiskDataAccess,
+            UnifiedPermission::FinancialDataAccess,
+            UnifiedPermission::ComplianceDataAccess,
+            UnifiedPermission::CustomerDataAccess,
+            UnifiedPermission::FieldLevelRead("c1".into(), "field_a".into()),
+            UnifiedPermission::FieldLevelWrite("c1".into(), "field_b".into()),
+        ];
+
+        // Each variant should produce a distinct Debug string
+        let debug_strings: HashSet<String> =
+            permissions.iter().map(|p| format!("{:?}", p)).collect();
+        assert_eq!(
+            debug_strings.len(),
+            permissions.len(),
+            "all permission variants should produce unique Debug representations"
+        );
+    }
+
+    #[test]
+    fn test_data_model_alias() {
+        // DataModel is re-exported as StoreType. Verify the alias works and
+        // key variants are accessible.
+        let vector = DataModel::Vector;
+        let document = DataModel::Document;
+        let graph = DataModel::Graph;
+
+        assert_ne!(vector, document);
+        assert_ne!(document, graph);
+        assert_eq!(vector, DataModel::Vector);
+
+        // Verify all variants listed in StoreType are reachable through the alias
+        let _observability = DataModel::Observability;
+        let _relational = DataModel::Relational;
+        let _time_series = DataModel::TimeSeries;
+        let _event = DataModel::Event;
+    }
+
+    #[test]
+    fn test_permission_cache_entry() {
+        // PermissionCacheEntry is private, but we can exercise it indirectly
+        // through the public cache API. Here we just verify the struct can be
+        // constructed (it is in scope for this test module via `super::*`).
+        let entry = PermissionCacheEntry {
+            allowed: true,
+            cached_at: Utc::now(),
+        };
+        assert!(entry.allowed);
+        assert!(entry.cached_at <= Utc::now());
+
+        let denied_entry = PermissionCacheEntry {
+            allowed: false,
+            cached_at: Utc::now() - chrono::Duration::minutes(5),
+        };
+        assert!(!denied_entry.allowed);
+        // TTL check: the entry was created 5 minutes ago
+        let age = Utc::now()
+            .signed_duration_since(denied_entry.cached_at)
+            .num_seconds();
+        assert!(
+            age >= 299,
+            "cache entry age should be approximately 300 seconds"
+        );
+    }
+
+    #[test]
+    fn test_authorization_result_allowed() {
+        let mut permissions = HashSet::new();
+        permissions.insert(UnifiedPermission::CollectionRead("my_coll".into()));
+
+        let result = AuthorizationResult {
+            allowed: true,
+            permissions,
+            tenant_context: Some(TenantContext {
+                tenant_id: "tenant_1".into(),
+                tenant_name: "Acme Corp".into(),
+                security_policy: "strict".into(),
+                compliance_frameworks: vec!["SOC2".into(), "GDPR".into()],
+            }),
+            reason: None,
+        };
+
+        assert!(result.allowed);
+        assert!(
+            result.reason.is_none(),
+            "allowed result should have no denial reason"
+        );
+        assert_eq!(result.permissions.len(), 1);
+        let ctx = result
+            .tenant_context
+            .as_ref()
+            .expect("should have tenant context");
+        assert_eq!(ctx.tenant_id, "tenant_1");
+        assert_eq!(ctx.compliance_frameworks.len(), 2);
+    }
+
+    #[test]
+    fn test_authorization_result_denied() {
+        let result = AuthorizationResult {
+            allowed: false,
+            permissions: HashSet::new(),
+            tenant_context: None,
+            reason: Some("Insufficient permissions for VectorSearch on collection 'secret'".into()),
+        };
+
+        assert!(!result.allowed);
+        assert!(result.permissions.is_empty());
+        assert!(result.tenant_context.is_none());
+        let reason = result
+            .reason
+            .as_ref()
+            .expect("denied result should carry a reason");
+        assert!(
+            reason.contains("Insufficient permissions"),
+            "reason should describe the denial"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cross_model_permission_validation() {
+        // Validate that validate_collection_access_cross_model produces
+        // correct AuthorizationResult for various DataModel + operation combos.
+        let config = RBACConfig {
+            default_deny: false, // allow by default (no assignment => allowed)
+            ..RBACConfig::default()
+        };
+        let rbac = ConsolidatedRBACManager::new(config);
+
+        let user_ctx = UnifiedUserContext {
+            user_id: "cross_model_user".into(),
+            tenant_id: Some("tenant_x".into()),
+            roles: vec![],
+            effective_permissions: HashSet::new(),
+            auth_method: AuthMethod::ApiKey,
+            session_id: "sess_cross".into(),
+            expires_at: None,
+            created_at: Utc::now(),
+            metadata: HashMap::new(),
+        };
+
+        // Vector + Read should map to CollectionRead
+        let result = rbac
+            .validate_collection_access_cross_model(
+                &user_ctx,
+                "embeddings",
+                EnhancedCollectionOperation::Read,
+                DataModel::Vector,
+            )
+            .await
+            .expect("should not fail");
+        // default_deny=false and no assignment => allowed
+        assert!(
+            result.allowed,
+            "Vector Read should be allowed with default_deny=false"
+        );
+
+        // Graph + Delete should map to CollectionDelete
+        let result = rbac
+            .validate_collection_access_cross_model(
+                &user_ctx,
+                "social_graph",
+                EnhancedCollectionOperation::Delete,
+                DataModel::Graph,
+            )
+            .await
+            .expect("should not fail");
+        assert!(result.allowed);
+
+        // Document + Write should map to CollectionWrite
+        let result = rbac
+            .validate_collection_access_cross_model(
+                &user_ctx,
+                "articles",
+                EnhancedCollectionOperation::Write,
+                DataModel::Document,
+            )
+            .await
+            .expect("should not fail");
+        assert!(result.allowed);
+
+        // Unsupported combo: Vector + Admin has no explicit mapping => denied
+        let result = rbac
+            .validate_collection_access_cross_model(
+                &user_ctx,
+                "embeddings",
+                EnhancedCollectionOperation::Admin,
+                DataModel::Vector,
+            )
+            .await
+            .expect("should not fail");
+        assert!(
+            !result.allowed,
+            "Vector + Admin is not an explicitly mapped combination"
+        );
+        assert!(
+            result.reason.is_some(),
+            "unsupported combo should carry a reason"
+        );
     }
 }

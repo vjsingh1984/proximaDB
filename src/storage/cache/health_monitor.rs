@@ -623,7 +623,7 @@ impl PerformanceProfiler {
 
     async fn flush_to_disk(&self, profiles: &[PerformanceProfile]) {
         // Would write to actual file
-        let _json = serde_json::to_string_pretty(profiles).unwrap();
+        let _json = serde_json::to_string_pretty(profiles).unwrap_or_else(|_| "[]".to_string());
         // std::fs::write(&self.output_path, json).ok();
     }
 }

@@ -5,12 +5,81 @@
 
 use anyhow::{Result, anyhow};
 use arrow::datatypes::Schema;
+use parquet::basic::Type as PhysicalType;
 use parquet::file::metadata::RowGroupMetaData;
+use parquet::file::statistics::Statistics;
 use std::sync::Arc;
 use tracing::debug;
 
 // Use the columnar module's MetadataFilter, not the proto one
 use crate::storage::engines::core::formats::columnar::{FilterCondition, MetadataFilter};
+
+/// Extract typed min/max from parquet statistics as f64 values.
+fn extract_stats_min_max(stats: &Statistics, col_type: PhysicalType) -> Option<(f64, f64)> {
+    let min_bytes = stats.min_bytes_opt()?;
+    let max_bytes = stats.max_bytes_opt()?;
+
+    match col_type {
+        PhysicalType::INT32 => {
+            if min_bytes.len() < 4 || max_bytes.len() < 4 {
+                return None;
+            }
+            let min_val =
+                i32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]) as f64;
+            let max_val =
+                i32::from_le_bytes([max_bytes[0], max_bytes[1], max_bytes[2], max_bytes[3]]) as f64;
+            Some((min_val, max_val))
+        }
+        PhysicalType::INT64 => {
+            if min_bytes.len() < 8 || max_bytes.len() < 8 {
+                return None;
+            }
+            let min_val = i64::from_le_bytes(min_bytes[..8].try_into().ok()?) as f64;
+            let max_val = i64::from_le_bytes(max_bytes[..8].try_into().ok()?) as f64;
+            Some((min_val, max_val))
+        }
+        PhysicalType::FLOAT => {
+            if min_bytes.len() < 4 || max_bytes.len() < 4 {
+                return None;
+            }
+            let min_val =
+                f32::from_le_bytes([min_bytes[0], min_bytes[1], min_bytes[2], min_bytes[3]]) as f64;
+            let max_val =
+                f32::from_le_bytes([max_bytes[0], max_bytes[1], max_bytes[2], max_bytes[3]]) as f64;
+            Some((min_val, max_val))
+        }
+        PhysicalType::DOUBLE => {
+            if min_bytes.len() < 8 || max_bytes.len() < 8 {
+                return None;
+            }
+            let min_val = f64::from_le_bytes(min_bytes[..8].try_into().ok()?);
+            let max_val = f64::from_le_bytes(max_bytes[..8].try_into().ok()?);
+            Some((min_val, max_val))
+        }
+        _ => None,
+    }
+}
+
+/// Check if a numeric value could exist in the row group based on column statistics.
+pub fn check_numeric_in_stats_range(
+    stats: &Statistics,
+    col_type: PhysicalType,
+    value: f64,
+) -> Option<bool> {
+    let (stats_min, stats_max) = extract_stats_min_max(stats, col_type)?;
+    Some(value >= stats_min && value <= stats_max)
+}
+
+/// Check if a filter range overlaps with the row group's statistics range.
+pub fn check_range_overlaps_stats(
+    stats: &Statistics,
+    col_type: PhysicalType,
+    filter_min: f64,
+    filter_max: f64,
+) -> Option<bool> {
+    let (stats_min, stats_max) = extract_stats_min_max(stats, col_type)?;
+    Some(filter_min <= stats_max && stats_min <= filter_max)
+}
 
 /// Predicate builder for filter pushdown
 pub struct PredicateBuilder {
@@ -146,6 +215,12 @@ impl PredicateBuilder {
     }
 }
 
+impl Default for PredicateBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Filter pushdown optimizer
 pub struct FilterPushdown {
     enable_statistics_pruning: bool,
@@ -222,6 +297,12 @@ impl FilterPushdown {
         // This would check column statistics (min/max) against filters
         // For now, return true to read all row groups
         true
+    }
+}
+
+impl Default for FilterPushdown {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

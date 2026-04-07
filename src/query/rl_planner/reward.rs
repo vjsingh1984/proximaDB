@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Optimization goal determines reward weighting
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum OptimizationGoal {
     /// Minimize latency (60% latency, 30% recall, 10% throughput)
     MinLatency,
@@ -15,19 +15,17 @@ pub enum OptimizationGoal {
     /// Maximize throughput (30% latency, 20% recall, 50% throughput)
     MaxThroughput,
     /// Balanced optimization (40% latency, 40% recall, 20% throughput)
+    #[default]
     Balanced,
     /// Custom weights (latency, recall, throughput as u8 percentages)
     Custom {
+        /// Weight for latency optimization (0-100)
         latency_weight: u8,
+        /// Weight for recall optimization (0-100)
         recall_weight: u8,
+        /// Weight for throughput optimization (0-100)
         throughput_weight: u8,
     },
-}
-
-impl Default for OptimizationGoal {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 impl OptimizationGoal {
@@ -184,8 +182,10 @@ impl LatencyModel {
 impl RewardCalculator {
     /// Create new reward calculator with default goal
     pub fn new(goal: OptimizationGoal) -> Self {
-        let mut target = OptimizationTarget::default();
-        target.goal = goal;
+        let target = OptimizationTarget {
+            goal,
+            ..Default::default()
+        };
 
         Self {
             default_goal: goal,
@@ -267,7 +267,7 @@ impl RewardCalculator {
             latency_w * latency_score + recall_w * recall_score + throughput_w * throughput_score;
 
         // Clip to [0, 1]
-        reward.max(0.0).min(1.0)
+        reward.clamp(0.0, 1.0)
     }
 
     /// Calculate reward with collection-size-aware latency normalization
@@ -365,7 +365,7 @@ impl RewardCalculator {
         );
 
         // Clip to [0, 1]
-        reward.max(0.0).min(1.0)
+        reward.clamp(0.0, 1.0)
     }
 
     /// Calculate reward with additional penalty for constraint violations
@@ -378,20 +378,20 @@ impl RewardCalculator {
         hard_constraints: &HardConstraints,
     ) -> f32 {
         // Check hard constraints first
-        if let Some(max_lat) = hard_constraints.max_latency_ms {
-            if latency_ms > max_lat {
-                return 0.0; // Constraint violation = zero reward
-            }
+        if let Some(max_lat) = hard_constraints.max_latency_ms
+            && latency_ms > max_lat
+        {
+            return 0.0; // Constraint violation = zero reward
         }
-        if let Some(min_rec) = hard_constraints.min_recall {
-            if recall < min_rec {
-                return 0.0;
-            }
+        if let Some(min_rec) = hard_constraints.min_recall
+            && recall < min_rec
+        {
+            return 0.0;
         }
-        if let Some(min_qps) = hard_constraints.min_qps {
-            if throughput_qps < min_qps {
-                return 0.0;
-            }
+        if let Some(min_qps) = hard_constraints.min_qps
+            && throughput_qps < min_qps
+        {
+            return 0.0;
         }
 
         // No constraint violations, calculate normal reward

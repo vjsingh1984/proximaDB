@@ -200,15 +200,15 @@ impl SQLValidator {
 
         // Step 2: Check for forbidden patterns
         for pattern in &self.forbidden_patterns {
-            if let Ok(regex) = regex::Regex::new(pattern) {
-                if regex.is_match(sql) {
-                    security_issues.push(SecurityIssue {
-                        issue_type: SecurityIssueType::SQLInjection,
-                        description: format!("Forbidden pattern detected: {}", pattern),
-                        severity: SecuritySeverity::Critical,
-                        location: None,
-                    });
-                }
+            if let Ok(regex) = regex::Regex::new(pattern)
+                && regex.is_match(sql)
+            {
+                security_issues.push(SecurityIssue {
+                    issue_type: SecurityIssueType::SQLInjection,
+                    description: format!("Forbidden pattern detected: {}", pattern),
+                    severity: SecuritySeverity::Critical,
+                    location: None,
+                });
             }
         }
 
@@ -393,18 +393,18 @@ impl SQLValidator {
             } else {
                 after_limit
             };
-            if let Ok(limit_value) = limit_str.parse::<u32>() {
-                if limit_value > self.config.max_result_limit {
-                    return Some(SecurityIssue {
-                        issue_type: SecurityIssueType::ExcessiveResultSize,
-                        description: format!(
-                            "LIMIT {} exceeds maximum allowed {}",
-                            limit_value, self.config.max_result_limit
-                        ),
-                        severity: SecuritySeverity::Medium,
-                        location: Some(format!("LIMIT {}", limit_value)),
-                    });
-                }
+            if let Ok(limit_value) = limit_str.parse::<u32>()
+                && limit_value > self.config.max_result_limit
+            {
+                return Some(SecurityIssue {
+                    issue_type: SecurityIssueType::ExcessiveResultSize,
+                    description: format!(
+                        "LIMIT {} exceeds maximum allowed {}",
+                        limit_value, self.config.max_result_limit
+                    ),
+                    severity: SecuritySeverity::Medium,
+                    location: Some(format!("LIMIT {}", limit_value)),
+                });
             }
         }
 

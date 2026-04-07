@@ -61,8 +61,8 @@ const VECTOR_DIMENSION: usize = 768;
 /// Default graph ID for benchmarks
 const BENCHMARK_GRAPH_ID: &str = "benchmark_multimodal_graph";
 
-/// Standard dataset sizes for benchmarks
-const DATASET_SIZES: &[usize] = &[1000, 5000, 10000];
+/// Standard dataset sizes for benchmarks (reduced ~10x for OOM prevention)
+const DATASET_SIZES: &[usize] = &[100, 500, 1000];
 
 /// Standard top-k values for search
 #[allow(dead_code)]
@@ -195,9 +195,9 @@ fn bench_vector_search_baseline(c: &mut Criterion) {
     print_system_info("Multi-Modal Query Benchmarks");
 
     let mut group = c.benchmark_group("vector_search_baseline");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(50);
-    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
 
     let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
 
@@ -248,9 +248,9 @@ fn bench_vector_search_baseline(c: &mut Criterion) {
 /// Benchmark pure graph traversal performance
 fn bench_graph_traversal_baseline(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_traversal_baseline");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(40);
-    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(15);
+    group.warm_up_time(Duration::from_secs(1));
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
 
@@ -282,8 +282,8 @@ fn bench_graph_traversal_baseline(c: &mut Criterion) {
         (service, collection_service)
     });
 
-    // Populate graph with test data
-    let node_count = 1000;
+    // Populate graph with test data (reduced for OOM prevention)
+    let node_count = 100;
     let edge_factor = 3;
 
     runtime.block_on(async {
@@ -362,9 +362,9 @@ fn bench_graph_traversal_baseline(c: &mut Criterion) {
 /// Benchmark combined vector search + graph traversal
 fn bench_vector_graph_combined(c: &mut Criterion) {
     let mut group = c.benchmark_group("vector_graph_combined");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(40);
-    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(15);
+    group.warm_up_time(Duration::from_secs(1));
 
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let distance_compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
@@ -378,8 +378,8 @@ fn bench_vector_graph_combined(c: &mut Criterion) {
         (service, collection_service)
     });
 
-    // Generate combined dataset
-    let dataset_size = 1000;
+    // Generate combined dataset (reduced for OOM prevention)
+    let dataset_size = 100;
     let vectors = generate_vectors(dataset_size, VECTOR_DIMENSION);
     let query_vector = EmbeddingGenerator::new(EmbeddingModel::Bert).generate(VECTOR_DIMENSION);
 
@@ -488,12 +488,12 @@ fn bench_vector_graph_combined(c: &mut Criterion) {
 /// Benchmark cross-model join operations
 fn bench_cross_model_join(c: &mut Criterion) {
     let mut group = c.benchmark_group("cross_model_join");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(50);
-    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
 
-    // Test different result set sizes for joining
-    let join_sizes = [(100, 100), (100, 1000), (1000, 1000), (1000, 10000)];
+    // Test different result set sizes for joining (reduced ~10x for OOM prevention)
+    let join_sizes = [(50, 50), (50, 100), (100, 100), (100, 1000)];
 
     for (left_size, right_size) in join_sizes {
         // Generate left (vector) and right (graph) result sets
@@ -561,8 +561,8 @@ fn bench_cross_model_join(c: &mut Criterion) {
 /// Benchmark query parsing and optimization overhead
 fn bench_query_planner_overhead(c: &mut Criterion) {
     let mut group = c.benchmark_group("query_planner_overhead");
-    group.measurement_time(Duration::from_secs(5));
-    group.sample_size(100);
+    group.measurement_time(Duration::from_secs(3));
+    group.sample_size(30);
     group.warm_up_time(Duration::from_secs(1));
 
     let parser = FederatedParser::new();
@@ -673,35 +673,35 @@ fn bench_query_planner_overhead(c: &mut Criterion) {
 /// Benchmark different result fusion strategies
 fn bench_fusion_strategies(c: &mut Criterion) {
     let mut group = c.benchmark_group("fusion_strategies");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(50);
-    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(20);
+    group.warm_up_time(Duration::from_secs(1));
 
-    // Test with different result set configurations
+    // Test with different result set configurations (reduced ~10x for OOM prevention)
     let configurations = vec![
         (
             "small_2way",
-            vec![100, 100],
+            vec![50, 50],
             vec![DataModel::Vector, DataModel::Graph],
         ),
         (
             "medium_2way",
-            vec![1000, 1000],
+            vec![100, 100],
             vec![DataModel::Vector, DataModel::Graph],
         ),
         (
             "large_2way",
-            vec![10000, 10000],
+            vec![1000, 1000],
             vec![DataModel::Vector, DataModel::Graph],
         ),
         (
             "3way_mixed",
-            vec![500, 1000, 2000],
+            vec![50, 100, 200],
             vec![DataModel::Vector, DataModel::Graph, DataModel::Document],
         ),
         (
             "4way_full",
-            vec![500, 500, 500, 500],
+            vec![50, 50, 50, 50],
             vec![
                 DataModel::Vector,
                 DataModel::Graph,
@@ -734,8 +734,8 @@ fn bench_fusion_strategies(c: &mut Criterion) {
             );
         }
 
-        // Benchmark RRF with different k values
-        for k in [20, 60, 100] {
+        // Benchmark RRF with different k values (skip 60, already benchmarked above)
+        for k in [20, 100] {
             let fuser = ResultFuser::new(FusionStrategy::ReciprocalRankFusion { k });
             let results_clone = sub_results.clone();
 
@@ -850,11 +850,11 @@ fn bench_fusion_strategies(c: &mut Criterion) {
 /// Benchmark how fusion strategies scale with result size
 fn bench_fusion_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("fusion_scaling");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(40);
-    group.warm_up_time(Duration::from_secs(2));
+    group.measurement_time(Duration::from_secs(5));
+    group.sample_size(15);
+    group.warm_up_time(Duration::from_secs(1));
 
-    let result_sizes = [100, 500, 1000, 5000, 10000];
+    let result_sizes = [50, 100, 500, 1000];
 
     for &size in &result_sizes {
         let sub_results =
@@ -915,9 +915,9 @@ fn bench_fusion_scaling(c: &mut Criterion) {
 criterion_group! {
     name = baseline_benchmarks;
     config = Criterion::default()
-        .sample_size(50)
-        .measurement_time(Duration::from_secs(10))
-        .warm_up_time(Duration::from_secs(2));
+        .sample_size(20)
+        .measurement_time(Duration::from_secs(5))
+        .warm_up_time(Duration::from_secs(1));
     targets = bench_vector_search_baseline,
               bench_graph_traversal_baseline
 }
@@ -925,9 +925,9 @@ criterion_group! {
 criterion_group! {
     name = combined_benchmarks;
     config = Criterion::default()
-        .sample_size(40)
-        .measurement_time(Duration::from_secs(10))
-        .warm_up_time(Duration::from_secs(2));
+        .sample_size(15)
+        .measurement_time(Duration::from_secs(5))
+        .warm_up_time(Duration::from_secs(1));
     targets = bench_vector_graph_combined,
               bench_cross_model_join
 }
@@ -935,8 +935,8 @@ criterion_group! {
 criterion_group! {
     name = planner_benchmarks;
     config = Criterion::default()
-        .sample_size(100)
-        .measurement_time(Duration::from_secs(5))
+        .sample_size(30)
+        .measurement_time(Duration::from_secs(3))
         .warm_up_time(Duration::from_secs(1));
     targets = bench_query_planner_overhead
 }
@@ -944,9 +944,9 @@ criterion_group! {
 criterion_group! {
     name = fusion_benchmarks;
     config = Criterion::default()
-        .sample_size(50)
-        .measurement_time(Duration::from_secs(10))
-        .warm_up_time(Duration::from_secs(2));
+        .sample_size(20)
+        .measurement_time(Duration::from_secs(5))
+        .warm_up_time(Duration::from_secs(1));
     targets = bench_fusion_strategies,
               bench_fusion_scaling
 }

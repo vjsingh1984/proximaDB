@@ -56,8 +56,7 @@ impl RLPlannerIntegration {
                     .collection
                     .config
                     .as_ref()
-                    .map(|c| c.dimension)
-                    .unwrap_or(128),
+                    .map_or(128, |c| c.dimension),
             )
             .top_k(context.search_params.and_then(|p| p.top_k).unwrap_or(10) as u32)
             .collection_size(context.total_vectors as u64)
@@ -104,10 +103,10 @@ impl RLPlannerIntegration {
                 SearchIndexType::HilbertCurve | SearchIndexType::AdaCurve => None,
                 SearchIndexType::ZoneMap | SearchIndexType::AdaptiveMatrix => None,
             };
-            if let Some(idx_type) = mapped {
-                if !indexes.contains(&idx_type) {
-                    indexes.push(idx_type);
-                }
+            if let Some(idx_type) = mapped
+                && !indexes.contains(&idx_type)
+            {
+                indexes.push(idx_type);
             }
         }
 
@@ -124,10 +123,10 @@ impl RLPlannerIntegration {
                         IndexingAlgorithm::Pq => Some(IndexType::PQ),
                         _ => None,
                     };
-                    if let Some(it) = idx_type {
-                        if !indexes.contains(&it) {
-                            indexes.push(it);
-                        }
+                    if let Some(it) = idx_type
+                        && !indexes.contains(&it)
+                    {
+                        indexes.push(it);
                     }
                 }
             }
@@ -206,45 +205,43 @@ impl RLPlannerIntegration {
     pub fn apply_action_to_plan(&self, action: &ExecutionAction, plan: &mut UnifiedExecutionPlan) {
         // Modify execution steps based on RL action
         for step in &mut plan.execution_steps {
-            match step {
-                ExecutionStep::VectorSearch {
-                    execution_method,
-                    candidates,
-                    ..
-                } => {
-                    // Apply index strategy from action
-                    if let Some(ref strategy) = action.index_strategy {
-                        *execution_method = match strategy {
-                            super::action::IndexStrategy::HNSW { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::HNSW,
-                                }
+            if let ExecutionStep::VectorSearch {
+                execution_method,
+                candidates,
+                ..
+            } = step
+            {
+                // Apply index strategy from action
+                if let Some(ref strategy) = action.index_strategy {
+                    *execution_method = match strategy {
+                        super::action::IndexStrategy::HNSW { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::HNSW,
                             }
-                            super::action::IndexStrategy::IVF { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::IVF,
-                                }
+                        }
+                        super::action::IndexStrategy::IVF { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::IVF,
                             }
-                            super::action::IndexStrategy::LSH { .. } => {
-                                SearchExecutionMethod::IndexBased {
-                                    index_type: Index::LSH,
-                                }
+                        }
+                        super::action::IndexStrategy::LSH { .. } => {
+                            SearchExecutionMethod::IndexBased {
+                                index_type: Index::LSH,
                             }
-                            super::action::IndexStrategy::DirectScan => {
-                                SearchExecutionMethod::DirectFP32
-                            }
-                            _ => execution_method.clone(),
-                        };
-                    }
-
-                    // Apply search mode
-                    if let super::action::SearchModeAction::Approximate { expansion_factor } =
-                        &action.search_mode
-                    {
-                        *candidates = (*candidates as f32 * expansion_factor) as usize;
-                    }
+                        }
+                        super::action::IndexStrategy::DirectScan => {
+                            SearchExecutionMethod::DirectFP32
+                        }
+                        _ => execution_method.clone(),
+                    };
                 }
-                _ => {}
+
+                // Apply search mode
+                if let super::action::SearchModeAction::Approximate { expansion_factor } =
+                    &action.search_mode
+                {
+                    *candidates = (*candidates as f32 * expansion_factor) as usize;
+                }
             }
         }
 
@@ -412,11 +409,11 @@ pub fn get_rl_planner() -> Option<&'static RLPlannerIntegration> {
 
 /// Convenience function to select action if RL planner is enabled
 pub async fn rl_select_action(context: &UnifiedQueryContext<'_>) -> Option<ExecutionAction> {
-    if let Some(planner) = get_rl_planner() {
-        if planner.is_enabled() {
-            let state = planner.extract_state(context);
-            return Some(planner.select_action(&state).await);
-        }
+    if let Some(planner) = get_rl_planner()
+        && planner.is_enabled()
+    {
+        let state = planner.extract_state(context);
+        return Some(planner.select_action(&state).await);
     }
     None
 }
@@ -480,6 +477,6 @@ mod tests {
         let stats = integration.get_action_stats().await;
         // Stats may or may not be populated depending on exploration
         // This test just ensures it doesn't crash
-        assert!(stats.len() >= 0);
+        let _ = stats.len();
     }
 }

@@ -227,7 +227,7 @@ impl MetricQuery {
 
             let key = GroupKey::new(bucket_ts, group_labels);
 
-            groups.entry(key).or_insert_with(Vec::new).push(sample);
+            groups.entry(key).or_default().push(sample);
         }
 
         groups
@@ -265,8 +265,8 @@ impl MetricQuery {
         let mut sorted: Vec<_> = samples.iter().collect();
         sorted.sort_by_key(|s| s.timestamp_ns);
 
-        let first = sorted.first().unwrap();
-        let last = sorted.last().unwrap();
+        let first = sorted[0];
+        let last = sorted[sorted.len() - 1];
 
         let time_diff_s = (last.timestamp_ns - first.timestamp_ns) as f64 / 1_000_000_000.0;
         if time_diff_s <= 0.0 {

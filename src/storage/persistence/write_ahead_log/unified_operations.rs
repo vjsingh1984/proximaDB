@@ -56,6 +56,9 @@ pub enum UnifiedWALOperation {
         batch_id: Option<String>,
     },
 
+    /// Time-series operation
+    TimeSeriesOp(TimeSeriesOperation),
+
     /// Checkpoint operation for recovery
     Checkpoint {
         sequence_number: u64,
@@ -65,6 +68,42 @@ pub enum UnifiedWALOperation {
         graphs: Vec<String>,
         document_collections: Vec<String>,
         observability_namespaces: Vec<String>,
+    },
+}
+
+/// Time-series operations for WAL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TimeSeriesOperation {
+    /// Insert a time-series record into a partition
+    InsertRecord {
+        collection_id: String,
+        /// Timestamp in milliseconds since Unix epoch
+        timestamp_ms: i64,
+        record: VectorRecord,
+    },
+    /// Insert an OHLC bar
+    InsertOHLC {
+        collection_id: String,
+        symbol: String,
+        /// Timestamp in milliseconds since Unix epoch
+        timestamp_ms: i64,
+        open: f64,
+        high: f64,
+        low: f64,
+        close: f64,
+        volume: i64,
+    },
+    /// Create a new time partition
+    CreatePartition {
+        collection_id: String,
+        /// Partition start timestamp in milliseconds since Unix epoch
+        partition_key_ms: i64,
+    },
+    /// Drop a time partition
+    DropPartition {
+        collection_id: String,
+        /// Partition start timestamp in milliseconds since Unix epoch
+        partition_key_ms: i64,
     },
 }
 
@@ -197,8 +236,8 @@ impl UnifiedWALEntry {
     pub fn new(sequence_number: u64, operation: UnifiedWALOperation) -> Self {
         let timestamp_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
         let checksum = Self::calculate_checksum(&operation);
 
         Self {
@@ -252,6 +291,11 @@ impl UnifiedWALEntry {
     pub fn is_observability_operation(&self) -> bool {
         matches!(&self.operation, UnifiedWALOperation::ObservabilityOp(_))
     }
+
+    /// Check if this is a time-series operation
+    pub fn is_timeseries_operation(&self) -> bool {
+        matches!(&self.operation, UnifiedWALOperation::TimeSeriesOp(_))
+    }
 }
 
 /// WAL writer extension for unified operations
@@ -297,19 +341,45 @@ impl UnifiedWALWriter {
         let fs = filesystem.get_filesystem(&base_url)?;
         fs.create_dir_all(&base_url).await?;
 
-        // TODO: Discover existing WAL files and resume from max sequence number
-        // For now, we start fresh each time to avoid complexity
-        // This is acceptable for the current TDD test which uses separate directories
-        tracing::debug!("WAL writer initialized for path: {}", base_path);
+        // Discover existing WAL files to resume from max sequence number
+        let mut max_seq: u64 = 0;
+        let mut segment_count: u64 = 0;
+        if let Ok(files) = fs.list(&base_url).await {
+            for file_info in &files {
+                // WAL filenames: wal_YYYYMMDD_HHMMSS_{min_seq}_{max_seq}_{uuid}.{ext}
+                if let Some(name) = file_info.name.split('/').last() {
+                    if name.starts_with("wal_") {
+                        segment_count += 1;
+                        // Extract max sequence from filename (field 3, 0-indexed)
+                        let parts: Vec<&str> = name.split('_').collect();
+                        if parts.len() >= 4 {
+                            if let Ok(seq) = parts[3].parse::<u64>() {
+                                max_seq = max_seq.max(seq);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if max_seq > 0 {
+            tracing::info!(
+                "WAL recovery: found {} segments, resuming from sequence {}",
+                segment_count,
+                max_seq
+            );
+        } else {
+            tracing::debug!("WAL writer initialized fresh for path: {}", base_path);
+        }
 
         Ok(Self {
             base_path,
-            sequence_number: std::sync::atomic::AtomicU64::new(0),
+            sequence_number: std::sync::atomic::AtomicU64::new(max_seq),
             filesystem,
             current_segment_path: None,
             current_segment_data: Vec::new(),
             max_segment_size: 64 * 1024 * 1024, // 64MB segments
-            segment_counter: 0,
+            segment_counter: segment_count as u32,
         })
     }
 
@@ -351,12 +421,7 @@ impl UnifiedWALWriter {
         self.current_segment_data.extend_from_slice(&serialized);
 
         // If requires immediate fsync, flush to disk
-        if entry
-            .metadata
-            .as_ref()
-            .map(|m| m.requires_fsync)
-            .unwrap_or(false)
-        {
+        if entry.metadata.as_ref().is_some_and(|m| m.requires_fsync) {
             self.flush_current_segment().await?;
         }
 
@@ -385,28 +450,28 @@ impl UnifiedWALWriter {
 
     /// Flush current segment to disk
     async fn flush_current_segment(&mut self) -> anyhow::Result<()> {
-        if let Some(ref path) = self.current_segment_path {
-            if !self.current_segment_data.is_empty() {
-                let url = format!("file://{}", path);
-                let fs = self.filesystem.get_filesystem(&url)?;
+        if let Some(ref path) = self.current_segment_path
+            && !self.current_segment_data.is_empty()
+        {
+            let url = format!("file://{}", path);
+            let fs = self.filesystem.get_filesystem(&url)?;
 
-                // Read existing data if file exists
-                let mut full_data = if fs.exists(&url).await? {
-                    fs.read(&url).await?
-                } else {
-                    Vec::new()
-                };
+            // Read existing data if file exists
+            let mut full_data = if fs.exists(&url).await? {
+                fs.read(&url).await?
+            } else {
+                Vec::new()
+            };
 
-                // Append new data
-                full_data.extend_from_slice(&self.current_segment_data);
+            // Append new data
+            full_data.extend_from_slice(&self.current_segment_data);
 
-                // Write back atomically
-                fs.write(&url, &full_data, None).await?;
-                fs.sync_file(&url).await?;
+            // Write back atomically
+            fs.write(&url, &full_data, None).await?;
+            fs.sync_file(&url).await?;
 
-                // Clear buffer after successful write
-                self.current_segment_data.clear();
-            }
+            // Clear buffer after successful write
+            self.current_segment_data.clear();
         }
         Ok(())
     }

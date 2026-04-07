@@ -180,10 +180,10 @@ impl SubscriptionManager {
         }
 
         // Check per-collection limit
-        if let Some(ids) = self.collection_index.get(&collection) {
-            if ids.len() >= self.config.max_per_collection {
-                return Err(SubscriptionError::TooManyPerCollection(collection));
-            }
+        if let Some(ids) = self.collection_index.get(&collection)
+            && ids.len() >= self.config.max_per_collection
+        {
+            return Err(SubscriptionError::TooManyPerCollection(collection));
         }
 
         // Create channel for updates
@@ -197,24 +197,24 @@ impl SubscriptionManager {
         // Add to indices
         self.collection_index
             .entry(collection)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(id.clone());
 
         self.fingerprint_index
             .entry(fingerprint.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(id.clone());
 
         // Check for fingerprint sharing (deduplication opportunity)
-        if let Some(fp_subs) = self.fingerprint_index.get(&fingerprint) {
-            if fp_subs.len() > 1 {
-                self.metrics.dedup_hits.fetch_add(1, Ordering::Relaxed);
-                debug!(
-                    "Subscription {} shares fingerprint with {} others",
-                    id,
-                    fp_subs.len() - 1
-                );
-            }
+        if let Some(fp_subs) = self.fingerprint_index.get(&fingerprint)
+            && fp_subs.len() > 1
+        {
+            self.metrics.dedup_hits.fetch_add(1, Ordering::Relaxed);
+            debug!(
+                "Subscription {} shares fingerprint with {} others",
+                id,
+                fp_subs.len() - 1
+            );
         }
 
         // Store subscription
@@ -564,11 +564,13 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("subscription should succeed");
 
         assert!(manager.get(&handle.id).is_some());
 
-        manager.unsubscribe(&handle.id).unwrap();
+        manager
+            .unsubscribe(&handle.id)
+            .expect("unsubscribe should succeed");
         assert!(manager.get(&handle.id).is_none());
     }
 
@@ -585,7 +587,7 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("first subscription should succeed");
 
         let handle2 = manager
             .subscribe(
@@ -595,15 +597,19 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("second subscription should succeed");
 
         let stats = manager.stats();
         assert_eq!(stats.total_subscriptions, 2);
         assert_eq!(stats.unique_fingerprints, 1);
         assert_eq!(stats.dedup_hits, 1);
 
-        manager.unsubscribe(&handle1.id).unwrap();
-        manager.unsubscribe(&handle2.id).unwrap();
+        manager
+            .unsubscribe(&handle1.id)
+            .expect("unsubscribe handle1 should succeed");
+        manager
+            .unsubscribe(&handle2.id)
+            .expect("unsubscribe handle2 should succeed");
     }
 
     #[tokio::test]
@@ -622,7 +628,7 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("first subscription should succeed");
 
         let _h2 = manager
             .subscribe(
@@ -632,7 +638,7 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("second subscription should succeed");
 
         let result = manager
             .subscribe(
@@ -664,7 +670,7 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("subscription should succeed");
 
         let initial_results = vec![ScoredResult {
             vector_id: "v1".to_string(),
@@ -672,10 +678,16 @@ mod tests {
             position: 0,
         }];
 
-        manager.activate(&handle.id, initial_results).await.unwrap();
+        manager
+            .activate(&handle.id, initial_results)
+            .await
+            .expect("activation should succeed");
 
         // Should receive initial update
-        let update = handle.updates.try_recv().unwrap();
+        let update = handle
+            .updates
+            .try_recv()
+            .expect("should receive initial update");
         assert_eq!(update.update_type, UpdateType::Initial);
         assert_eq!(update.changes.len(), 1);
     }
@@ -692,18 +704,21 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("subscription should succeed");
 
-        manager.activate(&handle.id, vec![]).await.unwrap();
+        manager
+            .activate(&handle.id, vec![])
+            .await
+            .expect("activation should succeed");
 
         // Pause
-        manager.pause(&handle.id).unwrap();
-        let stats = manager.get(&handle.id).unwrap();
+        manager.pause(&handle.id).expect("pause should succeed");
+        let stats = manager.get(&handle.id).expect("subscription should exist");
         assert_eq!(stats.state, SubscriptionState::Paused);
 
         // Resume
-        manager.resume(&handle.id).unwrap();
-        let stats = manager.get(&handle.id).unwrap();
+        manager.resume(&handle.id).expect("resume should succeed");
+        let stats = manager.get(&handle.id).expect("subscription should exist");
         assert_eq!(stats.state, SubscriptionState::Active);
     }
 
@@ -719,7 +734,7 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("first subscription should succeed");
 
         let _h2 = manager
             .subscribe(
@@ -729,7 +744,7 @@ mod tests {
                 None,
             )
             .await
-            .unwrap();
+            .expect("second subscription should succeed");
 
         let stats = manager.stats();
         assert_eq!(stats.total_subscriptions, 2);

@@ -118,20 +118,15 @@ pub struct DefaultVectorRecordBridge {
 }
 
 /// Mode for handling metadata in conversions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MetadataMode {
     /// Store metadata as JSON string (simple, flexible)
+    #[default]
     JsonString,
     /// Store metadata as Arrow Struct (typed, efficient)
     ArrowStruct,
     /// Auto-detect based on schema
     Auto,
-}
-
-impl Default for MetadataMode {
-    fn default() -> Self {
-        Self::JsonString
-    }
 }
 
 impl DefaultVectorRecordBridge {
@@ -175,7 +170,9 @@ impl DefaultVectorRecordBridge {
 
     /// Build vector array from records.
     fn build_vector_array(&self, records: &[VectorRecord]) -> Result<ArrayRef> {
-        let dimension = self.vector_dimension().unwrap_or(0) as usize;
+        let dimension =
+            self.vector_dimension()
+                .ok_or_else(|| anyhow!("Schema has no vector dimension"))? as usize;
         if dimension == 0 {
             return Err(anyhow!("Schema has no vector column"));
         }
@@ -351,7 +348,7 @@ impl DefaultVectorRecordBridge {
                 }
                 Ok(Arc::new(builder.finish()))
             }
-            DataType::Utf8 | _ => {
+            _ => {
                 // Default to string for all other types
                 let mut builder = StringBuilder::new();
                 for record in records {
@@ -404,7 +401,9 @@ impl DefaultVectorRecordBridge {
 
     /// Extract vector from batch at given row.
     fn extract_vector(&self, batch: &RecordBatch, row: usize) -> Result<Vec<f32>> {
-        let dimension = self.vector_dimension().unwrap_or(0) as usize;
+        let dimension =
+            self.vector_dimension()
+                .ok_or_else(|| anyhow!("Schema has no vector dimension"))? as usize;
         if dimension == 0 || !self.include_vectors {
             return Ok(vec![]);
         }
@@ -463,8 +462,8 @@ impl DefaultVectorRecordBridge {
                 return Ok(HashMap::new());
             }
             let json_str = string_array.value(row);
-            let json_map: HashMap<String, JsonValue> =
-                serde_json::from_str(json_str).unwrap_or_default();
+            let json_map: HashMap<String, JsonValue> = serde_json::from_str(json_str)
+                .with_context(|| format!("Failed to parse metadata JSON: {}", json_str))?;
             return Ok(json_map
                 .into_iter()
                 .map(|(k, v)| (k, json_to_sql_value(&v)))
@@ -590,8 +589,10 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         let mut columns: Vec<ArrayRef> = vec![id_array];
 
         // Add vector column if present in schema and requested
-        if self.include_vectors && self.vector_dimension().is_some() {
-            let _dimension = self.vector_dimension().unwrap() as i32;
+        if self.include_vectors
+            && let Some(dimension) = self.vector_dimension()
+        {
+            let _dimension = dimension as i32;
 
             // Store as FixedSizeListArray - each row contains one vector
             let vector_array = self.build_vector_array(records)?;
@@ -671,7 +672,12 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         }
 
         // Determine vector dimension
-        let dimension = records.iter().map(|r| r.vector.len()).max().unwrap_or(0) as u32;
+        let dimension = records
+            .iter()
+            .map(|r| r.vector.len())
+            .max()
+            .ok_or_else(|| anyhow!("Cannot infer schema from empty records"))?
+            as u32;
 
         if dimension == 0 {
             return Err(anyhow!("No vectors found in records"));
@@ -703,15 +709,15 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
 
         for (i, record) in records.iter().enumerate() {
             // Validate vector dimension
-            if let Some(dim) = expected_dim {
-                if record.vector.len() != dim as usize {
-                    return Err(anyhow!(
-                        "Record {} has wrong vector dimension: expected {}, got {}",
-                        i,
-                        dim,
-                        record.vector.len()
-                    ));
-                }
+            if let Some(dim) = expected_dim
+                && record.vector.len() != dim as usize
+            {
+                return Err(anyhow!(
+                    "Record {} has wrong vector dimension: expected {}, got {}",
+                    i,
+                    dim,
+                    record.vector.len()
+                ));
             }
 
             // Validate ID is not empty
@@ -739,7 +745,12 @@ pub fn infer_schema_from_vector_records(
         return Err(anyhow!("Cannot infer schema from empty records"));
     }
 
-    let dimension = records.iter().map(|r| r.vector.len()).max().unwrap_or(0) as u32;
+    let dimension = records
+        .iter()
+        .map(|r| r.vector.len())
+        .max()
+        .ok_or_else(|| anyhow!("Cannot infer schema from empty records"))?
+        as u32;
 
     if dimension == 0 {
         return Err(anyhow!("No vectors found in records"));
@@ -923,7 +934,7 @@ impl ProximaColumn {
             field_type,
             default: self.default_value.as_ref().map(|d| match d {
                 super::proxima_schema::DefaultValue::Literal(s) => {
-                    serde_json::from_str(s).unwrap_or(JsonValue::String(s.clone()))
+                    serde_json::from_str(s).unwrap_or_else(|_| JsonValue::String(s.clone()))
                 }
                 super::proxima_schema::DefaultValue::Expression(s) => JsonValue::String(s.clone()),
                 super::proxima_schema::DefaultValue::AutoGenerate(_) => JsonValue::Null,
@@ -1102,7 +1113,7 @@ impl AvroStyleType {
                             .as_ref()
                             .map(|i| i.to_proxima_type().map(|(t, _)| t))
                             .transpose()?
-                            .unwrap_or(ProximaDataType::String);
+                            .ok_or_else(|| anyhow!("Array type missing items specification"))?;
                         ProximaDataType::List {
                             element: Box::new(element),
                         }
@@ -1112,7 +1123,7 @@ impl AvroStyleType {
                             .as_ref()
                             .map(|v| v.to_proxima_type().map(|(t, _)| t))
                             .transpose()?
-                            .unwrap_or(ProximaDataType::String);
+                            .ok_or_else(|| anyhow!("Map type missing values specification"))?;
                         ProximaDataType::Map {
                             key: Box::new(ProximaDataType::String),
                             value: Box::new(value),
@@ -1129,8 +1140,9 @@ impl AvroStyleType {
                         }
                     }
                     "bytes" if precision.is_some() => ProximaDataType::Decimal {
-                        precision: precision.unwrap_or(38),
-                        scale: scale.unwrap_or(0),
+                        precision: precision
+                            .ok_or_else(|| anyhow!("Decimal type missing precision"))?,
+                        scale: scale.ok_or_else(|| anyhow!("Decimal type missing scale"))?,
                     },
                     _ => ProximaDataType::String,
                 };
@@ -1196,10 +1208,14 @@ mod tests {
             create_test_record("vec_2", 128),
         ];
 
-        let batch = bridge.records_to_batch(&records).unwrap();
+        let batch = bridge
+            .records_to_batch(&records)
+            .expect("Failed to convert records to batch");
         assert_eq!(batch.num_rows(), 2);
 
-        let recovered = bridge.batch_to_records(&batch).unwrap();
+        let recovered = bridge
+            .batch_to_records(&batch)
+            .expect("Failed to convert batch to records");
         assert_eq!(recovered.len(), 2);
         assert_eq!(recovered[0].id, "vec_1");
         assert_eq!(recovered[1].id, "vec_2");
@@ -1213,10 +1229,14 @@ mod tests {
             DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
 
         let records = vec![create_test_record("test", 64)];
-        let batch = bridge.records_to_batch(&records).unwrap();
+        let batch = bridge
+            .records_to_batch(&records)
+            .expect("Failed to convert records to batch");
 
         // Check metadata column is string type
-        let metadata_col = batch.column_by_name("metadata").unwrap();
+        let metadata_col = batch
+            .column_by_name("metadata")
+            .expect("Batch should have metadata column");
         assert!(
             metadata_col
                 .as_any()
@@ -1232,10 +1252,14 @@ mod tests {
             DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::ArrowStruct);
 
         let records = vec![create_test_record("test", 64)];
-        let batch = bridge.records_to_batch(&records).unwrap();
+        let batch = bridge
+            .records_to_batch(&records)
+            .expect("Failed to convert records to batch");
 
         // Check metadata column is struct type
-        let metadata_col = batch.column_by_name("metadata").unwrap();
+        let metadata_col = batch
+            .column_by_name("metadata")
+            .expect("Batch should have metadata column");
         assert!(
             metadata_col
                 .as_any()
@@ -1251,7 +1275,9 @@ mod tests {
 
         let records = vec![create_test_record("a", 256), create_test_record("b", 256)];
 
-        let inferred = bridge.infer_schema_from_records(&records).unwrap();
+        let inferred = bridge
+            .infer_schema_from_records(&records)
+            .expect("Failed to infer schema from records");
         assert_eq!(inferred.vector_dimension(), Some(256));
         assert!(inferred.active_column_count() >= 3); // id, vector, timestamp + metadata fields
     }
@@ -1289,8 +1315,11 @@ mod tests {
         assert!(!avro.fields.is_empty());
 
         // Round-trip test
-        let json = schema.to_avro_json().unwrap();
-        let recovered = ProximaSchema::from_avro_json(&json).unwrap();
+        let json = schema
+            .to_avro_json()
+            .expect("Failed to serialize schema to Avro JSON");
+        let recovered = ProximaSchema::from_avro_json(&json)
+            .expect("Failed to deserialize schema from Avro JSON");
         assert_eq!(recovered.vector_dimension(), Some(512));
     }
 
@@ -1307,7 +1336,9 @@ mod tests {
         let bridge = DefaultVectorRecordBridge::new(schema).without_vectors();
 
         let records = vec![create_test_record("test", 128)];
-        let batch = bridge.records_to_batch(&records).unwrap();
+        let batch = bridge
+            .records_to_batch(&records)
+            .expect("Failed to convert records to batch");
 
         // Vector column should not be present
         assert!(batch.column_by_name("vector").is_none());
@@ -1317,7 +1348,8 @@ mod tests {
     fn test_infer_schema_from_vector_records() {
         let records = vec![create_test_record("a", 384), create_test_record("b", 384)];
 
-        let schema = infer_schema_from_vector_records(&records, "test_schema".to_string()).unwrap();
+        let schema = infer_schema_from_vector_records(&records, "test_schema".to_string())
+            .expect("Failed to infer schema from vector records");
         assert_eq!(schema.vector_dimension(), Some(384));
         assert_eq!(schema.schema_id, "test_schema");
     }
@@ -1335,8 +1367,12 @@ mod tests {
             ..Default::default()
         }];
 
-        let batch = bridge.records_to_batch(&records).unwrap();
-        let recovered = bridge.batch_to_records(&batch).unwrap();
+        let batch = bridge
+            .records_to_batch(&records)
+            .expect("Failed to convert records to batch");
+        let recovered = bridge
+            .batch_to_records(&batch)
+            .expect("Failed to convert batch to records");
 
         assert_eq!(recovered[0].id, "empty_meta");
         assert!(recovered[0].metadata.is_empty());
@@ -1372,8 +1408,12 @@ mod tests {
             ..Default::default()
         }];
 
-        let batch = bridge.records_to_batch(&records).unwrap();
-        let recovered = bridge.batch_to_records(&batch).unwrap();
+        let batch = bridge
+            .records_to_batch(&records)
+            .expect("Failed to convert records to batch");
+        let recovered = bridge
+            .batch_to_records(&batch)
+            .expect("Failed to convert batch to records");
 
         assert!(recovered[0].metadata.contains_key("nested"));
     }

@@ -43,7 +43,7 @@ impl IndexNodeCache {
 
     /// Prefetch index path for a vector
     pub async fn prefetch_vector_index_path(&self, _vector_id: &str) {
-        // TODO: Implement prefetching logic based on index structure
+        // Deferred: Implement prefetching logic based on index structure
         // This would traverse the index tree and cache hot nodes
     }
 
@@ -164,7 +164,7 @@ impl IndexNodeCache {
         // Binary search or range scan to find relevant blocks
         let mut matching_blocks = Vec::new();
         for entry in index.entries {
-            if entry.min_key <= search_key.to_string() && entry.max_key >= search_key.to_string() {
+            if entry.min_key.as_str() <= search_key && entry.max_key.as_str() >= search_key {
                 matching_blocks.push(entry);
             }
         }

@@ -21,62 +21,112 @@ pub struct TenantPerformanceMonitor {
 }
 
 /// Real-time metrics for a specific tenant
+///
+/// Captures current operational metrics including throughput,
+/// latency, resource usage, and system health indicators.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantMetrics {
+    /// Unique identifier for the tenant
     pub tenant_id: String,
+    /// Current queries per second
     pub current_qps: f64,
+    /// Average response time in milliseconds
     pub avg_response_time_ms: f64,
+    /// Total memory usage in bytes
     pub memory_usage_bytes: u64,
+    /// Total storage usage in bytes
     pub storage_used_bytes: u64,
+    /// Number of concurrent operations in progress
     pub concurrent_operations: u32,
+    /// Cache hit rate as a percentage (0.0 to 1.0)
     pub cache_hit_rate: f64,
+    /// Error rate as a percentage (0.0 to 1.0)
     pub error_rate: f64,
+    /// Timestamp of last metrics update
     pub last_updated: DateTime<Utc>,
+    /// Tenant uptime in minutes
     pub uptime_minutes: u64,
 }
 
 /// SLA configuration for tenant
+///
+/// Defines service level agreement limits and guarantees for tenant operations,
+/// used for resource allocation and performance monitoring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantSLA {
+    /// Unique identifier for the tenant
     pub tenant_id: String,
+    /// Maximum allowed queries per second
     pub max_qps: u32,
+    /// Maximum acceptable response time in milliseconds
     pub max_response_time_ms: u64,
+    /// Minimum uptime guarantee as a percentage (e.g., 99.9)
     pub min_uptime_percent: f64,
+    /// Maximum memory allocation in bytes
     pub max_memory_bytes: u64,
+    /// Maximum storage allocation in bytes
     pub max_storage_bytes: u64,
+    /// Maximum concurrent operations allowed
     pub max_concurrent_operations: u32,
+    /// Guaranteed cache hit rate as a percentage (0.0 to 1.0), if applicable
     pub guaranteed_cache_hit_rate: Option<f64>,
 }
 
 /// Configuration for performance monitoring
+///
+/// Configures the behavior of the performance monitoring system including
+/// sampling intervals, data retention, and alerting thresholds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceMonitoringConfig {
+    /// Monitoring interval in milliseconds between metric collection cycles
     pub monitoring_interval_ms: u64,
+    /// How long to retain historical metrics data in hours
     pub metrics_retention_hours: u32,
+    /// Enable real-time alerting for SLA violations
     pub enable_real_time_alerting: bool,
+    /// Enable automatic enforcement of SLA limits
     pub enable_sla_enforcement: bool,
+    /// Number of consecutive violations before triggering enforcement
     pub violation_threshold_count: u32,
 }
 
 /// SLA check result
+///
+/// Result of an SLA compliance check indicating whether an operation
+/// is allowed and providing details about any violations.
 #[derive(Debug, Clone)]
 pub struct SLACheckResult {
+    /// Whether the operation is allowed under current SLA
     pub allowed: bool,
+    /// Type of SLA violation if one occurred
     pub violation_type: Option<SLAViolationType>,
+    /// Current metric value that triggered the check
     pub current_value: f64,
+    /// SLA limit that was evaluated against
     pub limit_value: f64,
+    /// Suggested retry delay in seconds if operation was denied
     pub retry_after_seconds: Option<u64>,
+    /// Human-readable explanation of the check result
     pub reason: String,
 }
 
 /// Types of SLA violations
+///
+/// Categorizes different types of SLA violations that can occur during
+/// tenant operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SLAViolationType {
+    /// Queries per second limit exceeded
     QPSLimitExceeded,
+    /// Response time SLA exceeded
     ResponseTimeExceeded,
+    /// Memory allocation limit exceeded
     MemoryLimitExceeded,
+    /// Storage allocation limit exceeded
     StorageLimitExceeded,
+    /// Concurrent operations limit exceeded
     ConcurrencyLimitExceeded,
+    /// Uptime percentage below minimum threshold
     UptimeBelowThreshold,
 }
 
@@ -218,8 +268,10 @@ impl TenantPerformanceMonitor {
         debug!(
             "📊 Updated metrics for tenant {}: {:.1} QPS, {:.1}ms avg response time",
             tenant_id,
-            metrics_map.get(tenant_id).unwrap().current_qps,
-            metrics_map.get(tenant_id).unwrap().avg_response_time_ms
+            metrics_map.get(tenant_id).map_or(0.0, |m| m.current_qps),
+            metrics_map
+                .get(tenant_id)
+                .map_or(0.0, |m| m.avg_response_time_ms)
         );
 
         Ok(())

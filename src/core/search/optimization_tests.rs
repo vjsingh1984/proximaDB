@@ -235,7 +235,8 @@ mod tests {
 
     // Removed performance benchmark test from unit tests to avoid flakiness and outdated APIs
 
-    // Helper functions
+    // Helper functions (reserved for future benchmark tests)
+    #[allow(dead_code)]
     fn compute_cosine_distance_baseline(a: &[f32], b: &[f32]) -> f32 {
         let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -243,6 +244,7 @@ mod tests {
         1.0 - (dot / (norm_a * norm_b))
     }
 
+    #[allow(dead_code)]
     fn calculate_recall(baseline: &[f32], optimized: &[OptimizedSearchRecord]) -> f32 {
         // Convert f32 scores to ordered keys for comparison
         let baseline_ids: std::collections::HashSet<_> = (0..baseline.len()).collect();

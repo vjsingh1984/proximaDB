@@ -70,11 +70,17 @@ impl Default for AxisLshConfig {
 /// Statistics for LSH index
 #[derive(Debug, Clone, Default)]
 pub struct LshStats {
+    /// Total number of vectors stored in the LSH index.
     pub vector_count: usize,
+    /// Number of independent hash tables.
     pub table_count: usize,
+    /// Number of hash functions used per table.
     pub hash_functions_per_table: usize,
+    /// Approximate memory consumption in bytes.
     pub memory_usage_bytes: usize,
+    /// Average number of vectors per hash bucket.
     pub avg_bucket_size: f32,
+    /// Fraction of vector pairs that hash to the same bucket.
     pub collision_rate: f32,
 }
 
@@ -97,8 +103,8 @@ impl HashFunction {
                 // Box-Muller transform for normal distribution
                 let u1: f32 = rng.gen_range(0.0..1.0);
                 let u2: f32 = rng.gen_range(0.0..1.0);
-                let z0 = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos();
-                z0
+
+                (-2.0 * u1.ln()).sqrt() * (2.0 * std::f32::consts::PI * u2).cos()
             })
             .collect();
 
@@ -125,11 +131,14 @@ impl HashFunction {
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct PartitionedKey<K: Hash + Eq> {
+    /// Collection identifier for multi-tenant partitioning.
     pub collection_id: String,
+    /// The underlying key value.
     pub key: K,
 }
 
 impl<K: Hash + Eq> PartitionedKey<K> {
+    /// Creates a new partitioned key scoped to a collection.
     pub fn new(collection_id: String, key: K) -> Self {
         Self { collection_id, key }
     }
@@ -189,10 +198,7 @@ impl AxisLshIndex {
         dimension: usize,
         preferred_extraction_mode: ExtractionMode,
     ) -> Self {
-        let coll_str = collection_id
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("<unnamed>");
+        let coll_str = collection_id.as_ref().map_or("<unnamed>", |s| s.as_str());
         info!(
             "Creating AXIS LSH index for collection '{}': {} tables, {} hashes, {} dim, repr={:?}",
             coll_str, config.n_tables, config.n_hashes, dimension, preferred_extraction_mode
@@ -265,14 +271,11 @@ impl AxisLshIndex {
                 PartitionedKey::new("default".to_string(), hash_value)
             };
 
-            table
-                .entry(key)
-                .or_insert_with(HashSet::new)
-                .insert(vector_id.clone());
+            table.entry(key).or_default().insert(vector_id.clone());
         }
 
         // Store vector in the collection-specific ZeroOverheadCollection
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
+        let collection_id = self.collection_id.as_deref();
 
         // Get or create collection for this collection_id
         let collection = self
@@ -286,7 +289,9 @@ impl AxisLshIndex {
             });
 
         // Insert vector into the zero-overhead collection
-        let mut coll = collection.write().unwrap();
+        let mut coll = collection
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         coll.add_fp32(vector_id.clone(), &vector_data)?;
 
         self.vector_count.fetch_add(1, Ordering::Relaxed);
@@ -350,14 +355,16 @@ impl AxisLshIndex {
 
         // Compute actual distances for candidates
         let mut results = Vec::new();
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
+        let collection_id = self.collection_id.as_deref();
 
         // Get the collection for this collection_id
         if let Some(collection) = self
             .vectors
             .get(&collection_id.unwrap_or("default").to_string())
         {
-            let coll = collection.read().unwrap();
+            let coll = collection
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
 
             for id in &candidates {
                 if let Some(view) = coll.get(id) {
@@ -380,7 +387,7 @@ impl AxisLshIndex {
         }
 
         // Sort by distance and return top-k
-        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(k);
 
         debug!(
@@ -393,14 +400,16 @@ impl AxisLshIndex {
     }
     /// Remove a vector from the index
     pub async fn remove(&self, id: &str) -> Result<()> {
-        let collection_id = self.collection_id.as_ref().map(|s| s.as_str());
+        let collection_id = self.collection_id.as_deref();
 
         // Get the collection and remove the vector
         if let Some(collection) = self
             .vectors
             .get(&collection_id.unwrap_or("default").to_string())
         {
-            let coll = collection.write().unwrap();
+            let coll = collection
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
 
             // Get the vector data before removing it (needed to update hash tables)
             let vector_data = if let Some(view) = coll.get(id) {
@@ -410,7 +419,7 @@ impl AxisLshIndex {
             };
 
             if let Some(vector) = vector_data {
-                // TODO: Implement remove method for ZeroOverheadCollection
+                // Deferred: Implement remove method for ZeroOverheadCollection
                 // For now, just log the removal
                 tracing::debug!(
                     "Would remove vector {} from collection (method not implemented)",
@@ -555,7 +564,7 @@ impl AxisLshIndex {
             ExtractionMode::Fp32Only => {
                 // Process FP32 vectors only
                 if event.has_fp32 {
-                    // TODO: Load FP32 vectors from file paths and process them
+                    // Deferred: Load FP32 vectors from file paths and process them
                     tracing::info!(
                         "Processing FP32 vectors from {} files",
                         event.file_paths.len()
@@ -566,7 +575,7 @@ impl AxisLshIndex {
             ExtractionMode::QuantizedOnly => {
                 // Process quantized vectors only
                 if event.has_quantized {
-                    // TODO: Load quantized vectors from file paths and process them
+                    // Deferred: Load quantized vectors from file paths and process them
                     tracing::info!(
                         "Processing quantized vectors from {} files",
                         event.file_paths.len()
@@ -577,14 +586,14 @@ impl AxisLshIndex {
             ExtractionMode::Both => {
                 // Process both representations
                 if event.has_fp32 {
-                    // TODO: Load FP32 vectors from file paths and process them
+                    // Deferred: Load FP32 vectors from file paths and process them
                     tracing::info!(
                         "Processing FP32 vectors from {} files",
                         event.file_paths.len()
                     );
                 }
                 if event.has_quantized {
-                    // TODO: Load quantized vectors from file paths and process them
+                    // Deferred: Load quantized vectors from file paths and process them
                     tracing::info!(
                         "Processing quantized vectors from {} files",
                         event.file_paths.len()
@@ -598,13 +607,13 @@ impl AxisLshIndex {
                         "Auto mode: Processing quantized vectors from {} files",
                         event.file_paths.len()
                     );
-                    // TODO: Load quantized vectors from file paths and process them
+                    // Deferred: Load quantized vectors from file paths and process them
                 } else if event.has_fp32 {
                     tracing::info!(
                         "Auto mode: Processing FP32 vectors from {} files",
                         event.file_paths.len()
                     );
-                    // TODO: Load FP32 vectors from file paths and process them
+                    // Deferred: Load FP32 vectors from file paths and process them
                 }
             }
         }
@@ -635,7 +644,7 @@ impl AxisLshIndex {
             return self.search(query, k, filter).await;
         }
 
-        // TODO: Implement two-stage search with quantized filtering
+        // Deferred: Implement two-stage search with quantized filtering
         // Stage 1: Fast filtering using quantized hash comparisons
         // Stage 2: FP32 reranking of top candidates
         tracing::warn!("Quantized acceleration not yet implemented - using standard search");

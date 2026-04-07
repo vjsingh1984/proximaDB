@@ -10,22 +10,17 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 /// Transaction isolation level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum IsolationLevel {
     /// Read uncommitted - can see uncommitted changes from other transactions
     ReadUncommitted,
     /// Read committed - only see committed changes (default)
+    #[default]
     ReadCommitted,
     /// Repeatable read - consistent reads within transaction
     RepeatableRead,
     /// Serializable - full isolation, transactions appear to run serially
     Serializable,
-}
-
-impl Default for IsolationLevel {
-    fn default() -> Self {
-        IsolationLevel::ReadCommitted
-    }
 }
 
 impl IsolationLevel {
@@ -188,24 +183,24 @@ impl WriteSet {
     pub fn conflicts_with(&self, other: &WriteSet) -> bool {
         // Check if any writes in self conflict with writes or deletes in other
         for (store_type, ids) in &self.writes {
-            if let Some(other_writes) = other.writes.get(store_type) {
-                if !ids.is_disjoint(other_writes) {
-                    return true;
-                }
+            if let Some(other_writes) = other.writes.get(store_type)
+                && !ids.is_disjoint(other_writes)
+            {
+                return true;
             }
-            if let Some(other_deletes) = other.deletes.get(store_type) {
-                if !ids.is_disjoint(other_deletes) {
-                    return true;
-                }
+            if let Some(other_deletes) = other.deletes.get(store_type)
+                && !ids.is_disjoint(other_deletes)
+            {
+                return true;
             }
         }
 
         // Check if any deletes in self conflict with writes in other
         for (store_type, ids) in &self.deletes {
-            if let Some(other_writes) = other.writes.get(store_type) {
-                if !ids.is_disjoint(other_writes) {
-                    return true;
-                }
+            if let Some(other_writes) = other.writes.get(store_type)
+                && !ids.is_disjoint(other_writes)
+            {
+                return true;
             }
         }
 
@@ -395,17 +390,17 @@ impl IsolationManager {
         };
 
         // Add to commit history
-        if let Some(ws) = write_set {
-            if !ws.is_empty() {
-                let mut history = self.commit_history.write().await;
-                history.push((transaction_id.to_string(), now, ws));
+        if let Some(ws) = write_set
+            && !ws.is_empty()
+        {
+            let mut history = self.commit_history.write().await;
+            history.push((transaction_id.to_string(), now, ws));
 
-                // Trim history if too large
-                let history_len = history.len();
-                if history_len > self.max_history_size {
-                    let drain_count = history_len - self.max_history_size;
-                    history.drain(0..drain_count);
-                }
+            // Trim history if too large
+            let history_len = history.len();
+            if history_len > self.max_history_size {
+                let drain_count = history_len - self.max_history_size;
+                history.drain(0..drain_count);
             }
         }
 

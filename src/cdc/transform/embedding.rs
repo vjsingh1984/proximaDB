@@ -197,9 +197,9 @@ impl EmbeddingPipeline {
                         .filter_map(|v| v.as_str())
                         .collect::<Vec<_>>()
                         .join(", "),
-                    serde_json::Value::Object(obj) => {
-                        serde_json::to_string(obj).unwrap_or_default()
-                    }
+                    serde_json::Value::Object(obj) => serde_json::to_string(obj).map_err(|e| {
+                        CdcError::Embedding(format!("Failed to serialize object: {}", e))
+                    })?,
                     serde_json::Value::Null => continue,
                 };
                 texts.push(text);
@@ -433,11 +433,23 @@ mod tests {
         let pipeline = EmbeddingPipeline::local(vec!["title".to_string()]);
         let event = create_test_event();
 
-        let result = pipeline.process(event).unwrap();
+        let result = pipeline
+            .process(event)
+            .expect("test_embedding_pipeline: process should succeed");
         assert!(result.after.is_some());
-        assert!(result.after.as_ref().unwrap().vector.is_some());
+        assert!(
+            result
+                .after
+                .as_ref()
+                .and_then(|a| a.vector.as_ref())
+                .is_some()
+        );
 
-        let vector = result.after.as_ref().unwrap().vector.as_ref().unwrap();
+        let vector = result
+            .after
+            .as_ref()
+            .and_then(|a| a.vector.as_ref())
+            .expect("test_embedding_pipeline: vector should be present");
         assert_eq!(vector.len(), 384); // Local embedding dimension
     }
 
@@ -446,8 +458,14 @@ mod tests {
         let pipeline = EmbeddingPipeline::local(vec!["title".to_string()]);
         let event = create_test_event();
 
-        let result = pipeline.process(event).unwrap();
-        let vector = result.after.as_ref().unwrap().vector.as_ref().unwrap();
+        let result = pipeline
+            .process(event)
+            .expect("test_embedding_normalization: process should succeed");
+        let vector = result
+            .after
+            .as_ref()
+            .and_then(|a| a.vector.as_ref())
+            .expect("test_embedding_normalization: vector should be present");
 
         // Check that vector is normalized (L2 norm ≈ 1)
         let norm: f32 = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -460,8 +478,16 @@ mod tests {
             EmbeddingPipeline::local(vec!["title".to_string(), "description".to_string()]);
         let event = create_test_event();
 
-        let result = pipeline.process(event).unwrap();
-        assert!(result.after.as_ref().unwrap().vector.is_some());
+        let result = pipeline
+            .process(event)
+            .expect("test_multiple_fields: process should succeed");
+        assert!(
+            result
+                .after
+                .as_ref()
+                .and_then(|a| a.vector.as_ref())
+                .is_some()
+        );
     }
 
     #[test]
@@ -479,7 +505,9 @@ mod tests {
             raw: None,
         };
 
-        let text = pipeline.extract_text(&state).unwrap();
+        let text = pipeline
+            .extract_text(&state)
+            .expect("test_text_extraction: extract_text should succeed");
         assert_eq!(text, "Hello World");
     }
 
@@ -499,7 +527,9 @@ mod tests {
             raw: None,
         };
 
-        let text = pipeline.extract_text(&state).unwrap();
+        let text = pipeline
+            .extract_text(&state)
+            .expect("test_text_truncation: extract_text should succeed");
         assert_eq!(text.len(), 5);
     }
 
@@ -513,11 +543,19 @@ mod tests {
             create_test_event(),
         ];
 
-        let results = pipeline.process_batch(events).unwrap();
+        let results = pipeline
+            .process_batch(events)
+            .expect("test_process_batch: process_batch should succeed");
         assert_eq!(results.len(), 3);
 
         for event in results {
-            assert!(event.after.as_ref().unwrap().vector.is_some());
+            assert!(
+                event
+                    .after
+                    .as_ref()
+                    .and_then(|a| a.vector.as_ref())
+                    .is_some()
+            );
         }
     }
 
@@ -528,11 +566,23 @@ mod tests {
         let event1 = create_test_event();
         let event2 = create_test_event();
 
-        let result1 = pipeline.process(event1).unwrap();
-        let result2 = pipeline.process(event2).unwrap();
+        let result1 = pipeline
+            .process(event1)
+            .expect("test_deterministic_embedding: first process should succeed");
+        let result2 = pipeline
+            .process(event2)
+            .expect("test_deterministic_embedding: second process should succeed");
 
-        let vec1 = result1.after.as_ref().unwrap().vector.as_ref().unwrap();
-        let vec2 = result2.after.as_ref().unwrap().vector.as_ref().unwrap();
+        let vec1 = result1
+            .after
+            .as_ref()
+            .and_then(|a| a.vector.as_ref())
+            .expect("test_deterministic_embedding: first vector should be present");
+        let vec2 = result2
+            .after
+            .as_ref()
+            .and_then(|a| a.vector.as_ref())
+            .expect("test_deterministic_embedding: second vector should be present");
 
         // Same input should produce same output
         assert_eq!(vec1, vec2);
@@ -544,10 +594,18 @@ mod tests {
         assert!(!pipeline.has_fields());
 
         let event = create_test_event();
-        let result = pipeline.process(event).unwrap();
+        let result = pipeline
+            .process(event)
+            .expect("test_empty_fields: process should succeed");
 
         // No fields configured, so no embedding generated
-        assert!(result.after.as_ref().unwrap().vector.is_none());
+        assert!(
+            result
+                .after
+                .as_ref()
+                .and_then(|a| a.vector.as_ref())
+                .is_none()
+        );
     }
 
     #[test]
@@ -555,9 +613,17 @@ mod tests {
         let pipeline = EmbeddingPipeline::local(vec!["nonexistent".to_string()]);
         let event = create_test_event();
 
-        let result = pipeline.process(event).unwrap();
+        let result = pipeline
+            .process(event)
+            .expect("test_missing_field: process should succeed");
         // Missing field results in empty text, no embedding
-        assert!(result.after.as_ref().unwrap().vector.is_none());
+        assert!(
+            result
+                .after
+                .as_ref()
+                .and_then(|a| a.vector.as_ref())
+                .is_none()
+        );
     }
 
     #[test]
@@ -568,10 +634,16 @@ mod tests {
         assert_eq!(pipeline.provider(), EmbeddingProvider::OpenAI);
 
         let event = create_test_event();
-        let result = pipeline.process(event).unwrap();
+        let result = pipeline
+            .process(event)
+            .expect("test_openai_pipeline: process should succeed");
 
         // OpenAI mock generates 1536-dim vectors
-        let vector = result.after.as_ref().unwrap().vector.as_ref().unwrap();
+        let vector = result
+            .after
+            .as_ref()
+            .and_then(|a| a.vector.as_ref())
+            .expect("test_openai_pipeline: vector should be present");
         assert_eq!(vector.len(), 1536);
     }
 

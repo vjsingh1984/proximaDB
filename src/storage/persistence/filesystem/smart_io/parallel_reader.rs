@@ -221,11 +221,19 @@ impl ParallelReader {
             return Err(err);
         }
 
-        // Unwrap all results (all should be Some at this point)
+        // Convert all results to Vec<u8> (all should be Some at this point if no errors occurred)
         let final_results: Vec<Vec<u8>> = results
             .into_iter()
-            .map(|opt| opt.unwrap_or_default())
-            .collect();
+            .enumerate()
+            .map(|(idx, opt)| {
+                opt.ok_or_else(|| {
+                    FilesystemError::InvalidOperation(format!(
+                        "Missing result for range index {} (this should not happen if no errors occurred)",
+                        idx
+                    ))
+                })
+            })
+            .collect::<FsResult<Vec<_>>>()?;
 
         Ok(final_results)
     }
@@ -288,7 +296,7 @@ impl IoStrategy for ParallelReader {
         // With parallelism, we can do multiple reads at once
         let io_operations = if self.should_parallelize(ranges) {
             // Parallel: ceiling of ranges / max_concurrent
-            (ranges.len() + self.config.max_concurrent_reads - 1) / self.config.max_concurrent_reads
+            ranges.len().div_ceil(self.config.max_concurrent_reads)
         } else {
             ranges.len()
         };
@@ -417,14 +425,19 @@ mod tests {
 
     async fn create_test_filesystem() -> Arc<dyn FileSystem> {
         let config = LocalConfig::default();
-        Arc::new(LocalFileSystem::new(config).await.unwrap())
+        Arc::new(
+            LocalFileSystem::new(config)
+                .await
+                .expect("Failed to create test filesystem"),
+        )
     }
 
     fn create_test_file(size: usize) -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("Failed to create temp file for testing");
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-        file.write_all(&data).unwrap();
-        file.flush().unwrap();
+        file.write_all(&data)
+            .expect("Failed to write test data to temp file");
+        file.flush().expect("Failed to flush temp file");
         file
     }
 
@@ -459,7 +472,10 @@ mod tests {
         let path = format!("file://{}", test_file.path().display());
 
         let ranges = vec![ByteRange::new(0, 100)];
-        let result = reader.execute_read(&path, &ranges).await.unwrap();
+        let result = reader
+            .execute_read(&path, &ranges)
+            .await
+            .expect("Failed to execute read for single range test");
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), 100);
@@ -485,7 +501,10 @@ mod tests {
             ByteRange::new(1000, 1100),
         ];
 
-        let result = reader.execute_read(&path, &ranges).await.unwrap();
+        let result = reader
+            .execute_read(&path, &ranges)
+            .await
+            .expect("Failed to execute read for multiple ranges test");
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].len(), 100);
@@ -504,7 +523,10 @@ mod tests {
         let metrics = Arc::new(IoMetrics::new());
         let reader = ParallelReader::new(fs, metrics);
 
-        let result = reader.execute_read("any_file", &[]).await.unwrap();
+        let result = reader
+            .execute_read("any_file", &[])
+            .await
+            .expect("Failed to execute read for empty ranges test");
         assert!(result.is_empty());
     }
 
@@ -519,7 +541,10 @@ mod tests {
 
         let ranges = vec![ByteRange::new(0, 50), ByteRange::new(100, 150)];
 
-        let result = reader.execute_read(&path, &ranges).await.unwrap();
+        let result = reader
+            .execute_read(&path, &ranges)
+            .await
+            .expect("Failed to execute read for sequential reader test");
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].len(), 50);
@@ -546,14 +571,17 @@ mod tests {
         assert!(reader.should_use_parallel(&large_ranges));
 
         // Test actual execution
-        let result = reader.execute_read(&path, &small_ranges).await.unwrap();
+        let result = reader
+            .execute_read(&path, &small_ranges)
+            .await
+            .expect("Failed to execute read for adaptive reader test");
         assert_eq!(result.len(), 2);
     }
 
     #[test]
     fn test_io_cost_estimate() {
         let fs_result = tokio::runtime::Runtime::new()
-            .unwrap()
+            .expect("Failed to create tokio runtime for test")
             .block_on(create_test_filesystem());
         let metrics = Arc::new(IoMetrics::new());
         let reader = ParallelReader::new(fs_result, metrics);
@@ -572,7 +600,7 @@ mod tests {
     #[test]
     fn test_strategy_names() {
         let fs_result = tokio::runtime::Runtime::new()
-            .unwrap()
+            .expect("Failed to create tokio runtime for test")
             .block_on(create_test_filesystem());
         let metrics = Arc::new(IoMetrics::new());
 

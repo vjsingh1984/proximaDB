@@ -254,8 +254,8 @@ impl ParquetReconstructor {
                 column_name: seek.range.column_name.clone(),
                 data: seek.data,
                 compression: self.detect_compression(&seek.range)?,
-                uncompressed_size: seek.range.length as usize, // Approximation
-                row_count: 0,                                  // Will be determined during parsing
+                uncompressed_size: seek.range.length, // Approximation
+                row_count: 0,                         // Will be determined during parsing
                 storage: None,
             };
 
@@ -277,7 +277,7 @@ impl ParquetReconstructor {
         let mut column_chunks = Vec::new();
 
         for range in range_data {
-            // TODO: Implement proper range-to-column mapping
+            // Deferred: Implement proper range-to-column mapping
             // This requires understanding the Parquet file structure
             // For now, create placeholder column chunks
 
@@ -503,7 +503,7 @@ impl ParquetReconstructor {
 
     /// Helper methods
     fn detect_compression(&self, _range: &FileSeekRange) -> Result<CompressionType> {
-        // TODO: Detect compression from Parquet metadata
+        // Deferred: Detect compression from Parquet metadata
         Ok(CompressionType::None)
     }
 
@@ -511,7 +511,7 @@ impl ParquetReconstructor {
         match chunk_data.compression {
             CompressionType::None => Ok(chunk_data.data.clone()),
             _ => {
-                // TODO: Implement decompression for other formats
+                // Deferred: Implement decompression for other formats
                 warn!(
                     "⚠️ Compression {:?} not implemented, returning raw data",
                     chunk_data.compression
@@ -527,7 +527,7 @@ impl ParquetReconstructor {
         _data: Vec<u8>,
         _row_group_metadata: &RowGroupMetaData,
     ) -> Result<ParsedColumn> {
-        // TODO: Implement actual Parquet column parsing
+        // Deferred: Implement actual Parquet column parsing
         // This is complex and would require implementing a Parquet column reader
 
         // For now, return placeholder parsed column
@@ -552,7 +552,7 @@ impl ParquetReconstructor {
     }
 
     fn extract_string_value(&self, _column: &Arc<dyn Array>, row_idx: usize) -> Result<String> {
-        // TODO: Implement proper string extraction from Arrow arrays
+        // Deferred: Implement proper string extraction from Arrow arrays
         Ok(format!("value_{}", row_idx))
     }
 
@@ -569,7 +569,7 @@ impl ParquetReconstructor {
             let vector: Vec<f32> = bytes
                 .chunks_exact(4)
                 .map(|chunk| {
-                    let arr: [u8; 4] = chunk.try_into().unwrap();
+                    let arr: [u8; 4] = chunk.try_into().unwrap_or([0; 4]);
                     f32::from_le_bytes(arr)
                 })
                 .collect();

@@ -227,7 +227,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
     // Create log directory if it doesn't exist
-    std::fs::create_dir_all("./log").expect("Failed to create log directory");
+    if let Err(e) = std::fs::create_dir_all("./log") {
+        eprintln!("Failed to create log directory: {}", e);
+    }
 
     // Create rolling file appender (daily rotation)
     let file_appender = RollingFileAppender::new(Rotation::DAILY, "./log", "proximadb.log");

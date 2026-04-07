@@ -320,28 +320,46 @@ impl TableConstraint {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConstraintType {
     /// Primary key constraint
-    PrimaryKey { columns: Vec<String> },
+    PrimaryKey {
+        /// Column names that form the primary key
+        columns: Vec<String>,
+    },
 
     /// Foreign key constraint with cross-model reference support
     ForeignKey {
+        /// Local column names that form the foreign key
         columns: Vec<String>,
+        /// Target object reference (table, graph node, document, or vector collection)
         reference: ForeignKeyReference,
+        /// Action to take when the referenced row is deleted
         on_delete: ReferentialAction,
+        /// Action to take when the referenced row is updated
         on_update: ReferentialAction,
     },
 
     /// Unique constraint
-    Unique { columns: Vec<String> },
+    Unique {
+        /// Column names included in the uniqueness constraint
+        columns: Vec<String>,
+    },
 
     /// Check constraint (SQL expression)
-    Check { expression: String },
+    Check {
+        /// SQL boolean expression that rows must satisfy
+        expression: String,
+    },
 
     /// Not null constraint
-    NotNull { column: String },
+    NotNull {
+        /// Name of the column that must not be NULL
+        column: String,
+    },
 
     /// Exclusion constraint (PostgreSQL-style)
     Exclusion {
+        /// Column names participating in the exclusion constraint
         columns: Vec<String>,
+        /// Exclusion operator (e.g., `&&` for range overlap)
         operator: String,
     },
 }
@@ -351,29 +369,40 @@ pub enum ConstraintType {
 pub enum ForeignKeyReference {
     /// Reference to an RDBMS table
     Table {
+        /// Optional catalog name of the referenced table
         catalog: Option<String>,
+        /// Optional schema name of the referenced table
         schema: Option<String>,
+        /// Name of the referenced table
         table: String,
+        /// Column names in the referenced table
         columns: Vec<String>,
     },
 
     /// Reference to a graph node by label
     GraphNode {
+        /// Identifier of the graph that owns the node
         graph_id: String,
+        /// Node label to reference
         node_label: String,
-        property: Option<String>, // Default: node ID
+        /// Node property to use as the key (default: node ID)
+        property: Option<String>,
     },
 
     /// Reference to a document by ID path
     Document {
+        /// Name of the document collection
         collection: String,
-        id_path: String, // JSONPath expression, default "$._id"
+        /// JSONPath expression identifying the document key (default: `$._id`)
+        id_path: String,
     },
 
     /// Reference to a vector collection
     Vector {
+        /// Name of the vector collection
         collection: String,
-        id_field: Option<String>, // Default: "id"
+        /// Name of the ID field in the vector collection (default: `id`)
+        id_field: Option<String>,
     },
 }
 

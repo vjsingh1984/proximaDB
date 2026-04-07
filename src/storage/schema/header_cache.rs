@@ -342,11 +342,11 @@ impl ScalarPredicate {
                 bounds
                     .min
                     .compare(v)
-                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                    .is_none_or(|o| o != std::cmp::Ordering::Greater)
                     && bounds
                         .max
                         .compare(v)
-                        .map_or(true, |o| o != std::cmp::Ordering::Less)
+                        .is_none_or(|o| o != std::cmp::Ordering::Less)
             }
             Ne(_) => {
                 // Can only skip if min == max == v
@@ -357,28 +357,28 @@ impl ScalarPredicate {
                 bounds
                     .min
                     .compare(v)
-                    .map_or(true, |o| o == std::cmp::Ordering::Less)
+                    .is_none_or(|o| o == std::cmp::Ordering::Less)
             }
             Le(v) => {
                 // min <= v
                 bounds
                     .min
                     .compare(v)
-                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                    .is_none_or(|o| o != std::cmp::Ordering::Greater)
             }
             Gt(v) => {
                 // max > v
                 bounds
                     .max
                     .compare(v)
-                    .map_or(true, |o| o == std::cmp::Ordering::Greater)
+                    .is_none_or(|o| o == std::cmp::Ordering::Greater)
             }
             Ge(v) => {
                 // max >= v
                 bounds
                     .max
                     .compare(v)
-                    .map_or(true, |o| o != std::cmp::Ordering::Less)
+                    .is_none_or(|o| o != std::cmp::Ordering::Less)
             }
             In(values) => {
                 // Any value in range
@@ -386,11 +386,11 @@ impl ScalarPredicate {
                     bounds
                         .min
                         .compare(v)
-                        .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                        .is_none_or(|o| o != std::cmp::Ordering::Greater)
                         && bounds
                             .max
                             .compare(v)
-                            .map_or(true, |o| o != std::cmp::Ordering::Less)
+                            .is_none_or(|o| o != std::cmp::Ordering::Less)
                 })
             }
             Between(min_v, max_v) => {
@@ -398,11 +398,11 @@ impl ScalarPredicate {
                 bounds
                     .min
                     .compare(max_v)
-                    .map_or(true, |o| o != std::cmp::Ordering::Greater)
+                    .is_none_or(|o| o != std::cmp::Ordering::Greater)
                     && bounds
                         .max
                         .compare(min_v)
-                        .map_or(true, |o| o != std::cmp::Ordering::Less)
+                        .is_none_or(|o| o != std::cmp::Ordering::Less)
             }
             IsNull => bounds.null_count > 0,
             IsNotNull => bounds.null_count < 1, // Conservative
@@ -486,10 +486,10 @@ impl SpatialRange {
             ) => {
                 // Must overlap in all shared dimensions
                 for (dim, (a_min, a_max)) in a_bounds {
-                    if let Some((b_min, b_max)) = b_bounds.get(dim) {
-                        if a_min > b_max || b_min > a_max {
-                            return false;
-                        }
+                    if let Some((b_min, b_max)) = b_bounds.get(dim)
+                        && (a_min > b_max || b_min > a_max)
+                    {
+                        return false;
                     }
                 }
                 true
@@ -643,13 +643,13 @@ impl ProximaHeaderCache {
             let cache = self.cache.read();
             if let Some(entry) = cache.get(path) {
                 // Check TTL
-                if let Some(ttl) = self.ttl {
-                    if now.duration_since(entry.last_access) > ttl {
-                        drop(cache);
-                        self.remove(path);
-                        *self.misses.write() += 1;
-                        return None;
-                    }
+                if let Some(ttl) = self.ttl
+                    && now.duration_since(entry.last_access) > ttl
+                {
+                    drop(cache);
+                    self.remove(path);
+                    *self.misses.write() += 1;
+                    return None;
                 }
 
                 *self.hits.write() += 1;
@@ -1056,8 +1056,7 @@ impl VectorPruner for EnhancedCachedHeader {
             .rowgroups
             .first()
             .and_then(|rg| rg.centroid.as_ref())
-            .map(|c| c.len())
-            .unwrap_or(0)
+            .map_or(0, |c| c.len())
     }
 
     fn num_entries(&self) -> usize {

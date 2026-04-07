@@ -377,7 +377,7 @@ impl ExportFileFormat {
 /// use proximadb::network::arrow_ipc::file_export::FlightCompression;
 ///
 /// // Parse from string (useful for API requests)
-/// let compression: FlightCompression = "zstd".parse().unwrap();
+/// let compression: FlightCompression = "zstd".parse()?;
 ///
 /// // Use in file request
 /// let request = ArrowFileRequest {
@@ -428,9 +428,15 @@ impl FlightCompression {
     pub fn to_ipc_write_options(&self) -> arrow_ipc::writer::IpcWriteOptions {
         match self.to_arrow_compression() {
             None => arrow_ipc::writer::IpcWriteOptions::default(),
-            Some(compression) => arrow_ipc::writer::IpcWriteOptions::default()
+            Some(compression) => match arrow_ipc::writer::IpcWriteOptions::default()
                 .try_with_compression(Some(compression))
-                .unwrap_or_default(),
+            {
+                Ok(options) => options,
+                Err(e) => {
+                    warn!("Failed to create IpcWriteOptions with compression: {}", e);
+                    arrow_ipc::writer::IpcWriteOptions::default()
+                }
+            },
         }
     }
 
@@ -535,7 +541,12 @@ impl ArrowFileRequest {
         // Parse parameters from cmd if present
         let (limit, compression) = if !descriptor.cmd.is_empty() {
             let params: HashMap<String, serde_json::Value> =
-                serde_json::from_slice(&descriptor.cmd).unwrap_or_default();
+                serde_json::from_slice(&descriptor.cmd).with_context(|| {
+                    format!(
+                        "Failed to parse descriptor cmd as JSON: {}",
+                        String::from_utf8_lossy(&descriptor.cmd)
+                    )
+                })?;
 
             let limit = params
                 .get("limit")
@@ -576,11 +587,18 @@ impl ArrowFileRequest {
 
         // Add compression if specified
         if let Some(compression) = &self.compression {
-            ticket_data["compression"] = serde_json::to_value(compression).unwrap_or_default();
+            // TD-007: unwrap_or_else with safe fallback - if compression enum can't be
+            // serialized (shouldn't happen in normal operation), use Null as fallback
+            ticket_data["compression"] =
+                serde_json::to_value(compression).unwrap_or(serde_json::Value::Null);
         }
 
         Ticket {
-            ticket: serde_json::to_vec(&ticket_data).unwrap_or_default().into(),
+            // TD-007: unwrap_or_else with safe fallback - if JSON serialization fails
+            // (shouldn't happen with valid data), use empty JSON object as fallback
+            ticket: serde_json::to_vec(&ticket_data)
+                .unwrap_or_else(|_| vec![b'{', b'}'])
+                .into(),
         }
     }
 
@@ -599,7 +617,11 @@ impl ArrowFileRequest {
             "compression": compression
         });
         Ticket {
-            ticket: serde_json::to_vec(&ticket_data).unwrap_or_default().into(),
+            // TD-007: unwrap_or_else with safe fallback - if JSON serialization fails
+            // (shouldn't happen with valid data), use empty JSON object as fallback
+            ticket: serde_json::to_vec(&ticket_data)
+                .unwrap_or_else(|_| vec![b'{', b'}'])
+                .into(),
         }
     }
 }
@@ -628,11 +650,13 @@ impl ArrowFileTicket {
     /// Check if this is an arrow file ticket
     pub fn is_arrow_file_ticket(ticket: &Ticket) -> bool {
         if let Ok(parsed) = serde_json::from_slice::<serde_json::Value>(&ticket.ticket) {
+            // TD-007: unwrap_or with safe fallback - if type field is missing or not a string,
+            // return false (not an arrow file ticket). This is the correct behavior for ticket
+            // validation - missing/invalid type means it's not a valid arrow file ticket.
             parsed
                 .get("type")
                 .and_then(|v| v.as_str())
-                .map(|t| t == "arrow_file")
-                .unwrap_or(false)
+                .is_some_and(|t| t == "arrow_file")
         } else {
             false
         }
@@ -709,7 +733,9 @@ impl ArrowFileExportHandler {
 
             // Convert URL to local path
             let local_path = if data_path.starts_with("file://") {
-                PathBuf::from(data_path.strip_prefix("file://").unwrap_or(&data_path))
+                PathBuf::from(data_path.strip_prefix("file://").with_context(|| {
+                    format!("Failed to strip file:// prefix from path: {}", data_path)
+                })?)
             } else {
                 PathBuf::from(&data_path)
             };
@@ -733,10 +759,10 @@ impl ArrowFileExportHandler {
                 }
 
                 // Check limit
-                if let Some(max) = limit {
-                    if files.len() >= max {
-                        return Ok(files);
-                    }
+                if let Some(max) = limit
+                    && files.len() >= max
+                {
+                    return Ok(files);
                 }
             }
         }
@@ -759,10 +785,12 @@ impl ArrowFileExportHandler {
                 continue;
             }
 
-            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let filename = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+                anyhow::anyhow!("Failed to convert filename to UTF-8: {:?}", path.display())
+            })?;
 
             // Check if matches pattern
-            if self.matches_pattern(filename, pattern) {
+            if self.matches_pattern(filename, pattern)? {
                 files.push(path);
             }
         }
@@ -771,68 +799,76 @@ impl ArrowFileExportHandler {
     }
 
     /// Simple glob pattern matching with support for .arrow, .parquet, and .sst files
-    fn matches_pattern(&self, filename: &str, pattern: &str) -> bool {
+    fn matches_pattern(&self, filename: &str, pattern: &str) -> Result<bool> {
         // Handle wildcard pattern that should match all exportable files
         if pattern == "*" {
-            return filename.ends_with(".arrow")
+            return Ok(filename.ends_with(".arrow")
                 || filename.ends_with(".parquet")
-                || filename.ends_with(".sst");
+                || filename.ends_with(".sst"));
         }
 
         // Handle *.arrow pattern
         if pattern == "*.arrow" {
-            return filename.ends_with(".arrow");
+            return Ok(filename.ends_with(".arrow"));
         }
 
         // Handle *.parquet pattern
         if pattern == "*.parquet" {
-            return filename.ends_with(".parquet");
+            return Ok(filename.ends_with(".parquet"));
         }
 
         // Handle *.sst pattern
         if pattern == "*.sst" {
-            return filename.ends_with(".sst");
+            return Ok(filename.ends_with(".sst"));
         }
 
         // Handle prefix patterns with .arrow suffix (e.g., block_*.arrow)
         if pattern.starts_with('*') && pattern.ends_with(".arrow") {
-            let suffix = pattern.strip_prefix('*').unwrap_or("");
-            return filename.ends_with(suffix);
+            let suffix = pattern
+                .strip_prefix('*')
+                .ok_or_else(|| anyhow::anyhow!("Pattern should start with '*': {}", pattern))?;
+            return Ok(filename.ends_with(suffix));
         }
 
         // Handle prefix patterns with .parquet suffix (e.g., nova_*.parquet)
         if pattern.starts_with('*') && pattern.ends_with(".parquet") {
-            let suffix = pattern.strip_prefix('*').unwrap_or("");
-            return filename.ends_with(suffix);
+            let suffix = pattern
+                .strip_prefix('*')
+                .ok_or_else(|| anyhow::anyhow!("Pattern should start with '*': {}", pattern))?;
+            return Ok(filename.ends_with(suffix));
         }
 
         // Handle prefix patterns with .sst suffix (e.g., block_*.sst)
         if pattern.starts_with('*') && pattern.ends_with(".sst") {
-            let suffix = pattern.strip_prefix('*').unwrap_or("");
-            return filename.ends_with(suffix);
+            let suffix = pattern
+                .strip_prefix('*')
+                .ok_or_else(|| anyhow::anyhow!("Pattern should start with '*': {}", pattern))?;
+            return Ok(filename.ends_with(suffix));
         }
 
         // Handle suffix patterns (e.g., block_*)
         if pattern.ends_with('*') {
-            let prefix = pattern.strip_suffix('*').unwrap_or("");
+            let prefix = pattern
+                .strip_suffix('*')
+                .ok_or_else(|| anyhow::anyhow!("Pattern should end with '*': {}", pattern))?;
             let matches_prefix = filename.starts_with(prefix);
             // Also check it's an exportable format
-            return matches_prefix
+            return Ok(matches_prefix
                 && (filename.ends_with(".arrow")
                     || filename.ends_with(".parquet")
-                    || filename.ends_with(".sst"));
+                    || filename.ends_with(".sst")));
         }
 
         // Handle patterns with wildcard in the middle (e.g., nova_*.parquet)
         if pattern.contains('*') {
             let parts: Vec<&str> = pattern.split('*').collect();
             if parts.len() == 2 {
-                return filename.starts_with(parts[0]) && filename.ends_with(parts[1]);
+                return Ok(filename.starts_with(parts[0]) && filename.ends_with(parts[1]));
             }
         }
 
         // Exact match
-        filename == pattern
+        Ok(filename == pattern)
     }
 
     /// Get file info for an .arrow or .parquet file
@@ -861,15 +897,16 @@ impl ArrowFileExportHandler {
         let filename = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("")
+            .ok_or_else(|| {
+                anyhow::anyhow!("Failed to convert filename to UTF-8: {:?}", path.display())
+            })?
             .to_string();
 
         let modified_at = file_metadata
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs() as i64);
 
         // Read file-specific metadata based on format
         let (num_batches, total_records, dimension) = match format {
@@ -898,14 +935,14 @@ impl ArrowFileExportHandler {
     ) -> Result<(usize, u64, u32)> {
         // Try ArrowBlockReader first (for ProximaDB-formatted files with sidecar index)
         let idx_path = format!("{}.idx", path.display());
-        if Path::new(&idx_path).exists() {
-            if let Ok(reader) = ArrowBlockReader::open(path) {
-                return Ok((
-                    reader.num_blocks() as usize,
-                    reader.total_records(),
-                    reader.metadata().dimension,
-                ));
-            }
+        if Path::new(&idx_path).exists()
+            && let Ok(reader) = ArrowBlockReader::open(path)
+        {
+            return Ok((
+                reader.num_blocks() as usize,
+                reader.total_records(),
+                reader.metadata().dimension,
+            ));
         }
 
         // Fall back to standard Arrow IPC reader
@@ -916,18 +953,12 @@ impl ArrowFileExportHandler {
         let mut total_records = 0u64;
 
         // Count records (we need to iterate batches)
-        for batch_result in reader {
-            if let Ok(batch) = batch_result {
-                total_records += batch.num_rows() as u64;
-            }
+        for batch in reader.filter_map(Result::ok) {
+            total_records += batch.num_rows() as u64;
         }
 
         // Get dimension from collection config
-        let dimension = collection
-            .config
-            .as_ref()
-            .map(|c| c.dimension as u32)
-            .unwrap_or(0);
+        let dimension = collection.config.as_ref().map_or(0, |c| c.dimension);
 
         Ok((num_batches, total_records, dimension))
     }
@@ -961,7 +992,7 @@ impl ArrowFileExportHandler {
             })
             .or_else(|| {
                 // Fall back to collection config
-                collection.config.as_ref().map(|c| c.dimension as u32)
+                collection.config.as_ref().map(|c| c.dimension)
             })
             .unwrap_or(0);
 
@@ -1013,25 +1044,21 @@ impl ArrowFileExportHandler {
                 total_records += block.records.len() as u64;
 
                 // Get dimension from first non-empty vector
-                if dimension == 0 {
-                    if let Some(first_record) = block.records.first() {
-                        dimension = first_record.vector.len() as u32;
-                    }
+                if dimension == 0
+                    && let Some(first_record) = block.records.first()
+                {
+                    dimension = first_record.vector.len() as u32;
                 }
             }
 
             // Move to next block (with cache-line alignment padding)
-            let aligned_size = ((block_len + 63) / 64) * 64;
+            let aligned_size = block_len.div_ceil(64) * 64;
             offset += 4 + aligned_size;
         }
 
         // Fall back to collection config for dimension if not found
         if dimension == 0 {
-            dimension = collection
-                .config
-                .as_ref()
-                .map(|c| c.dimension as u32)
-                .unwrap_or(0);
+            dimension = collection.config.as_ref().map_or(0, |c| c.dimension);
         }
 
         debug!(
@@ -1063,15 +1090,15 @@ impl ArrowFileExportHandler {
 
         // Try ArrowBlockReader first (for ProximaDB-formatted files with sidecar index)
         let idx_path = format!("{}.idx", file_path);
-        if Path::new(&idx_path).exists() {
-            if let Ok(_reader) = ArrowBlockReader::open(path) {
-                // ArrowBlockReader returns VectorRecords, so we fall back to standard IPC reader
-                // for direct RecordBatch streaming (no conversion needed)
-                debug!(
-                    "Found ArrowBlockReader index, using standard IPC reader for {}",
-                    file_path
-                );
-            }
+        if Path::new(&idx_path).exists()
+            && let Ok(_reader) = ArrowBlockReader::open(path)
+        {
+            // ArrowBlockReader returns VectorRecords, so we fall back to standard IPC reader
+            // for direct RecordBatch streaming (no conversion needed)
+            debug!(
+                "Found ArrowBlockReader index, using standard IPC reader for {}",
+                file_path
+            );
         }
 
         // Use standard Arrow IPC reader for direct RecordBatch streaming
@@ -1187,16 +1214,16 @@ impl ArrowFileExportHandler {
             // Try to deserialize the block
             if let Ok(block) = ProximaDataBlock::deserialize(block_data, None) {
                 // Get dimension from first non-empty vector
-                if dimension == 0 {
-                    if let Some(first_record) = block.records.first() {
-                        dimension = first_record.vector.len() as i32;
-                    }
+                if dimension == 0
+                    && let Some(first_record) = block.records.first()
+                {
+                    dimension = first_record.vector.len() as i32;
                 }
                 all_records.extend(block.records);
             }
 
             // Move to next block (with cache-line alignment padding)
-            let aligned_size = ((block_len + 63) / 64) * 64;
+            let aligned_size = block_len.div_ceil(64) * 64;
             offset += 4 + aligned_size;
         }
 
@@ -1375,14 +1402,14 @@ impl ArrowFileExportHandler {
                 num_blocks += 1;
                 total_records += block.records.len() as u64;
 
-                if dimension == 0 {
-                    if let Some(first_record) = block.records.first() {
-                        dimension = first_record.vector.len() as u32;
-                    }
+                if dimension == 0
+                    && let Some(first_record) = block.records.first()
+                {
+                    dimension = first_record.vector.len() as u32;
                 }
             }
 
-            let aligned_size = ((block_len + 63) / 64) * 64;
+            let aligned_size = block_len.div_ceil(64) * 64;
             offset += 4 + aligned_size;
         }
 
@@ -1404,8 +1431,7 @@ impl ArrowFileExportHandler {
             let dimension = collection
                 .config
                 .as_ref()
-                .map(|c| c.dimension as usize)
-                .unwrap_or(0);
+                .map_or(0, |c| c.dimension as usize);
             crate::network::arrow_ipc::ArrowProtoCodec::create_vector_schema(dimension)
         };
 
@@ -1429,7 +1455,9 @@ impl ArrowFileExportHandler {
                         uri: endpoint_location.to_string(),
                     }],
                     expiration_time: None,
-                    app_metadata: serde_json::to_vec(&file).unwrap_or_default().into(),
+                    app_metadata: serde_json::to_vec(&file)
+                        .unwrap_or_else(|_| vec![b'{', b'}'])
+                        .into(),
                 }
             })
             .collect();
@@ -1492,17 +1520,45 @@ mod tests {
         let handler = ArrowFileExportHandler::new(vec![]);
 
         // Test *.arrow
-        assert!(handler.matches_pattern("block_0.arrow", "*.arrow"));
-        assert!(handler.matches_pattern("test.arrow", "*.arrow"));
-        assert!(!handler.matches_pattern("test.parquet", "*.arrow"));
+        assert!(
+            handler
+                .matches_pattern("block_0.arrow", "*.arrow")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            handler
+                .matches_pattern("test.arrow", "*.arrow")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("test.parquet", "*.arrow")
+                .expect("Pattern match failed")
+        );
 
         // Test prefix*suffix for arrow
-        assert!(handler.matches_pattern("block_123.arrow", "block_*.arrow"));
-        assert!(!handler.matches_pattern("data_123.arrow", "block_*.arrow"));
+        assert!(
+            handler
+                .matches_pattern("block_123.arrow", "block_*.arrow")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("data_123.arrow", "block_*.arrow")
+                .expect("Pattern match failed")
+        );
 
         // Test exact match
-        assert!(handler.matches_pattern("test.arrow", "test.arrow"));
-        assert!(!handler.matches_pattern("test2.arrow", "test.arrow"));
+        assert!(
+            handler
+                .matches_pattern("test.arrow", "test.arrow")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("test2.arrow", "test.arrow")
+                .expect("Pattern match failed")
+        );
     }
 
     #[test]
@@ -1510,16 +1566,40 @@ mod tests {
         let handler = ArrowFileExportHandler::new(vec![]);
 
         // Test *.parquet
-        assert!(handler.matches_pattern("nova_vectors.parquet", "*.parquet"));
-        assert!(handler.matches_pattern("viper_data.parquet", "*.parquet"));
-        assert!(!handler.matches_pattern("test.arrow", "*.parquet"));
+        assert!(
+            handler
+                .matches_pattern("nova_vectors.parquet", "*.parquet")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            handler
+                .matches_pattern("viper_data.parquet", "*.parquet")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("test.arrow", "*.parquet")
+                .expect("Pattern match failed")
+        );
 
         // Test prefix*suffix for parquet (Nova naming convention)
-        assert!(handler.matches_pattern("nova_test_1234567890_abc.parquet", "nova_*.parquet"));
-        assert!(!handler.matches_pattern("viper_data.parquet", "nova_*.parquet"));
+        assert!(
+            handler
+                .matches_pattern("nova_test_1234567890_abc.parquet", "nova_*.parquet")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("viper_data.parquet", "nova_*.parquet")
+                .expect("Pattern match failed")
+        );
 
         // Test exact match
-        assert!(handler.matches_pattern("data.parquet", "data.parquet"));
+        assert!(
+            handler
+                .matches_pattern("data.parquet", "data.parquet")
+                .expect("Pattern match failed")
+        );
     }
 
     #[test]
@@ -1527,18 +1607,50 @@ mod tests {
         let handler = ArrowFileExportHandler::new(vec![]);
 
         // Test *.sst
-        assert!(handler.matches_pattern("block_0.sst", "*.sst"));
-        assert!(handler.matches_pattern("data.sst", "*.sst"));
-        assert!(!handler.matches_pattern("test.arrow", "*.sst"));
-        assert!(!handler.matches_pattern("test.parquet", "*.sst"));
+        assert!(
+            handler
+                .matches_pattern("block_0.sst", "*.sst")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            handler
+                .matches_pattern("data.sst", "*.sst")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("test.arrow", "*.sst")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("test.parquet", "*.sst")
+                .expect("Pattern match failed")
+        );
 
         // Test prefix*suffix for sst
-        assert!(handler.matches_pattern("block_123.sst", "block_*.sst"));
-        assert!(!handler.matches_pattern("data_123.sst", "block_*.sst"));
+        assert!(
+            handler
+                .matches_pattern("block_123.sst", "block_*.sst")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("data_123.sst", "block_*.sst")
+                .expect("Pattern match failed")
+        );
 
         // Test exact match
-        assert!(handler.matches_pattern("data.sst", "data.sst"));
-        assert!(!handler.matches_pattern("data2.sst", "data.sst"));
+        assert!(
+            handler
+                .matches_pattern("data.sst", "data.sst")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("data2.sst", "data.sst")
+                .expect("Pattern match failed")
+        );
     }
 
     #[test]
@@ -1546,23 +1658,60 @@ mod tests {
         let handler = ArrowFileExportHandler::new(vec![]);
 
         // Test * pattern (matches all exportable files)
-        assert!(handler.matches_pattern("block_0.arrow", "*"));
-        assert!(handler.matches_pattern("nova_vectors.parquet", "*"));
-        assert!(handler.matches_pattern("data.sst", "*"));
-        assert!(!handler.matches_pattern("readme.txt", "*"));
-        assert!(!handler.matches_pattern("config.json", "*"));
+        assert!(
+            handler
+                .matches_pattern("block_0.arrow", "*")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            handler
+                .matches_pattern("nova_vectors.parquet", "*")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            handler
+                .matches_pattern("data.sst", "*")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("readme.txt", "*")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("config.json", "*")
+                .expect("Pattern match failed")
+        );
 
         // Test prefix* pattern (matches prefix with any exportable extension)
-        assert!(handler.matches_pattern("block_0.arrow", "block_*"));
-        assert!(handler.matches_pattern("block_data.parquet", "block_*"));
-        assert!(handler.matches_pattern("block_data.sst", "block_*"));
-        assert!(!handler.matches_pattern("nova_data.arrow", "block_*"));
+        assert!(
+            handler
+                .matches_pattern("block_0.arrow", "block_*")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            handler
+                .matches_pattern("block_data.parquet", "block_*")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            handler
+                .matches_pattern("block_data.sst", "block_*")
+                .expect("Pattern match failed")
+        );
+        assert!(
+            !handler
+                .matches_pattern("nova_data.arrow", "block_*")
+                .expect("Pattern match failed")
+        );
     }
 
     #[test]
     fn test_arrow_file_request_parsing() {
         let descriptor = FlightDescriptor::new_path(vec!["my_collection".to_string()]);
-        let request = ArrowFileRequest::from_descriptor(&descriptor).unwrap();
+        let request = ArrowFileRequest::from_descriptor(&descriptor)
+            .expect("Failed to parse ArrowFileRequest from descriptor");
 
         assert_eq!(request.collection_id, "my_collection");
         assert!(request.file_pattern.is_none());
@@ -1573,7 +1722,8 @@ mod tests {
     fn test_arrow_file_request_with_pattern() {
         let descriptor =
             FlightDescriptor::new_path(vec!["my_collection".to_string(), "*.arrow".to_string()]);
-        let request = ArrowFileRequest::from_descriptor(&descriptor).unwrap();
+        let request = ArrowFileRequest::from_descriptor(&descriptor)
+            .expect("Failed to parse ArrowFileRequest from descriptor");
 
         assert_eq!(request.collection_id, "my_collection");
         assert_eq!(request.file_pattern.as_deref(), Some("*.arrow"));
@@ -1581,7 +1731,8 @@ mod tests {
         // Test with parquet pattern
         let descriptor =
             FlightDescriptor::new_path(vec!["my_collection".to_string(), "*.parquet".to_string()]);
-        let request = ArrowFileRequest::from_descriptor(&descriptor).unwrap();
+        let request = ArrowFileRequest::from_descriptor(&descriptor)
+            .expect("Failed to parse ArrowFileRequest from descriptor");
 
         assert_eq!(request.collection_id, "my_collection");
         assert_eq!(request.file_pattern.as_deref(), Some("*.parquet"));
@@ -1597,7 +1748,8 @@ mod tests {
         };
 
         let ticket = request.create_ticket("/path/to/file.arrow");
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
+        let parsed = ArrowFileTicket::from_ticket(&ticket)
+            .expect("Failed to parse ArrowFileTicket from ticket");
 
         assert_eq!(parsed.ticket_type, "arrow_file");
         assert_eq!(parsed.collection_id, "test");
@@ -1606,12 +1758,14 @@ mod tests {
 
         // Test with parquet file
         let ticket = request.create_ticket("/path/to/nova_vectors.parquet");
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
+        let parsed = ArrowFileTicket::from_ticket(&ticket)
+            .expect("Failed to parse ArrowFileTicket from ticket");
         assert_eq!(parsed.file_path, "/path/to/nova_vectors.parquet");
 
         // Test with SST file
         let ticket = request.create_ticket("/path/to/block_0.sst");
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
+        let parsed = ArrowFileTicket::from_ticket(&ticket)
+            .expect("Failed to parse ArrowFileTicket from ticket");
         assert_eq!(parsed.file_path, "/path/to/block_0.sst");
     }
 
@@ -1619,7 +1773,8 @@ mod tests {
     fn test_arrow_file_request_with_sst_pattern() {
         let descriptor =
             FlightDescriptor::new_path(vec!["my_collection".to_string(), "*.sst".to_string()]);
-        let request = ArrowFileRequest::from_descriptor(&descriptor).unwrap();
+        let request = ArrowFileRequest::from_descriptor(&descriptor)
+            .expect("Failed to parse ArrowFileRequest from descriptor");
 
         assert_eq!(request.collection_id, "my_collection");
         assert_eq!(request.file_pattern.as_deref(), Some("*.sst"));
@@ -1639,8 +1794,10 @@ mod tests {
             format: ExportFileFormat::Arrow,
         };
 
-        let json = serde_json::to_string(&arrow_info).unwrap();
-        let parsed: ArrowFileInfo = serde_json::from_str(&json).unwrap();
+        let json =
+            serde_json::to_string(&arrow_info).expect("Failed to serialize ArrowFileInfo to JSON");
+        let parsed: ArrowFileInfo =
+            serde_json::from_str(&json).expect("Failed to deserialize ArrowFileInfo from JSON");
         assert_eq!(parsed.format, ExportFileFormat::Arrow);
 
         // Test with Parquet format
@@ -1655,8 +1812,10 @@ mod tests {
             format: ExportFileFormat::Parquet,
         };
 
-        let json = serde_json::to_string(&parquet_info).unwrap();
-        let parsed: ArrowFileInfo = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&parquet_info)
+            .expect("Failed to serialize ArrowFileInfo to JSON");
+        let parsed: ArrowFileInfo =
+            serde_json::from_str(&json).expect("Failed to deserialize ArrowFileInfo from JSON");
         assert_eq!(parsed.format, ExportFileFormat::Parquet);
 
         // Test with SST format
@@ -1671,8 +1830,10 @@ mod tests {
             format: ExportFileFormat::Sst,
         };
 
-        let json = serde_json::to_string(&sst_info).unwrap();
-        let parsed: ArrowFileInfo = serde_json::from_str(&json).unwrap();
+        let json =
+            serde_json::to_string(&sst_info).expect("Failed to serialize ArrowFileInfo to JSON");
+        let parsed: ArrowFileInfo =
+            serde_json::from_str(&json).expect("Failed to deserialize ArrowFileInfo from JSON");
         assert_eq!(parsed.format, ExportFileFormat::Sst);
         assert_eq!(parsed.filename, "block_0.sst");
     }
@@ -1753,7 +1914,11 @@ mod tests {
         temp_file.flush().expect("Failed to flush temp file");
 
         let cache = SstArrowCache::with_default_config();
-        let file_path = temp_file.path().to_str().unwrap();
+        let file_path = temp_file
+            .path()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Failed to convert temp file path to UTF-8"))
+            .expect("Failed to convert temp file path to UTF-8");
 
         // Create a simple RecordBatch for testing
         use arrow_array::Int32Array;
@@ -1773,7 +1938,7 @@ mod tests {
         // Get should return the cached batch
         let cached = cache.get(file_path);
         assert!(cached.is_some());
-        let cached_batches = cached.unwrap();
+        let cached_batches = cached.expect("Expected cached batches");
         assert_eq!(cached_batches.len(), 1);
         assert_eq!(cached_batches[0].num_rows(), 3);
 
@@ -1791,7 +1956,12 @@ mod tests {
 
         // Create a temporary file
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let file_path = temp_file.path().to_str().unwrap().to_string();
+        let file_path = temp_file
+            .path()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Failed to convert temp file path to UTF-8"))
+            .expect("Failed to convert temp file path to UTF-8")
+            .to_string();
 
         let cache = SstArrowCache::with_default_config();
 
@@ -1859,7 +2029,13 @@ mod tests {
             let mut file = fs::File::create(&file_path).expect("Failed to create file");
             file.write_all(format!("content {}", i).as_bytes())
                 .expect("Failed to write");
-            file_paths.push(file_path.to_str().unwrap().to_string());
+            file_paths.push(
+                file_path
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Failed to convert file path to UTF-8"))
+                    .expect("Failed to convert file path to UTF-8")
+                    .to_string(),
+            );
 
             // Small delay to ensure different mtimes
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1899,7 +2075,11 @@ mod tests {
         temp_file
             .write_all(b"test data")
             .expect("Failed to write to temp file");
-        let file_path = temp_file.path().to_str().unwrap();
+        let file_path = temp_file
+            .path()
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Failed to convert temp file path to UTF-8"))
+            .expect("Failed to convert temp file path to UTF-8");
 
         let cache = SstArrowCache::with_default_config();
 
@@ -1969,7 +2149,11 @@ mod tests {
         let file_path = temp_dir.path().join("test.sst");
         let mut file = fs::File::create(&file_path).expect("Failed to create file");
         file.write_all(b"test content").expect("Failed to write");
-        let file_path_str = file_path.to_str().unwrap().to_string();
+        let file_path_str = file_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Failed to convert file path to UTF-8"))
+            .expect("Failed to convert file path to UTF-8")
+            .to_string();
 
         // Create test batch
         use arrow_array::Int32Array;
@@ -2019,43 +2203,60 @@ mod tests {
     fn test_flight_compression_from_str() {
         // Test None variants
         assert_eq!(
-            "none".parse::<FlightCompression>().unwrap(),
+            "none"
+                .parse::<FlightCompression>()
+                .expect("Failed to parse 'none' compression"),
             FlightCompression::None
         );
         assert_eq!(
-            "".parse::<FlightCompression>().unwrap(),
+            "".parse::<FlightCompression>()
+                .expect("Failed to parse empty string compression"),
             FlightCompression::None
         );
 
         // Test LZ4 variants
         assert_eq!(
-            "lz4".parse::<FlightCompression>().unwrap(),
+            "lz4"
+                .parse::<FlightCompression>()
+                .expect("Failed to parse 'lz4' compression"),
             FlightCompression::Lz4
         );
         assert_eq!(
-            "lz4_frame".parse::<FlightCompression>().unwrap(),
+            "lz4_frame"
+                .parse::<FlightCompression>()
+                .expect("Failed to parse 'lz4_frame' compression"),
             FlightCompression::Lz4
         );
         assert_eq!(
-            "lz4frame".parse::<FlightCompression>().unwrap(),
+            "lz4frame"
+                .parse::<FlightCompression>()
+                .expect("Failed to parse 'lz4frame' compression"),
             FlightCompression::Lz4
         );
         assert_eq!(
-            "LZ4".parse::<FlightCompression>().unwrap(),
+            "LZ4"
+                .parse::<FlightCompression>()
+                .expect("Failed to parse 'LZ4' compression"),
             FlightCompression::Lz4
         );
 
         // Test ZSTD variants
         assert_eq!(
-            "zstd".parse::<FlightCompression>().unwrap(),
+            "zstd"
+                .parse::<FlightCompression>()
+                .expect("Failed to parse 'zstd' compression"),
             FlightCompression::Zstd
         );
         assert_eq!(
-            "zstandard".parse::<FlightCompression>().unwrap(),
+            "zstandard"
+                .parse::<FlightCompression>()
+                .expect("Failed to parse 'zstandard' compression"),
             FlightCompression::Zstd
         );
         assert_eq!(
-            "ZSTD".parse::<FlightCompression>().unwrap(),
+            "ZSTD"
+                .parse::<FlightCompression>()
+                .expect("Failed to parse 'ZSTD' compression"),
             FlightCompression::Zstd
         );
 
@@ -2108,25 +2309,32 @@ mod tests {
     #[test]
     fn test_flight_compression_serde() {
         // Test serialization
-        let none_json = serde_json::to_string(&FlightCompression::None).unwrap();
-        let lz4_json = serde_json::to_string(&FlightCompression::Lz4).unwrap();
-        let zstd_json = serde_json::to_string(&FlightCompression::Zstd).unwrap();
+        let none_json = serde_json::to_string(&FlightCompression::None)
+            .expect("Failed to serialize None compression");
+        let lz4_json = serde_json::to_string(&FlightCompression::Lz4)
+            .expect("Failed to serialize Lz4 compression");
+        let zstd_json = serde_json::to_string(&FlightCompression::Zstd)
+            .expect("Failed to serialize Zstd compression");
 
         assert_eq!(none_json, "\"none\"");
         assert_eq!(lz4_json, "\"lz4\"");
         assert_eq!(zstd_json, "\"zstd\"");
 
         // Test deserialization
-        let parsed_none: FlightCompression = serde_json::from_str(&none_json).unwrap();
-        let parsed_lz4: FlightCompression = serde_json::from_str(&lz4_json).unwrap();
-        let parsed_zstd: FlightCompression = serde_json::from_str(&zstd_json).unwrap();
+        let parsed_none: FlightCompression =
+            serde_json::from_str(&none_json).expect("Failed to deserialize None compression");
+        let parsed_lz4: FlightCompression =
+            serde_json::from_str(&lz4_json).expect("Failed to deserialize Lz4 compression");
+        let parsed_zstd: FlightCompression =
+            serde_json::from_str(&zstd_json).expect("Failed to deserialize Zstd compression");
 
         assert_eq!(parsed_none, FlightCompression::None);
         assert_eq!(parsed_lz4, FlightCompression::Lz4);
         assert_eq!(parsed_zstd, FlightCompression::Zstd);
 
         // Test alias deserialization
-        let lz4_frame: FlightCompression = serde_json::from_str("\"lz4_frame\"").unwrap();
+        let lz4_frame: FlightCompression = serde_json::from_str("\"lz4_frame\"")
+            .expect("Failed to deserialize lz4_frame compression");
         assert_eq!(lz4_frame, FlightCompression::Lz4);
     }
 
@@ -2154,7 +2362,8 @@ mod tests {
         };
 
         let ticket = request.create_ticket("/path/to/file.arrow");
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
+        let parsed = ArrowFileTicket::from_ticket(&ticket)
+            .expect("Failed to parse ArrowFileTicket from ticket");
 
         assert_eq!(parsed.collection_id, "test");
         assert_eq!(parsed.file_path, "/path/to/file.arrow");
@@ -2171,7 +2380,8 @@ mod tests {
         };
 
         let ticket = request.create_ticket("/path/to/file.arrow");
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
+        let parsed = ArrowFileTicket::from_ticket(&ticket)
+            .expect("Failed to parse ArrowFileTicket from ticket");
 
         assert_eq!(parsed.collection_id, "test");
         assert!(parsed.compression.is_none());
@@ -2188,7 +2398,8 @@ mod tests {
 
         let ticket =
             request.create_ticket_with_compression("/path/to/file.arrow", FlightCompression::Lz4);
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
+        let parsed = ArrowFileTicket::from_ticket(&ticket)
+            .expect("Failed to parse ArrowFileTicket from ticket");
 
         // Should use the explicit compression, not the request's
         assert_eq!(parsed.compression, Some(FlightCompression::Lz4));
@@ -2200,10 +2411,11 @@ mod tests {
         descriptor.cmd = serde_json::to_vec(&serde_json::json!({
             "compression": "zstd"
         }))
-        .unwrap()
+        .expect("Failed to serialize compression to JSON")
         .into();
 
-        let request = ArrowFileRequest::from_descriptor(&descriptor).unwrap();
+        let request = ArrowFileRequest::from_descriptor(&descriptor)
+            .expect("Failed to parse ArrowFileRequest from descriptor");
 
         assert_eq!(request.collection_id, "my_collection");
         assert_eq!(request.compression, Some(FlightCompression::Zstd));
@@ -2215,10 +2427,11 @@ mod tests {
         descriptor.cmd = serde_json::to_vec(&serde_json::json!({
             "compression": "lz4"
         }))
-        .unwrap()
+        .expect("Failed to serialize compression to JSON")
         .into();
 
-        let request = ArrowFileRequest::from_descriptor(&descriptor).unwrap();
+        let request = ArrowFileRequest::from_descriptor(&descriptor)
+            .expect("Failed to parse ArrowFileRequest from descriptor");
 
         assert_eq!(request.compression, Some(FlightCompression::Lz4));
     }
@@ -2230,10 +2443,11 @@ mod tests {
             "limit": 100,
             "compression": "lz4"
         }))
-        .unwrap()
+        .expect("Failed to serialize limit and compression to JSON")
         .into();
 
-        let request = ArrowFileRequest::from_descriptor(&descriptor).unwrap();
+        let request = ArrowFileRequest::from_descriptor(&descriptor)
+            .expect("Failed to parse ArrowFileRequest from descriptor");
 
         assert_eq!(request.collection_id, "my_collection");
         assert_eq!(request.limit, Some(100));
@@ -2243,7 +2457,8 @@ mod tests {
     #[test]
     fn test_arrow_file_request_from_descriptor_without_compression() {
         let descriptor = FlightDescriptor::new_path(vec!["my_collection".to_string()]);
-        let request = ArrowFileRequest::from_descriptor(&descriptor).unwrap();
+        let request = ArrowFileRequest::from_descriptor(&descriptor)
+            .expect("Failed to parse ArrowFileRequest from descriptor");
 
         assert_eq!(request.collection_id, "my_collection");
         assert!(request.compression.is_none());
@@ -2261,10 +2476,13 @@ mod tests {
         });
 
         let ticket = Ticket {
-            ticket: serde_json::to_vec(&ticket_data).unwrap().into(),
+            ticket: serde_json::to_vec(&ticket_data)
+                .expect("Failed to serialize ticket data to JSON")
+                .into(),
         };
 
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
+        let parsed = ArrowFileTicket::from_ticket(&ticket)
+            .expect("Failed to parse ArrowFileTicket from ticket");
         assert_eq!(parsed.compression, Some(FlightCompression::Lz4));
     }
 
@@ -2277,10 +2495,13 @@ mod tests {
         });
 
         let ticket = Ticket {
-            ticket: serde_json::to_vec(&ticket_data).unwrap().into(),
+            ticket: serde_json::to_vec(&ticket_data)
+                .expect("Failed to serialize ticket data to JSON")
+                .into(),
         };
 
-        let parsed = ArrowFileTicket::from_ticket(&ticket).unwrap();
+        let parsed = ArrowFileTicket::from_ticket(&ticket)
+            .expect("Failed to parse ArrowFileTicket from ticket");
         assert!(parsed.compression.is_none());
     }
 
@@ -2293,7 +2514,8 @@ mod tests {
             compression: None,
         };
 
-        let json = serde_json::to_string(&ticket).unwrap();
+        let json =
+            serde_json::to_string(&ticket).expect("Failed to serialize ArrowFileTicket to JSON");
         // Should not contain "compression" field when it's None
         assert!(!json.contains("compression"));
     }
@@ -2307,7 +2529,8 @@ mod tests {
             compression: Some(FlightCompression::Zstd),
         };
 
-        let json = serde_json::to_string(&ticket).unwrap();
+        let json =
+            serde_json::to_string(&ticket).expect("Failed to serialize ArrowFileTicket to JSON");
         assert!(json.contains("\"compression\":\"zstd\""));
     }
 }

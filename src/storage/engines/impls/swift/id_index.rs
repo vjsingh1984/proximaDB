@@ -4,6 +4,7 @@
 use anyhow::Result;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::RwLock;
+use tracing::warn;
 
 /// B+ tree based ID index for fast lookups
 #[derive(Debug)]
@@ -81,11 +82,10 @@ impl IdIndex {
     /// Insert an ID with its location
     pub fn insert(&self, id: String, location: BlockLocation) -> Result<()> {
         // Update direct mapping
-        // SAFETY: write().unwrap() is safe here because RwLock poisoning only occurs if
-        // a thread panics while holding the lock. This is an internal data structure where
-        // we control all access paths, and the operations within the lock are simple
-        // HashMap insertions that cannot panic.
-        let mut map = self.id_to_location.write().unwrap();
+        let mut map = self
+            .id_to_location
+            .write()
+            .map_err(|e| anyhow::anyhow!("RwLock poisoned in id_to_location: {}", e))?;
         let is_new = map.insert(id.clone(), location.clone()).is_none();
 
         if is_new {
@@ -96,8 +96,10 @@ impl IdIndex {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         // Update B+ tree
-        // SAFETY: Same as above - RwLock poisoning cannot occur in normal operation.
-        let mut root = self.root.write().unwrap();
+        let mut root = self
+            .root
+            .write()
+            .map_err(|e| anyhow::anyhow!("RwLock poisoned in root: {}", e))?;
         match root.as_mut() {
             None => {
                 // Create first leaf node
@@ -110,7 +112,10 @@ impl IdIndex {
                 // Insert into existing tree
                 if self.insert_into_node(node, id, location)? {
                     // Node split occurred, need to create new root
-                    self.split_root(root.as_mut().unwrap())?;
+                    let root_mut = root
+                        .as_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Root should be Some after split"))?;
+                    self.split_root(root_mut)?;
                 }
             }
         }
@@ -120,28 +125,46 @@ impl IdIndex {
 
     /// Lookup an ID and return its location
     pub fn lookup(&self, id: &str) -> Option<BlockLocation> {
-        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
-        // The read lock is held briefly for a HashMap lookup and clone.
-        self.id_to_location.read().unwrap().get(id).cloned()
+        match self.id_to_location.read() {
+            Ok(map) => map.get(id).cloned(),
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned during lookup");
+                None
+            }
+        }
     }
 
     /// Async lookup for compatibility with async APIs
     pub async fn lookup_async(&self, id: &str) -> Option<RecordLocation> {
-        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
-        self.id_to_location.read().unwrap().get(id).cloned()
+        match self.id_to_location.read() {
+            Ok(map) => map.get(id).cloned(),
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned during async lookup");
+                None
+            }
+        }
     }
 
     /// Batch lookup for multiple IDs
     pub fn lookup_batch(&self, ids: &[String]) -> Vec<Option<BlockLocation>> {
-        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
-        let map = self.id_to_location.read().unwrap();
-        ids.iter().map(|id| map.get(id).cloned()).collect()
+        match self.id_to_location.read() {
+            Ok(map) => ids.iter().map(|id| map.get(id).cloned()).collect(),
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned during batch lookup");
+                vec![None; ids.len()]
+            }
+        }
     }
 
     /// Range query - get all IDs in a range
     pub fn range_query(&self, start: &str, end: &str) -> Vec<(String, BlockLocation)> {
-        // SAFETY: read().unwrap() is safe - RwLock poisoning cannot occur in normal operation.
-        let map = self.id_to_location.read().unwrap();
+        let map = match self.id_to_location.read() {
+            Ok(map) => map,
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned during range query");
+                return Vec::new();
+            }
+        };
         let mut results = Vec::new();
 
         for (id, loc) in map.iter() {
@@ -174,18 +197,24 @@ impl IdIndex {
     ) -> Result<bool> {
         match node.as_mut() {
             BPlusNode::Leaf { entries, .. } => {
-                // Find insertion position
-                let pos = entries
-                    .binary_search_by_key(&&id, |(k, _)| k)
-                    .unwrap_or_else(|p| p);
+                // Find insertion position (binary_search returns Result<usize, usize> where
+                // both variants contain the valid insertion position)
+                let pos = match entries.binary_search_by_key(&&id, |(k, _)| k) {
+                    Ok(p) => p,
+                    Err(p) => p,
+                };
                 entries.insert(pos, (id, location));
 
                 // Check if split is needed
                 Ok(entries.len() > self.order)
             }
             BPlusNode::Internal { keys, children, .. } => {
-                // Find child to insert into
-                let pos = keys.binary_search(&id).unwrap_or_else(|p| p);
+                // Find child to insert into (binary_search returns Result<usize, usize> where
+                // both variants contain the valid insertion position)
+                let pos = match keys.binary_search(&id) {
+                    Ok(p) => p,
+                    Err(p) => p,
+                };
                 let child_idx = pos.min(children.len() - 1);
 
                 let needs_split =
@@ -208,6 +237,7 @@ impl IdIndex {
         Ok(())
     }
 
+    #[expect(clippy::vec_box)] // Box<BPlusNode> provides stable addresses for B+Tree
     fn split_child(
         &self,
         _keys: &mut Vec<String>,
@@ -219,7 +249,13 @@ impl IdIndex {
     }
 
     fn get_tree_height(&self) -> u32 {
-        let root = self.root.read().unwrap();
+        let root = match self.root.read() {
+            Ok(root) => root,
+            Err(error) => {
+                warn!(error = %error, "root lock poisoned while computing tree height");
+                return 0;
+            }
+        };
         match root.as_ref() {
             None => 0,
             Some(node) => self.node_height(node),
@@ -230,6 +266,8 @@ impl IdIndex {
         match node {
             BPlusNode::Leaf { .. } => 1,
             BPlusNode::Internal { children, .. } => {
+                // Internal nodes should always have children in a valid B+ tree.
+                // If empty (tree corruption or edge case), return 0 as safe fallback.
                 1 + children
                     .iter()
                     .map(|c| self.node_height(c))
@@ -240,8 +278,16 @@ impl IdIndex {
     }
 
     fn estimate_memory_usage(&self) -> usize {
-        let map_size = self.id_to_location.read().unwrap().len()
-            * (std::mem::size_of::<String>() + std::mem::size_of::<BlockLocation>() + 32); // HashMap overhead
+        let map_size = match self.id_to_location.read() {
+            Ok(map) => {
+                map.len()
+                    * (std::mem::size_of::<String>() + std::mem::size_of::<BlockLocation>() + 32)
+            }
+            Err(error) => {
+                warn!(error = %error, "id_to_location lock poisoned while estimating memory");
+                0
+            }
+        }; // HashMap overhead
 
         let tree_size = self.estimate_tree_memory();
 
@@ -253,6 +299,12 @@ impl IdIndex {
         let unique_ids = self.unique_ids.load(std::sync::atomic::Ordering::Relaxed) as usize;
         let nodes = (unique_ids / (self.order / 2)).max(1);
         nodes * (self.order * std::mem::size_of::<String>() + 1024) // Node overhead
+    }
+}
+
+impl Default for IdIndex {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -389,5 +441,286 @@ mod tests {
         assert_eq!(index.lookup("id_0050"), Some(50));
         assert_eq!(index.lookup("id_0099"), Some(99));
         assert_eq!(index.lookup("id_0100"), None);
+    }
+
+    // ========================================================================
+    // IdIndex extended tests
+    // ========================================================================
+
+    #[test]
+    fn test_id_index_empty() {
+        let index = IdIndex::new();
+        assert!(index.lookup("nonexistent").is_none());
+        let stats = index.stats();
+        assert_eq!(stats.total_ids, 0);
+        assert_eq!(stats.unique_ids, 0);
+        assert_eq!(stats.tree_height, 0);
+    }
+
+    #[test]
+    fn test_id_index_default_trait() {
+        let index = IdIndex::default();
+        assert_eq!(index.stats().unique_ids, 0);
+    }
+
+    #[test]
+    fn test_id_index_single_insert_and_lookup() {
+        let index = IdIndex::new();
+        let loc = BlockLocation {
+            superblock_idx: 1,
+            block_idx: 2,
+            offset_in_block: 3,
+            size_bytes: 100,
+        };
+        index.insert("single".to_string(), loc).unwrap();
+        let result = index.lookup("single").unwrap();
+        assert_eq!(result.superblock_idx, 1);
+        assert_eq!(result.block_idx, 2);
+        assert_eq!(result.offset_in_block, 3);
+    }
+
+    #[test]
+    fn test_id_index_duplicate_handling() {
+        let index = IdIndex::new();
+        let loc1 = BlockLocation {
+            superblock_idx: 0,
+            block_idx: 0,
+            offset_in_block: 0,
+            size_bytes: 100,
+        };
+        let loc2 = BlockLocation {
+            superblock_idx: 9,
+            block_idx: 9,
+            offset_in_block: 9,
+            size_bytes: 200,
+        };
+        index.insert("dup".to_string(), loc1).unwrap();
+        index.insert("dup".to_string(), loc2).unwrap();
+
+        // Duplicate overwrites the location in the HashMap
+        let result = index.lookup("dup").unwrap();
+        assert_eq!(result.superblock_idx, 9);
+
+        let stats = index.stats();
+        // total_ids counts every insert
+        assert_eq!(stats.total_ids, 2);
+        // unique_ids only counted once for the key
+        assert_eq!(stats.unique_ids, 1);
+    }
+
+    #[test]
+    fn test_id_index_batch_lookup_mixed() {
+        let index = IdIndex::new();
+        index
+            .insert(
+                "exists".to_string(),
+                BlockLocation {
+                    superblock_idx: 0,
+                    block_idx: 0,
+                    offset_in_block: 0,
+                    size_bytes: 0,
+                },
+            )
+            .unwrap();
+
+        let ids = vec![
+            "exists".to_string(),
+            "missing".to_string(),
+            "also_missing".to_string(),
+        ];
+        let results = index.lookup_batch(&ids);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].is_some());
+        assert!(results[1].is_none());
+        assert!(results[2].is_none());
+    }
+
+    #[test]
+    fn test_id_index_batch_lookup_empty() {
+        let index = IdIndex::new();
+        let results = index.lookup_batch(&[]);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_id_index_range_query_empty_range() {
+        let index = IdIndex::new();
+        for i in 0..10 {
+            let id = format!("id_{:04}", i);
+            index
+                .insert(
+                    id,
+                    BlockLocation {
+                        superblock_idx: 0,
+                        block_idx: 0,
+                        offset_in_block: i as u32,
+                        size_bytes: 0,
+                    },
+                )
+                .unwrap();
+        }
+        // Range that matches nothing
+        let results = index.range_query("zzzz", "zzzz_end");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_id_index_range_query_single_match() {
+        let index = IdIndex::new();
+        for i in 0..10 {
+            let id = format!("id_{:04}", i);
+            index
+                .insert(
+                    id,
+                    BlockLocation {
+                        superblock_idx: 0,
+                        block_idx: 0,
+                        offset_in_block: i as u32,
+                        size_bytes: 0,
+                    },
+                )
+                .unwrap();
+        }
+        let results = index.range_query("id_0005", "id_0005");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "id_0005");
+    }
+
+    #[test]
+    fn test_id_index_range_query_sorted_output() {
+        let index = IdIndex::new();
+        // Insert in reverse order
+        for i in (0..20).rev() {
+            let id = format!("id_{:04}", i);
+            index
+                .insert(
+                    id,
+                    BlockLocation {
+                        superblock_idx: 0,
+                        block_idx: 0,
+                        offset_in_block: i as u32,
+                        size_bytes: 0,
+                    },
+                )
+                .unwrap();
+        }
+        let results = index.range_query("id_0005", "id_0010");
+        assert_eq!(results.len(), 6);
+        // Verify sorted order
+        for i in 0..results.len() - 1 {
+            assert!(results[i].0 <= results[i + 1].0);
+        }
+    }
+
+    #[test]
+    fn test_id_index_add_convenience_method() {
+        let index = IdIndex::new();
+        index.add("test_id".to_string(), 128, 5).unwrap();
+
+        let loc = index.lookup("test_id").unwrap();
+        // block_id=128: superblock_idx=128/64=2, block_idx=128%64=0
+        assert_eq!(loc.superblock_idx, 2);
+        assert_eq!(loc.block_idx, 0);
+        assert_eq!(loc.offset_in_block, 5);
+    }
+
+    #[test]
+    fn test_id_index_large_scale_insertion() {
+        let index = IdIndex::new();
+        let n = 5000;
+        for i in 0..n {
+            let id = format!("vec_{:06}", i);
+            index
+                .insert(
+                    id,
+                    BlockLocation {
+                        superblock_idx: (i / 1000) as u32,
+                        block_idx: ((i % 1000) / 100) as u32,
+                        offset_in_block: (i % 100) as u32,
+                        size_bytes: 64,
+                    },
+                )
+                .unwrap();
+        }
+        let stats = index.stats();
+        assert_eq!(stats.unique_ids, n as u64);
+        assert!(stats.tree_height >= 1);
+        assert!(stats.memory_usage > 0);
+
+        // Spot-check lookups
+        assert!(index.lookup("vec_002500").is_some());
+        assert!(index.lookup("vec_004999").is_some());
+        assert!(index.lookup("vec_005000").is_none());
+    }
+
+    #[test]
+    fn test_id_index_tree_height_grows() {
+        let index = IdIndex::new();
+        // With order 256, a single leaf holds up to 256 entries (height=1)
+        let height_0 = index.stats().tree_height;
+        assert_eq!(height_0, 0); // Empty tree
+
+        index
+            .insert(
+                "a".to_string(),
+                BlockLocation {
+                    superblock_idx: 0,
+                    block_idx: 0,
+                    offset_in_block: 0,
+                    size_bytes: 0,
+                },
+            )
+            .unwrap();
+        let height_1 = index.stats().tree_height;
+        assert_eq!(height_1, 1); // Single leaf node
+    }
+
+    #[test]
+    fn test_record_location_block_id() {
+        let loc = BlockLocation {
+            superblock_idx: 3,
+            block_idx: 7,
+            offset_in_block: 0,
+            size_bytes: 0,
+        };
+        // block_id = superblock_idx * 64 + block_idx = 3 * 64 + 7 = 199
+        assert_eq!(loc.block_id(), 199);
+    }
+
+    #[test]
+    fn test_record_location_block_id_zero() {
+        let loc = BlockLocation {
+            superblock_idx: 0,
+            block_idx: 0,
+            offset_in_block: 0,
+            size_bytes: 0,
+        };
+        assert_eq!(loc.block_id(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_id_index_async_lookup() {
+        let index = IdIndex::new();
+        index
+            .insert(
+                "async_id".to_string(),
+                BlockLocation {
+                    superblock_idx: 5,
+                    block_idx: 10,
+                    offset_in_block: 42,
+                    size_bytes: 128,
+                },
+            )
+            .unwrap();
+
+        let result = index.lookup_async("async_id").await;
+        assert!(result.is_some());
+        let loc = result.unwrap();
+        assert_eq!(loc.superblock_idx, 5);
+        assert_eq!(loc.block_idx, 10);
+        assert_eq!(loc.offset_in_block, 42);
+
+        let miss = index.lookup_async("missing").await;
+        assert!(miss.is_none());
     }
 }

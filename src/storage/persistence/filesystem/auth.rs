@@ -22,53 +22,94 @@ use tokio::time::{Duration, Instant};
 
 use super::{FilesystemError, FsResult};
 
-/// AWS credentials
+/// AWS credentials for S3 and related services
+///
+/// Contains the necessary authentication information for AWS API requests,
+/// including optional session token for temporary credentials and expiration
+/// time for credential renewal.
 #[derive(Debug, Clone)]
 pub struct AwsCredentials {
+    /// AWS access key ID
     pub access_key_id: String,
+    /// AWS secret access key
     pub secret_access_key: String,
+    /// Optional session token for temporary credentials (STS, IAM roles)
     pub session_token: Option<String>,
+    /// Optional expiration time for automatic credential refresh
     pub expiration: Option<Instant>,
 }
 
-/// Azure credentials
+/// Azure credentials for Blob Storage and related services
+///
+/// Contains authentication information for Azure API requests,
+/// including account name and bearer token with optional expiration.
 #[derive(Debug, Clone)]
 pub struct AzureCredentials {
+    /// Azure storage account name
     pub account_name: String,
+    /// OAuth bearer token for authentication
     pub access_token: String,
+    /// Optional expiration time for automatic token refresh
     pub expiration: Option<Instant>,
 }
 
-/// GCS credentials
+/// Google Cloud Storage credentials
+///
+/// Contains OAuth bearer token and project ID for GCS API access,
+/// with optional expiration for automatic token refresh.
 #[derive(Debug, Clone)]
 pub struct GcsCredentials {
+    /// OAuth bearer token for authentication
     pub access_token: String,
+    /// GCP project ID
     pub project_id: String,
+    /// Optional expiration time for automatic token refresh
     pub expiration: Option<Instant>,
 }
 
-/// Generic credential provider trait
+/// Generic credential provider trait for AWS
+///
+/// Implementations of this trait provide AWS credentials with support
+/// for automatic refresh of temporary credentials.
 #[async_trait]
 pub trait CredentialProvider: Send + Sync {
+    /// Get current AWS credentials
     async fn get_credentials(&self) -> FsResult<AwsCredentials>;
+
+    /// Refresh AWS credentials (for temporary credentials)
     async fn refresh_credentials(&self) -> FsResult<AwsCredentials>;
 }
 
-/// Azure credential provider trait
+/// Credential provider trait for Azure
+///
+/// Implementations of this trait provide Azure credentials with support
+/// for automatic token refresh.
 #[async_trait]
 pub trait AzureCredentialProvider: Send + Sync {
+    /// Get current Azure credentials
     async fn get_credentials(&self) -> FsResult<AzureCredentials>;
+
+    /// Refresh Azure credentials (for expired tokens)
     async fn refresh_credentials(&self) -> FsResult<AzureCredentials>;
 }
 
-/// GCS credential provider trait  
+/// Credential provider trait for Google Cloud Storage
+///
+/// Implementations of this trait provide GCS credentials with support
+/// for automatic token refresh.
 #[async_trait]
 pub trait GcsCredentialProvider: Send + Sync {
+    /// Get current GCS credentials
     async fn get_credentials(&self) -> FsResult<GcsCredentials>;
+
+    /// Refresh GCS credentials (for expired tokens)
     async fn refresh_credentials(&self) -> FsResult<GcsCredentials>;
 }
 
 /// Static AWS credential provider
+///
+/// Provides fixed AWS credentials that never expire. Useful for testing
+/// or long-term access keys.
 pub struct StaticCredentialProvider {
     access_key_id: String,
     secret_access_key: String,
@@ -76,6 +117,13 @@ pub struct StaticCredentialProvider {
 }
 
 impl StaticCredentialProvider {
+    /// Create a new static credential provider
+    ///
+    /// # Arguments
+    ///
+    /// * `access_key_id` - AWS access key ID
+    /// * `secret_access_key` - AWS secret access key
+    /// * `session_token` - Optional session token for temporary credentials
     pub fn new(
         access_key_id: String,
         secret_access_key: String,
@@ -105,12 +153,24 @@ impl CredentialProvider for StaticCredentialProvider {
     }
 }
 
-/// Environment variable credential provider
+/// Environment variable credential provider for AWS
+///
+/// Reads AWS credentials from environment variables:
+/// - `AWS_ACCESS_KEY_ID`
+/// - `AWS_SECRET_ACCESS_KEY`
+/// - `AWS_SESSION_TOKEN` (optional)
 pub struct EnvironmentCredentialProvider;
 
 impl EnvironmentCredentialProvider {
+    /// Create a new environment credential provider
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for EnvironmentCredentialProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -232,6 +292,12 @@ impl InstanceMetadataProvider {
     }
 }
 
+impl Default for InstanceMetadataProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl CredentialProvider for InstanceMetadataProvider {
     async fn get_credentials(&self) -> FsResult<AwsCredentials> {
@@ -253,6 +319,12 @@ impl EcsTaskMetadataProvider {
         Self {
             http_client: reqwest::Client::new(),
         }
+    }
+}
+
+impl Default for EcsTaskMetadataProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -393,6 +465,12 @@ impl ChainCredentialProvider {
     }
 }
 
+impl Default for ChainCredentialProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl CredentialProvider for ChainCredentialProvider {
     async fn get_credentials(&self) -> FsResult<AwsCredentials> {
@@ -491,6 +569,12 @@ impl GcsApplicationDefaultProvider {
         Self {
             http_client: reqwest::Client::new(),
         }
+    }
+}
+
+impl Default for GcsApplicationDefaultProvider {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

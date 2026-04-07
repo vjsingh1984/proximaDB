@@ -73,7 +73,7 @@ impl ParallelWALSearch {
         // Use Arc for shared query vector to avoid cloning
         let query_arc = Arc::new(query_vector.to_vec());
         let filters_arc = metadata_filters.cloned();
-        let distance_metric_arc = Arc::new(distance_metric.clone());
+        let distance_metric_arc = Arc::new(*distance_metric);
 
         // Process batches in parallel using rayon
         let candidates: Vec<SearchCandidate> = batches
@@ -100,8 +100,7 @@ impl ParallelWALSearch {
         // Convert to SearchResults and set ranks
         let results = sorted_candidates
             .into_iter()
-            .enumerate()
-            .map(|(_rank, candidate)| candidate.to_search_result())
+            .map(|candidate| candidate.to_search_result())
             .collect();
 
         let elapsed = start.elapsed();
@@ -141,7 +140,7 @@ impl ParallelWALSearch {
             .filter_map(|record| {
                 // Skip tombstones (empty vector + expires_at in past or 0)
                 let is_tombstone = record.vector.is_empty()
-                    && record.expires_at.map_or(false, |e| e <= current_time_secs);
+                    && record.expires_at.is_some_and(|e| e <= current_time_secs);
                 if is_tombstone {
                     return None;
                 }
@@ -152,10 +151,10 @@ impl ParallelWALSearch {
                 }
 
                 // Apply metadata filter if present
-                if let Some(filter) = metadata_filter {
-                    if !self.evaluate_filter(record, filter) {
-                        return None;
-                    }
+                if let Some(filter) = metadata_filter
+                    && !self.evaluate_filter(record, filter)
+                {
+                    return None;
                 }
 
                 // Calculate distance using SIMD when available
@@ -490,7 +489,7 @@ impl SearchCandidate {
 
         let mut result = OptimizedSearchRecord::new(self.record.id.clone(), self.score)
             .with_similarity(self.score)
-            .with_metadata(HashMap::new()) // TODO: Fix metadata conversion
+            .with_metadata(HashMap::new()) // Deferred: Fix metadata conversion
             .with_version_info(
                 self.record.version.unwrap_or(0),
                 self.record.timestamp.unwrap_or(0),
@@ -535,8 +534,7 @@ impl EarlyTerminationTracker {
     /// Get final results
     pub fn get_top_k(self) -> Vec<SearchCandidate> {
         let mut candidates = Arc::try_unwrap(self.candidates)
-            .map(|rwlock| rwlock.into_inner())
-            .unwrap_or_else(|arc| arc.read().clone());
+            .map_or_else(|arc| arc.read().clone(), |rwlock| rwlock.into_inner());
 
         candidates.sort_unstable_by(|a, b| {
             b.score

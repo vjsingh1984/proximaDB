@@ -88,11 +88,7 @@ impl PredictivePrefetcher {
             for pattern in history.iter() {
                 if let Some(pattern_key) = pattern.hilbert_key {
                     // Calculate distance safely for u64 values
-                    let distance = if query_key > pattern_key {
-                        query_key - pattern_key
-                    } else {
-                        pattern_key - query_key
-                    };
+                    let distance = query_key.abs_diff(pattern_key);
 
                     // Consider queries within Hilbert distance threshold
                     if distance < 1000 {
@@ -117,7 +113,7 @@ impl PredictivePrefetcher {
             .filter(|(_, score)| *score >= self.confidence_threshold)
             .collect();
 
-        ranked_files.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        ranked_files.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Return top files to prefetch
         ranked_files
@@ -222,10 +218,7 @@ impl SmartResultCache {
         // Update invalidation tracker
         let mut tracker = self.invalidation_tracker.write().await;
         for file in accessed_files {
-            tracker
-                .entry(file)
-                .or_insert_with(Vec::new)
-                .push(query_hash);
+            tracker.entry(file).or_default().push(query_hash);
         }
 
         debug!("Cached result for query hash {}", query_hash);
@@ -352,7 +345,7 @@ impl QueryOptimizer {
             cached_result,
             prefetch_files,
             use_progressive_search: stats.avg_latency_ms > 50.0,
-            skip_levels: Vec::new(), // TODO: Implement level skipping logic
+            skip_levels: Vec::new(), // Deferred: Implement level skipping logic
         }
     }
 

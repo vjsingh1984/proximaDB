@@ -156,10 +156,10 @@ impl MatrixBuilder {
         // Process row by row using batch distance computation
         let vector_refs: Vec<&[f32]> = vectors.iter().map(|v| v.as_slice()).collect();
 
-        for i in 0..num_vectors {
+        for (i, vec_i) in vectors.iter().enumerate().take(num_vectors) {
             // Compute distances from vector i to all vectors using batch method
             let row_distances = self.distance_compute.batch_distance_pooled_simd(
-                &vectors[i],
+                vec_i,
                 &vector_refs,
                 &self.distance_metric,
             );
@@ -500,11 +500,11 @@ impl MatrixBuilder {
         match storage_strategy {
             VectorCentroidStorageStrategy::Full => {
                 // Store all P×K distances in compressed form
-                for i in 0..num_vectors {
-                    for j in 0..num_centroids {
+                for vec_i in vectors.iter() {
+                    for centroid_j in centroids.iter() {
                         let dist = self
                             .distance_compute
-                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .calculate_distance(vec_i, centroid_j, &self.distance_metric)
                             .raw_value;
 
                         let quantized = ((dist * 65535.0).min(65535.0)) as u16;
@@ -522,24 +522,24 @@ impl MatrixBuilder {
                 let mut mean_distances = vec![0.0; num_centroids];
                 let mut delta_entries = Vec::new();
 
-                for j in 0..num_centroids {
+                for (mean_dist_j, centroid_j) in mean_distances.iter_mut().zip(centroids.iter()) {
                     let mut sum = 0.0;
-                    for i in 0..num_vectors {
+                    for vec_i in vectors.iter() {
                         let dist = self
                             .distance_compute
-                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .calculate_distance(vec_i, centroid_j, &self.distance_metric)
                             .raw_value;
                         sum += dist;
                     }
-                    mean_distances[j] = sum / num_vectors as f32;
+                    *mean_dist_j = sum / num_vectors as f32;
                 }
 
                 // Store significant deltas
-                for i in 0..num_vectors {
-                    for j in 0..num_centroids {
+                for (i, vec_i) in vectors.iter().enumerate() {
+                    for (j, centroid_j) in centroids.iter().enumerate() {
                         let dist = self
                             .distance_compute
-                            .calculate_distance(&vectors[i], &centroids[j], &self.distance_metric)
+                            .calculate_distance(vec_i, centroid_j, &self.distance_metric)
                             .raw_value;
 
                         let delta = dist - mean_distances[j];
@@ -571,20 +571,21 @@ impl MatrixBuilder {
                     .min(num_centroids);
                 let mut sparse_entries = Vec::new();
 
-                for i in 0..num_vectors {
+                for (i, vec_i) in vectors.iter().enumerate() {
                     let mut distances: Vec<(usize, f32)> = centroids
                         .iter()
                         .enumerate()
                         .map(|(j, centroid)| {
                             let dist = self
                                 .distance_compute
-                                .calculate_distance(&vectors[i], centroid, &self.distance_metric)
+                                .calculate_distance(vec_i, centroid, &self.distance_metric)
                                 .raw_value;
                             (j, dist)
                         })
                         .collect();
 
-                    distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                    distances
+                        .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
                     // For SparseEntry, we need to store individual entries per centroid
                     for &(centroid_idx, dist) in distances.iter().take(k) {
@@ -785,5 +786,170 @@ mod tests {
                 d
             );
         }
+    }
+
+    // ========== NEW TESTS ==========
+
+    fn create_builder(metric: DistanceMetric) -> MatrixBuilder {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let distance_compute = Arc::new(UnifiedDistanceCompute::new(metric));
+        MatrixBuilder::new(distance_compute, hardware, metric)
+    }
+
+    #[test]
+    fn test_p2_matrix_empty_vectors() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let matrix = builder.build_p2_matrix(&[], 3).unwrap();
+        assert_eq!(matrix.num_vectors, 0);
+        assert!(matrix.distances.is_empty());
+        assert_eq!(matrix.compressed_size, 0);
+    }
+
+    #[test]
+    fn test_p2_matrix_single_vector() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let vectors = vec![vec![1.0, 2.0, 3.0]];
+        let matrix = builder.build_p2_matrix(&vectors, 3).unwrap();
+        assert_eq!(matrix.num_vectors, 1);
+        // Single vector: 1x1 matrix = 1 distance (self), compressed as u16 = 2 bytes
+        assert_eq!(matrix.distances.len(), 2);
+    }
+
+    #[test]
+    fn test_p2_matrix_symmetric_distances() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let vectors = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+        let matrix = builder.build_p2_matrix(&vectors, 2).unwrap();
+        assert_eq!(matrix.num_vectors, 2);
+        // 2x2 matrix = 4 distances, each u16 = 8 bytes
+        assert_eq!(matrix.distances.len(), 8);
+        // Min distance should be > 0 (between the two different vectors)
+        assert!(matrix.min_distance > 0.0);
+    }
+
+    #[test]
+    fn test_p2_matrix_compression_scheme() {
+        let builder = create_builder(DistanceMetric::Cosine);
+        let vectors = vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]];
+        let matrix = builder.build_p2_matrix(&vectors, 3).unwrap();
+        // Should use BitPacked 16-bit compression
+        assert!(matches!(
+            matrix.compression,
+            ProximaScheme::BitPacked { bits: 16 }
+        ));
+    }
+
+    #[test]
+    fn test_k2_matrix_empty_centroids() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let matrix = builder.build_k2_matrix(&[], 3).unwrap();
+        assert_eq!(matrix.num_centroids, 0);
+        assert!(matrix.compressed_data.is_empty());
+        assert!(matrix.lookup_table.is_empty());
+    }
+
+    #[test]
+    fn test_k2_matrix_single_centroid() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let centroids = vec![vec![1.0, 0.0, 0.0]];
+        let matrix = builder.build_k2_matrix(&centroids, 3).unwrap();
+        assert_eq!(matrix.num_centroids, 1);
+        // Single centroid: upper triangle has 0 entries
+        assert!(matrix.compressed_data.is_empty());
+    }
+
+    #[test]
+    fn test_k2_matrix_upper_triangle_size() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let centroids = vec![
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![0.5, 0.5],
+            vec![0.0, 0.0],
+        ];
+        let matrix = builder.build_k2_matrix(&centroids, 2).unwrap();
+        assert_eq!(matrix.num_centroids, 4);
+        // Upper triangle: k*(k-1)/2 = 4*3/2 = 6 entries, each u16 = 12 bytes
+        assert_eq!(matrix.compressed_data.len(), 12);
+        assert_eq!(matrix.lookup_table.len(), 4);
+    }
+
+    #[test]
+    fn test_k2_row_decompression_roundtrip() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let centroids = vec![
+            vec![1.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 1.0],
+        ];
+        let matrix = builder.build_k2_matrix(&centroids, 3).unwrap();
+
+        // Decompress row 0
+        let row0 = builder.decompress_k2_row(&matrix, 0).unwrap();
+        assert_eq!(row0.len(), 3);
+        assert_eq!(row0[0], 0.0); // Distance to self is 0
+
+        // Decompress row 1
+        let row1 = builder.decompress_k2_row(&matrix, 1).unwrap();
+        assert_eq!(row1.len(), 3);
+        assert_eq!(row1[1], 0.0); // Distance to self is 0
+
+        // Symmetry: d(0,1) should approximately equal d(1,0)
+        assert!(
+            (row0[1] - row1[0]).abs() < 0.01,
+            "Symmetric distances should match: d(0,1)={} vs d(1,0)={}",
+            row0[1],
+            row1[0]
+        );
+    }
+
+    #[test]
+    fn test_k2_decompression_out_of_bounds() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let centroids = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
+        let matrix = builder.build_k2_matrix(&centroids, 2).unwrap();
+
+        let result = builder.decompress_k2_row(&matrix, 5);
+        assert!(result.is_err(), "Out-of-bounds centroid index should error");
+    }
+
+    #[test]
+    fn test_pxk_matrix_empty() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        let result = builder.build_pxk_matrix(&[], &[], 3, 0).unwrap();
+        assert_eq!(result.num_vectors, 0);
+        assert_eq!(result.num_centroids, 0);
+    }
+
+    #[test]
+    fn test_pxk_coverage_formula_properties() {
+        // The coverage formula: max(0.1, min(1.0, exp(-2 * ln(k/d + 1))))
+        // Should be monotonically decreasing as k/d increases
+        let d = 100.0_f32;
+        let mut prev_coverage = 2.0; // start above max
+        for k_val in [1, 10, 50, 100, 500, 1000] {
+            let k = k_val as f32;
+            let coverage = (0.1_f32).max(1.0_f32.min((-2.0 * (k / d + 1.0).ln()).exp()));
+            assert!(
+                coverage <= prev_coverage,
+                "Coverage should decrease as k/d increases: k={}, coverage={}, prev={}",
+                k_val,
+                coverage,
+                prev_coverage
+            );
+            prev_coverage = coverage;
+        }
+    }
+
+    #[test]
+    fn test_has_gpu_without_gpu_feature() {
+        let builder = create_builder(DistanceMetric::Euclidean);
+        // Without the gpu feature, has_gpu should always return false
+        #[cfg(not(feature = "gpu"))]
+        assert!(!builder.has_gpu());
+        // With gpu feature, it depends on hardware
+        #[cfg(feature = "gpu")]
+        let _ = builder.has_gpu(); // just ensure it doesn't panic
     }
 }

@@ -98,7 +98,7 @@ impl SstEngine {
         let mut key_frequency: HashMap<String, usize> = HashMap::new();
 
         for vector in vectors {
-            for (key, _) in &vector.metadata {
+            for key in vector.metadata.keys() {
                 *key_frequency.entry(key.clone()).or_insert(0) += 1;
             }
         }
@@ -176,15 +176,45 @@ impl SstEngine {
 
     /// Build bloom filter for a set of vector records
     pub async fn build_bloom_filter(&self, records: &[VectorRecord]) -> Result<SstableBloomFilter> {
-        debug!("🔧 Building bloom filter for {} records", records.len());
+        debug!("Building bloom filter for {} records", records.len());
 
-        // TODO: Fix bloom filter creation - needs proper constructor arguments
-        // For now, return a placeholder
-        debug!("⚠️ Bloom filter creation needs to be fixed");
+        use crate::core::bloom::{
+            BloomFilterConfig, BloomFilterStats, BloomStrategy, HashAlgorithm,
+            factory::BloomFilterFactory,
+        };
 
-        // Create a default bloom filter for now
-        // This needs to be properly implemented with the correct constructor
-        Err(anyhow::anyhow!("Bloom filter creation not yet implemented"))
+        let num_keys = records.len();
+        let bloom_config = BloomFilterConfig {
+            enabled: true,
+            strategy: BloomStrategy::BitPacked,
+            bits_per_key: 10,
+            expected_items: num_keys,
+            false_positive_rate: Some(0.01),
+            hash_algorithm: HashAlgorithm::XXHash,
+        };
+
+        let mut bloom = BloomFilterFactory::create(&bloom_config);
+        for record in records {
+            bloom.insert(record.id.as_bytes());
+        }
+
+        let data = bloom
+            .serialize()
+            .map_err(|e| anyhow::anyhow!("Bloom filter serialization failed: {}", e))?;
+        let stats = BloomFilterStats {
+            key_count: num_keys as u64,
+            metadata_columns: 0,
+            total_keys: num_keys as u64,
+            key_lookups_saved: 0,
+            metadata_queries_saved: 0,
+        };
+
+        Ok(SstableBloomFilter::new(
+            bloom_config,
+            data,
+            Vec::new(),
+            stats,
+        ))
     }
 
     /// Serialize records to SSTable row format
@@ -228,7 +258,7 @@ impl SstEngine {
         };
 
         // Ensure within reasonable bounds (4KB to 1MB)
-        optimal_size.max(4096).min(1048576)
+        optimal_size.clamp(4096, 1048576)
     }
 
     /// Estimate memory requirements for an operation
@@ -344,19 +374,18 @@ impl SstableFileUtils {
 
         if let Ok(mut entries) = tokio::fs::read_dir(dir).await {
             while let Some(entry) = entries.next_entry().await? {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with(".sst") {
-                        if let Ok(metadata) = entry.metadata().await {
-                            files.push(SstableFileInfo {
-                                path: entry.path().to_string_lossy().to_string(),
-                                name: name.to_string(),
-                                size: metadata.len(),
-                                created: metadata.created().ok(),
-                                level: 0,    // Will be parsed from filename
-                                sequence: 0, // Will be parsed from filename
-                            });
-                        }
-                    }
+                if let Some(name) = entry.file_name().to_str()
+                    && name.ends_with(".sst")
+                    && let Ok(metadata) = entry.metadata().await
+                {
+                    files.push(SstableFileInfo {
+                        path: entry.path().to_string_lossy().to_string(),
+                        name: name.to_string(),
+                        size: metadata.len(),
+                        created: metadata.created().ok(),
+                        level: 0,    // Will be parsed from filename
+                        sequence: 0, // Will be parsed from filename
+                    });
                 }
             }
         }

@@ -4,7 +4,7 @@
 //! with the server implementation and quantization features.
 
 use anyhow::Result;
-use proximadb::proto::proximadb_v1::{DistanceMetric, StorageEngine as StorageEngineType};
+use proximadb::proto::proximadb_v1::StorageEngine as StorageEngineType;
 use serde_json::json;
 use tracing::{debug, error, info, warn};
 

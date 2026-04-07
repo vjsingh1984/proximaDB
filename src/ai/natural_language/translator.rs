@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Natural Language Query Translator
 #[derive(Clone)]
@@ -59,7 +59,7 @@ pub struct TranslationMetadata {
 }
 
 /// User context for translation (simplified version)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserContext {
     pub user_id: String,
     pub tenant_id: Option<String>,
@@ -608,18 +608,6 @@ impl Default for TranslatorConfig {
             safety_validation_enabled: true,
             tenant_isolation_required: true,
             max_translation_attempts: 3,
-        }
-    }
-}
-
-impl Default for UserContext {
-    fn default() -> Self {
-        Self {
-            user_id: String::new(),
-            tenant_id: None,
-            accessible_tables: vec![],
-            permissions: vec![],
-            roles: vec![],
         }
     }
 }

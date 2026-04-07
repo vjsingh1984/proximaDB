@@ -33,9 +33,13 @@ use crate::monitoring::MetricsCollector;
 /// Metrics Service configuration
 #[derive(Debug, Clone)]
 pub struct MetricsServiceConfig {
+    /// Enable Prometheus metrics endpoint (/metrics/prometheus)
     pub enable_prometheus: bool,
+    /// Enable JSON metrics endpoint (/metrics/json)
     pub enable_json: bool,
+    /// Enable health check endpoint (/metrics/health)
     pub enable_health: bool,
+    /// Enable alerting rules endpoint (/metrics/alerts)
     pub enable_alerts: bool,
 }
 
@@ -53,16 +57,22 @@ impl Default for MetricsServiceConfig {
 /// Query parameters for metrics endpoint
 #[derive(Debug, Deserialize)]
 pub struct MetricsQuery {
-    pub format: Option<String>, // json, prometheus, text
-    pub since: Option<String>,  // ISO 8601 timestamp
+    /// Output format: "json", "prometheus", or "text"
+    pub format: Option<String>,
+    /// Filter metrics since this ISO 8601 timestamp
+    pub since: Option<String>,
 }
 
 /// Health check response for metrics
 #[derive(Debug, Serialize)]
 pub struct MetricsHealthResponse {
+    /// Health status of the metrics subsystem
     pub status: String,
+    /// Whether metrics collection is enabled
     pub metrics_enabled: bool,
+    /// Timestamp of the last metrics collection cycle
     pub last_collection: Option<chrono::DateTime<chrono::Utc>>,
+    /// Metrics collection interval in milliseconds
     pub collection_interval_ms: u64,
 }
 
@@ -98,7 +108,9 @@ impl MetricsService {
 
         // Prometheus-specific metrics endpoint
         if self.config.enable_prometheus {
-            router = router.route("/prometheus", get(prometheus_metrics_endpoint));
+            router = router
+                .route("/prometheus", get(prometheus_metrics_endpoint))
+                .route("/metrics/prometheus", get(prometheus_metrics_endpoint));
         }
 
         // Health check for metrics system
@@ -127,7 +139,7 @@ async fn metrics_endpoint(
             let metrics = metrics_collector.current_metrics().await;
             serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
-        "prometheus" | _ => {
+        _ => {
             let metrics = metrics_collector.current_metrics().await;
             let exporter = PrometheusExporter::new();
             exporter
@@ -142,7 +154,7 @@ async fn json_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
     State(metrics_collector): State<Arc<MetricsCollector>>,
 ) -> Json<crate::metrics::SystemMetrics> {
-    let _since = params.since; // TODO: Use for historical data
+    let _since = params.since; // Deferred: Use for historical data
     let metrics = metrics_collector.current_metrics().await;
     Json(metrics)
 }
@@ -168,7 +180,7 @@ async fn metrics_health_endpoint(
         status: "healthy".to_string(),
         metrics_enabled: true,
         last_collection: Some(metrics.timestamp),
-        collection_interval_ms: 5000, // TODO: Get from config
+        collection_interval_ms: 5000, // Deferred: Get from config
     })
 }
 

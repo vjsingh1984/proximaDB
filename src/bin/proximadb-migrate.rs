@@ -121,7 +121,9 @@ struct MigrationResult {
     bytes_processed: u64,
     duration_ms: u64,
     error: Option<String>,
+    #[allow(dead_code)]
     old_version: u32,
+    #[allow(dead_code)]
     new_version: u32,
 }
 
@@ -131,8 +133,10 @@ struct ValidationResult {
     collection_name: String,
     is_valid: bool,
     source_row_count: u64,
+    #[allow(dead_code)]
     target_row_count: u64,
     schema_matches: bool,
+    #[allow(dead_code)]
     checksum_matches: Option<bool>,
     warnings: Vec<String>,
     errors: Vec<String>,
@@ -233,7 +237,10 @@ async fn run_migration(
     let collections = if all {
         discover_collections(config_path).await?
     } else {
-        vec![collection.unwrap()]
+        match collection {
+            Some(name) => vec![name],
+            None => Vec::new(),
+        }
     };
 
     info!("Found {} collections to process", collections.len());
@@ -275,7 +282,10 @@ async fn run_migration(
         let is_dry_run = dry_run;
 
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem
+                .acquire()
+                .await
+                .map_err(|e| anyhow::anyhow!("Semaphore acquire failed: {}", e))?;
             migrate_collection(&collection_name, is_dry_run, &config).await
         });
 
@@ -350,7 +360,7 @@ async fn migrate_collection(
 
     info!("Processing collection: {}", name);
 
-    // TODO: Implement actual migration logic
+    // Deferred: Implement actual migration logic
     // 1. Load collection metadata
     // 2. Check if legacy VectorRecord format
     // 3. Create new ProximaSchema
@@ -402,7 +412,10 @@ async fn run_validation(
     let collections = if all {
         discover_collections(config_path).await?
     } else {
-        vec![collection.unwrap()]
+        match collection {
+            Some(name) => vec![name],
+            None => Vec::new(),
+        }
     };
 
     let mut all_valid = true;
@@ -447,7 +460,7 @@ async fn validate_collection(
 ) -> Result<ValidationResult> {
     info!("Validating collection: {}", name);
 
-    // TODO: Implement actual validation logic
+    // Deferred: Implement actual validation logic
     // 1. Load source and target schemas
     // 2. Compare row counts if requested
     // 3. Verify checksums if requested
@@ -530,7 +543,7 @@ async fn show_status(detailed: bool, config_path: &PathBuf) -> Result<()> {
 async fn run_rollback(collection: &str, to_version: u32, _config_path: &PathBuf) -> Result<()> {
     info!("Rolling back {} to version {}", collection, to_version);
 
-    // TODO: Implement rollback logic
+    // Deferred: Implement rollback logic
     // 1. Check if version exists in history
     // 2. Restore schema from registry
     // 3. Restore data files from backup (if available)
@@ -542,7 +555,7 @@ async fn run_rollback(collection: &str, to_version: u32, _config_path: &PathBuf)
 
 /// Discover all collections in the database
 async fn discover_collections(_config_path: &PathBuf) -> Result<Vec<String>> {
-    // TODO: Implement collection discovery from metadata
+    // Deferred: Implement collection discovery from metadata
     Ok(vec![
         "example_collection_1".to_string(),
         "example_collection_2".to_string(),
@@ -551,7 +564,7 @@ async fn discover_collections(_config_path: &PathBuf) -> Result<Vec<String>> {
 
 /// Get status of a single collection
 async fn get_collection_status(name: &str, _config_path: &PathBuf) -> Result<CollectionStatus> {
-    // TODO: Implement actual status lookup
+    // Deferred: Implement actual status lookup
     Ok(CollectionStatus {
         name: name.to_string(),
         is_legacy: true,

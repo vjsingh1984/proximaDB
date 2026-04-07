@@ -418,11 +418,12 @@ impl FilterBuilder {
     /// Add a condition to the list
     fn add_condition(&mut self, condition: FilterCondition) {
         // Handle pending operator (for OR conditions)
-        if let Some(op) = self.pending_operator.take() {
-            if op == LogicalOp::Or && self.current_operator == LogicalOp::And {
-                // Need to restructure for OR
-                self.current_operator = LogicalOp::Or;
-            }
+        if let Some(op) = self.pending_operator.take()
+            && op == LogicalOp::Or
+            && self.current_operator == LogicalOp::And
+        {
+            // Need to restructure for OR
+            self.current_operator = LogicalOp::Or;
         }
         self.conditions.push(FilterNode::Condition(condition));
     }

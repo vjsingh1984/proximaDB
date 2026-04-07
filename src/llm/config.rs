@@ -169,11 +169,10 @@ impl EmbeddingProvider {
 
     fn infer_dimension(model_name: &str) -> usize {
         // Common sentence-transformer dimensions
-        if model_name.contains("MiniLM-L6") {
-            384
-        } else if model_name.contains("MiniLM-L12") {
-            384
-        } else if model_name.contains("bge-small") {
+        if model_name.contains("MiniLM-L6")
+            || model_name.contains("MiniLM-L12")
+            || model_name.contains("bge-small")
+        {
             384
         } else if model_name.contains("bge-base") {
             768
@@ -194,9 +193,7 @@ impl EmbeddingProvider {
             2560
         } else if model_name.contains("gte-Qwen2-7B") {
             3584
-        } else if model_name.contains("bge-m3") {
-            1024
-        } else if model_name.contains("mxbai-embed-large") {
+        } else if model_name.contains("bge-m3") || model_name.contains("mxbai-embed-large") {
             1024
         } else if model_name.contains("nomic-embed-text") {
             768

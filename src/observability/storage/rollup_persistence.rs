@@ -49,11 +49,17 @@ pub trait RollupPersistence: Send + Sync {
 /// Rollup point for serialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RollupPoint {
+    /// Minimum observed value in the rollup window.
     pub min: f64,
+    /// Maximum observed value in the rollup window.
     pub max: f64,
+    /// Sum of all values in the rollup window.
     pub sum: f64,
+    /// Number of samples in the rollup window.
     pub count: u64,
+    /// Metric name.
     pub name: String,
+    /// Key-value labels identifying the metric series.
     pub labels: HashMap<String, String>,
 }
 
@@ -126,12 +132,7 @@ impl FileRollupPersistence {
 
     /// Sanitize series key for use in filenames
     fn sanitize_series_key(series_key: &str) -> String {
-        series_key
-            .replace(':', "_")
-            .replace('{', "_")
-            .replace('}', "_")
-            .replace(',', "_")
-            .replace('=', "_")
+        series_key.replace([':', '{', '}', ',', '='], "_")
     }
 
     /// Ensure directory exists
@@ -284,7 +285,7 @@ impl RollupPersistence for FileRollupPersistence {
         let mut entries = fs::read_dir(&dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
+            if path.extension().is_some_and(|e| e == "json") {
                 // Load and update file
                 let content = match fs::read_to_string(&path).await {
                     Ok(c) => c,
@@ -364,7 +365,7 @@ impl RollupPersistence for InMemoryRollupPersistence {
 
         let mut data = self.data.write().await;
         let key = (resolution, series_key.to_string());
-        let entry = data.entry(key).or_insert_with(BTreeMap::new);
+        let entry = data.entry(key).or_default();
 
         let count = aggregates.len();
         for (ts, point) in aggregates {
@@ -470,14 +471,14 @@ mod tests {
         let count = persistence
             .flush_rollups("cpu:{}", DownsampleResolution::Minute, &aggregates)
             .await
-            .unwrap();
+            .expect("flush_rollups should succeed");
         assert_eq!(count, 3);
 
         // Load
         let loaded = persistence
             .load_rollups("cpu:{}", DownsampleResolution::Minute, 0, 5000)
             .await
-            .unwrap();
+            .expect("load_rollups should succeed");
         assert_eq!(loaded.len(), 3);
     }
 
@@ -493,13 +494,13 @@ mod tests {
         persistence
             .flush_rollups("cpu:{}", DownsampleResolution::Minute, &aggregates)
             .await
-            .unwrap();
+            .expect("flush_rollups should succeed");
 
         // Load partial range
         let loaded = persistence
             .load_rollups("cpu:{}", DownsampleResolution::Minute, 1500, 2500)
             .await
-            .unwrap();
+            .expect("load_rollups should succeed");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].timestamp_ns, 2000);
     }
@@ -516,20 +517,20 @@ mod tests {
         persistence
             .flush_rollups("cpu:{}", DownsampleResolution::Minute, &aggregates)
             .await
-            .unwrap();
+            .expect("flush_rollups should succeed");
 
         // Delete before 2500
         let deleted = persistence
             .delete_before(DownsampleResolution::Minute, 2500)
             .await
-            .unwrap();
+            .expect("delete_before should succeed");
         assert_eq!(deleted, 2);
 
         // Only one should remain
         let loaded = persistence
             .load_rollups("cpu:{}", DownsampleResolution::Minute, 0, 5000)
             .await
-            .unwrap();
+            .expect("load_rollups should succeed");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].timestamp_ns, 3000);
     }
@@ -545,13 +546,13 @@ mod tests {
         let count = persistence
             .flush_rollups("cpu:{}", DownsampleResolution::Raw, &aggregates)
             .await
-            .unwrap();
+            .expect("flush_rollups should succeed");
         assert_eq!(count, 0);
 
         let loaded = persistence
             .load_rollups("cpu:{}", DownsampleResolution::Raw, 0, 5000)
             .await
-            .unwrap();
+            .expect("load_rollups should succeed");
         assert!(loaded.is_empty());
     }
 
@@ -568,31 +569,32 @@ mod tests {
         persistence
             .flush_rollups("cpu:{}", DownsampleResolution::Minute, &minute_aggregates)
             .await
-            .unwrap();
+            .expect("flush_rollups should succeed");
         persistence
             .flush_rollups("cpu:{}", DownsampleResolution::Hour, &hour_aggregates)
             .await
-            .unwrap();
+            .expect("flush_rollups should succeed");
 
         // Load minute
         let minute_loaded = persistence
             .load_rollups("cpu:{}", DownsampleResolution::Minute, 0, 100000000000)
             .await
-            .unwrap();
+            .expect("load_rollups should succeed");
         assert_eq!(minute_loaded.len(), 1);
 
         // Load hour
         let hour_loaded = persistence
             .load_rollups("cpu:{}", DownsampleResolution::Hour, 0, 5000000000000)
             .await
-            .unwrap();
+            .expect("load_rollups should succeed");
         assert_eq!(hour_loaded.len(), 1);
     }
 
     #[tokio::test]
     async fn test_file_persistence_flush_and_load() {
-        let dir = tempdir().unwrap();
-        let persistence = FileRollupPersistence::new(dir.path().to_str().unwrap());
+        let dir = tempdir().expect("tempdir should succeed");
+        let persistence =
+            FileRollupPersistence::new(dir.path().to_str().expect("path should be valid UTF-8"));
 
         let mut aggregates = BTreeMap::new();
         aggregates.insert(60000000000, make_rollup_point("cpu", 50.0));
@@ -606,7 +608,7 @@ mod tests {
                 &aggregates,
             )
             .await
-            .unwrap();
+            .expect("flush_rollups should succeed");
         assert_eq!(count, 2);
 
         // Load
@@ -618,15 +620,16 @@ mod tests {
                 200000000000,
             )
             .await
-            .unwrap();
+            .expect("load_rollups should succeed");
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].name, "cpu");
     }
 
     #[tokio::test]
     async fn test_file_persistence_delete_before() {
-        let dir = tempdir().unwrap();
-        let persistence = FileRollupPersistence::new(dir.path().to_str().unwrap());
+        let dir = tempdir().expect("tempdir should succeed");
+        let persistence =
+            FileRollupPersistence::new(dir.path().to_str().expect("path should be valid UTF-8"));
 
         let mut aggregates = BTreeMap::new();
         aggregates.insert(1000, make_rollup_point("cpu", 50.0));
@@ -636,20 +639,20 @@ mod tests {
         persistence
             .flush_rollups("cpu:{}", DownsampleResolution::Minute, &aggregates)
             .await
-            .unwrap();
+            .expect("flush_rollups should succeed");
 
         // Delete before 2500
         let deleted = persistence
             .delete_before(DownsampleResolution::Minute, 2500)
             .await
-            .unwrap();
+            .expect("delete_before should succeed");
         assert_eq!(deleted, 2);
 
         // Only one should remain
         let loaded = persistence
             .load_rollups("cpu:{}", DownsampleResolution::Minute, 0, 5000)
             .await
-            .unwrap();
+            .expect("load_rollups should succeed");
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].timestamp_ns, 3000);
     }

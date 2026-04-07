@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use anyhow::Result;
+use tracing::warn;
 
 use super::IndexValue;
 
@@ -76,18 +77,24 @@ impl ArrayIndex {
 
         // Update inverted index
         {
-            let mut index = self.index.write().unwrap();
+            let mut index = self
+                .index
+                .write()
+                .map_err(|e| anyhow::anyhow!("RwLock for index is poisoned: {}", e))?;
             for key in &keys {
                 index
                     .entry(key.clone())
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(doc_id.to_string());
             }
         }
 
         // Update forward lookup
         {
-            let mut forward = self.forward.write().unwrap();
+            let mut forward = self
+                .forward
+                .write()
+                .map_err(|e| anyhow::anyhow!("RwLock for forward is poisoned: {}", e))?;
             forward.insert(doc_id.to_string(), keys);
         }
 
@@ -98,13 +105,19 @@ impl ArrayIndex {
     pub fn remove(&self, doc_id: &str) -> Result<()> {
         // Get values from forward lookup
         let keys = {
-            let mut forward = self.forward.write().unwrap();
+            let mut forward = self
+                .forward
+                .write()
+                .map_err(|e| anyhow::anyhow!("RwLock for forward is poisoned: {}", e))?;
             forward.remove(doc_id)
         };
 
         // Remove from inverted index
         if let Some(keys) = keys {
-            let mut index = self.index.write().unwrap();
+            let mut index = self
+                .index
+                .write()
+                .map_err(|e| anyhow::anyhow!("RwLock for index is poisoned: {}", e))?;
             for key in keys {
                 if let Some(ids) = index.get_mut(&key) {
                     ids.remove(doc_id);
@@ -121,7 +134,10 @@ impl ArrayIndex {
     /// Query for documents containing a value
     pub fn query_contains(&self, value: &IndexValue) -> Result<Vec<String>> {
         let key = ArrayValueKey::from(value.clone());
-        let index = self.index.read().unwrap();
+        let index = self
+            .index
+            .read()
+            .map_err(|e| anyhow::anyhow!("RwLock for index is poisoned: {}", e))?;
 
         if let Some(ids) = index.get(&key) {
             Ok(ids.iter().cloned().collect())
@@ -132,7 +148,10 @@ impl ArrayIndex {
 
     /// Query for documents containing any of the values
     pub fn query_contains_any(&self, values: &[IndexValue]) -> Result<Vec<String>> {
-        let index = self.index.read().unwrap();
+        let index = self
+            .index
+            .read()
+            .map_err(|e| anyhow::anyhow!("RwLock for index is poisoned: {}", e))?;
         let mut results = HashSet::new();
 
         for value in values {
@@ -147,7 +166,10 @@ impl ArrayIndex {
 
     /// Query for documents containing all of the values
     pub fn query_contains_all(&self, values: &[IndexValue]) -> Result<Vec<String>> {
-        let index = self.index.read().unwrap();
+        let index = self
+            .index
+            .read()
+            .map_err(|e| anyhow::anyhow!("RwLock for index is poisoned: {}", e))?;
 
         let mut result_sets: Vec<&HashSet<String>> = Vec::new();
 
@@ -176,12 +198,24 @@ impl ArrayIndex {
 
     /// Get the number of unique values indexed
     pub fn unique_values_count(&self) -> usize {
-        self.index.read().unwrap().len()
+        match self.index.read() {
+            Ok(index) => index.len(),
+            Err(error) => {
+                warn!(error = %error, "ArrayIndex index lock poisoned while counting unique values");
+                0
+            }
+        }
     }
 
     /// Get the number of documents indexed
     pub fn documents_count(&self) -> usize {
-        self.forward.read().unwrap().len()
+        match self.forward.read() {
+            Ok(forward) => forward.len(),
+            Err(error) => {
+                warn!(error = %error, "ArrayIndex forward lock poisoned while counting documents");
+                0
+            }
+        }
     }
 }
 

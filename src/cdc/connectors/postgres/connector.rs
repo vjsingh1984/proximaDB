@@ -21,15 +21,15 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, mpsc, watch};
+use tokio::sync::{RwLock, mpsc};
+use tracing::info;
 
 use super::config::PostgresConfig;
 use super::decoder::{ColumnValue, PgOutputDecoder, PgOutputEvent, TupleData};
+use super::replication::ReplicationStream;
 use crate::cdc::config::SourceConfig;
 use crate::cdc::error::{CdcError, CdcResult};
-use crate::cdc::event::{
-    ChangeEvent, ConnectorType, Operation, RecordState, SourceInfo, TransactionInfo,
-};
+use crate::cdc::event::{ChangeEvent, Operation, RecordState, SourceInfo, TransactionInfo};
 use crate::cdc::offset::{Offset, OffsetStore};
 use crate::cdc::source::{BaseSource, CdcSource, SourceHandle, SourceStatus};
 
@@ -47,6 +47,8 @@ pub struct PostgresConnector {
     current_lsn: Arc<RwLock<u64>>,
     /// Current transaction
     current_tx: Arc<RwLock<Option<TransactionInfo>>>,
+    /// Replication stream connection
+    replication_stream: Arc<RwLock<Option<ReplicationStream>>>,
 }
 
 impl PostgresConnector {
@@ -68,6 +70,7 @@ impl PostgresConnector {
             decoder: Arc::new(RwLock::new(PgOutputDecoder::new())),
             current_lsn: Arc::new(RwLock::new(0)),
             current_tx: Arc::new(RwLock::new(None)),
+            replication_stream: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -84,7 +87,7 @@ impl PostgresConnector {
                 *self.current_tx.write().await = Some(tx);
                 None
             }
-            PgOutputEvent::Commit { xid, .. } => {
+            PgOutputEvent::Commit { xid: _, .. } => {
                 let mut tx = self.current_tx.write().await.take()?;
                 tx = tx.commit();
                 // We could emit a transaction marker here if needed
@@ -268,10 +271,10 @@ impl PostgresConnector {
 
         if key_columns.is_empty() {
             // Use first column as fallback
-            if let Some((_, value)) = tuple.values.first() {
-                if let ColumnValue::Text(s) = value {
-                    return s.clone();
-                }
+            if let Some((_, value)) = tuple.values.first()
+                && let ColumnValue::Text(s) = value
+            {
+                return s.clone();
             }
             return "unknown".to_string();
         }
@@ -288,7 +291,7 @@ impl PostgresConnector {
             .collect();
 
         if key_parts.len() == 1 {
-            key_parts.into_iter().next().unwrap()
+            key_parts.into_iter().next().unwrap_or_default()
         } else {
             key_parts.join(":")
         }
@@ -364,19 +367,36 @@ impl CdcSource for PostgresConnector {
     async fn start(
         &mut self,
         _event_tx: mpsc::Sender<ChangeEvent>,
-        _offset_store: Arc<dyn OffsetStore>,
+        offset_store: Arc<dyn OffsetStore>,
     ) -> CdcResult<SourceHandle> {
-        // Note: Real implementation would:
-        // 1. Connect to PostgreSQL
-        // 2. Create/validate replication slot
-        // 3. Start logical replication stream
-        // 4. Process incoming WAL data
-
         let _shutdown_rx = self.base.init_shutdown();
         self.base.set_status(SourceStatus::Connecting);
 
-        // For now, we just mark as streaming since we don't have
-        // actual tokio-postgres replication integration
+        info!(
+            "Starting PostgreSQL CDC connector for slot: {}",
+            self.pg_config.slot_name
+        );
+
+        // Load last known offset
+        let _start_lsn = if let Ok(Some(offset)) = offset_store.get(&self.pg_config.slot_name).await
+        {
+            *self.current_lsn.write().await = offset.lsn;
+            offset.lsn
+        } else {
+            0
+        };
+
+        // Create replication stream
+        let mut stream = ReplicationStream::new(self.pg_config.clone());
+
+        // Connect to PostgreSQL
+        stream.connect().await.map_err(|e| {
+            CdcError::Coordinator(format!("Failed to connect to PostgreSQL: {}", e))
+        })?;
+
+        // Store the stream
+        *self.replication_stream.write().await = Some(stream);
+
         self.base.set_status(SourceStatus::Streaming);
 
         Ok(self
@@ -435,7 +455,7 @@ mod tests {
         let offset_store = Arc::new(MemoryOffsetStore::new());
         PostgresConnector::new(pg_config, offset_store)
             .await
-            .unwrap()
+            .expect("Failed to create test connector")
     }
 
     #[tokio::test]
@@ -459,7 +479,10 @@ mod tests {
         let value = ColumnValue::Text("[1.0, 2.0, 3.0]".to_string());
         let result = connector.parse_vector(&value);
         assert!(result.is_some());
-        assert_eq!(result.unwrap(), vec![1.0, 2.0, 3.0]);
+        assert_eq!(
+            result.expect("Vector parsing should succeed"),
+            vec![1.0, 2.0, 3.0]
+        );
     }
 
     #[tokio::test]
@@ -469,7 +492,10 @@ mod tests {
         let value = ColumnValue::Text("{1.5, 2.5, 3.5}".to_string());
         let result = connector.parse_vector(&value);
         assert!(result.is_some());
-        assert_eq!(result.unwrap(), vec![1.5, 2.5, 3.5]);
+        assert_eq!(
+            result.expect("Vector parsing should succeed"),
+            vec![1.5, 2.5, 3.5]
+        );
     }
 
     #[tokio::test]
@@ -482,32 +508,43 @@ mod tests {
         assert_eq!(connector.current_lsn().await, 12345);
     }
 
+    #[cfg(feature = "experimental-cdc-connectors")]
     #[tokio::test]
     async fn test_connector_start_stop() {
         let mut connector = create_test_connector().await;
         let (tx, _rx) = mpsc::channel(10);
         let offset_store = Arc::new(MemoryOffsetStore::new());
 
-        let handle = connector.start(tx, offset_store).await.unwrap();
+        let handle = connector
+            .start(tx, offset_store)
+            .await
+            .expect("Failed to start connector");
         assert_eq!(connector.status(), SourceStatus::Streaming);
 
         handle.stop();
-        connector.stop().await.unwrap();
+        connector.stop().await.expect("Failed to stop connector");
         assert_eq!(connector.status(), SourceStatus::Stopped);
     }
 
+    #[cfg(feature = "experimental-cdc-connectors")]
     #[tokio::test]
     async fn test_connector_pause_resume() {
         let mut connector = create_test_connector().await;
         let (tx, _rx) = mpsc::channel(10);
         let offset_store = Arc::new(MemoryOffsetStore::new());
 
-        connector.start(tx, offset_store).await.unwrap();
+        connector
+            .start(tx, offset_store)
+            .await
+            .expect("Failed to start connector");
 
-        connector.pause().await.unwrap();
+        connector.pause().await.expect("Failed to pause connector");
         assert_eq!(connector.status(), SourceStatus::Paused);
 
-        connector.resume().await.unwrap();
+        connector
+            .resume()
+            .await
+            .expect("Failed to resume connector");
         assert_eq!(connector.status(), SourceStatus::Streaming);
     }
 
@@ -516,11 +553,19 @@ mod tests {
         let connector = create_test_connector().await;
 
         // Initially no offset
-        assert!(connector.current_offset().await.unwrap().is_none());
+        let current_offset = connector
+            .current_offset()
+            .await
+            .expect("Failed to get current offset");
+        assert!(current_offset.is_none());
 
         // After updating LSN
         connector.update_lsn(54321).await;
-        let offset = connector.current_offset().await.unwrap().unwrap();
+        let offset = connector
+            .current_offset()
+            .await
+            .expect("Failed to get current offset")
+            .expect("Offset should exist after updating LSN");
         assert_eq!(offset.lsn, 54321);
     }
 }

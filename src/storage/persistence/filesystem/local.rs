@@ -64,6 +64,8 @@ pub struct LocalFileSystem {
     /// Files above MIN_MMAP_SIZE are cached for faster subsequent reads
     mmap_cache:
         parking_lot::RwLock<crate::utils::cache::LruCache<PathBuf, std::sync::Arc<memmap2::Mmap>>>,
+    /// Optional file encryption layer for transparent encryption at rest
+    encryption_layer: Option<std::sync::Arc<crate::storage::encryption::FileEncryptionLayer>>,
 }
 
 impl std::fmt::Debug for LocalFileSystem {
@@ -89,6 +91,68 @@ impl LocalFileSystem {
 
         let path = FilesystemFactory::resolve_path(url)?;
         Ok(path)
+    }
+
+    /// Create new local filesystem instance with encryption support
+    pub async fn new_with_encryption(
+        config: LocalConfig,
+        encryption_layer: Option<std::sync::Arc<crate::storage::encryption::FileEncryptionLayer>>,
+    ) -> FsResult<Self> {
+        // Capture the process start directory information
+        match std::env::current_dir() {
+            Ok(_cwd) => {
+                // Try to get parent to see if it's accessible
+                if let Some(_parent) = _cwd.parent() {}
+            }
+            Err(_e) => {
+                // Try alternative methods to understand the environment
+                if let Ok(exe_path) = std::env::current_exe()
+                    && let Some(_exe_dir) = exe_path.parent()
+                {}
+
+                // Check environment variables
+                if let Ok(_pwd) = std::env::var("PWD") {}
+
+                // Check if we're in a test environment
+                if let Ok(_cargo_manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {}
+            }
+        }
+
+        // Create and validate root directory if specified
+        if let Some(ref root_dir) = config.root_dir {
+            if !root_dir.exists() {
+                // Create the root directory recursively if it doesn't exist
+                fs::create_dir_all(root_dir).await.map_err(|e| {
+                    FilesystemError::Config(format!(
+                        "Failed to create root directory {}: {}",
+                        root_dir.display(),
+                        e
+                    ))
+                })?;
+                tracing::info!("📁 Created root directory: {}", root_dir.display());
+            }
+            if !root_dir.is_dir() {
+                return Err(FilesystemError::Config(format!(
+                    "Root path is not a directory: {}",
+                    root_dir.display()
+                )));
+            }
+        }
+
+        Ok(Self {
+            config,
+            mmap_cache: parking_lot::RwLock::new(crate::utils::cache::LruCache::new(
+                MMAP_CACHE_SIZE,
+            )),
+            encryption_layer,
+        })
+    }
+
+    /// Get the encryption layer if enabled
+    pub fn encryption_layer(
+        &self,
+    ) -> Option<&std::sync::Arc<crate::storage::encryption::FileEncryptionLayer>> {
+        self.encryption_layer.as_ref()
     }
 
     /// Resolve a path string to an absolute PathBuf, handling cases where current_dir() fails
@@ -126,7 +190,10 @@ impl LocalFileSystem {
                     while remaining.starts_with("../") {
                         if let Some(parent) = current.parent() {
                             current = parent.to_path_buf();
-                            remaining = remaining.strip_prefix("../").unwrap_or(remaining);
+                            remaining = match remaining.strip_prefix("../") {
+                                Some(s) => s,
+                                None => remaining,
+                            };
                         } else {
                             // Can't go up further, just use what we have
                             break;
@@ -143,7 +210,10 @@ impl LocalFileSystem {
                     }
                 } else if path_str.starts_with("./") {
                     // Replace ./ with the base directory
-                    let clean_path = path_str.strip_prefix("./").unwrap_or(path_str);
+                    let clean_path = match path_str.strip_prefix("./") {
+                        Some(p) => p,
+                        None => path_str,
+                    };
                     resolved_path = PathBuf::from(fallback_base).join(clean_path);
                 } else if path_str == "." {
                     // Just current directory
@@ -232,9 +302,9 @@ impl LocalFileSystem {
             }
             Err(_e) => {
                 // Try alternative methods to understand the environment
-                if let Ok(exe_path) = std::env::current_exe() {
-                    if let Some(_exe_dir) = exe_path.parent() {}
-                }
+                if let Ok(exe_path) = std::env::current_exe()
+                    && let Some(_exe_dir) = exe_path.parent()
+                {}
 
                 // Check environment variables
                 if let Ok(_pwd) = std::env::var("PWD") {}
@@ -270,6 +340,7 @@ impl LocalFileSystem {
             mmap_cache: parking_lot::RwLock::new(crate::utils::cache::LruCache::new(
                 MMAP_CACHE_SIZE,
             )),
+            encryption_layer: None,
         })
     }
 
@@ -280,8 +351,9 @@ impl LocalFileSystem {
         let to_datetime = |time: std::io::Result<std::time::SystemTime>| {
             time.ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos()))
-                .flatten()
+                .and_then(|d| {
+                    chrono::DateTime::from_timestamp(d.as_secs() as i64, d.subsec_nanos())
+                })
         };
 
         FileMetadata {
@@ -328,7 +400,29 @@ impl FileSystem for LocalFileSystem {
         let resolved_path = PathBuf::from(path_str);
 
         match fs::read(&resolved_path).await {
-            Ok(data) => Ok(data),
+            Ok(data) => {
+                // Decrypt data if encryption is enabled
+                if let Some(ref encryption) = self.encryption_layer {
+                    match encryption.decrypt_file(path, &data) {
+                        Ok(decrypted) => Ok(decrypted),
+                        Err(e) => {
+                            // If decryption fails, the file might not be encrypted
+                            // Check for encrypted file magic number
+                            if data.len() >= 4 && &data[0..4] == b"PEDE" {
+                                Err(FilesystemError::Io(std::io::Error::new(
+                                    std::io::ErrorKind::InvalidData,
+                                    format!("Decryption failed for {}: {}", path, e),
+                                )))
+                            } else {
+                                // File is not encrypted, return as-is
+                                Ok(data)
+                            }
+                        }
+                    }
+                } else {
+                    Ok(data)
+                }
+            }
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => Err(FilesystemError::NotFound(format!(
                     "File not found: {}",
@@ -363,11 +457,7 @@ impl FileSystem for LocalFileSystem {
 
         // Create memory map
         // Safety: We're creating a read-only mmap which is safe for concurrent access
-        let mmap = unsafe {
-            MmapOptions::new()
-                .map(&file)
-                .map_err(|e| FilesystemError::Io(e))?
-        };
+        let mmap = unsafe { MmapOptions::new().map(&file).map_err(FilesystemError::Io)? };
 
         tracing::debug!(
             "Created memory map for file: {} (size: {} bytes)",
@@ -387,20 +477,35 @@ impl FileSystem for LocalFileSystem {
         let options = options.clone();
 
         // Create parent directories if requested
-        if options.as_ref().map(|o| o.create_dirs).unwrap_or(false) {
-            if let Some(parent) = resolved_path.parent() {
-                fs::create_dir_all(parent)
-                    .await
-                    .map_err(|e| FilesystemError::Io(e))?;
-            }
+        if options.as_ref().is_some_and(|o| o.create_dirs)
+            && let Some(parent) = resolved_path.parent()
+        {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(FilesystemError::Io)?;
         }
 
         // Check if file exists and handle overwrite option
-        if !options.as_ref().map(|o| o.overwrite).unwrap_or(true) && resolved_path.exists() {
+        if !options.as_ref().is_none_or(|o| o.overwrite) && resolved_path.exists() {
             return Err(FilesystemError::AlreadyExists(
                 resolved_path.display().to_string(),
             ));
         }
+
+        // Encrypt data if encryption is enabled
+        let data_to_write = if let Some(ref encryption) = self.encryption_layer {
+            match encryption.encrypt_file(path, data) {
+                Ok(encrypted) => encrypted,
+                Err(e) => {
+                    return Err(FilesystemError::Io(std::io::Error::other(format!(
+                        "Encryption failed for {}: {}",
+                        path, e
+                    ))));
+                }
+            }
+        } else {
+            data.to_vec()
+        };
 
         // Write file with proper sync to ensure data is flushed to disk
         // This is critical for atomic writes to prevent truncation
@@ -415,13 +520,15 @@ impl FileSystem for LocalFileSystem {
                 .map_err(FilesystemError::Io)?;
 
             // Write all data
-            file.write_all(data).await.map_err(FilesystemError::Io)?;
+            file.write_all(&data_to_write)
+                .await
+                .map_err(FilesystemError::Io)?;
 
             // Sync data to disk to prevent truncation issues
             file.sync_all().await.map_err(FilesystemError::Io)?;
         } else {
             // Fast write without sync (for development/testing only)
-            fs::write(&resolved_path, data)
+            fs::write(&resolved_path, data_to_write)
                 .await
                 .map_err(FilesystemError::Io)?;
         }
@@ -591,7 +698,7 @@ impl FileSystem for LocalFileSystem {
             }
             Err(e) => {
                 // Get current position for debugging
-                let current_pos = file.stream_position().await.unwrap_or(0);
+                let current_pos = file.stream_position().await.map_err(FilesystemError::Io)?;
                 tracing::error!(
                     "LocalFS read_exact failed: path={}, offset={}, bytes_to_read={}, current_pos={}, file_size={}, error={:?}",
                     path,
@@ -638,14 +745,19 @@ impl FileSystem for LocalFileSystem {
         let mut entries = Vec::new();
         let mut dir = fs::read_dir(&resolved_path)
             .await
-            .map_err(|e| FilesystemError::Io(e))?;
+            .map_err(FilesystemError::Io)?;
 
         while let Some(entry) = dir.next_entry().await.map_err(FilesystemError::Io)? {
             let entry_path = entry.path();
             let name = entry_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
+                .ok_or_else(|| {
+                    FilesystemError::InvalidPath(format!(
+                        "Invalid filename encoding for path: {}",
+                        entry_path.display()
+                    ))
+                })?
                 .to_string();
 
             let metadata = entry.metadata().await.map_err(FilesystemError::Io)?;
@@ -655,10 +767,10 @@ impl FileSystem for LocalFileSystem {
             let entry_url = if path.starts_with("file://./") || path.starts_with("./") {
                 // For relative URLs, preserve the relative nature
                 if let Some(root_dir) = &self.config.root_dir {
-                    let relative_from_root = entry_path
-                        .strip_prefix(root_dir)
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|_| entry_path.display().to_string());
+                    let relative_from_root = entry_path.strip_prefix(root_dir).map_or_else(
+                        |_| entry_path.display().to_string(),
+                        |p| p.to_string_lossy().to_string(),
+                    );
                     format!("file://./{}", relative_from_root)
                 } else {
                     // No root_dir, but path is relative - preserve relative nature
@@ -726,12 +838,12 @@ impl FileSystem for LocalFileSystem {
         if let Some(parent) = to_path.parent() {
             fs::create_dir_all(parent)
                 .await
-                .map_err(|e| FilesystemError::Io(e))?;
+                .map_err(FilesystemError::Io)?;
         }
 
         fs::copy(&from_path, &to_path)
             .await
-            .map_err(|e| FilesystemError::Io(e))?;
+            .map_err(FilesystemError::Io)?;
 
         Ok(())
     }
@@ -842,6 +954,7 @@ impl FileSystem for LocalFileSystem {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(true)
                 .open(&resolved_path)
                 .await
         } else {

@@ -22,11 +22,12 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 /// Performance tier for storage (from traits.rs)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum PerformanceTier {
     /// Memory/NVMe, <1ms latency - highest performance
     Hot,
     /// SSD, <10ms latency - balanced performance/cost
+    #[default]
     Warm,
     /// HDD/Cloud, <100ms latency - cost-optimized
     Cold,
@@ -73,12 +74,6 @@ impl PerformanceTier {
             Self::Cold => 100,
             Self::Archive => 1000,
         }
-    }
-}
-
-impl Default for PerformanceTier {
-    fn default() -> Self {
-        Self::Warm
     }
 }
 

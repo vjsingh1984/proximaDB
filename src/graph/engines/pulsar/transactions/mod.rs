@@ -292,7 +292,7 @@ impl DistributedLockManager {
                 // Add to waiting set
                 self.waiting
                     .entry(tx_id.clone())
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(resource_id.clone());
 
                 return Ok(false);

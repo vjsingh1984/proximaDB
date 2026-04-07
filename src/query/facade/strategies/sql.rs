@@ -119,8 +119,7 @@ impl SqlStrategy {
         if let Some(arr) = array.as_any().downcast_ref::<Float64Array>() {
             let val = arr.value(idx);
             return serde_json::Number::from_f64(val)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null);
+                .map_or(serde_json::Value::Null, serde_json::Value::Number);
         }
 
         if let Some(arr) = array.as_any().downcast_ref::<BooleanArray>() {
@@ -213,8 +212,7 @@ impl QueryStrategy for SqlStrategy {
             results = query_result
                 .metrics
                 .as_ref()
-                .map(|m| m.results_returned)
-                .unwrap_or(0),
+                .map_or(0, |m| m.results_returned),
             time_ms = execution_time_ms,
             "SQL query completed"
         );

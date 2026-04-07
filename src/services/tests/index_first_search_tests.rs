@@ -18,14 +18,17 @@ mod tests {
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
+    use crate::index::axis::management::manager::FilterOperator;
     use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
     use crate::services::collection::manager::CollectionService;
     use crate::services::operations::vectors::VectorOperationsService;
+    use crate::services::operations::vectors::build_axis_hybrid_query;
     use crate::storage::engines::impls::sst::SstEngine;
     use crate::storage::persistence::write_ahead_log::WALConfig;
     use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
     /// Create test environment for VectorOperationsService (similar to vectors_test.rs)
+    #[allow(dead_code)]
     async fn create_test_service() -> Result<(Arc<VectorOperationsService>, TempDir)> {
         let temp_dir = TempDir::new()?;
 
@@ -116,6 +119,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     impl MockCollectionService {
         async fn get_collection(&self, id: &str) -> Result<Collection> {
             let collections = self.collections.read().await;
@@ -280,20 +284,51 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         info!("🧪 Testing metadata filter pushdown to indexes");
 
-        // This test verifies that metadata filters are properly
-        // converted to HybridQuery metadata_filters and pushed to indexes
-
-        let _search_params = SearchParams {
-            filter_expression: Some(FilterExpression::Comparison {
-                field: "category".to_string(),
-                operator: ComparisonOperator::Equals,
-                value: serde_json::json!("electronics"),
-            }),
+        let search_params = SearchParams {
+            query_vectors: Some(vec![vec![0.1, 0.2, 0.3]]),
+            top_k: Some(5),
+            filter_expression: Some(FilterExpression::And(vec![
+                FilterExpression::Comparison {
+                    field: "category".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: serde_json::json!("electronics"),
+                },
+                FilterExpression::Comparison {
+                    field: "score".to_string(),
+                    operator: ComparisonOperator::GreaterThan,
+                    value: serde_json::json!(0.9),
+                },
+            ])),
             ..Default::default()
         };
 
-        // TODO: Verify that when index search is performed,
-        // the metadata filters are included in the HybridQuery
+        let hybrid_query = build_axis_hybrid_query("test_collection", &search_params)?;
+
+        assert_eq!(hybrid_query.collection_id, "test_collection");
+        assert!(hybrid_query.vector_query.is_some());
+        assert_eq!(hybrid_query.metadata_filters.len(), 2);
+        assert!(hybrid_query.id_filters.is_empty());
+        assert!(matches!(
+            hybrid_query.metadata_filters[0].operator,
+            FilterOperator::Equals
+        ));
+        assert_eq!(
+            hybrid_query.metadata_filters[0].field,
+            "category".to_string()
+        );
+        assert_eq!(
+            hybrid_query.metadata_filters[0].value,
+            serde_json::json!("electronics")
+        );
+        assert!(matches!(
+            hybrid_query.metadata_filters[1].operator,
+            FilterOperator::GreaterThan
+        ));
+        assert_eq!(hybrid_query.metadata_filters[1].field, "score".to_string());
+        assert_eq!(
+            hybrid_query.metadata_filters[1].value,
+            serde_json::json!(0.9)
+        );
 
         info!("✅ Metadata filter pushdown test completed");
         Ok(())

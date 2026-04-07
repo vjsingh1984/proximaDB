@@ -177,10 +177,17 @@
 pub mod arrow_ipc;
 pub mod auth;
 pub mod grpc;
+/// Hybrid (vector + BM25 text) search execution engine
+pub mod hybrid_search;
+/// Metrics endpoints (Prometheus, JSON, health)
 pub mod metrics_service;
+/// HTTP middleware stack (auth, CORS, rate limiting, TLS)
 pub mod middleware;
+/// Multi-protocol server orchestration (REST + gRPC + Arrow Flight)
 pub mod multi_server;
+/// Unified port protocol multiplexer (HTTP/gRPC auto-detection)
 pub mod multiplex;
+/// PostgreSQL wire protocol server (pgvector compatibility)
 pub mod postgres;
 pub mod rest;
 pub mod server_builder;

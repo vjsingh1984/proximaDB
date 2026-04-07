@@ -5,6 +5,9 @@
  * you may not use this file except in compliance with the License.
  */
 
+// RAPTOR is experimental - test helpers validate expected behavior
+#![allow(deprecated)]
+
 //! RAPTOR Engine Test Helpers
 //!
 //! Consolidated test helper functions for RAPTOR engine tests.
@@ -24,6 +27,7 @@ use std::sync::Arc;
 
 /// Mock P2Matrix struct for testing
 /// Source: p2_matrix_tests.rs
+#[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub struct P2Matrix {
     pub num_vectors: usize,
@@ -55,7 +59,7 @@ pub fn create_test_vectors(num_vectors: usize, dimension: usize) -> Vec<Vec<f32>
     (0..num_vectors)
         .map(|i| {
             (0..dimension)
-                .map(|j| ((i + j) as f32 / (num_vectors + dimension) as f32))
+                .map(|j| (i + j) as f32 / (num_vectors + dimension) as f32)
                 .collect()
         })
         .collect()

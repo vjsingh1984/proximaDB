@@ -76,13 +76,13 @@ impl SimdDecoder for ScalarDecoder {
         };
 
         // Decode each value
-        for i in 0..count {
+        for (i, out_val) in output.iter_mut().enumerate().take(count) {
             let bit_offset = i * bits;
             let byte_offset = bit_offset / 8;
             let bit_in_byte = bit_offset % 8;
 
             // Read enough bytes to cover all bits (up to 9 bytes for 64-bit values crossing boundaries)
-            let bytes_needed = ((bit_in_byte + bits) + 7) / 8;
+            let bytes_needed = (bit_in_byte + bits).div_ceil(8);
             if byte_offset + bytes_needed > input.len() {
                 // Partial read at end of input
                 break;
@@ -101,7 +101,7 @@ impl SimdDecoder for ScalarDecoder {
                 let extra_bits = (bit_in_byte + bits).saturating_sub(64);
                 let extra_byte = input[byte_offset + 8] as u64;
                 // First shift and mask the main 8-byte value
-                value = value >> bit_in_byte;
+                value >>= bit_in_byte;
                 // Then add the extra bits from 9th byte (only the relevant bits)
                 if extra_bits > 0 && extra_bits < 64 {
                     value |= (extra_byte & ((1u64 << extra_bits) - 1)) << (bits - extra_bits);
@@ -114,7 +114,7 @@ impl SimdDecoder for ScalarDecoder {
 
             // Sign-extend if the high bit is set (for signed interpretation)
             // Note: The caller decides whether to interpret as signed or unsigned
-            output[i] = value as i64;
+            *out_val = value as i64;
         }
 
         Ok(count)
@@ -155,13 +155,13 @@ impl SimdDecoder for ScalarDecoder {
         };
 
         // Decode each value
-        for i in 0..count {
+        for (i, out_val) in output.iter_mut().enumerate().take(count) {
             let bit_offset = i * bits;
             let byte_offset = bit_offset / 8;
             let bit_in_byte = bit_offset % 8;
 
             // Read enough bytes (up to 5 for 32-bit values crossing boundaries)
-            let bytes_needed = ((bit_in_byte + bits) + 7) / 8;
+            let bytes_needed = (bit_in_byte + bits).div_ceil(8);
             if byte_offset + bytes_needed > input.len() {
                 break;
             }
@@ -176,7 +176,7 @@ impl SimdDecoder for ScalarDecoder {
 
             // Shift to align and mask
             let extracted = ((value >> bit_in_byte) & (mask as u64)) as u32;
-            output[i] = extracted as i32;
+            *out_val = extracted as i32;
         }
 
         Ok(count)
@@ -252,9 +252,9 @@ impl SimdDecoder for ScalarDecoder {
         // values[0] = base + deltas[0]
         // values[i] = values[i-1] + deltas[i] for i > 0
         if decoded > 0 {
-            output[0] = base + output[0];
+            output[0] += base;
             for i in 1..decoded {
-                output[i] = output[i - 1] + output[i];
+                output[i] += output[i - 1];
             }
         }
 
@@ -489,7 +489,7 @@ mod tests {
             } else {
                 (1u64 << bits) - 1
             };
-            let values: Vec<u64> = (0..16).map(|i| (i * max_val / 16)).collect();
+            let values: Vec<u64> = (0..16).map(|i| i * max_val / 16).collect();
             let packed = create_bitpacked_data(&values, bits);
 
             let mut output = vec![0i64; values.len()];

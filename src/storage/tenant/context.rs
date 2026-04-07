@@ -91,22 +91,36 @@ pub struct BusinessContext {
     pub performance_requirements: PerformanceRequirements,
 }
 
-/// Data sensitivity levels
+/// Data sensitivity levels for domain classification
+///
+/// Defines the sensitivity classification for data stored in domains,
+/// influencing access controls, encryption requirements, and audit policies.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd)]
 pub enum DataSensitivityLevel {
+    /// Publicly accessible data with no restrictions
     Public,
+    /// Internal business data with organization access
     Internal,
+    /// Confidential business data requiring restricted access
     Confidential,
+    /// Restricted data with legal or regulatory access controls
     Restricted,
+    /// Top secret data with highest security classification
     TopSecret,
 }
 
 /// Performance requirements for domain
+///
+/// Defines service level objectives (SLOs) for latency, throughput,
+/// and availability for operations within a domain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceRequirements {
+    /// Maximum acceptable latency in milliseconds
     pub latency_requirement_ms: u32,
+    /// Minimum required throughput in queries per second
     pub throughput_requirement_qps: u32,
-    pub availability_requirement: f32, // e.g., 0.999 for 99.9%
+    /// Minimum availability requirement (e.g., 0.999 for 99.9%)
+    pub availability_requirement: f32,
 }
 
 /// Domain status

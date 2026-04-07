@@ -58,12 +58,21 @@ impl Default for NovaCollectorConfig {
 }
 
 /// Builder for accumulating row group statistics
+///
+/// Incrementally computes statistics (min, max, mean, variance) for vectors
+/// within a row group during the write process, avoiding a second pass over the data.
 struct RowGroupBuilder {
+    /// Row group identifier
     _row_group_id: usize,
+    /// Number of vectors processed
     vector_count: usize,
+    /// Minimum values per dimension
     min_values: Vec<f32>,
+    /// Maximum values per dimension
     max_values: Vec<f32>,
+    /// Sum of values per dimension (for mean calculation)
     sum_values: Vec<f64>,
+    /// Sum of squared values per dimension (for variance calculation)
     sum_squares: Vec<f64>,
 }
 
@@ -261,27 +270,26 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
         _batch_index_in_group: usize,
     ) -> Result<()> {
         // Extract vector column
-        if let Some(vector_col) = batch.column_by_name("vector") {
-            if let Some(float_array) = vector_col.as_any().downcast_ref::<Float32Array>() {
-                // Detect dimension from first batch
-                if self.dimension.is_none() && !float_array.is_empty() {
-                    // Assume vectors are stored flat, dimension = total_values / num_rows
-                    let dimension = float_array.len() / batch.num_rows();
-                    self.dimension = Some(dimension);
+        if let Some(vector_col) = batch.column_by_name("vector")
+            && let Some(float_array) = vector_col.as_any().downcast_ref::<Float32Array>()
+        {
+            // Detect dimension from first batch
+            if self.dimension.is_none() && !float_array.is_empty() {
+                // Assume vectors are stored flat, dimension = total_values / num_rows
+                let dimension = float_array.len() / batch.num_rows();
+                self.dimension = Some(dimension);
 
-                    // Initialize current row group if needed
-                    if self.current_row_group.is_none() {
-                        self.current_row_group =
-                            Some(RowGroupBuilder::new(row_group_index, dimension));
-                    }
+                // Initialize current row group if needed
+                if self.current_row_group.is_none() {
+                    self.current_row_group = Some(RowGroupBuilder::new(row_group_index, dimension));
                 }
+            }
 
-                // Update statistics
-                if let Some(ref mut builder) = self.current_row_group {
-                    if let Some(dim) = self.dimension {
-                        builder.update(float_array, dim);
-                    }
-                }
+            // Update statistics
+            if let Some(ref mut builder) = self.current_row_group
+                && let Some(dim) = self.dimension
+            {
+                builder.update(float_array, dim);
             }
         }
 
@@ -332,8 +340,7 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
 
     fn finalize(&mut self, total_row_groups: usize) -> Result<()> {
         // Build SuperBlocks
-        let superblock_count = (total_row_groups + self.config.row_groups_per_superblock - 1)
-            / self.config.row_groups_per_superblock;
+        let superblock_count = total_row_groups.div_ceil(self.config.row_groups_per_superblock);
 
         for sb_idx in 0..superblock_count {
             let start = (sb_idx * self.config.row_groups_per_superblock) as u32;
@@ -368,11 +375,19 @@ impl crate::storage::engines::core::formats::columnar::metadata_collector::Metad
 }
 
 /// Serializable NOVA metadata structure
+///
+/// Complete metadata structure stored in .nova_meta sidecar files,
+/// containing hierarchical statistics for query optimization.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct NovaMetadata {
+    /// Metadata format version
     pub version: u32,
+    /// Vector dimension
     pub dimension: usize,
+    /// Per-row group enhanced statistics
     pub row_group_stats: Vec<EnhancedRowGroupStats>,
+    /// SuperBlock aggregates for multi-level pruning
     pub superblocks: Vec<SuperBlock>,
+    /// Number of row groups per SuperBlock
     pub row_groups_per_superblock: usize,
 }

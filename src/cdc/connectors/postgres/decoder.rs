@@ -400,6 +400,7 @@ impl PgOutputDecoder {
 
 /// Transaction state tracking
 #[derive(Debug)]
+#[allow(dead_code)]
 struct TransactionState {
     xid: u32,
     final_lsn: u64,
@@ -412,54 +413,80 @@ struct TransactionState {
 pub enum PgOutputEvent {
     /// Begin transaction
     Begin {
+        /// LSN of the final record in this transaction.
         final_lsn: u64,
+        /// Commit timestamp (microseconds since PostgreSQL epoch).
         commit_time: i64,
+        /// Transaction ID.
         xid: u32,
     },
     /// Commit transaction
     Commit {
+        /// LSN of the commit record.
         commit_lsn: u64,
+        /// LSN of the end of the transaction.
         end_lsn: u64,
+        /// Commit timestamp (microseconds since PostgreSQL epoch).
         commit_time: i64,
+        /// Transaction ID (may be absent in newer protocol versions).
         xid: Option<u32>,
     },
     /// Insert row
     Insert {
+        /// OID of the relation being inserted into.
         relation_id: u32,
+        /// Relation metadata (populated from prior Relation message).
         relation: Option<PgRelation>,
+        /// The inserted tuple data.
         tuple: TupleData,
     },
     /// Update row
     Update {
+        /// OID of the relation being updated.
         relation_id: u32,
+        /// Relation metadata (populated from prior Relation message).
         relation: Option<PgRelation>,
+        /// Previous tuple data (if REPLICA IDENTITY is FULL).
         old_tuple: Option<TupleData>,
+        /// New tuple data after the update.
         new_tuple: Option<TupleData>,
     },
     /// Delete row
     Delete {
+        /// OID of the relation being deleted from.
         relation_id: u32,
+        /// Relation metadata (populated from prior Relation message).
         relation: Option<PgRelation>,
+        /// Key columns of the deleted row.
         key_tuple: TupleData,
+        /// Whether only key columns are included (vs. full row).
         is_key_only: bool,
     },
     /// Truncate table
     Truncate {
+        /// OIDs of the relations being truncated.
         relation_ids: Vec<u32>,
+        /// Whether CASCADE was specified.
         cascade: bool,
+        /// Whether RESTART IDENTITY was specified.
         restart_identity: bool,
     },
     /// Relation definition
     Relation(PgRelation),
     /// Type definition
     Type {
+        /// OID of the type.
         type_oid: u32,
+        /// Schema namespace of the type.
         namespace: String,
+        /// Name of the type.
         name: String,
     },
     /// Origin
     Origin {
+        /// LSN of the origin.
         origin_lsn: u64,
+        /// Name of the origin.
         origin_name: String,
     },
 }
@@ -521,7 +548,7 @@ impl TupleData {
     pub fn get(&self, name: &str) -> Option<&ColumnValue> {
         self.values
             .iter()
-            .find(|(n, _)| n.as_ref().map(|s| s == name).unwrap_or(false))
+            .find(|(n, _)| n.as_ref().is_some_and(|s| s == name))
             .map(|(_, v)| v)
     }
 

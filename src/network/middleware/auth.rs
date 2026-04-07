@@ -26,7 +26,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 
 /// Authentication configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
@@ -36,21 +36,14 @@ pub struct AuthConfig {
     pub require_auth_for_health: bool,
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            api_keys: HashMap::new(),
-            require_auth_for_health: false,
-        }
-    }
-}
-
 /// User information associated with an API key
 #[derive(Debug, Clone)]
 pub struct UserInfo {
+    /// Authenticated user identifier
     pub user_id: String,
+    /// Tenant identifier for multi-tenant requests
     pub tenant_id: Option<String>,
+    /// Granted permission strings
     pub permissions: Vec<String>,
 }
 
@@ -67,6 +60,7 @@ pub struct AuthLayer {
 }
 
 impl AuthLayer {
+    /// Create a new authentication layer with the given configuration
     pub fn new(config: AuthConfig) -> Self {
         Self { _config: config }
     }
@@ -119,10 +113,10 @@ pub async fn auth_middleware<B>(
 
     let api_key = match auth_header {
         Some(header_value) => {
-            if header_value.starts_with("Bearer ") {
-                &header_value[7..] // Remove "Bearer " prefix
-            } else if header_value.starts_with("API-Key ") {
-                &header_value[8..] // Remove "API-Key " prefix
+            if let Some(key) = header_value.strip_prefix("Bearer ") {
+                key
+            } else if let Some(key) = header_value.strip_prefix("API-Key ") {
+                key
             } else {
                 header_value // Use as-is for simple API key
             }
@@ -165,6 +159,7 @@ fn is_health_endpoint(path: &str) -> bool {
 
 /// Extension trait to extract user info from requests
 pub trait RequestUserInfo {
+    /// Extract authenticated user information from request extensions
     fn user_info(&self) -> Option<&UserInfo>;
 }
 

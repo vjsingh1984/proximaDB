@@ -30,6 +30,7 @@
 //! ```
 
 use anyhow::{Result, anyhow};
+use std::cmp::Ordering;
 use std::f32;
 
 /// ## Vector Normalization
@@ -126,14 +127,14 @@ pub fn standardize(vector: &[f32]) -> Vec<f32> {
 /// * Ok(()) if valid, Err with description of issue
 pub fn validate_vector(vector: &[f32], expected_dimension: Option<usize>) -> Result<()> {
     // Check dimension
-    if let Some(dim) = expected_dimension {
-        if vector.len() != dim {
-            return Err(anyhow!(
-                "Dimension mismatch: expected {}, got {}",
-                dim,
-                vector.len()
-            ));
-        }
+    if let Some(dim) = expected_dimension
+        && vector.len() != dim
+    {
+        return Err(anyhow!(
+            "Dimension mismatch: expected {}, got {}",
+            dim,
+            vector.len()
+        ));
     }
 
     // Check for empty vector
@@ -201,6 +202,7 @@ pub fn elementwise_add(a: &[f32], b: &[f32]) -> Result<Vec<f32>> {
     Ok(a.iter().zip(b.iter()).map(|(x, y)| x + y).collect())
 }
 
+/// Compute element-wise product of two vectors
 pub fn elementwise_multiply(a: &[f32], b: &[f32]) -> Result<Vec<f32>> {
     if a.len() != b.len() {
         return Err(anyhow!(
@@ -217,6 +219,7 @@ pub fn scalar_multiply(vector: &[f32], scalar: f32) -> Vec<f32> {
     vector.iter().map(|&v| v * scalar).collect()
 }
 
+/// Add a scalar value to every element of a vector
 pub fn scalar_add(vector: &[f32], scalar: f32) -> Vec<f32> {
     vector.iter().map(|&v| v + scalar).collect()
 }
@@ -279,7 +282,7 @@ pub fn quantile(vector: &[f32], quantile: f32) -> Result<f32> {
     }
 
     let mut sorted = vector.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 
     let index = (quantile * (sorted.len() - 1) as f32) as usize;
     Ok(sorted[index])

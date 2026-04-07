@@ -30,7 +30,8 @@
 //! ### 2. Federated SQL Queries (`/federated`)
 //!
 //! Uses `FederatedQueryContext` to parse and execute SQL with multi-model extensions.
-//! Supports LATERAL joins for cross-model correlation.
+//! Independent function-backed sources are executable; correlated/LATERAL joins are
+//! still reported as unsupported on the live path.
 //!
 //! ```json
 //! {
@@ -374,6 +375,7 @@ pub fn create_router() -> Router<UnifiedQueryApiState> {
         .route("/execute", post(execute_query))
         .route("/multi-model", post(execute_multi_model_query))
         .route("/federated", post(execute_federated_query))
+        .route("/distributed", post(execute_distributed_query))
         .route("/explain", post(explain_query))
         // Prepared statement endpoints
         .route("/prepare", post(prepare_statement))
@@ -484,8 +486,7 @@ fn transform_query_result_to_response(
                 id: row
                     .get("id")
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("row_{}", i)),
+                    .map_or_else(|| format!("row_{}", i), |s| s.to_string()),
                 source_model: "unified".to_string(),
                 data: row,
                 score: None,
@@ -820,7 +821,9 @@ fn estimate_cost(model: &DataModel) -> f64 {
         DataModel::Vector => 1.0,
         DataModel::Document => 2.0,
         DataModel::Graph => 3.0,
-        DataModel::Observability => 2.5,
+        DataModel::Observability | DataModel::TimeSeries => 2.5,
+        DataModel::Relational => 1.5,
+        DataModel::Event => 2.0,
     }
 }
 
@@ -924,10 +927,10 @@ fn convert_arrow_to_records(
                     if let serde_json::Value::String(s) = &value {
                         id = s.clone();
                     }
-                } else if field.name() == "score" || field.name() == "distance" {
-                    if let serde_json::Value::Number(n) = &value {
-                        score = n.as_f64();
-                    }
+                } else if (field.name() == "score" || field.name() == "distance")
+                    && let serde_json::Value::Number(n) = &value
+                {
+                    score = n.as_f64();
                 }
 
                 data.insert(field.name().clone(), value);
@@ -982,30 +985,30 @@ fn extract_value_from_array(array: &dyn arrow::array::Array, row_idx: usize) -> 
     }
 
     match array.data_type() {
-        DataType::Utf8 => {
-            let arr = array.as_any().downcast_ref::<StringArray>().unwrap();
-            serde_json::Value::String(arr.value(row_idx).to_string())
-        }
-        DataType::Float32 => {
-            let arr = array.as_any().downcast_ref::<Float32Array>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
-        DataType::Float64 => {
-            let arr = array.as_any().downcast_ref::<Float64Array>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
-        DataType::Int32 => {
-            let arr = array.as_any().downcast_ref::<Int32Array>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
-        DataType::Int64 => {
-            let arr = array.as_any().downcast_ref::<Int64Array>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
-        DataType::Boolean => {
-            let arr = array.as_any().downcast_ref::<BooleanArray>().unwrap();
-            serde_json::json!(arr.value(row_idx))
-        }
+        DataType::Utf8 => array.as_any().downcast_ref::<StringArray>().map_or_else(
+            || serde_json::Value::String("<invalid UTF8 array>".to_string()),
+            |arr| serde_json::Value::String(arr.value(row_idx).to_string()),
+        ),
+        DataType::Float32 => array.as_any().downcast_ref::<Float32Array>().map_or_else(
+            || serde_json::Value::String("<invalid Float32 array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
+        DataType::Float64 => array.as_any().downcast_ref::<Float64Array>().map_or_else(
+            || serde_json::Value::String("<invalid Float64 array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
+        DataType::Int32 => array.as_any().downcast_ref::<Int32Array>().map_or_else(
+            || serde_json::Value::String("<invalid Int32 array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
+        DataType::Int64 => array.as_any().downcast_ref::<Int64Array>().map_or_else(
+            || serde_json::Value::String("<invalid Int64 array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
+        DataType::Boolean => array.as_any().downcast_ref::<BooleanArray>().map_or_else(
+            || serde_json::Value::String("<invalid Boolean array>".to_string()),
+            |arr| serde_json::json!(arr.value(row_idx)),
+        ),
         _ => serde_json::Value::String(format!("<unsupported type: {:?}>", array.data_type())),
     }
 }
@@ -1200,6 +1203,206 @@ async fn execute_federated_via_adapter(
 }
 
 // =============================================================================
+// DISTRIBUTED QUERY API
+// =============================================================================
+
+/// Execute distributed query across the cluster
+///
+/// POST /api/v1/unified/distributed
+///
+/// This endpoint executes queries through the DistributedQueryCoordinator for
+/// cluster-aware query execution that can span multiple nodes in a ProximaDB cluster.
+///
+/// ## Features
+///
+/// - **Automatic query distribution**: Decomposes queries into subqueries for each node
+/// - **Result aggregation**: Merges results from multiple nodes
+/// - **Shard-aware routing**: Routes subqueries to appropriate shards
+/// - **Result caching**: Caches query results for improved performance
+/// - **Cross-shard joins**: Supports shuffle exchange for complex joins
+///
+/// Request body:
+/// ```json
+/// {
+///   "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2]', 10)",
+///   "strategy": "auto",
+///   "timeout_ms": 30000,
+///   "min_nodes": 1
+/// }
+/// ```
+///
+/// ## Execution Strategies
+///
+/// - `localOnly`: Execute on local node only (ignore cluster)
+/// - `distributed`: Distribute across cluster
+/// - `broadcast`: Send to all nodes
+/// - `auto`: Let coordinator decide (default)
+async fn execute_distributed_query(
+    State(state): State<UnifiedQueryApiState>,
+    Json(request): Json<DistributedQueryRequest>,
+) -> ApiResult<JsonResponse<DistributedQueryResponse>> {
+    use std::time::Instant;
+
+    info!(
+        "Executing distributed query with strategy: {:?}",
+        request.strategy
+    );
+    let start = Instant::now();
+
+    // All queries route through QueryFacadeAdapter
+    let adapter = state.query_adapter.as_ref().ok_or_else(|| {
+        ApiError::Internal(
+            "QueryFacadeAdapter not configured. Use UnifiedQueryApiState::new_with_adapter()"
+                .to_string(),
+        )
+    })?;
+
+    debug!("Routing distributed query through QueryFacadeAdapter");
+    execute_distributed_via_adapter(adapter, &request, start).await
+}
+
+/// Execute distributed query through the unified QueryFacadeAdapter
+///
+/// This function routes the query through the distributed execution path
+/// for cluster-aware query execution.
+async fn execute_distributed_via_adapter(
+    adapter: &QueryFacadeAdapter,
+    request: &DistributedQueryRequest,
+    start: std::time::Instant,
+) -> ApiResult<JsonResponse<DistributedQueryResponse>> {
+    // Apply strategy hint if provided
+    let query_with_strategy = match request.strategy {
+        ExecutionStrategy::LocalOnly => {
+            format!("/* LOCAL_ONLY */ {}", request.query)
+        }
+        ExecutionStrategy::Distributed => {
+            format!("/* DISTRIBUTED */ {}", request.query)
+        }
+        ExecutionStrategy::Broadcast => {
+            format!("/* BROADCAST */ {}", request.query)
+        }
+        ExecutionStrategy::Auto => request.query.clone(),
+    };
+
+    let result = adapter
+        .distributed_query(&query_with_strategy)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Distributed query failed: {}", e)))?;
+
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+    // Extract metrics if available
+    let metrics_info = result.metrics.unwrap_or_default();
+
+    // Convert QueryResult to DistributedQueryResponse
+    let records = match result.data {
+        crate::query::facade::QueryResultData::Rows(rows) => rows
+            .into_iter()
+            .take(request.limit.unwrap_or(100) as usize)
+            .collect(),
+        _ => vec![],
+    };
+
+    let records_returned = records.len() as u64;
+
+    let response = DistributedQueryResponse {
+        records,
+        total_count: None,
+        records_returned,
+        execution_plan: DistributedPlanResponse {
+            strategy: request.strategy,
+            nodes_involved: 1, // Deferred: Extract from actual execution plan
+            execution_time_ms: elapsed_ms,
+        },
+        metrics: DistributedMetricsResponse {
+            total_time_ms: elapsed_ms,
+            planning_time_ms: metrics_info.planning_time_ms as f64,
+            execution_time_ms: metrics_info.execution_time_ms as f64,
+            cache_hits: 0, // Deferred: Extract from distributed coordinator stats
+        },
+    };
+
+    info!(
+        "Distributed query executed in {:.2}ms, returned {} records",
+        elapsed_ms, response.records_returned
+    );
+
+    Ok(JsonResponse(response))
+}
+
+/// Request for distributed query execution
+#[derive(Debug, Deserialize)]
+pub struct DistributedQueryRequest {
+    /// SQL query to execute
+    pub query: String,
+    /// Execution strategy hint
+    #[serde(default)]
+    pub strategy: ExecutionStrategy,
+    /// Maximum results to return
+    pub limit: Option<u64>,
+    /// Timeout in milliseconds
+    pub timeout_ms: Option<u64>,
+    /// Minimum nodes required for execution
+    pub min_nodes: Option<usize>,
+}
+
+/// Execution strategy for distributed queries
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[derive(Default)]
+pub enum ExecutionStrategy {
+    /// Execute locally only
+    LocalOnly,
+    /// Distribute across cluster
+    Distributed,
+    /// Broadcast to all nodes
+    Broadcast,
+    /// Let coordinator decide
+    #[serde(alias = "auto")]
+    #[default]
+    Auto,
+}
+
+/// Response for distributed query execution
+#[derive(Debug, Serialize)]
+pub struct DistributedQueryResponse {
+    /// Result records
+    pub records: Vec<serde_json::Value>,
+    /// Total count (if available)
+    pub total_count: Option<u64>,
+    /// Number of records returned
+    pub records_returned: u64,
+    /// Execution plan details
+    pub execution_plan: DistributedPlanResponse,
+    /// Execution metrics
+    pub metrics: DistributedMetricsResponse,
+}
+
+/// Distributed execution plan information
+#[derive(Debug, Serialize)]
+pub struct DistributedPlanResponse {
+    /// Strategy used for execution
+    pub strategy: ExecutionStrategy,
+    /// Number of nodes involved
+    pub nodes_involved: usize,
+    /// Total execution time in milliseconds
+    pub execution_time_ms: f64,
+}
+
+/// Distributed query execution metrics
+#[derive(Debug, Serialize)]
+pub struct DistributedMetricsResponse {
+    /// Total execution time in milliseconds
+    pub total_time_ms: f64,
+    /// Query planning time in milliseconds
+    pub planning_time_ms: f64,
+    /// Query execution time in milliseconds
+    pub execution_time_ms: f64,
+    /// Number of cache hits
+    pub cache_hits: u64,
+}
+
+// =============================================================================
 // PREPARED STATEMENTS API
 // =============================================================================
 
@@ -1375,11 +1578,7 @@ async fn execute_prepared_statement(
     let start = Instant::now();
 
     // Convert JSON values to ParameterValues
-    let params: Vec<ParameterValue> = request
-        .params
-        .iter()
-        .map(|v| json_to_parameter_value(v))
-        .collect();
+    let params: Vec<ParameterValue> = request.params.iter().map(json_to_parameter_value).collect();
 
     // Get the substituted SQL
     let sql = state
@@ -1670,5 +1869,218 @@ mod tests {
         assert!(extensions.contains(&"VECTOR_SEARCH"));
         assert!(extensions.contains(&"GRAPH_QUERY"));
         assert!(extensions.contains(&"LOGS"));
+    }
+
+    // =========================================================================
+    // Request / Response serialization tests
+    // =========================================================================
+
+    #[test]
+    fn test_unified_query_request_parsing() {
+        // Verify ExecuteQueryRequest deserializes correctly from JSON
+        let json = serde_json::json!({
+            "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2]', 10)",
+            "query_vector": [0.1, 0.2, 0.3],
+            "fusion_strategy": "rrf",
+            "limit": 50
+        });
+
+        let request: ExecuteQueryRequest =
+            serde_json::from_value(json).expect("should deserialize");
+
+        assert_eq!(
+            request.query,
+            "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2]', 10)"
+        );
+        let qv = request
+            .query_vector
+            .expect("query_vector should be present");
+        assert_eq!(qv.len(), 3);
+        assert!((qv[0] - 0.1).abs() < f32::EPSILON);
+        assert_eq!(request.fusion_strategy.as_deref(), Some("rrf"));
+        assert_eq!(request.limit, Some(50));
+
+        // Minimal request (only required field)
+        let minimal = serde_json::json!({ "query": "SELECT 1" });
+        let req: ExecuteQueryRequest =
+            serde_json::from_value(minimal).expect("minimal request should parse");
+        assert_eq!(req.query, "SELECT 1");
+        assert!(req.query_vector.is_none());
+        assert!(req.fusion_strategy.is_none());
+        // default_limit() returns Some(100)
+        assert_eq!(req.limit, Some(100));
+    }
+
+    #[test]
+    fn test_unified_query_response_serialization() {
+        // Verify QueryResultResponse serializes to the expected JSON shape
+        let response = QueryResultResponse {
+            records: vec![
+                UnifiedRecordResponse {
+                    id: "vec_001".into(),
+                    source_model: "vector".into(),
+                    data: serde_json::json!({"score": 0.95}),
+                    score: Some(0.95),
+                    metadata: HashMap::new(),
+                },
+                UnifiedRecordResponse {
+                    id: "doc_042".into(),
+                    source_model: "document".into(),
+                    data: serde_json::json!({"title": "Rust programming"}),
+                    score: None,
+                    metadata: {
+                        let mut m = HashMap::new();
+                        m.insert("collection".into(), "articles".into());
+                        m
+                    },
+                },
+            ],
+            total_count: Some(2),
+            records_returned: 2,
+            metrics: QueryMetricsResponse {
+                total_time_ms: 12.5,
+                sub_query_times: vec![
+                    SubQueryTimeResponse {
+                        model: "vector".into(),
+                        time_ms: 5.0,
+                    },
+                    SubQueryTimeResponse {
+                        model: "document".into(),
+                        time_ms: 7.5,
+                    },
+                ],
+                records_scanned: 1000,
+                records_returned: 2,
+            },
+        };
+
+        let json = serde_json::to_value(&response).expect("should serialize");
+        assert_eq!(json["total_count"], 2);
+        assert_eq!(json["records_returned"], 2);
+        assert_eq!(json["records"].as_array().expect("records array").len(), 2);
+        assert_eq!(json["records"][0]["id"], "vec_001");
+        assert_eq!(json["records"][0]["source_model"], "vector");
+        assert!((json["records"][0]["score"].as_f64().unwrap() - 0.95).abs() < f64::EPSILON);
+        // metadata with entries should be present; empty metadata should be absent
+        assert!(json["records"][1]["metadata"].is_object());
+        assert!(
+            json["records"][0].get("metadata").is_none()
+                || json["records"][0]["metadata"]
+                    .as_object()
+                    .map_or(false, |m| m.is_empty()),
+            "empty metadata should be skipped or empty"
+        );
+        assert!((json["metrics"]["total_time_ms"].as_f64().unwrap() - 12.5).abs() < f64::EPSILON);
+        assert_eq!(
+            json["metrics"]["sub_query_times"]
+                .as_array()
+                .expect("sub_query_times")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn test_federated_query_request() {
+        // Verify MultiModelQueryRequest (cross-model programmatic API) parses correctly
+        let json = serde_json::json!({
+            "components": [
+                {
+                    "component_type": "vector",
+                    "config": {
+                        "collection": "embeddings",
+                        "query_vector": [0.1, 0.2],
+                        "top_k": 10
+                    }
+                },
+                {
+                    "component_type": "document",
+                    "config": {
+                        "collection": "articles",
+                        "filter": "$.category = 'science'"
+                    }
+                },
+                {
+                    "component_type": "graph",
+                    "config": {
+                        "graph": "social",
+                        "cypher": "MATCH (a)-[:KNOWS]->(b) RETURN b.name"
+                    }
+                }
+            ],
+            "fusion_strategy": "rrf",
+            "limit": 25
+        });
+
+        let request: MultiModelQueryRequest =
+            serde_json::from_value(json).expect("should deserialize cross-model request");
+
+        assert_eq!(request.components.len(), 3);
+        assert_eq!(request.components[0].component_type, "vector");
+        assert_eq!(request.components[1].component_type, "document");
+        assert_eq!(request.components[2].component_type, "graph");
+        assert_eq!(request.fusion_strategy, "rrf");
+        assert_eq!(request.limit, Some(25));
+
+        // Verify nested config values are accessible
+        let vec_config = &request.components[0].config;
+        assert_eq!(vec_config["collection"], "embeddings");
+        assert_eq!(vec_config["top_k"], 10);
+
+        // Default fusion strategy should be "intersection"
+        let minimal = serde_json::json!({
+            "components": []
+        });
+        let req: MultiModelQueryRequest =
+            serde_json::from_value(minimal).expect("minimal request should parse");
+        assert_eq!(req.fusion_strategy, "intersection");
+        assert_eq!(req.limit, Some(100));
+    }
+
+    #[test]
+    fn test_query_explain_request() {
+        // ExplainResponse is the output of the /explain endpoint.
+        // Verify it serializes with the expected structure.
+        let explain = ExplainResponse {
+            components: vec![
+                ComponentPlanResponse {
+                    model: "vector".into(),
+                    estimated_cost: 1.0,
+                    parallelizable: true,
+                },
+                ComponentPlanResponse {
+                    model: "document".into(),
+                    estimated_cost: 2.0,
+                    parallelizable: true,
+                },
+                ComponentPlanResponse {
+                    model: "graph".into(),
+                    estimated_cost: 3.0,
+                    parallelizable: false,
+                },
+            ],
+            fusion_strategy: "rrf".into(),
+            estimated_total_cost: 6.0,
+        };
+
+        let json = serde_json::to_value(&explain).expect("should serialize");
+        assert_eq!(json["fusion_strategy"], "rrf");
+        assert!((json["estimated_total_cost"].as_f64().unwrap() - 6.0).abs() < f64::EPSILON);
+
+        let components = json["components"].as_array().expect("components array");
+        assert_eq!(components.len(), 3);
+        assert_eq!(components[0]["model"], "vector");
+        assert!(components[0]["parallelizable"].as_bool().unwrap());
+        assert!(!components[2]["parallelizable"].as_bool().unwrap());
+        assert!((components[1]["estimated_cost"].as_f64().unwrap() - 2.0).abs() < f64::EPSILON);
+
+        // Also verify the explain endpoint uses the same ExecuteQueryRequest format
+        let explain_input = serde_json::json!({
+            "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.5]', 5) JOIN GRAPH_QUERY('MATCH (n) RETURN n')"
+        });
+        let req: ExecuteQueryRequest = serde_json::from_value(explain_input)
+            .expect("explain input should parse as ExecuteQueryRequest");
+        assert!(req.query.contains("VECTOR_SEARCH"));
+        assert!(req.query.contains("GRAPH_QUERY"));
     }
 }

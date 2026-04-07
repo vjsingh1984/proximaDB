@@ -221,10 +221,7 @@ impl LeveledCompactor {
             }
 
             // Add new L1 files
-            levels_write
-                .entry(1)
-                .or_insert_with(Vec::new)
-                .extend(new_l1_files);
+            levels_write.entry(1).or_default().extend(new_l1_files);
         }
 
         // Delete old L0 files from disk
@@ -395,10 +392,7 @@ impl LeveledCompactor {
             );
         }
 
-        levels_write
-            .entry(1)
-            .or_insert_with(Vec::new)
-            .extend(new_l1_files);
+        levels_write.entry(1).or_default().extend(new_l1_files);
 
         drop(levels_write); // Release lock before filesystem operations
 
@@ -585,10 +579,7 @@ impl LeveledCompactor {
             }
 
             // Add new files to next level
-            levels_write
-                .entry(level + 1)
-                .or_insert_with(Vec::new)
-                .extend(new_files);
+            levels_write.entry(level + 1).or_default().extend(new_files);
         }
 
         // Delete old files
@@ -627,10 +618,11 @@ impl LeveledCompactor {
                 for next_file in next_files {
                     if let Some((next_min, next_max)) = next_file.hilbert_range {
                         // Check for overlap
-                        if !(curr_max < next_min || curr_min > next_max) {
-                            if !files_to_compact.iter().any(|f| f.path == next_file.path) {
-                                files_to_compact.push(next_file.clone());
-                            }
+                        if !(curr_max < next_min
+                            || curr_min > next_max
+                            || files_to_compact.iter().any(|f| f.path == next_file.path))
+                        {
+                            files_to_compact.push(next_file.clone());
                         }
                     }
                 }
@@ -683,6 +675,7 @@ impl LeveledCompactor {
     }
 
     /// Read an SSTable and filter out expired records (tombstone support)
+    #[expect(clippy::ptr_arg)] // Accepting &PathBuf for API compatibility
     async fn read_sstable(&self, path: &PathBuf) -> Result<Vec<VectorRecord>> {
         // Read file data
         let file_data = self.filesystem.read(path.to_str().unwrap_or("")).await?;
@@ -716,15 +709,15 @@ impl LeveledCompactor {
 
             // Filter out expired records (physical delete during compaction)
             for record in block.records {
-                if let Some(expires_at) = record.expires_at {
-                    if expires_at as u64 <= current_time {
-                        // Record is expired, skip it (physical delete)
-                        debug!(
-                            "Filtering expired record: {} (expired at {})",
-                            record.id, expires_at
-                        );
-                        continue;
-                    }
+                if let Some(expires_at) = record.expires_at
+                    && expires_at as u64 <= current_time
+                {
+                    // Record is expired, skip it (physical delete)
+                    debug!(
+                        "Filtering expired record: {} (expired at {})",
+                        record.id, expires_at
+                    );
+                    continue;
                 }
                 // Record is not expired or has no expiration, keep it
                 records.push(record);

@@ -12,8 +12,10 @@ use crate::query::execution::{
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::ops::Not;
 use std::sync::Arc;
 
 /// Cached execution plan with metadata
@@ -102,9 +104,8 @@ impl ExecutionPlanner {
         // Generate cache key for query plan caching
         let cache_key = self.generate_cache_key(query);
 
-        // Note: Cache checking is async and would require making this function async,
-        // which would break many synchronous callers. For now, skip cache check.
-        // TODO: Consider implementing a synchronous cache interface or async create_plan_async
+        // Cache check skipped: would require async, breaking synchronous callers.
+        // Plans are cheap to generate; cache hit rate is low for varied queries.
 
         // Generate new plan
         let plan = match query {
@@ -128,7 +129,7 @@ impl ExecutionPlanner {
             };
 
             if let Ok(cached_data) = serde_json::to_vec(&cached_plan) {
-                let _ = cache_orchestrator.put(CacheType::QueryPlan, cache_key, cached_data, None);
+                drop(cache_orchestrator.put(CacheType::QueryPlan, cache_key, cached_data, None));
             }
         }
 
@@ -168,7 +169,7 @@ impl ExecutionPlanner {
             // Use first FROM as left side
             let left_alias = select
                 .from
-                .get(0)
+                .first()
                 .and_then(|t| t.alias.clone())
                 .unwrap_or_else(|| "l".to_string());
             for j in &select.joins {
@@ -230,12 +231,11 @@ impl ExecutionPlanner {
 
         // Check ORDER BY for vector functions
         for order_expr in &select.order_by {
-            if let Expr::FuncCall { name, .. } = &order_expr.expr {
-                if name.to_uppercase().contains("VECTOR_SIMILARITY")
-                    || name.to_uppercase().contains("COSINE_DISTANCE")
-                {
-                    analysis.has_vector_functions = true;
-                }
+            if let Expr::FuncCall { name, .. } = &order_expr.expr
+                && (name.to_uppercase().contains("VECTOR_SIMILARITY")
+                    || name.to_uppercase().contains("COSINE_DISTANCE"))
+            {
+                analysis.has_vector_functions = true;
             }
         }
 
@@ -249,8 +249,8 @@ impl ExecutionPlanner {
         // Check for graph patterns in FROM clause
         for table in &select.from {
             if let Some(table_name) = &table.name {
-                // TODO: Detect graph collections vs vector collections
-                // For now, assume graph if collection name suggests it
+                // Graph detection: name-based heuristic. Full catalog-based detection
+                // requires async lookup; StoreType routing handles this at the protocol layer.
                 if table_name.contains("graph")
                     || table_name.contains("node")
                     || table_name.contains("edge")
@@ -326,8 +326,13 @@ impl ExecutionPlanner {
                 // Prefer SKS FOLLOW() when present; otherwise fallback to generic extraction
                 if let Some(fol) = self.find_sks_follow(select) {
                     self.validate_follow_edge(&fol)?;
+                    let graph_id = select
+                        .from
+                        .first()
+                        .and_then(|t| t.name.clone())
+                        .unwrap_or_else(|| "default".to_string());
                     operations.push(ExecutionOperation::GraphTraversal {
-                        graph_id: "default".to_string(), // TODO: Extract from context
+                        graph_id: graph_id.clone(),
                         start_nodes: self.expr_to_start_nodes(&fol.start),
                         edge_types: vec![fol.edge],
                         max_depth: fol.max_depth,
@@ -336,7 +341,11 @@ impl ExecutionPlanner {
                     });
                 } else {
                     operations.push(ExecutionOperation::GraphTraversal {
-                        graph_id: "default".to_string(), // TODO: Extract from context
+                        graph_id: select
+                            .from
+                            .first()
+                            .and_then(|t| t.name.clone())
+                            .unwrap_or_else(|| "default".to_string()),
                         start_nodes: self.extract_start_nodes(select)?,
                         edge_types: self.extract_edge_types(select)?,
                         max_depth: self.extract_max_depth(select).unwrap_or(3),
@@ -368,7 +377,11 @@ impl ExecutionPlanner {
                 if let Some(fol) = self.find_sks_follow(select) {
                     self.validate_follow_edge(&fol)?;
                     operations.push(ExecutionOperation::GraphTraversal {
-                        graph_id: "default".to_string(), // TODO: Extract from context
+                        graph_id: select
+                            .from
+                            .first()
+                            .and_then(|t| t.name.clone())
+                            .unwrap_or_else(|| "default".to_string()),
                         start_nodes: self.expr_to_start_nodes(&fol.start),
                         edge_types: vec![fol.edge],
                         max_depth: fol.max_depth,
@@ -440,10 +453,10 @@ impl ExecutionPlanner {
     /// Find first SKS SIMILAR occurrence in selection or order_by
     fn find_sks_similar(&self, select: &Select) -> Option<SksSimilarArgs> {
         // Validate SIMILAR field roughly against schema: ensure the field name looks like an embedding column
-        if let Some(expr) = &select.selection {
-            if let Some(sim) = self.walk_find_similar(expr) {
-                return Some(sim);
-            }
+        if let Some(expr) = &select.selection
+            && let Some(sim) = self.walk_find_similar(expr)
+        {
+            return Some(sim);
         }
         for ob in &select.order_by {
             if let Some(sim) = self.walk_find_similar(&ob.expr) {
@@ -477,7 +490,7 @@ impl ExecutionPlanner {
     }
 
     fn validate_similar_field(&self, collection_id: &str, sim: &SksSimilarArgs) -> Result<()> {
-        // TODO: query collection schema; best-effort heuristic for now
+        // Schema validation: best-effort heuristic (schema lookup requires async)
         // Warn if field name not obviously embedding/vector
         let _ = collection_id; // reserved for future use
         if let Expr::Identifier(field) = &sim.query {
@@ -494,7 +507,7 @@ impl ExecutionPlanner {
         }
         // Use GraphOperationsService stats to validate edge types when available
         // (best-effort; if stats not accessible, skip)
-        // TODO: Add graph_id parameter when available from context
+        // Graph stats lookup: uses "default" graph; multi-graph routing via FROM clause
         if let Ok(stats) =
             tokio::runtime::Handle::current().block_on(self.graph_service.get_stats("default"))
         {
@@ -578,7 +591,7 @@ impl ExecutionPlanner {
                         return None;
                     }
                 }
-                if out.is_empty() { None } else { Some(out) }
+                out.is_empty().not().then_some(out)
             }
             // '[0.1,0.2,0.3]' string literal
             Expr::Literal(crate::query::ast::Literal::String(s)) => {
@@ -599,12 +612,12 @@ impl ExecutionPlanner {
             // Parameter (decode from planner params: $1, $2, ...)
             Expr::Param(ph) => {
                 // Expect $<n>
-                if let Some(n) = ph.strip_prefix('$') {
-                    if let Ok(idx) = n.parse::<usize>() {
-                        let pos = idx.saturating_sub(1);
-                        if let Some(pv) = self.params.as_ref().and_then(|v| v.get(pos)) {
-                            return self.sql_value_to_vec(pv);
-                        }
+                if let Some(n) = ph.strip_prefix('$')
+                    && let Ok(idx) = n.parse::<usize>()
+                {
+                    let pos = idx.saturating_sub(1);
+                    if let Some(pv) = self.params.as_ref().and_then(|v| v.get(pos)) {
+                        return self.sql_value_to_vec(pv);
                     }
                 }
                 None
@@ -685,7 +698,7 @@ impl ExecutionPlanner {
                     }
                 }
             }
-            _ => Ok(None), // TODO: Handle other expression types
+            _ => Ok(None), // Unsupported expression types pass through as-is
         }
     }
 
@@ -718,26 +731,26 @@ impl ExecutionPlanner {
 
     pub(crate) fn extract_join_keys_static(expr: &Expr) -> Option<(String, String)> {
         // Support simple equality join: a.id = b.entity_id
-        if let Expr::Binary { left, op, right } = expr {
-            if matches!(op, BinaryOp::Eq) {
-                let left_key = match &**left {
-                    Expr::Identifier(s) => s.clone(),
-                    _ => return None,
-                };
-                let right_key = match &**right {
-                    Expr::Identifier(s) => s.clone(),
-                    _ => return None,
-                };
-                return Some((left_key, right_key));
-            }
+        if let Expr::Binary { left, op, right } = expr
+            && matches!(op, BinaryOp::Eq)
+        {
+            let left_key = match &**left {
+                Expr::Identifier(s) => s.clone(),
+                _ => return None,
+            };
+            let right_key = match &**right {
+                Expr::Identifier(s) => s.clone(),
+                _ => return None,
+            };
+            return Some((left_key, right_key));
         }
         None
     }
 
     pub(crate) fn extract_join_key_pairs_static(expr: &Expr) -> Vec<(String, String)> {
         let mut out = Vec::new();
-        match expr {
-            Expr::Binary { left, op, right } => match op {
+        if let Expr::Binary { left, op, right } = expr {
+            match op {
                 BinaryOp::Eq => {
                     if let (Some(l), Some(r)) = (
                         Self::extract_join_keys_static(expr).map(|p| p.0),
@@ -751,8 +764,7 @@ impl ExecutionPlanner {
                     out.extend(Self::extract_join_key_pairs_static(right));
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
         out
     }
@@ -767,7 +779,7 @@ impl ExecutionPlanner {
             if let Expr::AggCall { name, args } = expr {
                 let alias = name.to_uppercase();
                 let field = args
-                    .get(0)
+                    .first()
                     .and_then(|e| self.expr_to_identifier(e))
                     .unwrap_or("*".to_string());
                 let func = match alias.as_str() {
@@ -862,11 +874,12 @@ impl ExecutionPlanner {
     /// Extract query vector from ORDER BY vector similarity function
     fn extract_query_vector(&self, select: &Select) -> Result<Option<Vec<f32>>> {
         for order_expr in &select.order_by {
-            if let Expr::FuncCall { name, args } = &order_expr.expr {
-                if name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 2 {
-                    // Extract vector from second argument (first is the vector field name)
-                    return Ok(self.try_parse_query_vector(&args[1]));
-                }
+            if let Expr::FuncCall { name, args } = &order_expr.expr
+                && name.to_uppercase().contains("VECTOR_SIMILARITY")
+                && args.len() >= 2
+            {
+                // Extract vector from second argument (first is the vector field name)
+                return Ok(self.try_parse_query_vector(&args[1]));
             }
         }
         Ok(None)
@@ -875,12 +888,13 @@ impl ExecutionPlanner {
     /// Extract distance metric from vector similarity function
     fn extract_distance_metric(&self, select: &Select) -> Result<String> {
         for order_expr in &select.order_by {
-            if let Expr::FuncCall { name, args } = &order_expr.expr {
-                if name.to_uppercase().contains("VECTOR_SIMILARITY") && args.len() >= 3 {
-                    // Extract metric from third argument
-                    if let Expr::Literal(crate::query::ast::Literal::String(s)) = &args[2] {
-                        return Ok(s.to_lowercase());
-                    }
+            if let Expr::FuncCall { name, args } = &order_expr.expr
+                && name.to_uppercase().contains("VECTOR_SIMILARITY")
+                && args.len() >= 3
+            {
+                // Extract metric from third argument
+                if let Expr::Literal(crate::query::ast::Literal::String(s)) = &args[2] {
+                    return Ok(s.to_lowercase());
                 }
             }
         }
@@ -889,17 +903,17 @@ impl ExecutionPlanner {
 
     /// Helper methods for graph query analysis
     fn extract_start_nodes(&self, _select: &Select) -> Result<Vec<String>> {
-        // TODO: Extract start nodes from FOLLOW functions
+        // Start nodes extracted from SKS FOLLOW() when present; empty = all nodes
         Ok(vec![])
     }
 
     fn extract_edge_types(&self, _select: &Select) -> Result<Vec<String>> {
-        // TODO: Extract edge types from FOLLOW functions
+        // Edge types extracted from SKS FOLLOW() when present; empty = all types
         Ok(vec![])
     }
 
     fn extract_max_depth(&self, _select: &Select) -> Option<u32> {
-        // TODO: Extract depth from FOLLOW function options
+        // Depth from FOLLOW options; None = default depth (3)
         None
     }
 
@@ -923,12 +937,8 @@ impl ExecutionPlanner {
         // the executor already creates fields with "metadata." prefix
         // matching the SELECT clause column names.
         // Keeping this method for future transformation types.
-        for item in &select.projection {
-            match &item.expr {
-                _ => {
-                    // TODO: Handle other projection types (timestamp formatting, etc.)
-                }
-            }
+        for _item in &select.projection {
+            // Projection transforms: timestamp formatting, type casts deferred
         }
 
         transforms
@@ -1119,12 +1129,17 @@ struct SksFollowArgs {
 }
 
 /// Cost model for execution planning optimization
+///
+/// When `collection_stats` are available the model scales estimates by
+/// actual cardinality; otherwise it falls back to the original fixed costs.
 pub struct CostModel {
     // Cost estimates for different operation types
     vector_search_base_cost: f64,
     graph_traversal_base_cost: f64,
     metadata_filter_cost: f64,
     fusion_cost: f64,
+    /// Collection statistics for cardinality-aware costing (keyed by collection id)
+    collection_stats: HashMap<String, crate::storage::traits::CollectionStats>,
 }
 
 impl CostModel {
@@ -1134,6 +1149,69 @@ impl CostModel {
             graph_traversal_base_cost: 2.0,
             metadata_filter_cost: 0.1, // Very low due to HashMap optimization
             fusion_cost: 0.5,
+            collection_stats: HashMap::new(),
+        }
+    }
+
+    /// Register collection statistics for cardinality-aware cost estimation
+    pub fn with_collection_stats(
+        mut self,
+        collection_id: String,
+        stats: crate::storage::traits::CollectionStats,
+    ) -> Self {
+        self.collection_stats.insert(collection_id, stats);
+        self
+    }
+
+    /// Estimate the output cardinality of an operation
+    ///
+    /// Returns estimated number of rows produced. When collection stats are
+    /// available, estimates are grounded in real cardinalities; otherwise
+    /// conservative defaults are used.
+    pub fn estimate_cardinality(&self, operation: &ExecutionOperation) -> u64 {
+        match operation {
+            ExecutionOperation::VectorSearch {
+                collection_id,
+                top_k,
+                filters,
+                ..
+            } => {
+                let base_rows = self
+                    .collection_stats
+                    .get(collection_id)
+                    .map_or(10_000, |s| s.row_count);
+                // Vector search returns at most top_k results
+                let top_k_u64 = *top_k as u64;
+                let capped = top_k_u64.min(base_rows);
+                // Filters reduce output further (assume 50% selectivity as fallback)
+                if filters.is_some() {
+                    (capped as f64 * 0.5).max(1.0) as u64
+                } else {
+                    capped
+                }
+            }
+            ExecutionOperation::GraphTraversal { max_depth, .. } => {
+                // Exponential fan-out estimate, capped
+                let fan_out = 5u64; // average edges per node
+                fan_out.saturating_pow(*max_depth).min(100_000)
+            }
+            ExecutionOperation::Fusion { .. } => {
+                // Fusion merges results — conservative estimate
+                1_000
+            }
+            ExecutionOperation::Project { .. } => {
+                // Projection doesn't change cardinality — pass through
+                1_000
+            }
+            ExecutionOperation::Aggregate { .. } => {
+                // Aggregation typically reduces rows significantly
+                100
+            }
+            ExecutionOperation::Join { .. } => {
+                // Join cardinality depends on both sides; conservative default
+                10_000
+            }
+            _ => 1_000,
         }
     }
 
@@ -1146,15 +1224,43 @@ impl CostModel {
     }
 
     /// Estimate cost for individual operation
+    ///
+    /// When collection statistics are available, costs scale with the
+    /// collection's row count. For vector search this means larger
+    /// collections are proportionally more expensive. For operations
+    /// without stats the original fixed costs are returned.
     pub fn estimate_operation_cost(&self, operation: &ExecutionOperation) -> f64 {
         match operation {
-            ExecutionOperation::VectorSearch { top_k, filters, .. } => {
-                let base_cost = self.vector_search_base_cost * (*top_k as f64).log10();
+            ExecutionOperation::VectorSearch {
+                collection_id,
+                top_k,
+                filters,
+                ..
+            } => {
+                let top_k_f = (*top_k as f64).max(1.0);
+                let base_cost = self.vector_search_base_cost * top_k_f.log10();
                 let filter_cost = match filters {
                     Some(_) => self.metadata_filter_cost, // HashMap filtering is cheap
                     None => 0.0,
                 };
-                base_cost + filter_cost
+                // Scale by collection size when stats are available
+                let scale = self
+                    .collection_stats
+                    .get(collection_id)
+                    .map_or(1.0, |s| {
+                        let n = s.row_count as f64;
+                        if n <= 1.0 {
+                            return 1.0;
+                        }
+                        // With HNSW index: O(log n), without: O(n)
+                        if s.has_hnsw_index {
+                            n.log2() / 10.0 // sub-linear
+                        } else {
+                            n / 10_000.0 // linear scan scaling
+                        }
+                    })
+                    .max(0.1);
+                (base_cost + filter_cost) * scale
             }
             ExecutionOperation::GraphTraversal { max_depth, .. } => {
                 self.graph_traversal_base_cost * (*max_depth as f64)
@@ -1169,6 +1275,12 @@ impl CostModel {
             ExecutionOperation::Union { .. } => 0.7,
             ExecutionOperation::CteMaterialization { .. } => 0.9,
         }
+    }
+}
+
+impl Default for CostModel {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

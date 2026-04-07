@@ -82,7 +82,7 @@ impl ProximaDBScanExec {
         };
 
         // Create partition info (for now, single partition per collection)
-        // TODO: Implement proper file discovery and partitioning
+        // Deferred: Implement proper file discovery and partitioning
         let partitions = vec![PartitionInfo {
             index: 0,
             file_paths: vec![base_path.clone()],

@@ -75,7 +75,7 @@ impl Default for NetworkConfig {
 }
 
 /// Hardware acceleration configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum HardwareAcceleration {
     /// CPU-only with SIMD optimizations
     SIMD,
@@ -86,15 +86,10 @@ pub enum HardwareAcceleration {
     /// OpenCL acceleration (cross-platform)
     OpenCL,
     /// Auto-detect and use best available
+    #[default]
     Auto,
     /// No acceleration (fallback)
     None,
-}
-
-impl Default for HardwareAcceleration {
-    fn default() -> Self {
-        Self::Auto // Auto-detect best acceleration
-    }
 }
 
 /// Compute system configuration
@@ -140,9 +135,10 @@ impl Default for ComputeConfig {
 pub use crate::compute::distance_computation::DistanceMetric;
 
 /// Indexing algorithm configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World (default for most cases)
+    #[default]
     HNSW,
     /// Inverted File with Product Quantization
     IVFPQ,
@@ -154,12 +150,6 @@ pub enum IndexingAlgorithm {
     NSW,
     /// Auto-select based on data characteristics
     Auto,
-}
-
-impl Default for IndexingAlgorithm {
-    fn default() -> Self {
-        Self::HNSW // HNSW is the best general-purpose algorithm
-    }
 }
 
 /// Indexing system configuration
@@ -261,7 +251,7 @@ impl Default for MonitoringConfig {
 }
 
 /// Complete server configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ServerConfig {
     /// Network configuration
     pub network: NetworkConfig,
@@ -274,17 +264,6 @@ pub struct ServerConfig {
 
     /// Monitoring configuration
     pub monitoring: MonitoringConfig,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            network: NetworkConfig::default(),
-            compute: ComputeConfig::default(),
-            indexing: IndexingConfig::default(),
-            monitoring: MonitoringConfig::default(),
-        }
-    }
 }
 
 /// Unified server builder that coordinates all subsystems
@@ -465,19 +444,19 @@ impl ServerBuilder {
         );
 
         // Initialize compute engines based on hardware config
-        let _compute_system = self.initialize_compute_engines().await?;
+        self.initialize_compute_engines().await?;
         tracing::info!("✅ Compute engines initialized");
 
         // Initialize indexing system
-        let _indexing_system = self.initialize_indexing_system().await?;
+        self.initialize_indexing_system().await?;
         tracing::info!("✅ Indexing system initialized");
 
         // Initialize monitoring systems before building storage system
-        let _monitoring_system = self.initialize_monitoring_systems().await?;
+        self.initialize_monitoring_systems().await?;
         tracing::info!("✅ Monitoring systems initialized");
 
         // Initialize network layer before building storage system
-        let _network_system = self.initialize_network_layer().await?;
+        self.initialize_network_layer().await?;
         tracing::info!("✅ Network layer initialized");
 
         // Extract server config before storage builder move
@@ -611,10 +590,10 @@ impl ProximaDBServer {
             self.config.network.port
         );
 
-        // TODO: Start network listeners
-        // TODO: Initialize indexing engines
-        // TODO: Start monitoring systems
-        // TODO: Start health check endpoints
+        // Deferred: Start network listeners
+        // Deferred: Initialize indexing engines
+        // Deferred: Start monitoring systems
+        // Deferred: Start health check endpoints
 
         Ok(())
     }

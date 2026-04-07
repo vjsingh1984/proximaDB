@@ -201,6 +201,9 @@ pub mod tests;
 // Filesystem implementations
 pub use local::LocalFileSystem;
 
+// Unified caching filesystem
+pub use unified::UnifiedCachingFilesystem;
+
 // Re-export centralized scheme validation functions
 pub use scheme_validation::{
     FilesystemScheme, extract_scheme, is_supported_scheme, normalize_url, validate_url,
@@ -247,7 +250,7 @@ pub enum FilesystemError {
 }
 
 /// File metadata information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct FileMetadata {
     pub path: String,
     pub size: u64,
@@ -268,13 +271,14 @@ pub struct DirEntry {
 }
 
 /// Temporary directory strategy for atomic operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum TempStrategy {
     /// Direct write (no temp files) - for local filesystem with atomic guarantees
     DirectWrite,
 
     /// Write to ___temp subdirectory in same location (same mount point)
     /// Ensures move operations are filesystem renames, not copies
+    #[default]
     SameDirectory,
 
     /// Write to user-configured temp directory
@@ -286,13 +290,6 @@ pub enum TempStrategy {
 
     /// Write to system /tmp directory (fallback for R&D)
     SystemTemp,
-}
-
-impl Default for TempStrategy {
-    fn default() -> Self {
-        // Default to same directory strategy for optimal performance
-        TempStrategy::SameDirectory
-    }
 }
 
 /// File operation options
@@ -660,9 +657,10 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
             TempStrategy::SameDirectory => {
                 // Create ___temp subdirectory in same location (same mount point)
                 let parent = final_path.parent();
-                let temp_dir = parent
-                    .map(|p| p.join("___temp"))
-                    .unwrap_or_else(|| std::path::PathBuf::from("___temp"));
+                let temp_dir = parent.map_or_else(
+                    || std::path::PathBuf::from("___temp"),
+                    |p| p.join("___temp"),
+                );
                 let temp_file = temp_dir.join(format!("{}.{}", filename, std::process::id())); // Add PID for uniqueness
                 Ok(temp_file.to_string_lossy().to_string())
             }
@@ -844,6 +842,37 @@ impl std::fmt::Debug for FilesystemFactory {
 }
 
 impl FilesystemFactory {
+    fn maybe_wrap_with_encryption(
+        &self,
+        filesystem: Arc<dyn FileSystem>,
+    ) -> FsResult<Arc<dyn FileSystem>> {
+        let Some(env_var) = self.config.global_options.encryption.as_deref() else {
+            return Ok(filesystem);
+        };
+
+        let env_var = env_var.trim();
+        if env_var.is_empty() {
+            return Err(FilesystemError::Config(
+                "Filesystem encryption env var name cannot be empty".to_string(),
+            ));
+        }
+
+        let key_manager =
+            crate::storage::encryption::KeyManager::from_env(env_var).map_err(|e| {
+                FilesystemError::Config(format!(
+                    "Failed to load filesystem encryption key from {}: {}",
+                    env_var, e
+                ))
+            })?;
+        let version_manager = Arc::new(crate::storage::encryption::KeyVersionManager::new(
+            Arc::new(key_manager),
+        ));
+
+        Ok(Arc::new(
+            crate::storage::encryption::EncryptedFilesystem::new(filesystem, version_manager, true),
+        ))
+    }
+
     /// Create filesystem factory with default configuration
     ///
     /// **DEPRECATED**: Use `create_default()` instead. This method creates a non-functional
@@ -852,6 +881,8 @@ impl FilesystemFactory {
         since = "0.1.5",
         note = "Use `create_default()` instead - this creates a broken factory"
     )]
+    #[expect(clippy::default_trait_access)] // Kept for backward compatibility despite creating broken factory
+    #[expect(clippy::should_implement_trait)] // Method is deprecated, trait implementation not appropriate
     pub fn default() -> Self {
         Self {
             config: FilesystemConfig::default(),
@@ -923,15 +954,21 @@ impl FilesystemFactory {
     async fn initialize_filesystems(&mut self) -> FsResult<()> {
         // Initialize local filesystem with root directory resolution
         if let Some(local_config) = &self.config.local {
-            let local_fs = LocalFileSystem::new(local_config.clone()).await?;
-            self.filesystems
-                .insert("file".to_string(), Arc::new(local_fs));
+            let local_fs: Arc<dyn FileSystem> =
+                Arc::new(LocalFileSystem::new(local_config.clone()).await?);
+            self.filesystems.insert(
+                "file".to_string(),
+                self.maybe_wrap_with_encryption(local_fs)?,
+            );
         } else {
             // Create default local filesystem without root restriction
             let default_config = local::LocalConfig::default();
-            let local_fs = LocalFileSystem::new(default_config).await?;
-            self.filesystems
-                .insert("file".to_string(), Arc::new(local_fs));
+            let local_fs: Arc<dyn FileSystem> =
+                Arc::new(LocalFileSystem::new(default_config).await?);
+            self.filesystems.insert(
+                "file".to_string(),
+                self.maybe_wrap_with_encryption(local_fs)?,
+            );
         }
 
         Ok(())
@@ -1075,6 +1112,16 @@ impl FilesystemFactory {
         debug!("    [DEBUG] from_path resolved: {}", from_path);
         debug!("    [DEBUG] to_path resolved: {}", to_path);
 
+        if from_fs.filesystem_type() == "encrypted" || to_fs.filesystem_type() == "encrypted" {
+            let data = from_fs.read(&from_path).await?;
+            to_fs.write_atomic(&to_path, &data, None).await?;
+            trace!("Whole-file copy complete");
+            debug!("    ✅ [DEBUG] Whole-file copy complete");
+            trace!("📋 [] copy_atomic COMPLETE");
+            debug!("📋 [DEBUG] copy_atomic COMPLETE");
+            return Ok(());
+        }
+
         // Open source and destination files for streaming
         trace!("Opening source file for streaming...");
         let mut source_file = from_fs.open_file(&from_path, false).await?;
@@ -1171,10 +1218,10 @@ impl FilesystemFactory {
             }
             "abfs" => {
                 // Container is before @ in hostname
-                if let Some(host) = parsed_url.host_str() {
-                    if let Some(at_pos) = host.find('@') {
-                        return Ok(Some(host[..at_pos].to_string()));
-                    }
+                if let Some(host) = parsed_url.host_str()
+                    && let Some(at_pos) = host.find('@')
+                {
+                    return Ok(Some(host[..at_pos].to_string()));
                 }
                 Ok(None)
             }
@@ -1214,10 +1261,10 @@ impl FilesystemFactory {
             }
             "abfs" => {
                 // Account is after @ in hostname
-                if let Some(host) = parsed_url.host_str() {
-                    if let Some(at_pos) = host.find('@') {
-                        return Ok(Some(host[at_pos + 1..].to_string()));
-                    }
+                if let Some(host) = parsed_url.host_str()
+                    && let Some(at_pos) = host.find('@')
+                {
+                    return Ok(Some(host[at_pos + 1..].to_string()));
                 }
                 Ok(None)
             }
@@ -1241,12 +1288,12 @@ impl FilesystemFactory {
 
         // Handle file:// URLs specially to avoid URL parsing issues
         if normalized_url.starts_with("file://") {
-            let path = if normalized_url.starts_with("file:///") {
+            let path = if let Some(after_slashes) = normalized_url.strip_prefix("file:///") {
                 // Absolute path
-                format!("/{}", &normalized_url[8..])
+                format!("/{}", after_slashes)
             } else {
                 // Relative or other path
-                normalized_url[7..].to_string()
+                normalized_url.strip_prefix("file://").unwrap().to_string()
             };
             info!("    scheme: file, returning path: {}", path);
             return Ok(path);
@@ -1341,15 +1388,15 @@ impl FilesystemFactory {
             // The URL parser can fail on paths that look like domain names
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
-                let relative_path = &url[7..]; // Remove "file://" prefix, keep "./"
+                let relative_path = url.strip_prefix("file://").unwrap(); // Keep the "./"
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Explicit relative path: '{}'",
                     relative_path
                 );
                 Ok(relative_path.to_string())
-            } else if url.starts_with("file:///") {
+            } else if let Some(absolute_path) = url.strip_prefix("file:///") {
                 // Absolute path: file:///absolute/path
-                let absolute_path = &url[8..]; // Remove "file:///" prefix
+                // Remove "file:///" prefix
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Absolute path: '/{}'",
                     absolute_path
@@ -1357,7 +1404,7 @@ impl FilesystemFactory {
                 Ok(format!("/{}", absolute_path))
             } else {
                 // Implicit relative path: file://relative/path (treat as relative)
-                let relative_path = &url[7..]; // Remove "file://" prefix
+                let relative_path = url.strip_prefix("file://").unwrap_or(url); // Remove "file://" prefix
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Implicit relative path: '{}'",
                     relative_path
@@ -1385,10 +1432,9 @@ impl FilesystemFactory {
         }
 
         // Add default mappings if not configured
-        if !self.tier_mapping.contains_key(&FileStorageTier::Memory) {
-            self.tier_mapping
-                .insert(FileStorageTier::Memory, "memory://".to_string());
-        }
+        self.tier_mapping
+            .entry(FileStorageTier::Memory)
+            .or_insert_with(|| "memory://".to_string());
     }
 
     /// Get filesystem URL for a specific storage tier
@@ -1650,16 +1696,93 @@ impl FilesystemFactory {
         let fs = self.get_filesystem(url)?;
         fs.sync().await
     }
+
+    /// Create an Arc-wrapped filesystem factory (safe helper)
+    ///
+    /// This is a convenience helper for creating Arc<FilesystemFactory> with proper error handling.
+    /// Use this to avoid panic-prone call sites when creating filesystem factories.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use anyhow::Context;
+    ///
+    /// // Before (panics on error):
+    /// let factory = Arc::new(FilesystemFactory::create(config).await?);
+    ///
+    /// // After (proper error handling):
+    /// let factory = FilesystemFactory::create_arc(config).await
+    ///     .context("Failed to create filesystem factory")?;
+    /// ```
+    pub async fn create_arc(config: FilesystemConfig) -> FsResult<Arc<Self>> {
+        let factory = Self::create(config).await?;
+        Ok(Arc::new(factory))
+    }
+
+    /// Create an Arc-wrapped filesystem factory with default config (safe helper)
+    ///
+    /// This is a convenience helper for creating Arc<FilesystemFactory> with proper error handling.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use anyhow::Context;
+    ///
+    /// // Before (panics on error):
+    /// let factory = Arc::new(FilesystemFactory::create_default().await?);
+    ///
+    /// // After (proper error handling):
+    /// let factory = FilesystemFactory::create_default_arc().await
+    ///     .context("Failed to create filesystem factory")?;
+    /// ```
+    pub async fn create_default_arc() -> FsResult<Arc<Self>> {
+        let factory = Self::create_default().await?;
+        Ok(Arc::new(factory))
+    }
 }
 
 #[cfg(test)]
 mod inline_tests {
     use super::*;
+    use std::ffi::OsString;
+    use tempfile::TempDir;
+
+    struct EnvVarGuard {
+        key: String,
+        previous: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &str, value: &str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self {
+                key: key.to_string(),
+                previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(previous) = &self.previous {
+                    std::env::set_var(&self.key, previous);
+                } else {
+                    std::env::remove_var(&self.key);
+                }
+            }
+        }
+    }
 
     #[tokio::test]
     async fn test_filesystem_factory_creation() {
         let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::create(config).await.unwrap();
+        let factory = FilesystemFactory::create(config)
+            .await
+            .expect("Failed to create filesystem factory with default config");
 
         // Should have local filesystem by default
         assert!(factory.available_filesystems().contains(&"file"));
@@ -1668,33 +1791,51 @@ mod inline_tests {
     #[tokio::test]
     async fn test_url_scheme_extraction() {
         let config = FilesystemConfig::default();
-        let factory = FilesystemFactory::create(config).await.unwrap();
+        let factory = FilesystemFactory::create(config)
+            .await
+            .expect("Failed to create filesystem factory for URL scheme extraction test");
 
         assert_eq!(
-            factory.extract_scheme("file:///tmp/test.txt").unwrap(),
+            factory
+                .extract_scheme("file:///tmp/test.txt")
+                .expect("Failed to extract scheme from file:// URL"),
             "file"
         );
-        assert_eq!(factory.extract_scheme("s3://bucket/key").unwrap(), "s3");
+        assert_eq!(
+            factory
+                .extract_scheme("s3://bucket/key")
+                .expect("Failed to extract scheme from s3:// URL"),
+            "s3"
+        );
         assert_eq!(
             factory
                 .extract_scheme("adls://account/container/path")
-                .unwrap(),
+                .expect("Failed to extract scheme from adls:// URL"),
             "adls"
         );
         assert_eq!(
             factory
                 .extract_scheme("abfs://container@account/path")
-                .unwrap(),
+                .expect("Failed to extract scheme from abfs:// URL"),
             "abfs"
         );
         assert_eq!(
-            factory.extract_scheme("gcs://bucket/object").unwrap(),
+            factory
+                .extract_scheme("gcs://bucket/object")
+                .expect("Failed to extract scheme from gcs:// URL"),
             "gcs"
         );
         // Test gs:// scheme mapping to gcs
-        assert_eq!(factory.extract_scheme("gs://bucket/object").unwrap(), "gcs");
         assert_eq!(
-            factory.extract_scheme("hdfs://namenode:9000/path").unwrap(),
+            factory
+                .extract_scheme("gs://bucket/object")
+                .expect("Failed to extract scheme from gs:// URL"),
+            "gcs"
+        );
+        assert_eq!(
+            factory
+                .extract_scheme("hdfs://namenode:9000/path")
+                .expect("Failed to extract scheme from hdfs:// URL"),
             "hdfs"
         );
     }
@@ -1702,20 +1843,120 @@ mod inline_tests {
     #[tokio::test]
     async fn test_path_extraction() {
         let _config = FilesystemConfig::default();
-        let _factory = FilesystemFactory::create(_config).await.unwrap();
+        let _factory = FilesystemFactory::create(_config)
+            .await
+            .expect("Failed to create filesystem factory for path extraction test");
 
         assert_eq!(
-            FilesystemFactory::resolve_path("file:///tmp/test.txt").unwrap(),
+            FilesystemFactory::resolve_path("file:///tmp/test.txt")
+                .expect("Failed to resolve path from file:// URL"),
             "/tmp/test.txt"
         );
         assert_eq!(
-            FilesystemFactory::resolve_path("s3://bucket/key").unwrap(),
+            FilesystemFactory::resolve_path("s3://bucket/key")
+                .expect("Failed to resolve path from s3:// URL"),
             "/key"
         );
         assert_eq!(
-            FilesystemFactory::resolve_path("/local/path").unwrap(),
+            FilesystemFactory::resolve_path("/local/path").expect("Failed to resolve local path"),
             "/local/path"
         );
+    }
+
+    #[tokio::test]
+    async fn test_filesystem_factory_wraps_local_fs_with_encryption() {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let _env = EnvVarGuard::set(
+            "TEST_PROXIMADB_FS_FACTORY_KEY",
+            "factory-test-master-key-32-bytes!!",
+        );
+
+        let config = FilesystemConfig {
+            local: Some(local::LocalConfig {
+                root_dir: Some(temp_dir.path().to_path_buf()),
+                ..Default::default()
+            }),
+            global_options: FileOptions {
+                encryption: Some("TEST_PROXIMADB_FS_FACTORY_KEY".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let factory = FilesystemFactory::create(config)
+            .await
+            .expect("failed to create encrypted filesystem factory");
+        let fs = factory
+            .get_filesystem("file:///tmp/proximadb-encrypted")
+            .expect("failed to get encrypted filesystem");
+
+        assert_eq!(fs.filesystem_type(), "encrypted");
+
+        let logical_path = temp_dir.path().join("wrapped.bin");
+        let logical_path = logical_path.to_string_lossy().to_string();
+        let encrypted_path = format!("{}.enc", logical_path);
+
+        fs.write(&logical_path, b"factory-secret", None)
+            .await
+            .expect("failed to write encrypted file");
+
+        assert!(std::path::Path::new(&encrypted_path).exists());
+        assert_eq!(
+            fs.read(&logical_path)
+                .await
+                .expect("failed to read encrypted file"),
+            b"factory-secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_copy_atomic_falls_back_for_encrypted_filesystems() {
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let _env = EnvVarGuard::set(
+            "TEST_PROXIMADB_FS_COPY_KEY",
+            "copy-test-master-key-32-bytes!!!!!",
+        );
+
+        let config = FilesystemConfig {
+            local: Some(local::LocalConfig {
+                root_dir: Some(temp_dir.path().to_path_buf()),
+                ..Default::default()
+            }),
+            global_options: FileOptions {
+                encryption: Some("TEST_PROXIMADB_FS_COPY_KEY".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let factory = FilesystemFactory::create(config)
+            .await
+            .expect("failed to create encrypted filesystem factory");
+        let fs = factory
+            .get_filesystem("file:///tmp/proximadb-encrypted")
+            .expect("failed to get encrypted filesystem");
+
+        let src_url = format!("file://{}", temp_dir.path().join("src.bin").display());
+        let dst_url = format!("file://{}", temp_dir.path().join("dst.bin").display());
+        let src_path = FilesystemFactory::resolve_path(&src_url).expect("failed to resolve src");
+        let dst_path = FilesystemFactory::resolve_path(&dst_url).expect("failed to resolve dst");
+
+        fs.write(&src_path, b"copy-secret", None)
+            .await
+            .expect("failed to write source file");
+
+        factory
+            .copy_atomic(&src_url, &dst_url)
+            .await
+            .expect("copy_atomic should succeed for encrypted filesystems");
+
+        assert_eq!(
+            fs.read(&dst_path)
+                .await
+                .expect("failed to read copied file"),
+            b"copy-secret"
+        );
+        assert!(std::path::Path::new(&format!("{}.enc", dst_path)).exists());
     }
 }
 

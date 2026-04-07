@@ -46,16 +46,41 @@ pub struct IndexingConfig {
 #[derive(Debug, Clone)]
 pub enum IndexingAlgorithm {
     /// Hierarchical Navigable Small World
+    ///
+    /// A graph-based approximate nearest neighbor algorithm that provides
+    /// excellent recall with fast query times.
     HNSW {
+        /// Number of bidirectional links for each node (higher = better recall, slower indexing)
         m: u32,
+        /// Size of dynamic candidate list for construction (higher = better recall, slower indexing)
         ef_construction: u32,
+        /// Size of dynamic candidate list for search (higher = better recall, slower search)
         ef_search: u32,
     },
     /// Inverted File Index
-    IVF { nlist: u32, nprobe: u32 },
+    ///
+    /// Partitions the vector space into Voronoi cells and searches only
+    /// the nearest cells for approximate search.
+    IVF {
+        /// Number of centroid clusters (higher = better precision, more memory)
+        nlist: u32,
+        /// Number of clusters to probe during search (higher = better recall, slower search)
+        nprobe: u32,
+    },
     /// Product Quantization
-    PQ { m: u32, nbits: u32 },
+    ///
+    /// Compresses vectors into compact codes for memory-efficient storage
+    /// and fast distance computation.
+    PQ {
+        /// Number of sub-quantizers (must divide dimensionality)
+        m: u32,
+        /// Number of bits per sub-quantizer (typically 8)
+        nbits: u32,
+    },
     /// Flat (brute force) search
+    ///
+    /// Exact nearest neighbor search with no approximation.
+    /// Provides perfect recall but slower query performance.
     Flat,
 }
 

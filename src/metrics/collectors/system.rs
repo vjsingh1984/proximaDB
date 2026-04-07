@@ -29,6 +29,12 @@ impl SystemMetricsCollector {
     }
 }
 
+impl Default for SystemMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl MetricsCollector for SystemMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {
@@ -128,19 +134,18 @@ impl SystemMetricsCollector {
             for line in output_str.lines() {
                 if line.contains("CPU usage:") {
                     // Example: "CPU usage: 15.2% user, 8.1% sys, 76.7% idle"
-                    if let Some(user_part) = line.split("CPU usage: ").nth(1) {
-                        if let Some(user_str) = user_part.split('%').next() {
-                            if let Ok(user_cpu) = user_str.trim().parse::<f64>() {
-                                // Also parse sys CPU if available
-                                let sys_cpu = user_part
-                                    .split(',')
-                                    .nth(1)
-                                    .and_then(|s| s.trim().split('%').next())
-                                    .and_then(|s| s.trim().parse::<f64>().ok())
-                                    .unwrap_or(0.0);
-                                return Ok(user_cpu + sys_cpu);
-                            }
-                        }
+                    if let Some(user_part) = line.split("CPU usage: ").nth(1)
+                        && let Some(user_str) = user_part.split('%').next()
+                        && let Ok(user_cpu) = user_str.trim().parse::<f64>()
+                    {
+                        // Also parse sys CPU if available
+                        let sys_cpu = user_part
+                            .split(',')
+                            .nth(1)
+                            .and_then(|s| s.trim().split('%').next())
+                            .and_then(|s| s.trim().parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        return Ok(user_cpu + sys_cpu);
                     }
                 }
             }

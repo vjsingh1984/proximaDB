@@ -22,6 +22,7 @@ use crate::storage::engines::core::progressive::{
 /// VIPER-specific Binary stage adapter
 ///
 /// Wraps VIPER's binary quantization filtering optimized for columnar data.
+/// Implements ISP-compliant progressive search for efficient binary filtering.
 pub struct ViperBinaryStage {
     hamming_threshold: f32,
     quantization_engine: Arc<UnifiedQuantizationEngine>,

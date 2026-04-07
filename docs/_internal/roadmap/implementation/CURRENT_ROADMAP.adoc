@@ -6,17 +6,39 @@
 
 This document provides a quick reference to ProximaDB's current roadmap status and implementation plans. For detailed quarterly plans and historical context, see the subdirectories.
 
-**Last Updated**: December 2025
+**Last Updated**: April 2026
 
 == Roadmap Organization
 
 === Directory Structure
 
-* **active/**: Current quarter implementation plans (Q3 2025, Q4 2025)
+* **active/**: Current implementation plans, including active 2026 execution blueprints
 * **completed/**: Finished implementations and optimizations
 * **archive/**: Historical quarterly plans and analyses (Q1 2025, Q2 2025)
 
 == Active Plans (Current Focus)
+
+=== Multi-Model Implementation Blueprint (2026-03-31)
+**Status**: Active +
+**Location**: link:active/MULTIMODEL_IMPLEMENTATION_BLUEPRINT_2026_03_31.adoc[active/MULTIMODEL_IMPLEMENTATION_BLUEPRINT_2026_03_31.adoc]
+**Design Resolution**: link:active/E1_E3_OPEN_TICKET_DESIGN_RESOLUTION_2026_04_01.adoc[active/E1_E3_OPEN_TICKET_DESIGN_RESOLUTION_2026_04_01.adoc]
+
+Key focus areas:
+* Capability-driven planning and supported-surface generation
+* Filtered ANN correctness on the canonical vector path
+* Shared multi-model plan and explain surface
+* Native graph and document and observability hardening
+* Durable transactions, distributed transport, and operator readiness
+
+=== Foundational Multi-Model Execution Plan (2026)
+**Status**: In Progress +
+**Location**: link:active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc[active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc]
+
+Key focus areas:
+* Predicate propagation and public-path correctness
+* Document query execution completeness
+* Federated/distributed execution hardening
+* Roadmap and capability-claim alignment
 
 === Q3 2025 Implementation
 **Status**: In Progress +

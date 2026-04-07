@@ -607,6 +607,7 @@ impl ZeroCopyIOSystem {
         Ok(())
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn create_execution_plan<'a>(
         &'a self,
         strategy: DownloadStrategy,
@@ -888,13 +889,13 @@ impl ZeroCopyIOSystem {
         // Try to get from cache first
         if let Some(_cached_metadata) = self
             .metadata_cache
-            .get_metadata(&file_path, collection_id, engine_type)
+            .get_metadata(file_path, collection_id, engine_type)
             .await
         {
             trace!(cache_key, "Cache HIT for metadata");
             // Create a synthetic EngineMetadata from FilesystemMetadata
             // This would need actual deserialization using the appropriate serializer
-            if self.serializers.get(engine_type).is_some() {
+            if self.serializers.contains_key(engine_type) {
                 // For now, return None as we need to implement proper deserialization
                 // In production, would deserialize mmap_metadata using the serializer
                 Ok(None)
@@ -907,7 +908,7 @@ impl ZeroCopyIOSystem {
 
             // CACHE POPULATION: Load metadata from file and populate cache
             match self
-                .populate_cache_from_file(&file_path, collection_id, engine_type)
+                .populate_cache_from_file(file_path, collection_id, engine_type)
                 .await
             {
                 Ok(metadata) => {

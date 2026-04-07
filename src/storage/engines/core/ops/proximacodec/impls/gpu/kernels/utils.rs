@@ -186,7 +186,7 @@ impl<T: Clone> GpuBuffer<T> {
 
     /// Allocate device memory (stub - platform-specific implementation needed)
     pub fn allocate_device(&mut self) -> Result<()> {
-        // TODO: Platform-specific allocation
+        // Deferred: Platform-specific allocation
         // - CUDA: cudaMalloc
         // - ROCm: hipMalloc
         // - Metal: MTLBuffer
@@ -202,7 +202,7 @@ impl<T: Clone> GpuBuffer<T> {
 
     /// Copy data from host to device (stub)
     pub fn copy_to_device(&mut self, data: &[T]) -> Result<()> {
-        // TODO: Platform-specific copy
+        // Deferred: Platform-specific copy
         // - CUDA: cudaMemcpy H2D
         // - ROCm: hipMemcpy H2D
         // - Metal: MTLBuffer contents
@@ -221,7 +221,7 @@ impl<T: Clone> GpuBuffer<T> {
     where
         T: Clone + Default,
     {
-        // TODO: Platform-specific copy
+        // Deferred: Platform-specific copy
         // - CUDA: cudaMemcpy D2H
         // - ROCm: hipMemcpy D2H
         // - Metal: MTLBuffer contents
@@ -238,7 +238,7 @@ impl<T: Clone> GpuBuffer<T> {
 impl<T> GpuBuffer<T> {
     /// Free device memory (stub)
     pub fn free_device(&mut self) -> Result<()> {
-        // TODO: Platform-specific free
+        // Deferred: Platform-specific free
         // - CUDA: cudaFree
         // - ROCm: hipFree
         // - Metal: release buffer

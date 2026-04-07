@@ -37,23 +37,35 @@ pub trait AuditStorage {
 /// Audit statistics for reporting
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditStatistics {
+    /// Total number of audit events in the reporting period
     pub total_events: u64,
+    /// Breakdown of event counts grouped by event type
     pub events_by_type: std::collections::HashMap<AuditEventType, u64>,
+    /// Number of distinct users who generated at least one event in the period
     pub unique_users: u64,
+    /// Number of distinct tenants that had activity in the period
     pub unique_tenants: u64,
+    /// Percentage of events that resulted in `AuditResult::Success` (0.0 – 100.0)
     pub success_rate: f64,
+    /// Start of the statistics window (UTC)
     pub period_start: DateTime<Utc>,
+    /// End of the statistics window (UTC)
     pub period_end: DateTime<Utc>,
 }
 
 /// File-based audit storage implementation
 pub struct FileAuditStorage {
+    /// Base directory for audit log files
     base_directory: String,
+    /// Path to the current active audit log file
     current_file: tokio::sync::RwLock<Option<String>>,
+    /// Maximum size in MB before rotating to a new file
     file_rotation_size_mb: usize,
 }
 
 impl FileAuditStorage {
+    /// Create a new `FileAuditStorage` that writes JSONL audit logs to the given directory.
+    /// The directory is created automatically if it does not already exist.
     pub async fn new(directory: String) -> Result<Self> {
         // Ensure directory exists
         tokio::fs::create_dir_all(&directory)
@@ -143,11 +155,11 @@ impl AuditStorage for FileAuditStorage {
                 events.extend(file_events);
 
                 // Apply limit if specified
-                if let Some(limit) = limit {
-                    if events.len() >= limit {
-                        events.truncate(limit);
-                        break;
-                    }
+                if let Some(limit) = limit
+                    && events.len() >= limit
+                {
+                    events.truncate(limit);
+                    break;
                 }
             }
         }
@@ -213,21 +225,21 @@ impl AuditStorage for FileAuditStorage {
         while let Some(entry) = dir_entries.next_entry().await? {
             let file_path = entry.path();
 
-            if let Ok(metadata) = entry.metadata().await {
-                if let Ok(modified) = metadata.modified() {
-                    let modified_dt: DateTime<Utc> = modified.into();
+            if let Ok(metadata) = entry.metadata().await
+                && let Ok(modified) = metadata.modified()
+            {
+                let modified_dt: DateTime<Utc> = modified.into();
 
-                    if modified_dt < cutoff_date {
-                        if let Err(e) = tokio::fs::remove_file(&file_path).await {
-                            warn!(
-                                "Failed to delete old audit log {}: {}",
-                                file_path.display(),
-                                e
-                            );
-                        } else {
-                            deleted_files += 1;
-                            info!("🗑️ Deleted old audit log: {}", file_path.display());
-                        }
+                if modified_dt < cutoff_date {
+                    if let Err(e) = tokio::fs::remove_file(&file_path).await {
+                        warn!(
+                            "Failed to delete old audit log {}: {}",
+                            file_path.display(),
+                            e
+                        );
+                    } else {
+                        deleted_files += 1;
+                        info!("🗑️ Deleted old audit log: {}", file_path.display());
                     }
                 }
             }
@@ -265,28 +277,28 @@ impl FileAuditStorage {
             match serde_json::from_str::<AuditEvent>(line) {
                 Ok(event) => {
                     // Apply filters
-                    if let Some(ref filter_type) = event_type {
-                        if &event.event_type != filter_type {
-                            continue;
-                        }
+                    if let Some(ref filter_type) = event_type
+                        && &event.event_type != filter_type
+                    {
+                        continue;
                     }
 
-                    if let Some(ref filter_user) = user_id {
-                        if event.user_id.as_ref() != Some(filter_user) {
-                            continue;
-                        }
+                    if let Some(ref filter_user) = user_id
+                        && event.user_id.as_ref() != Some(filter_user)
+                    {
+                        continue;
                     }
 
-                    if let Some(since_time) = since {
-                        if event.timestamp < since_time {
-                            continue;
-                        }
+                    if let Some(since_time) = since
+                        && event.timestamp < since_time
+                    {
+                        continue;
                     }
 
-                    if let Some(until_time) = until {
-                        if event.timestamp > until_time {
-                            continue;
-                        }
+                    if let Some(until_time) = until
+                        && event.timestamp > until_time
+                    {
+                        continue;
                     }
 
                     events.push(event);
@@ -307,11 +319,14 @@ impl FileAuditStorage {
 
 /// Database-based audit storage implementation (placeholder)
 pub struct DatabaseAuditStorage {
+    /// Connection string for the audit database (e.g., PostgreSQL)
     #[allow(dead_code)]
     connection_string: String,
 }
 
 impl DatabaseAuditStorage {
+    /// Create a new `DatabaseAuditStorage` backed by the given connection string.
+    /// This is a placeholder implementation; actual database setup is not yet performed.
     pub async fn new(connection_string: String) -> Result<Self> {
         // Placeholder for database initialization
         // Real implementation would:
@@ -607,8 +622,8 @@ mod tests {
             .await
             .expect("Failed to get statistics");
 
-        // Verify structure
-        assert!(stats.total_events >= 0);
+        // Verify structure (total_events is u64, always >= 0)
+        let _ = stats.total_events;
         assert!(stats.success_rate >= 0.0 && stats.success_rate <= 100.0);
         assert!(stats.period_start == since);
         assert!(stats.period_end >= since);

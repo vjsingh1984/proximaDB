@@ -26,6 +26,9 @@ pub mod cache;
 // Schema utilities (builders, evolution, validation)
 pub mod schema;
 
+// Partition pruning for query optimization
+pub mod partition_pruning;
+
 // Always-available catalog implementations
 pub mod hive;
 pub mod iceberg;
@@ -65,6 +68,9 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 pub use self::cache::CatalogCache;
+pub use self::partition_pruning::{
+    PartitionInfo, PartitionPruner, PruningResult, parse_partition_path,
+};
 pub use self::traits::*;
 pub use self::types::*;
 
@@ -483,7 +489,10 @@ impl CatalogManager {
                     .iter()
                     .map(|s| s.to_string())
                     .collect();
-                let table = parts.last().unwrap().to_string();
+                let table = parts
+                    .last()
+                    .ok_or_else(|| anyhow!("Invalid table name: missing table component"))?
+                    .to_string();
                 let id = TableIdentifier::new(namespace, table);
                 Ok((catalog, id))
             }
@@ -512,6 +521,7 @@ pub struct TableIdentifier {
 }
 
 impl TableIdentifier {
+    /// Create a new table identifier with the given namespace path and table name
     pub fn new(namespace: Vec<String>, name: String) -> Self {
         Self { namespace, name }
     }
@@ -526,7 +536,7 @@ impl TableIdentifier {
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
-            let name = parts.last().unwrap().to_string();
+            let name = parts[parts.len() - 1].to_string();
             Self::new(namespace, name)
         }
     }
@@ -637,7 +647,7 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.default_catalog().await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("No default catalog"));
     }
 
@@ -646,7 +656,7 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.get_catalog("nonexistent").await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("not found"));
     }
 
@@ -655,7 +665,8 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.set_default_catalog("nonexistent").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not found"));
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not found"));
     }
 
     #[tokio::test]
@@ -663,7 +674,7 @@ mod tests {
         let manager = CatalogManager::new();
         let result = manager.unregister_catalog("nonexistent").await;
         assert!(result.is_ok());
-        assert!(!result.unwrap()); // Returns false for nonexistent
+        assert!(!result.expect("Expected Ok result")); // Returns false for nonexistent
     }
 
     #[tokio::test]
@@ -686,7 +697,7 @@ mod tests {
             .create_glue_catalog("glue", "us-east-1", "123456789012")
             .await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("aws"));
     }
 
@@ -703,7 +714,7 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("unity-catalog"));
     }
 
@@ -720,7 +731,7 @@ mod tests {
             )
             .await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("polaris-catalog"));
     }
 
@@ -732,7 +743,7 @@ mod tests {
             .create_delta_catalog("delta", "file:///tmp/delta")
             .await;
         assert!(result.is_err());
-        let err = result.err().unwrap();
+        let err = result.err().expect("Expected error result");
         assert!(err.to_string().contains("delta-lake"));
     }
 
@@ -776,13 +787,16 @@ mod tests {
                 &format!("file://{}", temp_dir.display()),
             )
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         assert_eq!(catalog.name(), "test_iceberg");
         assert_eq!(catalog.catalog_type(), "iceberg");
 
         // Health check
-        let health = catalog.health_check().await.unwrap();
+        let health = catalog
+            .health_check()
+            .await
+            .expect("Expected health check to succeed");
         assert!(health.is_healthy);
 
         // Clean up
@@ -820,9 +834,12 @@ mod tests {
         manager
             .create_native_catalog("first", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
-        let default = manager.default_catalog().await.unwrap();
+        let default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog to exist");
         assert_eq!(default.name(), "first");
 
         // Clean up
@@ -861,7 +878,7 @@ mod tests {
         manager
             .create_native_catalog("catalog1", &format!("file://{}", temp_dir1.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
         manager
             .create_iceberg_catalog(
                 "catalog2",
@@ -869,7 +886,7 @@ mod tests {
                 &format!("file://{}", temp_dir2.display()),
             )
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         let catalogs = manager.list_catalogs().await;
         assert_eq!(catalogs.len(), 2);
@@ -892,19 +909,28 @@ mod tests {
         manager
             .create_native_catalog("cat1", &format!("file://{}", temp_dir1.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
         manager
             .create_native_catalog("cat2", &format!("file://{}", temp_dir2.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // First catalog should be default
-        let default = manager.default_catalog().await.unwrap();
+        let default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog to exist");
         assert_eq!(default.name(), "cat1");
 
         // Change default
-        manager.set_default_catalog("cat2").await.unwrap();
-        let new_default = manager.default_catalog().await.unwrap();
+        manager
+            .set_default_catalog("cat2")
+            .await
+            .expect("Expected set_default_catalog to succeed");
+        let new_default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog to exist");
         assert_eq!(new_default.name(), "cat2");
 
         // Clean up
@@ -921,11 +947,14 @@ mod tests {
         manager
             .create_native_catalog("to_remove", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         assert_eq!(manager.list_catalogs().await.len(), 1);
 
-        let removed = manager.unregister_catalog("to_remove").await.unwrap();
+        let removed = manager
+            .unregister_catalog("to_remove")
+            .await
+            .expect("Expected unregister to succeed");
         assert!(removed);
         assert!(manager.list_catalogs().await.is_empty());
 
@@ -944,17 +973,23 @@ mod tests {
         manager
             .create_native_catalog("cat1", &format!("file://{}", temp_dir1.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
         manager
             .create_native_catalog("cat2", &format!("file://{}", temp_dir2.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // Remove default catalog
-        manager.unregister_catalog("cat1").await.unwrap();
+        manager
+            .unregister_catalog("cat1")
+            .await
+            .expect("Expected unregister to succeed");
 
         // cat2 should become the new default
-        let default = manager.default_catalog().await.unwrap();
+        let default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog to exist");
         assert_eq!(default.name(), "cat2");
 
         // Clean up
@@ -975,10 +1010,13 @@ mod tests {
         manager
             .create_native_catalog("default", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // Simple table name
-        let (catalog, id) = manager.resolve_table("users").await.unwrap();
+        let (catalog, id) = manager
+            .resolve_table("users")
+            .await
+            .expect("Expected resolve_table to succeed");
         assert_eq!(catalog.name(), "default");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["default"]);
@@ -996,10 +1034,13 @@ mod tests {
         manager
             .create_native_catalog("default", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // namespace.table
-        let (catalog, id) = manager.resolve_table("mydb.users").await.unwrap();
+        let (catalog, id) = manager
+            .resolve_table("mydb.users")
+            .await
+            .expect("Expected resolve_table to succeed");
         assert_eq!(catalog.name(), "default");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["mydb"]);
@@ -1017,10 +1058,13 @@ mod tests {
         manager
             .create_native_catalog("mycat", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // catalog.namespace.table
-        let (catalog, id) = manager.resolve_table("mycat.mydb.users").await.unwrap();
+        let (catalog, id) = manager
+            .resolve_table("mycat.mydb.users")
+            .await
+            .expect("Expected resolve_table to succeed");
         assert_eq!(catalog.name(), "mycat");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["mydb"]);
@@ -1038,16 +1082,306 @@ mod tests {
         manager
             .create_native_catalog("catalog", &format!("file://{}", temp_dir.display()))
             .await
-            .unwrap();
+            .expect("Expected catalog creation to succeed");
 
         // catalog.ns1.ns2.table
         let (catalog, id) = manager
             .resolve_table("catalog.db.schema.users")
             .await
-            .unwrap();
+            .expect("Expected resolve_table to succeed");
         assert_eq!(catalog.name(), "catalog");
         assert_eq!(id.name, "users");
         assert_eq!(id.namespace, vec!["db", "schema"]);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    // ========================
+    // CatalogManager Creation Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_catalog_manager_creation() {
+        // Default construction
+        let manager = CatalogManager::new();
+        assert!(manager.list_catalogs().await.is_empty());
+
+        // No default catalog should be set
+        let default_result = manager.default_catalog().await;
+        assert!(default_result.is_err());
+
+        // With custom cache settings
+        let manager_custom = CatalogManager::with_cache(50000, 600);
+        assert!(manager_custom.list_catalogs().await.is_empty());
+
+        // Default trait implementation
+        let manager_default = CatalogManager::default();
+        assert!(manager_default.list_catalogs().await.is_empty());
+
+        // Cache should always be accessible
+        let cache = manager.cache();
+        assert!(std::sync::Arc::strong_count(&cache) >= 1);
+    }
+
+    // ========================
+    // Catalog Namespace Operations Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_catalog_namespace_operations() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_ns_ops");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        // Create a native catalog so we have something to operate against
+        let catalog = manager
+            .create_native_catalog("test_ns", &format!("file://{}", temp_dir.display()))
+            .await
+            .expect("Expected native catalog creation to succeed");
+
+        // Catalog should be registered
+        let catalogs = manager.list_catalogs().await;
+        assert!(catalogs.contains(&"test_ns".to_string()));
+
+        // It should be the default (first registered)
+        let default = manager
+            .default_catalog()
+            .await
+            .expect("Expected default catalog");
+        assert_eq!(default.name(), "test_ns");
+        assert_eq!(default.catalog_type(), "native");
+
+        // Create a namespace via the catalog trait
+        let ns = catalog
+            .create_namespace(&["analytics".to_string()], {
+                let mut props = std::collections::HashMap::new();
+                props.insert("owner".to_string(), "data_team".to_string());
+                props
+            })
+            .await
+            .expect("Expected namespace creation to succeed");
+
+        assert_eq!(ns.levels, vec!["analytics"]);
+        assert_eq!(ns.properties.get("owner"), Some(&"data_team".to_string()));
+
+        // Check namespace exists
+        let exists = catalog
+            .namespace_exists(&["analytics".to_string()])
+            .await
+            .expect("Expected namespace_exists to succeed");
+        assert!(exists);
+
+        // List namespaces
+        let namespaces = catalog
+            .list_namespaces(None)
+            .await
+            .expect("Expected list_namespaces to succeed");
+        assert!(!namespaces.is_empty());
+
+        // Drop namespace
+        let dropped = catalog
+            .drop_namespace(&["analytics".to_string()], false)
+            .await
+            .expect("Expected drop_namespace to succeed");
+        assert!(dropped);
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    // ========================
+    // Catalog Table Registration Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_catalog_table_registration() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_table_reg");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        let catalog = manager
+            .create_native_catalog("test_tbl", &format!("file://{}", temp_dir.display()))
+            .await
+            .expect("Expected native catalog creation to succeed");
+
+        // Create namespace first
+        catalog
+            .create_namespace(&["default".to_string()], std::collections::HashMap::new())
+            .await
+            .expect("Expected namespace creation to succeed");
+
+        // Create a table with schema
+        let table_id = TableIdentifier::new(vec!["default".to_string()], "vectors".to_string());
+
+        let schema = types::CatalogTableSchema::new("vectors")
+            .with_column(
+                types::CatalogColumn::new(1, "id", types::CatalogDataType::String).nullable(false),
+            )
+            .with_column({
+                let mut col =
+                    types::CatalogColumn::new(2, "embedding", types::CatalogDataType::Vector);
+                col.properties
+                    .insert("dimension".to_string(), "768".to_string());
+                col
+            })
+            .with_column(types::CatalogColumn::new(
+                3,
+                "category",
+                types::CatalogDataType::String,
+            ))
+            .with_primary_key(vec!["id".to_string()]);
+
+        let created_schema = catalog
+            .create_table(&table_id, schema)
+            .await
+            .expect("Expected table creation to succeed");
+
+        assert_eq!(created_schema.name, "vectors");
+        assert_eq!(created_schema.columns.len(), 3);
+        assert_eq!(created_schema.primary_key, vec!["id"]);
+
+        // Verify table exists
+        let exists = catalog
+            .table_exists(&table_id)
+            .await
+            .expect("Expected table_exists to succeed");
+        assert!(exists);
+
+        // List tables in namespace
+        let tables = catalog
+            .list_tables(&["default".to_string()])
+            .await
+            .expect("Expected list_tables to succeed");
+        assert!(!tables.is_empty());
+        assert!(tables.iter().any(|t| t.name == "vectors"));
+
+        // Resolve the table through the manager
+        let (resolved_catalog, resolved_id) = manager
+            .resolve_table("test_tbl.default.vectors")
+            .await
+            .expect("Expected resolve_table to succeed");
+        assert_eq!(resolved_catalog.name(), "test_tbl");
+        assert_eq!(resolved_id.name, "vectors");
+
+        // Clean up
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    }
+
+    // ========================
+    // Catalog Schema Introspection Tests
+    // ========================
+
+    #[tokio::test]
+    async fn test_catalog_schema_introspection() {
+        let manager = CatalogManager::new();
+        let temp_dir = std::env::temp_dir().join("proximadb_test_schema_intro");
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+        let catalog = manager
+            .create_native_catalog("test_intro", &format!("file://{}", temp_dir.display()))
+            .await
+            .expect("Expected native catalog creation to succeed");
+
+        // Create namespace
+        catalog
+            .create_namespace(&["mydb".to_string()], std::collections::HashMap::new())
+            .await
+            .expect("Expected namespace creation to succeed");
+
+        // Create a table with a rich schema
+        let table_id = TableIdentifier::new(vec!["mydb".to_string()], "products".to_string());
+
+        let schema = types::CatalogTableSchema::new("products")
+            .with_column(
+                types::CatalogColumn::new(1, "product_id", types::CatalogDataType::Uuid)
+                    .nullable(false)
+                    .with_comment("Primary key UUID"),
+            )
+            .with_column(
+                types::CatalogColumn::new(2, "name", types::CatalogDataType::String)
+                    .nullable(false),
+            )
+            .with_column(
+                types::CatalogColumn::new(3, "price", types::CatalogDataType::Float64)
+                    .with_default("0.0"),
+            )
+            .with_column(types::CatalogColumn::new(
+                4,
+                "created_at",
+                types::CatalogDataType::TimestampTz,
+            ))
+            .with_column({
+                let mut col =
+                    types::CatalogColumn::new(5, "embedding", types::CatalogDataType::Vector);
+                col.properties
+                    .insert("dimension".to_string(), "768".to_string());
+                col
+            })
+            .with_primary_key(vec!["product_id".to_string()])
+            .with_index(types::CatalogIndex::new(
+                "idx_name",
+                vec!["name".to_string()],
+                types::CatalogIndexType::BTree,
+            ));
+
+        catalog
+            .create_table(&table_id, schema)
+            .await
+            .expect("Expected table creation to succeed");
+
+        // Retrieve the schema and introspect it
+        let retrieved = catalog
+            .get_table(&table_id)
+            .await
+            .expect("Expected get_table to succeed");
+
+        assert_eq!(retrieved.name, "products");
+        assert_eq!(retrieved.columns.len(), 5);
+        assert_eq!(retrieved.schema_version, 1);
+
+        // Verify individual columns
+        let id_col = retrieved
+            .columns
+            .iter()
+            .find(|c| c.name == "product_id")
+            .expect("product_id column should exist");
+        assert!(!id_col.nullable);
+        assert_eq!(id_col.data_type, types::CatalogDataType::Uuid);
+        assert_eq!(id_col.comment.as_deref(), Some("Primary key UUID"));
+
+        let price_col = retrieved
+            .columns
+            .iter()
+            .find(|c| c.name == "price")
+            .expect("price column should exist");
+        assert_eq!(price_col.data_type, types::CatalogDataType::Float64);
+        assert_eq!(price_col.default_value.as_deref(), Some("0.0"));
+        assert!(price_col.nullable); // Default is true
+
+        let embed_col = retrieved
+            .columns
+            .iter()
+            .find(|c| c.name == "embedding")
+            .expect("embedding column should exist");
+        assert_eq!(embed_col.data_type, types::CatalogDataType::Vector);
+
+        // Verify primary key
+        assert_eq!(retrieved.primary_key, vec!["product_id"]);
+
+        // Verify index
+        assert!(!retrieved.indexes.is_empty());
+        let idx = &retrieved.indexes[0];
+        assert_eq!(idx.name, "idx_name");
+        assert_eq!(idx.columns, vec!["name"]);
+        assert_eq!(idx.index_type, types::CatalogIndexType::BTree);
+
+        // Check schema version
+        let version = catalog
+            .get_schema_version(&table_id)
+            .await
+            .expect("Expected get_schema_version to succeed");
+        assert_eq!(version, 1);
 
         // Clean up
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;

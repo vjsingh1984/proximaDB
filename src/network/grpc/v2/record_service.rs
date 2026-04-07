@@ -304,6 +304,14 @@ impl ProximaRecordServiceImpl {
         ProximaRecordServiceServer::new(self)
     }
 
+    fn extract_tenant_id<T>(request: &Request<T>) -> Option<String> {
+        request
+            .metadata()
+            .get("x-tenant-id")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.to_string())
+    }
+
     /// Convert ProximaRecordBatch to VectorBatchRequest for v1 storage
     fn convert_to_v1_batch(
         &self,
@@ -380,8 +388,7 @@ impl ProximaRecordServiceImpl {
                 // Convert UUID bytes to string for storage
                 if uuid.len() == 16 {
                     let uuid_str = uuid::Uuid::from_slice(uuid)
-                        .map(|u| u.to_string())
-                        .unwrap_or_else(|_| hex::encode(uuid));
+                        .map_or_else(|_| hex::encode(uuid), |u| u.to_string());
                     Value::StringValue(uuid_str)
                 } else {
                     Value::BytesValue(uuid.clone())
@@ -441,7 +448,7 @@ impl ProximaRecordServiceImpl {
                     },
                     text_fields: vec![], // Would be populated from text storage
                     timestamp_ms: r.timestamp,
-                    version: r.version.map(|v| v as u32),
+                    version: r.version,
                     source: r.source.clone(),
                 }
             })
@@ -583,8 +590,7 @@ impl ProximaRecordServiceImpl {
                     proximadb_v2::typed_value::Value::UuidValue(uuid) => {
                         let uuid_str = if uuid.len() == 16 {
                             uuid::Uuid::from_slice(uuid)
-                                .map(|u| u.to_string())
-                                .unwrap_or_else(|_| hex::encode(uuid))
+                                .map_or_else(|_| hex::encode(uuid), |u| u.to_string())
                         } else {
                             hex::encode(uuid)
                         };
@@ -758,6 +764,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let batch = request.into_inner();
         info!(
             "V2 gRPC: InsertRecords - collection='{}', records={}",
@@ -779,7 +786,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let record_count = v1_batch.vectors.len() as i64;
 
         // Insert via unified handlers
-        match self.unified_handlers.handle_vector_batch_v1(v1_batch).await {
+        match self
+            .unified_handlers
+            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .await
+        {
             Ok(resp) => {
                 let success_count = if resp.success { record_count } else { 0 };
                 Ok(Response::new(ProximaRecordBatchResponse {
@@ -804,6 +815,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let batch = request.into_inner();
         info!(
             "V2 gRPC: UpsertRecords - collection='{}', records={}",
@@ -815,7 +827,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let v1_batch = self.convert_to_v1_batch(&batch)?;
         let record_count = v1_batch.vectors.len() as i64;
 
-        match self.unified_handlers.handle_vector_batch_v1(v1_batch).await {
+        match self
+            .unified_handlers
+            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .await
+        {
             Ok(resp) => {
                 let success_count = if resp.success { record_count } else { 0 };
                 Ok(Response::new(ProximaRecordBatchResponse {
@@ -840,6 +856,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let batch = request.into_inner();
         info!(
             "V2 gRPC: UpdateRecords - collection='{}', records={}",
@@ -852,7 +869,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let v1_batch = self.convert_to_v1_batch(&batch)?;
         let record_count = v1_batch.vectors.len() as i64;
 
-        match self.unified_handlers.handle_vector_batch_v1(v1_batch).await {
+        match self
+            .unified_handlers
+            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .await
+        {
             Ok(resp) => {
                 let success_count = if resp.success { record_count } else { 0 };
                 Ok(Response::new(ProximaRecordBatchResponse {
@@ -901,6 +922,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<TypedSearchResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         debug!(
             "V2 gRPC: Search - collection='{}', top_k={}",
@@ -942,7 +964,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Execute search
         match self
             .unified_handlers
-            .handle_vector_search_v1(search_request)
+            .handle_vector_search_v1_for_tenant(search_request, tenant_id.as_deref())
             .await
         {
             Ok(resp) => {
@@ -950,7 +972,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 let include_vector = req.include_vector;
 
                 let results = self.convert_search_results(&search_result, include_vector);
-                let total_found = search_result.total_found as i64;
+                let total_found = search_result.total_found;
 
                 Ok(Response::new(TypedSearchResponse {
                     results,
@@ -981,6 +1003,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         debug!(
             "V2 gRPC: SearchStream - collection='{}', top_k={}",
@@ -1022,7 +1045,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Execute search
         let response = self
             .unified_handlers
-            .handle_vector_search_v1(search_request)
+            .handle_vector_search_v1_for_tenant(search_request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
 
@@ -1078,6 +1101,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<Streaming<BatchWriteStreamRequest>>,
     ) -> Result<Response<Self::BatchWriteStreamStream>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let mut inbound = request.into_inner();
 
         // Create a bounded channel for response streaming with flow control
@@ -1098,6 +1122,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         // Clone handlers for the processing task
         let unified_handlers = Arc::clone(&self.unified_handlers);
+        let tenant_id = tenant_id.clone();
 
         // Clone metrics for the spawned task
         let metrics_clone = Arc::clone(&metrics);
@@ -1182,7 +1207,9 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         | Ok(BatchWriteMode::Unspecified)
                         | Ok(BatchWriteMode::Upsert)
                         | Ok(BatchWriteMode::Update) => {
-                            unified_handlers.handle_vector_batch_v1(v1_batch).await
+                            unified_handlers
+                                .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+                                .await
                         }
                         Ok(BatchWriteMode::Delete) => {
                             // Delete not yet supported in batch mode
@@ -1254,17 +1281,17 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 );
 
                 // Record backpressure event if not NONE
-                if backpressure.level != BackpressureLevel::BackpressureNone as i32 {
-                    if let Ok(level) = BackpressureLevel::try_from(backpressure.level) {
-                        metrics.record_backpressure(level);
+                if backpressure.level != BackpressureLevel::BackpressureNone as i32
+                    && let Ok(level) = BackpressureLevel::try_from(backpressure.level)
+                {
+                    metrics.record_backpressure(level);
 
-                        // Log significant backpressure events
-                        if backpressure.level >= BackpressureLevel::BackpressureHigh as i32 {
-                            warn!(
-                                "V2 gRPC: BatchWriteStream - high backpressure: level={:?}, buffer={}%, delay={}ms",
-                                level, backpressure.buffer_percent, backpressure.suggested_delay_ms
-                            );
-                        }
+                    // Log significant backpressure events
+                    if backpressure.level >= BackpressureLevel::BackpressureHigh as i32 {
+                        warn!(
+                            "V2 gRPC: BatchWriteStream - high backpressure: level={:?}, buffer={}%, delay={}ms",
+                            level, backpressure.buffer_percent, backpressure.suggested_delay_ms
+                        );
                     }
                 }
 
@@ -1319,6 +1346,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<CreateSchemaRequest>,
     ) -> Result<Response<CreateSchemaResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         info!("V2 gRPC: CreateSchema - collection='{}'", req.collection_id);
 
@@ -1334,7 +1362,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         let collection_response = self
             .unified_handlers
-            .handle_collection_operation(collection_request)
+            .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {
@@ -1352,17 +1380,16 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         }
 
         // Generate schema ID
-        let schema_id = req
-            .schema
-            .as_ref()
-            .map(|s| {
+        let schema_id = req.schema.as_ref().map_or_else(
+            || format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4()),
+            |s| {
                 if s.schema_id.is_empty() {
                     format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4())
                 } else {
                     s.schema_id.clone()
                 }
-            })
-            .unwrap_or_else(|| format!("schema_{}_{}", req.collection_id, uuid::Uuid::new_v4()));
+            },
+        );
 
         // For now, we don't persist the schema separately - it's stored in collection config
         // A full implementation would update the collection's record_schema config
@@ -1378,6 +1405,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<GetSchemaRequest>,
     ) -> Result<Response<GetSchemaResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         debug!("V2 gRPC: GetSchema - collection='{}'", req.collection_id);
 
@@ -1393,7 +1421,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         let collection_response = self
             .unified_handlers
-            .handle_collection_operation(collection_request)
+            .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
             .await
             .map_err(|e| {
                 if e.to_string().contains("not found") {

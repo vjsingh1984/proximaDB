@@ -104,7 +104,7 @@ pub fn fused_decode_binary_to_f32(
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { fused_decode_binary_neon(input, output, count, bipolar) };
+        unsafe { fused_decode_binary_neon(input, output, count, bipolar) }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -147,7 +147,7 @@ pub fn fused_decode_int4_to_f32(
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { fused_decode_int4_neon(input, output, count, params) };
+        unsafe { fused_decode_int4_neon(input, output, count, params) }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -189,7 +189,7 @@ pub fn fused_decode_int8_to_f32(
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { fused_decode_int8_neon(input, output, count, params) };
+        unsafe { fused_decode_int8_neon(input, output, count, params) }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -238,7 +238,7 @@ pub fn progressive_decode_binary_int8_f32(
 
     #[cfg(target_arch = "aarch64")]
     {
-        return unsafe { progressive_decode_neon(input, output, count, params, bipolar) };
+        unsafe { progressive_decode_neon(input, output, count, params, bipolar) }
     }
 
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -264,11 +264,11 @@ fn fused_decode_binary_scalar(
         (0.0f32, 1.0f32)
     };
 
-    for i in 0..count {
+    for (i, out_val) in output.iter_mut().enumerate().take(count) {
         let byte_idx = i / 8;
         let bit_idx = i % 8;
         let bit = (input[byte_idx] >> bit_idx) & 1;
-        output[i] = if bit == 1 { val_1 } else { val_0 };
+        *out_val = if bit == 1 { val_1 } else { val_0 };
     }
 
     Ok(count)
@@ -284,7 +284,7 @@ fn fused_decode_int4_scalar(
     let scale = params.scale;
     let zero_point = params.zero_point;
 
-    for i in 0..count {
+    for (i, out_val) in output.iter_mut().enumerate().take(count) {
         let byte_idx = i / 2;
         let nibble = if i % 2 == 0 {
             // Low nibble
@@ -298,7 +298,7 @@ fn fused_decode_int4_scalar(
         let signed = if nibble > 7 { nibble - 16 } else { nibble };
 
         // Dequantize: (value - zero_point) * scale
-        output[i] = (signed as i32 - zero_point) as f32 * scale;
+        *out_val = (signed as i32 - zero_point) as f32 * scale;
     }
 
     Ok(count)
@@ -339,7 +339,7 @@ fn progressive_decode_scalar(
         (0i8, -1i8) // Use signed interpretation: 0 and 255 (which is -1 as i8)
     };
 
-    for i in 0..count {
+    for (i, out_val) in output.iter_mut().enumerate().take(count) {
         let byte_idx = i / 8;
         let bit_idx = i % 8;
         let bit = (input[byte_idx] >> bit_idx) & 1;
@@ -348,7 +348,7 @@ fn progressive_decode_scalar(
         let int8_val = if bit == 1 { int8_1 } else { int8_0 };
 
         // Stage 2: INT8 -> FP32
-        output[i] = (int8_val as i32 - zero_point) as f32 * scale;
+        *out_val = (int8_val as i32 - zero_point) as f32 * scale;
     }
 
     Ok(count)
@@ -572,8 +572,7 @@ unsafe fn fused_decode_binary_neon(
     // Process 8 bits at a time
     let chunks = count / 8;
 
-    for i in 0..chunks {
-        let byte = input[i];
+    for (i, &byte) in input.iter().enumerate().take(chunks) {
         let out_base = i * 8;
 
         for bit in 0..8 {
@@ -583,11 +582,11 @@ unsafe fn fused_decode_binary_neon(
 
     // Handle remaining
     let start = chunks * 8;
-    for i in start..count {
+    for (i, out_val) in output.iter_mut().enumerate().take(count).skip(start) {
         let byte_idx = i / 8;
         let bit_idx = i % 8;
         let bit = (input[byte_idx] >> bit_idx) & 1;
-        output[i] = if bit == 1 { val_1 } else { val_0 };
+        *out_val = if bit == 1 { val_1 } else { val_0 };
     }
 
     Ok(count)
@@ -638,7 +637,7 @@ unsafe fn fused_decode_int4_neon(
 
         // Handle remaining
         let start = chunks * 4;
-        for i in start..count {
+        for (i, out_val) in output.iter_mut().enumerate().take(count).skip(start) {
             let byte_idx = i / 2;
             let nibble = if i % 2 == 0 {
                 (input[byte_idx] & 0x0F) as i8
@@ -646,7 +645,7 @@ unsafe fn fused_decode_int4_neon(
                 ((input[byte_idx] >> 4) & 0x0F) as i8
             };
             let signed = if nibble > 7 { nibble - 16 } else { nibble };
-            output[i] = (signed as i32 - zero_point) as f32 * scale;
+            *out_val = (signed as i32 - zero_point) as f32 * scale;
         }
 
         Ok(count)
@@ -733,9 +732,9 @@ unsafe fn progressive_decode_neon(
 
             // Stage 1: Binary -> INT8
             let mut int8_vals = [0i32; 4];
-            for bit in 0..4 {
+            for (bit, int8_val) in int8_vals.iter_mut().enumerate() {
                 let is_set = (byte >> (bit_offset + bit)) & 1 == 1;
-                int8_vals[bit] = if is_set { int8_1 as i32 } else { int8_0 as i32 };
+                *int8_val = if is_set { int8_1 as i32 } else { int8_0 as i32 };
             }
 
             // Stage 2: INT8 -> FP32
@@ -748,12 +747,12 @@ unsafe fn progressive_decode_neon(
 
         // Handle remaining
         let start = chunks * 4;
-        for i in start..count {
+        for (i, out_val) in output.iter_mut().enumerate().take(count).skip(start) {
             let byte_idx = i / 8;
             let bit_idx = i % 8;
             let bit = (input[byte_idx] >> bit_idx) & 1;
             let int8_val = if bit == 1 { int8_1 } else { int8_0 };
-            output[i] = (int8_val as i32 - zero_point) as f32 * scale;
+            *out_val = (int8_val as i32 - zero_point) as f32 * scale;
         }
 
         Ok(count)
@@ -770,7 +769,8 @@ mod tests {
         let input = [0b10101010u8];
         let mut output = vec![0.0f32; 8];
 
-        let count = fused_decode_binary_to_f32(&input, &mut output, true).unwrap();
+        let count = fused_decode_binary_to_f32(&input, &mut output, true)
+            .expect("failed to decode binary bipolar data");
 
         assert_eq!(count, 8);
         let expected = [-1.0f32, 1.0, -1.0, 1.0, -1.0, 1.0, -1.0, 1.0];
@@ -791,7 +791,8 @@ mod tests {
         let input = [0b10101010u8];
         let mut output = vec![0.0f32; 8];
 
-        let count = fused_decode_binary_to_f32(&input, &mut output, false).unwrap();
+        let count = fused_decode_binary_to_f32(&input, &mut output, false)
+            .expect("failed to decode binary unipolar data");
 
         assert_eq!(count, 8);
         let expected = [0.0f32, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
@@ -813,7 +814,8 @@ mod tests {
         let mut output = vec![0.0f32; 4];
         let params = QuantizationParams::symmetric(0.1);
 
-        let count = fused_decode_int4_to_f32(&input, &mut output, &params).unwrap();
+        let count = fused_decode_int4_to_f32(&input, &mut output, &params)
+            .expect("failed to decode INT4 data");
 
         assert_eq!(count, 4);
         let expected = [0.1f32, 0.2, 0.3, 0.4];
@@ -834,7 +836,8 @@ mod tests {
         let mut output = vec![0.0f32; 4];
         let params = QuantizationParams::symmetric(0.01);
 
-        let count = fused_decode_int8_to_f32(&input, &mut output, &params).unwrap();
+        let count = fused_decode_int8_to_f32(&input, &mut output, &params)
+            .expect("failed to decode INT8 data");
 
         assert_eq!(count, 4);
 
@@ -857,7 +860,8 @@ mod tests {
         let mut output = vec![0.0f32; 3];
         let params = QuantizationParams::asymmetric(0.1, 128);
 
-        let count = fused_decode_int8_to_f32(&input, &mut output, &params).unwrap();
+        let count = fused_decode_int8_to_f32(&input, &mut output, &params)
+            .expect("failed to decode INT8 data with zero point");
 
         assert_eq!(count, 3);
 
@@ -883,7 +887,8 @@ mod tests {
         let mut output = vec![0.0f32; 8];
         let params = QuantizationParams::symmetric(0.01);
 
-        let count = progressive_decode_binary_int8_f32(&input, &mut output, &params, true).unwrap();
+        let count = progressive_decode_binary_int8_f32(&input, &mut output, &params, true)
+            .expect("failed to progressively decode binary to INT8 to FP32");
 
         assert_eq!(count, 8);
 
@@ -903,15 +908,16 @@ mod tests {
         let input: Vec<u8> = vec![];
         let mut output = vec![0.0f32; 10];
 
-        let count = fused_decode_binary_to_f32(&input, &mut output, true).unwrap();
+        let count = fused_decode_binary_to_f32(&input, &mut output, true)
+            .expect("failed to decode empty binary data");
         assert_eq!(count, 0);
 
-        let count =
-            fused_decode_int4_to_f32(&input, &mut output, &QuantizationParams::default()).unwrap();
+        let count = fused_decode_int4_to_f32(&input, &mut output, &QuantizationParams::default())
+            .expect("failed to decode empty INT4 data");
         assert_eq!(count, 0);
 
-        let count =
-            fused_decode_int8_to_f32(&input, &mut output, &QuantizationParams::default()).unwrap();
+        let count = fused_decode_int8_to_f32(&input, &mut output, &QuantizationParams::default())
+            .expect("failed to decode empty INT8 data");
         assert_eq!(count, 0);
     }
 
@@ -921,7 +927,8 @@ mod tests {
         let input: Vec<u8> = (0..=124).cycle().take(size / 8 + 1).collect();
         let mut output = vec![0.0f32; size];
 
-        let count = fused_decode_binary_to_f32(&input, &mut output, true).unwrap();
+        let count = fused_decode_binary_to_f32(&input, &mut output, true)
+            .expect("failed to decode large binary data");
         assert_eq!(count, size);
 
         // Verify all values are either -1 or 1

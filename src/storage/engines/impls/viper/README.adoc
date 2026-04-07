@@ -237,7 +237,7 @@ async fn search(&self, request: SearchRequest) -> Result<SearchResponse> {
         final_results.push(SearchResult { id: candidate.id, distance: exact_distance });
     }
 
-    final_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+    final_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
     Ok(SearchResponse { results: final_results })
 }
 ----

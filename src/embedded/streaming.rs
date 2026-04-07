@@ -202,10 +202,7 @@ impl Iterator for EmbeddedSearchIterator {
             IteratorState::Error(msg) => {
                 let error = msg.clone();
                 self.state = IteratorState::Completed;
-                return Some(Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    error,
-                ))));
+                return Some(Err(Box::new(std::io::Error::other(error))));
             }
             IteratorState::Active => {}
         }
@@ -248,10 +245,7 @@ impl Iterator for EmbeddedSearchIterator {
             }
             Some(Err(error)) => {
                 self.state = IteratorState::Error(error.clone());
-                Some(Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    error,
-                ))))
+                Some(Err(Box::new(std::io::Error::other(error))))
             }
             None => {
                 // Channel closed, search complete

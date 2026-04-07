@@ -50,7 +50,7 @@ impl Default for MetadataServiceConfig {
 }
 
 /// Cluster-wide metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClusterMetadata {
     /// Cluster version (incremented on each change)
     pub version: u64,
@@ -60,17 +60,6 @@ pub struct ClusterMetadata {
     pub shard_placements: HashMap<String, ShardPlacement>,
     /// Cluster configuration
     pub config: ClusterConfiguration,
-}
-
-impl Default for ClusterMetadata {
-    fn default() -> Self {
-        Self {
-            version: 0,
-            collections: HashMap::new(),
-            shard_placements: HashMap::new(),
-            config: ClusterConfiguration::default(),
-        }
-    }
 }
 
 /// Metadata for a collection in the cluster

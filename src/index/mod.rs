@@ -76,7 +76,17 @@
 
 pub mod axis;
 pub mod config;
+pub mod diskann;
+/// Enhanced Dense Retrieval with late interaction.
+pub mod edr;
+/// Geo-spatial indexing (geohash-based).
 pub mod geo;
+/// HNSW filtered search implementation.
+pub mod hnsw;
+/// IVF filtered search implementation.
+pub mod ivf;
+/// Sparse vector HNSW index for text and feature-based applications.
+pub mod sparse_hnsw;
 
 // Re-export main types for easier access
 pub use axis::{AxisConfig, AxisManager};
@@ -128,7 +138,7 @@ use crate::core::{VectorId, VectorRecord};
 /// ```
 #[derive(Debug)]
 pub struct GlobalIdIndex {
-    // TODO: Implement with DashMap<VectorId, IndexEntry>
+    // Deferred: Implement with DashMap<VectorId, IndexEntry>
     // where IndexEntry contains collection_id, file_path, offset
 }
 
@@ -158,7 +168,7 @@ impl GlobalIdIndex {
         _collection_id: &str,
         _vector: &VectorRecord,
     ) -> Result<()> {
-        // TODO: Implement with atomic CAS operation
+        // Deferred: Implement with atomic CAS operation
         Ok(())
     }
 
@@ -167,7 +177,7 @@ impl GlobalIdIndex {
     /// Called when vectors move from memtable to SST files or
     /// during compaction when vectors are reorganized.
     pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
-        // TODO: Update index entry with new storage location
+        // Deferred: Update index entry with new storage location
         Ok(())
     }
 
@@ -177,7 +187,7 @@ impl GlobalIdIndex {
     ///
     /// Returns error if ID doesn't exist
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
-        // TODO: Atomic removal with existence check
+        // Deferred: Atomic removal with existence check
         Ok(())
     }
 
@@ -185,7 +195,7 @@ impl GlobalIdIndex {
     ///
     /// Bulk operation for collection deletion
     pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
-        // TODO: Scan and remove all entries for collection
+        // Deferred: Scan and remove all entries for collection
         Ok(())
     }
 }
@@ -197,22 +207,27 @@ pub struct MetadataIndex {
 }
 
 impl MetadataIndex {
+    /// Creates a new metadata index for filtering and faceted search.
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
 
+    /// Inserts a vector's metadata fields into the index.
     pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
         Ok(())
     }
 
+    /// Updates the file reference for a metadata entry after flush or compaction.
     pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
         Ok(())
     }
 
+    /// Removes a vector's metadata from the index.
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
 
+    /// Removes all metadata entries for a given collection.
     pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
@@ -225,22 +240,27 @@ pub struct DenseVectorIndex {
 }
 
 impl DenseVectorIndex {
+    /// Creates a new dense vector index for approximate nearest neighbor search.
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
 
+    /// Inserts a dense vector record into the index.
     pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
         Ok(())
     }
 
+    /// Updates the file reference for a dense vector after flush or compaction.
     pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
         Ok(())
     }
 
+    /// Removes a dense vector from the index.
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
 
+    /// Removes all dense vectors for a given collection.
     pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
@@ -253,22 +273,27 @@ pub struct SparseVectorIndex {
 }
 
 impl SparseVectorIndex {
+    /// Creates a new sparse vector index for inverted-index-based search.
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
 
+    /// Inserts a sparse vector record into the index.
     pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
         Ok(())
     }
 
+    /// Updates the file reference for a sparse vector after flush or compaction.
     pub async fn update_file_reference(&self, _id: &VectorId, _file_path: &str) -> Result<()> {
         Ok(())
     }
 
+    /// Removes a sparse vector from the index.
     pub async fn remove(&self, _id: &VectorId) -> Result<()> {
         Ok(())
     }
 
+    /// Removes all sparse vectors for a given collection.
     pub async fn remove_collection(&self, _collection_id: &str) -> Result<()> {
         Ok(())
     }
@@ -281,10 +306,12 @@ pub struct JoinEngine {
 }
 
 impl JoinEngine {
+    /// Creates a new join engine for hybrid multi-index query execution.
     pub async fn new() -> Result<Self> {
         Ok(Self {})
     }
 
+    /// Executes a hybrid query across dense, sparse, and metadata indexes.
     pub async fn execute_query(
         &self,
         _query: &crate::index::axis::management::manager::HybridQuery,

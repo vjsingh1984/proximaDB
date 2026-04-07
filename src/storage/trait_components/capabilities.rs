@@ -376,6 +376,45 @@ impl EngineCapabilities for NovaCapabilities {
     }
 }
 
+/// TST engine capabilities
+pub struct TstCapabilities;
+
+impl EngineCapabilities for TstCapabilities {
+    fn engine_name(&self) -> &'static str {
+        "TST"
+    }
+
+    fn scan_capabilities(&self) -> ScanCapabilities {
+        ScanCapabilities {
+            supports_predicate_pushdown: true,
+            supports_column_projection: true,
+            supports_row_group_pruning: true,
+            supports_parallel_column_evaluation: true,
+            supports_bloom_filters: false,
+            supports_block_cache: true,
+            supports_range_scans: true,
+            supports_index_scans: false,
+            supports_progressive_quantization: false,
+            supports_zone_maps: true,
+            supports_streaming: true,
+            supports_tier_aware_scanning: true,
+            supports_consolidated_reading: false,
+        }
+    }
+
+    fn supports_collection_level_operations(&self) -> bool {
+        true
+    }
+
+    fn supports_atomic_operations(&self) -> bool {
+        true
+    }
+
+    fn supported_compression(&self) -> HashSet<CompressionAlgorithm> {
+        ViperCapabilities.supported_compression()
+    }
+}
+
 /// RAPTOR engine capabilities
 pub struct RaptorCapabilities;
 
@@ -463,6 +502,7 @@ impl CapabilityFactory {
             StorageEngineStrategy::Viper => Box::new(ViperCapabilities),
             StorageEngineStrategy::Swift => Box::new(SwiftCapabilities),
             StorageEngineStrategy::Nova => Box::new(NovaCapabilities),
+            StorageEngineStrategy::TimeSeries => Box::new(TstCapabilities),
             StorageEngineStrategy::Raptor => Box::new(RaptorCapabilities),
             // Default to SST capabilities for unknown strategies
             _ => Box::new(SstCapabilities),
@@ -484,6 +524,7 @@ impl CapabilityFactory {
             StorageEngine::Viper => Box::new(ViperCapabilities),
             StorageEngine::Swift => Box::new(SwiftCapabilities),
             StorageEngine::Nova => Box::new(NovaCapabilities),
+            StorageEngine::Tst => Box::new(TstCapabilities),
             StorageEngine::Raptor => Box::new(RaptorCapabilities),
             // Default to SST capabilities for unknown engines
             _ => Box::new(SstCapabilities),

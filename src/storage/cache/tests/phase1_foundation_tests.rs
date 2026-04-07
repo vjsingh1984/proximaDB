@@ -12,6 +12,7 @@ struct TestKey(String);
 
 impl CacheKey for TestKey {}
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct TestValue {
     data: Vec<u8>,
@@ -211,7 +212,7 @@ async fn test_storage_backends() {
     // Test memory backend
     let memory_backend = MemoryBackend::<String, Vec<u8>>::new(1024 * 1024);
 
-    memory_backend.put("key1".to_string(), vec![1, 2, 3]).await;
+    let _ = memory_backend.put("key1".to_string(), vec![1, 2, 3]).await;
     let value = memory_backend.get(&"key1".to_string()).await;
     assert_eq!(value, Some(vec![1, 2, 3]));
 

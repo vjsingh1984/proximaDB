@@ -6,6 +6,7 @@
 use super::{
     ColumnSpec, EdgeDirection, PhysicalOperator, QueryValue, ResultTuple, evaluate_property_filter,
 };
+use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::proto::proximadb_v1::{Edge, Node, PropertyFilter};
 use anyhow::Result;
@@ -191,7 +192,7 @@ impl PhysicalOperator for ExpandOperator {
 
         // Estimate cardinality (input cardinality * avg degree)
         let input_card = self.input.estimated_cardinality();
-        let avg_degree = 10; // TODO: Get from statistics
+        let avg_degree = 10; // Deferred: Get from statistics
         self.estimated_cardinality = input_card * avg_degree;
 
         Ok(())
@@ -200,21 +201,29 @@ impl PhysicalOperator for ExpandOperator {
     fn next(&mut self) -> Result<Option<ResultTuple>> {
         loop {
             // Expand current node's edges
-            if let Some(ref mut iter) = self.edge_iterator {
-                if let Some((edge, target_node)) = iter.next() {
-                    // Create result tuple by extending input tuple
-                    let mut result = self.current_input.as_ref().unwrap().clone();
+            if let Some(ref mut iter) = self.edge_iterator
+                && let Some((edge, target_node)) = iter.next()
+            {
+                // Create result tuple by extending input tuple
+                let mut result = self
+                    .current_input
+                    .as_ref()
+                    .ok_or_else(|| {
+                        ProximaDBError::Internal(
+                            "No current input tuple available in expand operator".to_string(),
+                        )
+                    })?
+                    .clone();
 
-                    // Add edge binding (if requested)
-                    if let Some(ref edge_var) = self.edge_variable {
-                        result.set(edge_var.clone(), QueryValue::Edge(edge));
-                    }
-
-                    // Add target node binding
-                    result.set(self.to_variable.clone(), QueryValue::Node(target_node));
-
-                    return Ok(Some(result));
+                // Add edge binding (if requested)
+                if let Some(ref edge_var) = self.edge_variable {
+                    result.set(edge_var.clone(), QueryValue::Edge(edge));
                 }
+
+                // Add target node binding
+                result.set(self.to_variable.clone(), QueryValue::Node(target_node));
+
+                return Ok(Some(result));
             }
 
             // Get next input tuple

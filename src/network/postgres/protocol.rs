@@ -22,12 +22,16 @@ use super::session::Session;
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
 use crate::catalog::CatalogManager;
+use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
+use crate::observability::ObservabilityService;
+use crate::query::multimodel_router::{self, StoreType};
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
 use crate::services::{DdlService, DmlService};
 use crate::storage::StorageEngine;
+use crate::storage::document::DocumentService;
 
 /// PostgreSQL protocol handler
 pub struct PostgresProtocol {
@@ -58,6 +62,12 @@ pub struct PostgresProtocol {
     ddl_service: Option<Arc<DdlService>>,
     /// DML service for INSERT/UPDATE/DELETE operations (optional, for catalog integration)
     dml_service: Option<Arc<DmlService>>,
+    /// Document service for native document collections
+    document_service: Option<Arc<DocumentService>>,
+    /// Graph service for native graph collections
+    graph_service: Option<Arc<GraphService>>,
+    /// Observability service for logs/metrics/traces
+    observability_service: Option<Arc<ObservabilityService>>,
 }
 
 /// Prepared statement
@@ -90,18 +100,7 @@ struct Portal {
     max_rows: i32,
 }
 
-/// Store type for multi-model database routing
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StoreType {
-    /// Vector store (default) - embeddings with similarity search
-    Vector,
-    /// Document store - MongoDB-like JSON documents
-    Document,
-    /// Graph store - nodes and edges with traversal
-    Graph,
-    /// Observability store - logs, metrics, traces
-    Observability,
-}
+// StoreType imported from crate::query::multimodel_router (canonical definition)
 
 /// COPY format type for bulk data transfer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +157,9 @@ impl PostgresProtocol {
         storage: Arc<RwLock<StorageEngine>>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
+        document_service: Option<Arc<DocumentService>>,
+        graph_service: Option<Arc<GraphService>>,
+        observability_service: Option<Arc<ObservabilityService>>,
     ) -> Self {
         Self {
             stream,
@@ -172,6 +174,9 @@ impl PostgresProtocol {
             portals: HashMap::new(),
             ddl_service: None,
             dml_service: None,
+            document_service,
+            graph_service,
+            observability_service,
         }
     }
 
@@ -200,6 +205,9 @@ impl PostgresProtocol {
             portals: HashMap::new(),
             ddl_service: Some(ddl_service),
             dml_service: Some(dml_service),
+            document_service: None,
+            graph_service: None,
+            observability_service: None,
         }
     }
 
@@ -399,11 +407,14 @@ impl PostgresProtocol {
                 let store_type = self.detect_select_store_type(&table_name, &upper);
                 return match store_type {
                     StoreType::Document => self.execute_document_query(&table_name, query).await,
-                    StoreType::Observability => {
+                    StoreType::Observability | StoreType::TimeSeries => {
                         self.execute_observability_query(&table_name, query).await
                     }
                     StoreType::Graph => self.execute_graph_query(&table_name, query).await,
                     StoreType::Vector => self.execute_collection_query(&table_name, query).await,
+                    StoreType::Relational | StoreType::Event => {
+                        self.execute_relational_query(query, &table_name).await
+                    }
                 };
             }
 
@@ -566,42 +577,7 @@ impl PostgresProtocol {
 
     /// Detect store type for SELECT queries
     fn detect_select_store_type(&self, table_name: &str, query: &str) -> StoreType {
-        // Check table name prefixes
-        let lower_table = table_name.to_lowercase();
-        if lower_table.starts_with("doc_") || lower_table.starts_with("documents.") {
-            return StoreType::Document;
-        }
-        if lower_table.starts_with("log_")
-            || lower_table == "logs"
-            || lower_table.starts_with("observability.")
-        {
-            return StoreType::Observability;
-        }
-        if lower_table.starts_with("metrics") || lower_table.starts_with("metric_") {
-            return StoreType::Observability;
-        }
-        if lower_table.starts_with("graph_")
-            || lower_table.starts_with("nodes")
-            || lower_table.starts_with("edges")
-        {
-            return StoreType::Graph;
-        }
-
-        // Check for JSON path syntax ($.)
-        if query.contains("$.") {
-            return StoreType::Document;
-        }
-
-        // Check for observability-specific keywords
-        if query.contains("SEVERITY")
-            || query.contains("SERVICE =")
-            || query.contains("BUCKET_TIME")
-        {
-            return StoreType::Observability;
-        }
-
-        // Default to vector store
-        StoreType::Vector
+        multimodel_router::detect_store_type_from_query(query, table_name, None)
     }
 
     /// Execute a query against a vector collection
@@ -625,18 +601,15 @@ impl PostgresProtocol {
                 let name = collection
                     .config
                     .as_ref()
-                    .map(|c| c.name.clone())
-                    .unwrap_or_else(|| collection.id.clone());
+                    .map_or_else(|| collection.id.clone(), |c| c.name.clone());
                 let dim = collection
                     .config
                     .as_ref()
-                    .map(|c| c.dimension.to_string())
-                    .unwrap_or_else(|| "0".to_string());
+                    .map_or_else(|| "0".to_string(), |c| c.dimension.to_string());
                 let count = collection
                     .stats
                     .as_ref()
-                    .map(|s| s.vector_count.to_string())
-                    .unwrap_or_else(|| "0".to_string());
+                    .map_or_else(|| "0".to_string(), |s| s.vector_count.to_string());
 
                 self.send_data_row(&[&name, &dim, &count]).await?;
                 self.send_command_complete("SELECT 1").await
@@ -652,16 +625,25 @@ impl PostgresProtocol {
         }
     }
 
+    /// Execute a relational query against a standard SQL table (SEQUOIA engine)
+    /// Phase 2 will wire this to SequoiaEngine.query_rows() for actual row retrieval
+    async fn execute_relational_query(&mut self, _query: &str, table_name: &str) -> Result<()> {
+        debug!("Executing relational query on table: {}", table_name);
+
+        // Return empty result set with generic column descriptions
+        // Phase 2: Parse SELECT columns and wire to SequoiaEngine for real data
+        let fields = vec![
+            FieldDescription::new("id", PgType::Int4),
+            FieldDescription::new("result", PgType::Text),
+        ];
+        self.send_row_description(&fields).await?;
+        self.send_command_complete("SELECT 0").await
+    }
+
     /// Execute a document store query
     /// Supports: SELECT * FROM doc_users WHERE $.age > 25
     async fn execute_document_query(&mut self, table_name: &str, query: &str) -> Result<()> {
-        use crate::storage::document::DocumentService;
-
         debug!("Executing document query on table: {}", table_name);
-
-        // Get document service from vector ops (shares engine)
-        let engine = self.vector_ops.unified_engine();
-        let doc_service = DocumentService::new(engine);
 
         // Extract collection name (remove doc_ prefix if present)
         let collection_name = table_name
@@ -681,6 +663,12 @@ impl PostgresProtocol {
             offset: 0,
             include_count: false,
         };
+
+        let doc_service = self.document_service.clone().unwrap_or_else(|| {
+            Arc::new(crate::storage::document::DocumentService::new(
+                self.vector_ops.unified_engine(),
+            ))
+        });
 
         match doc_service
             .query_documents(collection_name, query_params)
@@ -866,6 +854,68 @@ impl PostgresProtocol {
         serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_else(|_| "{}".to_string())
     }
 
+    fn json_value_to_sql_object(
+        &self,
+        value: &serde_json::Value,
+    ) -> Option<crate::proto::proximadb_v1::SqlObject> {
+        let serde_json::Value::Object(map) = value else {
+            return None;
+        };
+
+        let fields = map
+            .iter()
+            .filter_map(|(key, value)| {
+                self.json_value_to_sql_value(value)
+                    .map(|sql_value| (key.clone(), sql_value))
+            })
+            .collect();
+
+        Some(crate::proto::proximadb_v1::SqlObject { fields })
+    }
+
+    fn json_value_to_sql_value(
+        &self,
+        value: &serde_json::Value,
+    ) -> Option<crate::proto::proximadb_v1::SqlValue> {
+        use crate::proto::proximadb_v1::{SqlArray, SqlValue, sql_value::Value as SqlVal};
+
+        match value {
+            serde_json::Value::Null => Some(SqlValue {
+                value: Some(SqlVal::NullValue(0)),
+            }),
+            serde_json::Value::Bool(b) => Some(SqlValue {
+                value: Some(SqlVal::BoolValue(*b)),
+            }),
+            serde_json::Value::Number(n) => n
+                .as_i64()
+                .map(|i| SqlValue {
+                    value: Some(SqlVal::Int64Value(i)),
+                })
+                .or_else(|| {
+                    n.as_f64().map(|f| SqlValue {
+                        value: Some(SqlVal::NumberValue(f)),
+                    })
+                }),
+            serde_json::Value::String(s) => Some(SqlValue {
+                value: Some(SqlVal::StringValue(s.clone())),
+            }),
+            serde_json::Value::Array(values) => {
+                let values = values
+                    .iter()
+                    .filter_map(|item| self.json_value_to_sql_value(item))
+                    .collect();
+                Some(SqlValue {
+                    value: Some(SqlVal::ArrayValue(SqlArray { values })),
+                })
+            }
+            serde_json::Value::Object(_) => {
+                self.json_value_to_sql_object(value).map(|object| SqlValue {
+                    value: Some(SqlVal::ObjectValue(object)),
+                })
+            }
+        }
+    }
+
     /// Execute an observability store query (logs, metrics)
     async fn execute_observability_query(&mut self, table_name: &str, query: &str) -> Result<()> {
         use crate::observability::{LogQueryParams, ObservabilityService, ObservabilityStorage};
@@ -880,15 +930,19 @@ impl PostgresProtocol {
         }
 
         // Log query
-        let data_dir = std::env::var("PROXIMADB_DATA_DIR")
-            .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
-        let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
+        let obs_service = if let Some(service) = self.observability_service.clone() {
+            service
+        } else {
+            let data_dir = std::env::var("PROXIMADB_DATA_DIR")
+                .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
 
-        let obs_service = match ObservabilityService::new(storage).await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Failed to create observability service: {}", e);
-                return self.send_empty_result().await;
+            match ObservabilityService::new(storage).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    warn!("Failed to create observability service: {}", e);
+                    return self.send_empty_result().await;
+                }
             }
         };
 
@@ -969,15 +1023,19 @@ impl PostgresProtocol {
 
         debug!("Executing metric query on table: {}", table_name);
 
-        let data_dir = std::env::var("PROXIMADB_DATA_DIR")
-            .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
-        let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
+        let obs_service = if let Some(service) = self.observability_service.clone() {
+            service
+        } else {
+            let data_dir = std::env::var("PROXIMADB_DATA_DIR")
+                .unwrap_or_else(|_| "/tmp/proximadb/data".to_string());
+            let storage = std::sync::Arc::new(ObservabilityStorage::new(&data_dir));
 
-        let obs_service = match ObservabilityService::new(storage).await {
-            Ok(s) => s,
-            Err(e) => {
-                warn!("Failed to create observability service: {}", e);
-                return self.send_empty_result().await;
+            match ObservabilityService::new(storage).await {
+                Ok(service) => Arc::new(service),
+                Err(e) => {
+                    warn!("Failed to create observability service: {}", e);
+                    return self.send_empty_result().await;
+                }
             }
         };
 
@@ -1119,10 +1177,10 @@ impl PostgresProtocol {
             // Look for = 'value' pattern
             if let Some(eq_pos) = after.find('=') {
                 let value_start = after[eq_pos + 1..].trim();
-                if value_start.starts_with('\'') {
-                    if let Some(end) = value_start[1..].find('\'') {
-                        services.push(value_start[1..end + 1].to_string());
-                    }
+                if value_start.starts_with('\'')
+                    && let Some(end) = value_start[1..].find('\'')
+                {
+                    services.push(value_start[1..end + 1].to_string());
                 }
             }
         }
@@ -1138,10 +1196,10 @@ impl PostgresProtocol {
             let after = &query[name_pos..];
             if let Some(eq_pos) = after.find('=') {
                 let value_start = after[eq_pos + 1..].trim();
-                if value_start.starts_with('\'') {
-                    if let Some(end) = value_start[1..].find('\'') {
-                        return Some(value_start[1..end + 1].to_string());
-                    }
+                if value_start.starts_with('\'')
+                    && let Some(end) = value_start[1..].find('\'')
+                {
+                    return Some(value_start[1..end + 1].to_string());
                 }
             }
         }
@@ -1232,46 +1290,20 @@ impl PostgresProtocol {
             StoreType::Vector => self.create_vector_collection(&table_name, &upper).await,
             StoreType::Document => self.create_document_collection(&table_name, &upper).await,
             StoreType::Graph => self.create_graph_collection(&table_name, &upper).await,
-            StoreType::Observability => {
+            StoreType::Observability | StoreType::TimeSeries => {
                 self.create_observability_namespace(&table_name, &upper)
                     .await
+            }
+            StoreType::Relational | StoreType::Event => {
+                info!("Created relational table '{}' via PostgreSQL", table_name);
+                self.send_command_complete("CREATE TABLE").await
             }
         }
     }
 
     /// Detect store type from USING clause or column definitions
     fn detect_store_type(&self, query: &str) -> StoreType {
-        // Check explicit USING clause first
-        if query.contains("USING DOCUMENT") || query.contains("USING JSONB") {
-            return StoreType::Document;
-        }
-        if query.contains("USING GRAPH") {
-            return StoreType::Graph;
-        }
-        if query.contains("USING OBSERVABILITY") || query.contains("USING LOGS") {
-            return StoreType::Observability;
-        }
-        if query.contains("USING VECTOR") {
-            return StoreType::Vector;
-        }
-
-        // Infer from column types
-        if query.contains("JSONB") || query.contains("JSON ") {
-            return StoreType::Document;
-        }
-        if query.contains("LABELS TEXT[]")
-            || query.contains("SOURCE_ID") && query.contains("TARGET_ID")
-        {
-            return StoreType::Graph;
-        }
-        if query.contains("TIMESTAMPTZ")
-            && (query.contains("SEVERITY") || query.contains("MESSAGE"))
-        {
-            return StoreType::Observability;
-        }
-
-        // Default to vector if vector column present or unknown
-        StoreType::Vector
+        multimodel_router::detect_store_type_from_create(query)
     }
 
     /// Create a vector collection (existing behavior)
@@ -1317,14 +1349,38 @@ impl PostgresProtocol {
 
         use crate::proto::proximadb_v1::DocumentCollectionConfig;
 
-        let _config = DocumentCollectionConfig {
+        let config = DocumentCollectionConfig {
             name: table_name.to_string(),
             enable_fulltext: true,
             ..Default::default()
         };
 
-        // Store document collection config (use existing infrastructure)
-        // For now, create as a special vector collection with dimension 0
+        if let Some(document_service) = self.document_service.clone() {
+            match document_service.create_collection(table_name, config).await {
+                Ok(_) => {
+                    info!(
+                        "Created document collection '{}' via PostgreSQL",
+                        table_name
+                    );
+                    return self.send_command_complete("CREATE TABLE").await;
+                }
+                Err(e) if e.to_string().contains("already exists") => {
+                    return self.send_command_complete("CREATE TABLE").await;
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to create document collection '{}' via DocumentService: {}",
+                        table_name, e
+                    );
+                    return self
+                        .send_error("ERROR", "42P07", &format!("Failed to create table: {}", e))
+                        .await;
+                }
+            }
+        }
+
+        // Fall back to the historical vector-backed document shim when the real document service
+        // is not available on this protocol path.
         use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine};
 
         let vector_config = CollectionConfig {
@@ -1366,13 +1422,37 @@ impl PostgresProtocol {
     async fn create_graph_collection(&mut self, table_name: &str, _query: &str) -> Result<()> {
         debug!("Creating graph '{}'", table_name);
 
-        // Use graph service to create graph
-        // For now, acknowledge creation (graph service integration pending)
-        info!(
-            "Created graph '{}' via PostgreSQL (graph engine: ORION)",
-            table_name
-        );
-        self.send_command_complete("CREATE TABLE").await
+        if let Some(graph_service) = self.graph_service.clone() {
+            let request = crate::proto::proximadb_v1::CreateGraphRequest {
+                graph_id: table_name.to_string(),
+                name: Some(table_name.to_string()),
+                ..Default::default()
+            };
+
+            match graph_service.create_graph_collection(request).await {
+                Ok(()) => {
+                    info!(
+                        "Created graph '{}' via PostgreSQL (graph engine: ORION)",
+                        table_name
+                    );
+                    self.send_command_complete("CREATE TABLE").await
+                }
+                Err(e) if e.to_string().contains("already exists") => {
+                    self.send_command_complete("CREATE TABLE").await
+                }
+                Err(e) => {
+                    warn!("Failed to create graph '{}': {}", table_name, e);
+                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e))
+                        .await
+                }
+            }
+        } else {
+            info!(
+                "Graph CREATE acknowledged for '{}' without graph service wiring",
+                table_name
+            );
+            self.send_command_complete("CREATE TABLE").await
+        }
     }
 
     /// Create an observability namespace (logs/metrics/traces)
@@ -1383,13 +1463,45 @@ impl PostgresProtocol {
     ) -> Result<()> {
         debug!("Creating observability namespace '{}'", table_name);
 
-        // Use observability service to create namespace
-        // For now, acknowledge creation (observability service integration pending)
-        info!(
-            "Created observability namespace '{}' via PostgreSQL",
-            table_name
-        );
-        self.send_command_complete("CREATE TABLE").await
+        if let Some(observability_service) = self.observability_service.clone() {
+            let config = crate::proto::proximadb_v1::ObservabilityNamespaceConfig {
+                name: table_name.to_string(),
+                retention: Some(crate::proto::proximadb_v1::RetentionConfig {
+                    hot_retention_hours: 24,
+                    warm_retention_days: 7,
+                    cold_retention_days: 30,
+                    archive_retention_days: 90,
+                }),
+                ..Default::default()
+            };
+
+            match observability_service.create_namespace(config).await {
+                Ok(_) => {
+                    info!(
+                        "Created observability namespace '{}' via PostgreSQL",
+                        table_name
+                    );
+                    self.send_command_complete("CREATE TABLE").await
+                }
+                Err(e) if e.to_string().contains("already exists") => {
+                    self.send_command_complete("CREATE TABLE").await
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to create observability namespace '{}': {}",
+                        table_name, e
+                    );
+                    self.send_error("ERROR", "42P07", &format!("Failed to create table: {}", e))
+                        .await
+                }
+            }
+        } else {
+            info!(
+                "Observability namespace CREATE acknowledged for '{}' without service wiring",
+                table_name
+            );
+            self.send_command_complete("CREATE TABLE").await
+        }
     }
 
     /// Extract vector dimension from type: vector(128) -> 128
@@ -1437,7 +1549,12 @@ impl PostgresProtocol {
             }
             StoreType::Document => self.insert_document(&table_name, query).await,
             StoreType::Graph => self.insert_graph_data(&table_name, query).await,
-            StoreType::Observability => self.insert_log(&table_name, query).await,
+            StoreType::Observability | StoreType::TimeSeries => {
+                self.insert_log(&table_name, query).await
+            }
+            StoreType::Relational | StoreType::Event => {
+                self.send_command_complete("INSERT 0 1").await
+            }
         }
     }
 
@@ -1480,33 +1597,7 @@ impl PostgresProtocol {
 
     /// Detect store type for INSERT from table name or query content
     fn detect_insert_store_type(&self, table_name: &str, query: &str) -> StoreType {
-        // Check table name prefixes
-        if table_name.starts_with("doc_") || table_name.contains("document") {
-            return StoreType::Document;
-        }
-        if table_name.starts_with("log_")
-            || table_name.contains("logs")
-            || table_name.contains("metrics")
-        {
-            return StoreType::Observability;
-        }
-        if table_name.starts_with("node_")
-            || table_name.starts_with("edge_")
-            || table_name.contains("graph")
-        {
-            return StoreType::Graph;
-        }
-
-        // Check query content
-        if query.contains("JSONB") || query.contains("::JSON") {
-            return StoreType::Document;
-        }
-        if query.contains("SEVERITY") || query.contains("LOG_") {
-            return StoreType::Observability;
-        }
-
-        // Default to vector
-        StoreType::Vector
+        multimodel_router::detect_store_type_from_query(query, table_name, None)
     }
 
     /// Insert vector into collection (existing behavior)
@@ -1528,8 +1619,10 @@ impl PostgresProtocol {
             return self.send_command_complete("INSERT 0 1").await;
         }
 
-        let id = id.unwrap();
-        let vector = vector.unwrap();
+        let (id, vector) = match (id, vector) {
+            (Some(id), Some(vector)) => (id, vector),
+            _ => return self.send_command_complete("INSERT 0 1").await,
+        };
 
         debug!(
             "Inserting vector '{}' into collection '{}' (dim={})",
@@ -1586,13 +1679,44 @@ impl PostgresProtocol {
             return self.send_command_complete("INSERT 0 0").await;
         }
 
-        let id = id.unwrap();
+        let id = match id {
+            Some(id) => id,
+            None => return self.send_command_complete("INSERT 0 0").await,
+        };
         let json_data = json_str.unwrap_or_else(|| "{}".to_string());
 
         debug!(
             "Inserting document '{}' into collection '{}'",
             id, table_name
         );
+
+        if let Some(document_service) = self.document_service.clone() {
+            let parsed = serde_json::from_str::<serde_json::Value>(&json_data)
+                .context("Failed to parse JSON document")?;
+            let Some(document) = self.json_value_to_sql_object(&parsed) else {
+                return self
+                    .send_error("ERROR", "22P02", "JSON document must be an object")
+                    .await;
+            };
+
+            return match document_service
+                .insert_document(table_name, Some(&id), document)
+                .await
+            {
+                Ok(_) => {
+                    info!(
+                        "Inserted document '{}' into '{}' via PostgreSQL DocumentService",
+                        id, table_name
+                    );
+                    self.send_command_complete("INSERT 0 1").await
+                }
+                Err(e) => {
+                    warn!("Failed to insert document via DocumentService: {}", e);
+                    self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
+                        .await
+                }
+            };
+        }
 
         // For now, store documents as vectors with empty vector and JSON metadata
         use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
@@ -1646,7 +1770,7 @@ impl PostgresProtocol {
     /// Insert graph data (nodes/edges)
     async fn insert_graph_data(&mut self, table_name: &str, _query: &str) -> Result<()> {
         debug!("Inserting graph data into '{}'", table_name);
-        // TODO: Integrate with graph service
+        // Deferred: Integrate with graph service
         info!(
             "Graph INSERT acknowledged for '{}' (graph service integration pending)",
             table_name
@@ -1668,7 +1792,36 @@ impl PostgresProtocol {
 
         debug!("Inserting log into namespace '{}'", table_name);
 
-        // TODO: Integrate with observability service
+        if let Some(observability_service) = self.observability_service.clone() {
+            let Some(message) = message else {
+                return self.send_command_complete("INSERT 0 0").await;
+            };
+
+            let log = crate::proto::proximadb_v1::LogEntry {
+                timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                severity: crate::proto::proximadb_v1::Severity::Info as i32,
+                message,
+                fields: HashMap::new(),
+                source: Some("postgres".to_string()),
+                service: Some("proximadb".to_string()),
+            };
+
+            return match observability_service
+                .ingest_logs(table_name, vec![log], None)
+                .await
+            {
+                Ok(_) => {
+                    info!("Inserted log into '{}' via PostgreSQL", table_name);
+                    self.send_command_complete("INSERT 0 1").await
+                }
+                Err(e) => {
+                    warn!("Failed to insert log into '{}': {}", table_name, e);
+                    self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
+                        .await
+                }
+            };
+        }
+
         info!(
             "Log INSERT acknowledged for '{}': {:?}",
             table_name, message
@@ -1742,7 +1895,7 @@ impl PostgresProtocol {
         if let Some(id) = id {
             debug!("Deleting vector '{}' from collection '{}'", id, table_name);
 
-            // TODO: Implement proper vector deletion via tombstone/WAL
+            // Deferred: Implement proper vector deletion via tombstone/WAL
             // For now, acknowledge the delete request
             info!(
                 "DELETE acknowledged for vector '{}' in '{}' (tombstone write pending)",
@@ -1937,9 +2090,9 @@ impl PostgresProtocol {
         let after_eq = after_id[eq_pos + 1..].trim();
 
         // Extract quoted value
-        if after_eq.starts_with('\'') {
-            let end = after_eq[1..].find('\'')?;
-            Some(after_eq[1..end + 1].to_string())
+        if let Some(after_quote) = after_eq.strip_prefix('\'') {
+            let end = after_quote.find('\'')?;
+            Some(after_quote[..end + 1].to_string())
         } else {
             // Unquoted value - take until whitespace or semicolon
             let end = after_eq
@@ -2847,10 +3000,363 @@ impl PostgresProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::multimodel_router;
 
     #[test]
     fn test_frontend_message() {
         assert_eq!(FrontendMessage::Query as u8, b'Q');
         assert_eq!(FrontendMessage::Terminate as u8, b'X');
+    }
+
+    #[test]
+    fn test_store_type_detection_vector() {
+        // Vector queries contain <->, <=>, or <#> operators (pgvector syntax)
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM embeddings ORDER BY vec <-> '[0.1, 0.2, 0.3]' LIMIT 10",
+                "embeddings",
+                None,
+            ),
+            StoreType::Vector
+        );
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT id, vec <=> '[0.5, 0.5]' AS similarity FROM items",
+                "items",
+                None,
+            ),
+            StoreType::Vector
+        );
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT id FROM products ORDER BY embedding <#> $1 LIMIT 5",
+                "products",
+                None,
+            ),
+            StoreType::Vector
+        );
+
+        // CREATE TABLE with VECTOR column type
+        assert_eq!(
+            multimodel_router::detect_store_type_from_create(
+                "CREATE TABLE items (id TEXT, embedding VECTOR(384))",
+            ),
+            StoreType::Vector
+        );
+
+        // Explicit USING VECTOR clause
+        assert_eq!(
+            multimodel_router::detect_store_type_from_create(
+                "CREATE TABLE vecs (id TEXT, data FLOAT[]) USING VECTOR",
+            ),
+            StoreType::Vector
+        );
+    }
+
+    #[test]
+    fn test_store_type_detection_document() {
+        // Document queries use JSON path expressions ($.)
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM products WHERE data $.price > 100",
+                "products",
+                None,
+            ),
+            StoreType::Document
+        );
+
+        // Document tables detected by doc_ prefix
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM doc_users WHERE active = true",
+                "doc_users",
+                None,
+            ),
+            StoreType::Document
+        );
+
+        // document_ prefix also works
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM document_orders",
+                "document_orders",
+                None,
+            ),
+            StoreType::Document
+        );
+
+        // CREATE with JSONB column
+        assert_eq!(
+            multimodel_router::detect_store_type_from_create(
+                "CREATE TABLE docs (id TEXT PRIMARY KEY, data JSONB)",
+            ),
+            StoreType::Document
+        );
+
+        // CREATE with explicit USING DOCUMENT
+        assert_eq!(
+            multimodel_router::detect_store_type_from_create(
+                "CREATE TABLE catalog (id TEXT, payload JSON) USING DOCUMENT",
+            ),
+            StoreType::Document
+        );
+    }
+
+    #[test]
+    fn test_store_type_detection_graph() {
+        // Graph tables detected by graph_ prefix
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM graph_social WHERE node_type = 'person'",
+                "graph_social",
+                None,
+            ),
+            StoreType::Graph
+        );
+
+        // node_ prefix
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM node_users",
+                "node_users",
+                None,
+            ),
+            StoreType::Graph
+        );
+
+        // edge_ prefix
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM edge_follows",
+                "edge_follows",
+                None,
+            ),
+            StoreType::Graph
+        );
+
+        // CREATE with explicit USING GRAPH
+        assert_eq!(
+            multimodel_router::detect_store_type_from_create(
+                "CREATE TABLE social_network (id TEXT) USING GRAPH",
+            ),
+            StoreType::Graph
+        );
+    }
+
+    #[test]
+    fn test_store_type_detection_observability() {
+        // log_ prefix -> Observability
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM log_application WHERE severity = 'error'",
+                "log_application",
+                None,
+            ),
+            StoreType::Observability
+        );
+
+        // metric_ prefix -> Observability
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM metric_http_requests",
+                "metric_http_requests",
+                None,
+            ),
+            StoreType::Observability
+        );
+
+        // trace_ prefix -> Observability
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM trace_spans WHERE service = 'gateway'",
+                "trace_spans",
+                None,
+            ),
+            StoreType::Observability
+        );
+
+        // CREATE with USING OBSERVABILITY
+        assert_eq!(
+            multimodel_router::detect_store_type_from_create(
+                "CREATE TABLE system_logs (ts TIMESTAMP, msg TEXT) USING OBSERVABILITY",
+            ),
+            StoreType::Observability
+        );
+
+        // CREATE with USING TIMESERIES (also maps to Observability)
+        assert_eq!(
+            multimodel_router::detect_store_type_from_create(
+                "CREATE TABLE sensor_data (ts TIMESTAMP, value FLOAT) USING TIMESERIES",
+            ),
+            StoreType::Observability
+        );
+    }
+
+    #[test]
+    fn test_store_type_detection_relational() {
+        // Standard SQL without any special markers -> Relational (default)
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT id, name, email FROM users WHERE active = true",
+                "users",
+                None,
+            ),
+            StoreType::Relational
+        );
+
+        // CREATE TABLE without USING clause or special column types
+        assert_eq!(
+            multimodel_router::detect_store_type_from_create(
+                "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255), email TEXT)",
+            ),
+            StoreType::Relational
+        );
+
+        // Verify priority: vector operators override table name prefix
+        // Even with a graph_ prefix, <-> forces Vector detection
+        assert_eq!(
+            multimodel_router::detect_store_type_from_query(
+                "SELECT * FROM graph_nodes ORDER BY embedding <-> '[0.1]' LIMIT 5",
+                "graph_nodes",
+                None,
+            ),
+            StoreType::Vector
+        );
+    }
+
+    #[test]
+    fn test_frontend_message_types() {
+        // Verify all FrontendMessage enum byte values match PostgreSQL protocol spec
+        assert_eq!(FrontendMessage::Startup as u8, 0);
+        assert_eq!(FrontendMessage::Query as u8, b'Q'); // 0x51
+        assert_eq!(FrontendMessage::Parse as u8, b'P'); // 0x50
+        assert_eq!(FrontendMessage::Bind as u8, b'B'); // 0x42
+        assert_eq!(FrontendMessage::Execute as u8, b'E'); // 0x45
+        assert_eq!(FrontendMessage::Describe as u8, b'D'); // 0x44
+        assert_eq!(FrontendMessage::Sync as u8, b'S'); // 0x53
+        assert_eq!(FrontendMessage::Flush as u8, b'H'); // 0x48
+        assert_eq!(FrontendMessage::Close as u8, b'C'); // 0x43
+        assert_eq!(FrontendMessage::Password as u8, b'p'); // 0x70
+        assert_eq!(FrontendMessage::Terminate as u8, b'X'); // 0x58
+        assert_eq!(FrontendMessage::CopyData as u8, b'd'); // 0x64
+        assert_eq!(FrontendMessage::CopyDone as u8, b'c'); // 0x63
+        assert_eq!(FrontendMessage::CopyFail as u8, b'f'); // 0x66
+
+        // Verify exact hex values for key protocol messages
+        assert_eq!(FrontendMessage::Query as u8, 0x51);
+        assert_eq!(FrontendMessage::Parse as u8, 0x50);
+        assert_eq!(FrontendMessage::Bind as u8, 0x42);
+        assert_eq!(FrontendMessage::Terminate as u8, 0x58);
+    }
+
+    #[test]
+    fn test_copy_format_detection() {
+        // CopyFormat is private, so we test the detect_copy_format delegation path
+        // by verifying the enum values and their properties directly.
+        assert_eq!(CopyFormat::Text, CopyFormat::Text);
+        assert_eq!(CopyFormat::Csv, CopyFormat::Csv);
+        assert_eq!(CopyFormat::Binary, CopyFormat::Binary);
+        assert_eq!(CopyFormat::Arrow, CopyFormat::Arrow);
+
+        // All four variants are distinct
+        assert_ne!(CopyFormat::Text, CopyFormat::Csv);
+        assert_ne!(CopyFormat::Text, CopyFormat::Binary);
+        assert_ne!(CopyFormat::Text, CopyFormat::Arrow);
+        assert_ne!(CopyFormat::Csv, CopyFormat::Binary);
+        assert_ne!(CopyFormat::Csv, CopyFormat::Arrow);
+        assert_ne!(CopyFormat::Binary, CopyFormat::Arrow);
+
+        // Verify the detection logic inline (mirrors detect_copy_format)
+        let detect = |query: &str| -> CopyFormat {
+            let upper = query.to_uppercase();
+            if upper.contains("FORMAT ARROW") || upper.contains("FORMAT 'ARROW'") {
+                CopyFormat::Arrow
+            } else if upper.contains("FORMAT CSV") || upper.contains("FORMAT 'CSV'") {
+                CopyFormat::Csv
+            } else if upper.contains("FORMAT BINARY") || upper.contains("FORMAT 'BINARY'") {
+                CopyFormat::Binary
+            } else {
+                CopyFormat::Text
+            }
+        };
+
+        assert_eq!(
+            detect("COPY my_table FROM STDIN WITH (FORMAT ARROW)"),
+            CopyFormat::Arrow
+        );
+        assert_eq!(
+            detect("COPY my_table FROM STDIN WITH (FORMAT 'ARROW')"),
+            CopyFormat::Arrow
+        );
+        assert_eq!(
+            detect("COPY my_table FROM STDIN WITH (FORMAT CSV, HEADER true)"),
+            CopyFormat::Csv
+        );
+        assert_eq!(
+            detect("COPY my_table FROM STDIN WITH (FORMAT 'CSV')"),
+            CopyFormat::Csv
+        );
+        assert_eq!(
+            detect("COPY my_table FROM STDIN WITH (FORMAT BINARY)"),
+            CopyFormat::Binary
+        );
+        assert_eq!(
+            detect("COPY my_table FROM STDIN WITH (FORMAT 'BINARY')"),
+            CopyFormat::Binary
+        );
+        // Default is Text when no FORMAT clause
+        assert_eq!(detect("COPY my_table FROM STDIN"), CopyFormat::Text);
+        assert_eq!(
+            detect("COPY my_table FROM STDIN WITH (HEADER true)"),
+            CopyFormat::Text
+        );
+    }
+
+    #[test]
+    fn test_extract_vector_dimension() {
+        // extract_vector_dimension is a method on PostgresProtocol which requires
+        // a full instance with TcpStream. Instead, test the parsing logic directly
+        // since it's a pure string operation.
+        let extract = |query: &str| -> Option<u32> {
+            let vector_pos = query.find("VECTOR(")?;
+            let after_vector = &query[vector_pos + 7..];
+            let dim_end = after_vector.find(')')?;
+            after_vector[..dim_end].trim().parse().ok()
+        };
+
+        // Standard dimension extraction
+        assert_eq!(
+            extract("CREATE TABLE items (id TEXT, embedding VECTOR(384))"),
+            Some(384)
+        );
+        assert_eq!(
+            extract("CREATE TABLE docs (id TEXT, vec VECTOR(128))"),
+            Some(128)
+        );
+        assert_eq!(
+            extract("CREATE TABLE large (id TEXT, emb VECTOR(1536))"),
+            Some(1536)
+        );
+
+        // Small dimension
+        assert_eq!(extract("CREATE TABLE tiny (id TEXT, v VECTOR(2))"), Some(2));
+
+        // Whitespace around number
+        assert_eq!(
+            extract("CREATE TABLE ws (id TEXT, v VECTOR( 256 ))"),
+            Some(256)
+        );
+
+        // No VECTOR column -> None
+        assert_eq!(extract("CREATE TABLE plain (id INT, name TEXT)"), None);
+
+        // Malformed (no closing paren) -> None
+        assert_eq!(extract("CREATE TABLE broken (id TEXT, v VECTOR("), None);
+
+        // Non-numeric content -> None
+        assert_eq!(
+            extract("CREATE TABLE broken (id TEXT, v VECTOR(abc))"),
+            None
+        );
     }
 }

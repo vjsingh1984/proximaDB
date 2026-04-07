@@ -11,9 +11,13 @@ use std::sync::Arc;
 /// This provides zero-cost abstraction over dynamic metadata
 #[derive(Debug, Clone, PartialEq)]
 pub enum MetadataValue {
-    String(Arc<str>), // Use Arc<str> to avoid cloning strings
+    /// UTF-8 string value (reference-counted for cheap cloning)
+    String(Arc<str>),
+    /// 64-bit floating-point number
     Number(f64),
+    /// Boolean value
     Bool(bool),
+    /// Null / absent value
     Null,
     // Future: Array(Vec<MetadataValue>),
     // Future: Object(HashMap<String, MetadataValue>),
@@ -288,18 +292,21 @@ pub struct TypedMetadataBuilder {
 }
 
 impl TypedMetadataBuilder {
+    /// Create an empty metadata builder
     pub fn new() -> Self {
         Self {
             map: HashMap::new(),
         }
     }
 
+    /// Create a metadata builder with pre-allocated capacity
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             map: HashMap::with_capacity(capacity),
         }
     }
 
+    /// Insert a string metadata value
     pub fn insert_string(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.map.insert(
             key.into(),
@@ -308,18 +315,27 @@ impl TypedMetadataBuilder {
         self
     }
 
+    /// Insert a numeric metadata value
     pub fn insert_number(mut self, key: impl Into<String>, value: f64) -> Self {
         self.map.insert(key.into(), MetadataValue::Number(value));
         self
     }
 
+    /// Insert a boolean metadata value
     pub fn insert_bool(mut self, key: impl Into<String>, value: bool) -> Self {
         self.map.insert(key.into(), MetadataValue::Bool(value));
         self
     }
 
+    /// Finalize and return the constructed typed metadata
     pub fn build(self) -> TypedMetadata {
         TypedMetadata::from_map(self.map)
+    }
+}
+
+impl Default for TypedMetadataBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

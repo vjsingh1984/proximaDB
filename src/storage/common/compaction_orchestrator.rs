@@ -44,18 +44,25 @@ pub type OperationId = String;
 pub type CollectionId = String;
 
 /// Queue status for compaction coordination
+///
+/// Indicates the current state of the EventLog queue and whether
+/// it's safe to proceed with compaction operations.
 #[derive(Debug, Clone)]
 pub enum QueueStatus {
     /// Queue is empty, safe to proceed with compaction
     Empty,
     /// Queue is draining, wait before compaction
     Draining {
+        /// Number of pending acknowledgments
         pending_acks: usize,
+        /// Estimated time until queue is fully drained
         estimated_drain_time: Duration,
     },
     /// Queue is active with pending items
     Active {
+        /// Current depth of the queue (number of pending items)
         queue_depth: usize,
+        /// Timestamp of the oldest unacknowledged item
         oldest_unacked: Instant,
     },
 }
@@ -331,15 +338,13 @@ impl CompactionCoordinator {
         estimated_duration: Option<Duration>,
     ) -> Result<String> {
         // Check if this is a compaction and if queue-aware mode is enabled
-        if self.config.queue_aware_compaction {
-            if let OperationType::Compaction { .. } = &operation_type {
-                if let Some(decision) = self
-                    .evaluate_axis_aware_compaction(collection_id, &[], &operation_type)
-                    .await?
-                {
-                    return Err(anyhow::anyhow!("{}", decision));
-                }
-            }
+        if self.config.queue_aware_compaction
+            && let OperationType::Compaction { .. } = &operation_type
+            && let Some(decision) = self
+                .evaluate_axis_aware_compaction(collection_id, &[], &operation_type)
+                .await?
+        {
+            return Err(anyhow::anyhow!("{}", decision));
         }
 
         let operation_id = Uuid::new_v4().to_string();
@@ -541,7 +546,7 @@ impl CompactionCoordinator {
         let mut ready_collections = Vec::new();
 
         // Check each deferred collection
-        for entry in self.deferred_compactions.iter() {
+        for entry in &self.deferred_compactions {
             let collection_id = entry.key();
             let deferred = entry.value();
 
@@ -641,9 +646,12 @@ impl FilenameCodec {
 
     /// Parse level from filename with caching
     pub fn parse_level(&self, filename: &str) -> u32 {
-        let pattern = self
-            .level_pattern
-            .get_or_init(|| Regex::new(r"^L(\d+)_").unwrap());
+        #[allow(clippy::panic)] // Compile-time invariant: regex pattern must be valid
+        let compile_level_regex = || match Regex::new(r"^L(\d+)_") {
+            Ok(regex) => regex,
+            Err(err) => panic!("Invalid level filename regex: {err}"),
+        };
+        let pattern = self.level_pattern.get_or_init(compile_level_regex);
 
         pattern
             .captures(filename)
@@ -654,9 +662,12 @@ impl FilenameCodec {
 
     /// Parse timestamp from filename with caching
     pub fn parse_timestamp(&self, filename: &str) -> u64 {
-        let pattern = self
-            .timestamp_pattern
-            .get_or_init(|| Regex::new(r"L\d+_(\d{8}T\d{6})_").unwrap());
+        #[allow(clippy::panic)] // Compile-time invariant: regex pattern must be valid
+        let compile_timestamp_regex = || match Regex::new(r"L\d+_(\d{8}T\d{6})_") {
+            Ok(regex) => regex,
+            Err(err) => panic!("Invalid timestamp filename regex: {err}"),
+        };
+        let pattern = self.timestamp_pattern.get_or_init(compile_timestamp_regex);
 
         pattern
             .captures(filename)
@@ -671,9 +682,12 @@ impl FilenameCodec {
 
     /// Check if filename follows convention
     pub fn is_tiered_filename(&self, filename: &str, extension: &str) -> bool {
-        let pattern = self
-            .full_pattern
-            .get_or_init(|| Regex::new(r"^L\d+_\d{8}T\d{6}_[a-f0-9]{8}\.\w+$").unwrap());
+        #[allow(clippy::panic)] // Compile-time invariant: regex pattern must be valid
+        let compile_full_regex = || match Regex::new(r"^L\d+_\d{8}T\d{6}_[a-f0-9]{8}\.\w+$") {
+            Ok(regex) => regex,
+            Err(err) => panic!("Invalid full filename regex: {err}"),
+        };
+        let pattern = self.full_pattern.get_or_init(compile_full_regex);
 
         pattern.is_match(filename) && filename.ends_with(&format!(".{}", extension))
     }
@@ -882,42 +896,42 @@ impl CompactionOrchestrator {
         let config = engine.compaction_config();
 
         // Check Level 0 first (highest priority)
-        if let Some(level0_files) = files_by_level.get(&0) {
-            if level0_files.len() >= config.level0_threshold {
-                return self
-                    .create_compaction_execution(
-                        engine,
-                        collection_id,
-                        0,
-                        1,
-                        level0_files.clone(),
-                        Duration::from_secs(300), // 5 minutes estimated
-                    )
-                    .await
-                    .map(Some);
-            }
+        if let Some(level0_files) = files_by_level.get(&0)
+            && level0_files.len() >= config.level0_threshold
+        {
+            return self
+                .create_compaction_execution(
+                    engine,
+                    collection_id,
+                    0,
+                    1,
+                    level0_files.clone(),
+                    Duration::from_secs(300), // 5 minutes estimated
+                )
+                .await
+                .map(Some);
         }
 
         // Check higher levels
         for level in 1..=config.max_level {
-            if let Some(level_files) = files_by_level.get(&level) {
-                if level_files.len() >= config.level_threshold {
-                    // For higher levels, compact oldest file
-                    let oldest_file = level_files.iter().min_by_key(|f| f.timestamp()).cloned();
+            if let Some(level_files) = files_by_level.get(&level)
+                && level_files.len() >= config.level_threshold
+            {
+                // For higher levels, compact oldest file
+                let oldest_file = level_files.iter().min_by_key(|f| f.timestamp()).cloned();
 
-                    if let Some(file) = oldest_file {
-                        return self
-                            .create_compaction_execution(
-                                engine,
-                                collection_id,
-                                level,
-                                level + 1,
-                                vec![file],
-                                Duration::from_secs(600), // 10 minutes estimated
-                            )
-                            .await
-                            .map(Some);
-                    }
+                if let Some(file) = oldest_file {
+                    return self
+                        .create_compaction_execution(
+                            engine,
+                            collection_id,
+                            level,
+                            level + 1,
+                            vec![file],
+                            Duration::from_secs(600), // 10 minutes estimated
+                        )
+                        .await
+                        .map(Some);
                 }
             }
         }

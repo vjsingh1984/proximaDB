@@ -274,15 +274,15 @@ impl CacheInvalidator {
         }
 
         // Handle transaction-aware invalidation
-        if self.config.transaction_aware {
-            if let Some(ref txn_id) = event.transaction_id {
-                // Defer invalidation until transaction commits
-                self.pending_transactions
-                    .entry(txn_id.clone())
-                    .or_insert_with(Vec::new)
-                    .push(event);
-                return 0;
-            }
+        if self.config.transaction_aware
+            && let Some(ref txn_id) = event.transaction_id
+        {
+            // Defer invalidation until transaction commits
+            self.pending_transactions
+                .entry(txn_id.clone())
+                .or_default()
+                .push(event);
+            return 0;
         }
 
         // Check if batching is enabled
@@ -410,7 +410,7 @@ impl CacheInvalidator {
     fn add_to_batch(&self, event: &InvalidationEvent) {
         self.pending_batch
             .entry(event.collection.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(event.record_key.clone());
     }
 
@@ -490,7 +490,7 @@ impl BroadcastInvalidator {
         let invalidated = self.invalidator.on_change_event(event);
 
         if invalidated > 0 {
-            for entry in self.listeners.iter() {
+            for entry in &self.listeners {
                 entry.value().on_invalidation(&collection, invalidated);
             }
         }
@@ -511,7 +511,7 @@ impl BroadcastInvalidator {
         let total = self.invalidator.flush_batch();
 
         if total > 0 && !collections.is_empty() {
-            for entry in self.listeners.iter() {
+            for entry in &self.listeners {
                 entry.value().on_batch_flush(&collections, total);
             }
         }

@@ -3,9 +3,10 @@
 use crate::core::foundation::BaseConfig;
 
 /// Compaction strategy for storage optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CompactionStrategy {
     /// Level-based compaction (LSM)
+    #[default]
     Level,
     /// Tiered compaction
     Tiered,
@@ -15,12 +16,6 @@ pub enum CompactionStrategy {
     TimeBased,
     /// No compaction
     None,
-}
-
-impl Default for CompactionStrategy {
-    fn default() -> Self {
-        Self::Level
-    }
 }
 
 /// Compaction configuration
@@ -68,9 +63,10 @@ impl BaseConfig for CompactionConfig {
 }
 
 /// WAL strategy type
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum WriteBufferStrategyType {
     /// Apache Avro format
+    #[default]
     Avro,
     /// Bincode binary format
     Bincode,
@@ -78,18 +74,13 @@ pub enum WriteBufferStrategyType {
     Json,
 }
 
-impl Default for WriteBufferStrategyType {
-    fn default() -> Self {
-        Self::Avro
-    }
-}
-
 /// Memory table type for WAL
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum MemTableType {
     /// Hash map implementation
     HashMap,
     /// B-tree implementation
+    #[default]
     BTree,
     /// Skip list implementation
     SkipList,
@@ -97,25 +88,14 @@ pub enum MemTableType {
     ART,
 }
 
-impl Default for MemTableType {
-    fn default() -> Self {
-        Self::BTree
-    }
-}
-
 /// Synchronization mode for WAL
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum SyncMode {
     /// Synchronous writes
     Sync,
     /// Asynchronous writes
     Async,
     /// Batch synchronous writes
+    #[default]
     BatchSync,
-}
-
-impl Default for SyncMode {
-    fn default() -> Self {
-        Self::BatchSync
-    }
 }

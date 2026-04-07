@@ -96,13 +96,12 @@ impl StreamingParquetWriter {
         );
 
         // Convert proto filterable columns to columnar format
-        let columnar_filterable: Vec<ColumnarFilterableSpec> = filterable_columns
-            .map(|cols| {
+        let columnar_filterable: Vec<ColumnarFilterableSpec> =
+            filterable_columns.map_or_else(Vec::new, |cols| {
                 cols.iter()
                     .map(ColumnarFilterableSpec::from_proto)
                     .collect()
-            })
-            .unwrap_or_else(Vec::new);
+            });
 
         // Build optimized schema
         let mut schema_builder = ParquetSchemaBuilder::new(dimension, config.clone());
@@ -227,7 +226,7 @@ impl StreamingParquetWriter {
 
         // Apply sorting for better compression (if enabled)
         let sorted_records = if !self.config.sort_columns.is_empty() {
-            // TODO: Implement column-based sorting
+            // Deferred: Implement column-based sorting
             self.current_batch.clone()
         } else {
             self.current_batch.clone()
@@ -303,7 +302,7 @@ impl StreamingParquetWriter {
             Arc::new(values_array),
             None,
         )
-        .expect("Failed to create fixed-size list array");
+        .map_err(|e| anyhow::anyhow!("Failed to create fixed-size list array: {}", e))?;
 
         arrays.push(Arc::new(fixed_list_array));
 
@@ -316,24 +315,15 @@ impl StreamingParquetWriter {
         }
 
         // Timestamp
-        let timestamps: Vec<i64> = records
-            .iter()
-            .map(|r| r.timestamp.unwrap_or(0) as i64)
-            .collect();
+        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0)).collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
 
         // Updated at (optional)
-        let updated_at: Vec<Option<i64>> = records
-            .iter()
-            .map(|r| r.updated_at.map(|v| v as i64))
-            .collect();
+        let updated_at: Vec<Option<i64>> = records.iter().map(|r| r.updated_at).collect();
         arrays.push(Arc::new(Int64Array::from(updated_at)));
 
         // Expires at (optional)
-        let expires_at: Vec<Option<i64>> = records
-            .iter()
-            .map(|r| r.expires_at.map(|v| v as i64))
-            .collect();
+        let expires_at: Vec<Option<i64>> = records.iter().map(|r| r.expires_at).collect();
         arrays.push(Arc::new(Int64Array::from(expires_at)));
 
         // Version (optional)
@@ -569,7 +559,7 @@ impl StreamingParquetWriter {
             vec![Arc::new(keys_array), Arc::new(values_array)],
             None,
         )
-        .expect("Failed to create struct array");
+        .map_err(|e| anyhow::anyhow!("Failed to create struct array: {}", e))?;
 
         // Create offsets buffer from the offsets vector
         let offsets =
@@ -660,7 +650,7 @@ impl StreamingParquetWriter {
 
         // PQ quantization
         if self.config.quantization.enable_pq.unwrap_or(false) {
-            // TODO: Implement PQ quantization
+            // Deferred: Implement PQ quantization
             // PQ requires async codebook training and proper sidecar file storage
             // For now, store null values
             let mut pq_builder = BinaryBuilder::new();
@@ -802,7 +792,7 @@ impl StreamingParquetWriter {
             // File information
             file_path: self.file_path.clone(),
             file_size,
-            total_row_groups: total_row_groups as usize,
+            total_row_groups,
             // Record statistics
             total_records: self.total_records_written as usize,
             unique_ids: 0, // Would need to track this
@@ -814,9 +804,9 @@ impl StreamingParquetWriter {
             compression_ratio,
             vector_compression_ratio: compression_ratio,
             metadata_compression_ratio: 0.0,
-            row_groups_written: total_row_groups as usize,
+            row_groups_written: total_row_groups,
             avg_row_group_size: if total_row_groups > 0 {
-                self.total_records_written as usize / total_row_groups as usize
+                self.total_records_written as usize / total_row_groups
             } else {
                 0
             },
@@ -835,6 +825,12 @@ impl StreamingParquetWriter {
             filterable_columns_count: self.filterable_columns.len(),
             records_with_metadata: 0,
             avg_metadata_fields: 0.0,
+            // TD-040: Vector bounds computed during write (populated by caller)
+            vector_norm_min: None,
+            vector_norm_max: None,
+            vector_norm_mean: None,
+            vector_component_min: None,
+            vector_component_max: None,
         };
 
         Ok((stats, written_data, self.metadata_collector))
@@ -968,5 +964,11 @@ impl StreamingWriterBuilder {
                 .await
             }
         }
+    }
+}
+
+impl Default for StreamingWriterBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }

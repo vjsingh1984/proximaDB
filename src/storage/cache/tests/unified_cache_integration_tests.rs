@@ -8,12 +8,14 @@
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::base::BaseCacheImpl;
-use crate::storage::cache::specialized::{IndexNodeCache, MetadataStore};
+use crate::storage::cache::specialized::MetadataStore;
 use std::sync::Arc;
 // Type aliases for missing cache types
+#[allow(dead_code)]
 type VectorStore = BaseCacheImpl<String, VectorRecord>;
 
 // Mock types for compilation
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct SstBlockKey {
     file_path: String,
@@ -31,6 +33,7 @@ impl SstBlockKey {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum CompressionType {
     None,

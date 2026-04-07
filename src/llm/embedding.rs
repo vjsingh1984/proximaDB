@@ -72,11 +72,17 @@ pub struct BatchEmbeddingResponse {
 /// Embedding service statistics
 #[derive(Debug, Clone, Default)]
 pub struct EmbeddingStats {
+    /// Total embedding API requests made.
     pub total_requests: u64,
+    /// Total individual embeddings generated.
     pub total_embeddings: u64,
+    /// Number of requests served from the semantic cache.
     pub cache_hits: u64,
+    /// Number of requests that required a provider call.
     pub cache_misses: u64,
+    /// Cumulative latency across all requests in milliseconds.
     pub total_latency_ms: u64,
+    /// Number of failed embedding requests.
     pub errors: u64,
 }
 

@@ -4,7 +4,6 @@
 //! and graph traversal with various fusion strategies.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use proximadb::query::unified::UnifiedRecord;
 use proximadb::query::unified::ast::{

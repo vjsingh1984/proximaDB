@@ -355,9 +355,8 @@ impl SwiftCandidateLoader {
     ) -> Vec<ScoredCandidate> {
         let mut candidates = Vec::new();
 
-        let indices: Vec<usize> = block_indices
-            .map(|i| i.to_vec())
-            .unwrap_or_else(|| (0..superblock.blocks.len()).collect());
+        let indices: Vec<usize> =
+            block_indices.map_or_else(|| (0..superblock.blocks.len()).collect(), |i| i.to_vec());
 
         for block_idx in indices {
             if let Some(block) = superblock.blocks.get(block_idx) {
@@ -403,9 +402,8 @@ impl SwiftCandidateLoader {
     ) -> Vec<ScoredCandidate> {
         let mut all_candidates = Vec::new();
 
-        let sb_indices: Vec<usize> = superblock_filter
-            .map(|i| i.to_vec())
-            .unwrap_or_else(|| (0..superblocks.len()).collect());
+        let sb_indices: Vec<usize> =
+            superblock_filter.map_or_else(|| (0..superblocks.len()).collect(), |i| i.to_vec());
 
         for sb_idx in sb_indices {
             if let Some(superblock) = superblocks.get(sb_idx) {
@@ -613,5 +611,207 @@ mod tests {
         // Should filter out the candidate with score > threshold (0.5)
         assert_eq!(filtered.len(), 2);
         assert!(filtered.iter().all(|c| c.score <= 0.5));
+    }
+
+    // ========================================================================
+    // SwiftBinaryStage extended tests
+    // ========================================================================
+
+    #[test]
+    fn test_binary_stage_custom_threshold() {
+        let engine = create_test_quantization_engine();
+        let stage = SwiftBinaryStage::with_threshold(engine, 0.1);
+        assert_eq!(stage.hamming_threshold, 0.1);
+        assert_eq!(stage.name(), "SwiftBinary");
+    }
+
+    #[test]
+    fn test_binary_stage_default_threshold() {
+        let engine = create_test_quantization_engine();
+        let stage = SwiftBinaryStage::new(engine);
+        assert!((stage.hamming_threshold - 0.3).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_filter_candidates_empty() {
+        let engine = create_test_quantization_engine();
+        let stage = SwiftBinaryStage::new(engine);
+
+        let filtered = stage.filter_candidates(Vec::new(), 2.0, 10);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_filter_candidates_all_above_threshold() {
+        let engine = create_test_quantization_engine();
+        let stage = SwiftBinaryStage::with_threshold(engine, 0.1);
+
+        let candidates = vec![
+            ScoredCandidate::new("a".to_string()).with_score(0.5),
+            ScoredCandidate::new("b".to_string()).with_score(0.9),
+        ];
+
+        let filtered = stage.filter_candidates(candidates, 2.0, 10);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_filter_candidates_respects_top_k() {
+        let engine = create_test_quantization_engine();
+        let stage = SwiftBinaryStage::with_threshold(engine, 1.0); // Allow all
+
+        let candidates = vec![
+            ScoredCandidate::new("a".to_string()).with_score(0.1),
+            ScoredCandidate::new("b".to_string()).with_score(0.2),
+            ScoredCandidate::new("c".to_string()).with_score(0.3),
+            ScoredCandidate::new("d".to_string()).with_score(0.4),
+        ];
+
+        // expansion_factor=1.0, top_k=2 => keep_count = max(2, ceil(2*1.0)) = 2
+        let filtered = stage.filter_candidates(candidates, 1.0, 2);
+        assert_eq!(filtered.len(), 2);
+        // Should keep the best 2
+        assert_eq!(filtered[0].id, "a");
+        assert_eq!(filtered[1].id, "b");
+    }
+
+    #[test]
+    fn test_filter_candidates_expansion_factor() {
+        let engine = create_test_quantization_engine();
+        let stage = SwiftBinaryStage::with_threshold(engine, 1.0); // Allow all
+
+        let candidates = vec![
+            ScoredCandidate::new("a".to_string()).with_score(0.1),
+            ScoredCandidate::new("b".to_string()).with_score(0.2),
+            ScoredCandidate::new("c".to_string()).with_score(0.3),
+            ScoredCandidate::new("d".to_string()).with_score(0.4),
+        ];
+
+        // expansion_factor=3.0, top_k=1 => keep_count = max(1, ceil(1*3.0)) = 3
+        let filtered = stage.filter_candidates(candidates, 3.0, 1);
+        assert_eq!(filtered.len(), 3);
+    }
+
+    #[test]
+    fn test_filter_candidates_sorted_by_score() {
+        let engine = create_test_quantization_engine();
+        let stage = SwiftBinaryStage::with_threshold(engine, 1.0);
+
+        let candidates = vec![
+            ScoredCandidate::new("c".to_string()).with_score(0.9),
+            ScoredCandidate::new("a".to_string()).with_score(0.1),
+            ScoredCandidate::new("b".to_string()).with_score(0.5),
+        ];
+
+        let filtered = stage.filter_candidates(candidates, 1.0, 10);
+        // All pass threshold, should be sorted by score ascending
+        assert_eq!(filtered[0].id, "a");
+        assert_eq!(filtered[1].id, "b");
+        assert_eq!(filtered[2].id, "c");
+    }
+
+    // ========================================================================
+    // SwiftInt8Stage extended tests
+    // ========================================================================
+
+    #[test]
+    fn test_int8_stage_custom_scale() {
+        let compute = create_test_distance_compute();
+        let stage = SwiftInt8Stage::with_scale(compute, 100.0);
+        assert_eq!(stage.scale_factor, 100.0);
+    }
+
+    #[test]
+    fn test_int8_stage_default_scale() {
+        let compute = create_test_distance_compute();
+        let stage = SwiftInt8Stage::new(compute);
+        assert_eq!(stage.scale_factor, 127.0);
+    }
+
+    #[test]
+    fn test_int8_stage_can_skip_empty() {
+        let compute = create_test_distance_compute();
+        let stage = SwiftInt8Stage::new(compute);
+        assert!(stage.can_skip(&[]));
+    }
+
+    #[test]
+    fn test_int8_stage_can_skip_no_data() {
+        let compute = create_test_distance_compute();
+        let stage = SwiftInt8Stage::new(compute);
+
+        let candidates = vec![ScoredCandidate::new("id".to_string())];
+        assert!(stage.can_skip(&candidates));
+    }
+
+    #[test]
+    fn test_int8_stage_cannot_skip_with_vector() {
+        let compute = create_test_distance_compute();
+        let stage = SwiftInt8Stage::new(compute);
+
+        let candidates = vec![ScoredCandidate::with_vector(
+            "id".to_string(),
+            vec![1.0, 2.0],
+        )];
+        assert!(!stage.can_skip(&candidates));
+    }
+
+    // ========================================================================
+    // SwiftFp32Stage extended tests
+    // ========================================================================
+
+    #[test]
+    fn test_fp32_stage_can_skip_no_vectors() {
+        let compute = create_test_distance_compute();
+        let stage = SwiftFp32Stage::new(compute);
+
+        let candidates = vec![
+            ScoredCandidate::new("a".to_string()),
+            ScoredCandidate::new("b".to_string()),
+        ];
+        assert!(stage.can_skip(&candidates));
+    }
+
+    #[test]
+    fn test_fp32_stage_cannot_skip_with_vectors() {
+        let compute = create_test_distance_compute();
+        let stage = SwiftFp32Stage::new(compute);
+
+        let candidates = vec![
+            ScoredCandidate::new("a".to_string()),
+            ScoredCandidate::with_vector("b".to_string(), vec![1.0]),
+        ];
+        assert!(!stage.can_skip(&candidates));
+    }
+
+    // ========================================================================
+    // Pipeline builder extended tests
+    // ========================================================================
+
+    #[test]
+    fn test_pipeline_builder_without_int8() {
+        let qe = create_test_quantization_engine();
+        let dc = create_test_distance_compute();
+
+        let coordinator = SwiftProgressivePipelineBuilder::new(qe, dc)
+            .without_int8()
+            .build();
+
+        // Should have 2 stages: Binary + FP32
+        assert_eq!(coordinator.stage_count(), 2);
+    }
+
+    #[test]
+    fn test_pipeline_builder_without_both_optional() {
+        let qe = create_test_quantization_engine();
+        let dc = create_test_distance_compute();
+
+        let coordinator = SwiftProgressivePipelineBuilder::new(qe, dc)
+            .without_binary()
+            .without_int8()
+            .build();
+
+        // Only FP32 stage remains
+        assert_eq!(coordinator.stage_count(), 1);
     }
 }

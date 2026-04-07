@@ -19,10 +19,22 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::cdc::error::{CdcError, CdcResult};
+
+fn unix_timestamp_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn lock_poisoned_error(lock_name: &str) -> CdcError {
+    CdcError::Other(format!("{} lock poisoned", lock_name))
+}
 
 /// Position in the WAL stream
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -44,10 +56,7 @@ impl Position {
             lsn,
             segment: None,
             offset: None,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+            timestamp: unix_timestamp_millis(),
         }
     }
 
@@ -57,10 +66,7 @@ impl Position {
             lsn,
             segment: Some(segment.into()),
             offset: Some(offset),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+            timestamp: unix_timestamp_millis(),
         }
     }
 
@@ -122,29 +128,35 @@ impl PositionTracker {
 
     /// Get the current position for a subscription
     pub fn get(&self, subscription_id: &str) -> Option<Position> {
-        self.positions.read().unwrap().get(subscription_id).cloned()
+        self.positions
+            .read()
+            .ok()
+            .and_then(|positions| positions.get(subscription_id).cloned())
     }
 
     /// Set the current position for a subscription
     pub fn set(&self, subscription_id: &str, position: Position) {
-        self.positions
-            .write()
-            .unwrap()
-            .insert(subscription_id.to_string(), position);
+        if let Ok(mut positions) = self.positions.write() {
+            positions.insert(subscription_id.to_string(), position);
+        }
     }
 
     /// Mark a position as pending (dispatched but not acked)
     pub fn mark_pending(&self, subscription_id: &str, position: Position) {
-        let mut pending = self.pending.write().unwrap();
-        pending
-            .entry(subscription_id.to_string())
-            .or_default()
-            .push(position);
+        if let Ok(mut pending) = self.pending.write() {
+            pending
+                .entry(subscription_id.to_string())
+                .or_default()
+                .push(position);
+        }
     }
 
     /// Acknowledge a position
     pub fn acknowledge(&self, subscription_id: &str, lsn: u64) -> CdcResult<()> {
-        let mut pending = self.pending.write().unwrap();
+        let mut pending = self
+            .pending
+            .write()
+            .map_err(|_| lock_poisoned_error("pending"))?;
 
         if let Some(positions) = pending.get_mut(subscription_id) {
             // Remove all positions up to and including this LSN
@@ -153,7 +165,7 @@ impl PositionTracker {
             // Update committed position
             self.positions
                 .write()
-                .unwrap()
+                .map_err(|_| lock_poisoned_error("positions"))?
                 .insert(subscription_id.to_string(), Position::from_lsn(lsn));
         }
 
@@ -164,10 +176,9 @@ impl PositionTracker {
     pub fn pending_count(&self, subscription_id: &str) -> usize {
         self.pending
             .read()
-            .unwrap()
-            .get(subscription_id)
-            .map(|v| v.len())
-            .unwrap_or(0)
+            .ok()
+            .and_then(|pending| pending.get(subscription_id).map(|v| v.len()))
+            .unwrap_or_default()
     }
 
     /// Check if subscription has any pending positions
@@ -190,27 +201,31 @@ impl PositionTracker {
 
     /// Save position to store (checkpoint)
     pub async fn checkpoint(&self, subscription_id: &str) -> CdcResult<()> {
-        if let Some(ref store) = self.store {
-            if let Some(position) = self.get(subscription_id) {
-                store.save(subscription_id, &position).await?;
-            }
+        if let Some(ref store) = self.store
+            && let Some(position) = self.get(subscription_id)
+        {
+            store.save(subscription_id, &position).await?;
         }
         Ok(())
     }
 
     /// Get oldest pending position (for timeout detection)
     pub fn oldest_pending(&self, subscription_id: &str) -> Option<Position> {
-        self.pending
-            .read()
-            .unwrap()
-            .get(subscription_id)
-            .and_then(|v| v.first().cloned())
+        self.pending.read().ok().and_then(|pending| {
+            pending
+                .get(subscription_id)
+                .and_then(|v| v.first().cloned())
+        })
     }
 
     /// Clear all state for a subscription
     pub fn clear(&self, subscription_id: &str) {
-        self.positions.write().unwrap().remove(subscription_id);
-        self.pending.write().unwrap().remove(subscription_id);
+        if let Ok(mut positions) = self.positions.write() {
+            positions.remove(subscription_id);
+        }
+        if let Ok(mut pending) = self.pending.write() {
+            pending.remove(subscription_id);
+        }
     }
 }
 
@@ -290,10 +305,10 @@ impl PositionStore for FilePositionStore {
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map(|e| e == "pos").unwrap_or(false) {
-                if let Some(stem) = path.file_stem() {
-                    ids.push(stem.to_string_lossy().to_string());
-                }
+            if path.extension().is_some_and(|e| e == "pos")
+                && let Some(stem) = path.file_stem()
+            {
+                ids.push(stem.to_string_lossy().to_string());
             }
         }
 
@@ -302,6 +317,7 @@ impl PositionStore for FilePositionStore {
 }
 
 /// In-memory position store (for testing)
+#[allow(dead_code)]
 pub struct MemoryPositionStore {
     positions: RwLock<HashMap<String, Position>>,
 }
@@ -312,6 +328,7 @@ impl Default for MemoryPositionStore {
     }
 }
 
+#[allow(dead_code)]
 impl MemoryPositionStore {
     /// Create a new memory position store
     pub fn new() -> Self {
@@ -324,24 +341,35 @@ impl MemoryPositionStore {
 #[async_trait::async_trait]
 impl PositionStore for MemoryPositionStore {
     async fn load(&self, subscription_id: &str) -> CdcResult<Option<Position>> {
-        Ok(self.positions.read().unwrap().get(subscription_id).cloned())
+        let positions = self
+            .positions
+            .read()
+            .map_err(|_| lock_poisoned_error("positions"))?;
+        Ok(positions.get(subscription_id).cloned())
     }
 
     async fn save(&self, subscription_id: &str, position: &Position) -> CdcResult<()> {
         self.positions
             .write()
-            .unwrap()
+            .map_err(|_| lock_poisoned_error("positions"))?
             .insert(subscription_id.to_string(), position.clone());
         Ok(())
     }
 
     async fn delete(&self, subscription_id: &str) -> CdcResult<()> {
-        self.positions.write().unwrap().remove(subscription_id);
+        self.positions
+            .write()
+            .map_err(|_| lock_poisoned_error("positions"))?
+            .remove(subscription_id);
         Ok(())
     }
 
     async fn list(&self) -> CdcResult<Vec<String>> {
-        Ok(self.positions.read().unwrap().keys().cloned().collect())
+        let positions = self
+            .positions
+            .read()
+            .map_err(|_| lock_poisoned_error("positions"))?;
+        Ok(positions.keys().cloned().collect())
     }
 }
 
@@ -394,10 +422,22 @@ mod tests {
         assert!(tracker.get("sub1").is_none());
 
         tracker.set("sub1", Position::from_lsn(100));
-        assert_eq!(tracker.get("sub1").unwrap().lsn, 100);
+        assert_eq!(
+            tracker
+                .get("sub1")
+                .expect("position should exist after set")
+                .lsn,
+            100
+        );
 
         tracker.set("sub1", Position::from_lsn(200));
-        assert_eq!(tracker.get("sub1").unwrap().lsn, 200);
+        assert_eq!(
+            tracker
+                .get("sub1")
+                .expect("position should exist after set")
+                .lsn,
+            200
+        );
     }
 
     #[test]
@@ -415,9 +455,17 @@ mod tests {
         assert!(tracker.has_pending("sub1"));
 
         // Acknowledge up to 200
-        tracker.acknowledge("sub1", 200).unwrap();
+        tracker
+            .acknowledge("sub1", 200)
+            .expect("acknowledge should succeed");
         assert_eq!(tracker.pending_count("sub1"), 1);
-        assert_eq!(tracker.get("sub1").unwrap().lsn, 200);
+        assert_eq!(
+            tracker
+                .get("sub1")
+                .expect("position should exist after acknowledge")
+                .lsn,
+            200
+        );
     }
 
     #[test]
@@ -429,7 +477,9 @@ mod tests {
         tracker.mark_pending("sub1", Position::from_lsn(100));
         tracker.mark_pending("sub1", Position::from_lsn(200));
 
-        let oldest = tracker.oldest_pending("sub1").unwrap();
+        let oldest = tracker
+            .oldest_pending("sub1")
+            .expect("oldest pending should exist after marking pending");
         assert_eq!(oldest.lsn, 100);
     }
 
@@ -451,20 +501,42 @@ mod tests {
         let store = MemoryPositionStore::new();
 
         // Initially empty
-        assert!(store.load("sub1").await.unwrap().is_none());
+        assert!(
+            store
+                .load("sub1")
+                .await
+                .expect("load should succeed")
+                .is_none()
+        );
 
         // Save and load
-        store.save("sub1", &Position::from_lsn(100)).await.unwrap();
-        let loaded = store.load("sub1").await.unwrap().unwrap();
+        store
+            .save("sub1", &Position::from_lsn(100))
+            .await
+            .expect("save should succeed");
+        let loaded = store
+            .load("sub1")
+            .await
+            .expect("load should succeed")
+            .expect("position should exist after save");
         assert_eq!(loaded.lsn, 100);
 
         // List
-        store.save("sub2", &Position::from_lsn(200)).await.unwrap();
-        let list = store.list().await.unwrap();
+        store
+            .save("sub2", &Position::from_lsn(200))
+            .await
+            .expect("save should succeed");
+        let list = store.list().await.expect("list should succeed");
         assert_eq!(list.len(), 2);
 
         // Delete
-        store.delete("sub1").await.unwrap();
-        assert!(store.load("sub1").await.unwrap().is_none());
+        store.delete("sub1").await.expect("delete should succeed");
+        assert!(
+            store
+                .load("sub1")
+                .await
+                .expect("load should succeed")
+                .is_none()
+        );
     }
 }

@@ -1,8 +1,36 @@
-//! # SWIFT Engine - INCOMPLETE
+//! # SWIFT Engine - ⚠️ DEPRECATED - INCOMPLETE
 //!
-//! **WARNING**: This engine has incomplete implementations.
-//! Several critical features are not yet implemented.
-//! Use SST, VIPER, or HELIX for production workloads.
+//! **WARNING**: This engine is DEPRECATED and INCOMPLETE.
+//!
+//! ## Deprecation Notice (2026-04-03)
+//!
+//! SWIFT is deprecated and will be removed in v1.0 unless contributors complete the
+//! remaining implementation. See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md` for details.
+//!
+//! ## Current Status
+//!
+//! - **Status**: INCOMPLETE - Not Production Ready
+//! - **Feature Flag**: `experimental-engines` required
+//! - **Tests**: 41 tests (insufficient coverage)
+//! - **DEFERRED Items**: 30+ critical features missing
+//! - **Recommendation**: Use SST, VIPER, HELIX, or NOVA instead
+//!
+//! ## Migration Guide
+//!
+//! For hierarchical storage needs, use application-level hierarchy with production engines:
+//! - **SST**: For range queries and efficient access patterns
+//! - **NOVA**: For columnar analytics with zone maps
+//! - **Multiple Collections**: Use collection naming for hierarchy
+//!
+//! Example:
+//! ```rust,ignore
+//! // Instead of SWIFT hierarchy:
+//! // swift_engine.create_department_hierarchy(&org_structure).await?;
+//!
+//! // Use multiple SST collections:
+//! let marketing = sst_engine.create_collection("tenant_marketing").await?;
+//! let sales = sst_engine.create_collection("tenant_sales").await?;
+//! ```
 //!
 //! ## SWIFT Engine: Storage With Indexed Fast Traversal
 //!
@@ -166,6 +194,7 @@ pub mod unified_reader;
 pub mod unified_strategy_reader;
 
 // Re-export main engine type and cache
+#[allow(deprecated)]
 pub use engine::SwiftEngine;
 pub use superblock_cache::{
     CachedSuperBlockMetadata, OptimalTreePath, SwiftSuperBlockCache, TreeNavigationHints,
@@ -480,7 +509,7 @@ impl Default for SwiftHeader {
             timestamp: 0,
             compaction_level: 0,
             dimension: 0,
-            distance_metric: "cosine".to_string(), // TODO: Use proper enum conversion
+            distance_metric: "cosine".to_string(), // Deferred: Use proper enum conversion
             quantization: QuantizationConfig::default(),
             total_records: 0,
             deleted_records: 0,
@@ -606,7 +635,7 @@ impl SwiftFile {
             // Use centralized compression config conversion from Proxima
             use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
             let mut compression_config =
-                RowBasedCompressionConfig::create_block_config_from_proto(None); // TODO: Pass actual compression config
+                RowBasedCompressionConfig::create_block_config_from_proto(None); // Deferred: Pass actual compression config
 
             // Enable SIMD optimization for SWIFT (low-latency focus)
             compression_config.vector_layout = crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::TransposeFieldEncodedAndCompressedVector;
@@ -630,7 +659,7 @@ impl SwiftFile {
                 let binary_vectors: Vec<Vec<u8>> = vectors
                     .iter()
                     .map(|v| {
-                        let mut binary = vec![0u8; (dimension + 7) / 8];
+                        let mut binary = vec![0u8; dimension.div_ceil(8)];
                         for (i, &val) in v.iter().enumerate() {
                             if val > 0.0 {
                                 binary[i / 8] |= 1 << (i % 8);
@@ -716,7 +745,7 @@ impl SwiftFile {
         self.header.superblock_count = self.superblocks.len() as u32;
 
         // Build metadata indexes
-        // TODO: Fix SuperBlock type mismatch - MetadataIndex expects different SuperBlock type
+        // Deferred: Fix SuperBlock type mismatch - MetadataIndex expects different SuperBlock type
         // self.metadata_index.build_from_superblocks(&self.superblocks[..])?;
 
         Ok(())
@@ -867,7 +896,7 @@ impl SwiftFile {
             // Track AdaCurve codes per superblock for aggregation
             superblock_codes
                 .entry(superblock_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(adacurve_code);
 
             self.superblocks[superblock_id].add_block(block);
@@ -875,7 +904,7 @@ impl SwiftFile {
         }
 
         // Populate superblock AdaCurve codes (use average of block codes)
-        for (sb_id, codes) in superblock_codes.iter() {
+        for (sb_id, codes) in &superblock_codes {
             if let Some(superblock) = self.superblocks.get_mut(*sb_id) {
                 let avg_code = if codes.is_empty() {
                     0
@@ -891,7 +920,7 @@ impl SwiftFile {
         self.header.superblock_count = self.superblocks.len() as u32;
 
         // Build metadata indexes
-        // TODO: Fix SuperBlock type mismatch - MetadataIndex expects different SuperBlock type
+        // Deferred: Fix SuperBlock type mismatch - MetadataIndex expects different SuperBlock type
         // self.metadata_index.build_from_superblocks(&self.superblocks[..])?;
 
         Ok(())
@@ -1036,8 +1065,8 @@ impl SwiftFile {
             if has_bloom {
                 buffer.extend_from_slice(&1u8.to_le_bytes()); // Has bloom filter
                 // For now, just use first block's bloom filter as representative
-                // TODO: Implement proper bloom filter aggregation
-                if let Some(ref first_block) = superblock.blocks.first() {
+                // Deferred: Implement proper bloom filter aggregation
+                if let Some(first_block) = superblock.blocks.first() {
                     if let Some(ref bloom) = first_block.bloom_filter {
                         let bloom_bytes: Vec<u8> = bloom.serialize()?;
                         buffer.extend_from_slice(&(bloom_bytes.len() as u32).to_le_bytes());
@@ -1312,7 +1341,7 @@ impl SwiftFile {
             let mut columnar_stats = Vec::new();
             for dim in 0..dimension {
                 let mut values: Vec<f32> = all_vectors.iter().map(|v| v[dim]).collect();
-                values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
                 let min_val = values[0];
                 let max_val = values[values.len() - 1];

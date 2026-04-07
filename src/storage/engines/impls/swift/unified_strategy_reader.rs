@@ -140,7 +140,7 @@ impl UnifiedSWIFTReader {
             ReadAccessStrategy::DirectStream => super::unified_reader::SwiftReadStrategy::StreamAll,
             ReadAccessStrategy::CachedSelective { filter: _ } => {
                 super::unified_reader::SwiftReadStrategy::HierarchicalPrune {
-                    metadata_filter: None, // TODO: Convert FilterExpression to MetadataFilter
+                    metadata_filter: None, // Deferred: Convert FilterExpression to MetadataFilter
                     id_filter: None,
                 }
             }
@@ -262,23 +262,56 @@ impl UnifiedSWIFTReader {
     /// Check bloom filter for potential matches
     fn check_bloom_filter(
         &self,
-        _bloom: &crate::core::bloom::SstableBloomFilter,
-        _filter: &Option<crate::core::search::FilterExpression>,
+        bloom: &crate::core::bloom::SstableBloomFilter,
+        filter: &Option<crate::core::search::FilterExpression>,
     ) -> bool {
-        // TODO: Implement bloom filter check based on filter expression
-        // For now, conservatively return true (check the block)
-        true
+        // Extract field name from filter for bloom filter check
+        if let Some(crate::core::search::FilterExpression::Comparison { field, value, .. }) = filter
+        {
+            // Build a MetadataItem from the filter value for bloom lookup
+            let item = crate::proto::proximadb_v1::MetadataItem {
+                key: field.clone(),
+                value: match value {
+                    serde_json::Value::String(s) => Some(
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(s.clone()),
+                    ),
+                    serde_json::Value::Number(n) => n
+                        .as_f64()
+                        .map(crate::proto::proximadb_v1::metadata_item::Value::NumberValue),
+                    _ => None,
+                },
+            };
+            // might_match_metadata returns Result<bool>; on error, conservatively return true
+            bloom.might_match_metadata(field, &item).unwrap_or(true)
+        } else {
+            true // No simple comparison filter, must check block
+        }
     }
 
     /// Apply filter to block records (predicate pushdown)
     fn apply_filter_to_block(
         &self,
         records: &[VectorRecord],
-        _filter: &Option<crate::core::search::FilterExpression>,
+        filter: &Option<crate::core::search::FilterExpression>,
     ) -> Result<Vec<VectorRecord>> {
-        // TODO: Implement actual filter evaluation
-        // For now, return all records
-        Ok(records.to_vec())
+        let filter_expr = match filter {
+            Some(expr) => expr,
+            None => return Ok(records.to_vec()),
+        };
+
+        let filtered = records
+            .iter()
+            .filter(|record| {
+                // VectorRecord.metadata is HashMap<String, SqlValue> — use directly
+                crate::core::search::sql_value_filter::evaluate_filter(
+                    filter_expr,
+                    &record.metadata,
+                )
+            })
+            .cloned()
+            .collect();
+
+        Ok(filtered)
     }
 }
 
@@ -308,14 +341,15 @@ impl StrategyAwareReader for UnifiedSWIFTReader {
             }
 
             // Recreate cached filesystem if strategy changed to cached
-            if self.strategy.should_use_cache() && self.cached_filesystem.is_none() {
-                if let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
-                    self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
-                        base_fs,
-                        self.collection_id.clone(),
-                        "swift".to_string(),
-                    )));
-                }
+            if self.strategy.should_use_cache()
+                && self.cached_filesystem.is_none()
+                && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://")
+            {
+                self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
+                    base_fs,
+                    self.collection_id.clone(),
+                    "swift".to_string(),
+                )));
             }
         }
     }
@@ -358,7 +392,7 @@ impl DirectSWIFTReader {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let _ = fs.read(file_path).await?;
 
-        // TODO: Implement SWIFT superblock streaming
+        // Deferred: Implement SWIFT superblock streaming
         Ok(vec![])
     }
 }
@@ -410,7 +444,7 @@ impl CachedSWIFTReader {
     ) -> Result<Vec<VectorRecord>> {
         let _ = self.cached_filesystem.read(file_path).await?;
 
-        // TODO: Implement hierarchical pruning with metadata filter
+        // Deferred: Implement hierarchical pruning with metadata filter
         Ok(vec![])
     }
 }

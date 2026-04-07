@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Not;
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{Node, PropertyValue, Edge};
 
@@ -70,7 +71,7 @@ impl From<proximadb_v1::VectorOperationResponse> for RestVectorOperationResponse
         Self {
             success: proto.success,
             message: proto.message,
-            request_id: if proto.request_id.is_empty() { None } else { Some(proto.request_id) },
+            request_id: proto.request_id.is_empty().not().then(|| proto.request_id),
             processed_count: proto.processed_count,
             search_results: proto.search_results.into_iter().map(RestSearchResult::from).collect::<Vec<_>>().into(),
             collection_info: proto.collection_info.map(RestCollectionInfo::from),
@@ -85,9 +86,9 @@ impl From<proximadb_v1::SearchResult> for RestSearchResult {
         Self {
             id: proto.id,
             score: proto.score,
-            vector: if proto.vector.is_empty() { None } else { Some(proto.vector) },
+            vector: proto.vector.is_empty().not().then(|| proto.vector),
             metadata: convert_proto_metadata_to_json(proto.metadata),
-            collection_id: if proto.collection_id.is_empty() { None } else { Some(proto.collection_id) },
+            collection_id: proto.collection_id.is_empty().not().then(|| proto.collection_id),
         }
     }
 }
@@ -101,7 +102,7 @@ impl From<proximadb_v1::CollectionInfo> for RestCollectionInfo {
             vector_count: proto.vector_count,
             index_type: proto.index_type,
             distance_metric: proto.distance_metric,
-            created_at: if proto.created_at.is_empty() { None } else { Some(proto.created_at) },
+            created_at: proto.created_at.is_empty().not().then(|| proto.created_at),
             metadata: convert_proto_metadata_to_json(proto.metadata),
         }
     }
@@ -179,7 +180,7 @@ pub fn node_to_json(node: &Node) -> serde_json::Value {
         "id": node.id,
         "labels": node.labels,
         "properties": properties_map,
-        "embedding": if node.embedding.is_empty() { None } else { Some(&node.embedding) }
+        "embedding": node.embedding.is_empty().not().then(|| &node.embedding)
     })
 }
 
@@ -217,7 +218,7 @@ pub fn edge_to_json(edge: &Edge) -> serde_json::Value {
         "edge_type": edge.edge_type,
         "properties": properties_map,
         "weight": edge.weight,
-        "created_at": if edge.created_at.is_empty() { None } else { Some(&edge.created_at) },
-        "updated_at": if edge.updated_at.is_empty() { None } else { Some(&edge.updated_at) }
+        "created_at": edge.created_at.is_empty().not().then(|| &edge.created_at),
+        "updated_at": edge.updated_at.is_empty().not().then(|| &edge.updated_at)
     })
 }

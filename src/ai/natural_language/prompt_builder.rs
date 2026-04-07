@@ -36,8 +36,7 @@ impl PromptBuilder {
         // Fallback templates if files don't exist
         if templates
             .get(&PromptTemplate::SecureTranslation)
-            .unwrap()
-            .is_empty()
+            .is_none_or(|t| t.is_empty())
         {
             templates.insert(
                 PromptTemplate::SecureTranslation,
@@ -326,6 +325,12 @@ EXPLANATION:"#
             .collect();
 
         Ok(missing_variables)
+    }
+}
+
+impl Default for PromptBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

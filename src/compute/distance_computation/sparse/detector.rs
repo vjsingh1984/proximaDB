@@ -99,7 +99,9 @@ impl Default for SparsityConfig {
 
 /// Sparsity analyzer with caching
 pub struct SparsityAnalyzer {
+    /// Configuration for sparsity detection thresholds and cache behavior
     config: SparsityConfig,
+    /// Cached sparsity results keyed by vector hash
     cache: DashMap<u64, SparsityInfo>,
 }
 
@@ -127,14 +129,13 @@ impl SparsityAnalyzer {
     /// SparsityInfo with detected characteristics
     pub fn detect_sparsity(&self, vector: &[f32], vector_id: Option<u64>) -> SparsityInfo {
         // Check cache first
-        if let Some(id) = vector_id {
-            if self.config.cache_sparsity_info {
-                if let Some(cached) = self.cache.get(&id) {
-                    let ttl = Duration::from_secs(self.config.cache_ttl_seconds);
-                    if cached.is_valid(ttl) {
-                        return cached.clone();
-                    }
-                }
+        if let Some(id) = vector_id
+            && self.config.cache_sparsity_info
+            && let Some(cached) = self.cache.get(&id)
+        {
+            let ttl = Duration::from_secs(self.config.cache_ttl_seconds);
+            if cached.is_valid(ttl) {
+                return cached.clone();
             }
         }
 
@@ -142,18 +143,18 @@ impl SparsityAnalyzer {
         let info = self.analyze_vector(vector, None);
 
         // Cache result
-        if let Some(id) = vector_id {
-            if self.config.cache_sparsity_info {
-                self.cache.insert(id, info.clone());
+        if let Some(id) = vector_id
+            && self.config.cache_sparsity_info
+        {
+            self.cache.insert(id, info.clone());
 
-                // Evict if cache too large (simple FIFO)
-                if self.cache.len() > self.config.sparsity_cache_size {
-                    // Remove oldest entries (approximate FIFO)
-                    if let Some(entry) = self.cache.iter().next() {
-                        let key = *entry.key();
-                        drop(entry);
-                        self.cache.remove(&key);
-                    }
+            // Evict if cache too large (simple FIFO)
+            if self.cache.len() > self.config.sparsity_cache_size {
+                // Remove oldest entries (approximate FIFO)
+                if let Some(entry) = self.cache.iter().next() {
+                    let key = *entry.key();
+                    drop(entry);
+                    self.cache.remove(&key);
                 }
             }
         }

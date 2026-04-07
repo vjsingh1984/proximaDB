@@ -207,8 +207,7 @@ impl RankingStrategy for HybridRankingStrategy {
         let graph_score = self
             .centrality_cache
             .get(&node.id)
-            .map(|entry| *entry)
-            .unwrap_or(0.0);
+            .map_or(0.0, |entry| *entry);
 
         // Combine scores with weights
         let combined_score = self.vector_weight * vector_score + self.graph_weight * graph_score;
@@ -230,6 +229,7 @@ pub struct VectorSimilarityStrategy {
 }
 
 impl VectorSimilarityStrategy {
+    /// Create a new vector similarity ranking strategy with the given distance computation engine.
     pub fn new(distance_compute: Arc<UnifiedDistanceCompute>) -> Self {
         Self { distance_compute }
     }
@@ -266,6 +266,7 @@ pub struct GraphCentralityStrategy {
 }
 
 impl GraphCentralityStrategy {
+    /// Create a new graph centrality ranking strategy backed by a pre-computed centrality cache.
     pub fn new(centrality_cache: Arc<DashMap<NodeId, f64>>) -> Self {
         Self { centrality_cache }
     }
@@ -276,8 +277,7 @@ impl RankingStrategy for GraphCentralityStrategy {
         Ok(self
             .centrality_cache
             .get(&node.id)
-            .map(|entry| *entry)
-            .unwrap_or(0.0))
+            .map_or(0.0, |entry| *entry))
     }
 
     fn strategy_name(&self) -> &str {
@@ -333,8 +333,14 @@ mod tests {
             distance_metric: DistanceMetric::Cosine,
         };
 
-        let score1 = strategy.compute_score(&node1, &context).unwrap();
-        let score2 = strategy.compute_score(&node2, &context).unwrap();
+        let score1 = strategy
+            .compute_score(&node1, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node1: {}", e))
+            .unwrap();
+        let score2 = strategy
+            .compute_score(&node2, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node2: {}", e))
+            .unwrap();
 
         // node1 should have higher score (high centrality + high similarity)
         assert!(score1 > score2);
@@ -354,8 +360,14 @@ mod tests {
             distance_metric: DistanceMetric::Cosine,
         };
 
-        let score1 = strategy.compute_score(&node1, &context).unwrap();
-        let score2 = strategy.compute_score(&node2, &context).unwrap();
+        let score1 = strategy
+            .compute_score(&node1, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node1: {}", e))
+            .unwrap();
+        let score2 = strategy
+            .compute_score(&node2, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node2: {}", e))
+            .unwrap();
 
         // node1 should have higher score (exact match)
         assert!(score1 > score2);
@@ -380,8 +392,14 @@ mod tests {
             distance_metric: DistanceMetric::Cosine,
         };
 
-        let score1 = strategy.compute_score(&node1, &context).unwrap();
-        let score2 = strategy.compute_score(&node2, &context).unwrap();
+        let score1 = strategy
+            .compute_score(&node1, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node1: {}", e))
+            .unwrap();
+        let score2 = strategy
+            .compute_score(&node2, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node2: {}", e))
+            .unwrap();
 
         println!("test_graph_only: score1={}, score2={}", score1, score2);
 
@@ -410,7 +428,10 @@ mod tests {
             distance_metric: DistanceMetric::Cosine,
         };
 
-        let score = strategy.compute_score(&node, &context).unwrap();
+        let score = strategy
+            .compute_score(&node, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node: {}", e))
+            .unwrap();
 
         // Should get graph score only (0.5 * 0.5 = 0.25)
         assert!((score - 0.25).abs() < 1e-6);
@@ -430,8 +451,14 @@ mod tests {
             distance_metric: DistanceMetric::Euclidean,
         };
 
-        let score1 = strategy.compute_score(&node1, &context).unwrap();
-        let score2 = strategy.compute_score(&node2, &context).unwrap();
+        let score1 = strategy
+            .compute_score(&node1, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node1: {}", e))
+            .unwrap();
+        let score2 = strategy
+            .compute_score(&node2, &context)
+            .map_err(|e| anyhow::anyhow!("Failed to compute score for node2: {}", e))
+            .unwrap();
 
         // node1 should have higher score (closer in L2 space)
         assert!(score1 > score2);

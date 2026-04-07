@@ -17,6 +17,7 @@ use crate::storage::transaction_coordinator::{
 use std::sync::Arc;
 
 /// Create test vector
+#[allow(dead_code)]
 fn create_test_vector(id: &str) -> VectorRecord {
     VectorRecord {
         id: id.to_string(),

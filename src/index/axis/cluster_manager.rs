@@ -6,6 +6,7 @@ use super::types::ClusterAssignment;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
+/// Manages vector clustering for IVF-style index partitioning.
 pub struct ClusterManager {
     config: ClusteringConfig,
     centroids: Vec<Vec<f32>>,
@@ -16,6 +17,7 @@ pub struct ClusterManager {
 }
 
 impl ClusterManager {
+    /// Creates a new cluster manager with the given clustering configuration.
     pub async fn new(config: ClusteringConfig) -> Result<Self> {
         // Use DistanceMetric directly, not UnifiedDistanceConfig
         let distance_calculator = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -30,6 +32,7 @@ impl ClusterManager {
         })
     }
 
+    /// Partitions vectors into clusters using the configured algorithm (e.g., k-means).
     pub async fn cluster_vectors(
         &mut self,
         vectors: &[Vec<f32>],
@@ -141,7 +144,7 @@ impl ClusterManager {
                     .centroids
                     .iter()
                     .map(|c| Self::euclidean_distance(vector, c))
-                    .min_by(|a, b| a.partial_cmp(b).unwrap());
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 if let Some(dist) = min_dist {
                     distances.push(dist * dist);
                 } else {
@@ -187,6 +190,7 @@ impl ClusterManager {
         Ok((nearest_cluster, min_distance))
     }
 
+    /// Finds the k nearest cluster centroids to the given query vector.
     pub async fn find_nearest_clusters(&self, query: &[f32], k: usize) -> Result<Vec<u32>> {
         let mut cluster_distances = Vec::new();
 
@@ -199,7 +203,8 @@ impl ClusterManager {
             cluster_distances.push((i as u32, distance));
         }
 
-        cluster_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        cluster_distances
+            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(cluster_distances
             .into_iter()
@@ -208,6 +213,7 @@ impl ClusterManager {
             .collect())
     }
 
+    /// Returns the global centroid computed across all vectors.
     pub async fn get_global_centroid(&self) -> Result<Vec<f32>> {
         Ok(self.global_centroid.clone())
     }

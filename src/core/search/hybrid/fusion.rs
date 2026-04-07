@@ -8,9 +8,11 @@ use std::collections::HashMap;
 /// Errors that can occur during fusion
 #[derive(Debug, thiserror::Error)]
 pub enum FusionError {
+    /// Requested fusion strategy is not implemented
     #[error("Strategy not yet implemented: {0}")]
     NotYetImplemented(String),
 
+    /// Fusion parameters are invalid
     #[error("Invalid fusion parameters: {0}")]
     InvalidParameters(String),
 }
@@ -474,7 +476,11 @@ impl HybridFusionEngine {
         }
 
         let mut fused_results: Vec<_> = fused_map.into_values().collect();
-        fused_results.sort_by(|a, b| b.fused_score.partial_cmp(&a.fused_score).unwrap());
+        fused_results.sort_by(|a, b| {
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(fused_results)
     }
@@ -556,7 +562,11 @@ impl HybridFusionEngine {
         }
 
         let mut fused_results: Vec<_> = fused_map.into_values().collect();
-        fused_results.sort_by(|a, b| b.fused_score.partial_cmp(&a.fused_score).unwrap());
+        fused_results.sort_by(|a, b| {
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(fused_results)
     }
@@ -638,7 +648,11 @@ impl HybridFusionEngine {
         }
 
         let mut fused_results: Vec<_> = fused_map.into_values().collect();
-        fused_results.sort_by(|a, b| b.fused_score.partial_cmp(&a.fused_score).unwrap());
+        fused_results.sort_by(|a, b| {
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(fused_results)
     }
@@ -720,7 +734,11 @@ impl HybridFusionEngine {
         }
 
         let mut fused_results: Vec<_> = fused_map.into_values().collect();
-        fused_results.sort_by(|a, b| b.fused_score.partial_cmp(&a.fused_score).unwrap());
+        fused_results.sort_by(|a, b| {
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(fused_results)
     }
@@ -771,12 +789,10 @@ impl HybridFusionEngine {
 
                 let bm25_better = bm25_rank
                     .zip(bm25_ranks.get(other_doc))
-                    .map(|(my_r, other_r)| my_r < other_r)
-                    .unwrap_or(false);
+                    .is_some_and(|(my_r, other_r)| my_r < other_r);
                 let vector_better = vector_rank
                     .zip(vector_ranks.get(other_doc))
-                    .map(|(my_r, other_r)| my_r < other_r)
-                    .unwrap_or(false);
+                    .is_some_and(|(my_r, other_r)| my_r < other_r);
 
                 // Wins if ranks higher in both
                 if bm25_better && vector_better {
@@ -786,13 +802,11 @@ impl HybridFusionEngine {
                 let other_bm25_better = bm25_ranks
                     .get(other_doc)
                     .zip(bm25_rank)
-                    .map(|(other_r, my_r)| other_r < my_r)
-                    .unwrap_or(false);
+                    .is_some_and(|(other_r, my_r)| other_r < my_r);
                 let other_vector_better = vector_ranks
                     .get(other_doc)
                     .zip(vector_rank)
-                    .map(|(other_r, my_r)| other_r < my_r)
-                    .unwrap_or(false);
+                    .is_some_and(|(other_r, my_r)| other_r < my_r);
 
                 // Losses if ranks lower in both
                 if other_bm25_better && other_vector_better {
@@ -806,13 +820,11 @@ impl HybridFusionEngine {
             let bm25_score = bm25_results
                 .iter()
                 .find(|r| &r.doc_id == doc_id)
-                .map(|r| r.score)
-                .unwrap_or(0.0);
+                .map_or(0.0, |r| r.score);
             let vector_score = vector_results
                 .iter()
                 .find(|r| &r.doc_id == doc_id)
-                .map(|r| r.score)
-                .unwrap_or(0.0);
+                .map_or(0.0, |r| r.score);
 
             fused_map.insert(
                 doc_id.to_string(),
@@ -821,8 +833,8 @@ impl HybridFusionEngine {
                     bm25_score,
                     vector_score,
                     fused_score: condorcet_score,
-                    bm25_rank: bm25_rank.map(|r| r + 1).unwrap_or(usize::MAX),
-                    vector_rank: vector_rank.map(|r| r + 1).unwrap_or(usize::MAX),
+                    bm25_rank: bm25_rank.map_or(usize::MAX, |r| r + 1),
+                    vector_rank: vector_rank.map_or(usize::MAX, |r| r + 1),
                     highlights: None,
                     metadata: HashMap::new(),
                 },
@@ -830,7 +842,11 @@ impl HybridFusionEngine {
         }
 
         let mut fused_results: Vec<_> = fused_map.into_values().collect();
-        fused_results.sort_by(|a, b| b.fused_score.partial_cmp(&a.fused_score).unwrap());
+        fused_results.sort_by(|a, b| {
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(fused_results)
     }
@@ -916,7 +932,11 @@ impl HybridFusionEngine {
         }
 
         let mut fused_results: Vec<_> = fused_map.into_values().collect();
-        fused_results.sort_by(|a, b| b.fused_score.partial_cmp(&a.fused_score).unwrap());
+        fused_results.sort_by(|a, b| {
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         Ok(fused_results)
     }
@@ -1021,7 +1041,9 @@ mod tests {
             metadata: HashMap::new(),
         }];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // Should have 2 documents
         assert_eq!(fused.len(), 2);
@@ -1064,7 +1086,9 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // Total results: 4 documents
         assert_eq!(fused.len(), 4);
@@ -1109,7 +1133,9 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // Total unique documents: 3 (doc1, doc2, doc3)
         assert_eq!(fused.len(), 3);
@@ -1119,15 +1145,24 @@ mod tests {
         // BM25 rank 0: 4-0 = 4 points
         // Vector rank 0: 4-0 = 4 points
         // Total for doc1: 4 + 4 = 8 points
-        let doc1_result = fused.iter().find(|r| r.doc_id == "doc1").unwrap();
+        let doc1_result = fused
+            .iter()
+            .find(|r| r.doc_id == "doc1")
+            .expect("doc1 should exist in fused results");
         assert_eq!(doc1_result.fused_score, 8.0);
 
         // doc2: only in BM25 at rank 1: 4-1 = 3 points
-        let doc2_result = fused.iter().find(|r| r.doc_id == "doc2").unwrap();
+        let doc2_result = fused
+            .iter()
+            .find(|r| r.doc_id == "doc2")
+            .expect("doc2 should exist in fused results");
         assert_eq!(doc2_result.fused_score, 3.0);
 
         // doc3: only in vector at rank 1: 4-1 = 3 points
-        let doc3_result = fused.iter().find(|r| r.doc_id == "doc3").unwrap();
+        let doc3_result = fused
+            .iter()
+            .find(|r| r.doc_id == "doc3")
+            .expect("doc3 should exist in fused results");
         assert_eq!(doc3_result.fused_score, 3.0);
     }
 
@@ -1167,7 +1202,9 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         assert_eq!(fused.len(), 3);
 
@@ -1179,7 +1216,10 @@ mod tests {
         //   doc1: (0.8-0.6)/0.2 = 1.0
         //   doc3: (0.6-0.6)/0.2 = 0.0
         // doc1: 1.0 + 1.0 = 2.0
-        let doc1 = fused.iter().find(|r| r.doc_id == "doc1").unwrap();
+        let doc1 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc1")
+            .expect("doc1 should exist in fused results");
         assert!((doc1.fused_score - 2.0).abs() < 0.01);
 
         // doc1 should have highest score
@@ -1205,7 +1245,9 @@ mod tests {
             metadata: HashMap::new(),
         }];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // Should normalize before combining
         let doc1 = &fused[0];
@@ -1249,12 +1291,20 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // doc1: min(1.0, 0.8) = 0.8
         // doc2: min(0.3, 0.9) = 0.3
-        let doc1 = fused.iter().find(|r| r.doc_id == "doc1").unwrap();
-        let doc2 = fused.iter().find(|r| r.doc_id == "doc2").unwrap();
+        let doc1 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc1")
+            .expect("doc1 should exist in fused results");
+        let doc2 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc2")
+            .expect("doc2 should exist in fused results");
 
         assert!(doc1.fused_score > doc2.fused_score);
     }
@@ -1295,7 +1345,9 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // After normalization:
         // BM25: max=1.0, min=0.3, range=0.7
@@ -1307,8 +1359,14 @@ mod tests {
         // doc1: max(1.0, 0.0) = 1.0
         // doc2: max(0.0, 1.0) = 1.0
         // Both have the same max score after normalization!
-        let doc1 = fused.iter().find(|r| r.doc_id == "doc1").unwrap();
-        let doc2 = fused.iter().find(|r| r.doc_id == "doc2").unwrap();
+        let doc1 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc1")
+            .expect("doc1 should exist in fused results");
+        let doc2 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc2")
+            .expect("doc2 should exist in fused results");
 
         // Both should have score 1.0 (they're tied)
         assert!((doc1.fused_score - 1.0).abs() < 0.01);
@@ -1351,13 +1409,21 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         assert_eq!(fused.len(), 2);
 
         // doc1 should win over doc2 in both BM25 and vector
-        let doc1 = fused.iter().find(|r| r.doc_id == "doc1").unwrap();
-        let doc2 = fused.iter().find(|r| r.doc_id == "doc2").unwrap();
+        let doc1 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc1")
+            .expect("doc1 should exist in fused results");
+        let doc2 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc2")
+            .expect("doc2 should exist in fused results");
 
         // doc1 should have positive score (more wins than losses)
         assert!(doc1.fused_score > 0.0);
@@ -1401,13 +1467,21 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         assert_eq!(fused.len(), 2);
 
         // Scores should be combined using Dempster's rule
-        let doc1 = fused.iter().find(|r| r.doc_id == "doc1").unwrap();
-        let doc2 = fused.iter().find(|r| r.doc_id == "doc2").unwrap();
+        let doc1 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc1")
+            .expect("doc1 should exist in fused results");
+        let doc2 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc2")
+            .expect("doc2 should exist in fused results");
 
         // doc1 should have higher combined belief
         assert!(doc1.fused_score > doc2.fused_score);
@@ -1442,8 +1516,10 @@ mod tests {
         // Just verify both engines work without error
         let _fused_low = engine_low
             .fuse(bm25_results.clone(), vector_results.clone())
-            .unwrap();
-        let _fused_high = engine_high.fuse(bm25_results, vector_results).unwrap();
+            .expect("Low-alpha fusion should succeed");
+        let _fused_high = engine_high
+            .fuse(bm25_results, vector_results)
+            .expect("High-alpha fusion should succeed");
 
         // Test passes if both engines complete successfully
         // (The alpha parameter effect is subtle with normalization)
@@ -1487,12 +1563,17 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // Should use WeightedLinear for high overlap
         assert_eq!(fused.len(), 2);
         // Check that results are properly fused
-        let doc1 = fused.iter().find(|r| r.doc_id == "doc1").unwrap();
+        let doc1 = fused
+            .iter()
+            .find(|r| r.doc_id == "doc1")
+            .expect("doc1 should exist in fused results");
         assert!(doc1.fused_score > 0.0);
     }
 
@@ -1531,7 +1612,9 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // Should use CombSUM for low overlap
         assert_eq!(fused.len(), 4);
@@ -1578,7 +1661,9 @@ mod tests {
             },
         ];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         // Should use RRF for medium overlap (Jaccard ~0.25)
         assert_eq!(fused.len(), 4);
@@ -1593,7 +1678,9 @@ mod tests {
         let bm25_results = vec![];
         let vector_results = vec![];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         assert_eq!(fused.len(), 0);
     }
@@ -1611,7 +1698,9 @@ mod tests {
 
         let vector_results = vec![];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         assert_eq!(fused.len(), 1);
         assert_eq!(fused[0].doc_id, "doc1");
@@ -1630,7 +1719,9 @@ mod tests {
             metadata: HashMap::new(),
         }];
 
-        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Fusion should succeed");
 
         assert_eq!(fused.len(), 1);
         assert_eq!(fused[0].doc_id, "doc1");
@@ -1661,5 +1752,169 @@ mod tests {
             let engine = HybridFusionEngine::new(strategy);
             assert_eq!(engine.default_top_k, 10);
         }
+    }
+
+    // ============================================================
+    // Fusion strategy coverage tests
+    // ============================================================
+
+    fn make_bm25(id: &str, score: f64) -> BM25Result {
+        BM25Result {
+            doc_id: id.to_string(),
+            score,
+            highlights: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    fn make_vector(id: &str, score: f64) -> VectorResult {
+        VectorResult {
+            doc_id: id.to_string(),
+            score,
+            distance: 1.0 - score,
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_weighted_linear_fusion() {
+        let engine = HybridFusionEngine::new(FusionStrategy::WeightedLinear {
+            alpha: 0.7,
+            bm25_normalize: true,
+            vector_normalize: true,
+        });
+
+        let bm25 = vec![make_bm25("a", 2.0), make_bm25("b", 1.0)];
+        let vector = vec![make_vector("a", 0.9), make_vector("c", 0.8)];
+
+        let fused = engine.fuse(bm25, vector).expect("Fusion should succeed");
+        assert!(!fused.is_empty());
+        // "a" should be top result (present in both)
+        assert_eq!(fused[0].doc_id, "a");
+    }
+
+    #[test]
+    fn test_rank_biased_precision() {
+        let engine =
+            HybridFusionEngine::new(FusionStrategy::RankBiasedPrecision { persistence: 0.9 });
+
+        let bm25 = vec![make_bm25("x", 3.0), make_bm25("y", 2.0)];
+        let vector = vec![make_vector("y", 0.95), make_vector("z", 0.8)];
+
+        let fused = engine.fuse(bm25, vector).expect("RBP should succeed");
+        assert!(fused.len() >= 2);
+    }
+
+    #[test]
+    fn test_conditional_normalization() {
+        let engine = HybridFusionEngine::new(FusionStrategy::ConditionalNormalization);
+
+        let bm25 = vec![make_bm25("d1", 5.0), make_bm25("d2", 1.0)];
+        let vector = vec![make_vector("d1", 0.7), make_vector("d3", 0.5)];
+
+        let fused = engine
+            .fuse(bm25, vector)
+            .expect("ConditionalNorm should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_comb_sum() {
+        let engine = HybridFusionEngine::new(FusionStrategy::CombSum);
+
+        let bm25 = vec![make_bm25("a", 1.0), make_bm25("b", 0.5)];
+        let vector = vec![make_vector("a", 0.8), make_vector("c", 0.6)];
+
+        let fused = engine.fuse(bm25, vector).expect("CombSum should succeed");
+        assert!(fused.len() >= 2);
+        // "a" should rank highest (appears in both lists)
+        assert_eq!(fused[0].doc_id, "a");
+    }
+
+    #[test]
+    fn test_comb_min() {
+        let engine = HybridFusionEngine::new(FusionStrategy::CombMin);
+
+        let bm25 = vec![make_bm25("a", 2.0)];
+        let vector = vec![make_vector("a", 0.5), make_vector("b", 0.9)];
+
+        let fused = engine.fuse(bm25, vector).expect("CombMin should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_comb_max() {
+        let engine = HybridFusionEngine::new(FusionStrategy::CombMax);
+
+        let bm25 = vec![make_bm25("a", 0.3)];
+        let vector = vec![make_vector("a", 0.9), make_vector("b", 0.1)];
+
+        let fused = engine.fuse(bm25, vector).expect("CombMax should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_condorcet() {
+        let engine = HybridFusionEngine::new(FusionStrategy::Condorcet);
+
+        let bm25 = vec![
+            make_bm25("p", 3.0),
+            make_bm25("q", 2.0),
+            make_bm25("r", 1.0),
+        ];
+        let vector = vec![
+            make_vector("q", 0.9),
+            make_vector("p", 0.7),
+            make_vector("r", 0.5),
+        ];
+
+        let fused = engine.fuse(bm25, vector).expect("Condorcet should succeed");
+        assert_eq!(fused.len(), 3);
+    }
+
+    #[test]
+    fn test_dempster_shafer() {
+        let engine = HybridFusionEngine::new(FusionStrategy::DempsterShafer { alpha: 0.6 });
+
+        let bm25 = vec![make_bm25("x", 1.5), make_bm25("y", 0.8)];
+        let vector = vec![make_vector("x", 0.85), make_vector("z", 0.4)];
+
+        let fused = engine
+            .fuse(bm25, vector)
+            .expect("DempsterShafer should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_adaptive_fusion() {
+        let engine = HybridFusionEngine::new(FusionStrategy::Adaptive);
+
+        let bm25 = vec![make_bm25("a", 2.0), make_bm25("b", 1.0)];
+        let vector = vec![make_vector("a", 0.9), make_vector("c", 0.7)];
+
+        let fused = engine.fuse(bm25, vector).expect("Adaptive should succeed");
+        assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_fusion_empty_inputs() {
+        let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+
+        let fused = engine
+            .fuse(vec![], vec![])
+            .expect("Empty fusion should succeed");
+        assert!(fused.is_empty());
+    }
+
+    #[test]
+    fn test_fusion_single_source_only() {
+        let engine = HybridFusionEngine::new(FusionStrategy::CombSum);
+
+        // Only BM25 results, no vector results
+        let bm25 = vec![make_bm25("solo", 1.0)];
+        let fused = engine
+            .fuse(bm25, vec![])
+            .expect("Single source should succeed");
+        assert!(!fused.is_empty());
     }
 }

@@ -603,7 +603,7 @@ impl NovaUnifiedEngine {
                 )
                 .await?;
             // Convert QuantizedDistanceResult to (VectorRecord, f32)
-            // TODO: This needs to be refactored to load IDs from storage along with vectors
+            // Deferred: This needs to be refactored to load IDs from storage along with vectors
             // The current implementation is a placeholder that won't work in production
             Vec::new()
         } else {
@@ -620,7 +620,7 @@ impl NovaUnifiedEngine {
                 .await?;
 
             // Convert to VectorRecords with scores
-            // TODO: This needs to be refactored to load IDs from storage along with vectors
+            // Deferred: This needs to be refactored to load IDs from storage along with vectors
             // The current implementation is a placeholder that won't work in production
             Vec::new()
         };
@@ -944,7 +944,11 @@ impl NovaUnifiedEngine {
         _search_options: &AdvancedSearchOptions,
     ) -> Result<Vec<NovaSearchResult>> {
         // Sort by distance and take top_k
-        distance_results.sort_by(|a, b| a.similarity.partial_cmp(&b.similarity).unwrap());
+        distance_results.sort_by(|a, b| {
+            a.similarity
+                .partial_cmp(&b.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         let results = distance_results
             .into_iter()

@@ -168,14 +168,14 @@ impl GraphMemtable {
                 graph_id: _,
                 index_config: _,
             } => {
-                // TODO: Implement edge index creation
+                // Deferred: Implement edge index creation
                 Ok(())
             }
             GraphOperation::DropEdgeIndex {
                 graph_id: _,
                 index_name: _,
             } => {
-                // TODO: Implement edge index dropping
+                // Deferred: Implement edge index dropping
                 Ok(())
             }
             GraphOperation::BatchOperation { operations } => {
@@ -199,7 +199,7 @@ impl GraphMemtable {
         for label in &node.labels {
             self.label_index
                 .entry(label.clone())
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(node_id.clone());
         }
 
@@ -236,7 +236,7 @@ impl GraphMemtable {
                 for label in &node.labels {
                     self.label_index
                         .entry(label.clone())
-                        .or_insert_with(HashSet::new)
+                        .or_default()
                         .insert(node_id.clone());
                 }
             }
@@ -290,7 +290,7 @@ impl GraphMemtable {
         // Update edge type index
         self.edge_type_index
             .entry(edge.edge_type.clone())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(edge_id.clone());
 
         // Update CSR structure for the edge
@@ -484,7 +484,7 @@ impl GraphMemtable {
             for label in &node_arc.labels {
                 self.label_index
                     .entry(label.clone())
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(node_arc.id.clone());
             }
         }
@@ -497,7 +497,7 @@ impl GraphMemtable {
             // Rebuild edge type index
             self.edge_type_index
                 .entry(edge_arc.edge_type.clone())
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(edge_arc.id.clone());
         }
 

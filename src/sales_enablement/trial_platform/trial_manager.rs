@@ -23,102 +23,159 @@ pub struct EnterpriseTrialManager {
 /// Configuration for trial management
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrialConfig {
+    /// Number of days a standard trial remains active before expiring.
     pub trial_duration_days: u32,
+    /// Maximum number of trials that may be in the `Active` state simultaneously.
     pub max_concurrent_trials: u32,
+    /// Whether account managers can grant time extensions to active trials.
     pub enable_trial_extensions: bool,
+    /// Whether customers may upload their own data into the trial environment.
     pub enable_custom_data_loading: bool,
+    /// Resource quota applied to every provisioned trial environment.
     pub trial_resource_limits: TrialResourceLimits,
 }
 
 /// Enterprise trial instance
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnterpriseTrial {
+    /// Unique identifier for this trial, generated at creation time.
     pub trial_id: String,
+    /// Email address of the primary contact at the prospective customer.
     pub customer_email: String,
+    /// Legal or trading name of the prospective customer company.
     pub company_name: String,
+    /// Category of trial selected by the customer during sign-up.
     pub trial_type: TrialType,
+    /// Current lifecycle status of the trial.
     pub status: TrialStatus,
+    /// UTC timestamp when the trial was created.
     pub created_at: DateTime<Utc>,
+    /// UTC timestamp after which the trial is considered expired.
     pub expires_at: DateTime<Utc>,
+    /// Connection details and credentials for the provisioned environment.
     pub environment_details: TrialEnvironment,
+    /// Tracks which evaluation milestones have been reached.
     pub evaluation_progress: EvaluationProgress,
+    /// Aggregated usage statistics for the trial session.
     pub engagement_metrics: EngagementMetrics,
 }
 
 /// Types of enterprise trials
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TrialType {
-    AIShowcase,         // Focus on AI and natural language capabilities
-    PerformanceTrial,   // Focus on performance and scale
-    SecurityEvaluation, // Focus on enterprise security and compliance
-    ComprehensiveEval,  // Full platform evaluation
-    CustomPOC,          // Custom proof-of-concept
+    /// Focus on AI and natural language query capabilities.
+    AIShowcase,
+    /// Focus on throughput, latency, and large-scale vector workloads.
+    PerformanceTrial,
+    /// Focus on enterprise security, multi-tenancy, and compliance features.
+    SecurityEvaluation,
+    /// Full platform evaluation covering all major feature areas.
+    ComprehensiveEval,
+    /// Customer-defined proof-of-concept using their own data and scenarios.
+    CustomPOC,
 }
 
 /// Trial status tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TrialStatus {
+    /// Trial environment is being set up; not yet accessible to the customer.
     Provisioning,
+    /// Trial is running and the customer has full access.
     Active,
+    /// Trial has been granted a time extension beyond the original expiry date.
     Extended,
+    /// Trial period has elapsed without conversion.
     Expired,
+    /// Customer signed a contract; trial converted to a paid subscription.
     Converted,
+    /// Customer stopped engaging before the trial period ended.
     Abandoned,
 }
 
 /// Trial environment details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrialEnvironment {
+    /// Unique identifier assigned to this isolated trial environment.
     pub environment_id: String,
+    /// HTTPS base URL for REST API access.
     pub rest_endpoint: String,
+    /// gRPC endpoint address including port.
     pub grpc_endpoint: String,
+    /// URL of the web-based administrative dashboard.
     pub dashboard_url: String,
+    /// API key issued to the customer for authenticating requests.
     pub api_key: String,
+    /// Whether sample data has been successfully loaded into the environment.
     pub sample_data_loaded: bool,
+    /// Whether AI-powered query features are available in this environment.
     pub ai_features_enabled: bool,
+    /// DNS subdomain prefix used for all endpoints in this environment.
     pub trial_subdomain: String,
 }
 
 /// Customer evaluation progress tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationProgress {
+    /// Ordered list of milestones the customer has completed so far.
     pub milestones_completed: Vec<EvaluationMilestone>,
+    /// Overall evaluation completion as a percentage in [0.0, 100.0].
     pub completion_percentage: f64,
+    /// Total time the customer has actively spent in the trial environment, in minutes.
     pub time_spent_minutes: u32,
+    /// Names of product features the customer has interacted with.
     pub features_explored: Vec<String>,
+    /// Pain points surfaced by the customer during the evaluation.
     pub pain_points_identified: Vec<String>,
+    /// Success criteria from the customer's evaluation plan that have been satisfied.
     pub success_criteria_met: Vec<String>,
 }
 
 /// Evaluation milestone for customer success tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvaluationMilestone {
+    /// Stable identifier used to deduplicate milestone completions.
     pub milestone_id: String,
+    /// Short human-readable name shown in dashboards and emails.
     pub name: String,
+    /// Full description explaining what achieving this milestone means.
     pub description: String,
+    /// UTC timestamp when the milestone was completed, or `None` if still pending.
     pub completed_at: Option<DateTime<Utc>>,
+    /// Value proposition statement tied to this milestone.
     pub value_demonstrated: String,
 }
 
 /// Customer engagement metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngagementMetrics {
+    /// Cumulative count of REST or gRPC API calls made during the trial.
     pub total_api_calls: u32,
+    /// Number of distinct product features the customer has exercised.
     pub unique_features_used: u32,
+    /// Number of natural-language or vector AI queries executed.
     pub ai_queries_executed: u32,
+    /// Number of times the customer viewed the web dashboard.
     pub dashboard_views: u32,
+    /// Number of documentation pages the customer loaded.
     pub documentation_pages_viewed: u32,
+    /// Number of times the customer contacted support during the trial.
     pub support_interactions: u32,
+    /// UTC timestamp of the most recent customer activity.
     pub last_activity: DateTime<Utc>,
 }
 
 /// Resource limits for trial environments
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrialResourceLimits {
+    /// Maximum number of collections the trial account may create.
     pub max_collections: u32,
+    /// Maximum number of vectors allowed in a single collection.
     pub max_vectors_per_collection: u64,
+    /// Maximum number of API calls permitted per calendar day.
     pub max_api_calls_per_day: u32,
+    /// Maximum number of AI queries permitted per calendar day.
     pub max_ai_queries_per_day: u32,
+    /// Total persistent storage allocated to the trial environment, in gigabytes.
     pub storage_limit_gb: u32,
 }
 
@@ -603,16 +660,23 @@ ProximaDB Enterprise Team",
 /// Trial creation request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrialCreationRequest {
+    /// Email address of the primary business contact requesting the trial.
     pub customer_email: String,
+    /// Legal name of the company requesting the trial.
     pub company_name: String,
+    /// Desired trial focus area selected by the customer.
     pub trial_type: TrialType,
+    /// Industry vertical of the prospective customer (e.g., "Finance", "Healthcare").
     pub industry: Option<String>,
+    /// Brief description of the customer's intended use case.
     pub use_case_description: Option<String>,
+    /// Rough estimate of the customer's anticipated data volume (e.g., "500K vectors").
     pub estimated_data_size: Option<String>,
+    /// Email address of the customer's technical evaluator, if different from the primary contact.
     pub technical_contact: Option<String>,
 }
 
-/// Trial environment manager
+/// Manages provisioning and lifecycle of isolated trial environments.
 #[derive(Debug)]
 pub struct TrialEnvironmentManager {
     #[allow(dead_code)]
@@ -620,6 +684,7 @@ pub struct TrialEnvironmentManager {
 }
 
 impl TrialEnvironmentManager {
+    /// Creates a new `TrialEnvironmentManager` pre-loaded with default environment templates.
     pub async fn new() -> Result<Self> {
         let mut templates = HashMap::new();
 
@@ -640,6 +705,7 @@ impl TrialEnvironmentManager {
         })
     }
 
+    /// Provisions a new isolated environment for the given trial creation request.
     pub async fn provision_trial_environment(
         &self,
         _request: &TrialCreationRequest,
@@ -670,14 +736,19 @@ impl TrialEnvironmentManager {
 /// Environment template for different trial types
 #[derive(Debug, Clone)]
 pub struct EnvironmentTemplate {
+    /// Number of virtual CPUs allocated to environments created from this template.
     pub cpu_allocation: u32,
+    /// RAM allocated to environments created from this template, in gigabytes.
     pub memory_gb: u32,
+    /// Persistent storage allocated to environments created from this template, in gigabytes.
     pub storage_gb: u32,
+    /// Names of AI provider integrations enabled for environments created from this template.
     pub ai_providers_enabled: Vec<String>,
+    /// Number of sample vectors pre-loaded when provisioning from this template.
     pub sample_data_size: usize,
 }
 
-/// Customer engagement analytics
+/// Collects and stores per-trial customer engagement activity streams.
 #[derive(Debug)]
 pub struct CustomerEngagementAnalytics {
     #[allow(dead_code)]
@@ -685,12 +756,14 @@ pub struct CustomerEngagementAnalytics {
 }
 
 impl CustomerEngagementAnalytics {
+    /// Creates a new `CustomerEngagementAnalytics` instance with an empty activity store.
     pub async fn new() -> Result<Self> {
         Ok(Self {
             engagement_data: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
+    /// Begins recording engagement activity for the given trial.
     pub async fn start_trial_tracking(&self, trial: &EnterpriseTrial) -> Result<()> {
         info!(
             "📈 Starting engagement tracking for trial: {}",
@@ -703,37 +776,56 @@ impl CustomerEngagementAnalytics {
 /// Customer activity tracking
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomerActivity {
+    /// Category of action that the customer performed.
     pub activity_type: ActivityType,
+    /// UTC timestamp when the activity occurred.
     pub timestamp: DateTime<Utc>,
+    /// Duration of the activity session in minutes, if applicable.
     pub duration_minutes: Option<u32>,
+    /// Additional key-value metadata specific to the activity type.
     pub details: HashMap<String, String>,
 }
 
 /// Types of customer activities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActivityType {
+    /// Customer successfully completed trial onboarding and started the session.
     TrialStarted,
+    /// Customer opened the web-based administrative dashboard.
     DashboardViewed,
+    /// Customer submitted a natural-language or vector AI query.
     AIQueryExecuted,
+    /// Customer triggered a performance benchmarking run.
     PerformanceTestRun,
+    /// Customer uploaded a dataset into their trial environment.
     DataUploaded,
+    /// Customer tested an API or SDK integration.
     IntegrationTested,
+    /// Customer viewed a documentation page.
     DocumentationViewed,
+    /// Customer opened a support ticket or chat session.
     SupportContacted,
+    /// Trial period was extended at customer request.
     TrialExtended,
+    /// Customer engaged in a sales or pricing discussion.
     ConversionDiscussion,
 }
 
 /// Sample dataset for trials
 #[derive(Debug, Clone)]
 pub struct SampleDataset {
+    /// Human-readable label indicating which scenario this dataset targets.
     pub dataset_type: String,
+    /// Total number of vectors contained in the dataset.
     pub vector_count: usize,
+    /// Names of the collections that this dataset is spread across.
     pub collections: Vec<String>,
+    /// Names of the metadata fields present on vectors in this dataset.
     pub metadata_fields: Vec<String>,
 }
 
 impl SampleDataset {
+    /// Returns a sample dataset suitable for AI showcase demonstrations.
     pub fn ai_showcase() -> Self {
         Self {
             dataset_type: "AI Showcase".to_string(),
@@ -750,6 +842,7 @@ impl SampleDataset {
         }
     }
 
+    /// Returns a large sample dataset intended for performance and scale demonstrations.
     pub fn performance_test() -> Self {
         Self {
             dataset_type: "Performance Test".to_string(),
@@ -759,6 +852,7 @@ impl SampleDataset {
         }
     }
 
+    /// Returns a multi-tenant sample dataset for security and isolation demonstrations.
     pub fn security_demo() -> Self {
         Self {
             dataset_type: "Security Demo".to_string(),
@@ -768,6 +862,7 @@ impl SampleDataset {
         }
     }
 
+    /// Returns a broad sample dataset covering all major product feature areas.
     pub fn comprehensive() -> Self {
         Self {
             dataset_type: "Comprehensive".to_string(),
@@ -789,17 +884,25 @@ impl SampleDataset {
 /// Sales notification for internal team
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SalesNotification {
+    /// Identifier of the trial that triggered this notification.
     pub trial_id: String,
+    /// Name of the prospective customer company.
     pub company_name: String,
+    /// Email address of the primary customer contact.
     pub customer_email: String,
+    /// Computed engagement score at the time the notification was generated, in [0.0, 1.0].
     pub engagement_score: f64,
+    /// Estimated probability that the trial converts to a paid subscription, in [0.0, 1.0].
     pub conversion_probability: f64,
+    /// Prioritised list of actions recommended for the sales representative.
     pub recommended_actions: Vec<String>,
+    /// UTC timestamp when this notification was created.
     pub notification_time: DateTime<Utc>,
 }
 
 // Default implementations
 impl EvaluationProgress {
+    /// Creates a new `EvaluationProgress` with all counters zeroed and no milestones recorded.
     pub fn new() -> Self {
         Self {
             milestones_completed: vec![],
@@ -811,11 +914,13 @@ impl EvaluationProgress {
         }
     }
 
+    /// Records a completed milestone and recalculates the overall completion percentage.
     pub fn complete_milestone(&mut self, milestone: EvaluationMilestone) {
         self.milestones_completed.push(milestone);
         self.update_completion_percentage();
     }
 
+    /// Recalculates and updates `completion_percentage` based on milestones and features explored.
     pub fn update_completion_percentage(&mut self) {
         // Calculate completion based on milestones and feature usage
         let milestone_score = self.milestones_completed.len() as f64 * 20.0; // 20% per milestone
@@ -824,7 +929,14 @@ impl EvaluationProgress {
     }
 }
 
+impl Default for EvaluationProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EngagementMetrics {
+    /// Creates a new `EngagementMetrics` with all counters zeroed and `last_activity` set to now.
     pub fn new() -> Self {
         Self {
             total_api_calls: 0,
@@ -837,6 +949,7 @@ impl EngagementMetrics {
         }
     }
 
+    /// Updates the metrics counters to account for a new customer activity event.
     pub fn record_activity(&mut self, activity: &CustomerActivity) {
         self.last_activity = activity.timestamp;
 
@@ -849,6 +962,12 @@ impl EngagementMetrics {
         }
 
         self.total_api_calls += 1;
+    }
+}
+
+impl Default for EngagementMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

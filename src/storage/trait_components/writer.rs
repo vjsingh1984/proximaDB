@@ -93,10 +93,10 @@ pub trait StorageWriter: StorageIdentity + Send + Sync {
             );
         }
 
-        if let Some(timeout) = params.timeout_ms {
-            if timeout == 0 {
-                return Err(anyhow::anyhow!("Flush timeout cannot be zero"));
-            }
+        if let Some(timeout) = params.timeout_ms
+            && timeout == 0
+        {
+            return Err(anyhow::anyhow!("Flush timeout cannot be zero"));
         }
 
         Ok(())

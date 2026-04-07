@@ -291,7 +291,7 @@ impl SmartIoLayer {
             "SmartIO: Coalesced {} ranges to {} ranges ({}% reduction, {} bytes in gaps)",
             ranges.len(),
             coalesced_ranges.len(),
-            if ranges.len() > 0 {
+            if !ranges.is_empty() {
                 ((ranges.len() - coalesced_ranges.len()) * 100) / ranges.len()
             } else {
                 0
@@ -403,14 +403,19 @@ mod tests {
 
     async fn create_test_filesystem() -> Arc<dyn FileSystem> {
         let config = LocalConfig::default();
-        Arc::new(LocalFileSystem::new(config).await.unwrap())
+        Arc::new(
+            LocalFileSystem::new(config)
+                .await
+                .expect("Failed to create test filesystem"),
+        )
     }
 
     fn create_test_file(size: usize) -> NamedTempFile {
-        let mut file = NamedTempFile::new().unwrap();
+        let mut file = NamedTempFile::new().expect("Failed to create test temp file");
         let data: Vec<u8> = (0..size).map(|i| (i % 256) as u8).collect();
-        file.write_all(&data).unwrap();
-        file.flush().unwrap();
+        file.write_all(&data)
+            .expect("Failed to write test data to temp file");
+        file.flush().expect("Failed to flush test temp file");
         file
     }
 
@@ -452,7 +457,10 @@ mod tests {
         let path = format!("file://{}", test_file.path().display());
 
         let ranges = vec![ByteRange::new(0, 100)];
-        let result = smart_io.read_ranges(&path, ranges).await.unwrap();
+        let result = smart_io
+            .read_ranges(&path, ranges)
+            .await
+            .expect("Failed to read single range");
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].len(), 100);
@@ -477,7 +485,10 @@ mod tests {
             ByteRange::new(1000, 1100),
         ];
 
-        let result = smart_io.read_ranges(&path, ranges).await.unwrap();
+        let result = smart_io
+            .read_ranges(&path, ranges)
+            .await
+            .expect("Failed to read multiple ranges");
 
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].len(), 100);
@@ -510,7 +521,10 @@ mod tests {
             ByteRange::new(100, 200), // Adjacent - should coalesce
         ];
 
-        let result = smart_io.read_ranges(&path, ranges).await.unwrap();
+        let result = smart_io
+            .read_ranges(&path, ranges)
+            .await
+            .expect("Failed to read coalesced ranges");
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].len(), 100);
@@ -527,7 +541,10 @@ mod tests {
         let fs = create_test_filesystem().await;
         let smart_io = SmartIoLayer::new(fs);
 
-        let result = smart_io.read_ranges("any_file", vec![]).await.unwrap();
+        let result = smart_io
+            .read_ranges("any_file", vec![])
+            .await
+            .expect("Failed to read empty ranges");
         assert!(result.is_empty());
     }
 
@@ -540,7 +557,10 @@ mod tests {
         let path = format!("file://{}", test_file.path().display());
 
         let ranges = vec![0u64..100, 500..600];
-        let result = smart_io.read_std_ranges(&path, ranges).await.unwrap();
+        let result = smart_io
+            .read_std_ranges(&path, ranges)
+            .await
+            .expect("Failed to read std ranges");
 
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].len(), 100);
@@ -577,7 +597,10 @@ mod tests {
 
         // Perform some reads
         let ranges = vec![ByteRange::new(0, 1000), ByteRange::new(2000, 3000)];
-        smart_io.read_ranges(&path, ranges).await.unwrap();
+        smart_io
+            .read_ranges(&path, ranges)
+            .await
+            .expect("Failed to read ranges for metrics tracking");
 
         let metrics = smart_io.metrics();
         assert!(metrics.bytes_requested > 0);
@@ -595,7 +618,10 @@ mod tests {
 
         // Perform a read
         let ranges = vec![ByteRange::new(0, 100)];
-        smart_io.read_ranges(&path, ranges).await.unwrap();
+        smart_io
+            .read_ranges(&path, ranges)
+            .await
+            .expect("Failed to read range for metrics reset test");
 
         // Reset and verify
         smart_io.reset_metrics();
@@ -643,7 +669,10 @@ mod tests {
             ByteRange::new(500, 600),
         ];
 
-        let result = smart_io.read_ranges(&path, ranges).await.unwrap();
+        let result = smart_io
+            .read_ranges(&path, ranges)
+            .await
+            .expect("Failed to read ranges with coalescing");
 
         // Verify each range got the correct data
         assert_eq!(result.len(), 3);

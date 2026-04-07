@@ -4,7 +4,6 @@
 //! which replaces the old IntelligentFilesystem and ZeroCopyFilesystem.
 
 use anyhow::Result;
-use bytes::Bytes;
 use std::sync::Arc;
 use tempfile::TempDir;
 

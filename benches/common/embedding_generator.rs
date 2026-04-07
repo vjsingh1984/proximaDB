@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 //! Realistic embedding generators for benchmarking
 //!
 //! This module provides generators that create vectors with distributions
@@ -219,6 +220,8 @@ impl EmbeddingStats {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_bert_embedding_characteristics() {
         let mut generator = EmbeddingGenerator::new(EmbeddingModel::Bert);

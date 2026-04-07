@@ -30,12 +30,14 @@ use std::sync::Arc;
 pub struct CompiledPattern {
     /// Pattern nodes
     pub nodes: Vec<NodePattern>,
-    /// Pattern edges  
+    /// Pattern edges
     pub edges: Vec<EdgePattern>,
     /// Path patterns (variable length)
     pub paths: Vec<PathPattern>,
     /// Where clauses
     pub where_clauses: Vec<WhereClause>,
+    /// WITH clauses for intermediate projections
+    pub with_clauses: Vec<WithClause>,
     /// Return specification
     pub return_spec: ReturnSpec,
     /// Pattern variables (for binding)
@@ -146,8 +148,11 @@ pub enum EdgeDirection {
 pub enum WhereClause {
     /// Simple property constraint
     Property {
+        /// Variable name the constraint applies to (e.g. "n").
         variable: String,
+        /// Property name being constrained (e.g. "age").
         property: String,
+        /// The comparison constraint to apply.
         constraint: PropertyConstraint,
     },
     /// Logical AND of two conditions
@@ -161,7 +166,9 @@ pub enum WhereClause {
 /// Logical operators for WHERE clauses
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum LogicalOperator {
+    /// Logical conjunction (both conditions must hold).
     And,
+    /// Logical disjunction (at least one condition must hold).
     Or,
 }
 
@@ -188,17 +195,42 @@ pub enum PropertyProjection {
     /// Simple variable (e.g., RETURN n)
     Variable(String),
     /// Property access (e.g., RETURN n.name)
-    Property { variable: String, property: String },
+    Property {
+        /// Variable name to access.
+        variable: String,
+        /// Property name to project.
+        property: String,
+    },
     /// COUNT(*) aggregation
     Count,
     /// SUM(variable.property) aggregation
-    Sum { variable: String, property: String },
+    Sum {
+        /// Variable name for aggregation source.
+        variable: String,
+        /// Property name to sum.
+        property: String,
+    },
     /// AVG(variable.property) aggregation
-    Avg { variable: String, property: String },
+    Avg {
+        /// Variable name for aggregation source.
+        variable: String,
+        /// Property name to average.
+        property: String,
+    },
     /// MIN(variable.property) aggregation
-    Min { variable: String, property: String },
+    Min {
+        /// Variable name for aggregation source.
+        variable: String,
+        /// Property name to find minimum of.
+        property: String,
+    },
     /// MAX(variable.property) aggregation
-    Max { variable: String, property: String },
+    Max {
+        /// Variable name for aggregation source.
+        variable: String,
+        /// Property name to find maximum of.
+        property: String,
+    },
 }
 
 /// Order by specification
@@ -223,14 +255,42 @@ pub enum VariableBinding {
     Path(Vec<PathElement>),
 }
 
-/// Element in a path
+impl VariableBinding {
+    /// Returns the bound node when this binding represents a node.
+    pub fn as_node(&self) -> Option<&Arc<Node>> {
+        match self {
+            Self::Node(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    /// Returns the bound edge when this binding represents an edge.
+    pub fn as_edge(&self) -> Option<&Arc<Edge>> {
+        match self {
+            Self::Edge(edge) => Some(edge),
+            _ => None,
+        }
+    }
+
+    /// Returns the bound path when this binding represents a path.
+    pub fn as_path(&self) -> Option<&[PathElement]> {
+        match self {
+            Self::Path(path) => Some(path),
+            _ => None,
+        }
+    }
+}
+
+/// Element in a path (alternating nodes and edges).
 #[derive(Debug, Clone)]
 pub enum PathElement {
+    /// A graph node in the path.
     Node(Arc<Node>),
+    /// A graph edge connecting two nodes in the path.
     Edge(Arc<Edge>),
 }
 
-/// Pattern matching result
+/// Pattern matching result with variable bindings and match quality score.
 #[derive(Debug, Clone)]
 pub struct MatchResult {
     /// Variable bindings for this match
@@ -239,10 +299,12 @@ pub struct MatchResult {
     pub score: f64,
 }
 
-/// Helper struct for path finding
+/// Helper struct for path finding results.
 #[derive(Debug, Clone)]
 pub struct FoundPath {
+    /// Ordered sequence of nodes and edges forming the path.
     pub elements: Vec<PathElement>,
+    /// Number of hops (edges) in the path.
     pub length: u32,
 }
 
@@ -257,6 +319,8 @@ pub struct CypherQuery {
     pub updating_clauses: Vec<UpdatingClause>,
     /// WITH clauses for intermediate projections
     pub with_clauses: Vec<WithClause>,
+    /// UNION clauses for combining queries (TD-019)
+    pub union_clauses: Vec<UnionClause>,
     /// Final RETURN specification (optional for update-only queries)
     pub return_spec: Option<ReturnSpec>,
 }
@@ -266,18 +330,25 @@ pub struct CypherQuery {
 pub enum ReadingClause {
     /// Standard MATCH clause
     Match {
+        /// The graph pattern to match against.
         pattern: MatchPattern,
+        /// Whether this is an OPTIONAL MATCH (unmatched variables become null).
         optional: bool,
     },
     /// UNWIND clause for list expansion
     Unwind {
+        /// Expression that evaluates to a list.
         expression: String,
+        /// Variable name bound to each list element.
         variable: String,
     },
     /// CALL clause for procedure calls
     Call {
+        /// Fully qualified procedure name.
         procedure: String,
+        /// Arguments passed to the procedure.
         arguments: Vec<serde_json::Value>,
+        /// Variables to yield from the procedure result.
         yield_items: Vec<String>,
     },
 }
@@ -368,22 +439,34 @@ pub struct SetClause {
 pub enum SetItem {
     /// Set a single property: SET n.name = 'Alice'
     Property {
+        /// Variable name of the node or edge to update.
         variable: String,
+        /// Property name to set.
         property: String,
+        /// New value for the property.
         value: serde_json::Value,
     },
     /// Set all properties: SET n = {name: 'Alice', age: 30}
     AllProperties {
+        /// Variable name of the node or edge to update.
         variable: String,
+        /// Complete property map replacing all existing properties.
         properties: HashMap<String, serde_json::Value>,
     },
     /// Add/merge properties: SET n += {age: 31}
     MergeProperties {
+        /// Variable name of the node or edge to update.
         variable: String,
+        /// Properties to merge into existing properties.
         properties: HashMap<String, serde_json::Value>,
     },
     /// Add label: SET n:NewLabel
-    AddLabel { variable: String, label: String },
+    AddLabel {
+        /// Variable name of the node to label.
+        variable: String,
+        /// Label to add to the node.
+        label: String,
+    },
 }
 
 /// REMOVE clause for removing properties and labels
@@ -397,9 +480,19 @@ pub struct RemoveClause {
 #[derive(Debug, Clone)]
 pub enum RemoveItem {
     /// Remove a property: REMOVE n.property
-    Property { variable: String, property: String },
+    Property {
+        /// Variable name of the node or edge.
+        variable: String,
+        /// Property name to remove.
+        property: String,
+    },
     /// Remove a label: REMOVE n:Label
-    Label { variable: String, label: String },
+    Label {
+        /// Variable name of the node.
+        variable: String,
+        /// Label to remove from the node.
+        label: String,
+    },
 }
 
 /// MERGE clause for create-if-not-exists pattern
@@ -441,6 +534,16 @@ pub struct WithClause {
     pub where_clause: Option<WhereClause>,
 }
 
+/// UNION clause for combining multiple queries
+/// TD-019: UNION clause implementation
+#[derive(Debug, Clone)]
+pub struct UnionClause {
+    /// Whether to use DISTINCT (UNION) or ALL (UNION ALL)
+    pub distinct: bool,
+    /// The query to union with (right side of UNION)
+    pub query: Box<CypherQuery>,
+}
+
 // ==================== Query Builder Helpers ====================
 
 impl CypherQuery {
@@ -450,6 +553,7 @@ impl CypherQuery {
             reading_clauses: Vec::new(),
             updating_clauses: Vec::new(),
             with_clauses: Vec::new(),
+            union_clauses: Vec::new(), // TD-019: UNION clause support
             return_spec: None,
         }
     }

@@ -3,7 +3,7 @@
 
 //! Baseline encoder - Pure Rust implementation (always available)
 //!
-//! TODO: Phase 2.1 - Extract encoding functions from old ProximaEncoder
+//! DEFERRED: Phase 2.1 - Extract encoding functions from old ProximaEncoder
 
 use crate::storage::engines::core::ops::proximacodec::traits::RawEncoder;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;

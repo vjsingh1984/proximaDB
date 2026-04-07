@@ -224,7 +224,7 @@ impl PgValue {
             DataValue::Json(j) => j.clone(),
             DataValue::Uuid(u) => u.clone(),
             DataValue::Array(arr) => {
-                let elements: Vec<String> = arr.iter().map(|v| Self::encode_text(v)).collect();
+                let elements: Vec<String> = arr.iter().map(Self::encode_text).collect();
                 format!("{{{}}}", elements.join(","))
             }
             DataValue::Vector(v) => {

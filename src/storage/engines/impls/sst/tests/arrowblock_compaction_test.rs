@@ -520,7 +520,7 @@ mod tests {
 
         // Search for each original vector to ensure none were lost
         let mut found_count = 0;
-        for (idx, original_vector) in all_vectors.iter().enumerate() {
+        for (_idx, original_vector) in all_vectors.iter().enumerate() {
             let search_params = Arc::new(SearchParams {
                 vector: Some(original_vector.vector.clone()),
                 top_k: Some(1),
@@ -724,7 +724,7 @@ mod tests {
         info!("Compaction completed");
 
         // Search and verify metadata is preserved
-        for (idx, original_vector) in vectors.iter().enumerate() {
+        for (_idx, original_vector) in vectors.iter().enumerate() {
             let search_params = Arc::new(SearchParams {
                 vector: Some(original_vector.vector.clone()),
                 top_k: Some(1),

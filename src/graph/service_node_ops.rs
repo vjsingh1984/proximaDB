@@ -127,10 +127,7 @@ impl super::GraphOperationsService {
                         let key = super::index_key_for_value(filter_val);
                         if let Some(ids_vec) = index_map.get(&key) {
                             let id_set: HashSet<NodeId> = ids_vec.iter().cloned().collect();
-                            candidates = candidates
-                                .into_iter()
-                                .filter(|id| id_set.contains(id))
-                                .collect();
+                            candidates.retain(|id| id_set.contains(id));
                         } else {
                             // No matches for this property value; result is empty
                             candidates.clear();
@@ -165,10 +162,7 @@ impl super::GraphOperationsService {
                         {
                             matched.extend(ids.iter().cloned());
                         }
-                        candidates = candidates
-                            .into_iter()
-                            .filter(|id| matched.contains(id))
-                            .collect();
+                        candidates.retain(|id| matched.contains(id));
                     }
                 }
                 Op::GreaterThan | Op::GreaterEqual | Op::LessThan | Op::LessEqual => {
@@ -221,10 +215,7 @@ impl super::GraphOperationsService {
                             }
                             _ => {}
                         }
-                        candidates = candidates
-                            .into_iter()
-                            .filter(|id| matched.contains(id))
-                            .collect();
+                        candidates.retain(|id| matched.contains(id));
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
@@ -274,10 +265,7 @@ impl super::GraphOperationsService {
                             }
                             _ => {}
                         }
-                        candidates = candidates
-                            .into_iter()
-                            .filter(|id| matched.contains(id))
-                            .collect();
+                        candidates.retain(|id| matched.contains(id));
                     }
                 }
                 _ => {}
@@ -458,19 +446,18 @@ impl super::GraphOperationsService {
             for entry in self.memory_pool.unique_constraints.iter() {
                 let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if cgraph == graph_id && clabel == label {
-                    if let Some(val) = node.properties.get(cprop) {
-                        let k = super::index_key_for_value(val);
-                        if let Some(existing) = map.get(&k) {
-                            if existing.value() != &node.id {
-                                return Err(crate::core::error::ProximaDBError::InvalidInput(
-                                    format!(
-                                        "Unique constraint violation on (label='{}', property='{}') for value '{}'",
-                                        clabel, cprop, k
-                                    ),
-                                ));
-                            }
-                        }
+                if cgraph == graph_id
+                    && clabel == label
+                    && let Some(val) = node.properties.get(cprop)
+                {
+                    let k = super::index_key_for_value(val);
+                    if let Some(existing) = map.get(&k)
+                        && existing.value() != &node.id
+                    {
+                        return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
+                            "Unique constraint violation on (label='{}', property='{}') for value '{}'",
+                            clabel, cprop, k
+                        )));
                     }
                 }
             }
@@ -484,11 +471,12 @@ impl super::GraphOperationsService {
             for entry in self.memory_pool.unique_constraints.iter() {
                 let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if cgraph == graph_id && *clabel == label {
-                    if let Some(val) = node.properties.get(cprop) {
-                        let k = super::index_key_for_value(val);
-                        map.insert(k, node.id.clone());
-                    }
+                if cgraph == graph_id
+                    && *clabel == label
+                    && let Some(val) = node.properties.get(cprop)
+                {
+                    let k = super::index_key_for_value(val);
+                    map.insert(k, node.id.clone());
                 }
             }
         }
@@ -500,14 +488,15 @@ impl super::GraphOperationsService {
             for entry in self.memory_pool.unique_constraints.iter() {
                 let (cgraph, clabel, cprop) = entry.key();
                 let map = entry.value();
-                if cgraph == graph_id && *clabel == label {
-                    if let Some(val) = node.properties.get(cprop) {
-                        let k = super::index_key_for_value(val);
-                        if let Some(existing) = map.get(&k) {
-                            if existing.value() == &node.id {
-                                map.remove(&k);
-                            }
-                        }
+                if cgraph == graph_id
+                    && *clabel == label
+                    && let Some(val) = node.properties.get(cprop)
+                {
+                    let k = super::index_key_for_value(val);
+                    if let Some(existing) = map.get(&k)
+                        && existing.value() == &node.id
+                    {
+                        map.remove(&k);
                     }
                 }
             }
@@ -533,13 +522,13 @@ impl super::GraphOperationsService {
             if let Some(comp) = super::GraphOperationsService::composite_key_for_node(node, &props)
             {
                 let map = entry.value();
-                if let Some(existing) = map.get(&comp) {
-                    if existing.value() != &node.id {
-                        return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
-                            "Duplicate composite key for unique ({:?})",
-                            props
-                        )));
-                    }
+                if let Some(existing) = map.get(&comp)
+                    && existing.value() != &node.id
+                {
+                    return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
+                        "Duplicate composite key for unique ({:?})",
+                        props
+                    )));
                 }
             }
         }

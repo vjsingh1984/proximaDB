@@ -325,13 +325,12 @@ impl NovaHierarchicalCache {
             if let Some(zonemap) = self.zonemap_cache.get(&cache_key) {
                 // Check if query range overlaps with zone map
                 for dim_range in &zonemap.dimension_ranges {
-                    if dim_range.dim_index == query_range.dim_index {
-                        if !(query_range.max_value < dim_range.min_value
+                    if dim_range.dim_index == query_range.dim_index
+                        && !(query_range.max_value < dim_range.min_value
                             || query_range.min_value > dim_range.max_value)
-                        {
-                            matching_blocks.push(collection.clone());
-                            break;
-                        }
+                    {
+                        matching_blocks.push(collection.clone());
+                        break;
                     }
                 }
             }

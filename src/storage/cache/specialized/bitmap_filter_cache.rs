@@ -89,6 +89,12 @@ impl FilterOptimizer {
     }
 }
 
+impl Default for FilterOptimizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Filter component that can be cached
 pub struct FilterComponent {
     pub expression: String,
@@ -135,6 +141,12 @@ impl IncrementalUpdater {
         let mut index = self.doc_filter_index.write().await;
         index.remove(&doc_id);
         Ok(())
+    }
+}
+
+impl Default for IncrementalUpdater {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -200,8 +212,8 @@ impl BitmapFilterCache {
                     filter_expr: component.expression.clone(),
                     cached_at: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or(0),
                     dependencies: vec![],
                 };
 
@@ -223,8 +235,8 @@ impl BitmapFilterCache {
             filter_expr: filter.to_string(),
             cached_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0),
             dependencies,
         };
 
@@ -253,7 +265,7 @@ impl BitmapFilterCache {
 
     /// Invalidate filters that depend on changed data
     pub async fn invalidate_dependent_filters(&self, _changed_keys: Vec<String>) -> Result<()> {
-        // TODO: Implement dependent filter invalidation when BaseCache supports key enumeration
+        // Deferred: Implement dependent filter invalidation when BaseCache supports key enumeration
         // For now, we can't iterate over all keys in the cache
         // This would require adding a keys() method to the BaseCache trait
         // As a workaround, we could maintain a separate index of filter dependencies
@@ -263,13 +275,13 @@ impl BitmapFilterCache {
 
     /// Invalidate a specific filter
     pub async fn invalidate(&self, _key: &str) -> bool {
-        // TODO: Implement invalidation
+        // Deferred: Implement invalidation
         false
     }
 
     /// Resize the cache
     pub async fn resize(&self, _new_size_mb: usize) -> Result<()> {
-        // TODO: Implement cache resizing
+        // Deferred: Implement cache resizing
         Ok(())
     }
 
@@ -306,8 +318,8 @@ impl BitmapFilterCache {
                     filter_expr: format!("{:?}({:?})", op, filter_keys),
                     cached_at: std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
+                        .map(|duration| duration.as_secs())
+                        .unwrap_or(0),
                     dependencies: filter_keys.iter().map(|s| s.to_string()).collect(),
                 });
             }
@@ -318,8 +330,8 @@ impl BitmapFilterCache {
             filter_expr: format!("{:?}({:?})", op, filter_keys),
             cached_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0),
             dependencies: filter_keys.iter().map(|s| s.to_string()).collect(),
         })
     }

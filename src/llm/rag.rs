@@ -120,12 +120,19 @@ pub struct RAGContext {
 /// RAG pipeline statistics
 #[derive(Debug, Clone, Default)]
 pub struct RAGStats {
+    /// Total RAG queries executed.
     pub total_queries: u64,
+    /// Total source documents retrieved across all queries.
     pub total_documents_retrieved: u64,
+    /// Queries served from cache without re-retrieval.
     pub cache_hits: u64,
+    /// Queries that required full retrieval + generation.
     pub cache_misses: u64,
+    /// Cumulative token consumption for generation.
     pub total_tokens_used: u64,
+    /// Running average query latency in milliseconds.
     pub average_latency_ms: f64,
+    /// Running average source documents per query.
     pub average_sources_per_query: f64,
 }
 

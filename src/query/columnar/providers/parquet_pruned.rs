@@ -237,86 +237,86 @@ impl ParquetRangePrunedProvider {
         use parquet::file::statistics::Statistics;
 
         // Integer statistics with integer value
-        if let Statistics::Int64(int_stats) = stats {
-            if let Some(val) = value.as_i64() {
-                let min = int_stats.min_opt().copied();
-                let max = int_stats.max_opt().copied();
+        if let Statistics::Int64(int_stats) = stats
+            && let Some(val) = value.as_i64()
+        {
+            let min = int_stats.min_opt().copied();
+            let max = int_stats.max_opt().copied();
 
-                return match op {
-                    ComparisonOperator::Equals => {
-                        // Value must be within [min, max]
-                        if let (Some(min), Some(max)) = (min, max) {
-                            Ok(val >= min && val <= max)
-                        } else {
-                            Ok(true)
-                        }
+            return match op {
+                ComparisonOperator::Equals => {
+                    // Value must be within [min, max]
+                    if let (Some(min), Some(max)) = (min, max) {
+                        Ok(val >= min && val <= max)
+                    } else {
+                        Ok(true)
                     }
-                    ComparisonOperator::LessThan => {
-                        // min must be < val
-                        if let Some(min) = min {
-                            Ok(min < val)
-                        } else {
-                            Ok(true)
-                        }
+                }
+                ComparisonOperator::LessThan => {
+                    // min must be < val
+                    if let Some(min) = min {
+                        Ok(min < val)
+                    } else {
+                        Ok(true)
                     }
-                    ComparisonOperator::LessThanOrEqual => {
-                        if let Some(min) = min {
-                            Ok(min <= val)
-                        } else {
-                            Ok(true)
-                        }
+                }
+                ComparisonOperator::LessThanOrEqual => {
+                    if let Some(min) = min {
+                        Ok(min <= val)
+                    } else {
+                        Ok(true)
                     }
-                    ComparisonOperator::GreaterThan => {
-                        if let Some(max) = max {
-                            Ok(max > val)
-                        } else {
-                            Ok(true)
-                        }
+                }
+                ComparisonOperator::GreaterThan => {
+                    if let Some(max) = max {
+                        Ok(max > val)
+                    } else {
+                        Ok(true)
                     }
-                    ComparisonOperator::GreaterThanOrEqual => {
-                        if let Some(max) = max {
-                            Ok(max >= val)
-                        } else {
-                            Ok(true)
-                        }
+                }
+                ComparisonOperator::GreaterThanOrEqual => {
+                    if let Some(max) = max {
+                        Ok(max >= val)
+                    } else {
+                        Ok(true)
                     }
-                    ComparisonOperator::NotEquals => Ok(true), // Could always contain non-equal values
-                    _ => Ok(true),
-                };
-            }
+                }
+                ComparisonOperator::NotEquals => Ok(true), // Could always contain non-equal values
+                _ => Ok(true),
+            };
         }
 
         // Float statistics with float value
-        if let Statistics::Double(float_stats) = stats {
-            if let Some(val) = value.as_f64() {
-                let min = float_stats.min_opt().copied();
-                let max = float_stats.max_opt().copied();
+        if let Statistics::Double(float_stats) = stats
+            && let Some(val) = value.as_f64()
+        {
+            let min = float_stats.min_opt().copied();
+            let max = float_stats.max_opt().copied();
 
-                return match op {
-                    ComparisonOperator::Equals => {
-                        if let (Some(min), Some(max)) = (min, max) {
-                            Ok(val >= min && val <= max)
-                        } else {
-                            Ok(true)
-                        }
+            return match op {
+                ComparisonOperator::Equals => {
+                    if let (Some(min), Some(max)) = (min, max) {
+                        Ok(val >= min && val <= max)
+                    } else {
+                        Ok(true)
                     }
-                    ComparisonOperator::LessThan => {
-                        if let Some(min) = min {
-                            Ok(min < val)
-                        } else {
-                            Ok(true)
-                        }
+                }
+                ComparisonOperator::LessThan => {
+                    if let Some(min) = min {
+                        Ok(min < val)
+                    } else {
+                        Ok(true)
                     }
-                    ComparisonOperator::GreaterThan => {
-                        if let Some(max) = max {
-                            Ok(max > val)
-                        } else {
-                            Ok(true)
-                        }
+                }
+                ComparisonOperator::GreaterThan => {
+                    if let Some(max) = max {
+                        Ok(max > val)
+                    } else {
+                        Ok(true)
                     }
-                    _ => Ok(true),
-                };
-            }
+                }
+                _ => Ok(true),
+            };
         }
 
         // Unsupported type combination, assume match
@@ -355,11 +355,11 @@ impl ParquetRangePrunedProvider {
         // Build reader with projections
         let mut builder = ParquetRecordBatchReaderBuilder::try_new(bytes)?;
 
-        if config.enable_projection {
-            if let Some(ref columns) = config.projection {
-                let projection = Self::build_projection_mask(builder.parquet_schema(), columns);
-                builder = builder.with_projection(projection);
-            }
+        if config.enable_projection
+            && let Some(ref columns) = config.projection
+        {
+            let projection = Self::build_projection_mask(builder.parquet_schema(), columns);
+            builder = builder.with_projection(projection);
         }
 
         // Read specific row groups
@@ -529,7 +529,7 @@ impl ColumnarReadProvider for ParquetRangePrunedProvider {
         _batch_size: usize,
     ) -> Result<Box<dyn ColumnarBatchStream>> {
         // For now, read all and stream
-        // TODO: Implement true streaming with row-group-at-a-time
+        // Deferred: Implement true streaming with row-group-at-a-time
         let batches = self.read_batches(config).await?;
         Ok(Box::new(ParquetBatchStream {
             batches,
@@ -563,8 +563,7 @@ impl ColumnarReadProvider for ParquetRangePrunedProvider {
     fn get_stats(&self) -> ColumnarAccessStats {
         self.stats
             .read()
-            .map(|stats| stats.clone())
-            .unwrap_or_else(|_| ColumnarAccessStats::default())
+            .map_or_else(|_| ColumnarAccessStats::default(), |stats| stats.clone())
     }
 
     fn reset_stats(&mut self) {

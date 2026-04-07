@@ -21,7 +21,6 @@ use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::core::formats::columnar::CollectionContext;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
-use crate::storage::persistence::filesystem::FilesystemFactory;
 
 // Arrow imports for parquet file creation
 use arrow_array::{Int64Array, RecordBatch, StringArray};
@@ -293,6 +292,9 @@ async fn test_search_vectors_basic() -> Result<()> {
         enable_progressive_search: None,
         filters: None,
         timeout_ms: None,
+        enable_vectorized_execution: None,
+        enable_parallel_morsels: None,
+        enable_pipeline_execution: None,
         search_mode: crate::core::search::SearchMode::default(),
         block_prune: crate::core::search::BlockPruneConfig::default(),
         text_query: None,

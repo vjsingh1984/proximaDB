@@ -142,7 +142,7 @@ for (id, _) in top_10_percent {
 }
 
 // Keep top 1% (or top_k * 10) for final level
-candidates_l2.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap());
+candidates_l2.sort_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 let top_1_percent = &candidates_l2[..(request.top_k * 10).min(candidates_l2.len())];
 ----
 
@@ -167,7 +167,7 @@ for (id, _) in top_1_percent {
     final_results.push(SearchResult { id: *id, distance: exact_dist });
 }
 
-final_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+final_results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
 Ok(SearchResponse {
     results: final_results.into_iter().take(request.top_k).collect(),
 })

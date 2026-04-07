@@ -51,20 +51,33 @@ pub struct IndexEvent {
     pub operation: OperationType,
 }
 
+/// Storage engine types that produce index events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StorageEngineType {
+    /// Sorted String Table engine.
     SST,
+    /// VIPER engine for high-throughput writes.
     VIPER,
+    /// NOVA engine for large-scale batch operations.
     NOVA,
+    /// RAPTOR engine for columnar analytics.
     RAPTOR,
+    /// SWIFT engine for low-latency reads.
     SWIFT,
+    /// HELIX engine for time-series workloads.
     HELIX,
+    /// TST (Ternary Search Tree) engine for text indexing.
+    TST,
 }
 
+/// Type of storage operation that triggered an index event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum OperationType {
+    /// Memtable flush to persistent storage.
     Flush,
+    /// Background compaction merging storage files.
     Compaction,
+    /// Record deletion requiring index cleanup.
     Delete,
 }
 
@@ -259,8 +272,7 @@ impl EventLogQueue {
     pub fn can_compact(&self, file_path: &str) -> bool {
         self.file_status
             .get(file_path)
-            .map(|s| s.ready_for_compaction)
-            .unwrap_or(true) // If not tracked, allow compaction
+            .is_none_or(|s| s.ready_for_compaction) // If not tracked, allow compaction
     }
 
     /// Clean up after compaction
@@ -388,7 +400,7 @@ impl EventLogQueue {
 
     /// Get list of active indexes from collection config
     fn get_active_indexes(&self) -> Vec<String> {
-        // TODO: Get from collection config
+        // Deferred: Get from collection config
         vec!["hnsw".to_string(), "ivf".to_string()]
     }
 
@@ -450,19 +462,23 @@ impl EventLogQueue {
     }
 }
 
-/// Vector extraction mode for AXIS
+/// Vector extraction mode for AXIS index building.
 #[derive(Debug, Clone)]
 pub enum ExtractionMode {
+    /// Extract only full-precision f32 vectors.
     Fp32Only,
+    /// Extract only quantized (compressed) vectors.
     QuantizedOnly,
+    /// Extract both f32 and quantized representations.
     Both,
+    /// Automatically choose extraction mode based on index requirements.
     Auto,
 }
 
 fn current_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs()
 }
 

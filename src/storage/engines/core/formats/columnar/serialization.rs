@@ -197,9 +197,25 @@ impl MemoryPools {
         }
     }
 
+    fn lock_pool<'a, T>(
+        pool: &'a std::sync::Mutex<Vec<T>>,
+        pool_name: &str,
+    ) -> std::sync::MutexGuard<'a, Vec<T>> {
+        match pool.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                warn!(
+                    pool = pool_name,
+                    "Memory pool mutex poisoned; recovering inner pool"
+                );
+                poisoned.into_inner()
+            }
+        }
+    }
+
     /// Get or allocate FP32 vector
     fn fp32_vector(&self, size: usize) -> Vec<f32> {
-        let mut pool = self.fp32_pool.lock().unwrap();
+        let mut pool = Self::lock_pool(&self.fp32_pool, "fp32_pool");
         if let Some(mut vec) = pool.pop() {
             vec.clear();
             vec.reserve(size);
@@ -213,7 +229,7 @@ impl MemoryPools {
     fn return_fp32_vector(&self, vec: Vec<f32>) {
         if vec.capacity() <= 4096 {
             // Don't pool very large vectors
-            let mut pool = self.fp32_pool.lock().unwrap();
+            let mut pool = Self::lock_pool(&self.fp32_pool, "fp32_pool");
             if pool.len() < 100 {
                 // Limit pool size
                 pool.push(vec);
@@ -224,7 +240,7 @@ impl MemoryPools {
     /// Get or allocate INT8 vector
     #[allow(dead_code)]
     fn get_int8_vector(&self, size: usize) -> Vec<i8> {
-        let mut pool = self.int8_pool.lock().unwrap();
+        let mut pool = Self::lock_pool(&self.int8_pool, "int8_pool");
         if let Some(mut vec) = pool.pop() {
             vec.clear();
             vec.reserve(size);
@@ -238,7 +254,7 @@ impl MemoryPools {
     #[allow(dead_code)]
     fn return_int8_vector(&self, vec: Vec<i8>) {
         if vec.capacity() <= 4096 {
-            let mut pool = self.int8_pool.lock().unwrap();
+            let mut pool = Self::lock_pool(&self.int8_pool, "int8_pool");
             if pool.len() < 100 {
                 pool.push(vec);
             }
@@ -248,7 +264,7 @@ impl MemoryPools {
     /// Get or allocate binary vector
     #[allow(dead_code)]
     fn get_binary_vector(&self, size: usize) -> Vec<u8> {
-        let mut pool = self.binary_pool.lock().unwrap();
+        let mut pool = Self::lock_pool(&self.binary_pool, "binary_pool");
         if let Some(mut vec) = pool.pop() {
             vec.clear();
             vec.reserve(size);
@@ -263,7 +279,7 @@ impl MemoryPools {
     fn return_binary_vector(&self, vec: Vec<u8>) {
         if vec.capacity() <= 2048 {
             // Binary vectors are smaller
-            let mut pool = self.binary_pool.lock().unwrap();
+            let mut pool = Self::lock_pool(&self.binary_pool, "binary_pool");
             if pool.len() < 100 {
                 pool.push(vec);
             }
@@ -340,7 +356,7 @@ impl ColumnarSerializer {
         let hardware_caps = get_hardware_capabilities();
 
         let quantization_engine = if config.quantization.is_some() {
-            let quant_config = StorageQuantizationConfig::default(); // TODO: Convert from QuantizationConfig
+            let quant_config = StorageQuantizationConfig::default(); // Deferred: Convert from QuantizationConfig
             let distance_compute = Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
             );
@@ -377,7 +393,7 @@ impl ColumnarSerializer {
         let start_time = std::time::Instant::now();
         let mut quantization_time = 0.0;
         let mut _compression_time = 0.0;
-        let _memory_pool_hits = 0; // TODO: Track actual memory pool hits
+        let _memory_pool_hits = 0; // Deferred: Track actual memory pool hits
 
         info!(
             "Serializing {} vector records with transparent quantization",
@@ -501,26 +517,57 @@ impl ColumnarSerializer {
         let vectors = match selected_format {
             SelectedFormat::FP32 => {
                 let vector_key = "vector";
-                self.deserialize_fp32_vectors(arrays.get(vector_key).unwrap())?
+                let array = arrays.get(vector_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        vector_key
+                    ))
+                })?;
+                self.deserialize_fp32_vectors(array)?
             }
             SelectedFormat::Binary => {
                 let binary_key = "vector_binary";
-                self.deserialize_binary_vectors(arrays.get(binary_key).unwrap())
-                    .await?
+                let array = arrays.get(binary_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        binary_key
+                    ))
+                })?;
+                self.deserialize_binary_vectors(array).await?
             }
             SelectedFormat::INT8 => {
                 let vector_key = "vector_int8";
                 let scale_key = "int8_scale";
                 let zero_point_key = "int8_zero_point";
-                let vector_array = arrays.get(vector_key).unwrap();
-                let scale_array = arrays.get(scale_key).unwrap();
-                let zero_point_array = arrays.get(zero_point_key).unwrap();
+                let vector_array = arrays.get(vector_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        vector_key
+                    ))
+                })?;
+                let scale_array = arrays.get(scale_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        scale_key
+                    ))
+                })?;
+                let zero_point_array = arrays.get(zero_point_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        zero_point_key
+                    ))
+                })?;
                 self.deserialize_int8_vectors(vector_array, scale_array, zero_point_array)?
             }
             SelectedFormat::PQ => {
                 let pq_key = "vector_pq";
-                self.deserialize_pq_vectors(arrays.get(pq_key).unwrap())
-                    .await?
+                let array = arrays.get(pq_key).ok_or_else(|| {
+                    crate::core::error::VectorDBError::InvalidInput(format!(
+                        "Missing required array: {}",
+                        pq_key
+                    ))
+                })?;
+                self.deserialize_pq_vectors(array).await?
             }
         };
 
@@ -642,7 +689,7 @@ impl ColumnarSerializer {
         &self,
         quantized_data: &[StorageQuantizedData],
     ) -> Result<ArrayRef> {
-        let binary_size = (self.config.dimension + 7) / 8;
+        let binary_size = self.config.dimension.div_ceil(8);
         let mut builder = FixedSizeBinaryBuilder::new(binary_size as i32);
 
         for data in quantized_data {
@@ -715,8 +762,7 @@ impl ColumnarSerializer {
             .config
             .quantization
             .as_ref()
-            .map(|q| q.pq_segments.unwrap_or(8) as usize)
-            .unwrap_or(16); // Default PQ segments
+            .map_or(16, |q| q.pq_segments.unwrap_or(8) as usize); // Default PQ segments
 
         let mut builder = FixedSizeBinaryBuilder::new(pq_size as i32);
 
@@ -752,9 +798,9 @@ impl ColumnarSerializer {
             let quantized_size = quantized_data
                 .iter()
                 .map(|d| {
-                    d.primary.as_ref().map(|p| p.data.len()).unwrap_or(0)
-                        + d.filter.as_ref().map(|f| f.data.len()).unwrap_or(0)
-                        + d.fast.as_ref().map(|f| f.data.len()).unwrap_or(0)
+                    d.primary.as_ref().map_or(0, |p| p.data.len())
+                        + d.filter.as_ref().map_or(0, |f| f.data.len())
+                        + d.fast.as_ref().map_or(0, |f| f.data.len())
                 })
                 .sum::<usize>();
 
@@ -768,9 +814,9 @@ impl ColumnarSerializer {
         };
 
         Ok(QuantizationStats {
-            binary_hamming_accuracy: None, // TODO: Calculate actual accuracy
-            int8_mse: None,                // TODO: Calculate MSE
-            pq_mse: None,                  // TODO: Calculate PQ MSE
+            binary_hamming_accuracy: None, // Deferred: Calculate actual accuracy
+            int8_mse: None,                // Deferred: Calculate MSE
+            pq_mse: None,                  // Deferred: Calculate PQ MSE
             compression_ratio,
             memory_reduction: (compression_ratio - 1.0) / compression_ratio * 100.0,
         })

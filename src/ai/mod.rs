@@ -156,20 +156,32 @@ impl AIEnterpiseIntelligenceCoordinator {
 /// AI enterprise query types
 #[derive(Debug, Clone)]
 pub enum AIEnterpriseQuery {
+    /// Natural language business question
     NaturalLanguage {
+        /// Natural language query text
         query: String,
+        /// Business context for the query
         business_context: crate::storage::tenant::BusinessContext,
     },
+    /// Automated insight generation request
     AutomatedInsights {
+        /// Business domains to analyze
         domains: Vec<String>,
+        /// Type of insight to generate
         insight_type: InsightType,
     },
+    /// Predictive analytics request
     PredictiveAnalytics {
+        /// Business scenario to predict
         business_scenario: BusinessScenario,
+        /// Prediction time horizon
         prediction_horizon: PredictionHorizon,
     },
+    /// Conversational analytics session
     ConversationalSession {
+        /// Type of conversational session
         session_type: ConversationalSessionType,
+        /// Session context
         context: ConversationalContext,
     },
 }
@@ -177,20 +189,31 @@ pub enum AIEnterpriseQuery {
 /// AI enterprise intelligence result
 #[derive(Debug, Clone)]
 pub enum AIEnterpriseIntelligenceResult {
+    /// Natural language answer result
     NaturalLanguageAnswer(AIIntelligentBusinessAnswer),
+    /// Automated insights result
     AutomatedInsights(AutomatedBusinessInsights),
+    /// Predictive analysis result
     PredictiveAnalysis(PredictiveBusinessAnalysis),
+    /// Conversational session result
     ConversationalSession(ConversationalAnalyticsSession),
 }
 
-// Type definitions for AI intelligence
+/// Type alias for AI-generated business answer
 pub type AIIntelligentBusinessAnswer = String;
+/// Type alias for automated business insights
 pub type AutomatedBusinessInsights = String;
+/// Type alias for predictive business analysis results
 pub type PredictiveBusinessAnalysis = String;
+/// Type alias for conversational analytics session
 pub type ConversationalAnalyticsSession = String;
+/// Type alias for business scenario description
 pub type BusinessScenario = String;
+/// Type alias for prediction time horizon
 pub type PredictionHorizon = String;
+/// Type alias for conversational session type
 pub type ConversationalSessionType = String;
+/// Type alias for conversational session context
 pub type ConversationalContext = String;
 
 /// Global AI intelligence manager

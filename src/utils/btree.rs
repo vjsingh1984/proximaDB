@@ -138,6 +138,7 @@ struct InternalNode {
 }
 
 impl InternalNode {
+    /// Create a new empty internal node with no keys or children
     fn new() -> Self {
         InternalNode {
             keys: Vec::new(),
@@ -208,6 +209,7 @@ struct LeafNode {
 }
 
 impl LeafNode {
+    /// Create a new empty leaf node with no entries
     fn new() -> Self {
         LeafNode {
             entries: Vec::new(),
@@ -261,7 +263,10 @@ impl LeafNode {
         let mid = max_keys / 2;
         let new_entries = self.entries.split_off(mid);
 
-        let split_key = new_entries.first().unwrap().0.clone();
+        let split_key = new_entries
+            .first()
+            .map(|(key, _)| key.clone())
+            .unwrap_or_default();
 
         let new_node = LeafNode {
             entries: new_entries,
@@ -289,16 +294,16 @@ impl LeafNode {
         for (key, _value) in &self.entries {
             let key_slice = key.as_slice();
 
-            if let Some(start_key) = start {
-                if key_slice < start_key {
-                    continue;
-                }
+            if let Some(start_key) = start
+                && key_slice < start_key
+            {
+                continue;
             }
 
-            if let Some(end_key) = end {
-                if key_slice >= end_key {
-                    break;
-                }
+            if let Some(end_key) = end
+                && key_slice >= end_key
+            {
+                break;
             }
 
             result.push((key.clone(), key.clone()));
@@ -321,10 +326,12 @@ enum NodeRef {
 // NodeRef serde handled by derive macro
 
 impl NodeRef {
+    /// Wrap an internal node in an in-memory reference
     fn new_internal(node: InternalNode) -> Self {
         NodeRef::InMemory(Arc::new(RwLock::new(Node::Internal(node))))
     }
 
+    /// Wrap a leaf node in an in-memory reference
     fn new_leaf(node: LeafNode) -> Self {
         NodeRef::InMemory(Arc::new(RwLock::new(Node::Leaf(node))))
     }
@@ -425,6 +432,7 @@ pub struct BTreeIterator {
 }
 
 impl BTreeIterator {
+    /// Create a new iterator starting from the given leaf node
     fn new(leaf: Option<NodeRef>, end_key: Option<Vec<u8>>, forward: bool) -> Self {
         BTreeIterator {
             current_leaf: leaf,
@@ -434,6 +442,7 @@ impl BTreeIterator {
         }
     }
 
+    /// Create a new iterator positioned at the first key >= start_key
     fn new_with_start(
         leaf: Option<NodeRef>,
         start_key: Option<Vec<u8>>,
@@ -448,21 +457,20 @@ impl BTreeIterator {
         };
 
         // Position the iterator at the first key >= start_key
-        if let (Some(leaf_ref), Some(start)) = (&iterator.current_leaf, &start_key) {
-            if let Ok(leaf_guard) = leaf_ref.read() {
-                if let Node::Leaf(leaf) = &*leaf_guard {
-                    // Find the first entry >= start_key
-                    for (i, (key, _)) in leaf.entries.iter().enumerate() {
-                        if key.as_slice() >= start.as_slice() {
-                            iterator.current_index = i;
-                            break;
-                        }
-                    }
-                    // If no entry >= start_key in this leaf, we'll move to next leaf in next()
-                    if iterator.current_index >= leaf.entries.len() {
-                        iterator.current_index = leaf.entries.len(); // This will trigger next leaf lookup
-                    }
+        if let (Some(leaf_ref), Some(start)) = (&iterator.current_leaf, &start_key)
+            && let Ok(leaf_guard) = leaf_ref.read()
+            && let Node::Leaf(leaf) = &*leaf_guard
+        {
+            // Find the first entry >= start_key
+            for (i, (key, _)) in leaf.entries.iter().enumerate() {
+                if key.as_slice() >= start.as_slice() {
+                    iterator.current_index = i;
+                    break;
                 }
+            }
+            // If no entry >= start_key in this leaf, we'll move to next leaf in next()
+            if iterator.current_index >= leaf.entries.len() {
+                iterator.current_index = leaf.entries.len(); // This will trigger next leaf lookup
             }
         }
 
@@ -482,10 +490,10 @@ impl Iterator for BTreeIterator {
                 let entry = leaf.entries[self.current_index].clone();
 
                 // Check if we've reached the end key
-                if let Some(ref end) = self.end_key {
-                    if entry.0.as_slice() >= end.as_slice() {
-                        return None;
-                    }
+                if let Some(ref end) = self.end_key
+                    && entry.0.as_slice() >= end.as_slice()
+                {
+                    return None;
                 }
 
                 self.current_index += 1;
@@ -524,7 +532,11 @@ impl BPlusTree {
     /// Create a new B+ tree with specified node size
     pub fn new(node_size: usize) -> Self {
         if node_size < 4 {
-            panic!("Node size must be at least 4");
+            // API contract violation - B+ tree requires min 4 keys
+            #[allow(clippy::panic)]
+            {
+                panic!("Node size must be at least 4");
+            }
         }
 
         BPlusTree {
@@ -554,12 +566,20 @@ impl BPlusTree {
             return old_value;
         }
 
-        let root_ref = self.root.as_ref().unwrap().clone();
+        let root_ref = match self.root.as_ref() {
+            Some(root) => root.clone(),
+            None => return None,
+        };
         if let Some((old_value, split_result)) = self.insert_recursive(&root_ref, key, value) {
             // Handle root split
             if let Some((split_key, new_node)) = split_result {
                 let mut new_root = InternalNode::new();
-                new_root.children.push(self.root.take().unwrap());
+                if let Some(old_root) = self.root.take() {
+                    new_root.children.push(old_root);
+                } else {
+                    self.root = Some(NodeRef::new_internal(new_root));
+                    return old_value;
+                }
                 new_root.keys.push(split_key);
                 new_root.children.push(new_node);
 
@@ -658,15 +678,16 @@ impl BPlusTree {
             if underflow {
                 // Handle root underflow
                 let root_guard = root.read().ok()?;
-                if let Node::Internal(internal) = &*root_guard {
-                    if internal.keys.is_empty() && !internal.children.is_empty() {
-                        // Root has only one child, make it the new root
-                        let new_root = internal.children[0].clone();
-                        drop(root_guard);
-                        self.root = Some(new_root);
-                        self.stats.height = self.stats.height.saturating_sub(1);
-                        self.stats.internal_nodes = self.stats.internal_nodes.saturating_sub(1);
-                    }
+                if let Node::Internal(internal) = &*root_guard
+                    && internal.keys.is_empty()
+                    && !internal.children.is_empty()
+                {
+                    // Root has only one child, make it the new root
+                    let new_root = internal.children[0].clone();
+                    drop(root_guard);
+                    self.root = Some(new_root);
+                    self.stats.height = self.stats.height.saturating_sub(1);
+                    self.stats.internal_nodes = self.stats.internal_nodes.saturating_sub(1);
                 }
             }
 
@@ -872,16 +893,16 @@ impl BPlusTree {
                 for i in 0..leaf.entries.len() {
                     let key = &leaf.entries[i].0;
 
-                    if let Some(min) = min_key {
-                        if key.as_slice() < min {
-                            return Err(BTreeError::TreeCorrupted("Key below minimum".to_string()));
-                        }
+                    if let Some(min) = min_key
+                        && key.as_slice() < min
+                    {
+                        return Err(BTreeError::TreeCorrupted("Key below minimum".to_string()));
                     }
 
-                    if let Some(max) = max_key {
-                        if key.as_slice() >= max {
-                            return Err(BTreeError::TreeCorrupted("Key above maximum".to_string()));
-                        }
+                    if let Some(max) = max_key
+                        && key.as_slice() >= max
+                    {
+                        return Err(BTreeError::TreeCorrupted("Key above maximum".to_string()));
                     }
 
                     if i > 0 && leaf.entries[i - 1].0 >= leaf.entries[i].0 {

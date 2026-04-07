@@ -8,48 +8,12 @@ use std::sync::Arc;
 
 use crate::graph::engines::GraphEngine;
 use crate::storage::traits::{
-    DataModel, DocumentStorageOperations, MultiModelStats, ObservabilityStorageOperations,
+    DocumentStorageOperations, MultiModelStats, ObservabilityStorageOperations,
     UnifiedStorageEngine,
 };
 
-/// Model type discriminator for routing operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ModelType {
-    /// Vector embeddings storage (Helix + SST)
-    Vector,
-    /// Semi-structured JSON documents (Raptor + SST)
-    Document,
-    /// Graph nodes and edges (Orion)
-    Graph,
-    /// Relational tables (SST + Viper HTAP)
-    Relational,
-    /// Observability data: logs, metrics, traces (Viper + Tantivy)
-    Observability,
-}
-
-impl From<DataModel> for ModelType {
-    fn from(model: DataModel) -> Self {
-        match model {
-            DataModel::Vector => ModelType::Vector,
-            DataModel::Document => ModelType::Document,
-            DataModel::Graph => ModelType::Graph,
-            DataModel::Observability => ModelType::Observability,
-            DataModel::Relational => ModelType::Relational,
-        }
-    }
-}
-
-impl From<ModelType> for DataModel {
-    fn from(model: ModelType) -> Self {
-        match model {
-            ModelType::Vector => DataModel::Vector,
-            ModelType::Document => DataModel::Document,
-            ModelType::Graph => DataModel::Graph,
-            ModelType::Relational => DataModel::Relational,
-            ModelType::Observability => DataModel::Observability,
-        }
-    }
-}
+/// Model type discriminator for routing operations — alias for the canonical StoreType
+pub type ModelType = crate::query::multimodel_router::StoreType;
 
 /// Capabilities of a store
 #[derive(Debug, Clone)]
@@ -218,34 +182,28 @@ pub struct MultiModelStorageConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::traits::DataModel;
 
     #[test]
-    fn test_model_type_conversion() {
-        assert_eq!(ModelType::from(DataModel::Vector), ModelType::Vector);
-        assert_eq!(ModelType::from(DataModel::Document), ModelType::Document);
-        assert_eq!(ModelType::from(DataModel::Graph), ModelType::Graph);
-        assert_eq!(
-            ModelType::from(DataModel::Relational),
-            ModelType::Relational
-        );
-        assert_eq!(
-            ModelType::from(DataModel::Observability),
-            ModelType::Observability
-        );
+    fn test_model_type_is_data_model() {
+        // ModelType and DataModel are now both aliases for StoreType
+        let mt: ModelType = ModelType::Vector;
+        let dm: DataModel = mt; // zero-cost: same type
+        assert_eq!(dm, DataModel::Vector);
+        assert_eq!(dm, ModelType::Vector);
     }
 
     #[test]
-    fn test_data_model_conversion() {
-        assert_eq!(DataModel::from(ModelType::Vector), DataModel::Vector);
-        assert_eq!(DataModel::from(ModelType::Document), DataModel::Document);
-        assert_eq!(DataModel::from(ModelType::Graph), DataModel::Graph);
-        assert_eq!(
-            DataModel::from(ModelType::Relational),
-            DataModel::Relational
-        );
-        assert_eq!(
-            DataModel::from(ModelType::Observability),
-            DataModel::Observability
-        );
+    fn test_all_variants_accessible() {
+        let variants = [
+            ModelType::Vector,
+            ModelType::Document,
+            ModelType::Graph,
+            ModelType::Relational,
+            ModelType::Observability,
+            ModelType::TimeSeries,
+            ModelType::Event,
+        ];
+        assert_eq!(variants.len(), 7);
     }
 }

@@ -70,8 +70,7 @@ impl SstRecord {
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
                         serde_json::Number::from_f64(f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number)
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(b)
@@ -114,11 +113,7 @@ impl SstRecord {
         &self,
         score: f32,
     ) -> crate::core::search::results::OptimizedSearchRecord {
-        let mut record = crate::core::search::results::OptimizedSearchRecord::default();
-        record.id = self.id.clone();
-        record.score = score;
-        record.vector = self.vector.as_ref().map(|v| Arc::new(v.clone()));
-        record.metadata = self
+        let metadata = self
             .metadata
             .as_ref()
             .map(|json_value| {
@@ -163,9 +158,15 @@ impl SstRecord {
                 }
             })
             .unwrap_or_default();
-        record.timestamp = Some(self.timestamp as i64);
-        record.version = Some(self.sequence_number as u32);
-        record
+        crate::core::search::results::OptimizedSearchRecord {
+            id: self.id.clone(),
+            score,
+            vector: self.vector.as_ref().map(|v| Arc::new(v.clone())),
+            metadata,
+            timestamp: Some(self.timestamp as i64),
+            version: Some(self.sequence_number as u32),
+            ..Default::default()
+        }
     }
 
     /// Serialize record to bytes

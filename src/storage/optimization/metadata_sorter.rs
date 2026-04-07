@@ -40,10 +40,15 @@ impl Default for MetadataSortConfig {
 /// Statistics about the sorting operation
 #[derive(Debug, Default)]
 pub struct SortingStats {
+    /// Total number of records sorted
     pub records_sorted: usize,
+    /// Sort keys used (in priority order)
     pub sort_keys_used: Vec<String>,
+    /// Number of distinct values found per sort key
     pub distinct_values_per_key: HashMap<String, usize>,
-    pub compression_estimate: f64, // Estimated compression improvement (0.0-1.0)
+    /// Estimated compression improvement ratio (0.0-1.0, where 1.0 = 100% improvement)
+    pub compression_estimate: f64,
+    /// Time taken for sorting operation in microseconds
     pub sort_time_us: u64,
 }
 
@@ -141,28 +146,28 @@ impl MetadataSorter {
     /// Extract metadata value for sorting (handles different data types)
     fn extract_metadata_value(&self, record: &VectorRecord, key: &str) -> SortableValue {
         // Find the metadata item in the HashMap
-        if let Some(sql_value) = record.metadata.get(key) {
-            if let Some(value) = &sql_value.value {
-                match value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                        return SortableValue::from_string(s);
+        if let Some(sql_value) = record.metadata.get(key)
+            && let Some(value) = &sql_value.value
+        {
+            match value {
+                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                    return SortableValue::from_string(s);
+                }
+                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
+                    // Check if it's an integer
+                    if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
+                        return SortableValue::Number(*n as i64);
+                    } else {
+                        // Store floats as string for consistent ordering
+                        return SortableValue::Float(n.to_string());
                     }
-                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                        // Check if it's an integer
-                        if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-                            return SortableValue::Number(*n as i64);
-                        } else {
-                            // Store floats as string for consistent ordering
-                            return SortableValue::Float(n.to_string());
-                        }
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                        // Convert bool to string for sorting
-                        return SortableValue::String(b.to_string());
-                    }
-                    _ => {
-                        return SortableValue::Null;
-                    }
+                }
+                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                    // Convert bool to string for sorting
+                    return SortableValue::String(b.to_string());
+                }
+                _ => {
+                    return SortableValue::Null;
                 }
             }
         }
@@ -235,10 +240,14 @@ impl MetadataSorter {
 /// Sortable value that handles different data types uniformly
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum SortableValue {
+    /// Null/missing value (sorts first)
     Null,
+    /// String value
     String(String),
-    Number(i64),   // For integer-like strings
-    Float(String), // For float-like strings (stored as string for ordering)
+    /// Integer value (for whole numbers)
+    Number(i64),
+    /// Float value (stored as string for consistent ordering)
+    Float(String),
 }
 
 impl PartialOrd for SortableValue {
@@ -271,6 +280,14 @@ impl Ord for SortableValue {
 }
 
 impl SortableValue {
+    /// Parse a string into the appropriate SortableValue type
+    ///
+    /// Attempts to parse as integer first, then float, then falls back
+    /// to string. Empty strings become Null.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - String value to parse
     fn from_string(value: &str) -> Self {
         if value.is_empty() {
             return Self::Null;
@@ -282,7 +299,7 @@ impl SortableValue {
         }
 
         // Try to parse as float
-        if let Ok(_) = value.parse::<f64>() {
+        if value.parse::<f64>().is_ok() {
             return Self::Float(value.to_string());
         }
 
@@ -297,17 +314,28 @@ pub struct SortConfigBuilder {
 }
 
 impl SortConfigBuilder {
+    /// Create a new sort configuration builder with default settings
     pub fn new() -> Self {
         Self {
             config: MetadataSortConfig::default(),
         }
     }
 
+    /// Add a single sort key to the configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Metadata field name to sort by
     pub fn add_sort_key(mut self, key: String) -> Self {
         self.config.primary_sort_keys.push(key);
         self
     }
 
+    /// Add multiple sort keys to the configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `keys` - Iterator of metadata field names to sort by
     pub fn add_sort_keys<I>(mut self, keys: I) -> Self
     where
         I: IntoIterator<Item = String>,
@@ -316,18 +344,41 @@ impl SortConfigBuilder {
         self
     }
 
+    /// Enable or disable stable sorting by vector ID
+    ///
+    /// When enabled, records are sorted by vector ID as a final tiebreaker
+    /// to ensure deterministic ordering.
+    ///
+    /// # Arguments
+    ///
+    /// * `enabled` - Whether to enable stable sorting by ID
     pub fn stable_sort_by_id(mut self, enabled: bool) -> Self {
         self.config.stable_sort_by_id = enabled;
         self
     }
 
+    /// Set the cardinality threshold for hash-based sorting
+    ///
+    /// When a sort key has more distinct values than this threshold,
+    /// the algorithm switches to hash-based sorting for performance.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Maximum distinct values before using hash-based sorting
     pub fn cardinality_threshold(mut self, threshold: usize) -> Self {
         self.config.cardinality_threshold = threshold;
         self
     }
 
+    /// Build the final sort configuration
     pub fn build(self) -> MetadataSortConfig {
         self.config
+    }
+}
+
+impl Default for SortConfigBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

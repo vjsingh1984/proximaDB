@@ -3,6 +3,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
 use tracing::{debug, info};
 
+/// Loads and merges configuration from TOML files and environment variables
 pub struct ConfigLoader;
 
 impl ConfigLoader {

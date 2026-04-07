@@ -24,6 +24,7 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     /// Helper to create test metadata write buffer config
+    #[allow(dead_code)]
     fn create_test_wal_config(temp_dir: &TempDir) -> MetadataWALConfig {
         use crate::storage::persistence::write_ahead_log::config::MemTableType;
         use crate::storage::persistence::write_ahead_log::{
@@ -132,6 +133,7 @@ mod tests {
     }
 
     /// Mock implementation for testing that avoids write buffer complexity
+    #[allow(dead_code)]
     struct MockAtomicMetadataStore {
         metadata: Arc<RwLock<HashMap<String, VersionedCollectionMetadata>>>,
         transactions: Arc<RwLock<HashMap<TransactionId, MetadataTransaction>>>,

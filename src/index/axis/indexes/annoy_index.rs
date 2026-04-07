@@ -163,6 +163,7 @@ impl AnnoyTree {
     }
 
     /// Build a subtree recursively
+    #[allow(clippy::only_used_in_recursion)]
     fn build_subtree(
         &mut self,
         vectors: &[(String, Vec<f32>)],
@@ -298,16 +299,15 @@ impl AnnoyTree {
                             id.as_str()
                         };
 
-                        if let Some(view) = vectors.get(id) {
-                            if let Some(vector_data) = view.as_f32() {
-                                let distance_result = distance_compute.calculate_distance(
-                                    query,
-                                    vector_data,
-                                    &distance_compute.system_default(),
-                                );
-                                candidates
-                                    .push((actual_id.to_string(), distance_result.rank_value));
-                            }
+                        if let Some(view) = vectors.get(id)
+                            && let Some(vector_data) = view.as_f32()
+                        {
+                            let distance_result = distance_compute.calculate_distance(
+                                query,
+                                vector_data,
+                                &distance_compute.system_default(),
+                            );
+                            candidates.push((actual_id.to_string(), distance_result.rank_value));
                         }
                     }
                 }
@@ -381,10 +381,7 @@ impl AxisAnnoyIndex {
         // USING UTILS: Validate configuration
         validation::validate_dimension(dimension)?;
 
-        let coll_str = collection_id
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("default");
+        let coll_str = collection_id.as_ref().map_or("default", |s| s.as_str());
         info!(
             "Creating AXIS Annoy index for collection '{}': {} trees, search_k={}, dim={}",
             coll_str, config.n_trees, config.search_k, dimension
@@ -423,7 +420,10 @@ impl AxisAnnoyIndex {
             return Err(anyhow!("Index is already built"));
         }
 
-        let vectors = self.vectors.read().unwrap();
+        let vectors = self
+            .vectors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if vectors.is_empty() {
             // Mark as built even for empty index
             self.is_built.store(true, Ordering::Relaxed);
@@ -433,8 +433,7 @@ impl AxisAnnoyIndex {
         let coll_str = self
             .collection_id
             .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("default");
+            .map_or("default", |s| s.as_str());
         info!(
             "Building Annoy index with {} trees for {} vectors in collection '{}'",
             self.config.n_trees,
@@ -484,7 +483,10 @@ impl AxisAnnoyIndex {
         }
 
         // Update trees
-        *self.trees.write().unwrap() = trees;
+        *self
+            .trees
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = trees;
 
         // Mark as built atomically
         self.is_built.store(true, Ordering::Release);
@@ -506,7 +508,10 @@ impl AxisAnnoyIndex {
 
     /// Get statistics
     pub fn stats(&self) -> AnnoyStats {
-        let trees = self.trees.read().unwrap();
+        let trees = self
+            .trees
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let total_nodes = trees.iter().map(|t| t.nodes.len()).sum();
         let avg_tree_depth = if !trees.is_empty() {
@@ -517,7 +522,10 @@ impl AxisAnnoyIndex {
 
         AnnoyStats {
             vector_count: {
-                let vectors = self.vectors.read().unwrap();
+                let vectors = self
+                    .vectors
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 vectors.len()
             },
             tree_count: trees.len(),
@@ -577,7 +585,10 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         validation::validate_vector_id(&id)?;
 
         // Insert vector into zero-overhead collection
-        let mut vectors = self.vectors.write().unwrap();
+        let mut vectors = self
+            .vectors
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         vectors.add_fp32(id, &vector_data)?;
 
         // USING UTILS: Record successful operation
@@ -605,7 +616,10 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         let k = validation::validate_k(top_k, 10000)?;
 
         // Validate query dimension against stored dimension
-        let vectors = self.vectors.read().unwrap();
+        let vectors = self
+            .vectors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if query.len() != vectors.config().dimension {
             self.stats
                 .record_failure(start.elapsed().as_micros() as u64);
@@ -617,7 +631,10 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         }
 
         // Get trees read lock
-        let trees = self.trees.read().unwrap();
+        let trees = self
+            .trees
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         // Return empty results for empty index (valid case)
         if vectors.is_empty() {
@@ -654,7 +671,7 @@ impl AxisVectorIndex for AxisAnnoyIndex {
         }
 
         // Sort by distance and take top k
-        all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         all_candidates.truncate(k);
 
         // USING UTILS: Record successful search
@@ -676,10 +693,16 @@ impl AxisVectorIndex for AxisAnnoyIndex {
     fn stats(&self) -> IndexStats {
         // Get memory usage from zero-overhead collection
         let vector_memory = {
-            let vectors = self.vectors.read().unwrap();
+            let vectors = self
+                .vectors
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             vectors.memory_usage()
         };
-        let trees = self.trees.read().unwrap();
+        let trees = self
+            .trees
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let tree_memory = memory::vec_memory::<AnnoyTree>(trees.len())
             + trees
                 .iter()
@@ -690,7 +713,10 @@ impl AxisVectorIndex for AxisAnnoyIndex {
 
         IndexStats {
             vector_count: {
-                let vectors = self.vectors.read().unwrap();
+                let vectors = self
+                    .vectors
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 vectors.len()
             },
             memory_usage_bytes: total_memory,
@@ -702,10 +728,15 @@ impl AxisVectorIndex for AxisAnnoyIndex {
 /// Annoy-specific statistics
 #[derive(Debug, Clone)]
 pub struct AnnoyStats {
+    /// Number of vectors stored in the index.
     pub vector_count: usize,
+    /// Number of random projection trees built.
     pub tree_count: usize,
+    /// Total number of nodes across all trees.
     pub total_nodes: usize,
+    /// Average depth of the projection trees.
     pub avg_tree_depth: f32,
+    /// Whether the trees have been built and the index is ready for queries.
     pub is_built: bool,
 }
 

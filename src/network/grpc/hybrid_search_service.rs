@@ -61,7 +61,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
         // Create fusion engine
         let fusion_engine = HybridFusionEngine::new(fusion_strategy);
 
-        // TODO: Integrate with actual BM25 and vector search backends
+        // Deferred: Integrate with actual BM25 and vector search backends
         // For now, create mock results to demonstrate the API
         let (bm25_results, vector_results) = create_mock_results(&req);
 
@@ -79,7 +79,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
         let results: Vec<proximadb_v1::HybridSearchResult> = fused_results
             .into_iter()
             .take(req.top_k as usize)
-            .map(|r| convert_fused_result_to_proto(r))
+            .map(convert_fused_result_to_proto)
             .collect();
 
         let results_count = results.len() as u32;
@@ -94,7 +94,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
         let response = proximadb_v1::HybridFusionSearchResponse {
             results,
             results_count,
-            fusion_strategy: req.fusion_strategy as i32,
+            fusion_strategy: req.fusion_strategy,
             metrics: Some(proximadb_v1::HybridSearchMetrics {
                 bm25_search_time_ms: 0.0, // Will be populated when real BM25 backend integrated
                 vector_search_time_ms: 0.0, // Will be populated when real vector backend integrated
@@ -274,7 +274,7 @@ fn convert_highlight_to_proto(th: TextHighlight) -> proximadb_v1::TextHighlight 
 
 /// Create mock BM25 and vector results for demonstration
 ///
-/// TODO: Replace with actual search backend integration
+/// Deferred: Replace with actual search backend integration
 fn create_mock_results(
     request: &proximadb_v1::HybridFusionSearchRequest,
 ) -> (Vec<BM25Result>, Vec<VectorResult>) {

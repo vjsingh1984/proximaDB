@@ -33,11 +33,11 @@
 //!
 //! | Model Type | Primary Engine | Secondary Engine | Rationale |
 //! |------------|----------------|------------------|-----------|
-//! | Vector | HELIX | SST | Hilbert curve locality + real-time |
-//! | Document | RAPTOR | SST | Adaptive row-groups + hot tier |
+//! | Vector | SST | HELIX | Real-time writes with optional high-dimensional routing |
+//! | Document | DocumentService (SST-backed) | VIPER/Tantivy integration in progress | JSON CRUD with explicit hot/cold tiering still being hardened |
 //! | Graph | ORION | - | Native CSR format |
 //! | RDBMS | SST (OLTP) | VIPER (OLAP) | HTAP separation |
-//! | Observability | VIPER | Tantivy | Columnar + log indexing |
+//! | Observability | ObservabilityService | Tantivy | WAL-backed logs/metrics/traces with indexed log search |
 
 pub mod facade;
 pub mod htap;

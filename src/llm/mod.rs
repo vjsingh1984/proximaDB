@@ -107,12 +107,19 @@ pub struct LLMCoordinator {
 /// LLM integration status
 #[derive(Debug, Clone)]
 pub struct LLMStatus {
+    /// Whether LLM integration is active.
     pub enabled: bool,
+    /// Name of the configured embedding provider (e.g. "openai", "local").
     pub embedding_provider: String,
+    /// Output dimension of the embedding model.
     pub embedding_dimension: usize,
+    /// Number of collections registered for RAG retrieval.
     pub rag_collections: usize,
+    /// Semantic cache hit rate (0.0–1.0).
     pub cache_hit_rate: f64,
+    /// Lifetime count of embedding vectors generated.
     pub total_embeddings_generated: u64,
+    /// Lifetime count of RAG retrieval queries served.
     pub total_rag_queries: u64,
 }
 

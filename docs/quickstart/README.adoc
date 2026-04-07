@@ -1,0 +1,82 @@
+= ProximaDB Quick Start Documentation
+
+This directory contains quick start guides for installing and using ProximaDB.
+
+== Files
+
+* `QUICKSTART.adoc` - Comprehensive 5-minute quick start guide
+* `verify_installation.py` - Installation verification script
+* `README.adoc` - This file
+
+== Quick Start
+
+1. **Install ProximaDB Python SDK**:
+
++
+[source,bash]
+----
+pip install proximadb-python
+----
+
+2. **Verify Installation**:
+
++
+[source,bash]
+----
+python docs/quickstart/verify_installation.py
+----
+
+Expected output:
+----
+🎉 Installation verified successfully!
+----
+
+3. **Start ProximaDB Server**:
+
++
+[source,bash]
+----
+# Using Docker
+docker run -p 5678:5678 -p 5679:5679 ghcr.io/vjsingh1984/proximadb:latest
+
+# OR build from source
+cargo run --bin proximadb-server --release
+----
+
+4. **Run Your First Query**:
+
++
+[source,python]
+----
+from proximadb_sdk import connect
+
+client = connect(url="http://localhost:5678")
+collection = client.create_collection("docs", dimension=384)
+
+# Insert vectors
+client.insert_vectors("docs", [{
+    "id": "doc1",
+    "vector": [0.1] * 384,
+    "metadata": {"category": "tech"}
+}])
+
+# Search
+results = client.search(
+    collection_id="docs",
+    vector=[0.1] * 384,
+    top_k=5
+)
+----
+
+== Next Steps
+
+* Read the full quick start guide: link:QUICKSTART.adoc[QUICKSTART.adoc]
+* Explore examples: link:../../clients/python/examples[examples/]
+* Read API documentation: link:../../clients/python/README.adoc[Python SDK README]
+* View architecture docs: link:../concepts/architecture.adoc[Architecture]
+
+== Support
+
+* **GitHub Issues**: https://github.com/vjsingh1984/proximadb/issues
+* **Documentation**: https://github.com/vjsingh1984/proximadb/tree/main/docs
+* **Email**: singhvjd@gmail.com

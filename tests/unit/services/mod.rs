@@ -1,6 +1,7 @@
 //! Unit tests for service layer
+//!
+//! **NOTE:** Service tests have been moved to tests/integration/
+//! - collection_service_tests → tests/integration/services_collection_test
+//! - vector_service_tests → tests/integration/services_vector_test
 
-#[cfg(test)]
-pub mod collection_service_tests;
-#[cfg(test)]
-pub mod vector_service_tests;
+// Service integration tests are now in tests/integration/

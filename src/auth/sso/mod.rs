@@ -64,10 +64,10 @@ impl SSOIntegrationManager {
         sso_token: &SSOToken,
     ) -> Result<EnterpriseUserContext> {
         // Check cache first for performance
-        if let Some(cached) = self.token_cache.get(&sso_token.token_id) {
-            if !cached.is_expired() {
-                return Ok(cached.user_context.clone());
-            }
+        if let Some(cached) = self.token_cache.get(&sso_token.token_id)
+            && !cached.is_expired()
+        {
+            return Ok(cached.user_context.clone());
         }
 
         // Validate with appropriate provider
@@ -102,6 +102,12 @@ impl SSOIntegrationManager {
     }
 }
 
+impl Default for SSOIntegrationManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Cached token validation for performance
 #[derive(Debug, Clone)]
 struct CachedTokenValidation {
@@ -118,26 +124,37 @@ impl CachedTokenValidation {
 /// AWS IAM configuration
 #[derive(Debug, Clone)]
 pub struct AWSIAMConfig {
+    /// AWS region for STS operations (e.g., "us-east-1").
     pub region: String,
+    /// Mappings from AWS IAM roles to ProximaDB roles.
     pub role_mapping: Vec<AWSRoleMapping>,
+    /// Whether cross-account AssumeRole delegation is enabled.
     pub enable_cross_account: bool,
+    /// AWS account IDs trusted for cross-account access.
     pub trusted_account_ids: Vec<String>,
 }
 
 /// Azure AD configuration
 #[derive(Debug, Clone)]
 pub struct AzureADConfig {
+    /// Azure AD tenant GUID.
     pub tenant_id: String,
+    /// OAuth2 client/application ID.
     pub client_id: String,
+    /// OAuth2 client secret.
     pub client_secret: String,
+    /// Azure AD authority URL (e.g., "https://login.microsoftonline.com/").
     pub authority: String,
 }
 
 /// AWS role mapping for enterprise users
 #[derive(Debug, Clone)]
 pub struct AWSRoleMapping {
+    /// AWS IAM role ARN to match.
     pub aws_role_arn: String,
+    /// ProximaDB role to assign when this AWS role matches.
     pub proximadb_role: String,
+    /// ProximaDB tenant to assign when this AWS role matches.
     pub tenant_id: String,
 }
 
@@ -148,7 +165,7 @@ static SSO_MANAGER: std::sync::OnceLock<SSOIntegrationManager> = std::sync::Once
 
 /// Initialize global SSO manager
 pub fn initialize_sso_manager() -> &'static SSOIntegrationManager {
-    SSO_MANAGER.get_or_init(|| SSOIntegrationManager::new())
+    SSO_MANAGER.get_or_init(SSOIntegrationManager::new)
 }
 
 /// Get global SSO manager

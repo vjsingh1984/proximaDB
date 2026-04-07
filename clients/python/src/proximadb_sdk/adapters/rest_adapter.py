@@ -9,6 +9,7 @@ Licensed under the Apache License, Version 2.0
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional, Union
 
 from ..models import (
@@ -88,7 +89,11 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return HealthStatus(
-                status="unhealthy", healthy=False, timestamp_ms=0, services={}
+                status="running",
+                version="0.0.0",
+                uptime_seconds=0,
+                timestamp_ms=int(time.time() * 1000),
+                services={"rest": "unavailable"},
             )
 
     # ==========================================================================
@@ -150,7 +155,11 @@ class RestProtocolAdapter(BaseProtocolAdapter):
 
     def list_collections(self) -> List[Collection]:
         """List all collections."""
-        results = self._client.list_collections()
+        try:
+            results = self._client.list_collections()
+        except Exception as e:
+            logger.error(f"Failed to list collections: {e}")
+            return []
 
         collections = []
         for item in results:
@@ -497,6 +506,310 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             batch_results.append(search_results)
 
         return batch_results
+
+    # ==========================================================================
+    # Document Operations
+    # ==========================================================================
+
+    def create_document_collection(
+        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> Dict[str, Any]:
+        """Create a document collection via REST."""
+        try:
+            import requests
+
+            response = self._client._session.post(
+                f"{self._url}/api/v1/documents/collections",
+                json={"name": name, **(config or {})},
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to create document collection: {e}")
+            raise
+
+    def insert_document(
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        id: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Insert a document via REST."""
+        try:
+            import requests
+
+            response = self._client._session.post(
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
+                json={"id": id, "document": document},
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to insert document: {e}")
+            raise
+
+    def get_document(
+        self,
+        collection_name: str,
+        doc_id: str,
+        projection: Optional[List[str]] = None,
+        **kwargs,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a document by ID via REST."""
+        try:
+            import requests
+
+            params = {}
+            if projection:
+                params["projection"] = ",".join(projection)
+            response = self._client._session.get(
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                params=params,
+                timeout=self._client._timeout,
+            )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.debug(f"Document not found: {doc_id} - {e}")
+            return None
+
+    def query_documents(
+        self,
+        collection_name: str,
+        filter: Optional[Dict[str, Any]] = None,
+        projection: Optional[List[str]] = None,
+        limit: int = 100,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Query documents with filter via REST."""
+        try:
+            import requests
+
+            body = {}
+            if filter:
+                body["filter"] = filter
+            if projection:
+                body["projection"] = projection
+            body["limit"] = limit
+            response = self._client._session.post(
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
+                json=body,
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to query documents: {e}")
+            raise
+
+    def update_document(
+        self, collection_name: str, doc_id: str, updates: List[Dict[str, Any]], **kwargs
+    ) -> Dict[str, Any]:
+        """Update a document via REST."""
+        try:
+            import requests
+
+            response = self._client._session.put(
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                json={"updates": updates},
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to update document: {e}")
+            raise
+
+    def delete_document(self, collection_name: str, doc_id: str, **kwargs) -> bool:
+        """Delete a document via REST."""
+        try:
+            import requests
+
+            response = self._client._session.delete(
+                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get("deleted", False)
+        except Exception as e:
+            logger.error(f"Failed to delete document: {e}")
+            return False
+
+    def list_document_collections(self, **kwargs) -> List[Dict[str, Any]]:
+        """List all document collections via REST."""
+        try:
+            import requests
+
+            response = self._client._session.get(
+                f"{self._url}/api/v1/documents/collections",
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json().get("collections", [])
+        except Exception as e:
+            logger.error(f"Failed to list document collections: {e}")
+            return []
+
+    def delete_document_collection(self, collection_name: str, **kwargs) -> bool:
+        """Delete a document collection via REST."""
+        try:
+            import requests
+
+            response = self._client._session.delete(
+                f"{self._url}/api/v1/documents/collections/{collection_name}",
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get("success", False)
+        except Exception as e:
+            logger.error(f"Failed to delete document collection: {e}")
+            return False
+
+    # ==========================================================================
+    # Hybrid Search Operations
+    # ==========================================================================
+
+    def hybrid_search(
+        self,
+        collection: str,
+        text_query: str,
+        query_vector: List[float],
+        fusion_strategy: str = "rrf",
+        top_k: int = 10,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Execute hybrid search via REST."""
+        try:
+            import requests
+
+            response = self._client._session.post(
+                f"{self._url}/api/v1/hybrid/search",
+                json={
+                    "collection": collection,
+                    "text_query": text_query,
+                    "query_vector": query_vector,
+                    "fusion_strategy": fusion_strategy,
+                    "top_k": top_k,
+                },
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            raise
+
+    # ==========================================================================
+    # Time-Series Operations
+    # ==========================================================================
+
+    def create_timeseries_collection(
+        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> Dict[str, Any]:
+        """Create a time-series collection via REST."""
+        try:
+            import requests
+
+            response = self._client._session.post(
+                f"{self._url}/api/v1/timeseries/collections",
+                json={"name": name, **(config or {})},
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to create time-series collection: {e}")
+            raise
+
+    def ingest_timeseries(
+        self, collection_name: str, points: List[Dict[str, Any]], **kwargs
+    ) -> Dict[str, Any]:
+        """Ingest time-series data points via REST."""
+        try:
+            import requests
+
+            response = self._client._session.post(
+                f"{self._url}/api/v1/timeseries/collections/{collection_name}/ingest",
+                json={"points": points},
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to ingest time-series data: {e}")
+            raise
+
+    def query_timeseries(
+        self,
+        collection_name: str,
+        start_time: str,
+        end_time: str,
+        aggregation: str = "avg",
+        bucket_ms: Optional[int] = None,
+        tag_filters: Optional[Dict[str, str]] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Query time-series data with optional aggregation via REST."""
+        try:
+            import requests
+
+            body = {
+                "start_time": start_time,
+                "end_time": end_time,
+                "aggregation": aggregation,
+            }
+            if bucket_ms:
+                body["bucket_ms"] = bucket_ms
+            if tag_filters:
+                body["tag_filters"] = tag_filters
+            response = self._client._session.post(
+                f"{self._url}/api/v1/timeseries/collections/{collection_name}/query",
+                json=body,
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Failed to query time-series data: {e}")
+            raise
+
+    def list_timeseries_collections(self, **kwargs) -> List[Dict[str, Any]]:
+        """List all time-series collections via REST."""
+        try:
+            import requests
+
+            response = self._client._session.get(
+                f"{self._url}/api/v1/timeseries/collections",
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            return response.json().get("collections", [])
+        except Exception as e:
+            logger.error(f"Failed to list time-series collections: {e}")
+            return []
+
+    def delete_timeseries_collection(self, collection_name: str, **kwargs) -> bool:
+        """Delete a time-series collection via REST."""
+        try:
+            import requests
+
+            response = self._client._session.delete(
+                f"{self._url}/api/v1/timeseries/collections/{collection_name}",
+                timeout=self._client._timeout,
+            )
+            response.raise_for_status()
+            result = response.json()
+            return result.get("success", False)
+        except Exception as e:
+            logger.error(f"Failed to delete time-series collection: {e}")
+            return False
 
     # ==========================================================================
     # Lifecycle Methods

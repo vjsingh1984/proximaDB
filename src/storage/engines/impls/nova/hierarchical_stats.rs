@@ -214,13 +214,12 @@ impl SuperBlock {
         // Aggregate vector count
         let vector_count = enhanced_stats
             .iter()
-            .map(|stats| {
+            .filter_map(|stats| {
                 stats
                     .parquet_metadata
                     .as_ref()
                     .map(|md| md.num_rows() as u64)
             })
-            .flatten()
             .sum();
 
         // Create aggregate zone map
@@ -368,12 +367,11 @@ impl SuperBlock {
         // Estimate memory requirement (rough calculation)
         hints.memory_requirement = stats
             .iter()
-            .map(|s| {
+            .filter_map(|s| {
                 s.parquet_metadata
                     .as_ref()
                     .map(|md| md.total_byte_size() as usize)
             })
-            .flatten()
             .sum();
 
         hints

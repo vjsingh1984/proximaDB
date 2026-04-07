@@ -227,42 +227,42 @@ impl StorageQuantizationEngine {
         };
 
         // Train primary quantization (PQ)
-        if let Some(ref level) = self.config.primary_level {
-            if let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
-                let codebook_id = format!("storage_pq_{}_{}", pq.num_subvectors, pq.bits_per_code);
+        if let Some(ref level) = self.config.primary_level
+            && let Some(QuantizationLevel::Pq(pq)) = &level.level_type
+        {
+            let codebook_id = format!("storage_pq_{}_{}", pq.num_subvectors, pq.bits_per_code);
 
-                info!("Training PQ codebook: {}", codebook_id);
-                self.unified_engine
-                    .train_pq_codebook(
-                        &training_vectors,
-                        pq.num_subvectors as usize,
-                        pq.bits_per_code as u8,
-                        &codebook_id,
-                    )
-                    .await?;
+            info!("Training PQ codebook: {}", codebook_id);
+            self.unified_engine
+                .train_pq_codebook(
+                    &training_vectors,
+                    pq.num_subvectors as usize,
+                    pq.bits_per_code as u8,
+                    &codebook_id,
+                )
+                .await?;
 
-                // Cache the trained codebook centroids for fast access
-                // The centroids are stored as flattened arrays for efficient distance computation
-                let centroids_cache: Vec<Vec<f32>> = (0..pq.num_subvectors)
-                    .map(|_subspace| {
-                        // For now, create placeholder centroids - in production these would be loaded
-                        // from the codebook store after training
-                        let num_centroids = 1 << pq.bits_per_code;
-                        let subvector_dim =
-                            (training_vectors[0].len() + pq.num_subvectors as usize - 1)
-                                / pq.num_subvectors as usize;
-                        vec![0.0f32; num_centroids as usize * subvector_dim]
-                    })
-                    .collect();
+            // Cache the trained codebook centroids for fast access
+            // The centroids are stored as flattened arrays for efficient distance computation
+            let centroids_cache: Vec<Vec<f32>> = (0..pq.num_subvectors)
+                .map(|_subspace| {
+                    // For now, create placeholder centroids - in production these would be loaded
+                    // from the codebook store after training
+                    let num_centroids = 1 << pq.bits_per_code;
+                    let subvector_dim = training_vectors[0]
+                        .len()
+                        .div_ceil(pq.num_subvectors as usize);
+                    vec![0.0f32; num_centroids as usize * subvector_dim]
+                })
+                .collect();
 
-                self.codebooks
-                    .insert(codebook_id.clone(), Arc::new(centroids_cache));
+            self.codebooks
+                .insert(codebook_id.clone(), Arc::new(centroids_cache));
 
-                info!(
-                    "Cached PQ codebook {} with {} subspaces",
-                    codebook_id, pq.num_subvectors
-                );
-            }
+            info!(
+                "Cached PQ codebook {} with {} subspaces",
+                codebook_id, pq.num_subvectors
+            );
         }
 
         // No training needed for binary or INT8 quantization
@@ -309,9 +309,7 @@ impl StorageQuantizationEngine {
         let mut results = Vec::with_capacity(vectors.len());
 
         for (i, vector) in vectors.iter().enumerate() {
-            let id = ids
-                .map(|ids| ids[i].clone())
-                .unwrap_or_else(|| format!("vec_{}", i));
+            let id = ids.map_or_else(|| format!("vec_{}", i), |ids| ids[i].clone());
 
             let mut data = StorageQuantizedData {
                 id,
@@ -366,9 +364,7 @@ impl StorageQuantizationEngine {
         let mut results = Vec::with_capacity(vectors.len());
 
         for (i, vector) in vectors.iter().enumerate() {
-            let id = ids
-                .map(|ids| ids[i].clone())
-                .unwrap_or_else(|| format!("vec_{}", i));
+            let id = ids.map_or_else(|| format!("vec_{}", i), |ids| ids[i].clone());
 
             let mut data = StorageQuantizedData {
                 id,
@@ -636,7 +632,7 @@ impl StorageQuantizationEngine {
                 let hamming_dist = query_binary
                     .iter()
                     .zip(quantized_vector.data.iter())
-                    .map(|(a, b)| (a ^ b).count_ones() as u32)
+                    .map(|(a, b)| (a ^ b).count_ones())
                     .sum::<u32>();
                 Ok(hamming_dist as f32)
             }
@@ -868,10 +864,8 @@ impl StorageQuantizationEngine {
 
         let mut codebook = Vec::with_capacity(subvectors);
         for _ in 0..subvectors {
-            let mut centroid_data = Vec::with_capacity(centroids_per_subvector * subvector_dim);
-            for _ in 0..(centroids_per_subvector * subvector_dim) {
-                centroid_data.push(0.1); // Placeholder values
-            }
+            let size = centroids_per_subvector * subvector_dim;
+            let centroid_data = vec![0.1; size]; // Placeholder values
             codebook.push(centroid_data);
         }
 
@@ -903,7 +897,7 @@ impl StorageQuantizationEngine {
         }
 
         // Sort and take top-k
-        scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         let top_candidates: Vec<usize> = scores
             .iter()
             .take(top_k.min(scores.len()))
@@ -963,21 +957,21 @@ impl StorageQuantizationEngine {
         }
 
         // Check if we have PQ quantization configuration and precompute distance table
-        if let Some(ref level) = self.config.primary_level {
-            if let Some(QuantizationLevel::Pq(pq)) = &level.level_type {
-                // Precompute distance table for faster PQ distance calculations
-                let _distance_table = self.precompute_pq_distance_table(
-                    query,
-                    pq.num_subvectors as usize,
-                    pq.bits_per_code as u8,
-                )?;
-                debug!(
-                    "Precomputed distance table for PQ ranking with {} subvectors",
-                    pq.num_subvectors
-                );
-                // Note: The distance table would be used in an optimized version of
-                // calculate_batch_distances that accepts precomputed tables
-            }
+        if let Some(ref level) = self.config.primary_level
+            && let Some(QuantizationLevel::Pq(pq)) = &level.level_type
+        {
+            // Precompute distance table for faster PQ distance calculations
+            let _distance_table = self.precompute_pq_distance_table(
+                query,
+                pq.num_subvectors as usize,
+                pq.bits_per_code as u8,
+            )?;
+            debug!(
+                "Precomputed distance table for PQ ranking with {} subvectors",
+                pq.num_subvectors
+            );
+            // Note: The distance table would be used in an optimized version of
+            // calculate_batch_distances that accepts precomputed tables
         }
 
         // Calculate distances
@@ -995,7 +989,7 @@ impl StorageQuantizationEngine {
             .map(|(&idx, dist)| (idx, dist.raw_value))
             .collect();
 
-        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         let top_candidates: Vec<usize> = scored
             .iter()
@@ -1074,25 +1068,33 @@ impl StorageQuantizationEngine {
     /// Quantize distances to 8-bit values with min/max for dequantization
     /// Returns (quantized_values, min, max)
     pub fn quantize_to_u8(&self, distances: &[f32]) -> (Vec<u8>, f32, f32) {
-        self.unified_engine.quantize_to_u8(distances).unwrap()
+        self.unified_engine
+            .quantize_to_u8(distances)
+            .unwrap_or_else(|_| (Vec::new(), 0.0, 0.0))
     }
 
     /// Quantize distances to 16-bit values with min/max for dequantization
     /// Returns (quantized_values, min, max)
     pub fn quantize_to_u16(&self, distances: &[f32]) -> (Vec<u16>, f32, f32) {
-        self.unified_engine.quantize_to_u16(distances).unwrap()
+        self.unified_engine
+            .quantize_to_u16(distances)
+            .unwrap_or_else(|_| (Vec::new(), 0.0, 0.0))
     }
 
     /// Quantize distances to 4-bit values with min/max for dequantization
     /// Returns (packed_values, min, max, num_values)
     pub fn quantize_to_u4(&self, distances: &[f32]) -> (Vec<u8>, f32, f32, usize) {
-        self.unified_engine.quantize_to_u4(distances).unwrap()
+        self.unified_engine
+            .quantize_to_u4(distances)
+            .unwrap_or_else(|_| (Vec::new(), 0.0, 0.0, 0))
     }
 
     /// Quantize distances to 6-bit values with min/max for dequantization
     /// Returns (packed_values, min, max, num_values)
     pub fn quantize_to_u6(&self, distances: &[f32]) -> (Vec<u8>, f32, f32, usize) {
-        self.unified_engine.quantize_to_u6(distances).unwrap()
+        self.unified_engine
+            .quantize_to_u6(distances)
+            .unwrap_or_else(|_| (Vec::new(), 0.0, 0.0, 0))
     }
 
     /// Dequantize 8-bit values back to f32 using stored min/max

@@ -3,7 +3,6 @@
 //! Defines the abstract syntax tree for cross-model queries that combine
 //! vector search, document queries, and graph traversal.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::fusion::FusionStrategy;
@@ -150,29 +149,13 @@ pub enum JoinType {
     Anti,
 }
 
-/// Data models supported by ProximaDB
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum DataModel {
-    /// Vector embeddings for similarity search
-    Vector,
-    /// JSON documents for document queries
-    Document,
-    /// Graph nodes and edges
-    Graph,
-    /// Observability data (logs, metrics, traces)
-    Observability,
-}
-
-impl std::fmt::Display for DataModel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            DataModel::Vector => write!(f, "vector"),
-            DataModel::Document => write!(f, "document"),
-            DataModel::Graph => write!(f, "graph"),
-            DataModel::Observability => write!(f, "observability"),
-        }
-    }
-}
+/// Data models supported by ProximaDB.
+///
+/// Re-exported from `crate::query::multimodel_router::StoreType` -- the single
+/// source of truth for all data model type discrimination across the codebase.
+/// The `DataModel` alias is maintained for backward compatibility with existing
+/// code that imports `DataModel` from this module.
+pub type DataModel = crate::query::multimodel_router::StoreType;
 
 /// Operations that can be performed on each data model
 #[derive(Debug, Clone)]
@@ -218,22 +201,17 @@ pub struct VectorSearchParams {
 }
 
 /// Distance metrics for vector search
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum DistanceMetric {
     /// Euclidean distance (L2)
     Euclidean,
     /// Cosine similarity
+    #[default]
     Cosine,
     /// Dot product
     DotProduct,
     /// Manhattan distance (L1)
     Manhattan,
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::Cosine
-    }
 }
 
 /// Document query expression
@@ -338,17 +316,12 @@ pub enum StartNodeSpec {
 }
 
 /// Traversal direction
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum TraversalDirection {
+    #[default]
     Outgoing,
     Incoming,
     Both,
-}
-
-impl Default for TraversalDirection {
-    fn default() -> Self {
-        Self::Outgoing
-    }
 }
 
 /// Node filter for graph queries
@@ -421,9 +394,10 @@ pub struct MetricQueryExpr {
 }
 
 /// Metric aggregation functions
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum MetricAggregation {
     Sum,
+    #[default]
     Avg,
     Min,
     Max,
@@ -433,12 +407,6 @@ pub enum MetricAggregation {
     P95,
     P99,
     Rate,
-}
-
-impl Default for MetricAggregation {
-    fn default() -> Self {
-        Self::Avg
-    }
 }
 
 /// Generic filter that can apply to any record

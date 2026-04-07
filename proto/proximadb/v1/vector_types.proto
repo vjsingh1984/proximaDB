@@ -33,6 +33,10 @@ enum StorageEngine {
   RAPTOR = 6;
   MMAP = 7;
   HYBRID = 8;
+  TST = 9;
+  CEDAR = 10;
+  TITAN = 11;
+  CHRONO = 12;
 }
 
 enum IndexingAlgorithm {

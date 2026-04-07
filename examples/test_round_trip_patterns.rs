@@ -140,7 +140,7 @@ fn create_vector_records(vectors: Vec<Vec<f32>>) -> Vec<VectorRecord> {
 }
 
 fn test_round_trip(
-    pattern: &DataPattern,
+    _pattern: &DataPattern,
     layout: VectorEncodingLayout,
     algorithm: CompressionAlgorithm,
     vectors: &[Vec<f32>],

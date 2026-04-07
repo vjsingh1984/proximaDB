@@ -252,8 +252,8 @@ mod tests {
         values.extend(vec![2.0f32; 50]);
         values.extend(vec![3.0f32; 75]);
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 values with RLE");
+        let decoded = decode_f32(&encoded).expect("Failed to decode f32 values with RLE");
 
         assert_eq!(values, decoded);
     }
@@ -266,8 +266,8 @@ mod tests {
         values.extend(vec![100i64; 500]);
         values.extend(vec![200i64; 750]);
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded).unwrap();
+        let encoded = encode_i64(&values).expect("Failed to encode i64 values with RLE");
+        let decoded = decode_i64(&encoded).expect("Failed to decode i64 values with RLE");
 
         assert_eq!(values, decoded);
     }
@@ -277,8 +277,8 @@ mod tests {
         // Constant value - extreme compression
         let values = vec![42i32; 100000];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 values with RLE");
+        let decoded = decode_i32(&encoded).expect("Failed to decode i32 values with RLE");
 
         assert_eq!(values, decoded);
 
@@ -301,8 +301,8 @@ mod tests {
             values.extend(vec![i as i32; 100]);
         }
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 values with RLE");
+        let decoded = decode_i32(&encoded).expect("Failed to decode i32 values with RLE");
 
         assert_eq!(values, decoded);
 
@@ -321,8 +321,8 @@ mod tests {
         // No repeated values - worst case for RLE
         let values: Vec<i32> = (0..100).collect();
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 values with RLE");
+        let decoded = decode_i32(&encoded).expect("Failed to decode i32 values with RLE");
 
         assert_eq!(values, decoded);
 
@@ -336,10 +336,10 @@ mod tests {
     fn test_rle_empty() {
         let values: Vec<f32> = vec![];
 
-        let encoded = encode_f32(&values).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode empty f32 values with RLE");
         assert!(encoded.is_empty());
 
-        let decoded = decode_f32(&encoded).unwrap();
+        let decoded = decode_f32(&encoded).expect("Failed to decode empty f32 values with RLE");
         assert!(decoded.is_empty());
     }
 
@@ -347,8 +347,8 @@ mod tests {
     fn test_rle_single_value() {
         let values = vec![42.0f32];
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode single f32 value with RLE");
+        let decoded = decode_f32(&encoded).expect("Failed to decode single f32 value with RLE");
 
         assert_eq!(values, decoded);
     }
@@ -361,8 +361,10 @@ mod tests {
             values.push(if i % 2 == 0 { 1i64 } else { 2i64 });
         }
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded).unwrap();
+        let encoded =
+            encode_i64(&values).expect("Failed to encode alternating i64 values with RLE");
+        let decoded =
+            decode_i64(&encoded).expect("Failed to decode alternating i64 values with RLE");
 
         assert_eq!(values, decoded);
 
@@ -374,8 +376,8 @@ mod tests {
         // Single very long run
         let values = vec![42i32; 1000000];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode long run i32 values with RLE");
+        let decoded = decode_i32(&encoded).expect("Failed to decode long run i32 values with RLE");
 
         assert_eq!(values, decoded);
 

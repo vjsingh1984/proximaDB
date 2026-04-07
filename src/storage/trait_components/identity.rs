@@ -45,6 +45,7 @@ pub trait StorageIdentity: Send + Sync {
             StorageEngineStrategy::Nova => StorageEngineType::NOVA,
             StorageEngineStrategy::Swift => StorageEngineType::SWIFT,
             StorageEngineStrategy::Raptor => StorageEngineType::RAPTOR,
+            StorageEngineStrategy::TimeSeries => StorageEngineType::TST,
             // Future engines should override this method
             _ => StorageEngineType::SST,
         }

@@ -97,7 +97,9 @@ pub mod validation {
             anyhow::bail!("Collection config is required");
         }
 
-        let config = collection.config.as_ref().unwrap();
+        let Some(config) = collection.config.as_ref() else {
+            anyhow::bail!("Collection config is required");
+        };
         if config.name.is_empty() {
             anyhow::bail!("Collection name cannot be empty");
         }

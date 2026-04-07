@@ -5,8 +5,10 @@ use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::specialized::*;
 
 // Type alias for VectorStore since it doesn't exist in the specialized module
+#[allow(dead_code)]
 type VectorStore = BaseCacheImpl<String, VectorRecord>;
 
+#[allow(dead_code)]
 async fn test_vector_data_cache_specialization() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
@@ -198,6 +200,7 @@ async fn test_metadata_cache_specialization() {
 }
 
 // Helper structs for testing
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct QueryResult {
     query_vector: Vec<f32>,
@@ -205,6 +208,7 @@ struct QueryResult {
     total_time_ms: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct SearchResult {
     id: String,
@@ -248,6 +252,7 @@ struct SchemaMetadata {
 //     }
 // }
 
+#[allow(dead_code)]
 impl QueryCache {
     fn generate_key(&self, vector: &[f32], k: usize, _filter: Option<&str>) -> String {
         format!("query_{}_{}", vector.len(), k)

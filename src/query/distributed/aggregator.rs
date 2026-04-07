@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use tracing::debug;
 
+use crate::core::error::VectorDBError;
 use crate::query::unified::UnifiedRecord;
 use crate::query::unified::ast::DataModel;
 use crate::query::unified::fusion::SubQueryResult;
@@ -126,7 +127,10 @@ impl ResultAggregator {
         }
 
         if results.len() == 1 {
-            return Ok(results.into_iter().next().unwrap());
+            let result = results.into_iter().next().ok_or_else(|| {
+                VectorDBError::Internal("Expected single result but found none".to_string())
+            })?;
+            return Ok(result);
         }
 
         match &self.strategy {

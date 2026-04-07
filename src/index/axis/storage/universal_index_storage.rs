@@ -53,26 +53,43 @@ pub enum StorageLocation {
     /// In-memory with bincode format
     Memory,
     /// NVMe SSD with SST/VIPER format
-    NvmeSsd { path: PathBuf },
-    /// HDD with SST/VIPER format  
-    HardDisk { path: PathBuf },
+    NvmeSsd {
+        /// Root directory on the NVMe SSD
+        path: PathBuf,
+    },
+    /// HDD with SST/VIPER format
+    HardDisk {
+        /// Root directory on the hard disk
+        path: PathBuf,
+    },
     /// S3 Express One Zone with SST/VIPER format
-    S3Express { bucket: String, prefix: String },
+    S3Express {
+        /// S3 bucket name
+        bucket: String,
+        /// Key prefix used to scope objects within the bucket
+        prefix: String,
+    },
 }
 
 /// Storage engine type
 #[derive(Debug, Clone, Copy)]
 pub enum StorageEngine {
+    /// Sorted String Table engine — bloom-filter accelerated key lookup
     SST,
+    /// VIPER columnar engine — Parquet-based analytical storage
     VIPER,
 }
 
 /// Index storage configuration
 #[derive(Debug, Clone)]
 pub struct IndexStorageConfig {
+    /// Physical location where index data resides
     pub storage_location: StorageLocation,
+    /// Serialization engine used for on-disk/cloud data
     pub storage_engine: StorageEngine,
+    /// Maximum number of items to keep in the memory cache
     pub cache_size: usize,
+    /// Fraction of cache capacity (0.0–1.0) that triggers LRU eviction
     pub eviction_threshold: f64,
 }
 
@@ -104,6 +121,10 @@ pub struct UniversalIndexStorage<T: IndexData> {
 }
 
 impl<T: IndexData> UniversalIndexStorage<T> {
+    /// Create a new `UniversalIndexStorage` instance.
+    ///
+    /// Storage tiers are auto-detected from the environment.  Set
+    /// `PROXIMADB_S3_BUCKET` to enable the cloud tier.
     pub fn new(
         collection_id: String,
         index_type: String,
@@ -235,8 +256,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
             .filter(|entry| {
                 self.data_locations
                     .get(entry.key())
-                    .map(|loc| matches!(*loc, StorageLocation::Memory))
-                    .unwrap_or(false)
+                    .is_some_and(|loc| matches!(*loc, StorageLocation::Memory))
             })
             .map(|entry| (entry.key().clone(), *entry.value()))
             .collect();
@@ -300,9 +320,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
         match self.storage_engine {
             StorageEngine::SST => {
                 // Write as SST
-                let mut config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                config.default_fs = Some(file_path.to_string_lossy().to_string());
+                let config = crate::storage::persistence::filesystem::FilesystemConfig {
+                    default_fs: Some(file_path.to_string_lossy().to_string()),
+                    ..Default::default()
+                };
                 let filesystem_factory =
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -321,7 +342,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                         timestamp: Some(
                             std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
+                                .unwrap_or_default()
                                 .as_secs() as i64,
                         ),
                         updated_at: None,
@@ -332,7 +353,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 );
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
-                let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
+                let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
                     .write_sorted_records(sorted_records_iter, record_count)
                     .await?;
@@ -358,9 +379,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 if !file_path.exists() {
                     return Ok(None);
                 }
-                let mut config =
-                    crate::storage::persistence::filesystem::FilesystemConfig::default();
-                config.default_fs = Some(file_path.to_string_lossy().to_string());
+                let config = crate::storage::persistence::filesystem::FilesystemConfig {
+                    default_fs: Some(file_path.to_string_lossy().to_string()),
+                    ..Default::default()
+                };
                 let filesystem_factory =
                     crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                         .await
@@ -369,10 +391,10 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 // Create zero-copy system for the reader
                 // Create UnifiedCachingFilesystem for the reader
                 let base_fs = filesystem.get_filesystem("file://").map_err(|e| {
-                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to get base filesystem: {}", e),
-                    )))
+                    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(format!(
+                        "Failed to get base filesystem: {}",
+                        e
+                    ))))
                 })?;
                 let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
                     base_fs,
@@ -517,7 +539,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                     timestamp: Some(
                         std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
+                            .unwrap_or_default()
                             .as_secs() as i64,
                     ),
                     updated_at: None,
@@ -528,7 +550,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 records.insert(id.to_string(), record);
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
-                let sorted_records_iter = records.into_iter().map(|(_, record)| record); // Extract values from BTreeMap
+                let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
                     .write_sorted_records(sorted_records_iter, record_count)
                     .await?;
@@ -555,6 +577,7 @@ impl<T: IndexData> UniversalIndexStorage<T> {
     }
 
     /// Get disk path for a data item
+    #[expect(clippy::ptr_arg)] // Accepting &PathBuf for API compatibility
     fn get_disk_path(&self, base: &PathBuf, id: &str) -> PathBuf {
         let ext = match self.storage_engine {
             StorageEngine::SST => "sst",
@@ -595,8 +618,11 @@ impl<T: IndexData> UniversalIndexStorage<T> {
 /// Example implementation for HNSW graph nodes
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HnswNode {
+    /// Internal node identifier (dense index into the node array)
     pub id: usize,
+    /// Graph layer this node resides in (0 = bottom/largest layer)
     pub layer: usize,
+    /// Neighbour node IDs in the same layer
     pub connections: Vec<usize>,
 }
 
@@ -613,8 +639,11 @@ impl IndexData for HnswNode {
 /// Example implementation for LSH hash buckets
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LshBucket {
+    /// Index of the LSH hash table this bucket belongs to
     pub table_id: usize,
+    /// Hash value that identifies this bucket within its table
     pub hash: u64,
+    /// External vector IDs that hash to this bucket
     pub vector_ids: Vec<String>,
 }
 

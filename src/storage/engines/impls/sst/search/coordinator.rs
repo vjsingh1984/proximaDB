@@ -83,7 +83,7 @@ impl SearchCoordinator {
     async fn select_search_strategy(&self, ctx: &StorageQueryContext) -> Result<SearchStrategy> {
         let collection_id = ctx.collection_id();
         let has_filters = ctx.search_params.filter_expression.is_some();
-        let vector_dimension = ctx.query_vector().map(|v| v.len()).unwrap_or(0);
+        let vector_dimension = ctx.query_vector().map_or(0, |v| v.len());
 
         debug!(
             "🔍 Analyzing query: collection={}, has_filters={}, dimensions={}",
@@ -176,12 +176,12 @@ impl SearchCoordinator {
             .into_iter()
             .filter(|r| {
                 // Tombstone check: empty vector + expires_at in past
-                let is_empty_vector = r.vector.as_ref().map(|v| v.is_empty()).unwrap_or(true);
-                let is_expired = r.expires_at.map_or(false, |e| e <= current_time_secs);
+                let is_empty_vector = r.vector.as_ref().is_none_or(|v| v.is_empty());
+                let is_expired = r.expires_at.is_some_and(|e| e <= current_time_secs);
                 let is_tombstone = is_empty_vector && is_expired;
 
                 // Keep records that are NOT tombstones AND have valid vectors
-                !is_tombstone && r.vector.as_ref().map(|v| !v.is_empty()).unwrap_or(false)
+                !is_tombstone && r.vector.as_ref().is_some_and(|v| !v.is_empty())
             })
             .collect();
 
@@ -233,7 +233,7 @@ impl SearchCoordinator {
 
             if max_score > 0.0 {
                 for result in &mut results {
-                    result.score = result.score / max_score;
+                    result.score /= max_score;
                 }
                 debug!("📈 Normalized scores by max score: {}", max_score);
             }
@@ -357,6 +357,9 @@ mod tests {
             progressive_scenario: None,
             progressive_recalls: None,
             optimization_hint: None,
+            enable_vectorized_execution: Some(false),
+            enable_parallel_morsels: Some(false),
+            enable_pipeline_execution: Some(false),
             search_mode: crate::core::search::SearchMode::default(),
             block_prune: crate::core::search::BlockPruneConfig::default(),
             text_query: None,

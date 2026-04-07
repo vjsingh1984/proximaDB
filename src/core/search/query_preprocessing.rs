@@ -80,7 +80,7 @@ impl QueryPreprocessor {
             "QueryPreprocessor::new called with cache_size: {}",
             cache_size
         );
-        let cache_size = NonZeroUsize::new(cache_size).unwrap_or(NonZeroUsize::new(100).unwrap());
+        let cache_size = NonZeroUsize::new(cache_size).map_or(100, NonZeroUsize::get);
 
         // Initialize quantization engine with default configuration
         // TEMPORARILY DISABLED TO DEBUG SEGFAULT
@@ -113,7 +113,7 @@ impl QueryPreprocessor {
 
         trace!("QueryPreprocessor creation complete");
         Self {
-            cache: Arc::new(RwLock::new(LruCache::new(cache_size.get()))),
+            cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
             quantization_engine,
             hardware,
             stats: Arc::new(RwLock::new(CacheStats::default())),
@@ -152,13 +152,13 @@ impl QueryPreprocessor {
             trace!("Acquiring cache write lock");
             let mut cache = self.cache.write();
             trace!("Cache lock acquired");
-            if let Some(cached) = cache.get(&vector_hash) {
-                if cached.distance_metric == distance_metric {
-                    debug!("Cache hit!");
-                    self.stats.write().hits += 1;
-                    trace!("Query cache hit for hash {}", vector_hash);
-                    return cached.clone();
-                }
+            if let Some(cached) = cache.get(&vector_hash)
+                && cached.distance_metric == distance_metric
+            {
+                debug!("Cache hit!");
+                self.stats.write().hits += 1;
+                trace!("Query cache hit for hash {}", vector_hash);
+                return cached.clone();
             }
         }
         debug!("Cache miss - preprocessing query");
@@ -440,7 +440,7 @@ impl QueryPreprocessor {
     fn normalize_neon(&self, vector: &[f32]) -> Vec<f32> {
         trace!("normalize_neon called, forwarding to scalar");
         // For now, use scalar implementation on ARM64
-        // TODO: Implement actual NEON intrinsics when stable
+        // Deferred: Implement actual NEON intrinsics when stable
         self.normalize_scalar(vector)
     }
 
@@ -491,70 +491,50 @@ impl QueryPreprocessor {
         if levels
             .iter()
             .any(|l| matches!(l.level_type, Some(QuantizationLevel::Binary(_))))
+            && let Some(engine) = &self.quantization_engine
+            && let Ok(quantized) = engine
+                .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
+                .await
+            && let Some(storage_data) = quantized.into_iter().next()
+            && let Some(primary) = storage_data.primary
         {
-            if let Some(engine) = &self.quantization_engine {
-                if let Ok(quantized) = engine
-                    .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Binary)
-                    .await
-                {
-                    if let Some(storage_data) = quantized.into_iter().next() {
-                        if let Some(primary) = storage_data.primary {
-                            binary = Some(Arc::new(primary.data));
-                        }
-                    }
-                }
-            }
+            binary = Some(Arc::new(primary.data));
         }
 
         if levels
             .iter()
             .any(|l| matches!(l.level_type, Some(QuantizationLevel::Scalar(_))))
+            && let Some(engine) = &self.quantization_engine
+            && let Ok(quantized) = engine
+                .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
+                .await
+            && let Some(storage_data) = quantized.into_iter().next()
+            && let Some(primary) = storage_data.primary
         {
-            if let Some(engine) = &self.quantization_engine {
-                if let Ok(quantized) = engine
-                    .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Int8)
-                    .await
-                {
-                    if let Some(storage_data) = quantized.into_iter().next() {
-                        if let Some(primary) = storage_data.primary {
-                            int8 = Some(Arc::new(
-                                primary.data.into_iter().map(|b| b as i8).collect(),
-                            ));
-                        }
-                    }
-                }
-            }
+            int8 = Some(Arc::new(
+                primary.data.into_iter().map(|b| b as i8).collect(),
+            ));
         }
 
-        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 4)) {
-            if let Some(engine) = &self.quantization_engine {
-                if let Ok(quantized) = engine
+        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 4))
+            && let Some(engine) = &self.quantization_engine
+                && let Ok(quantized) = engine
                     .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq4)
                 .await
-            {
-                if let Some(storage_data) = quantized.into_iter().next() {
-                    if let Some(primary) = storage_data.primary {
+                && let Some(storage_data) = quantized.into_iter().next()
+                    && let Some(primary) = storage_data.primary {
                         pq4 = Some(Arc::new(primary.data));
                     }
-                }
-            }
-            }
-        }
 
-        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 8)) {
-            if let Some(engine) = &self.quantization_engine {
-                if let Ok(quantized) = engine
+        if levels.iter().any(|l| matches!(l.level_type, Some(QuantizationLevel::Pq(ref pq)) if pq.bits_per_code == 8))
+            && let Some(engine) = &self.quantization_engine
+                && let Ok(quantized) = engine
                     .quantize_batch_with_level(&[vector.to_vec()], UnifiedQuantizationLevel::Pq8)
                 .await
-            {
-                if let Some(storage_data) = quantized.into_iter().next() {
-                    if let Some(primary) = storage_data.primary {
+                && let Some(storage_data) = quantized.into_iter().next()
+                    && let Some(primary) = storage_data.primary {
                         pq8 = Some(Arc::new(primary.data));
                     }
-                }
-            }
-            }
-        }
 
         (binary, int8, pq4, pq8)
     }
@@ -622,11 +602,14 @@ impl QueryPreprocessor {
 
         // Hash first few elements and last few for efficiency
         let sample_size = vector.len().min(16);
-        for i in 0..sample_size / 2 {
-            vector[i].to_bits().hash(&mut hasher);
+        for val in vector.iter().take(sample_size / 2) {
+            val.to_bits().hash(&mut hasher);
         }
-        for i in (vector.len().saturating_sub(sample_size / 2))..vector.len() {
-            vector[i].to_bits().hash(&mut hasher);
+        for val in vector
+            .iter()
+            .skip(vector.len().saturating_sub(sample_size / 2))
+        {
+            val.to_bits().hash(&mut hasher);
         }
         vector.len().hash(&mut hasher);
 
@@ -663,10 +646,15 @@ impl QueryPreprocessor {
 /// Cache statistics for monitoring
 #[derive(Debug, Clone)]
 pub struct CacheStatistics {
+    /// Number of preprocessing cache hits
     pub hits: u64,
+    /// Number of preprocessing cache misses
     pub misses: u64,
+    /// Cache hit rate (0.0 to 1.0)
     pub hit_rate: f64,
+    /// Average preprocessing time in microseconds
     pub avg_preprocessing_time_us: u64,
+    /// Total SIMD-accelerated operations performed
     pub simd_operations: u64,
 }
 

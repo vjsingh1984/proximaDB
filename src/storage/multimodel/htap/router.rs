@@ -283,14 +283,14 @@ impl WorkloadRouter {
         }
 
         // Check row count threshold
-        if let Some(rows) = chars.estimated_rows {
-            if rows >= self.config.olap_row_threshold {
-                self.olap_queries.fetch_add(1, Ordering::Relaxed);
-                return RoutingDecision::olap(format!(
-                    "Large result set ({} rows >= {} threshold)",
-                    rows, self.config.olap_row_threshold
-                ));
-            }
+        if let Some(rows) = chars.estimated_rows
+            && rows >= self.config.olap_row_threshold
+        {
+            self.olap_queries.fetch_add(1, Ordering::Relaxed);
+            return RoutingDecision::olap(format!(
+                "Large result set ({} rows >= {} threshold)",
+                rows, self.config.olap_row_threshold
+            ));
         }
 
         // Check complexity score
@@ -303,15 +303,15 @@ impl WorkloadRouter {
         }
 
         // Check adaptive learning history
-        if self.config.adaptive_learning {
-            if let Some(decision) = self.check_history(query_id).await {
-                if decision.use_olap {
-                    self.olap_queries.fetch_add(1, Ordering::Relaxed);
-                } else {
-                    self.oltp_queries.fetch_add(1, Ordering::Relaxed);
-                }
-                return decision;
+        if self.config.adaptive_learning
+            && let Some(decision) = self.check_history(query_id).await
+        {
+            if decision.use_olap {
+                self.olap_queries.fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.oltp_queries.fetch_add(1, Ordering::Relaxed);
             }
+            return decision;
         }
 
         // Default to OLTP for uncertain cases

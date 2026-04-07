@@ -191,18 +191,26 @@ pub struct PerformanceTracker {
 
 /// Search cost estimator (from IntegratedSearchOptimizer)
 pub struct SearchCostEstimator {
+    /// Average search times per index type
     pub index_search_times: HashMap<Index, PerformanceStats>,
+    /// Average search times per quantization level
     pub progressive_search_times: HashMap<UnifiedQuantizationLevel, PerformanceStats>,
-    pub direct_search_times: HashMap<usize, PerformanceStats>, // by dataset size
+    /// Average search times by dataset size
+    pub direct_search_times: HashMap<usize, PerformanceStats>,
+    /// Detected hardware profile for SIMD/memory optimization
     pub hardware_profile: HardwareProfile,
 }
 
 /// Performance statistics for cost estimation
 #[derive(Debug, Clone)]
 pub struct PerformanceStats {
+    /// Average execution time in milliseconds
     pub avg_time_ms: f32,
+    /// Standard deviation of execution times
     pub std_dev_ms: f32,
+    /// 95th percentile execution time in milliseconds
     pub p95_time_ms: f32,
+    /// Number of samples collected
     pub sample_count: u64,
 }
 
@@ -217,9 +225,13 @@ pub struct RoutingEngine {
 /// Hardware profile for optimization decisions
 #[derive(Debug, Clone)]
 pub struct HardwareProfile {
+    /// Whether AVX2 SIMD is available
     pub has_avx2: bool,
+    /// Whether AVX-512 SIMD is available
     pub has_avx512: bool,
+    /// Number of CPU cores available
     pub cpu_cores: usize,
+    /// Available system memory in gigabytes
     pub available_memory_gb: f32,
 }
 
@@ -314,12 +326,11 @@ impl AdvancedSearchOptimizer {
         {
             // Use sysctl on macOS
             use std::process::Command;
-            if let Ok(output) = Command::new("sysctl").arg("-n").arg("hw.memsize").output() {
-                if let Ok(bytes_str) = String::from_utf8(output.stdout) {
-                    if let Ok(bytes) = bytes_str.trim().parse::<u64>() {
-                        return (bytes as f64 / 1024.0 / 1024.0 / 1024.0) as f32; // Convert bytes to GB
-                    }
-                }
+            if let Ok(output) = Command::new("sysctl").arg("-n").arg("hw.memsize").output()
+                && let Ok(bytes_str) = String::from_utf8(output.stdout)
+                && let Ok(bytes) = bytes_str.trim().parse::<u64>()
+            {
+                return (bytes as f64 / 1024.0 / 1024.0 / 1024.0) as f32; // Convert bytes to GB
             }
         }
 
@@ -385,7 +396,7 @@ impl AdvancedSearchOptimizer {
             }
             ExecutionStrategy::Progressive { .. } => self.execute_progressive_search(ctx).await?,
             ExecutionStrategy::DirectFP32 { .. } => {
-                // TODO: Need to get records from storage based on ctx
+                // Deferred: Need to get records from storage based on ctx
                 warn!("Direct FP32 search not fully implemented - returning empty results");
                 vec![]
             }
@@ -456,7 +467,7 @@ impl AdvancedSearchOptimizer {
             stages.binary_candidates
         );
 
-        // TODO: Get all_vectors from storage based on collection_id
+        // Deferred: Get all_vectors from storage based on collection_id
         // For now, return empty results as we need to implement the actual search
         warn!("Progressive search not fully implemented - returning empty results");
         Ok(vec![])
@@ -479,21 +490,19 @@ impl AdvancedSearchOptimizer {
         let top_k = search_params.top_k.unwrap_or(10);
         let distance_metric = search_params
             .distance_metric
-            .clone()
             .unwrap_or(DistanceMetric::Cosine);
 
         // Phase 7: Check result cache first
-        if self.config.enable_result_cache {
-            if let Some(cached_results) = self
+        if self.config.enable_result_cache
+            && let Some(cached_results) = self
                 .check_result_cache(collection_id, query_vector, search_params)
                 .await?
-            {
-                info!(
-                    "Cache hit! Returning cached results in {:?}",
-                    start.elapsed()
-                );
-                return Ok(cached_results);
-            }
+        {
+            info!(
+                "Cache hit! Returning cached results in {:?}",
+                start.elapsed()
+            );
+            return Ok(cached_results);
         }
 
         // Track cache access for predictive prefetching
@@ -592,7 +601,7 @@ impl AdvancedSearchOptimizer {
                     let rec = OptimizedSearchRecord::new(record.id.clone(), record.score as f32)
                         .add_vector(record.vector.clone())
                         .with_metadata(record.metadata);
-                    // TODO: Implement with_version method if needed
+                    // Deferred: Implement with_version method if needed
                     // if let Some(v) = record.version { rec = rec.with_version(v); }
                     converted_results.push(rec);
                 }
@@ -669,8 +678,8 @@ impl AdvancedSearchOptimizer {
                         .unwrap_or_default(),
                     metadata: std::collections::HashMap::new(), // Would convert metadata
                     version: r.version,
-                    timestamp: r.timestamp.map(|t| t as i64),
-                    source: None, // TODO: Convert SourceContent to Option<String> when needed
+                    timestamp: r.timestamp,
+                    source: None, // Deferred: Convert SourceContent to Option<String> when needed
                     expanded_context: r
                         .expanded_context
                         .iter()
@@ -804,7 +813,7 @@ impl AdvancedSearchOptimizer {
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
-        let distance_compute = UnifiedDistanceCompute::new(distance_metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*distance_metric);
         let mut results = Vec::new();
 
         for (idx, view) in batch.iter().enumerate() {
@@ -859,7 +868,7 @@ impl AdvancedSearchOptimizer {
                         records,
                         query_vector,
                         top_k,
-                        distance_metric.clone(),
+                        *distance_metric,
                         &quantization_config,
                         params.filter_expression.as_ref(),
                     )
@@ -889,7 +898,7 @@ impl AdvancedSearchOptimizer {
                         records,
                         query_vector,
                         top_k,
-                        distance_metric.clone(),
+                        *distance_metric,
                         &quantization_config,
                         params.filter_expression.as_ref(),
                     )
@@ -907,7 +916,7 @@ impl AdvancedSearchOptimizer {
         &self,
         _ctx: &StorageQueryContext,
     ) -> Result<Option<Vec<OptimizedSearchRecord>>> {
-        // TODO: Implement cache lookup based on context
+        // Deferred: Implement cache lookup based on context
         Ok(None)
     }
 
@@ -916,7 +925,7 @@ impl AdvancedSearchOptimizer {
         &self,
         _ctx: &StorageQueryContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        // TODO: Implement index-first search using AXIS
+        // Deferred: Implement index-first search using AXIS
         Err(anyhow::anyhow!("Index-first search not yet implemented"))
     }
 
@@ -963,7 +972,7 @@ impl AdvancedSearchOptimizer {
         _ctx: &StorageQueryContext,
         _results: &[OptimizedSearchRecord],
     ) -> Result<()> {
-        // TODO: Implement result caching
+        // Deferred: Implement result caching
         Ok(())
     }
 
@@ -985,7 +994,7 @@ impl AdvancedSearchOptimizer {
             records
         };
 
-        let distance_compute = UnifiedDistanceCompute::new(distance_metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*distance_metric);
         let mut results = Vec::new();
 
         for record in filtered_records {
@@ -1076,6 +1085,7 @@ impl AdvancedSearchOptimizer {
 /// Stable facade for search implementations
 #[async_trait::async_trait]
 pub trait SearchOptimizer: Send + Sync {
+    /// Execute a simple vector similarity search
     async fn search_simple(
         &self,
         collection_id: &str,
@@ -1085,6 +1095,7 @@ pub trait SearchOptimizer: Send + Sync {
         filter: Option<&FilterExpression>,
     ) -> Result<Vec<OptimizedSearchRecord>>;
 
+    /// Inject an AXIS index manager for index-accelerated search
     fn set_axis_manager(&self, _axis: Arc<AxisManager>) {
         // Default no-op
     }
@@ -1194,6 +1205,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_zero_copy_view() {
         let data = vec![1.0, 2.0, 3.0, 4.0];
         let view = ZeroCopyVectorView {

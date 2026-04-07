@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 //! Unified Test Utilities for ProximaDB
 //!
 //! This module provides comprehensive test utilities for all ProximaDB components:

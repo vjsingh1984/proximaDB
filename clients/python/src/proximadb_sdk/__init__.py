@@ -582,55 +582,55 @@ if _circuit_breaker_available:
         ]
     )
 
-# LangChain integration (if langchain-core is installed)
-try:
-    from .integrations.langchain import ProximaDBVectorStore
+# Optional integration exports are loaded lazily so importing the base SDK does
+# not pull in heavyweight third-party stacks or their side effects.
+_OPTIONAL_EXPORTS = {
+    "ProximaDBVectorStore": (".integrations.langchain", "ProximaDBVectorStore"),
+    "ProximaDBEmbeddingProvider": (
+        ".integrations.victor",
+        "ProximaDBEmbeddingProvider",
+    ),
+    "ProximaDBKnowledgeSource": (
+        ".integrations.crewai",
+        "ProximaDBKnowledgeSource",
+    ),
+    "ProximaDBSearchTool": (".integrations.crewai", "ProximaDBSearchTool"),
+    "create_langgraph_retriever": (
+        ".integrations.langgraph",
+        "create_retriever_tool",
+    ),
+    "ProximaDBRM": (".integrations.dspy", "ProximaDBRM"),
+    "ProximaDBVectorDB": (".integrations.autogen", "ProximaDBVectorDB"),
+}
 
-    _langchain_available = True
-except ImportError:
-    _langchain_available = False
+_OPTIONAL_EXPORT_DEPENDENCIES = {
+    "ProximaDBVectorStore": ("langchain_core",),
+    "ProximaDBEmbeddingProvider": ("victor",),
+    "ProximaDBKnowledgeSource": ("crewai",),
+    "ProximaDBSearchTool": ("crewai",),
+    "create_langgraph_retriever": ("langchain_core",),
+    "ProximaDBRM": ("dspy",),
+    "ProximaDBVectorDB": ("autogen_agentchat", "pyautogen"),
+}
 
-# Victor integration (if victor-ai is installed)
-try:
-    from .integrations.victor import ProximaDBEmbeddingProvider
 
-    _victor_available = True
-except ImportError:
-    _victor_available = False
+def _optional_export_is_available(name: str) -> bool:
+    import importlib
+    import importlib.util
 
-# CrewAI integration (if crewai is installed)
-try:
-    from .integrations.crewai import ProximaDBKnowledgeSource, ProximaDBSearchTool
+    dependencies = _OPTIONAL_EXPORT_DEPENDENCIES.get(name, ())
+    if not dependencies:
+        return True
+    for dep in dependencies:
+        if importlib.util.find_spec(dep) is None:
+            continue
+        try:
+            importlib.import_module(dep)
+            return True
+        except Exception:
+            continue
+    return False
 
-    _crewai_available = True
-except ImportError:
-    _crewai_available = False
-
-# LangGraph integration (if langchain-core is installed)
-try:
-    from .integrations.langgraph import (
-        create_retriever_tool as create_langgraph_retriever,
-    )
-
-    _langgraph_available = True
-except ImportError:
-    _langgraph_available = False
-
-# DSPy integration (if dspy is installed)
-try:
-    from .integrations.dspy import ProximaDBRM
-
-    _dspy_available = True
-except ImportError:
-    _dspy_available = False
-
-# AutoGen integration (if autogen-agentchat is installed)
-try:
-    from .integrations.autogen import ProximaDBVectorDB
-
-    _autogen_available = True
-except ImportError:
-    _autogen_available = False
 
 # Backwards compatibility aliases
 IndexConfig = IndexConfiguration  # Alias for backwards compatibility
@@ -642,24 +642,34 @@ __all__.extend(
         "Vector",
     ]
 )
+__all__.extend(
+    name for name in _OPTIONAL_EXPORTS.keys() if _optional_export_is_available(name)
+)
 
-if _langchain_available:
-    __all__.append("ProximaDBVectorStore")
 
-if _victor_available:
-    __all__.append("ProximaDBEmbeddingProvider")
+def __getattr__(name):
+    """Load optional integrations only when their public export is accessed."""
+    if name in _OPTIONAL_EXPORTS:
+        import importlib
 
-if _crewai_available:
-    __all__.extend(["ProximaDBSearchTool", "ProximaDBKnowledgeSource"])
+        if not _optional_export_is_available(name):
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r} "
+                f"(optional dependency not installed)"
+            )
+        module_name, attr_name = _OPTIONAL_EXPORTS[name]
+        try:
+            module = importlib.import_module(module_name, __name__)
+        except Exception as exc:
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r} "
+                f"(optional dependency import failed: {exc})"
+            ) from exc
+        value = getattr(module, attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-if _langgraph_available:
-    __all__.append("create_langgraph_retriever")
-
-if _dspy_available:
-    __all__.append("ProximaDBRM")
-
-if _autogen_available:
-    __all__.append("ProximaDBVectorDB")
 
 # Graph Analytics
 try:
@@ -684,6 +694,89 @@ try:
 except ImportError:
     _graph_analytics_available = False
 
+# Graph Operations API (High-level interface for Victor integration)
+try:
+    from .graph import (
+        GraphEdge,
+        GraphNode,
+        GraphPath,
+        GraphQueryResult,
+        ProximaDBGraph,
+        create_graph_api,
+    )
+
+    _graph_available = True
+except ImportError:
+    _graph_available = False
+
+# Document Operations API (MongoDB-like document storage)
+try:
+    from .document import AggregationType as DocAggregationType
+    from .document import CompressionAlgorithm as DocCompressionAlgorithm
+    from .document import (
+        DocIndexType,
+        Document,
+        DocumentCollectionConfig,
+        DocumentFilter,
+        DocumentQueryResult,
+        DocumentRepository,
+        IndexDefinition,
+        ProximaDBDocument,
+        create_document_api,
+    )
+
+    _document_available = True
+except ImportError:
+    _document_available = False
+
+# Time-Series Operations API (Metrics and monitoring)
+try:
+    from .timeseries import (
+        AggregatedMetric,
+    )
+    from .timeseries import AggregationType as TSAggregationType
+    from .timeseries import CompressionCodec as TSCompressionCodec
+    from .timeseries import (
+        DownsampleMode,
+        Metric,
+        ProximaDBTimeSeries,
+        TimeSeriesCollectionConfig,
+        TimeSeriesFilter,
+        TimeSeriesRepository,
+        ValueColumn,
+        ValueType,
+        create_timeseries_api,
+    )
+
+    _timeseries_available = True
+except ImportError:
+    _timeseries_available = False
+
+# Hybrid Query API (Multi-model fusion)
+try:
+    from .hybrid import (
+        CascadeFusion,
+        DocumentSearchResult,
+        FusionStrategy,
+        FusionStrategyBase,
+        GraphSearchResult,
+        HybridQueryRepository,
+        HybridSearchResult,
+        JoinType,
+        ProximaDBHybrid,
+        QueryModel,
+        ReciprocalRankFusion,
+        TimeSeriesResult,
+        VectorSearchResult,
+        WeightedFusion,
+        create_fusion_strategy,
+        create_hybrid_api,
+    )
+
+    _hybrid_available = True
+except ImportError:
+    _hybrid_available = False
+
 if _graph_analytics_available:
     __all__.extend(
         [
@@ -701,6 +794,75 @@ if _graph_analytics_available:
             "PatternMatchMode",
             "node",
             "relationship",
+        ]
+    )
+
+if _graph_available:
+    __all__.extend(
+        [
+            "ProximaDBGraph",
+            "GraphNode",
+            "GraphEdge",
+            "GraphPath",
+            "GraphQueryResult",
+            "create_graph_api",
+        ]
+    )
+
+if _document_available:
+    __all__.extend(
+        [
+            "ProximaDBDocument",
+            "Document",
+            "DocumentFilter",
+            "DocumentCollectionConfig",
+            "DocumentRepository",
+            "DocumentQueryResult",
+            "IndexDefinition",
+            "DocIndexType",
+            "DocCompressionAlgorithm",
+            "DocAggregationType",
+            "create_document_api",
+        ]
+    )
+
+if _timeseries_available:
+    __all__.extend(
+        [
+            "ProximaDBTimeSeries",
+            "Metric",
+            "AggregatedMetric",
+            "TimeSeriesCollectionConfig",
+            "TimeSeriesFilter",
+            "ValueColumn",
+            "ValueType",
+            "TSAggregationType",
+            "DownsampleMode",
+            "TSCompressionCodec",
+            "TimeSeriesRepository",
+            "create_timeseries_api",
+        ]
+    )
+
+if _hybrid_available:
+    __all__.extend(
+        [
+            "ProximaDBHybrid",
+            "FusionStrategy",
+            "HybridSearchResult",
+            "VectorSearchResult",
+            "GraphSearchResult",
+            "DocumentSearchResult",
+            "TimeSeriesResult",
+            "QueryModel",
+            "JoinType",
+            "ReciprocalRankFusion",
+            "WeightedFusion",
+            "CascadeFusion",
+            "FusionStrategyBase",
+            "HybridQueryRepository",
+            "create_hybrid_api",
+            "create_fusion_strategy",
         ]
     )
 
@@ -794,6 +956,7 @@ try:
         connect_embedded,
         create_embedding_model,
     )
+    from .embedded_multi import EmbeddedMultiModelProvider
 
     _embedded_available = True
 except ImportError:
@@ -807,6 +970,7 @@ if _embedded_available:
             "EmbeddedCollection",
             "EmbeddedConfig",
             "EmbeddedMultiModalQueryExecutor",
+            "EmbeddedMultiModelProvider",
             "connect_embedded",
             # Embedding models
             "BaseEmbeddingModel",

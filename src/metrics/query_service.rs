@@ -114,11 +114,11 @@ impl MetricsQueryService {
     pub async fn global_metrics(&self) -> Result<GlobalMetrics> {
         // Check cache first
         let cache = self.cache.read().await;
-        if let Some(cached) = &cache.global {
-            if self.is_cache_valid(cached.cached_at, cached.ttl_seconds) {
-                debug!("Returning cached global metrics");
-                return Ok(cached.metrics.clone());
-            }
+        if let Some(cached) = &cache.global
+            && self.is_cache_valid(cached.cached_at, cached.ttl_seconds)
+        {
+            debug!("Returning cached global metrics");
+            return Ok(cached.metrics.clone());
         }
         drop(cache);
 
@@ -144,18 +144,18 @@ impl MetricsQueryService {
     ) -> Result<serde_json::Value> {
         // Check cache first
         let cache = self.cache.read().await;
-        if let Some(cached) = cache.collections.get(collection_id) {
-            if self.is_cache_valid(cached.cached_at, cached.ttl_seconds) {
-                debug!("Returning cached metrics for collection {}", collection_id);
-                return self.format_metrics_response(
-                    &cached.metrics,
-                    if options.include_hints {
-                        Some(&cached.hints)
-                    } else {
-                        None
-                    },
-                );
-            }
+        if let Some(cached) = cache.collections.get(collection_id)
+            && self.is_cache_valid(cached.cached_at, cached.ttl_seconds)
+        {
+            debug!("Returning cached metrics for collection {}", collection_id);
+            return self.format_metrics_response(
+                &cached.metrics,
+                if options.include_hints {
+                    Some(&cached.hints)
+                } else {
+                    None
+                },
+            );
         }
         drop(cache);
 

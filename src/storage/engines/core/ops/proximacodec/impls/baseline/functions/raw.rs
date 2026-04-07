@@ -44,7 +44,7 @@ pub fn decode_f32(data: &[u8]) -> Result<Vec<f32>> {
         return Ok(Vec::new());
     }
 
-    if data.len() % 4 != 0 {
+    if !data.len().is_multiple_of(4) {
         return Err(anyhow::anyhow!(
             "Invalid raw bytes length for f32: {} (must be multiple of 4)",
             data.len()
@@ -81,7 +81,7 @@ pub fn decode_i64(data: &[u8]) -> Result<Vec<i64>> {
         return Ok(Vec::new());
     }
 
-    if data.len() % 8 != 0 {
+    if !data.len().is_multiple_of(8) {
         return Err(anyhow::anyhow!(
             "Invalid raw bytes length for i64: {} (must be multiple of 8)",
             data.len()
@@ -117,7 +117,7 @@ pub fn decode_i32(data: &[u8]) -> Result<Vec<i32>> {
         return Ok(Vec::new());
     }
 
-    if data.len() % 4 != 0 {
+    if !data.len().is_multiple_of(4) {
         return Err(anyhow::anyhow!(
             "Invalid raw bytes length for i32: {} (must be multiple of 4)",
             data.len()

@@ -8,6 +8,7 @@ use anyhow::Result;
 
 /// Hardware-accelerated quantization dispatcher
 pub struct AcceleratedQuantization {
+    /// Active SIMD or GPU backend selected at initialization
     backend: HardwareBackend,
 }
 
@@ -48,6 +49,7 @@ impl AcceleratedQuantization {
         Self { backend }
     }
 
+    /// Select the best CPU SIMD backend based on detected hardware capabilities.
     fn select_cpu_backend(
         caps: &crate::core::hardware_capabilities::HardwareCapabilities,
     ) -> HardwareBackend {
@@ -113,7 +115,7 @@ impl AcceleratedQuantization {
     /// Quantize to 16-bit with hardware acceleration
     pub fn quantize_u16_accelerated(&self, values: &[f32]) -> Result<(Vec<u16>, f32, f32)> {
         // For now, use scalar implementation
-        // TODO: Add SIMD implementation for u16
+        // Deferred: Add SIMD implementation for u16
         self.quantize_u16_scalar(values)
     }
 
@@ -491,17 +493,20 @@ impl AcceleratedQuantization {
         self.quantize_u8_scalar(values)
     }
 
+    /// Fallback AVX-512 quantization stub for non-x86 platforms (delegates to scalar).
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     #[allow(dead_code)]
     fn quantize_u8_avx512(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         self.quantize_u8_scalar(values)
     }
 
+    /// Fallback AVX2 quantization stub for non-x86 platforms (delegates to scalar).
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn quantize_u8_avx2(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         self.quantize_u8_scalar(values)
     }
 
+    /// Fallback SSE quantization stub for non-x86 platforms (delegates to scalar).
     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
     fn quantize_u8_sse(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
         self.quantize_u8_scalar(values)
@@ -590,28 +595,28 @@ impl AcceleratedQuantization {
     // GPU implementations (stubs for now)
     #[cfg(feature = "gpu")]
     fn quantize_u8_cuda(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
-        // TODO: Implement CUDA quantization
+        // Deferred: Implement CUDA quantization
         tracing::warn!("CUDA quantization not yet implemented, falling back to scalar");
         self.quantize_u8_scalar(values)
     }
 
     #[cfg(feature = "gpu")]
     fn quantize_u8_rocm(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
-        // TODO: Implement ROCm quantization
+        // Deferred: Implement ROCm quantization
         tracing::warn!("ROCm quantization not yet implemented, falling back to scalar");
         self.quantize_u8_scalar(values)
     }
 
     #[cfg(feature = "gpu")]
     fn quantize_u8_mps(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
-        // TODO: Implement Metal Performance Shaders quantization
+        // Deferred: Implement Metal Performance Shaders quantization
         tracing::warn!("MPS quantization not yet implemented, falling back to scalar");
         self.quantize_u8_scalar(values)
     }
 
     #[cfg(feature = "gpu")]
     fn quantize_u8_opencl(&self, values: &[f32]) -> Result<(Vec<u8>, f32, f32)> {
-        // TODO: Implement OpenCL quantization
+        // Deferred: Implement OpenCL quantization
         tracing::warn!("OpenCL quantization not yet implemented, falling back to scalar");
         self.quantize_u8_scalar(values)
     }

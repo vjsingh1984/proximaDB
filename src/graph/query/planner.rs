@@ -27,7 +27,7 @@
 
 use super::QueryResult;
 use super::ast::CompiledPattern;
-use crate::core::error::VectorDBError;
+use crate::core::error::{QueryError, VectorDBError};
 use crate::graph::GraphMemoryPool;
 use crate::utils::Uuid;
 use std::collections::HashMap;
@@ -185,110 +185,168 @@ pub struct PlanStep {
     pub output_cardinality: usize,
 }
 
-/// Types of plan steps
+/// Types of plan steps in a query execution plan.
 #[derive(Debug, Clone)]
 pub enum PlanStepType {
     /// Scan all nodes with optional filter
     NodeScan {
+        /// Label constraints to filter nodes (None means all nodes).
         labels: Option<Vec<String>>,
+        /// Property-based filters applied during scan.
         property_filters: Vec<PropertyFilter>,
     },
     /// Index seek operation
     IndexSeek {
+        /// Name of the index to seek into.
         index_name: String,
+        /// Exact key value to look up.
         key_value: serde_json::Value,
     },
     /// Index scan with range
     IndexScan {
+        /// Name of the index to scan.
         index_name: String,
+        /// Lower bound of the range scan (inclusive), or None for unbounded.
         start_key: Option<serde_json::Value>,
+        /// Upper bound of the range scan (exclusive), or None for unbounded.
         end_key: Option<serde_json::Value>,
     },
     /// Graph traversal operation
     Traverse {
+        /// Traversal algorithm to use (BFS, DFS, Dijkstra, A*).
         algorithm: TraversalAlgorithm,
+        /// Maximum traversal depth, or None for unlimited.
         max_depth: Option<u32>,
+        /// Edge filters applied during traversal expansion.
         edge_filters: Vec<EdgeFilter>,
     },
     /// Join two result sets
     Join {
+        /// Type of join (Inner, LeftOuter, etc.).
         join_type: JoinType,
+        /// Join key from the left result set.
         left_key: String,
+        /// Join key from the right result set.
         right_key: String,
     },
     /// Filter results
-    Filter { condition: FilterCondition },
+    Filter {
+        /// Filter condition to evaluate against each result row.
+        condition: FilterCondition,
+    },
     /// Project/select specific fields
-    Project { fields: Vec<String> },
+    Project {
+        /// Field names to include in the output.
+        fields: Vec<String>,
+    },
     /// Sort results
-    Sort { fields: Vec<SortField> },
+    Sort {
+        /// Sort key specifications with direction.
+        fields: Vec<SortField>,
+    },
     /// Limit results
-    Limit { count: usize, offset: Option<usize> },
+    Limit {
+        /// Maximum number of results to return.
+        count: usize,
+        /// Number of results to skip before returning.
+        offset: Option<usize>,
+    },
 }
 
-/// Property filter for node selection
+/// Property filter for node selection during plan execution.
 #[derive(Debug, Clone)]
 pub struct PropertyFilter {
+    /// Name of the property to filter on.
     pub property_name: String,
+    /// Comparison operator to apply.
     pub operator: FilterOperator,
+    /// Value to compare the property against.
     pub value: serde_json::Value,
 }
 
-/// Edge filter for traversal
+/// Edge filter constraining which edges are followed during traversal.
 #[derive(Debug, Clone)]
 pub struct EdgeFilter {
+    /// Required edge type, or None to match all types.
     pub edge_type: Option<String>,
+    /// Additional property-based filters on the edge.
     pub property_filters: Vec<PropertyFilter>,
 }
 
-/// Filter operators
+/// Filter operators for property comparison in query plans.
 #[derive(Debug, Clone)]
 pub enum FilterOperator {
+    /// Exact equality match.
     Equal,
+    /// Not-equal comparison.
     NotEqual,
+    /// Strictly less than.
     LessThan,
+    /// Less than or equal to.
     LessThanOrEqual,
+    /// Strictly greater than.
     GreaterThan,
+    /// Greater than or equal to.
     GreaterThanOrEqual,
+    /// Value is in the provided set.
     In,
+    /// Value is not in the provided set.
     NotIn,
+    /// String contains substring.
     Contains,
+    /// String starts with prefix.
     StartsWith,
+    /// String ends with suffix.
     EndsWith,
+    /// Regular expression match.
     Regex,
 }
 
-/// Join types
+/// Join types for combining intermediate result sets.
 #[derive(Debug, Clone)]
 pub enum JoinType {
+    /// Inner join: only matching rows from both sides.
     Inner,
+    /// Left outer join: all rows from left, matching from right.
     LeftOuter,
+    /// Right outer join: all rows from right, matching from left.
     RightOuter,
+    /// Full outer join: all rows from both sides.
     FullOuter,
 }
 
-/// Filter conditions
+/// Filter conditions supporting boolean composition.
 #[derive(Debug, Clone)]
 pub enum FilterCondition {
+    /// Single property comparison filter.
     Simple(PropertyFilter),
+    /// Conjunction of multiple conditions (all must hold).
     And(Vec<FilterCondition>),
+    /// Disjunction of multiple conditions (at least one must hold).
     Or(Vec<FilterCondition>),
+    /// Negation of a condition.
     Not(Box<FilterCondition>),
 }
 
-/// Traversal algorithms
+/// Traversal algorithms available for graph plan steps.
 #[derive(Debug, Clone)]
 pub enum TraversalAlgorithm {
+    /// Breadth-first search traversal.
     BFS,
+    /// Depth-first search traversal.
     DFS,
+    /// Dijkstra shortest-path traversal using edge weights.
     Dijkstra,
+    /// A* heuristic-guided shortest-path traversal.
     AStar,
 }
 
-/// Sort field specification
+/// Sort field specification for ORDER BY in query plans.
 #[derive(Debug, Clone)]
 pub struct SortField {
+    /// Name of the field to sort by.
     pub field_name: String,
+    /// Whether to sort in ascending order (false = descending).
     pub ascending: bool,
 }
 
@@ -351,6 +409,7 @@ impl Default for OptimizationFlags {
 }
 
 impl CostEstimate {
+    /// Create a new cost estimate with explicit CPU, I/O, and memory cost components.
     pub fn new(cpu: f64, io: f64, memory: f64) -> Self {
         Self {
             cpu_cost: cpu,
@@ -360,10 +419,12 @@ impl CostEstimate {
         }
     }
 
+    /// Create a zero-cost estimate (all components are 0.0).
     pub fn zero() -> Self {
         Self::new(0.0, 0.0, 0.0)
     }
 
+    /// Add two cost estimates component-wise, returning the combined estimate.
     pub fn add(&self, other: &CostEstimate) -> CostEstimate {
         CostEstimate::new(
             self.cpu_cost + other.cpu_cost,
@@ -441,7 +502,7 @@ impl CostEstimator for CostModel {
         if !pattern.properties.is_empty() {
             // Each property constraint reduces result set
             // Use histogram-based estimation if available, otherwise default to 0.1 per constraint
-            for (prop_name, _constraint) in &pattern.properties {
+            for prop_name in pattern.properties.keys() {
                 if let Some(&distinct_values) = stats.property_selectivity.get(prop_name) {
                     // Selectivity = 1 / distinct_values (assuming uniform distribution)
                     let prop_sel = if distinct_values > 0 {
@@ -653,7 +714,7 @@ impl QueryPlanner {
                     } else {
                         0.0
                     },
-                    avg_seek_time_us: 0.0, // TODO: Populate with actual benchmark data
+                    avg_seek_time_us: 0.0, // Deferred: Populate with actual benchmark data
                     last_updated: Instant::now(),
                 },
             );
@@ -678,7 +739,7 @@ impl QueryPlanner {
                     } else {
                         0.0
                     },
-                    avg_seek_time_us: 0.0, // TODO: Populate with actual benchmark data
+                    avg_seek_time_us: 0.0, // Deferred: Populate with actual benchmark data
                     last_updated: Instant::now(),
                 },
             );
@@ -1001,7 +1062,11 @@ impl QueryPlanner {
             .min_by(|(_, sel1), (_, sel2)| {
                 sel1.partial_cmp(sel2).unwrap_or(std::cmp::Ordering::Equal)
             })
-            .unwrap();
+            .ok_or_else(|| {
+                VectorDBError::Query(QueryError::InvalidQuery(
+                    "No viable starting node found in pattern".to_string(),
+                ))
+            })?;
 
         let starting_node = &pattern.nodes[start_idx];
         let start_cardinality = (stats.node_count as f64 * start_selectivity).max(1.0) as usize;
@@ -1359,14 +1424,13 @@ impl QueryPlanner {
             }
 
             // If still full, remove least recently used
-            if cache.len() >= self.config.max_cached_plans {
-                if let Some((lru_key, _)) = cache
+            if cache.len() >= self.config.max_cached_plans
+                && let Some((lru_key, _)) = cache
                     .iter()
                     .min_by_key(|(_, cached)| cached.last_accessed)
                     .map(|(k, v)| (k.clone(), v.clone()))
-                {
-                    cache.remove(&lru_key);
-                }
+            {
+                cache.remove(&lru_key);
             }
         }
 
@@ -1420,7 +1484,9 @@ mod tests {
     #[test]
     fn test_query_planner_creation() {
         let planner = QueryPlanner::new();
-        let stats = planner.get_statistics().unwrap();
+        let stats = planner
+            .get_statistics()
+            .expect("Failed to get statistics in test");
         assert_eq!(stats.node_count, 0);
         assert_eq!(stats.edge_count, 0);
     }
@@ -1470,9 +1536,13 @@ mod tests {
         let memory_pool = Arc::new(GraphMemoryPool::new());
 
         // Update statistics with empty pool
-        planner.update_statistics(&memory_pool).unwrap();
+        planner
+            .update_statistics(&memory_pool)
+            .expect("Failed to update statistics in test");
 
-        let stats = planner.get_statistics().unwrap();
+        let stats = planner
+            .get_statistics()
+            .expect("Failed to get statistics in test");
         assert_eq!(stats.node_count, 0);
         assert_eq!(stats.edge_count, 0);
         assert_eq!(stats.avg_node_degree, 0.0);
@@ -1488,14 +1558,21 @@ mod tests {
             serde_json::Value::String("Person".to_string()),
         );
 
-        let plan = planner.plan_node_by_label_query(&params).unwrap();
+        let plan = planner
+            .plan_node_by_label_query(&params)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         assert_eq!(plan.steps.len(), 1);
 
         match &plan.steps[0].step_type {
             PlanStepType::NodeScan { labels, .. } => {
-                assert_eq!(labels.as_ref().unwrap()[0], "Person");
+                assert_eq!(
+                    labels
+                        .as_ref()
+                        .expect("Labels should be present in NodeScan")[0],
+                    "Person"
+                );
             }
             PlanStepType::IndexSeek { .. } => {
                 // Also valid if index is chosen
@@ -1831,6 +1908,7 @@ mod tests {
             edges: vec![edge],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![], // TD-019: WITH clause support
             return_spec: ReturnSpec {
                 variables: vec!["a".to_string(), "b".to_string()],
                 projections: vec![],
@@ -1851,7 +1929,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_single_node() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.label_selectivity.insert("Person".to_string(), 300);
         drop(stats);
@@ -1866,6 +1947,7 @@ mod tests {
             edges: vec![],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["n".to_string()],
                 projections: vec![],
@@ -1877,7 +1959,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         assert!(!plan.steps.is_empty());
@@ -1888,7 +1972,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_with_edge() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.edge_count = 5000;
         stats.avg_node_degree = 5.0;
@@ -1924,6 +2011,7 @@ mod tests {
             }],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["a".to_string(), "b".to_string()],
                 projections: vec![],
@@ -1935,7 +2023,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         assert!(plan.steps.len() >= 2); // At least node access + expand
@@ -1945,7 +2035,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_with_where_clause() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.label_selectivity.insert("Person".to_string(), 300);
         stats.property_selectivity.insert("age".to_string(), 100);
@@ -1965,6 +2058,7 @@ mod tests {
                 property: "age".to_string(),
                 constraint: PropertyConstraint::GreaterThan(serde_json::json!(30)),
             }],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["n".to_string()],
                 projections: vec![],
@@ -1976,7 +2070,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         // Should include filter step for WHERE clause
@@ -1990,7 +2086,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_with_order_by() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.label_selectivity.insert("Person".to_string(), 300);
         drop(stats);
@@ -2005,6 +2104,7 @@ mod tests {
             edges: vec![],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["n".to_string()],
                 projections: vec![],
@@ -2016,7 +2116,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         // Should include sort step for ORDER BY
@@ -2030,7 +2132,10 @@ mod tests {
     #[test]
     fn test_plan_pattern_query_with_limit() {
         let planner = QueryPlanner::new();
-        let mut stats = planner.stats.write().unwrap();
+        let mut stats = planner
+            .stats
+            .write()
+            .expect("Stats lock should not be poisoned in test");
         stats.node_count = 1000;
         stats.label_selectivity.insert("Person".to_string(), 300);
         drop(stats);
@@ -2045,6 +2150,7 @@ mod tests {
             edges: vec![],
             paths: vec![],
             where_clauses: vec![],
+            with_clauses: vec![],
             return_spec: ReturnSpec {
                 variables: vec!["n".to_string()],
                 projections: vec![],
@@ -2056,7 +2162,9 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let plan = planner.plan_pattern_query(&pattern).unwrap();
+        let plan = planner
+            .plan_pattern_query(&pattern)
+            .expect("Failed to create plan in test");
 
         assert!(!plan.id.is_empty());
         // Estimated result size should respect limit

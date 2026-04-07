@@ -110,7 +110,6 @@ impl FlushOperations {
             auto_cleanup: true,
             max_orphaned_age_hours: 24,
             skip_uuid_subdir: true,
-            ..Default::default()
         };
 
         self.engine
@@ -194,7 +193,7 @@ impl FlushOperations {
         };
 
         // Ensure minimum and maximum block sizes
-        optimal_size.max(4096).min(1024 * 1024) // 4KB to 1MB
+        optimal_size.clamp(4096, 1024 * 1024) // 4KB to 1MB
     }
 
     /// Validate flush preconditions

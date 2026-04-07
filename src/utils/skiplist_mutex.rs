@@ -17,25 +17,37 @@ impl<K: Ord + Clone, V: Clone> MutexSkipList<K, V> {
 
     /// Insert - guaranteed to succeed
     pub fn insert(&self, key: K, value: V) -> Option<V> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.insert(key, value)
     }
 
     /// Get
     pub fn get(&self, key: &K) -> Option<V> {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.get(key).cloned()
     }
 
     /// Remove
     pub fn remove(&self, key: &K) -> Option<V> {
-        let mut data = self.data.lock().unwrap();
+        let mut data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.remove(key)
     }
 
     /// Length
     pub fn len(&self) -> usize {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.len()
     }
 
@@ -44,7 +56,10 @@ impl<K: Ord + Clone, V: Clone> MutexSkipList<K, V> {
     where
         R: std::ops::RangeBounds<K>,
     {
-        let data = self.data.lock().unwrap();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.range(range)
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()

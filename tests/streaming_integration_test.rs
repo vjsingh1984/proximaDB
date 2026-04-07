@@ -428,7 +428,7 @@ async fn test_coordinator_session_stats_tracking() {
     assert_eq!(info.records_received, 100);
     assert_eq!(info.records_processed, 30);
     assert_eq!(info.buffer_len, 70);
-    assert!(info.age_secs >= 0);
+    let _ = info.age_secs; // usize: always >= 0
 }
 
 // =============================================================================
@@ -587,7 +587,7 @@ async fn test_subscription_pause_resume() {
 
 #[test]
 fn test_query_evaluator_creation() {
-    let evaluator = QueryEvaluator::new();
+    let _evaluator = QueryEvaluator::new();
     // Evaluator should be created without panic
     assert!(true);
 }
@@ -1536,7 +1536,7 @@ async fn test_subscription_removal_notification() {
         .await;
 
     // Subscription manager was invoked (may be 0 if no ranking change)
-    assert!(notified >= 0);
+    let _ = notified; // usize: always >= 0
 
     // Cleanup
     subscription_manager.unsubscribe(&handle.id).unwrap();
@@ -1575,7 +1575,7 @@ async fn test_subscription_threshold_filtering() {
     let notified = subscription_manager
         .notify_insert("threshold_test", new_vectors)
         .await;
-    assert!(notified >= 0); // Manager was notified
+    let _ = notified; // usize: always >= 0 // Manager was notified
 
     subscription_manager.unsubscribe(&handle.id).unwrap();
 }
@@ -1975,7 +1975,7 @@ async fn test_subscription_manager_notify_insert() {
     let notified = manager.notify_insert("test_collection", vectors).await;
 
     // Should have notified the subscription
-    assert!(notified >= 0);
+    let _ = notified; // usize: always >= 0
 
     // Cleanup
     manager.unsubscribe(&handle.id).unwrap();
@@ -2018,7 +2018,7 @@ async fn test_subscription_manager_notify_remove() {
     let notified = manager.notify_remove("test_collection", &removed).await;
 
     // Should have processed the removal
-    assert!(notified >= 0);
+    let _ = notified; // usize: always >= 0
 
     // Cleanup
     manager.unsubscribe(&handle.id).unwrap();
@@ -2465,7 +2465,7 @@ async fn test_integrated_service_push_and_notify() {
 
     assert_eq!(result.push_result.pushed, 10);
     // Subscription was notified (may be 0 if no vectors matched)
-    assert!(result.subscriptions_notified >= 0);
+    let _ = result.subscriptions_notified; // usize: always >= 0
 
     // Cleanup
     service.unsubscribe(&sub_handle.id).unwrap();

@@ -51,13 +51,13 @@ impl ColumnarBatchOperations {
     }
 
     /// Batch read vectors by IDs across multiple files
-    /// TODO: Re-implement when UnifiedParquetReader.batch_id_lookup is available
+    /// Deferred: Re-implement when UnifiedParquetReader.batch_id_lookup is available
     pub async fn batch_read_by_ids(
         &self,
         _file_paths: &[String],
         _ids: &[String],
     ) -> Result<Vec<VectorRecord>> {
-        // TODO: Re-implement when batch_id_lookup API is available
+        // Deferred: Re-implement when batch_id_lookup API is available
         Err(anyhow::anyhow!(
             "BatchOperations temporarily disabled due to API changes"
         ))

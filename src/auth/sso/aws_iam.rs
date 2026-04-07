@@ -31,37 +31,59 @@ pub struct AWSIAMIntegration {
 /// AWS token data structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AWSTokenData {
+    /// JWT subject claim (user identifier).
     pub sub: String,
+    /// JWT audience claim.
     pub aud: String,
+    /// JWT issuer claim.
     pub iss: String,
+    /// JWT expiration timestamp (Unix epoch seconds).
     pub exp: i64,
+    /// JWT issued-at timestamp (Unix epoch seconds).
     pub iat: i64,
+    /// AWS IAM role ARN from the token.
     pub role_arn: String,
+    /// AWS account ID that owns the identity.
     pub account_id: String,
+    /// Preferred username from Cognito or custom claims.
     pub preferred_username: Option<String>,
+    /// User email address from token claims.
     pub email: Option<String>,
+    /// Cognito user pool groups the user belongs to.
     pub cognito_groups: Vec<String>,
+    /// Custom tenant ID claim for multi-tenant routing.
     pub custom_tenant_id: Option<String>,
+    /// Raw JWT token string for STS operations.
     pub raw_token: String,
 }
 
 /// AWS credentials from STS
 #[derive(Debug, Clone)]
 pub struct AWSCredentials {
+    /// AWS access key ID from STS.
     pub access_key_id: String,
+    /// AWS secret access key from STS.
     pub secret_access_key: String,
+    /// Temporary session token for assumed-role sessions.
     pub session_token: Option<String>,
+    /// Credential expiration timestamp.
     pub expiration: Option<DateTime<Utc>>,
+    /// ARN of the assumed IAM role.
     pub role_arn: String,
+    /// Identity of the user who assumed the role.
     pub assumed_role_user: String,
 }
 
 /// AWS user context for enterprise integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AWSUserContext {
+    /// ARN of the IAM role.
     pub role_arn: String,
+    /// Identity of the user who assumed the role.
     pub assumed_role_user: String,
+    /// AWS account ID.
     pub account_id: String,
+    /// AWS region where the authentication occurred.
     pub region: String,
 }
 
@@ -155,7 +177,7 @@ impl AWSIAMIntegration {
             organization_id: token_data.account_id.clone(),
             roles: proximadb_roles,
             permissions: HashSet::new(), // Will be populated based on roles
-            security_clearance: self.determine_security_clearance(&token_data).await?,
+            security_clearance: self.determine_security_clearance(token_data).await?,
             department: None,
             cost_center: None,
             session_id: uuid::Uuid::new_v4().to_string(),
@@ -334,8 +356,7 @@ impl AWSIAMIntegration {
                 || aws_user
                     .assumed_role_arn
                     .as_ref()
-                    .map(|arn| arn.contains(&mapping.aws_role_arn))
-                    .unwrap_or(false)
+                    .is_some_and(|arn| arn.contains(&mapping.aws_role_arn))
         });
 
         let (proximadb_role, tenant_id) = if let Some(mapping) = role_mapping {
@@ -436,10 +457,15 @@ impl AWSIAMIntegration {
 /// AWS user information resolved from token
 #[derive(Debug, Clone)]
 pub struct AWSUserInfo {
+    /// Full IAM user ARN.
     pub user_arn: String,
+    /// IAM user name.
     pub user_name: String,
+    /// AWS account ID.
     pub account_id: String,
+    /// ARN of the assumed role, if any.
     pub assumed_role_arn: Option<String>,
+    /// Whether MFA was used during authentication.
     pub mfa_authenticated: bool,
 }
 
@@ -529,6 +555,7 @@ mod tests {
             raw_token: "jwt_token_here".to_string(),
         };
 
+        // Test-only: unwrap justified for serialization test assertions
         let json = serde_json::to_string(&token_data).unwrap();
         let deserialized: AWSTokenData = serde_json::from_str(&json).unwrap();
 
@@ -654,6 +681,7 @@ mod tests {
             region: "us-west-2".to_string(),
         };
 
+        // Test-only: unwrap justified for serialization test assertions
         let json = serde_json::to_string(&user_context).unwrap();
         let deserialized: AWSUserContext = serde_json::from_str(&json).unwrap();
 
@@ -698,6 +726,7 @@ mod tests {
     #[test]
     fn test_get_role_permissions_tenant_admin() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let permissions = integration.get_role_permissions("tenant_admin");
@@ -710,6 +739,7 @@ mod tests {
     #[test]
     fn test_get_role_permissions_tenant_user() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let permissions = integration.get_role_permissions("tenant_user");
@@ -721,6 +751,7 @@ mod tests {
     #[test]
     fn test_get_role_permissions_analyst() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let permissions = integration.get_role_permissions("analyst");
@@ -733,6 +764,7 @@ mod tests {
     #[test]
     fn test_get_role_permissions_unknown_role() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let permissions = integration.get_role_permissions("unknown_role");
@@ -744,11 +776,13 @@ mod tests {
     #[tokio::test]
     async fn test_determine_security_clearance_admin() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
         token_data.cognito_groups = vec!["admin".to_string()];
 
+        // Test-only: unwrap justified - assertion that async operation succeeds
         let clearance = integration
             .determine_security_clearance(&token_data)
             .await
@@ -759,11 +793,13 @@ mod tests {
     #[tokio::test]
     async fn test_determine_security_clearance_executive() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
         token_data.cognito_groups = vec!["executive".to_string()];
 
+        // Test-only: unwrap justified - assertion that async operation succeeds
         let clearance = integration
             .determine_security_clearance(&token_data)
             .await
@@ -774,11 +810,13 @@ mod tests {
     #[tokio::test]
     async fn test_determine_security_clearance_manager() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
         token_data.cognito_groups = vec!["manager".to_string()];
 
+        // Test-only: unwrap justified - assertion that async operation succeeds
         let clearance = integration
             .determine_security_clearance(&token_data)
             .await
@@ -789,11 +827,13 @@ mod tests {
     #[tokio::test]
     async fn test_determine_security_clearance_analyst() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
         token_data.cognito_groups = vec!["analyst".to_string()];
 
+        // Test-only: unwrap justified - assertion that async operation succeeds
         let clearance = integration
             .determine_security_clearance(&token_data)
             .await
@@ -804,11 +844,13 @@ mod tests {
     #[tokio::test]
     async fn test_determine_security_clearance_default() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
         token_data.cognito_groups = vec!["regular_user".to_string()];
 
+        // Test-only: unwrap justified - assertion that async operation succeeds
         let clearance = integration
             .determine_security_clearance(&token_data)
             .await
@@ -821,9 +863,11 @@ mod tests {
     #[tokio::test]
     async fn test_map_aws_roles_to_proximadb_with_mapping() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let cognito_groups = vec!["AdminRole".to_string()];
+        // Test-only: unwrap justified - assertion that async operation succeeds
         let roles = integration
             .map_aws_roles_to_proximadb(&cognito_groups)
             .await
@@ -835,9 +879,11 @@ mod tests {
     #[tokio::test]
     async fn test_map_aws_roles_to_proximadb_default() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let cognito_groups = vec!["unmapped_group".to_string()];
+        // Test-only: unwrap justified - assertion that async operation succeeds
         let roles = integration
             .map_aws_roles_to_proximadb(&cognito_groups)
             .await
@@ -850,9 +896,11 @@ mod tests {
     #[tokio::test]
     async fn test_map_aws_roles_to_proximadb_empty_groups() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let cognito_groups: Vec<String> = vec![];
+        // Test-only: unwrap justified - assertion that async operation succeeds
         let roles = integration
             .map_aws_roles_to_proximadb(&cognito_groups)
             .await
@@ -868,6 +916,7 @@ mod tests {
     #[test]
     fn test_extract_aws_claims() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let aws_user = AWSUserInfo {
@@ -898,6 +947,7 @@ mod tests {
     #[test]
     fn test_extract_aws_claims_without_assumed_role() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let aws_user = AWSUserInfo {
@@ -922,18 +972,21 @@ mod tests {
     #[test]
     fn test_extract_account_id_from_access_key_valid() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let access_key = "AKIAIOSFODNN7EXAMPLE";
         let result = integration.extract_account_id_from_access_key(access_key);
 
         assert!(result.is_ok());
+        // Test-only: unwrap justified - assertion that result contains expected value
         assert_eq!(result.unwrap(), "123456789012");
     }
 
     #[test]
     fn test_extract_account_id_from_access_key_invalid() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let short_access_key = "AKIA";
@@ -953,6 +1006,7 @@ mod tests {
     #[test]
     fn test_parse_aws_token_data_valid() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let token_json = serde_json::json!({
@@ -973,6 +1027,7 @@ mod tests {
         let result = integration.parse_aws_token_data(&token_json.to_string());
         assert!(result.is_ok());
 
+        // Test-only: unwrap justified - assertion that parsing succeeded
         let parsed = result.unwrap();
         assert_eq!(parsed.sub, "user123");
         assert_eq!(parsed.account_id, "123456789012");
@@ -981,6 +1036,7 @@ mod tests {
     #[test]
     fn test_parse_aws_token_data_invalid_json() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let result = integration.parse_aws_token_data("invalid json");
@@ -993,12 +1049,14 @@ mod tests {
     #[tokio::test]
     async fn test_assume_role_with_web_identity_valid() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let token_data = create_test_token_data();
         let result = integration.assume_role_with_web_identity(&token_data).await;
 
         assert!(result.is_ok());
+        // Test-only: unwrap justified - assertion that async operation succeeded
         let credentials = result.unwrap();
         assert!(!credentials.access_key_id.is_empty());
         assert!(!credentials.secret_access_key.is_empty());
@@ -1008,6 +1066,7 @@ mod tests {
     #[tokio::test]
     async fn test_assume_role_with_web_identity_empty_role_arn() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
@@ -1026,6 +1085,7 @@ mod tests {
     #[tokio::test]
     async fn test_assume_role_with_web_identity_empty_sub() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
@@ -1046,12 +1106,14 @@ mod tests {
     #[tokio::test]
     async fn test_validate_aws_sts_token_valid() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let token_data = create_test_token_data();
         let result = integration.validate_aws_sts_token(&token_data).await;
 
         assert!(result.is_ok());
+        // Test-only: unwrap justified - assertion that validation succeeded
         let user_info = result.unwrap();
         assert!(!user_info.user_name.is_empty());
         assert_eq!(user_info.account_id, "123456789012");
@@ -1060,6 +1122,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_aws_sts_token_empty_sub() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
@@ -1073,6 +1136,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_aws_sts_token_untrusted_account() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
@@ -1088,6 +1152,7 @@ mod tests {
     #[test]
     fn test_map_aws_user_to_enterprise_context_with_mapping() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let aws_user = AWSUserInfo {
@@ -1108,6 +1173,7 @@ mod tests {
         let result = integration.map_aws_user_to_enterprise_context(&aws_user, &sso_token);
         assert!(result.is_ok());
 
+        // Test-only: unwrap justified - assertion that mapping succeeded
         let context = result.unwrap();
         assert_eq!(context.user_id, "test_user");
         assert!(context.roles.contains(&"tenant_admin".to_string()));
@@ -1118,6 +1184,7 @@ mod tests {
     #[test]
     fn test_map_aws_user_to_enterprise_context_default_mapping() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let aws_user = AWSUserInfo {
@@ -1138,6 +1205,7 @@ mod tests {
         let result = integration.map_aws_user_to_enterprise_context(&aws_user, &sso_token);
         assert!(result.is_ok());
 
+        // Test-only: unwrap justified - assertion that mapping succeeded
         let context = result.unwrap();
         assert!(context.roles.contains(&"tenant_user".to_string()));
         assert_eq!(context.tenant_id, "default");
@@ -1149,6 +1217,7 @@ mod tests {
     #[test]
     fn test_enterprise_context_provider_context() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let aws_user = AWSUserInfo {
@@ -1166,6 +1235,7 @@ mod tests {
             3600,
         );
 
+        // Test-only: unwrap justified - assertion that mapping succeeded
         let context = integration
             .map_aws_user_to_enterprise_context(&aws_user, &sso_token)
             .unwrap();
@@ -1191,9 +1261,11 @@ mod tests {
     #[tokio::test]
     async fn test_validate_token_expired() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let token_data = create_test_token_data();
+        // Test-only: unwrap justified - serialization test should never fail
         let token_json = serde_json::to_string(&token_data).unwrap();
 
         // Create an expired token (expires_in_seconds = 0 means immediate expiry)
@@ -1216,6 +1288,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_enterprise_user_context() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let token_data = create_test_token_data();
@@ -1233,6 +1306,7 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
+        // Test-only: unwrap justified - assertion that context build succeeded
         let context = result.unwrap();
         assert_eq!(context.user_id, "user123");
         assert_eq!(context.email, "test@example.com");
@@ -1243,6 +1317,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_enterprise_user_context_without_email() {
         let config = create_test_aws_config();
+        // Test-only: unwrap justified - test setup should never fail
         let integration = AWSIAMIntegration::new(config).unwrap();
 
         let mut token_data = create_test_token_data();
@@ -1262,6 +1337,7 @@ mod tests {
             .await;
         assert!(result.is_ok());
 
+        // Test-only: unwrap justified - assertion that context build succeeded
         let context = result.unwrap();
         // Email should be generated from user_id
         assert!(context.email.contains("@unknown.aws"));

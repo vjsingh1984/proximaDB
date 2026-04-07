@@ -464,12 +464,12 @@ impl ColumnarStrategy {
                     || col_upper.contains("MAX(")
                 {
                     // Extract column from aggregate if simple (e.g., SUM(price))
-                    if let Some(start) = col.find('(') {
-                        if let Some(end) = col.find(')') {
-                            let inner = col[start + 1..end].trim();
-                            if inner != "*" && !inner.contains(' ') {
-                                return Some(inner.to_string());
-                            }
+                    if let Some(start) = col.find('(')
+                        && let Some(end) = col.find(')')
+                    {
+                        let inner = col[start + 1..end].trim();
+                        if inner != "*" && !inner.contains(' ') {
+                            return Some(inner.to_string());
                         }
                     }
                     return None;
@@ -856,7 +856,7 @@ mod tests {
                 Arc::new(score_array),
             ],
         )
-        .unwrap()
+        .expect("Failed to create test RecordBatch")
     }
 
     #[test]
@@ -950,7 +950,7 @@ mod tests {
 
         strategy
             .register_arrow_provider("test_collection", vec![batch])
-            .unwrap();
+            .expect("Failed to register Arrow provider for test_collection");
 
         assert!(strategy.get_provider("test_collection").is_some());
         assert!(strategy.get_provider("nonexistent").is_none());
@@ -970,7 +970,7 @@ mod tests {
 
         strategy
             .register_arrow_provider("products", vec![batch])
-            .unwrap();
+            .expect("Failed to register Arrow provider for products");
 
         // Should handle aggregation query with registered provider
         let request = QueryRequest::sql("SELECT COUNT(*) FROM products");
@@ -992,7 +992,7 @@ mod tests {
 
         strategy
             .register_arrow_provider("products", vec![batch])
-            .unwrap();
+            .expect("Failed to register Arrow provider for products");
 
         // Should handle with explicit target
         let request = QueryRequest::sql("SELECT COUNT(*) FROM products").with_target("products");
@@ -1009,12 +1009,22 @@ mod tests {
         assert_eq!(rows.len(), 3);
 
         // Check first row
-        let row0 = rows[0].as_object().unwrap();
-        assert_eq!(row0.get("id").unwrap(), &serde_json::json!("a"));
-        assert_eq!(row0.get("value").unwrap(), &serde_json::json!(1));
+        let row0 = rows[0].as_object().expect("First row should be an object");
+        assert_eq!(
+            row0.get("id").expect("id field should exist"),
+            &serde_json::json!("a")
+        );
+        assert_eq!(
+            row0.get("value").expect("value field should exist"),
+            &serde_json::json!(1)
+        );
 
         // Check score is approximately 0.1
-        let score0 = row0.get("score").unwrap().as_f64().unwrap();
+        let score0 = row0
+            .get("score")
+            .expect("score field should exist")
+            .as_f64()
+            .expect("score should be a float");
         assert!((score0 - 0.1).abs() < 0.001);
     }
 
@@ -1037,14 +1047,17 @@ mod tests {
 
         strategy
             .register_arrow_provider("products", vec![batch])
-            .unwrap();
+            .expect("Failed to register Arrow provider for products");
 
         let request = QueryRequest::sql("SELECT COUNT(*) FROM products")
             .with_target("products")
             .with_metrics();
 
         let ctx = QueryContext::new(30000);
-        let result = strategy.execute(request, &ctx).await.unwrap();
+        let result = strategy
+            .execute(request, &ctx)
+            .await
+            .expect("Failed to execute query");
 
         // Should return rows
         if let QueryResultData::Rows(rows) = result.data {
@@ -1054,7 +1067,7 @@ mod tests {
         }
 
         // Should have metrics
-        let metrics = result.metrics.unwrap();
+        let metrics = result.metrics.expect("Metrics should be present");
         assert_eq!(metrics.strategy_name, "columnar");
         assert_eq!(metrics.execution_path, "unified");
     }
@@ -1217,7 +1230,7 @@ mod tests {
         let columns = strategy.extract_projection_columns(sql);
         assert!(columns.is_some());
 
-        let columns = columns.unwrap();
+        let columns = columns.expect("Columns should be present");
         assert_eq!(columns.len(), 3);
         assert!(columns.contains(&"id".to_string()));
         assert!(columns.contains(&"name".to_string()));
@@ -1250,7 +1263,7 @@ mod tests {
         let columns = strategy.extract_projection_columns(sql);
         assert!(columns.is_some());
 
-        let columns = columns.unwrap();
+        let columns = columns.expect("Columns should be present");
         assert_eq!(columns.len(), 2);
         assert!(columns.contains(&"id".to_string()));
         assert!(columns.contains(&"name".to_string())); // Original name, not alias
@@ -1264,7 +1277,7 @@ mod tests {
         let columns = strategy.extract_projection_columns(sql);
         assert!(columns.is_some());
 
-        let columns = columns.unwrap();
+        let columns = columns.expect("Columns should be present");
         // Should extract 'category' and 'price' from SUM(price)
         assert!(columns.contains(&"category".to_string()));
         assert!(columns.contains(&"price".to_string()));
@@ -1359,7 +1372,7 @@ mod tests {
 
         strategy
             .register_arrow_provider("test", vec![batch])
-            .unwrap();
+            .expect("Failed to register Arrow provider for test");
         assert!(strategy.has_provider("test"));
 
         let removed = strategy.unregister_provider("test");
@@ -1374,10 +1387,10 @@ mod tests {
 
         strategy
             .register_arrow_provider("collection_a", vec![batch.clone()])
-            .unwrap();
+            .expect("Failed to register Arrow provider for collection_a");
         strategy
             .register_arrow_provider("collection_b", vec![batch])
-            .unwrap();
+            .expect("Failed to register Arrow provider for collection_b");
 
         let collections = strategy.registered_collections();
         assert_eq!(collections.len(), 2);
@@ -1425,26 +1438,37 @@ mod tests {
                 Arc::new(status_array),
             ],
         )
-        .unwrap();
+        .expect("Failed to create test RecordBatch");
 
         strategy
             .register_arrow_provider("products", vec![batch])
-            .unwrap();
+            .expect("Failed to register Arrow provider for products");
 
         let request = QueryRequest::sql("SELECT COUNT(*) FROM products WHERE value > 15")
             .with_target("products")
             .with_metrics();
 
         let ctx = QueryContext::new(30000);
-        let result = strategy.execute(request, &ctx).await.unwrap();
+        let result = strategy
+            .execute(request, &ctx)
+            .await
+            .expect("Failed to execute query");
 
         // Verify metrics include predicate pushdown info
-        let metrics = result.metrics.unwrap();
+        let metrics = result.metrics.expect("Metrics should be present");
         assert_eq!(metrics.strategy_name, "columnar");
 
-        let extra = metrics.extra.as_object().unwrap();
+        let extra = metrics
+            .extra
+            .as_object()
+            .expect("extra should be an object");
         assert!(extra.contains_key("predicate_pushdown"));
-        assert_eq!(extra.get("provider_type").unwrap(), "in_memory");
+        assert_eq!(
+            extra
+                .get("provider_type")
+                .expect("provider_type should exist"),
+            "in_memory"
+        );
     }
 
     #[tokio::test]
@@ -1456,18 +1480,22 @@ mod tests {
 
         let id_array = Int64Array::from((0..100).collect::<Vec<i64>>());
 
-        let batch = RecordBatch::try_new(schema, vec![Arc::new(id_array)]).unwrap();
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(id_array)])
+            .expect("Failed to create test RecordBatch");
 
         strategy
             .register_arrow_provider("numbers", vec![batch])
-            .unwrap();
+            .expect("Failed to register Arrow provider for numbers");
 
         let request = QueryRequest::sql("SELECT COUNT(*) FROM numbers LIMIT 10")
             .with_target("numbers")
             .with_metrics();
 
         let ctx = QueryContext::new(30000);
-        let result = strategy.execute(request, &ctx).await.unwrap();
+        let result = strategy
+            .execute(request, &ctx)
+            .await
+            .expect("Failed to execute query");
 
         // Should return at most 10 rows due to LIMIT
         if let QueryResultData::Rows(rows) = result.data {
@@ -1525,7 +1553,10 @@ mod tests {
         // Float values
         let float_val = strategy.parse_sql_value("3.14");
         assert!(float_val.is_some());
-        let f = float_val.unwrap().as_f64().unwrap();
+        let f = float_val
+            .expect("Float value should be present")
+            .as_f64()
+            .expect("Should be a float64");
         assert!((f - 3.14).abs() < 0.001);
     }
 

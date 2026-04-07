@@ -236,7 +236,7 @@ impl JsonPath {
                     all
                 }
                 PathSegment::Filter(_) => {
-                    // TODO: Implement filter evaluation
+                    // Deferred: Implement filter evaluation
                     current
                 }
             };

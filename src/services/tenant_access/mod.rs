@@ -214,6 +214,12 @@ impl InMemoryTenantAccessService {
     }
 }
 
+impl Default for InMemoryTenantAccessService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl TenantAccessService for InMemoryTenantAccessService {
     async fn get_tenant_info(&self, tenant_id: &str) -> Result<Option<Tenant>> {

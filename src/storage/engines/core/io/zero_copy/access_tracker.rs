@@ -365,14 +365,13 @@ impl AccessPatternTracker {
         // Update primary query type
         let max_count = stats.query_type_distribution.values().max().copied();
 
-        if let Some(max_count) = max_count {
-            if let Some((query_type, _)) = stats
+        if let Some(max_count) = max_count
+            && let Some((query_type, _)) = stats
                 .query_type_distribution
                 .iter()
                 .find(|(_, count)| **count == max_count)
-            {
-                stats.primary_query_type = query_type.clone();
-            }
+        {
+            stats.primary_query_type = query_type.clone();
         }
 
         // Update recent pattern
@@ -494,11 +493,7 @@ impl AccessPatternTracker {
         let variance = intervals
             .iter()
             .map(|&interval| {
-                let diff = if interval > avg_interval {
-                    interval - avg_interval
-                } else {
-                    avg_interval - interval
-                };
+                let diff = interval.abs_diff(avg_interval);
                 diff.as_secs_f64().powi(2)
             })
             .sum::<f64>()

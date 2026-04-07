@@ -5,6 +5,7 @@ use chrono::{DateTime, Duration, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ops::Not;
 use std::sync::Arc;
 use tracing::{debug, info};
 
@@ -56,10 +57,13 @@ pub struct ProviderAuditIntegrations {
 
 /// Cross-provider event correlator for unified audit trails
 pub struct CrossProviderEventCorrelator {
+    /// Rules defining how events from different providers are correlated
     #[allow(dead_code)]
     correlation_rules: Vec<EventCorrelationRule>,
+    /// Time window within which events are considered related
     #[allow(dead_code)]
     event_window: Duration,
+    /// Minimum confidence score required to accept a correlation
     #[allow(dead_code)]
     confidence_threshold: f64,
 }
@@ -67,23 +71,30 @@ pub struct CrossProviderEventCorrelator {
 /// Event correlation rule definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventCorrelationRule {
+    /// Human-readable name identifying this correlation rule
     pub rule_name: String,
+    /// Regex or sequence pattern used to match event chains
     pub pattern: String,
+    /// Minimum confidence score [0.0, 1.0] required to accept a match for this rule
     pub confidence_threshold: f64,
 }
 
 /// Compliance audit reporter for enterprise reporting
 pub struct ComplianceAuditReporter {
+    /// Compliance frameworks (SOC2, GDPR, HIPAA, etc.) to report against
     #[allow(dead_code)]
     compliance_frameworks: Vec<ComplianceFramework>,
+    /// Configuration for report generation schedule and delivery
     #[allow(dead_code)]
     reporting_config: ReportingConfiguration,
 }
 
 /// Audit event store for persistent logging
 pub struct AuditEventStore {
+    /// Backend used for persisting audit events (local, S3, Azure, GCS)
     #[allow(dead_code)]
     storage_backend: StorageBackend,
+    /// Policy governing how long audit events are retained and archived
     #[allow(dead_code)]
     retention_policy: RetentionPolicy,
 }
@@ -91,12 +102,16 @@ pub struct AuditEventStore {
 /// Audit correlation session tracking
 #[derive(Debug, Clone)]
 pub struct AuditCorrelationSession {
+    /// Unique identifier for this correlation session
     #[allow(dead_code)]
     session_id: String,
+    /// Timestamp when this correlation session began
     #[allow(dead_code)]
     start_time: DateTime<Utc>,
+    /// Collected audit events being correlated in this session
     #[allow(dead_code)]
     events: Vec<AuditEvent>,
+    /// Current status of the correlation session (active, completed, failed)
     #[allow(dead_code)]
     correlation_status: CorrelationStatus,
 }
@@ -104,95 +119,145 @@ pub struct AuditCorrelationSession {
 /// Enterprise audit event structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
+    /// Unique identifier for this audit event
     pub event_id: String,
+    /// Category of event (e.g., "authentication", "data_access")
     pub event_type: String,
+    /// Timestamp when the event was recorded (UTC)
     pub timestamp: DateTime<Utc>,
+    /// Name of the cloud or identity provider that generated the event (e.g., "aws", "okta")
     pub provider: String,
+    /// User or principal associated with the event, if available
     pub user_context: Option<String>,
+    /// Identifier of the resource that was acted upon
     pub resource: String,
+    /// Specific action performed on the resource
     pub action: String,
+    /// Outcome of the action (e.g., "success", "failure")
     pub outcome: String,
+    /// Arbitrary provider-specific key-value metadata attached to this event
     pub metadata: HashMap<String, String>,
 }
 
 /// Correlation analysis result
 #[derive(Debug)]
 pub struct EventSequenceAnalysis {
+    /// Ordered sequence of correlated audit events
     pub event_sequence: Vec<AuditEvent>,
+    /// Confidence score [0.0, 1.0] for the correlation hypothesis
     pub confidence: f64,
+    /// Human-readable summary of the correlation analysis result
     pub analysis_summary: String,
 }
 
 /// Anomaly detection result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditAnomaly {
+    /// Unique identifier for this anomaly
     pub anomaly_id: String,
+    /// Machine-readable anomaly category (e.g., "unusual_access_pattern")
     pub anomaly_type: String,
+    /// Severity level of the anomaly (e.g., "low", "medium", "high", "critical")
     pub severity: String,
+    /// Human-readable description of the detected anomaly
     pub description: String,
+    /// Timestamp when the anomaly was detected (UTC)
     pub detected_at: DateTime<Utc>,
 }
 
 /// Compliance analysis result
 #[derive(Debug)]
 pub struct ComplianceAnalysis {
+    /// Overall compliance status for the evaluated framework (e.g., "compliant", "non-compliant")
     pub compliance_status: String,
+    /// List of specific compliance violations detected during analysis
     pub violations: Vec<String>,
+    /// Actionable recommendations to address violations or improve compliance posture
     pub recommendations: Vec<String>,
 }
 
-// Supporting types
+/// Lifecycle status of an audit correlation session
 #[derive(Debug, Clone)]
 pub enum CorrelationStatus {
+    /// Session is currently collecting and correlating events
     Active,
+    /// Correlation analysis has finished successfully
     Completed,
+    /// Correlation analysis failed before producing a result
     Failed,
 }
 
+/// Compliance framework definition (e.g., SOC2, GDPR, HIPAA)
 #[derive(Debug)]
 pub struct ComplianceFramework {
+    /// Name of the compliance framework
     #[allow(dead_code)]
     name: String,
+    /// Version of the framework specification
     #[allow(dead_code)]
     version: String,
+    /// List of compliance requirements defined by this framework
     #[allow(dead_code)]
     requirements: Vec<String>,
 }
 
+/// Configuration for scheduled compliance report generation
 #[derive(Debug)]
 pub struct ReportingConfiguration {
+    /// How often reports are generated
     #[allow(dead_code)]
     frequency: Duration,
+    /// Email addresses of report recipients
     #[allow(dead_code)]
     recipients: Vec<String>,
+    /// Output format for reports (e.g., JSON, PDF)
     #[allow(dead_code)]
     format: String,
 }
 
+/// Storage backend options for audit event persistence
 #[derive(Debug)]
 pub enum StorageBackend {
+    /// Local filesystem storage
     Local,
+    /// Amazon S3 object storage
     S3,
+    /// Azure Blob Storage
     Azure,
+    /// Google Cloud Storage
     GCS,
 }
 
+/// Policy defining audit event retention and archival periods
 #[derive(Debug)]
 pub struct RetentionPolicy {
+    /// Number of days to retain audit events before deletion
     #[allow(dead_code)]
     retention_days: u32,
+    /// Number of days after which events are moved to archive storage
     #[allow(dead_code)]
     archive_after_days: u32,
 }
 
 // Provider integration stubs
+
+/// Integration stub for AWS CloudTrail audit log ingestion
 pub struct AWSCloudTrailIntegration;
+
+/// Integration stub for Azure Activity Log ingestion
 pub struct AzureActivityLogIntegration;
+
+/// Integration stub for Google Cloud Audit Logs ingestion
 pub struct GCPCloudAuditIntegration;
+
+/// Integration stub for Okta System Log ingestion
 pub struct OktaSystemLogIntegration;
+
+/// Integration stub for generic SIEM (Security Information and Event Management) systems
 pub struct GenericSIEMIntegration;
 
 impl AuditCorrelationEngine {
+    /// Create a new `AuditCorrelationEngine` with default provider integrations and configuration
     pub async fn new() -> Result<Self> {
         Ok(Self {
             correlation_sessions: Arc::new(DashMap::new()),
@@ -237,11 +302,12 @@ impl AuditCorrelationEngine {
         })
     }
 
+    /// Correlate a list of audit events and return a sequence analysis with a confidence score
     pub async fn correlate_events(&self, events: Vec<AuditEvent>) -> Result<EventSequenceAnalysis> {
         info!("Correlating {} audit events", events.len());
 
         // Basic event correlation logic
-        let confidence = if events.len() > 0 { 0.85 } else { 0.0 };
+        let confidence = events.is_empty().not().then_some(0.85).unwrap_or(0.0);
 
         Ok(EventSequenceAnalysis {
             event_sequence: events.to_vec(),
@@ -250,6 +316,7 @@ impl AuditCorrelationEngine {
         })
     }
 
+    /// Analyse a slice of audit events and return any detected anomalies
     pub async fn detect_anomalies(&self, events: &[AuditEvent]) -> Result<Vec<AuditAnomaly>> {
         debug!("Detecting anomalies in {} events", events.len());
 
@@ -263,6 +330,7 @@ impl AuditCorrelationEngine {
         }])
     }
 
+    /// Generate a compliance analysis report for the specified framework (e.g., "SOC2", "GDPR")
     pub async fn generate_compliance_report(&self, framework: &str) -> Result<ComplianceAnalysis> {
         info!("Generating compliance report for framework: {}", framework);
 
@@ -275,6 +343,7 @@ impl AuditCorrelationEngine {
 }
 
 impl CrossProviderEventCorrelator {
+    /// Create a new `CrossProviderEventCorrelator` with an empty rule set and default thresholds
     pub fn new() -> Self {
         Self {
             correlation_rules: vec![],
@@ -283,6 +352,7 @@ impl CrossProviderEventCorrelator {
         }
     }
 
+    /// Correlate audit events that originate from different cloud or identity providers
     pub async fn correlate_cross_provider_events(
         &self,
         events: &[AuditEvent],
@@ -292,6 +362,12 @@ impl CrossProviderEventCorrelator {
             confidence: 0.85,
             analysis_summary: "Cross_provider_analysis_done".to_string(),
         })
+    }
+}
+
+impl Default for CrossProviderEventCorrelator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -343,14 +419,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_creation() {
-        let correlation_engine = AuditCorrelationEngine::new().await.unwrap();
+        let correlation_engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         assert!(correlation_engine.correlation_sessions.is_empty());
     }
 
     #[tokio::test]
     async fn test_audit_correlation_engine_correlate_events_empty() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
-        let result = engine.correlate_events(vec![]).await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
+        let result = engine
+            .correlate_events(vec![])
+            .await
+            .expect("Failed to correlate events");
 
         assert_eq!(result.confidence, 0.0);
         assert!(result.event_sequence.is_empty());
@@ -358,7 +441,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_correlate_events_single() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         let events = vec![create_test_event(
             "EVT001",
             "authentication",
@@ -366,7 +451,10 @@ mod tests {
             Some("user1"),
         )];
 
-        let result = engine.correlate_events(events).await.unwrap();
+        let result = engine
+            .correlate_events(events)
+            .await
+            .expect("Failed to correlate events");
 
         assert_eq!(result.confidence, 0.85);
         assert_eq!(result.event_sequence.len(), 1);
@@ -375,14 +463,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_correlate_events_multiple() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         let events = vec![
             create_test_event("EVT001", "authentication", "okta", Some("user1")),
             create_test_event("EVT002", "authorization", "aws", Some("user1")),
             create_test_event("EVT003", "data_access", "proximadb", Some("user1")),
         ];
 
-        let result = engine.correlate_events(events).await.unwrap();
+        let result = engine
+            .correlate_events(events)
+            .await
+            .expect("Failed to correlate events");
 
         assert_eq!(result.confidence, 0.85);
         assert_eq!(result.event_sequence.len(), 3);
@@ -390,13 +483,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_detect_anomalies() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         let events = vec![
             create_test_event("EVT001", "authentication", "okta", Some("user1")),
             create_test_event("EVT002", "data_access", "aws", Some("user1")),
         ];
 
-        let anomalies = engine.detect_anomalies(&events).await.unwrap();
+        let anomalies = engine
+            .detect_anomalies(&events)
+            .await
+            .expect("Failed to detect anomalies");
 
         // Should detect at least one anomaly (based on placeholder implementation)
         assert!(!anomalies.is_empty());
@@ -406,10 +504,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_detect_anomalies_empty() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
         let events: Vec<AuditEvent> = vec![];
 
-        let anomalies = engine.detect_anomalies(&events).await.unwrap();
+        let anomalies = engine
+            .detect_anomalies(&events)
+            .await
+            .expect("Failed to detect anomalies");
 
         // Placeholder still returns anomaly
         assert!(!anomalies.is_empty());
@@ -417,9 +520,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_generate_compliance_report() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
 
-        let analysis = engine.generate_compliance_report("SOC2").await.unwrap();
+        let analysis = engine
+            .generate_compliance_report("SOC2")
+            .await
+            .expect("Failed to generate compliance report");
 
         assert_eq!(analysis.compliance_status, "compliant");
         assert!(analysis.violations.is_empty());
@@ -428,10 +536,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_audit_correlation_engine_generate_compliance_report_different_frameworks() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
 
         for framework in &["SOC2", "GDPR", "HIPAA", "PCI-DSS"] {
-            let analysis = engine.generate_compliance_report(framework).await.unwrap();
+            let analysis = engine
+                .generate_compliance_report(framework)
+                .await
+                .expect("Failed to generate compliance report");
             assert_eq!(analysis.compliance_status, "compliant");
         }
     }
@@ -459,7 +572,7 @@ mod tests {
         let result = correlator
             .correlate_cross_provider_events(&events)
             .await
-            .unwrap();
+            .expect("Failed to correlate cross-provider events");
 
         assert_eq!(result.confidence, 0.85);
         assert_eq!(result.event_sequence.len(), 3);
@@ -474,7 +587,7 @@ mod tests {
         let result = correlator
             .correlate_cross_provider_events(&events)
             .await
-            .unwrap();
+            .expect("Failed to correlate cross-provider events");
 
         assert!(result.event_sequence.is_empty());
     }
@@ -747,7 +860,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_full_correlation_workflow() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
 
         // Create a sequence of events simulating a typical authentication flow
         let now = Utc::now();
@@ -785,22 +900,33 @@ mod tests {
         ];
 
         // Correlate events
-        let correlation_result = engine.correlate_events(events.clone()).await.unwrap();
+        let correlation_result = engine
+            .correlate_events(events.clone())
+            .await
+            .expect("Failed to correlate events");
         assert_eq!(correlation_result.event_sequence.len(), 5);
         assert!(correlation_result.confidence > 0.0);
 
         // Detect anomalies
-        let anomalies = engine.detect_anomalies(&events).await.unwrap();
+        let anomalies = engine
+            .detect_anomalies(&events)
+            .await
+            .expect("Failed to detect anomalies");
         assert!(!anomalies.is_empty());
 
         // Generate compliance report
-        let compliance = engine.generate_compliance_report("SOC2").await.unwrap();
+        let compliance = engine
+            .generate_compliance_report("SOC2")
+            .await
+            .expect("Failed to generate compliance report");
         assert_eq!(compliance.compliance_status, "compliant");
     }
 
     #[tokio::test]
     async fn test_correlation_session_management() {
-        let engine = AuditCorrelationEngine::new().await.unwrap();
+        let engine = AuditCorrelationEngine::new()
+            .await
+            .expect("Failed to create AuditCorrelationEngine");
 
         // Verify sessions are initially empty
         assert!(engine.correlation_sessions.is_empty());

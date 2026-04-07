@@ -78,24 +78,33 @@ use crate::utils::StoragePath;
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
 
 // Local types to replace assignment service
+/// Storage component type used for multi-disk path assignment.
 #[derive(Debug, Clone)]
 enum StorageComponentType {
+    /// Write-ahead log component
     Wal,
+    /// Data storage component
     Storage,
+    /// Index storage component
     Index,
 }
 
 /// Collection service for unified business logic with multi-disk coordination
 pub struct CollectionService {
+    /// Backend provider for collection metadata persistence
     metadata_backend: Arc<dyn InternalCollectionProvider>,
+    /// Factory for creating filesystem instances per collection path
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
     /// Using dashmap for lock-free concurrent access
     index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::IndexConfig>>,
+    /// Global storage configuration for engine and WAL settings
     storage_config: StorageConfig,
 
     // NEW: Multi-tenant integration
+    /// Optional tenant manager for multi-tenant isolation
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
+    /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 }
 
@@ -157,6 +166,122 @@ impl CollectionService {
         &self.storage_config
     }
 
+    /// Returns `true` if multi-tenant mode is enabled (a tenant manager is configured).
+    pub fn multi_tenant_enabled(&self) -> bool {
+        self.tenant_manager.is_some()
+    }
+
+    /// Load tenant context for the given tenant ID.
+    ///
+    /// Returns `Ok(None)` when multi-tenant mode is disabled.
+    /// Returns an error if the tenant ID is missing or the tenant is not found.
+    pub fn load_tenant_context(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<crate::storage::tenant::TenantContext>> {
+        match &self.tenant_manager {
+            Some(tenant_manager) => {
+                let tenant_id = tenant_id
+                    .map(str::trim)
+                    .filter(|tenant_id| !tenant_id.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Tenant context is required for this operation")
+                    })?;
+                let tenant_ctx = tenant_manager
+                    .get_tenant(tenant_id)
+                    .with_context(|| format!("Tenant '{}' not found", tenant_id))?;
+                Ok(Some(tenant_ctx))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn collection_tenant_id(collection: &Collection) -> Option<String> {
+        let config = collection.config.as_ref()?;
+
+        if let Some(tag_tenant) = config
+            .tags
+            .iter()
+            .find_map(|tag| tag.strip_prefix("tenant:"))
+            .filter(|tenant_id| !tenant_id.is_empty())
+        {
+            return Some(tag_tenant.to_string());
+        }
+
+        let tenant_isolated = config.tags.iter().any(|tag| tag == "tenant_isolated:true");
+        if tenant_isolated {
+            return config
+                .owner
+                .as_ref()
+                .filter(|owner| !owner.is_empty())
+                .cloned();
+        }
+
+        None
+    }
+
+    async fn count_tenant_collections(&self, tenant_id: &str) -> Result<usize> {
+        Ok(self
+            .metadata_backend
+            .list_collections()
+            .await?
+            .into_iter()
+            .filter(|collection| {
+                Self::collection_tenant_id(collection).as_deref() == Some(tenant_id)
+            })
+            .count())
+    }
+
+    async fn validate_tenant_collection_access(
+        &self,
+        collection_identifier: &str,
+        tenant_ctx: &crate::storage::tenant::TenantContext,
+    ) -> Result<Option<Collection>> {
+        if let Some(ref tenant_manager) = self.tenant_manager
+            && !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id)
+        {
+            warn!(
+                "🚨 Tenant '{}' is not active; denying access to collection '{}'",
+                tenant_ctx.tenant_id, collection_identifier
+            );
+            return Ok(None);
+        }
+
+        let collection = self
+            .metadata_backend
+            .get_collection(collection_identifier)
+            .await?;
+
+        let Some(collection) = collection else {
+            return Ok(None);
+        };
+
+        let Some(collection_tenant) = Self::collection_tenant_id(&collection) else {
+            warn!(
+                "🚨 Collection '{}' is missing tenant metadata; denying tenant-scoped access",
+                collection_identifier
+            );
+            return Ok(None);
+        };
+
+        if collection_tenant != tenant_ctx.tenant_id {
+            warn!(
+                "🚨 Cross-tenant access attempt blocked: user tenant {} tried to access collection owned by tenant {}",
+                tenant_ctx.tenant_id, collection_tenant
+            );
+            return Ok(None);
+        }
+
+        if self.rbac_enforcer.is_some() {
+            debug!(
+                "RBAC enforcer configured for tenant '{}', but collection service access checks still need user context wiring",
+                tenant_ctx.tenant_id
+            );
+        }
+
+        Ok(Some(collection))
+    }
+
     /// Create collection - single method for all handlers (REST, gRPC, etc)
     /// Takes native types directly, no proto/avro conversions needed
     /// NOW WITH MULTI-TENANT SUPPORT
@@ -174,47 +299,53 @@ impl CollectionService {
         collection_name: &str,
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<Option<crate::proto::proximadb_v1::Collection>> {
-        // NEW: Tenant validation for get operations
-        if let Some(ref _tenant_manager) = self.tenant_manager {
-            if let Some(tenant_ctx) = tenant_context {
-                // Validate tenant ownership of collection
-                // TODO: Implement get_collection_tenant method
-                let collection_tenant = tenant_ctx.tenant_id.clone(); // Placeholder
+        if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
+            let collection = self
+                .validate_tenant_collection_access(collection_name, tenant_ctx)
+                .await?;
 
-                if collection_tenant != tenant_ctx.tenant_id {
-                    warn!(
-                        "🚨 Cross-tenant access attempt blocked: user tenant {} tried to access collection owned by tenant {}",
-                        tenant_ctx.tenant_id, collection_tenant
-                    );
-                    return Ok(None); // Return None instead of error for get operations
-                }
-
-                // RBAC permission validation
-                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
-                    // TODO: Implement check_permission method
-                    let permission_result = crate::storage::tenant::rbac::PermissionResult {
-                        allowed: true,
-                        reason: "Placeholder".to_string(),
-                    };
-
-                    if !permission_result.allowed {
-                        warn!(
-                            "🚨 RBAC access denied for tenant {} to collection {}",
-                            tenant_ctx.tenant_id, collection_name
-                        );
-                        return Ok(None);
-                    }
-                }
-
+            if collection.is_some() {
                 debug!(
-                    "✅ Tenant validation passed for collection access: tenant={}, collection={}",
+                    "✅ Tenant ownership validation passed for collection access: tenant={}, collection={}",
                     tenant_ctx.tenant_id, collection_name
                 );
             }
+
+            return Ok(collection);
         }
 
         // Proceed with normal collection retrieval
         self.metadata_backend.get_collection(collection_name).await
+    }
+
+    /// List all collections, filtered to the given tenant context if multi-tenant mode is active.
+    pub async fn list_collections_with_tenant_context(
+        &self,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<Vec<Collection>> {
+        let collections = self.metadata_backend.list_collections().await?;
+
+        if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
+            if let Some(ref tenant_manager) = self.tenant_manager
+                && !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id)
+            {
+                warn!(
+                    "🚨 Tenant '{}' is not active; returning empty collection list",
+                    tenant_ctx.tenant_id
+                );
+                return Ok(Vec::new());
+            }
+
+            let filtered = collections
+                .into_iter()
+                .filter(|collection| {
+                    Self::collection_tenant_id(collection).as_deref() == Some(&tenant_ctx.tenant_id)
+                })
+                .collect();
+            return Ok(filtered);
+        }
+
+        Ok(collections)
     }
 
     /// Delete collection with tenant validation
@@ -225,56 +356,28 @@ impl CollectionService {
     ) -> Result<CollectionServiceResponse> {
         debug!("🗑️ Deleting collection: {}", collection_name);
 
-        // NEW: Tenant validation for delete operations
-        if let Some(ref _tenant_manager) = self.tenant_manager {
-            if let Some(tenant_ctx) = tenant_context {
-                // Validate tenant ownership
-                // TODO: Implement get_collection_tenant method
-                let collection_tenant = tenant_ctx.tenant_id.clone(); // Placeholder
+        if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
+            let collection = self
+                .validate_tenant_collection_access(collection_name, tenant_ctx)
+                .await?;
 
-                if collection_tenant != tenant_ctx.tenant_id {
-                    return Ok(CollectionServiceResponse::error(
-                        format!(
-                            "Cross-tenant delete attempt denied: collection {} not owned by tenant {}",
-                            collection_name, tenant_ctx.tenant_id
-                        ),
-                        0, // processing_time_us
-                    ));
-                }
-
-                // RBAC permission validation (delete requires admin or owner permissions)
-                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
-                    // TODO: Implement check_permission method
-                    let permission_result = crate::storage::tenant::rbac::PermissionResult {
-                        allowed: true,
-                        reason: "Placeholder".to_string(),
-                    };
-
-                    if !permission_result.allowed {
-                        return Ok(CollectionServiceResponse::error(
-                            format!(
-                                "Permission denied: tenant {} cannot delete collections",
-                                tenant_ctx.tenant_id
-                            ),
-                            0, // processing_time_us
-                        ));
-                    }
-                }
-
-                debug!(
-                    "✅ Tenant validation passed for collection deletion: tenant={}, collection={}",
-                    tenant_ctx.tenant_id, collection_name
-                );
+            if collection.is_none() {
+                return Ok(CollectionServiceResponse::error(
+                    format!(
+                        "TENANT_ACCESS_DENIED: collection {} is not accessible to tenant {}",
+                        collection_name, tenant_ctx.tenant_id
+                    ),
+                    0,
+                ));
             }
+
+            debug!(
+                "✅ Tenant ownership validation passed for collection deletion: tenant={}, collection={}",
+                tenant_ctx.tenant_id, collection_name
+            );
         }
 
-        // Proceed with deletion (existing logic)
-        // For now, return success response - full deletion logic would be implemented here
-        Ok(CollectionServiceResponse::success(
-            "deleted".to_string(), // collection_uuid
-            "deleted".to_string(), // storage_path
-            0,                     // processing_time_us
-        ))
+        self.delete_collection(collection_name).await
     }
 
     /// Create collection with tenant context validation
@@ -289,44 +392,49 @@ impl CollectionService {
         );
         let start_time = std::time::Instant::now();
 
-        // NEW: Multi-tenant validation if tenant manager is available
-        if let Some(ref _tenant_manager) = self.tenant_manager {
-            if let Some(tenant_ctx) = tenant_context {
-                // Step 1: Validate tenant access and resource limits
-                // TODO: Implement check_collection_creation_limits method
-                let resource_check = crate::storage::tenant::rbac::PermissionResult {
-                    allowed: true,
-                    reason: "Placeholder".to_string(),
-                };
+        if let Some(ref tenant_manager) = self.tenant_manager {
+            let Some(tenant_ctx) = tenant_context else {
+                return Ok(CollectionServiceResponse::error(
+                    "TENANT_CONTEXT_REQUIRED: tenant context is required when multi-tenant mode is enabled".to_string(),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            };
 
-                if !resource_check.allowed {
-                    return Ok(CollectionServiceResponse::error(
-                        format!("Tenant resource limit exceeded: {}", resource_check.reason),
-                        0, // processing_time_us
-                    ));
-                }
+            if !tenant_manager.is_tenant_active(&tenant_ctx.tenant_id) {
+                return Ok(CollectionServiceResponse::error(
+                    format!(
+                        "TENANT_INACTIVE: tenant {} is not active",
+                        tenant_ctx.tenant_id
+                    ),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            }
 
-                // Step 2: RBAC permission validation if enforcer is available
-                if let Some(ref _rbac_enforcer) = self.rbac_enforcer {
-                    // TODO: Implement check_permission method
-                    let permission_result = crate::storage::tenant::rbac::PermissionResult {
-                        allowed: true,
-                        reason: "Placeholder".to_string(),
-                    };
+            let tenant_collection_count =
+                self.count_tenant_collections(&tenant_ctx.tenant_id).await?;
+            let tenant_limit = tenant_ctx.resource_limits.max_collections as usize;
 
-                    if !permission_result.allowed {
-                        return Ok(CollectionServiceResponse::error(
-                            format!("Permission denied: {}", permission_result.reason),
-                            0, // processing_time_us
-                        ));
-                    }
-                }
+            if tenant_collection_count >= tenant_limit {
+                return Ok(CollectionServiceResponse::error(
+                    format!(
+                        "TENANT_COLLECTION_LIMIT_EXCEEDED: tenant {} has reached its collection limit ({})",
+                        tenant_ctx.tenant_id, tenant_limit
+                    ),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            }
 
+            if self.rbac_enforcer.is_some() {
                 debug!(
-                    "✅ Tenant validation passed for collection creation: tenant={}",
+                    "RBAC enforcer configured for tenant '{}', but collection creation checks still need user context wiring",
                     tenant_ctx.tenant_id
                 );
             }
+
+            debug!(
+                "✅ Tenant validation passed for collection creation: tenant={}, existing_collections={}, limit={}",
+                tenant_ctx.tenant_id, tenant_collection_count, tenant_limit
+            );
         }
 
         // Resolve compression and storage configuration
@@ -334,6 +442,10 @@ impl CollectionService {
 
         // NEW: Add tenant metadata to collection if tenant context is provided
         if let Some(tenant_ctx) = tenant_context {
+            enriched_config
+                .tags
+                .retain(|tag| !tag.starts_with("tenant:") && tag != "tenant_isolated:true");
+
             // Add tenant ID to collection tags for tenant isolation (metadata field doesn't exist)
             enriched_config
                 .tags
@@ -368,7 +480,7 @@ impl CollectionService {
                 config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
             );
             if let Some(compression_config) = resolved_compression {
-                storage_cfg.compression = Some(compression_config.algorithm as i32);
+                storage_cfg.compression = Some(compression_config.algorithm);
             }
         }
 
@@ -424,7 +536,12 @@ impl CollectionService {
 
         // Add default HNSW index configuration if not provided
         // This enables AXIS indexes for accelerated vector search
-        if enriched_config.index_configs.is_empty() {
+        let resolved_engine = crate::proto::proximadb_v1::StorageEngine::try_from(
+            config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+        )
+        .unwrap_or(StorageEngine::Sst);
+
+        if enriched_config.index_configs.is_empty() && resolved_engine != StorageEngine::Tst {
             use crate::proto::proximadb_v1::{HnswConfig, IndexConfig, IndexingAlgorithm};
 
             let default_hnsw_config = IndexConfig {
@@ -449,6 +566,11 @@ impl CollectionService {
             info!(
                 "📊 Created default HNSW index for collection '{}' (dimension: {})",
                 config.name, config.dimension
+            );
+        } else if enriched_config.index_configs.is_empty() {
+            info!(
+                "📊 Skipping default HNSW index for time-series collection '{}'",
+                config.name
             );
         }
 
@@ -518,21 +640,26 @@ impl CollectionService {
         }
 
         // Validate quantization configuration
-        if let Some(quant_config) = &enriched_config.quantization {
-            if quant_config.enabled.unwrap_or(false) {
-                info!(
-                    "⚠️ Collection '{}' has quantization enabled. All vectors MUST have unique IDs for tracking quantized representations",
-                    config.name
-                );
-                // Note: We don't fail here, but log a warning. The actual validation happens during insert
-                // This allows collections to be created with quantization enabled, but enforces IDs at insert time
-            }
+        if let Some(quant_config) = &enriched_config.quantization
+            && quant_config.enabled.unwrap_or(false)
+        {
+            info!(
+                "⚠️ Collection '{}' has quantization enabled. All vectors MUST have unique IDs for tracking quantized representations",
+                config.name
+            );
+            // Note: We don't fail here, but log a warning. The actual validation happens during insert
+            // This allows collections to be created with quantization enabled, but enforces IDs at insert time
         }
 
         // Check if collection already exists
         // Check if collection already exists
         // Check if collection already exists
-        if let Some(_) = self.metadata_backend.get_collection(&config.name).await? {
+        if self
+            .metadata_backend
+            .get_collection(&config.name)
+            .await?
+            .is_some()
+        {
             return Ok(CollectionServiceResponse {
                 success: false,
                 collection: None,
@@ -552,7 +679,7 @@ impl CollectionService {
             if storage_config
                 .storage_path
                 .as_ref()
-                .map_or(false, |p| !p.is_empty())
+                .is_some_and(|p| !p.is_empty())
             {
                 // User provided storage location
                 storage_config.storage_path.clone().unwrap_or_default()
@@ -680,10 +807,10 @@ impl CollectionService {
     /// ✅ RESOLVE COLLECTION ID TO COLLECTION NAME  
     /// Reverse resolution for user-friendly displays
     pub async fn resolve_collection_name(&self, collection_id: &str) -> Result<Option<String>> {
-        if let Some(collection) = self.collection(collection_id).await? {
-            if let Some(config) = &collection.config {
-                return Ok(Some(config.name.clone()));
-            }
+        if let Some(collection) = self.collection(collection_id).await?
+            && let Some(config) = &collection.config
+        {
+            return Ok(Some(config.name.clone()));
         }
         Ok(None)
     }
@@ -746,13 +873,13 @@ impl CollectionService {
         proto: &Collection,
     ) -> Result<crate::index::config::IndexConfig> {
         // Check if proto has index_config field
-        if let Some(config) = proto.config.as_ref() {
-            if !config.index_configs.is_empty() {
-                // Take the first IndexConfig from proto (index_configs is a Vec)
-                if let Some(first_config) = config.index_configs.first() {
-                    // Convert from proto IndexConfig to internal IndexConfig
-                    return Ok(self.convert_proto_index_config(first_config)?);
-                }
+        if let Some(config) = proto.config.as_ref()
+            && !config.index_configs.is_empty()
+        {
+            // Take the first IndexConfig from proto (index_configs is a Vec)
+            if let Some(first_config) = config.index_configs.first() {
+                // Convert from proto IndexConfig to internal IndexConfig
+                return self.convert_proto_index_config(first_config);
             }
         }
 
@@ -846,11 +973,9 @@ impl CollectionService {
 
                 // Add storage engine specific hints
                 hints["storage_engine"] =
-                    match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
-                        1 => serde_json::json!("VIPER"),
-                        2 => serde_json::json!("LSM"),
-                        _ => serde_json::json!("LSM"),
-                    };
+                    serde_json::json!(crate::core::conversions::storage_engine_to_string(
+                        config.storage_engine.unwrap_or(StorageEngine::Sst as i32)
+                    ));
 
                 Ok(Some(hints))
             } else {
@@ -893,11 +1018,9 @@ impl CollectionService {
         if let Some(_proto) = self.get_native_proto(identifier).await? {
             if let Some(config) = _proto.config.as_ref() {
                 // Build storage config from proto
-                let engine_name = match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
-                    1 => "VIPER",
-                    2 => "LSM",
-                    _ => "LSM", // Default
-                };
+                let engine_name = crate::core::conversions::storage_engine_to_string(
+                    config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
+                );
 
                 let mut storage_config = serde_json::json!({
                     "engine": engine_name,
@@ -1075,6 +1198,46 @@ impl CollectionService {
         Ok(())
     }
 
+    /// Get collection statistics for cost-based query optimization
+    ///
+    /// Returns canonical `CollectionStats` from the storage engine, enriched
+    /// with metadata from the collection config (dimension, index type).
+    /// Used by the query planner's CostModel.
+    pub async fn get_collection_stats(
+        &self,
+        collection_name: &str,
+        storage_engine: Option<&std::sync::Arc<dyn crate::storage::traits::UnifiedStorageEngine>>,
+    ) -> Result<crate::storage::traits::CollectionStats> {
+        // If a storage engine is provided, delegate to it for real stats
+        if let Some(engine) = storage_engine {
+            let mut stats = engine.collection_stats(collection_name).await?;
+
+            // Enrich with metadata from collection config
+            if let Some(collection) = self.collection(collection_name).await?
+                && let Some(config) = &collection.config
+            {
+                stats.dimension = Some(config.dimension);
+            }
+
+            return Ok(stats);
+        }
+
+        // Fallback: return stats from proto collection metadata
+        if let Some(collection) = self.collection(collection_name).await? {
+            let mut stats = crate::storage::traits::CollectionStats::default();
+            if let Some(proto_stats) = collection.stats {
+                stats.row_count = proto_stats.vector_count as u64;
+                stats.total_bytes = proto_stats.data_size_bytes as u64;
+            }
+            if let Some(config) = &collection.config {
+                stats.dimension = Some(config.dimension);
+            }
+            return Ok(stats);
+        }
+
+        Ok(crate::storage::traits::CollectionStats::default())
+    }
+
     /// Get collection UUID by name or UUID
     pub async fn uuid(&self, collection_id: &str) -> Result<Option<String>> {
         debug!("🔍 Getting UUID for collection: {}", collection_id);
@@ -1125,7 +1288,7 @@ impl CollectionService {
             // Merge the new config with existing one to preserve unchanged fields
             if let Some(existing_config) = record.config.as_mut() {
                 // Only update fields that are provided in new_config
-                if new_config.name != "" {
+                if !new_config.name.is_empty() {
                     existing_config.name = new_config.name;
                 }
                 if new_config.dimension > 0 {
@@ -1200,26 +1363,23 @@ impl CollectionService {
         // If compression explicitly requested, validate and use it
         if let Some(config) = requested {
             // Validate compression level if specified
-            if let Some(level) = config.level {
-                match CompressionAlgorithm::try_from(config.algorithm) {
-                    Ok(CompressionAlgorithm::CompressionZstd) => {
-                        if level < 1 || level > 22 {
-                            warn!("Invalid ZSTD compression level {}, using default 3", level);
-                            return Some(CompressionConfig {
-                                algorithm: config.algorithm,
-                                level: Some(3),
-                                adaptive: config.adaptive,
-                                min_ratio: config.min_ratio,
-                                enable_quantization: config.enable_quantization,
-                                quantization_type: config.quantization_type.clone(),
-                                normalization_method: config.normalization_method.clone(),
-                                block_size_kb: config.block_size_kb,
-                                dynamic_block_sizing: config.dynamic_block_sizing,
-                            });
-                        }
-                    }
-                    _ => {}
-                }
+            if let Some(level) = config.level
+                && let Ok(CompressionAlgorithm::CompressionZstd) =
+                    CompressionAlgorithm::try_from(config.algorithm)
+                && !(1..=22).contains(&level)
+            {
+                warn!("Invalid ZSTD compression level {}, using default 3", level);
+                return Some(CompressionConfig {
+                    algorithm: config.algorithm,
+                    level: Some(3),
+                    adaptive: config.adaptive,
+                    min_ratio: config.min_ratio,
+                    enable_quantization: config.enable_quantization,
+                    quantization_type: config.quantization_type.clone(),
+                    normalization_method: config.normalization_method.clone(),
+                    block_size_kb: config.block_size_kb,
+                    dynamic_block_sizing: config.dynamic_block_sizing,
+                });
             }
             return Some(config.clone());
         }
@@ -1573,10 +1733,15 @@ impl std::fmt::Debug for CollectionService {
 /// Response for collection operations - includes the full collection data
 #[derive(Debug, Clone)]
 pub struct CollectionServiceResponse {
+    /// Whether the operation completed successfully.
     pub success: bool,
-    pub collection: Option<Collection>, // Proto-first architecture
+    /// The collection affected by the operation, if applicable (proto-first architecture).
+    pub collection: Option<Collection>,
+    /// Filesystem path where the collection's data is stored.
     pub storage_path: Option<String>,
+    /// Machine-readable error code when the operation fails.
     pub error_code: Option<String>,
+    /// Wall-clock time taken to process the request, in microseconds.
     pub processing_time_us: i64,
 }
 
@@ -1625,11 +1790,14 @@ impl CollectionServiceResponse {
 
 /// Builder for collection service with dependencies
 pub struct CollectionServiceBuilder {
+    /// Optional metadata backend to set during construction
     metadata_backend: Option<Arc<dyn InternalCollectionProvider>>,
+    /// Optional storage configuration to set during construction
     storage_config: Option<StorageConfig>,
 }
 
 impl CollectionServiceBuilder {
+    /// Create a new builder with no dependencies configured.
     pub fn new() -> Self {
         Self {
             metadata_backend: None,
@@ -1637,16 +1805,21 @@ impl CollectionServiceBuilder {
         }
     }
 
+    /// Set the metadata backend used for collection persistence.
     pub fn with_metadata_backend(mut self, backend: Arc<dyn InternalCollectionProvider>) -> Self {
         self.metadata_backend = Some(backend);
         self
     }
 
+    /// Set the storage configuration (data paths, engine settings, etc.).
     pub fn with_storage_config(mut self, config: StorageConfig) -> Self {
         self.storage_config = Some(config);
         self
     }
 
+    /// Consume the builder and construct a [`CollectionService`].
+    ///
+    /// Returns an error if the required metadata backend has not been provided.
     pub async fn build(self) -> Result<CollectionService> {
         let metadata_backend = self
             .metadata_backend
@@ -1670,7 +1843,7 @@ mod tests {
     use crate::proto::proximadb_v1::CollectionConfig;
 
     #[tokio::test]
-    async fn test_collection_validation() {
+    async fn test_collection_validation() -> Result<()> {
         // Use filestore backend with temporary directory for testing
         use crate::storage::metadata::backends::universal_backend::{
             UniversalMetadataBackend, UniversalMetadataConfig,
@@ -1678,7 +1851,7 @@ mod tests {
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
 
         let filestore_config = UniversalMetadataConfig {
@@ -1692,19 +1865,22 @@ mod tests {
         };
 
         let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory =
-            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(filesystem_config)
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
 
         let backend = Arc::new(
             UniversalMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
-                .unwrap(),
+                .context("Failed to create metadata backend for test")?,
         );
 
         let storage_config = StorageConfig::default();
         let service = CollectionService::new(backend, storage_config)
             .await
-            .unwrap();
+            .context("Failed to create collection service for test")?;
 
         // Valid config
         let valid_config = CollectionConfig {
@@ -1729,7 +1905,10 @@ mod tests {
         };
 
         // Test create with valid config
-        let result = service.create_collection(&valid_config).await.unwrap();
+        let result = service
+            .create_collection(&valid_config)
+            .await
+            .context("Failed to create valid collection")?;
         assert!(result.success);
 
         // Test empty name
@@ -1737,10 +1916,17 @@ mod tests {
             name: "".to_string(),
             ..valid_config.clone()
         };
-        let result = service.create_collection(&empty_name).await.unwrap();
+        let result = service
+            .create_collection(&empty_name)
+            .await
+            .context("Failed to create collection with empty name")?;
         assert!(!result.success);
         assert!(
-            result.error_code.as_ref().unwrap().contains("INVALID_NAME"),
+            result
+                .error_code
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Error code missing"))?
+                .contains("INVALID_NAME"),
             "Error code should contain INVALID_NAME, got: {:?}",
             result.error_code
         );
@@ -1750,13 +1936,16 @@ mod tests {
             name: "short".to_string(),
             ..valid_config.clone()
         };
-        let result = service.create_collection(&short_name).await.unwrap();
+        let result = service
+            .create_collection(&short_name)
+            .await
+            .context("Failed to create collection with short name")?;
         assert!(!result.success);
         assert!(
             result
                 .error_code
                 .as_ref()
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Error code missing"))?
                 .contains("INVALID_NAME_LENGTH"),
             "Error code should contain INVALID_NAME_LENGTH, got: {:?}",
             result.error_code
@@ -1767,7 +1956,10 @@ mod tests {
             name: "exactly8".to_string(),
             ..valid_config.clone()
         };
-        let result = service.create_collection(&eight_chars).await.unwrap();
+        let result = service
+            .create_collection(&eight_chars)
+            .await
+            .context("Failed to create collection with 8-character name")?;
         assert!(result.success);
 
         // Test invalid dimension
@@ -1776,21 +1968,26 @@ mod tests {
             dimension: 0,
             ..valid_config.clone()
         };
-        let result = service.create_collection(&invalid_dimension).await.unwrap();
+        let result = service
+            .create_collection(&invalid_dimension)
+            .await
+            .context("Failed to create collection with invalid dimension")?;
         assert!(!result.success);
         assert!(
             result
                 .error_code
                 .as_ref()
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("Error code missing"))?
                 .contains("INVALID_DIMENSION"),
             "Error code should contain INVALID_DIMENSION, got: {:?}",
             result.error_code
         );
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_collection_name_length_validation() {
+    async fn test_collection_name_length_validation() -> Result<()> {
         // Create a minimal test setup
         use crate::storage::metadata::backends::universal_backend::{
             UniversalMetadataBackend, UniversalMetadataConfig,
@@ -1798,7 +1995,7 @@ mod tests {
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
 
         let filestore_config = UniversalMetadataConfig {
@@ -1812,19 +2009,22 @@ mod tests {
         };
 
         let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory =
-            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(filesystem_config)
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
 
         let backend = Arc::new(
             UniversalMetadataBackend::new(filestore_config, filesystem_factory)
                 .await
-                .unwrap(),
+                .context("Failed to create metadata backend for test")?,
         );
 
         let storage_config = StorageConfig::default();
         let service = CollectionService::new(backend, storage_config)
             .await
-            .unwrap();
+            .context("Failed to create collection service for test")?;
 
         // Test cases for collection name length
         let test_cases = vec![
@@ -1859,7 +2059,10 @@ mod tests {
                 text_storage_configs: vec![],
             };
 
-            let result = service.create_collection(&config).await.unwrap();
+            let result = service
+                .create_collection(&config)
+                .await
+                .context(format!("Failed to create collection with name '{}'", name))?;
 
             assert_eq!(
                 result.success, should_succeed,
@@ -1872,7 +2075,7 @@ mod tests {
                     result
                         .error_code
                         .as_ref()
-                        .unwrap()
+                        .ok_or_else(|| anyhow::anyhow!("Error code missing for name '{}'", name))?
                         .contains(expected_error_code),
                     "Name '{}' error code mismatch: expected to contain '{}', got '{:?}'",
                     name,
@@ -1881,6 +2084,8 @@ mod tests {
                 );
             }
         }
+
+        Ok(())
     }
 
     #[test]

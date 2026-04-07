@@ -12,7 +12,7 @@ pub struct BincodeSerializer;
 impl BincodeSerializer {
     /// Create a new Bincode serializer
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 

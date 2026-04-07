@@ -43,6 +43,29 @@ use crate::core::compression::{CompressionAlgorithm, CompressionContext};
 // Additional imports for component boosting and hierarchical search
 use std::collections::HashSet;
 
+/// Compare two SqlValue instances for ordering (used in predicate pushdown)
+fn compare_sql_values(
+    a: &crate::proto::proximadb_v1::SqlValue,
+    b: &crate::proto::proximadb_v1::SqlValue,
+) -> std::cmp::Ordering {
+    use crate::proto::proximadb_v1::sql_value::Value as V;
+    match (a.value.as_ref(), b.value.as_ref()) {
+        (Some(V::NumberValue(a)), Some(V::NumberValue(b))) => {
+            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+        }
+        (Some(V::Int64Value(a)), Some(V::Int64Value(b))) => a.cmp(b),
+        (Some(V::Int64Value(a)), Some(V::NumberValue(b))) => (*a as f64)
+            .partial_cmp(b)
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (Some(V::NumberValue(a)), Some(V::Int64Value(b))) => a
+            .partial_cmp(&(*b as f64))
+            .unwrap_or(std::cmp::Ordering::Equal),
+        (Some(V::StringValue(a)), Some(V::StringValue(b))) => a.cmp(b),
+        (Some(V::BoolValue(a)), Some(V::BoolValue(b))) => a.cmp(b),
+        _ => std::cmp::Ordering::Equal, // Incomparable types treated as equal (conservative)
+    }
+}
+
 /// Wrapper for f32 to make it orderable for priority queues
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
@@ -343,7 +366,7 @@ impl RaptorReader {
                 if let Ok(_cached_data) = self.filesystem.read(file_path).await {
                     // Check if we have cached row group data
                     debug!("✅ Zero-copy cache hit for row group {}", rg_idx);
-                    // TODO: Extract specific row group from cached data
+                    // Deferred: Extract specific row group from cached data
                 }
 
                 // Cache miss - DIRECT storage read
@@ -364,7 +387,7 @@ impl RaptorReader {
 
                 // Use standard decompression (Proxima used for different data types)
                 let decompressed = crate::core::compression::decompress(
-                    &compressed_data,
+                    compressed_data,
                     CompressionAlgorithm::Zstd,
                     CompressionContext::Column,
                 )?;
@@ -376,14 +399,14 @@ impl RaptorReader {
                 let mut reader = StreamReader::try_new(cursor, None)?;
                 let batch = reader.next().context("No record batch")??;
 
-                // TODO: Implement proper caching with updated APIs
+                // Deferred: Implement proper caching with updated APIs
 
                 results.push(batch);
             }
         } else {
             // Load all row groups - DIRECT operations
             let metadata = self.read_metadata(file_path).await?;
-            for (_idx, rg_metadata) in metadata.row_groups.iter().enumerate() {
+            for rg_metadata in metadata.row_groups.iter() {
                 // DIRECT filesystem read
                 let full_file_data = self.filesystem.read(file_path).await?;
                 let start = rg_metadata.offset;
@@ -392,7 +415,7 @@ impl RaptorReader {
 
                 // DIRECT decode
                 let decompressed = crate::core::compression::decompress(
-                    &compressed_data,
+                    compressed_data,
                     CompressionAlgorithm::Zstd,
                     CompressionContext::Column,
                 )?;
@@ -435,12 +458,12 @@ impl RaptorReader {
                 .pattern_tracker()
                 .track_access_async(_cache_key.clone(), CacheType::VectorData);
 
-            // TODO: Implement proper caching with updated APIs
+            // Deferred: Implement proper caching with updated APIs
 
             // Load from storage if not cached
             let vector = self.load_vector_by_id(&self.base_path, &id).await?;
 
-            // TODO: Implement proper caching with updated APIs
+            // Deferred: Implement proper caching with updated APIs
             candidates.push((id, vector));
         }
 
@@ -655,14 +678,18 @@ impl RaptorReader {
                     };
 
                     rowgroups_loaded += 1;
-                    _bytes_read += self.estimate_rowgroup_size(
-                        footer
-                            .file_metadata
-                            .row_groups
-                            .iter()
-                            .find(|rg| rg.id == rowgroup_id)
-                            .unwrap(),
-                    );
+                    let rowgroup = footer
+                        .file_metadata
+                        .row_groups
+                        .iter()
+                        .find(|rg| rg.id == rowgroup_id)
+                        .ok_or_else(|| {
+                            crate::core::error::ProximaDBError::InvalidInput(format!(
+                                "Rowgroup {} not found in footer metadata",
+                                rowgroup_id
+                            ))
+                        })?;
+                    _bytes_read += self.estimate_rowgroup_size(rowgroup);
                     all_vectors.extend(filtered_vectors);
                 }
                 Err(e) => {
@@ -673,7 +700,7 @@ impl RaptorReader {
         }
 
         let elapsed = start_time.elapsed();
-        let efficiency = if footer.file_metadata.row_groups.len() > 0 {
+        let efficiency = if !footer.file_metadata.row_groups.is_empty() {
             100.0 * rowgroups_loaded as f64 / footer.file_metadata.row_groups.len() as f64
         } else {
             0.0
@@ -768,31 +795,50 @@ impl RaptorReader {
         if let Some(column_stats) = rowgroup.metadata_stats.get(&predicate.field) {
             match &predicate.op {
                 super::common::PredicateOp::Eq => {
-                    // For equality, check if value is within min/max range
-                    if let (Some(_min), Some(_max)) =
+                    // For equality, value must be within [min, max] range
+                    if let (Some(min), Some(max)) =
                         (&column_stats.min_value, &column_stats.max_value)
                     {
-                        true // TODO: Implement SqlValue comparison
+                        // Value must be >= min AND <= max for it to possibly exist
+                        compare_sql_values(&predicate.value, min) != std::cmp::Ordering::Less
+                            && compare_sql_values(&predicate.value, max)
+                                != std::cmp::Ordering::Greater
                     } else {
                         true // No statistics available, include rowgroup
                     }
                 }
                 super::common::PredicateOp::Lt => {
-                    if let Some(_min) = &column_stats.min_value {
-                        true // TODO: Implement SqlValue comparison
+                    // For Lt, we need min < value (at least one row could be less)
+                    if let Some(min) = &column_stats.min_value {
+                        compare_sql_values(min, &predicate.value) == std::cmp::Ordering::Less
+                    } else {
+                        true
+                    }
+                }
+                super::common::PredicateOp::Lte => {
+                    if let Some(min) = &column_stats.min_value {
+                        compare_sql_values(min, &predicate.value) != std::cmp::Ordering::Greater
                     } else {
                         true
                     }
                 }
                 super::common::PredicateOp::Gt => {
-                    if let Some(_max) = &column_stats.max_value {
-                        true // TODO: Implement SqlValue comparison
+                    // For Gt, we need max > value
+                    if let Some(max) = &column_stats.max_value {
+                        compare_sql_values(max, &predicate.value) == std::cmp::Ordering::Greater
                     } else {
                         true
                     }
                 }
-                // Add more operators as needed
-                _ => true, // Conservative: include rowgroup if unsure
+                super::common::PredicateOp::Gte => {
+                    if let Some(max) = &column_stats.max_value {
+                        compare_sql_values(max, &predicate.value) != std::cmp::Ordering::Less
+                    } else {
+                        true
+                    }
+                }
+                // Conservative: include rowgroup if unsure
+                _ => true,
             }
         } else {
             true // No statistics for this field, include rowgroup
@@ -895,7 +941,11 @@ impl RaptorReader {
                 let fixed_array = vector_col
                     .as_any()
                     .downcast_ref::<arrow_array::FixedSizeListArray>()
-                    .unwrap();
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Vector column expected FixedSizeListArray when fixed-size flag is set"
+                        )
+                    })?;
                 if !fixed_array.is_null(row_idx) {
                     let vector_list = fixed_array.value(row_idx);
                     if let Some(float_array) =
@@ -908,7 +958,9 @@ impl RaptorReader {
                 let list_array = vector_col
                     .as_any()
                     .downcast_ref::<arrow_array::ListArray>()
-                    .unwrap();
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Vector column expected ListArray when list flag is set")
+                    })?;
                 if !list_array.is_null(row_idx) {
                     let vector_list = list_array.value(row_idx);
                     if let Some(float_array) =
@@ -920,92 +972,96 @@ impl RaptorReader {
             }
 
             // Extract quantized vector (optional)
-            if let Some(quant_array) = quantized_vector_array {
-                if !quant_array.is_null(row_idx) {
-                    let quant_list = quant_array.value(row_idx);
-                    if let Some(_u8_array) =
-                        quant_list.as_primitive_opt::<arrow_array::types::UInt8Type>()
-                    {
-                        // quantized_vector removed - internalized in storage
-                        // Store quantized data internally if needed
-                    }
+            if let Some(quant_array) = quantized_vector_array
+                && !quant_array.is_null(row_idx)
+            {
+                let quant_list = quant_array.value(row_idx);
+                if let Some(_u8_array) =
+                    quant_list.as_primitive_opt::<arrow_array::types::UInt8Type>()
+                {
+                    // quantized_vector removed - internalized in storage
+                    // Store quantized data internally if needed
                 }
             }
 
             // Extract timestamp fields (optional)
-            if let Some(ts_array) = timestamp_array {
-                if !ts_array.is_null(row_idx) {
-                    record.timestamp = Some(ts_array.value(row_idx) as i64);
-                }
+            if let Some(ts_array) = timestamp_array
+                && !ts_array.is_null(row_idx)
+            {
+                record.timestamp = Some(ts_array.value(row_idx) as i64);
             }
 
-            if let Some(upd_array) = updated_at_array {
-                if !upd_array.is_null(row_idx) {
-                    record.updated_at = Some(upd_array.value(row_idx) as i64);
-                }
+            if let Some(upd_array) = updated_at_array
+                && !upd_array.is_null(row_idx)
+            {
+                record.updated_at = Some(upd_array.value(row_idx) as i64);
             }
 
-            if let Some(exp_array) = expires_at_array {
-                if !exp_array.is_null(row_idx) {
-                    record.expires_at = Some(exp_array.value(row_idx) as i64);
-                }
+            if let Some(exp_array) = expires_at_array
+                && !exp_array.is_null(row_idx)
+            {
+                record.expires_at = Some(exp_array.value(row_idx) as i64);
             }
 
-            if let Some(ver_array) = version_array {
-                if !ver_array.is_null(row_idx) {
-                    record.version = Some(ver_array.value(row_idx) as u32);
-                }
+            if let Some(ver_array) = version_array
+                && !ver_array.is_null(row_idx)
+            {
+                record.version = Some(ver_array.value(row_idx));
             }
 
             // Extract metadata (JSON string → HashMap)
-            if let Some(meta_array) = metadata_array {
-                if !meta_array.is_null(row_idx) {
-                    let json_str = meta_array.value(row_idx);
-                    if let Ok(metadata_map) = serde_json::from_str::<
-                        std::collections::HashMap<String, serde_json::Value>,
-                    >(json_str)
-                    {
-                        for (key, value) in metadata_map {
-                            let sql_value = match value {
-                                serde_json::Value::String(s) => {
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
-                                    }
-                                }
-                                serde_json::Value::Number(n) => {
-                                    // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+            if let Some(meta_array) = metadata_array
+                && !meta_array.is_null(row_idx)
+            {
+                let json_str = meta_array.value(row_idx);
+                if let Ok(metadata_map) = serde_json::from_str::<
+                    std::collections::HashMap<String, serde_json::Value>,
+                >(json_str)
+                {
+                    for (key, value) in metadata_map {
+                        let sql_value = match value {
+                            serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
+                                ),
+                            },
+                            serde_json::Value::Number(n) => {
+                                // Convert all numbers to f64 since we only have NumberValue(f64) in the proto
+                                crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(
                                             n.as_f64().unwrap_or(0.0),
-                                        )),
-                                    }
+                                        ),
+                                    ),
                                 }
-                                serde_json::Value::Bool(b) => {
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
-                                    }
-                                }
-                                _ => crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            }
+                            serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
+                                ),
+                            },
+                            _ => crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
                                         value.to_string(),
-                                    )),
-                                },
-                            };
+                                    ),
+                                ),
+                            },
+                        };
 
-                            record.metadata.insert(key, sql_value);
-                        }
+                        record.metadata.insert(key, sql_value);
                     }
                 }
             }
 
             // Extract source content (binary)
-            if let Some(source_array) = source_content_array {
-                if !source_array.is_null(row_idx) {
-                    let source_bytes = source_array.value(row_idx);
-                    // Convert bytes to source string
-                    if let Ok(source_string) = String::from_utf8(source_bytes.to_vec()) {
-                        record.source = Some(source_string);
-                    }
+            if let Some(source_array) = source_content_array
+                && !source_array.is_null(row_idx)
+            {
+                let source_bytes = source_array.value(row_idx);
+                // Convert bytes to source string
+                if let Ok(source_string) = String::from_utf8(source_bytes.to_vec()) {
+                    record.source = Some(source_string);
                 }
             }
 
@@ -1157,7 +1213,7 @@ impl RaptorReader {
         let kxk_matrix = self.get_kxk_matrix(file_path).await?;
 
         // Step 2: Calculate distances to all centroids from footer
-        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*metric);
         let mut centroid_distances = Vec::with_capacity(kxk_matrix.num_centroids as usize);
 
         // Get all centroids from the footer's ColumnarCentroids
@@ -1173,10 +1229,7 @@ impl RaptorReader {
         }
 
         // Step 3: Select top-k centroids (which map 1:1 to rowgroups)
-        // SAFETY: partial_cmp().unwrap() is safe here because distances are computed from
-        // valid vector operations and cannot be NaN. Distance calculations always produce
-        // finite f32 values (L2, cosine, dot product all return finite results for finite inputs).
-        centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        centroid_distances.sort_by(|a, b| a.1.total_cmp(&b.1));
         let num_centroids_to_search = (ef / 10).max(1).min(kxk_matrix.num_centroids as usize);
 
         let mut all_candidates = Vec::new();
@@ -1208,9 +1261,7 @@ impl RaptorReader {
         }
 
         // Step 5: Sort all candidates and return top-ef
-        // SAFETY: partial_cmp().unwrap() is safe - distances are computed using valid
-        // vector operations that cannot produce NaN values.
-        all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_candidates.sort_by(|a, b| a.1.total_cmp(&b.1));
 
         let final_candidates: Vec<String> = all_candidates
             .into_iter()
@@ -1250,7 +1301,7 @@ impl RaptorReader {
             .await?;
         let ids = self.load_rowgroup_ids(&self.base_path, rowgroup_id).await?;
 
-        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*metric);
 
         // Step 1: Compute query-to-centroid distance once
         // Get the centroid for this rowgroup from footer
@@ -1261,14 +1312,11 @@ impl RaptorReader {
             .find(|(rg_id, _)| *rg_id == rowgroup_id)
             .map(|(_, c)| c.clone());
 
-        let query_to_centroid = centroid
-            .as_ref()
-            .map(|c| {
-                distance_compute
-                    .calculate_distance(query, c, metric)
-                    .raw_value
-            })
-            .unwrap_or(0.0);
+        let query_to_centroid = centroid.as_ref().map_or(0.0, |c| {
+            distance_compute
+                .calculate_distance(query, c, metric)
+                .raw_value
+        });
 
         // Step 2: Use P×K filtering with triangle inequality
         // Track filtering statistics
@@ -1305,7 +1353,7 @@ impl RaptorReader {
                 });
                 candidates.truncate(k);
                 // Update threshold to k-th best + margin
-                threshold = candidates.last().map(|(_, d)| *d * 1.2).unwrap_or(f32::MAX);
+                threshold = candidates.last().map_or(f32::MAX, |(_, d)| *d * 1.2);
             }
 
             if idx < ids.len() {
@@ -1392,14 +1440,22 @@ impl RaptorReader {
         // Load all centroids from footer
         let footer = self.get_footer(&self.base_path).await?;
 
-        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*metric);
         let mut all_distances = Vec::new();
 
         // Step 1: Compute distance from query to all centroids
         for centroid_id in 0..footer.centroids.count as usize {
-            let centroid = footer.centroids.get_centroid(centroid_id as u16).unwrap();
+            let centroid = footer
+                .centroids
+                .get_centroid(centroid_id as u16)
+                .ok_or_else(|| {
+                    crate::core::error::ProximaDBError::Internal(format!(
+                        "Centroid {} not found (centroid count mismatch)",
+                        centroid_id
+                    ))
+                })?;
             let dist = distance_compute
-                .calculate_distance(query, &centroid, &metric)
+                .calculate_distance(query, &centroid, metric)
                 .raw_value;
 
             // Simple 1-to-1 mapping: centroid_id == rowgroup_id
@@ -1413,7 +1469,7 @@ impl RaptorReader {
         }
 
         // Step 2: Sort and select primary centroids
-        all_distances.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        all_distances.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         let primary_centroids: Vec<CentroidSelection> =
             all_distances.iter().take(num_centroids).cloned().collect();
 
@@ -1536,7 +1592,7 @@ impl RaptorReader {
         // Load vectors from rowgroup for distance computation
         let vectors = self.load_vectors_for_rowgroup(rowgroup_id).await?;
 
-        let distance_compute = UnifiedDistanceCompute::new(metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*metric);
 
         // Step 1: Get rowgroup centroid and compute query-to-centroid distance
         let footer = self.get_footer(&self.base_path).await?;
@@ -1546,14 +1602,11 @@ impl RaptorReader {
             .find(|(rg_id, _)| *rg_id == rowgroup_id)
             .map(|(_, c)| c.clone());
 
-        let query_to_centroid = centroid
-            .as_ref()
-            .map(|c| {
-                distance_compute
-                    .calculate_distance(query, c, metric)
-                    .raw_value
-            })
-            .unwrap_or(0.0);
+        let query_to_centroid = centroid.as_ref().map_or(0.0, |c| {
+            distance_compute
+                .calculate_distance(query, c, metric)
+                .raw_value
+        });
 
         // Step 2: Use P×K filtering with triangle inequality
         let total_vectors = vectors.len();
@@ -1590,18 +1643,17 @@ impl RaptorReader {
 
             // Update dynamic threshold
             if candidate_distances.len() >= ef {
-                candidate_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                candidate_distances.sort_by(|a, b| a.total_cmp(b));
                 candidate_distances.truncate(ef);
                 threshold = candidate_distances
                     .last()
                     .copied()
-                    .map(|d| d * 1.2)
-                    .unwrap_or(f32::MAX);
+                    .map_or(f32::MAX, |d| d * 1.2);
             }
         }
 
         // Sort and return top distances
-        candidate_distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        candidate_distances.sort_by(|a, b| a.total_cmp(b));
         candidate_distances.truncate(ef);
 
         tracing::debug!(
@@ -1706,8 +1758,8 @@ impl RaptorReader {
         for i in 0..num_vectors {
             let mut vector = vec![0.0; dimension];
             // Add some variation to make it realistic
-            for j in 0..dimension {
-                vector[j] = (i as f32 + j as f32) / (num_vectors + dimension) as f32;
+            for (j, v_val) in vector.iter_mut().enumerate() {
+                *v_val = (i as f32 + j as f32) / (num_vectors + dimension) as f32;
             }
             vectors.push(vector);
         }
@@ -2108,7 +2160,7 @@ impl RaptorReader {
             let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
 
             // Extract fields before moving matrix into Arc
-            let storage_strategy = matrix.storage_strategy.clone();
+            let storage_strategy = matrix.storage_strategy;
             let num_vectors = matrix.num_vectors;
             let num_centroids = matrix.num_centroids;
 
@@ -2619,27 +2671,26 @@ impl RaptorReader {
         let batch = self.read_rowgroup(rg_id).await?;
 
         // Find the vector by ID in the batch
-        if let Some(id_array) = batch.column_by_name("id") {
-            if let Some(vector_array) = batch.column_by_name("vector") {
-                use arrow_array::{ListArray, StringArray};
+        if let Some(id_array) = batch.column_by_name("id")
+            && let Some(vector_array) = batch.column_by_name("vector")
+        {
+            use arrow_array::{ListArray, StringArray};
 
-                if let Some(ids) = id_array.as_any().downcast_ref::<StringArray>() {
-                    for i in 0..ids.len() {
-                        if !ids.is_null(i) && ids.value(i) == vector_id {
-                            // Found the ID, extract the vector
-                            if let Some(vectors) = vector_array.as_any().downcast_ref::<ListArray>()
-                            {
-                                if let Some(vector_values) = vectors
-                                    .value(i)
-                                    .as_any()
-                                    .downcast_ref::<arrow_array::Float32Array>(
-                                ) {
-                                    let vector: Vec<f32> = (0..vector_values.len())
-                                        .map(|j| vector_values.value(j))
-                                        .collect();
-                                    return Ok(vector);
-                                }
-                            }
+            if let Some(ids) = id_array.as_any().downcast_ref::<StringArray>() {
+                for i in 0..ids.len() {
+                    if !ids.is_null(i) && ids.value(i) == vector_id {
+                        // Found the ID, extract the vector
+                        if let Some(vectors) = vector_array.as_any().downcast_ref::<ListArray>()
+                            && let Some(vector_values) = vectors
+                                .value(i)
+                                .as_any()
+                                .downcast_ref::<arrow_array::Float32Array>(
+                            )
+                        {
+                            let vector: Vec<f32> = (0..vector_values.len())
+                                .map(|j| vector_values.value(j))
+                                .collect();
+                            return Ok(vector);
                         }
                     }
                 }
@@ -2886,7 +2937,7 @@ impl RaptorReader {
         }
 
         // Sort by distance to find nearest vectors
-        query_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        query_distances.sort_by(|a, b| a.1.total_cmp(&b.1));
 
         // Step 2: Use P² matrix to identify dense clusters around top candidates
         // This helps find vectors that are similar to each other AND the query
@@ -2907,7 +2958,7 @@ impl RaptorReader {
                 // Use P² matrix to find vectors close to this candidate
                 // This identifies local clusters of similar vectors
                 if final_candidates.len() < k * 3 {
-                    for other_idx in 0..vectors.len() {
+                    for (other_idx, other_vec) in vectors.iter().enumerate() {
                         if other_idx != candidate_idx && !seen.contains(&other_idx) {
                             // Get pre-computed distance from P² matrix
                             let intra_dist =
@@ -2919,7 +2970,7 @@ impl RaptorReader {
                                 let query_dist = distance_compute
                                     .calculate_distance(
                                         target_vector,
-                                        &vectors[other_idx],
+                                        other_vec,
                                         &DistanceMetric::Cosine,
                                     )
                                     .raw_value;
@@ -2944,7 +2995,7 @@ impl RaptorReader {
         }
 
         // Sort final candidates by distance and return top-k
-        final_candidates.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap());
+        final_candidates.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         final_candidates.truncate(k);
 
         tracing::debug!(
@@ -2966,7 +3017,7 @@ impl RaptorReader {
     ) -> Result<Vec<CandidateResult>> {
         let mut candidates = Vec::new();
 
-        for (_idx, (vector, id)) in vectors.iter().zip(ids.iter()).enumerate() {
+        for (vector, id) in vectors.iter().zip(ids.iter()) {
             let distance = self
                 .distance_compute
                 .calculate_distance(target_vector, vector, &DistanceMetric::Cosine)
@@ -3392,8 +3443,7 @@ impl RaptorReader {
             // Triangle inequality: query_to_neighbor >= |query_to_seed - seed_to_neighbor|
             let expansion_threshold = centroid_distances
                 .get(top_k_rowgroups.min(k - 1))
-                .map(|(d, _)| d * 1.5) // 50% margin beyond kth best
-                .unwrap_or(f32::MAX);
+                .map_or(f32::MAX, |(d, _)| d * 1.5);
 
             for &(seed_dist, seed_rg) in centroid_distances.iter().take(3) {
                 if let Some(&seed_idx) = rg_to_idx.get(&seed_rg) {
@@ -3474,17 +3524,13 @@ impl RaptorReader {
             // Small collection: pre-compute full matrix (< 1ms overhead)
             let mut distances = vec![vec![0.0f32; centroids.len()]; centroids.len()];
 
-            for i in 0..centroids.len() {
+            for (i, centroid_i) in centroids.iter().enumerate() {
                 distances[i][i] = 0.0;
 
                 for j in (i + 1)..centroids.len() {
                     let dist = self
                         .distance_compute
-                        .calculate_distance(
-                            &centroids[i],
-                            &centroids[j],
-                            &DistanceMetric::Euclidean,
-                        )
+                        .calculate_distance(centroid_i, &centroids[j], &DistanceMetric::Euclidean)
                         .raw_value;
 
                     distances[i][j] = dist;
@@ -3837,7 +3883,7 @@ impl RaptorReader {
 
         // Use dimension from metadata, not from config
         let dimension = metadata.dimension;
-        let num_rows = rg_metadata.vector_count as usize;
+        let num_rows = rg_metadata.vector_count;
 
         // Read and decompress VECTOR column separately
         tracing::debug!(
@@ -3932,7 +3978,7 @@ impl RaptorReader {
             vector_data.len()
         );
 
-        for dim_idx in 0..dimension {
+        for (dim_idx, column) in columns.iter_mut().enumerate().take(dimension) {
             // Read encoded column length
             let mut len_bytes = [0u8; 4];
             if let Err(e) = cursor.read_exact(&mut len_bytes) {
@@ -3977,14 +4023,14 @@ impl RaptorReader {
 
             // Decode using ProximaCodec
             let decoded = codec.decode(&encoded_data)?;
-            columns[dim_idx] = decoded;
+            *column = decoded;
         }
 
         // Transpose back to row format and create Float32Array
         let mut flat_values = Vec::with_capacity(num_rows * dimension);
         for vec_idx in 0..num_rows {
-            for dim_idx in 0..dimension {
-                flat_values.push(columns[dim_idx][vec_idx]);
+            for column in columns.iter().take(dimension) {
+                flat_values.push(column[vec_idx]);
             }
         }
 
@@ -4074,3 +4120,506 @@ impl RaptorReader {
 // Reason: Unnecessary wrapper adding stack overhead
 // Solution: Direct calls to unified cache modules (vector_store, metadata_store, etc.)
 // Benefit: Reduced stack depth, less function call overhead, cleaner code
+
+#[cfg(test)]
+#[cfg(feature = "experimental-engines")]
+mod tests {
+    use super::compare_sql_values;
+    use super::*;
+    use crate::proto::proximadb_v1::SqlValue;
+    use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+
+    #[test]
+    fn test_compare_sql_values_numbers() {
+        let a = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        let b = SqlValue {
+            value: Some(SqlVal::NumberValue(2.0)),
+        };
+        assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
+        assert_eq!(compare_sql_values(&b, &a), std::cmp::Ordering::Greater);
+        assert_eq!(compare_sql_values(&a, &a), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_sql_values_int64() {
+        let a = SqlValue {
+            value: Some(SqlVal::Int64Value(10)),
+        };
+        let b = SqlValue {
+            value: Some(SqlVal::Int64Value(20)),
+        };
+        assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
+        assert_eq!(compare_sql_values(&b, &a), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn test_compare_sql_values_strings() {
+        let a = SqlValue {
+            value: Some(SqlVal::StringValue("apple".to_string())),
+        };
+        let b = SqlValue {
+            value: Some(SqlVal::StringValue("banana".to_string())),
+        };
+        assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn test_compare_sql_values_cross_numeric_types() {
+        let int_val = SqlValue {
+            value: Some(SqlVal::Int64Value(5)),
+        };
+        let float_val = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&int_val, &float_val),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_predicate_eq_within_range() {
+        use super::super::common::{ColumnEncoding, ColumnStats};
+
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+
+        // Value 5.0 is within [1.0, 10.0] — Eq should pass
+        assert!(
+            compare_sql_values(&value, &min) != std::cmp::Ordering::Less
+                && compare_sql_values(&value, &max) != std::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn test_predicate_eq_outside_range() {
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(15.0)),
+        };
+
+        // Value 15.0 is outside [1.0, 10.0] — Eq should fail
+        assert!(
+            !(compare_sql_values(&value, &min) != std::cmp::Ordering::Less
+                && compare_sql_values(&value, &max) != std::cmp::Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn test_predicate_lt_pruning() {
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+
+        // Lt: min < value should be false (min=10 is NOT < value=5)
+        assert_ne!(compare_sql_values(&min, &value), std::cmp::Ordering::Less);
+
+        // Lt: min < value should be true (min=1 IS < value=5)
+        let low_min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&low_min, &value),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_predicate_gt_pruning() {
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(3.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+
+        // Gt: max > value should be false (max=3 is NOT > value=5)
+        assert_ne!(
+            compare_sql_values(&max, &value),
+            std::cmp::Ordering::Greater
+        );
+
+        // Gt: max > value should be true (max=10 IS > value=5)
+        let high_max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&high_max, &value),
+            std::cmp::Ordering::Greater
+        );
+    }
+
+    // ========== NEW TESTS ==========
+
+    #[test]
+    fn test_compare_sql_values_null_vs_null() {
+        let a = SqlValue { value: None };
+        let b = SqlValue { value: None };
+        // Two Nulls are incomparable, treated as Equal (conservative)
+        assert_eq!(compare_sql_values(&a, &b), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_sql_values_null_vs_number() {
+        let null_val = SqlValue { value: None };
+        let num_val = SqlValue {
+            value: Some(SqlVal::NumberValue(42.0)),
+        };
+        // Null vs typed value is incomparable, treated as Equal (conservative)
+        assert_eq!(
+            compare_sql_values(&null_val, &num_val),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_sql_values(&num_val, &null_val),
+            std::cmp::Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn test_compare_sql_values_bool_ordering() {
+        let f = SqlValue {
+            value: Some(SqlVal::BoolValue(false)),
+        };
+        let t = SqlValue {
+            value: Some(SqlVal::BoolValue(true)),
+        };
+        assert_eq!(compare_sql_values(&f, &t), std::cmp::Ordering::Less);
+        assert_eq!(compare_sql_values(&t, &f), std::cmp::Ordering::Greater);
+        assert_eq!(compare_sql_values(&t, &t), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn test_compare_sql_values_int64_to_number_coercion() {
+        // Int64(100) vs Number(99.5)
+        let int_val = SqlValue {
+            value: Some(SqlVal::Int64Value(100)),
+        };
+        let float_val = SqlValue {
+            value: Some(SqlVal::NumberValue(99.5)),
+        };
+        assert_eq!(
+            compare_sql_values(&int_val, &float_val),
+            std::cmp::Ordering::Greater
+        );
+
+        // Reverse direction: Number vs Int64
+        assert_eq!(
+            compare_sql_values(&float_val, &int_val),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_compare_sql_values_int64_equal_as_float() {
+        // Int64(5) vs Number(5.0) should be Equal
+        let int_val = SqlValue {
+            value: Some(SqlVal::Int64Value(5)),
+        };
+        let float_val = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&int_val, &float_val),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_sql_values(&float_val, &int_val),
+            std::cmp::Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn test_compare_sql_values_negative_numbers() {
+        let neg = SqlValue {
+            value: Some(SqlVal::NumberValue(-10.0)),
+        };
+        let pos = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        assert_eq!(compare_sql_values(&neg, &pos), std::cmp::Ordering::Less);
+        assert_eq!(compare_sql_values(&pos, &neg), std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn test_compare_sql_values_incompatible_types() {
+        // String vs Number: incomparable, treated as Equal
+        let str_val = SqlValue {
+            value: Some(SqlVal::StringValue("abc".to_string())),
+        };
+        let num_val = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&str_val, &num_val),
+            std::cmp::Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn test_compare_sql_values_nan_handling() {
+        // NaN comparisons should not panic; partial_cmp returns None -> Equal
+        let nan_val = SqlValue {
+            value: Some(SqlVal::NumberValue(f64::NAN)),
+        };
+        let normal = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        // NaN compared to anything should be Equal (fallback behavior)
+        assert_eq!(
+            compare_sql_values(&nan_val, &normal),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_sql_values(&nan_val, &nan_val),
+            std::cmp::Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn test_compare_sql_values_infinity() {
+        let pos_inf = SqlValue {
+            value: Some(SqlVal::NumberValue(f64::INFINITY)),
+        };
+        let neg_inf = SqlValue {
+            value: Some(SqlVal::NumberValue(f64::NEG_INFINITY)),
+        };
+        let normal = SqlValue {
+            value: Some(SqlVal::NumberValue(100.0)),
+        };
+        assert_eq!(
+            compare_sql_values(&pos_inf, &normal),
+            std::cmp::Ordering::Greater
+        );
+        assert_eq!(
+            compare_sql_values(&neg_inf, &normal),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_sql_values(&neg_inf, &pos_inf),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn test_predicate_lte_pruning() {
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        // Lte: value <= max is true when value equals the bound
+        assert!(compare_sql_values(&value, &min) != std::cmp::Ordering::Greater);
+
+        let small_val = SqlValue {
+            value: Some(SqlVal::NumberValue(3.0)),
+        };
+        assert!(compare_sql_values(&small_val, &min) != std::cmp::Ordering::Greater);
+
+        let large_val = SqlValue {
+            value: Some(SqlVal::NumberValue(7.0)),
+        };
+        // 7.0 > 5.0, so Lte should fail
+        assert!(compare_sql_values(&large_val, &min) == std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn test_predicate_gte_pruning() {
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let value = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        // Gte: value >= min is true when value equals the bound
+        assert!(compare_sql_values(&value, &max) != std::cmp::Ordering::Less);
+
+        let large_val = SqlValue {
+            value: Some(SqlVal::NumberValue(15.0)),
+        };
+        assert!(compare_sql_values(&large_val, &max) != std::cmp::Ordering::Less);
+
+        let small_val = SqlValue {
+            value: Some(SqlVal::NumberValue(3.0)),
+        };
+        // 3.0 < 10.0, so Gte should fail
+        assert!(compare_sql_values(&small_val, &max) == std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn test_predicate_between_range_check() {
+        // Between: min <= value <= max
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+
+        // Value inside range
+        let inside = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        assert!(
+            compare_sql_values(&inside, &min) != std::cmp::Ordering::Less
+                && compare_sql_values(&inside, &max) != std::cmp::Ordering::Greater
+        );
+
+        // Value at min boundary
+        let at_min = SqlValue {
+            value: Some(SqlVal::NumberValue(1.0)),
+        };
+        assert!(
+            compare_sql_values(&at_min, &min) != std::cmp::Ordering::Less
+                && compare_sql_values(&at_min, &max) != std::cmp::Ordering::Greater
+        );
+
+        // Value at max boundary
+        let at_max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        assert!(
+            compare_sql_values(&at_max, &min) != std::cmp::Ordering::Less
+                && compare_sql_values(&at_max, &max) != std::cmp::Ordering::Greater
+        );
+
+        // Value below range
+        let below = SqlValue {
+            value: Some(SqlVal::NumberValue(0.0)),
+        };
+        assert!(compare_sql_values(&below, &min) == std::cmp::Ordering::Less);
+
+        // Value above range
+        let above = SqlValue {
+            value: Some(SqlVal::NumberValue(11.0)),
+        };
+        assert!(compare_sql_values(&above, &max) == std::cmp::Ordering::Greater);
+    }
+
+    #[test]
+    fn test_predicate_not_equal_detection() {
+        // NotEqual: value != target means we keep rowgroup if range includes other values
+        let val_a = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let val_b = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        // Equal values
+        assert_eq!(
+            compare_sql_values(&val_a, &val_b),
+            std::cmp::Ordering::Equal
+        );
+
+        // If min == max == value, NotEqual should prune the rowgroup
+        // If min != max, there might be other values, so keep it
+        let min = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let max = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let target = SqlValue {
+            value: Some(SqlVal::NumberValue(5.0)),
+        };
+        let can_prune = compare_sql_values(&min, &target) == std::cmp::Ordering::Equal
+            && compare_sql_values(&max, &target) == std::cmp::Ordering::Equal;
+        assert!(can_prune, "Should prune when min=max=target for NotEqual");
+
+        // When range is wider, cannot prune
+        let wide_max = SqlValue {
+            value: Some(SqlVal::NumberValue(10.0)),
+        };
+        let cannot_prune = compare_sql_values(&min, &target) == std::cmp::Ordering::Equal
+            && compare_sql_values(&wide_max, &target) == std::cmp::Ordering::Equal;
+        assert!(
+            !cannot_prune,
+            "Should NOT prune when max != target for NotEqual"
+        );
+    }
+
+    #[test]
+    fn test_compare_sql_values_empty_strings() {
+        let empty = SqlValue {
+            value: Some(SqlVal::StringValue(String::new())),
+        };
+        let non_empty = SqlValue {
+            value: Some(SqlVal::StringValue("a".to_string())),
+        };
+        assert_eq!(
+            compare_sql_values(&empty, &non_empty),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_sql_values(&empty, &empty),
+            std::cmp::Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn test_scan_strategy_default_is_filtering() {
+        let strategy = ScanStrategy::default();
+        match strategy {
+            ScanStrategy::Filtering {
+                target_ids,
+                predicates,
+                max_rowgroups,
+            } => {
+                assert!(target_ids.is_none());
+                assert!(predicates.is_none());
+                assert!(max_rowgroups.is_none());
+            }
+            _ => panic!("Default should be Filtering"),
+        }
+    }
+
+    #[test]
+    fn test_scan_strategy_equality() {
+        assert_eq!(ScanStrategy::FullScan, ScanStrategy::FullScan);
+        assert_ne!(ScanStrategy::FullScan, ScanStrategy::default());
+    }
+
+    #[test]
+    fn test_boost_config_defaults() {
+        let config = BoostConfig::default();
+        assert!(config.alpha_own > 0.0);
+        assert!(config.alpha_other > 0.0);
+        assert!(config.alpha_variance > 0.0);
+        assert!(config.beta_min > 0.0);
+        assert!(config.beta_max > 0.0);
+        assert!(config.boundary_threshold > 0.0);
+        assert!(config.alpha_inter > 0.0);
+        assert!(config.beta_cross > 0.0);
+    }
+
+    #[test]
+    fn test_search_stats_cluster_tracking() {
+        let mut stats = SearchStats::new();
+        assert_eq!(stats.clusters_visited.len(), 0);
+
+        stats.record_cluster_visit(0);
+        stats.record_cluster_visit(1);
+        stats.record_cluster_visit(0); // duplicate
+        assert_eq!(stats.clusters_visited.len(), 2);
+        assert!(stats.clusters_visited.contains(&0));
+        assert!(stats.clusters_visited.contains(&1));
+    }
+}

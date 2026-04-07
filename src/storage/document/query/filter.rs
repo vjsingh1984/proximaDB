@@ -101,9 +101,7 @@ impl FilterEvaluator {
         let json_value = self.sql_object_to_json(document);
 
         // Normalize path: $.field or field -> $.field
-        let normalized_path = if path.starts_with("$.") {
-            path.to_string()
-        } else if path.starts_with('$') {
+        let normalized_path = if path.starts_with("$.") || path.starts_with('$') {
             path.to_string()
         } else {
             format!("$.{}", path)
@@ -206,12 +204,10 @@ impl FilterEvaluator {
                     Some(SqlValue {
                         value: Some(SqlValueVariant::Int64Value(i)),
                     })
-                } else if let Some(f) = n.as_f64() {
-                    Some(SqlValue {
+                } else {
+                    n.as_f64().map(|f| SqlValue {
                         value: Some(SqlValueVariant::NumberValue(f)),
                     })
-                } else {
-                    None
                 }
             }
             JsonValue::String(s) => Some(SqlValue {

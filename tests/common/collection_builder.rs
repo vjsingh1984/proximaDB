@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 //! Test Collection Builder
 //!
 //! Provides a fluent builder interface for creating test collections

@@ -155,16 +155,13 @@ impl Compaction {
         }
 
         // Extract collection ID from path like: /path/to/collection_id/data/level0/file.sst
-        if let Some(path) = paths.first() {
-            if let Some(_parent) = path.parent() {
-                if let Some(_parent_parent) = _parent.parent() {
-                    if let Some(parent_parent_parent) = _parent_parent.parent() {
-                        if let Some(_collection_id) = parent_parent_parent.file_name() {
-                            return Ok(_collection_id.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            }
+        if let Some(path) = paths.first()
+            && let Some(_parent) = path.parent()
+            && let Some(_parent_parent) = _parent.parent()
+            && let Some(parent_parent_parent) = _parent_parent.parent()
+            && let Some(_collection_id) = parent_parent_parent.file_name()
+        {
+            return Ok(_collection_id.to_string_lossy().to_string());
         }
 
         Ok("unknown".to_string())
@@ -829,20 +826,20 @@ impl Compaction {
         // Get current time in seconds for consistent comparison
         let current_time_secs = current_time / 1000;
 
-        for vector_record in resolved_records.iter() {
+        for vector_record in &resolved_records {
             // Tombstone detection: empty vector + expires_at in past (including 0)
             // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
             let is_tombstone = vector_record.vector.is_empty()
                 && vector_record
                     .expires_at
-                    .map_or(false, |e| e <= current_time_secs);
+                    .is_some_and(|e| e <= current_time_secs);
 
             // Check if record is expired (TTL-based expiry for non-tombstones)
             // This is different from tombstones - these are regular records that have expired
             let is_expired = !is_tombstone
-                && vector_record.expires_at.map_or(false, |expires_at| {
-                    expires_at > 0 && expires_at < current_time_secs
-                });
+                && vector_record
+                    .expires_at
+                    .is_some_and(|expires_at| expires_at > 0 && expires_at < current_time_secs);
 
             // Skip expired records completely - they are physically deleted
             if is_expired {
@@ -853,7 +850,7 @@ impl Compaction {
             }
             let should_keep = if is_tombstone {
                 // Keep tombstones that are less than 1 hour old
-                let age = (current_time / 1000) - (vector_record.timestamp.unwrap_or(0) as i64); // Both in seconds
+                let age = (current_time / 1000) - vector_record.timestamp.unwrap_or(0); // Both in seconds
                 let keep_tombstone = age < (60 * 60); // 1 hour in seconds
 
                 if !keep_tombstone {
@@ -963,7 +960,7 @@ impl Compaction {
         let block_size_kb = task.block_size_kb.unwrap_or(64); // Default to 64KB blocks
         let block_size = (block_size_kb * 1024) as usize;
 
-        // TODO: Pass filesystem from compaction manager - for now create a new factory
+        // Deferred: Pass filesystem from compaction manager - for now create a new factory
         let filesystem_factory = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
@@ -1022,7 +1019,10 @@ impl Compaction {
             // Write SSTable directly to staging path
             // Strip file:// prefix if present for local filesystem operations
             let staging_path = if atomic_op.staging_url.starts_with("file://") {
-                atomic_op.staging_url.strip_prefix("file://").unwrap()
+                atomic_op
+                    .staging_url
+                    .strip_prefix("file://")
+                    .unwrap_or(&atomic_op.staging_url)
             } else {
                 &atomic_op.staging_url
             };
@@ -1030,7 +1030,7 @@ impl Compaction {
             debug!("Writing to staging path: {}", staging_file_path.display());
 
             // Check block format and use appropriate writer
-            let block_format = BlockFormat::from_str(&self.config.block_format);
+            let block_format = BlockFormat::parse_block_format(&self.config.block_format);
             debug!("🔍 COMPACTION: Using block format: {:?}", block_format);
 
             match block_format {
@@ -1042,13 +1042,12 @@ impl Compaction {
                     let dimension = btree_records
                         .values()
                         .next()
-                        .map(|r| r.vector.len() as u32)
-                        .unwrap_or(128);
+                        .map_or(128, |r| r.vector.len() as u32);
 
                     // Ensure parent directory exists
                     if let Some(parent) = staging_file_path.parent() {
                         std::fs::create_dir_all(parent)
-                            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+                            .map_err(crate::core::StorageError::DiskIO)?;
                     }
 
                     let config = ArrowBlockConfig::new(dimension);
@@ -1106,10 +1105,7 @@ impl Compaction {
                 .metadata(&staging_file_path.to_string_lossy())
                 .await
                 .map_err(|e| {
-                    crate::core::StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    ))
+                    crate::core::StorageError::DiskIO(std::io::Error::other(e.to_string()))
                 })?;
             let written_bytes = metadata.size;
 
@@ -1136,7 +1132,7 @@ impl Compaction {
             debug!("Writing directly to: {}", task.output_file.display());
 
             // Check block format and use appropriate writer
-            let block_format = BlockFormat::from_str(&self.config.block_format);
+            let block_format = BlockFormat::parse_block_format(&self.config.block_format);
             debug!(
                 "🔍 COMPACTION (non-atomic): Using block format: {:?}",
                 block_format
@@ -1151,13 +1147,12 @@ impl Compaction {
                     let dimension = btree_records
                         .values()
                         .next()
-                        .map(|r| r.vector.len() as u32)
-                        .unwrap_or(128);
+                        .map_or(128, |r| r.vector.len() as u32);
 
                     // Ensure parent directory exists
                     if let Some(parent) = task.output_file.parent() {
                         std::fs::create_dir_all(parent)
-                            .map_err(|e| crate::core::StorageError::DiskIO(e))?;
+                            .map_err(crate::core::StorageError::DiskIO)?;
                     }
 
                     let config = ArrowBlockConfig::new(dimension);
@@ -1210,10 +1205,7 @@ impl Compaction {
 
             let output_path = task.output_file.to_string_lossy();
             let metadata = fs.metadata(&output_path).await.map_err(|e| {
-                crate::core::StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
+                crate::core::StorageError::DiskIO(std::io::Error::other(e.to_string()))
             })?;
             metadata.size
         };
@@ -1644,7 +1636,7 @@ impl Compaction {
 
         let codec = FilenameCodec::new();
         // Check block_format from config and use appropriate extension
-        let block_format = BlockFormat::from_str(&self.config.block_format);
+        let block_format = BlockFormat::parse_block_format(&self.config.block_format);
         let extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",
@@ -1743,7 +1735,7 @@ impl Drop for Compaction {
 }
 
 // Test module for vector tracking during compaction
-// TODO: Missing test file - compaction_vector_tracking_tests.rs
+// Deferred: Missing test file - compaction_vector_tracking_tests.rs
 // #[cfg(test)]
 // #[path = "compaction_vector_tracking_tests.rs"]
 // mod vector_tracking_tests;

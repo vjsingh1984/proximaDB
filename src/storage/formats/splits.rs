@@ -303,24 +303,20 @@ impl FileSplit {
     ) -> bool {
         if let Some(bounds) = self.statistics.column_stats.get(column) {
             // If split's max < predicate's min, split can be pruned
-            if let (Some(split_max), Some(_pred_min)) = (&bounds.max, min.as_f64()) {
-                if let Some(split_max_val) = split_max.as_f64() {
-                    if let Some(pred_min_val) = min.as_f64() {
-                        if split_max_val < pred_min_val {
-                            return true;
-                        }
-                    }
-                }
+            if let (Some(split_max), Some(_pred_min)) = (&bounds.max, min.as_f64())
+                && let Some(split_max_val) = split_max.as_f64()
+                && let Some(pred_min_val) = min.as_f64()
+                && split_max_val < pred_min_val
+            {
+                return true;
             }
             // If split's min > predicate's max, split can be pruned
-            if let (Some(split_min), Some(_pred_max)) = (&bounds.min, max.as_f64()) {
-                if let Some(split_min_val) = split_min.as_f64() {
-                    if let Some(pred_max_val) = max.as_f64() {
-                        if split_min_val > pred_max_val {
-                            return true;
-                        }
-                    }
-                }
+            if let (Some(split_min), Some(_pred_max)) = (&bounds.min, max.as_f64())
+                && let Some(split_min_val) = split_min.as_f64()
+                && let Some(pred_max_val) = max.as_f64()
+                && split_min_val > pred_max_val
+            {
+                return true;
             }
         }
         false // Cannot prune - must read this split
@@ -384,22 +380,19 @@ impl FileSplit {
     /// Get the maximum radius from centroid for this split.
     fn get_max_radius(&self) -> Option<f32> {
         // Try to get from spatial bounds
-        if let Some(ref spatial) = self.statistics.spatial_bounds {
-            match spatial {
-                SpatialBounds::BoundingBox {
-                    min_corner,
-                    max_corner,
-                } => {
-                    // Calculate diagonal as conservative radius estimate
-                    let diagonal_sq: f32 = min_corner
-                        .iter()
-                        .zip(max_corner.iter())
-                        .map(|(a, b)| (b - a).powi(2))
-                        .sum();
-                    return Some(diagonal_sq.sqrt() / 2.0);
-                }
-                _ => {}
-            }
+        if let Some(ref spatial) = self.statistics.spatial_bounds
+            && let SpatialBounds::BoundingBox {
+                min_corner,
+                max_corner,
+            } = spatial
+        {
+            // Calculate diagonal as conservative radius estimate
+            let diagonal_sq: f32 = min_corner
+                .iter()
+                .zip(max_corner.iter())
+                .map(|(a, b)| (b - a).powi(2))
+                .sum();
+            return Some(diagonal_sq.sqrt() / 2.0);
         }
         None
     }
@@ -471,10 +464,8 @@ impl ScalarValue {
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     Some(ScalarValue::Int64(i))
-                } else if let Some(f) = n.as_f64() {
-                    Some(ScalarValue::Float64(f))
                 } else {
-                    None
+                    n.as_f64().map(ScalarValue::Float64)
                 }
             }
             serde_json::Value::String(s) => Some(ScalarValue::String(s.clone())),
@@ -507,48 +498,47 @@ impl ColumnBounds {
         match predicate {
             ScalarPredicate::Equal(value) => {
                 // If value < min or value > max, prune
-                if let (Some(min), Some(max)) = (&self.min, &self.max) {
-                    if let (Some(min_val), Some(max_val)) =
+                if let (Some(min), Some(max)) = (&self.min, &self.max)
+                    && let (Some(min_val), Some(max_val)) =
                         (ScalarValue::from_json(min), ScalarValue::from_json(max))
-                    {
-                        return value < &min_val || value > &max_val;
-                    }
+                {
+                    return value < &min_val || value > &max_val;
                 }
                 false
             }
             ScalarPredicate::LessThan(value) => {
                 // If min >= value, prune
-                if let Some(min) = &self.min {
-                    if let Some(min_val) = ScalarValue::from_json(min) {
-                        return &min_val >= value;
-                    }
+                if let Some(min) = &self.min
+                    && let Some(min_val) = ScalarValue::from_json(min)
+                {
+                    return &min_val >= value;
                 }
                 false
             }
             ScalarPredicate::LessThanOrEqual(value) => {
                 // If min > value, prune
-                if let Some(min) = &self.min {
-                    if let Some(min_val) = ScalarValue::from_json(min) {
-                        return &min_val > value;
-                    }
+                if let Some(min) = &self.min
+                    && let Some(min_val) = ScalarValue::from_json(min)
+                {
+                    return &min_val > value;
                 }
                 false
             }
             ScalarPredicate::GreaterThan(value) => {
                 // If max <= value, prune
-                if let Some(max) = &self.max {
-                    if let Some(max_val) = ScalarValue::from_json(max) {
-                        return &max_val <= value;
-                    }
+                if let Some(max) = &self.max
+                    && let Some(max_val) = ScalarValue::from_json(max)
+                {
+                    return &max_val <= value;
                 }
                 false
             }
             ScalarPredicate::GreaterThanOrEqual(value) => {
                 // If max < value, prune
-                if let Some(max) = &self.max {
-                    if let Some(max_val) = ScalarValue::from_json(max) {
-                        return &max_val < value;
-                    }
+                if let Some(max) = &self.max
+                    && let Some(max_val) = ScalarValue::from_json(max)
+                {
+                    return &max_val < value;
                 }
                 false
             }
@@ -562,23 +552,21 @@ impl ColumnBounds {
             }
             ScalarPredicate::Between(low, high) => {
                 // If max < low or min > high, prune
-                if let (Some(min), Some(max)) = (&self.min, &self.max) {
-                    if let (Some(min_val), Some(max_val)) =
+                if let (Some(min), Some(max)) = (&self.min, &self.max)
+                    && let (Some(min_val), Some(max_val)) =
                         (ScalarValue::from_json(min), ScalarValue::from_json(max))
-                    {
-                        return &max_val < low || &min_val > high;
-                    }
+                {
+                    return &max_val < low || &min_val > high;
                 }
                 false
             }
             ScalarPredicate::In(values) => {
                 // If all values are outside [min, max], prune
-                if let (Some(min), Some(max)) = (&self.min, &self.max) {
-                    if let (Some(min_val), Some(max_val)) =
+                if let (Some(min), Some(max)) = (&self.min, &self.max)
+                    && let (Some(min_val), Some(max_val)) =
                         (ScalarValue::from_json(min), ScalarValue::from_json(max))
-                    {
-                        return values.iter().all(|v| v < &min_val || v > &max_val);
-                    }
+                {
+                    return values.iter().all(|v| v < &min_val || v > &max_val);
                 }
                 false
             }
@@ -663,7 +651,7 @@ impl SplitPlanner {
 
         // Sort splits by cost (descending) for better load balancing
         let mut sorted_splits = splits;
-        sorted_splits.sort_by(|a, b| b.estimated_cost().cmp(&a.estimated_cost()));
+        sorted_splits.sort_by_key(|s| std::cmp::Reverse(s.estimated_cost()));
 
         // Greedy assignment to partition with lowest cost
         for split in sorted_splits {
@@ -672,8 +660,7 @@ impl SplitPlanner {
                 .iter()
                 .enumerate()
                 .min_by_key(|(_, c)| *c)
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
 
             partitions[min_idx].push(split);
             partition_costs[min_idx] += cost;

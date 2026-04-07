@@ -40,6 +40,7 @@ pub struct ExactSearchStrategy {
 }
 
 impl ExactSearchStrategy {
+    /// Create a new exact search strategy with default settings
     pub fn new() -> Self {
         Self {
             enable_simd: true,

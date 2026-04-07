@@ -1,8 +1,36 @@
-//! # RAPTOR Engine - EXPERIMENTAL
+//! # RAPTOR Engine - ⚠️ DEPRECATED - EXPERIMENTAL
 //!
-//! **WARNING**: This engine is experimental and NOT production-ready.
-//! It has 35+ TODO items and incomplete implementations.
-//! Use SST, VIPER, or HELIX for production workloads.
+//! **WARNING**: This engine is DEPRECATED and EXPERIMENTAL.
+//!
+//! ## Deprecation Notice (2026-04-03)
+//!
+//! RAPTOR is deprecated and will be removed in v1.0 unless contributors complete the
+//! remaining implementation. See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md` for details.
+//!
+//! ## Current Status
+//!
+//! - **Status**: EXPERIMENTAL - Not Production Ready
+//! - **Feature Flag**: `experimental-engines` required
+//! - **Tests**: 23 tests (insufficient coverage)
+//! - **DEFERRED Items**: 35+ optimization tasks remaining
+//! - **Recommendation**: Use SST, VIPER, HELIX, or NOVA instead
+//!
+//! ## Migration Guide
+//!
+//! For adaptive workload optimization, use production engines with appropriate configuration:
+//! - **VIPER**: For vector storage with Proxima encoding and compression
+//! - **HELIX**: For high-dimensional data with PCA dimension reduction
+//! - **SST**: For static workloads with efficient range queries
+//!
+//! Example:
+//! ```rust,ignore
+//! // Instead of RAPTOR adaptive mode:
+//! // raptor_engine.enable_adaptive_mode(true).await?;
+//!
+//! // Use VIPER with optimized configuration:
+//! let viper_config = ViperConfig::optimized_for_workload(&workload_profile);
+//! let viper_engine = ViperEngine::new(viper_config).await?;
+//! ```
 //!
 //! ## RAPTOR Storage Engine - Row-Aligned Predicated Tensor Optimized Repository
 //!
@@ -144,6 +172,7 @@ pub use common::{
 pub use config::{AccuracyLevel, CompactionConfig, CompressionStrategy, PxKStrategy, RaptorConfig};
 pub use consolidated_compactor::RaptorCompactor;
 pub use consolidated_reader::{IntraRowgroupMatrix, RaptorReader}; // Use consolidated reader
+#[allow(deprecated)]
 pub use engine::RaptorEngine;
 pub use writer::RaptorWriter; // Use consolidated compactor
 // IvfManager removed - Matrix Trinity handles clustering via centroids

@@ -79,24 +79,28 @@ pub enum DomainStatus {
 }
 
 /// Mapping types between collections and domains
+///
+/// Defines how collection data is mapped to domains for business context.
 #[derive(Debug, Clone)]
 pub enum MappingType {
-    /// Direct 1:1 mapping
+    /// Direct 1:1 mapping between collection and domain
     Direct,
-    /// Shared collection across domains
+    /// Shared collection accessible by multiple domains
     Shared,
-    /// Collection subset mapped to domain
-    Subset(Vec<String>), // Entity IDs
+    /// Collection subset mapped to domain (vector of entity IDs)
+    Subset(Vec<String>),
 }
 
 /// Synchronization policy
+///
+/// Defines how changes are synchronized between collections and domains.
 #[derive(Debug, Clone)]
 pub enum SyncPolicy {
-    /// Real-time sync
+    /// Real-time synchronization
     Realtime,
-    /// Batch sync with interval
+    /// Batch synchronization with specified interval in seconds
     Batch { interval_seconds: u32 },
-    /// Manual sync only
+    /// Manual synchronization only
     Manual,
 }
 
@@ -130,14 +134,14 @@ impl DomainManager {
         let domain_id = format!("{}::{}", tenant_id, domain_name);
 
         // Check if domain already exists
-        if let Some(tenant_domains) = self.tenant_domains.get(tenant_id) {
-            if tenant_domains.contains_key(domain_name) {
-                return Err(anyhow!(
-                    "Domain {} already exists in tenant {}",
-                    domain_name,
-                    tenant_id
-                ));
-            }
+        if let Some(tenant_domains) = self.tenant_domains.get(tenant_id)
+            && tenant_domains.contains_key(domain_name)
+        {
+            return Err(anyhow!(
+                "Domain {} already exists in tenant {}",
+                domain_name,
+                tenant_id
+            ));
         }
 
         // Create domain context
@@ -254,6 +258,12 @@ impl DomainManager {
     }
 }
 
+impl Default for DomainManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DomainEntityStore {
     fn new(domain_id: String, tenant_id: String, business_context: BusinessContext) -> Self {
         Self {
@@ -332,6 +342,12 @@ impl DomainAuditLogger {
 
         self.audit_events.insert(event.event_id.clone(), event);
         Ok(())
+    }
+}
+
+impl Default for DomainAuditLogger {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

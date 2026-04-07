@@ -7,17 +7,23 @@ pub mod adaptive_filter_executor;
 pub mod column_projector;
 pub mod columnar_reader;
 pub mod filter_pushdown_engine;
+pub mod pipeline;
 pub mod query_metrics;
 pub mod result_cache;
 pub mod unified_reader;
+pub mod vectorized_executor;
 
 // Re-export main types for convenience with semantic names
 pub use adaptive_filter_executor::{BranchedFilterExecutor, FilterPath};
 pub use column_projector::{ColumnProjection, ProjectionBuilder};
 pub use columnar_reader::{ParquetReader, ReaderBuilder};
 pub use filter_pushdown_engine::{FilterPushdown, PredicateBuilder};
+pub use pipeline::{
+    FilterOperator, PipelineBuilder, PipelineOperator, ScanOperator, ScoreOperator, TopKOperator,
+};
 pub use query_metrics::{QueryStatistics, StatisticsCollector};
 pub use result_cache::{CacheStrategy, QueryCache};
+pub use vectorized_executor::{DataChunk, vectorized_filter_batch};
 
 // Re-export unified reader types for compatibility
 pub use unified_reader::{

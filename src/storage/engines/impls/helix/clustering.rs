@@ -14,20 +14,27 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FileSystem;
 
 /// Hilbert key type
+///
+/// 64-bit Hilbert curve key used for spatial indexing and clustering.
+/// Vectors that are close in high-dimensional space map to close Hilbert keys.
 pub type HilbertKey = u64;
 
 /// PCA model for dimensionality reduction
+///
+/// Principal Component Analysis model that reduces high-dimensional vectors
+/// to lower-dimensional representations while preserving maximum variance.
+/// Uses real SVD-based computation for accurate dimensionality reduction.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PCAModel {
-    /// Principal components (eigenvectors)
+    /// Principal components (eigenvectors), one per component
     pub components: Vec<Vec<f32>>,
-    /// Mean vector for centering
+    /// Mean vector for centering input data
     pub mean: Vec<f32>,
-    /// Variance explained by each component
+    /// Variance explained by each component (normalized to sum to 1.0)
     pub explained_variance: Vec<f32>,
-    /// Number of components to use
+    /// Number of components in the reduced space
     pub n_components: usize,
-    /// Original dimension
+    /// Original high dimension before reduction
     pub original_dim: usize,
     /// Model version for tracking updates
     pub version: u32,
@@ -434,17 +441,20 @@ pub fn compute_hilbert_key_with_config(vector: &[f32], bits_per_dimension: usize
 }
 
 /// Liquid clustering configuration
+///
+/// Configures adaptive clustering that reorganizes data based on
+/// access patterns to improve query performance over time.
 #[derive(Debug, Clone)]
 pub struct LiquidClusteringConfig {
     /// Enable adaptive clustering
     pub enabled: bool,
-    /// Query pattern window size
+    /// Query pattern window size for tracking
     pub query_window_size: usize,
     /// Re-clustering threshold (query count)
     pub recluster_threshold: usize,
-    /// Access frequency weight
+    /// Access frequency weight in scoring (0.0-1.0)
     pub access_weight: f32,
-    /// Recency weight
+    /// Recency weight in scoring (0.0-1.0)
     pub recency_weight: f32,
 }
 
@@ -461,6 +471,9 @@ impl Default for LiquidClusteringConfig {
 }
 
 /// Query pattern tracker for liquid clustering
+///
+/// Tracks access patterns for vectors to enable adaptive re-clustering
+/// based on query frequency and recency.
 #[derive(Debug, Clone, Default)]
 pub struct QueryPatternTracker {
     /// Vector ID -> access count
@@ -469,7 +482,7 @@ pub struct QueryPatternTracker {
     pub last_access: HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// Total queries tracked
     pub total_queries: usize,
-    /// Hilbert key access histogram
+    /// Hilbert key access histogram for hot region detection
     pub hilbert_histogram: HashMap<u64, usize>,
 }
 

@@ -104,11 +104,17 @@ impl DeduplicationCache {
         }
 
         let key = self.get_key(event);
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self
+            .stats
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.checked += 1;
 
         // Check if seen
-        let id_times = self.id_times.read().unwrap();
+        let id_times = self
+            .id_times
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(time) = id_times.get(&key) {
             // Check TTL
             if time.elapsed() < self.ttl {
@@ -134,8 +140,14 @@ impl DeduplicationCache {
         self.evict_if_needed();
 
         // Add to seen
-        let mut seen_ids = self.seen_ids.write().unwrap();
-        let mut id_times = self.id_times.write().unwrap();
+        let mut seen_ids = self
+            .seen_ids
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut id_times = self
+            .id_times
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if !id_times.contains_key(&key) {
             seen_ids.push_back(key.clone());
@@ -175,9 +187,18 @@ impl DeduplicationCache {
 
     /// Evict old entries if cache is full
     fn evict_if_needed(&self) {
-        let mut seen_ids = self.seen_ids.write().unwrap();
-        let mut id_times = self.id_times.write().unwrap();
-        let mut stats = self.stats.write().unwrap();
+        let mut seen_ids = self
+            .seen_ids
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut id_times = self
+            .id_times
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut stats = self
+            .stats
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
 
         // First, remove expired entries
@@ -204,23 +225,38 @@ impl DeduplicationCache {
 
     /// Clear the cache
     pub fn clear(&self) {
-        self.seen_ids.write().unwrap().clear();
-        self.id_times.write().unwrap().clear();
+        self.seen_ids
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+        self.id_times
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
     }
 
     /// Get cache size
     pub fn size(&self) -> usize {
-        self.seen_ids.read().unwrap().len()
+        self.seen_ids
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
     }
 
     /// Get statistics
     pub fn stats(&self) -> DeduplicationStats {
-        self.stats.read().unwrap().clone()
+        self.stats
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     /// Get the duplicate rate
     pub fn duplicate_rate(&self) -> f64 {
-        let stats = self.stats.read().unwrap();
+        let stats = self
+            .stats
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if stats.checked == 0 {
             0.0
         } else {

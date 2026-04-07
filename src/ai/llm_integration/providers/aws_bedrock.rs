@@ -49,6 +49,7 @@ struct BedrockResponse {
 }
 
 impl AWSBedrockClient {
+    /// Create a new AWS Bedrock client with the given configuration.
     pub async fn new(config: AWSBedrockConfig) -> Result<Self, LLMError> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120)) // Bedrock can be slower

@@ -213,22 +213,34 @@ impl Default for AxisTieringConfig {
 /// Statistics for AXIS tiering operations
 #[derive(Debug, Clone, Default)]
 pub struct TieringStats {
+    /// Number of indexes promoted to a higher (faster) tier.
     pub promotions: u64,
+    /// Number of indexes demoted to a lower (cheaper) tier.
     pub demotions: u64,
+    /// Number of prefetch predictions that were accessed.
     pub prefetch_hits: u64,
+    /// Number of prefetch predictions that were not accessed.
     pub prefetch_misses: u64,
+    /// Total bytes moved to higher tiers.
     pub bytes_promoted: u64,
+    /// Total bytes moved to lower tiers.
     pub bytes_demoted: u64,
+    /// Timestamp of the last tiering evaluation cycle.
     pub last_evaluation: Option<Instant>,
+    /// Statistics from integration with existing infrastructure.
     pub integration_stats: IntegrationStats,
 }
 
 /// Statistics for integration with existing infrastructure
 #[derive(Debug, Clone, Default)]
 pub struct IntegrationStats {
+    /// Number of queries to the access pattern tracker.
     pub pattern_tracker_queries: u64,
+    /// Number of calls to the global tier manager.
     pub global_tier_manager_calls: u64,
+    /// Number of adaptive store read/write operations.
     pub adaptive_store_operations: u64,
+    /// Number of format conversions performed during tier transitions.
     pub format_conversions: u64,
 }
 
@@ -391,14 +403,13 @@ impl AxisTieringManager {
 
         for (collection_id, _frequency) in collection_frequencies {
             // Check if memory-pinned
-            if let Some(constraints) = &self.config.collection_constraints {
-                if constraints
+            if let Some(constraints) = &self.config.collection_constraints
+                && constraints
                     .memory_pinned_collections
                     .contains(&collection_id)
-                {
-                    debug!("Skipping memory-pinned collection {}", collection_id);
-                    continue;
-                }
+            {
+                debug!("Skipping memory-pinned collection {}", collection_id);
+                continue;
             }
 
             // Demote to NVMe
@@ -596,46 +607,44 @@ impl AxisTieringManager {
             if constraints
                 .memory_pinned_collections
                 .contains(&collection_id.to_string())
+                && !matches!(global_recommendation, InfrastructureTier::Memory)
             {
-                if !matches!(global_recommendation, InfrastructureTier::Memory) {
-                    debug!(
-                        "Collection {} is memory-pinned, keeping in mem",
-                        collection_id
-                    );
-                    return Ok(Some(InfrastructureTier::Memory));
-                }
+                debug!(
+                    "Collection {} is memory-pinned, keeping in mem",
+                    collection_id
+                );
+                return Ok(Some(InfrastructureTier::Memory));
             }
 
             // No-cloud collections
             if constraints
                 .no_cloud_collections
                 .contains(&collection_id.to_string())
-            {
-                if matches!(
+                && matches!(
                     global_recommendation,
                     InfrastructureTier::CloudStandard { .. }
                         | InfrastructureTier::CloudInfrequentAccess { .. }
                         | InfrastructureTier::CloudArchive { .. }
-                ) {
-                    debug!(
-                        "Collection {} cannot go to cloud, using HDD instead",
-                        collection_id
-                    );
-                    return Ok(Some(InfrastructureTier::HardDisk {
-                        mount_path: "/data".to_string(),
-                    }));
-                }
+                )
+            {
+                debug!(
+                    "Collection {} cannot go to cloud, using HDD instead",
+                    collection_id
+                );
+                return Ok(Some(InfrastructureTier::HardDisk {
+                    mount_path: "/data".to_string(),
+                }));
             }
 
             // Maximum tier per collection
-            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id) {
-                if self.tier_order(global_recommendation) > self.tier_order(max_tier) {
-                    debug!(
-                        "Collection {} limited to tier {:?}",
-                        collection_id, max_tier
-                    );
-                    return Ok(Some(max_tier.clone()));
-                }
+            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id)
+                && self.tier_order(global_recommendation) > self.tier_order(max_tier)
+            {
+                debug!(
+                    "Collection {} limited to tier {:?}",
+                    collection_id, max_tier
+                );
+                return Ok(Some(max_tier.clone()));
             }
         }
 
@@ -895,10 +904,10 @@ impl AxisTieringManager {
     ) -> anyhow::Result<bool> {
         if let Some(constraints) = &self.config.collection_constraints {
             // Check max tier constraint
-            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id) {
-                if self.tier_order(target_tier) < self.tier_order(max_tier) {
-                    return Ok(false); // Would exceed max tier
-                }
+            if let Some(max_tier) = constraints.max_tier_per_collection.get(collection_id)
+                && self.tier_order(target_tier) < self.tier_order(max_tier)
+            {
+                return Ok(false); // Would exceed max tier
             }
         }
         Ok(true)
@@ -915,26 +924,24 @@ impl AxisTieringManager {
             if constraints
                 .memory_pinned_collections
                 .contains(&collection_id.to_string())
+                && !matches!(target_tier, InfrastructureTier::Memory)
             {
-                if !matches!(target_tier, InfrastructureTier::Memory) {
-                    return Ok(false);
-                }
+                return Ok(false);
             }
 
             // No-cloud collections cannot be demoted to cloud
             if constraints
                 .no_cloud_collections
                 .contains(&collection_id.to_string())
-            {
-                if matches!(
+                && matches!(
                     target_tier,
                     InfrastructureTier::CloudStandard { .. }
                         | InfrastructureTier::CloudInfrequentAccess { .. }
                         | InfrastructureTier::CloudArchive { .. }
                         | InfrastructureTier::CloudDeepArchive { .. }
-                ) {
-                    return Ok(false);
-                }
+                )
+            {
+                return Ok(false);
             }
         }
         Ok(true)

@@ -84,7 +84,9 @@ pub async fn init(config: &WALConfig) -> Result<Arc<GlobalManifestService>> {
         // Double-check in case another thread initialized while we were creating
         if guard.is_some() {
             warn!("Manifest initialized by another thread");
-            return Ok(guard.as_ref().unwrap().clone());
+            if let Some(existing) = guard.as_ref() {
+                return Ok(existing.clone());
+            }
         }
 
         *guard = Some(service.clone());

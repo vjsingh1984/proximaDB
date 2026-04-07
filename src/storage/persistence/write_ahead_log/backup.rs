@@ -321,7 +321,7 @@ impl BackupCoordinator {
 
         // Get parent backup for incremental/differential
         let parent_backup = self.get_parent_backup(&actual_backup_type).await?;
-        let start_lsn = parent_backup.as_ref().map(|p| p.end_lsn + 1).unwrap_or(0);
+        let start_lsn = parent_backup.as_ref().map_or(0, |p| p.end_lsn + 1);
         let current_lsn = self.manifest_service.current_lsn().await;
 
         // Initialize backup metadata
@@ -337,10 +337,7 @@ impl BackupCoordinator {
             wal_entries_count: 0,
             collections_count: 0,
             parent_backup_id: parent_backup.as_ref().map(|p| p.backup_id.clone()),
-            chain_depth: parent_backup
-                .as_ref()
-                .map(|p| p.chain_depth + 1)
-                .unwrap_or(0),
+            chain_depth: parent_backup.as_ref().map_or(0, |p| p.chain_depth + 1),
             collections: HashMap::new(),
             errors: Vec::new(),
             warnings: Vec::new(),
@@ -644,16 +641,15 @@ impl BackupCoordinator {
                 .await
                 .get(&BackupType::Incremental)
                 .cloned();
-            if let Some(ref last_id) = last_incr {
-                if let Ok(last_backup) = self.get_backup_metadata(last_id).await {
-                    if last_backup.chain_depth >= self.config.max_incremental_chain_length {
-                        info!(
-                            "📋 Incremental chain length ({}) exceeded max ({}), creating full backup",
-                            last_backup.chain_depth, self.config.max_incremental_chain_length
-                        );
-                        return Ok(BackupType::Full);
-                    }
-                }
+            if let Some(ref last_id) = last_incr
+                && let Ok(last_backup) = self.get_backup_metadata(last_id).await
+                && last_backup.chain_depth >= self.config.max_incremental_chain_length
+            {
+                info!(
+                    "📋 Incremental chain length ({}) exceeded max ({}), creating full backup",
+                    last_backup.chain_depth, self.config.max_incremental_chain_length
+                );
+                return Ok(BackupType::Full);
             }
         }
 
@@ -766,7 +762,9 @@ impl BackupCoordinator {
                 break;
             }
 
-            let parent_id = current.parent_backup_id.as_ref().unwrap();
+            let Some(parent_id) = current.parent_backup_id.as_ref() else {
+                break;
+            };
             current = self.get_backup_metadata(parent_id).await?;
         }
 
@@ -824,10 +822,9 @@ impl BackupCoordinator {
                                     // Track as last backup of its type
                                     let existing = last_backup.get(&metadata.backup_type);
                                     if existing.is_none() || {
-                                        let existing_meta = backups.get(existing.unwrap());
+                                        let existing_meta = existing.and_then(|id| backups.get(id));
                                         existing_meta
-                                            .map(|m| metadata.started_at > m.started_at)
-                                            .unwrap_or(true)
+                                            .is_none_or(|m| metadata.started_at > m.started_at)
                                     } {
                                         last_backup.insert(
                                             metadata.backup_type,

@@ -288,20 +288,15 @@ impl GraphTraversalContext {
 }
 
 /// Traversal direction for graph queries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TraversalDirection {
     /// Follow outgoing edges only
+    #[default]
     Outbound,
     /// Follow incoming edges only
     Inbound,
     /// Follow edges in both directions
     Both,
-}
-
-impl Default for TraversalDirection {
-    fn default() -> Self {
-        Self::Outbound
-    }
 }
 
 impl std::fmt::Display for TraversalDirection {

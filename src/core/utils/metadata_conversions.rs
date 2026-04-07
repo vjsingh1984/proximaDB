@@ -207,14 +207,14 @@ pub fn validate_metadata_types(
     schema: &HashMap<String, MetadataValueType>,
 ) -> Result<()> {
     for item in metadata {
-        if let Some(expected_type) = schema.get(&item.key) {
-            if !matches_type(&item.value, expected_type) {
-                return Err(anyhow!(
-                    "Type mismatch for field '{}': expected {:?}",
-                    item.key,
-                    expected_type
-                ));
-            }
+        if let Some(expected_type) = schema.get(&item.key)
+            && !matches_type(&item.value, expected_type)
+        {
+            return Err(anyhow!(
+                "Type mismatch for field '{}': expected {:?}",
+                item.key,
+                expected_type
+            ));
         }
     }
     Ok(())
@@ -226,20 +226,30 @@ pub fn validate_metadata_types(
 /// Used for schema validation and type checking.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MetadataValueType {
+    /// UTF-8 string value
     String,
+    /// Numeric value (integer or float)
     Number,
+    /// Boolean value
     Boolean,
     // Complex types (arrays, objects) are stored as JSON strings for now
 }
 
 /// Helper function to check if a metadata value matches an expected type
 fn matches_type(value: &Option<metadata_item::Value>, expected: &MetadataValueType) -> bool {
-    match (value, expected) {
-        (Some(metadata_item::Value::StringValue(_)), MetadataValueType::String) => true,
-        (Some(metadata_item::Value::NumberValue(_)), MetadataValueType::Number) => true,
-        (Some(metadata_item::Value::BoolValue(_)), MetadataValueType::Boolean) => true,
-        _ => false,
-    }
+    matches!(
+        (value, expected),
+        (
+            Some(metadata_item::Value::StringValue(_)),
+            MetadataValueType::String
+        ) | (
+            Some(metadata_item::Value::NumberValue(_)),
+            MetadataValueType::Number
+        ) | (
+            Some(metadata_item::Value::BoolValue(_)),
+            MetadataValueType::Boolean
+        )
+    )
 }
 
 #[cfg(test)]

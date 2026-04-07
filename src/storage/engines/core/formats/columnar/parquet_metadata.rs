@@ -265,8 +265,8 @@ impl ParquetMetadataSerializer {
             parquet_version: 2, // Parquet version 2.x
             created_timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0),
             compression_type: 1, // SNAPPY as default
             reserved: [0; 7],
         };
@@ -286,7 +286,7 @@ impl ParquetMetadataSerializer {
         &self,
         _footer_data: &[u8],
     ) -> Result<(Vec<RowGroupInfo>, Vec<u8>), ProximaDBError> {
-        // TODO: Implement actual Parquet footer parsing
+        // Deferred: Implement actual Parquet footer parsing
         // This requires reading the actual Parquet file metadata structure
         // Should use the parquet crate's FileMetaData parsing
 
@@ -805,7 +805,9 @@ impl MetadataSerializer for ParquetMetadataSerializer {
     }
 
     fn can_skip_file(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> bool {
-        let parquet_metadata = metadata.as_any().downcast_ref::<ParquetMetadata>().unwrap();
+        let Some(parquet_metadata) = metadata.as_any().downcast_ref::<ParquetMetadata>() else {
+            return false;
+        };
 
         // Check if we can skip entire file based on row group statistics
         if !query_context.id_lookups.is_empty() {
@@ -833,12 +835,11 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         }
 
         // Check metadata filters
-        if let Some(ttl_threshold) = query_context.metadata_filters.get("ttl_threshold") {
-            if let Ok(threshold) = ttl_threshold.parse::<u64>() {
-                if parquet_metadata.footer.created_timestamp < threshold {
-                    return true; // Entire file is expired
-                }
-            }
+        if let Some(ttl_threshold) = query_context.metadata_filters.get("ttl_threshold")
+            && let Ok(threshold) = ttl_threshold.parse::<u64>()
+            && parquet_metadata.footer.created_timestamp < threshold
+        {
+            return true; // Entire file is expired
         }
 
         // Check vector similarity threshold with estimated selectivity
@@ -857,7 +858,7 @@ impl MetadataSerializer for ParquetMetadataSerializer {
         metadata: &dyn EngineMetadata,
         query_context: &QueryContext,
     ) -> Option<Vec<DataRange>> {
-        let parquet_metadata = metadata.as_any().downcast_ref::<ParquetMetadata>().unwrap();
+        let parquet_metadata = metadata.as_any().downcast_ref::<ParquetMetadata>()?;
 
         // For vector similarity search, typically need entire file
         if query_context.query_vector.is_some() && query_context.id_lookups.is_empty() {

@@ -55,6 +55,7 @@ fn create_test_collection_config(
 }
 
 /// Create test vector records for testing
+#[allow(dead_code)]
 fn create_test_vector_records(_collection_id: &str, count: usize) -> Vec<VectorRecord> {
     (0..count)
         .map(|i| {

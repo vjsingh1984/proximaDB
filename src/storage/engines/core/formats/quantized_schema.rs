@@ -523,7 +523,7 @@ impl QuantizedVectorSchemaBuilder {
         match level {
             QuantizationLevel::Binary => DataCharacteristics {
                 expected_compression_ratio: 32.0, // 32x compression vs FP32
-                expected_memory_per_vector: (self.dimension + 7) / 8, // Bit-packed
+                expected_memory_per_vector: self.dimension.div_ceil(8), // Bit-packed
                 expected_search_speedup: 15.0,
                 sparsity_info: Some(SparsityInfo {
                     zero_percentage: 50.0,      // Binary typically has high sparsity
@@ -727,15 +727,14 @@ impl QuantizedVectorSchema {
             if let PhysicalFieldSpec::ProductQuantization {
                 num_subquantizers, ..
             } = &def.physical_spec
+                && !self.dimension.is_multiple_of(*num_subquantizers)
             {
-                if self.dimension % num_subquantizers != 0 {
-                    tracing::warn!(
-                        "Dimension {} not evenly divisible by subquantizers {} for {:?}",
-                        self.dimension,
-                        num_subquantizers,
-                        def.level
-                    );
-                }
+                tracing::warn!(
+                    "Dimension {} not evenly divisible by subquantizers {} for {:?}",
+                    self.dimension,
+                    num_subquantizers,
+                    def.level
+                );
             }
         }
 

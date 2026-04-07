@@ -775,14 +775,15 @@ impl ExplainIntegration {
         }
 
         // Check action history
-        if let Some(history) = &context.action_history {
-            if history.execution_count > 10 && history.average_recall > 0.95 {
-                reasons.push(format!(
-                    "Action achieved {:.1}% recall over {} executions",
-                    history.average_recall * 100.0,
-                    history.execution_count
-                ));
-            }
+        if let Some(history) = &context.action_history
+            && history.execution_count > 10
+            && history.average_recall > 0.95
+        {
+            reasons.push(format!(
+                "Action achieved {:.1}% recall over {} executions",
+                history.average_recall * 100.0,
+                history.execution_count
+            ));
         }
 
         if reasons.is_empty() {

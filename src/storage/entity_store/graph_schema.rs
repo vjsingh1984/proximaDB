@@ -178,12 +178,12 @@ impl EntityNodeMapper {
         }
 
         // Add additional embeddings if stored in properties
-        if let Some(embeddings_prop) = node.properties.get(EMBEDDINGS_KEY) {
-            if let Some(property_value::Value::StringValue(json)) = &embeddings_prop.value {
-                let additional: Vec<EmbeddingVersion> = serde_json::from_str(json)
-                    .context("Failed to deserialize additional embeddings")?;
-                embeddings.extend(additional);
-            }
+        if let Some(embeddings_prop) = node.properties.get(EMBEDDINGS_KEY)
+            && let Some(property_value::Value::StringValue(json)) = &embeddings_prop.value
+        {
+            let additional: Vec<EmbeddingVersion> = serde_json::from_str(json)
+                .context("Failed to deserialize additional embeddings")?;
+            embeddings.extend(additional);
         }
 
         // Extract typed metadata

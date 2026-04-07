@@ -103,7 +103,7 @@ impl HelixSIMDWriter {
             let binary_vectors: Vec<Vec<u8>> = vectors
                 .iter()
                 .map(|v| {
-                    let mut binary = vec![0u8; (dimension + 7) / 8];
+                    let mut binary = vec![0u8; dimension.div_ceil(8)];
                     for (i, &val) in v.iter().enumerate() {
                         if val > 0.0 {
                             binary[i / 8] |= 1 << (i % 8);
@@ -162,9 +162,12 @@ impl HelixSIMDWriter {
         // Calculate spatial statistics for clustering
         let hilbert_range = if let Some(keys) = hilbert_keys {
             if !keys.is_empty() {
-                let min_key = *keys.iter().min().unwrap();
-                let max_key = *keys.iter().max().unwrap();
-                Some((min_key, max_key))
+                let min_key = keys.iter().copied().min();
+                let max_key = keys.iter().copied().max();
+                match (min_key, max_key) {
+                    (Some(min_key), Some(max_key)) => Some((min_key, max_key)),
+                    _ => None,
+                }
             } else {
                 None
             }
@@ -194,8 +197,7 @@ impl HelixSIMDWriter {
 
         // Get compression ratio from the block's encoded data
         let compression_ratio = if let Some(ref encoded) = block.encoded_vectors {
-            let original_size =
-                records.len() * records.first().map(|r| r.vector.len()).unwrap_or(0) * 4;
+            let original_size = records.len() * records.first().map_or(0, |r| r.vector.len()) * 4;
             let encoded_size: usize = encoded.iter().map(|d| d.len()).sum();
             if original_size > 0 {
                 (encoded_size * 100) / original_size
@@ -484,11 +486,7 @@ pub async fn write_helix_sstable(
         block_offsets.push(file_data.len() as u64);
 
         // Extract Hilbert keys for this block
-        let block_hilbert_keys = if let Some(keys) = hilbert_keys {
-            Some(&keys[block_start..block_end])
-        } else {
-            None
-        };
+        let block_hilbert_keys = hilbert_keys.map(|keys| &keys[block_start..block_end]);
 
         // Create SIMD-optimized block
         let block_start_time = std::time::Instant::now();
@@ -921,10 +919,10 @@ pub async fn search_helix_sstable(
         let block_data = &chunk_data[4..4 + exact_size as usize];
 
         // Deserialize block with collection config for type-safe metadata
-        let block = ProximaDataBlock::deserialize(&block_data, collection)?;
+        let block = ProximaDataBlock::deserialize(block_data, collection)?;
 
         // Search within block
-        for record in block.records.iter() {
+        for record in &block.records {
             // Apply type-safe filter if present
             if let Some(filter_expr) = filter_expression {
                 let matches = crate::core::search::sql_value_filter::evaluate_filter(
@@ -945,7 +943,7 @@ pub async fn search_helix_sstable(
     }
 
     // Sort by distance and return top-k
-    results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     results.truncate(k);
 
     Ok(results)
@@ -1016,8 +1014,9 @@ fn select_blocks_by_centroid(
             .map(|(idx, meta)| {
                 let hilbert_code = meta
                     .hilbert_range
-                    .map(|(min, max)| SpatialCode::Code64((min + max) / 2))
-                    .unwrap_or(SpatialCode::Code64(0));
+                    .map_or(SpatialCode::Code64(0), |(min, max)| {
+                        SpatialCode::Code64((min + max) / 2)
+                    });
                 BlockPruningInfo::with_centroid(idx, hilbert_code, meta.block_centroid.clone())
             })
             .collect();
@@ -1170,11 +1169,11 @@ pub fn extract_helix_metadata(
             // Create base Proxima metadata
             let base_metadata = ProximaBlockMetadata {
                 record_count: chunk.len() as u32,
-                size_bytes: (chunk.len() * std::mem::size_of::<VectorRecord>()) as u64,
+                size_bytes: std::mem::size_of_val(chunk) as u64,
                 compressed_size: 0, // Will be set during compression
                 timestamp: chunk
                     .iter()
-                    .map(|r| r.timestamp.unwrap_or(0) as i64)
+                    .map(|r| r.timestamp.unwrap_or(0))
                     .max()
                     .unwrap_or(0),
                 compaction_level: 0,

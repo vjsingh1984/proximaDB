@@ -19,6 +19,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import math
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
@@ -770,7 +771,7 @@ class IndexConfiguration(BaseModel):
     """Index configuration"""
 
     index_name: str
-    algorithm: IndexingAlgorithm
+    algorithm: Union[IndexingAlgorithm, IndexType]
     update_mode: IndexUpdateMode = IndexUpdateMode.SYNCHRONOUS
     async_update_timeout_ms: Optional[int] = None
     async_update_batch_size: Optional[int] = None
@@ -1088,7 +1089,17 @@ class VectorRecord(BaseModel):
             raise ValueError("Vector cannot be empty")
         if not all(isinstance(x, (int, float)) for x in v):
             raise ValueError("Vector must contain only numeric values")
+        if not all(math.isfinite(float(x)) for x in v):
+            raise ValueError("Vector must contain only finite numeric values")
         return v
+
+    def __getitem__(self, key: str) -> Any:
+        """Support legacy dict-style access for SDK callers/tests."""
+        return self.model_dump()[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Support legacy dict.get(...) access for SDK callers/tests."""
+        return self.model_dump().get(key, default)
 
     # Backward compatibility properties
     @property
@@ -1362,7 +1373,7 @@ class BatchResult(BaseModel):
 class VectorOperationResponse(BaseModel):
     """Vector operation response"""
 
-    success: bool
+    success: Union[bool, int]
     operation: str
     metrics: OperationMetrics
     results: Optional[List[SearchResult]] = None

@@ -56,22 +56,35 @@ impl Default for MetadataCheckpointConfig {
 /// Checkpoint statistics
 #[derive(Debug, Default, Clone)]
 pub struct CheckpointStats {
+    /// Last checkpoint timestamp
     pub last_checkpoint_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Total number of checkpoints created
     pub total_checkpoints: u64,
+    /// Total operations compacted
     pub operations_compacted: u64,
+    /// Total snapshots created
     pub snapshots_created: u64,
+    /// Total archives created
     pub archives_created: u64,
+    /// Total bytes compacted
     pub bytes_compacted: u64,
+    /// Current incremental operation count
     pub current_incremental_count: usize,
+    /// Current incremental log size in bytes
     pub current_incremental_size: usize,
 }
 
 /// Checkpoint manager for filestore backend
 pub struct FilestoreCheckpoint {
+    /// Checkpoint configuration
     config: MetadataCheckpointConfig,
+    /// Filesystem factory for I/O operations
     filesystem: Arc<FilesystemFactory>,
+    /// Filestore storage URL
     filestore_url: String,
+    /// Metadata storage path
     metadata_path: PathBuf,
+    /// Checkpoint statistics
     stats: CheckpointStats,
 }
 
@@ -222,13 +235,11 @@ impl FilestoreCheckpoint {
                 if let Ok(data) = fs.read(&path.to_string_lossy()).await {
                     let reader = apache_avro::Reader::new(&data[..])?;
 
-                    for value in reader {
-                        if let Ok(avro_value) = value {
-                            // Parse the Avro record manually
-                            if let apache_avro::types::Value::Record(fields) = avro_value {
-                                let operation = self.parse_incremental_operation(fields)?;
-                                operations.push(operation);
-                            }
+                    for avro_value in reader.filter_map(Result::ok) {
+                        // Parse the Avro record manually
+                        if let apache_avro::types::Value::Record(fields) = avro_value {
+                            let operation = self.parse_incremental_operation(fields)?;
+                            operations.push(operation);
                         }
                     }
                 }
@@ -345,7 +356,7 @@ impl FilestoreCheckpoint {
 
         // Create a wrapper message for all collections
         let snapshot = crate::proto::proximadb_v1::CollectionSnapshot {
-            collection: collections.get(0).cloned(),
+            collection: collections.first().cloned(),
             vectors: Vec::new(),
             snapshot_timestamp: chrono::Utc::now().timestamp_micros(),
             snapshot_version: "1".to_string(),
@@ -486,11 +497,17 @@ impl FilestoreCheckpoint {
 /// Result of a checkpoint operation
 #[derive(Debug)]
 pub struct CheckpointResult {
+    /// Duration of the checkpoint operation
     pub duration: std::time::Duration,
+    /// Initial number of collections
     pub initial_collections: usize,
+    /// Final number of collections
     pub final_collections: usize,
+    /// Number of operations compacted
     pub operations_compacted: usize,
+    /// Number of bytes compacted
     pub bytes_compacted: usize,
+    /// Path to the archive
     pub archive_path: Option<String>,
 }
 

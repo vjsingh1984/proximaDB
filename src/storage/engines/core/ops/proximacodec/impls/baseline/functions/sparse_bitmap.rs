@@ -37,7 +37,7 @@ fn encode_sparse_bitmap_i32_wire(wire_values: &[i32]) -> Result<Vec<u8>> {
     result.extend_from_slice(&num_nonzero.to_le_bytes());
 
     // Create bitmap
-    let bitmap_bytes = (wire_values.len() + 7) / 8;
+    let bitmap_bytes = wire_values.len().div_ceil(8);
     let mut bitmap = vec![0u8; bitmap_bytes];
 
     for &idx in &nonzero_indices {
@@ -82,7 +82,7 @@ fn encode_sparse_bitmap_i64_wire(wire_values: &[i64]) -> Result<Vec<u8>> {
     result.extend_from_slice(&num_nonzero.to_le_bytes());
 
     // Create bitmap
-    let bitmap_bytes = (wire_values.len() + 7) / 8;
+    let bitmap_bytes = wire_values.len().div_ceil(8);
     let mut bitmap = vec![0u8; bitmap_bytes];
 
     for &idx in &nonzero_indices {
@@ -152,7 +152,7 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
     let num_nonzero = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
     // Calculate bitmap size
-    let bitmap_bytes = (count + 7) / 8;
+    let bitmap_bytes = count.div_ceil(8);
 
     if data.len() < 4 + bitmap_bytes {
         return Err(anyhow::anyhow!(
@@ -174,22 +174,23 @@ fn decode_sparse_bitmap_i32_wire(data: &[u8], count: usize) -> Result<Vec<i32>> 
 
     // Read non-zero values
     let mut value_idx = 0;
-    for idx in 0..count {
+    for (idx, res_val) in result.iter_mut().enumerate() {
         let byte_idx = idx / 8;
         let bit_idx = idx % 8;
 
-        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0 {
-            if value_idx < num_nonzero {
-                let offset = values_start + value_idx * 4;
-                let val = i32::from_le_bytes([
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                ]);
-                result[idx] = val;
-                value_idx += 1;
-            }
+        if byte_idx < bitmap.len()
+            && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
+            && value_idx < num_nonzero
+        {
+            let offset = values_start + value_idx * 4;
+            let val = i32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]);
+            *res_val = val;
+            value_idx += 1;
         }
     }
 
@@ -210,7 +211,7 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
     let num_nonzero = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
 
     // Calculate bitmap size
-    let bitmap_bytes = (count + 7) / 8;
+    let bitmap_bytes = count.div_ceil(8);
 
     if data.len() < 4 + bitmap_bytes {
         return Err(anyhow::anyhow!(
@@ -232,26 +233,27 @@ fn decode_sparse_bitmap_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> 
 
     // Read non-zero values
     let mut value_idx = 0;
-    for idx in 0..count {
+    for (idx, res_val) in result.iter_mut().enumerate() {
         let byte_idx = idx / 8;
         let bit_idx = idx % 8;
 
-        if byte_idx < bitmap.len() && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0 {
-            if value_idx < num_nonzero {
-                let offset = values_start + value_idx * 8;
-                let val = i64::from_le_bytes([
-                    data[offset],
-                    data[offset + 1],
-                    data[offset + 2],
-                    data[offset + 3],
-                    data[offset + 4],
-                    data[offset + 5],
-                    data[offset + 6],
-                    data[offset + 7],
-                ]);
-                result[idx] = val;
-                value_idx += 1;
-            }
+        if byte_idx < bitmap.len()
+            && (bitmap[byte_idx] & (1u8 << bit_idx)) != 0
+            && value_idx < num_nonzero
+        {
+            let offset = values_start + value_idx * 8;
+            let val = i64::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
+            ]);
+            *res_val = val;
+            value_idx += 1;
         }
     }
 
@@ -289,8 +291,8 @@ mod tests {
         values[75] = 4.5;
         values[99] = 5.5;
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode f32 values");
 
         assert_eq!(values, decoded);
     }
@@ -303,8 +305,8 @@ mod tests {
         values[500] = 100;
         values[999] = 200;
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("Failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -317,8 +319,8 @@ mod tests {
             values[i * 1000] = (i as i32 + 1) * 10;
         }
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -338,8 +340,8 @@ mod tests {
     fn test_sparse_bitmap_all_zeros() {
         let values = vec![0i64; 100];
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("Failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("Failed to decode i64 values");
 
         assert_eq!(values, decoded);
 
@@ -352,8 +354,8 @@ mod tests {
         // Not sparse at all
         let values: Vec<i32> = (1..=100).collect();
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("Failed to encode i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("Failed to decode i32 values");
 
         assert_eq!(values, decoded);
 
@@ -367,10 +369,10 @@ mod tests {
     fn test_sparse_bitmap_empty() {
         let values: Vec<f32> = vec![];
 
-        let encoded = encode_f32(&values).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 values");
         assert!(encoded.is_empty());
 
-        let decoded = decode_f32(&encoded, 0).unwrap();
+        let decoded = decode_f32(&encoded, 0).expect("Failed to decode f32 values");
         assert!(decoded.is_empty());
     }
 
@@ -379,8 +381,8 @@ mod tests {
         let mut values = vec![0.0f32; 1000];
         values[500] = 42.0;
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("Failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("Failed to decode f32 values");
 
         assert_eq!(values, decoded);
 

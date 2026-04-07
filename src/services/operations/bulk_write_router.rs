@@ -86,6 +86,7 @@ impl Default for BulkWriteConfig {
 /// This optimization reduces I/O and memory usage for bulk inserts by
 /// bypassing the WAL + memtable double-write pattern.
 pub struct BulkWriteRouter {
+    /// Configuration controlling batch size thresholds and routing behavior
     config: BulkWriteConfig,
 }
 

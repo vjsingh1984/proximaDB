@@ -26,6 +26,8 @@ use crate::storage::persistence::write_ahead_log::unified_operations::{
 };
 use crate::storage::traits::UnifiedStorageEngine;
 
+use super::DocumentStorageEngine;
+use super::aggregation_extensions::LookupFetcher;
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -36,8 +38,13 @@ use super::{
 
 /// Document service for CRUD operations
 pub struct DocumentService {
-    /// Storage engine for persistence
+    /// Storage engine for persistence (vector-centric, used for legacy flush path)
     storage_engine: Arc<dyn UnifiedStorageEngine>,
+    /// Document-native storage engine (CEDAR) for direct document operations.
+    /// When present, CRUD operations delegate to this engine instead of
+    /// the in-memory HashMap cache. (Phase 2: wire CRUD through this)
+    #[allow(dead_code)]
+    document_engine: Option<Arc<dyn DocumentStorageEngine>>,
     /// Index manager for path and full-text indexes
     index_manager: Arc<IndexManager>,
     /// Query executor for filter evaluation
@@ -45,6 +52,7 @@ pub struct DocumentService {
     /// Collection metadata cache
     collections: Arc<RwLock<HashMap<String, DocumentCollection>>>,
     /// In-memory document store (hot cache, backed by WAL)
+    /// Used when document_engine is None (legacy mode)
     documents: Arc<RwLock<HashMap<String, HashMap<String, DocumentRecord>>>>,
     /// WAL writer for durability
     wal_writer: Arc<Mutex<Option<UnifiedWALWriter>>>,
@@ -55,10 +63,32 @@ pub struct DocumentService {
 }
 
 impl DocumentService {
-    /// Create a new document service
+    /// Create a new document service (legacy mode, uses in-memory HashMap)
     pub fn new(storage_engine: Arc<dyn UnifiedStorageEngine>) -> Self {
         Self {
             storage_engine,
+            document_engine: None,
+            index_manager: Arc::new(IndexManager::new()),
+            query_executor: Arc::new(QueryExecutor::new()),
+            collections: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(RwLock::new(HashMap::new())),
+            wal_writer: Arc::new(Mutex::new(None)),
+            wal_path: String::new(),
+            metrics_collector: None,
+        }
+    }
+
+    /// Create a document service backed by a DocumentStorageEngine (CEDAR).
+    ///
+    /// When a document engine is provided, all CRUD operations delegate to it
+    /// instead of the in-memory HashMap cache.
+    pub fn with_document_engine(
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        document_engine: Arc<dyn DocumentStorageEngine>,
+    ) -> Self {
+        Self {
+            storage_engine,
+            document_engine: Some(document_engine),
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
@@ -76,6 +106,7 @@ impl DocumentService {
     ) -> Self {
         Self {
             storage_engine,
+            document_engine: None,
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
@@ -107,6 +138,7 @@ impl DocumentService {
 
         let mut service = Self {
             storage_engine,
+            document_engine: None,
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
@@ -166,79 +198,76 @@ impl DocumentService {
         let mut recovered_collections = 0;
 
         for entry in entries {
-            if entry.is_document_operation() {
-                if let UnifiedWALOperation::DocumentOp(op) = entry.operation {
-                    match op {
-                        DocumentOperation::InsertDocument {
-                            collection_id,
-                            document,
-                        } => {
-                            // Replay insert
-                            let mut documents = self.documents.write().await;
-                            let collection_docs =
-                                documents.entry(collection_id).or_insert_with(HashMap::new);
-                            collection_docs.insert(document.id.clone(), document);
+            if entry.is_document_operation()
+                && let UnifiedWALOperation::DocumentOp(op) = entry.operation
+            {
+                match op {
+                    DocumentOperation::InsertDocument {
+                        collection_id,
+                        document,
+                    } => {
+                        // Replay insert
+                        let mut documents = self.documents.write().await;
+                        let collection_docs = documents.entry(collection_id).or_default();
+                        collection_docs.insert(document.id.clone(), document);
+                        recovered_docs += 1;
+                    }
+                    DocumentOperation::UpdateDocument {
+                        collection_id,
+                        document_id,
+                        new_version,
+                        ..
+                    } => {
+                        // Update version (simplified recovery - full update replay would need stored doc)
+                        let mut documents = self.documents.write().await;
+                        if let Some(collection_docs) = documents.get_mut(&collection_id)
+                            && let Some(doc) = collection_docs.get_mut(&document_id)
+                        {
+                            doc.version = new_version;
+                        }
+                    }
+                    DocumentOperation::DeleteDocument {
+                        collection_id,
+                        document_id,
+                    } => {
+                        // Replay delete
+                        let mut documents = self.documents.write().await;
+                        if let Some(collection_docs) = documents.get_mut(&collection_id) {
+                            collection_docs.remove(&document_id);
+                        }
+                    }
+                    DocumentOperation::BatchDocuments {
+                        collection_id,
+                        documents: docs,
+                    } => {
+                        // Replay batch insert
+                        let mut doc_store = self.documents.write().await;
+                        let collection_docs = doc_store.entry(collection_id).or_default();
+                        for doc in docs {
+                            collection_docs.insert(doc.id.clone(), doc);
                             recovered_docs += 1;
                         }
-                        DocumentOperation::UpdateDocument {
-                            collection_id,
-                            document_id,
-                            new_version,
-                            ..
-                        } => {
-                            // Update version (simplified recovery - full update replay would need stored doc)
-                            let mut documents = self.documents.write().await;
-                            if let Some(collection_docs) = documents.get_mut(&collection_id) {
-                                if let Some(doc) = collection_docs.get_mut(&document_id) {
-                                    doc.version = new_version;
-                                }
-                            }
-                        }
-                        DocumentOperation::DeleteDocument {
-                            collection_id,
-                            document_id,
-                        } => {
-                            // Replay delete
-                            let mut documents = self.documents.write().await;
-                            if let Some(collection_docs) = documents.get_mut(&collection_id) {
-                                collection_docs.remove(&document_id);
-                            }
-                        }
-                        DocumentOperation::BatchDocuments {
-                            collection_id,
-                            documents: docs,
-                        } => {
-                            // Replay batch insert
-                            let mut doc_store = self.documents.write().await;
-                            let collection_docs =
-                                doc_store.entry(collection_id).or_insert_with(HashMap::new);
-                            for doc in docs {
-                                collection_docs.insert(doc.id.clone(), doc);
-                                recovered_docs += 1;
-                            }
-                        }
-                        DocumentOperation::CreateCollection {
-                            collection_id,
-                            config_json,
-                        } => {
-                            // Replay collection creation
-                            if let Ok(config) =
-                                serde_json::from_str::<DocumentCollectionConfig>(&config_json)
-                            {
-                                let collection =
-                                    DocumentCollection::new(collection_id.clone(), config);
-                                let mut collections = self.collections.write().await;
-                                collections.insert(collection_id, collection);
-                                recovered_collections += 1;
-                            }
-                        }
-                        DocumentOperation::DeleteCollection { collection_id } => {
-                            // Replay collection deletion
+                    }
+                    DocumentOperation::CreateCollection {
+                        collection_id,
+                        config_json,
+                    } => {
+                        // Replay collection creation
+                        if let Ok(config) =
+                            serde_json::from_str::<DocumentCollectionConfig>(&config_json)
+                        {
+                            let collection = DocumentCollection::new(collection_id.clone(), config);
                             let mut collections = self.collections.write().await;
-                            collections.remove(&collection_id);
-                            let mut documents = self.documents.write().await;
-                            documents.remove(&collection_id);
+                            collections.insert(collection_id, collection);
+                            recovered_collections += 1;
                         }
+                    }
+                    DocumentOperation::DeleteCollection { collection_id } => {
+                        // Replay collection deletion
+                        let mut collections = self.collections.write().await;
+                        collections.remove(&collection_id);
+                        let mut documents = self.documents.write().await;
+                        documents.remove(&collection_id);
                     }
                 }
             }
@@ -704,9 +733,7 @@ impl DocumentService {
         };
 
         // Generate ID if not provided
-        let doc_id = id
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let doc_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), |s| s.to_string());
 
         // Create document record
         let record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
@@ -732,9 +759,7 @@ impl DocumentService {
         // Store document in memory (backed by WAL for durability)
         {
             let mut documents = self.documents.write().await;
-            let collection_docs = documents
-                .entry(collection.to_string())
-                .or_insert_with(HashMap::new);
+            let collection_docs = documents.entry(collection.to_string()).or_default();
             collection_docs.insert(doc_id.clone(), record.clone());
         }
 
@@ -791,19 +816,19 @@ impl DocumentService {
 
         // Retrieve from in-memory store
         let documents = self.documents.read().await;
-        if let Some(collection_docs) = documents.get(collection) {
-            if let Some(record) = collection_docs.get(id) {
-                let mut result = record.clone();
+        if let Some(collection_docs) = documents.get(collection)
+            && let Some(record) = collection_docs.get(id)
+        {
+            let mut result = record.clone();
 
-                // Apply projection if specified
-                if let Some(fields) = projection {
-                    if !fields.is_empty() {
-                        result.document = self.apply_projection(&result.document, &fields);
-                    }
-                }
-
-                return Ok(Some(result));
+            // Apply projection if specified
+            if let Some(fields) = projection
+                && !fields.is_empty()
+            {
+                result.document = self.apply_projection(&result.document, &fields);
             }
+
+            return Ok(Some(result));
         }
 
         Ok(None)
@@ -821,7 +846,7 @@ impl DocumentService {
                 let values = path.evaluate(document);
                 if let Some(value) = values.into_iter().next() {
                     // Use the field name as key (simplified - doesn't handle nested paths)
-                    let key = field.split('.').last().unwrap_or(field);
+                    let key = field.split('.').next_back().unwrap_or(field);
                     projected.fields.insert(key.to_string(), value);
                 }
             } else if let Some(value) = document.fields.get(field) {
@@ -858,15 +883,15 @@ impl DocumentService {
         };
 
         // Check version for optimistic locking
-        if let Some(expected) = expected_version {
-            if record.version != expected {
-                self.record_update_metrics(start, true).await;
-                return Err(anyhow!(
-                    "Version mismatch: expected {}, got {}",
-                    expected,
-                    record.version
-                ));
-            }
+        if let Some(expected) = expected_version
+            && record.version != expected
+        {
+            self.record_update_metrics(start, true).await;
+            return Err(anyhow!(
+                "Version mismatch: expected {}, got {}",
+                expected,
+                record.version
+            ));
         }
 
         // Apply updates
@@ -1316,8 +1341,7 @@ impl DocumentService {
             let documents = self.documents.read().await;
             documents
                 .get(collection)
-                .map(|docs| docs.contains_key(id))
-                .unwrap_or(false)
+                .is_some_and(|docs| docs.contains_key(id))
         };
 
         if !exists {
@@ -1390,9 +1414,17 @@ impl DocumentService {
         };
 
         // Execute query
+        let documents: Vec<DocumentRecord> = {
+            let docs = self.documents.read().await;
+            match docs.get(collection) {
+                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                None => Vec::new(),
+            }
+        };
+
         let (documents, total_count) = match self
             .query_executor
-            .execute(collection, &params, &self.index_manager)
+            .execute(collection, &documents, &params, &self.index_manager)
             .await
         {
             Ok(result) => result,
@@ -1466,6 +1498,177 @@ impl DocumentService {
 
         Ok(crate::storage::document::AggregateResult {
             results,
+            query_time_ms,
+        })
+    }
+
+    /// Aggregate documents with $lookup support
+    ///
+    /// Extended aggregation that supports cross-collection joins via the $lookup stage.
+    /// For each lookup stage in the pipeline, this method fetches matching documents
+    /// from the foreign collection and merges them into the local documents.
+    ///
+    /// # Arguments
+    /// * `collection` - Source collection name
+    /// * `filter` - Optional filter to apply before aggregation
+    /// * `pipeline` - Aggregation pipeline stages (may include $lookup)
+    ///
+    /// # Returns
+    /// Aggregated results with lookup fields populated
+    ///
+    /// # Note
+    /// For lookup stages, this method requires Arc<DocumentService>. Use the async variant
+    /// that takes Arc<DocumentService> for full lookup support.
+    pub async fn aggregate_documents_with_lookup(
+        &self,
+        collection: &str,
+        filter: Option<DocumentFilter>,
+        pipeline: Vec<crate::proto::proximadb_v1::AggregationStage>,
+    ) -> Result<crate::storage::document::AggregateResult> {
+        use crate::storage::document::aggregation::AggregationExecutor;
+
+        let start = std::time::Instant::now();
+        debug!(
+            "Aggregating documents in {} with lookup support",
+            collection
+        );
+
+        // Verify source collection exists
+        self.get_collection(collection)
+            .await?
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+
+        // Get all documents from the source collection
+        let documents: Vec<DocumentRecord> = {
+            let docs = self.documents.read().await;
+            match docs.get(collection) {
+                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                None => Vec::new(),
+            }
+        };
+
+        // Check if pipeline contains lookup stages
+        let has_lookup = pipeline.iter().any(|stage| {
+            matches!(
+                &stage.stage,
+                Some(crate::proto::proximadb_v1::aggregation_stage::Stage::Lookup(_))
+            )
+        });
+
+        if has_lookup {
+            // For lookup stages, caller should use aggregate_documents_with_lookup_arc
+            return Err(anyhow!(
+                "Pipeline contains $lookup stages - use aggregate_documents_with_lookup_arc which takes Arc<DocumentService>"
+            ));
+        }
+
+        // Execute the aggregation pipeline (without lookup support)
+        let executor = AggregationExecutor::new();
+        let results = executor.execute(documents, filter.as_ref(), &pipeline)?;
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+        debug!(
+            "Aggregation complete: {} results in {}ms",
+            results.len(),
+            query_time_ms
+        );
+
+        Ok(crate::storage::document::AggregateResult {
+            results,
+            query_time_ms,
+        })
+    }
+
+    /// Aggregate documents with $lookup support (Arc variant)
+    ///
+    /// This is the preferred method for aggregation pipelines that include $lookup stages.
+    /// It takes Arc<DocumentService> which allows the lookup fetcher to query foreign collections.
+    ///
+    /// # Arguments
+    /// * `collection` - Source collection name
+    /// * `filter` - Optional filter to apply before aggregation
+    /// * `pipeline` - Aggregation pipeline stages (may include $lookup)
+    ///
+    /// # Returns
+    /// Aggregated results with lookup fields populated
+    pub async fn aggregate_documents_with_lookup_arc(
+        this: Arc<DocumentService>,
+        collection: &str,
+        filter: Option<DocumentFilter>,
+        pipeline: Vec<crate::proto::proximadb_v1::AggregationStage>,
+    ) -> Result<crate::storage::document::AggregateResult> {
+        use crate::storage::document::aggregation::AggregationExecutor;
+
+        let start = std::time::Instant::now();
+        debug!(
+            "Aggregating documents in {} with lookup support (Arc variant)",
+            collection
+        );
+
+        // Verify source collection exists
+        this.get_collection(collection)
+            .await?
+            .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+
+        // Get all documents from the source collection
+        let documents: Vec<DocumentRecord> = {
+            let docs = this.documents.read().await;
+            match docs.get(collection) {
+                Some(collection_docs) => collection_docs.values().cloned().collect(),
+                None => Vec::new(),
+            }
+        };
+
+        // Create a lookup fetcher that can query foreign collections
+        let fetcher = DocumentServiceLookupFetcher {
+            service: this.clone(),
+        };
+
+        // Execute aggregation pipeline with lookup support
+        let executor = AggregationExecutor::new();
+        let mut working_set: Vec<SqlObject> = if let Some(f) = &filter {
+            documents
+                .iter()
+                .filter(|doc| executor.matches_filter(doc, f))
+                .map(|doc| doc.document.clone())
+                .collect()
+        } else {
+            documents.into_iter().map(|doc| doc.document).collect()
+        };
+
+        // Process each stage, handling lookups specially
+        for (stage_idx, stage) in pipeline.iter().enumerate() {
+            use crate::proto::proximadb_v1::aggregation_stage::Stage;
+
+            match &stage.stage {
+                Some(Stage::Lookup(lookup_stage)) => {
+                    working_set = executor.process_lookup(&working_set, lookup_stage, &fetcher)?;
+                    debug!(
+                        "After lookup stage {}: {} documents",
+                        stage_idx,
+                        working_set.len()
+                    );
+                }
+                Some(_) => {
+                    // Use the standard process_stage for non-lookup stages
+                    working_set = executor.process_stage(&working_set, stage, stage_idx)?;
+                    debug!("After stage {}: {} documents", stage_idx, working_set.len());
+                }
+                None => {
+                    return Err(anyhow!("Empty stage at index {}", stage_idx));
+                }
+            }
+        }
+
+        let query_time_ms = start.elapsed().as_millis() as u64;
+        debug!(
+            "Aggregation with lookup complete: {} results in {}ms",
+            working_set.len(),
+            query_time_ms
+        );
+
+        Ok(crate::storage::document::AggregateResult {
+            results: working_set,
             query_time_ms,
         })
     }
@@ -1649,7 +1852,686 @@ impl DocumentStorageOperations for DocumentService {
     }
 }
 
+// =============================================================================
+// LOOKUP FETCHER FOR AGGREGATION PIPELINE
+// =============================================================================
+
+/// Implementation of LookupFetcher that queries the DocumentService
+pub struct DocumentServiceLookupFetcher {
+    pub service: Arc<DocumentService>,
+}
+
+impl LookupFetcher for DocumentServiceLookupFetcher {
+    /// Fetch documents from a collection where a field matches a value
+    fn fetch_matching(
+        &self,
+        collection: &str,
+        field_path: &str,
+        match_value: &SqlValue,
+    ) -> Result<Vec<SqlObject>> {
+        // Use blocking API to query documents from another collection
+        let rt = tokio::runtime::Handle::try_current()
+            .map_err(|e| anyhow!("Failed to get runtime handle: {}", e))?;
+
+        rt.block_on(async {
+            // Create a filter for the field match
+            let filter = DocumentFilter {
+                conditions: vec![create_field_eq_filter(field_path, match_value.clone())],
+                ..Default::default()
+            };
+
+            // Query documents with the filter
+            let params = DocumentQueryParams {
+                filter: Some(filter),
+                limit: 1000, // Reasonable limit for lookup results
+                ..Default::default()
+            };
+
+            let result = self.service.query_documents(collection, params).await?;
+
+            Ok(result
+                .documents
+                .into_iter()
+                .map(|doc| doc.document)
+                .collect())
+        })
+    }
+}
+
+/// Helper to create an equality filter for a field
+fn create_field_eq_filter(
+    field_path: &str,
+    value: SqlValue,
+) -> crate::proto::proximadb_v1::DocFilterCondition {
+    use crate::proto::proximadb_v1::DocFilterOperator;
+
+    crate::proto::proximadb_v1::DocFilterCondition {
+        path: field_path.to_string(),
+        operator: DocFilterOperator::Eq as i32,
+        value: Some(value),
+        values: Vec::new(), // Empty for equality operator
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    // TODO: Add unit tests with mock storage engine
+    use super::*;
+    use crate::proto::proximadb_v1::{
+        DocFilterCondition, DocFilterOperator, DocumentCollectionConfig, DocumentFilter,
+        DocumentUpdate, SqlObject, SqlValue, UpdateOperation, sql_value,
+    };
+    use crate::storage::traits::{
+        CompactionParameters, CompactionResult, FlushParameters, FlushResult,
+        StorageEngineStrategy, UnifiedStorageEngine,
+    };
+    use async_trait::async_trait;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    // =========================================================================
+    // Mock storage engine for document service tests
+    // =========================================================================
+
+    struct MockStorageEngine;
+
+    #[async_trait]
+    impl UnifiedStorageEngine for MockStorageEngine {
+        fn engine_name(&self) -> &'static str {
+            "MockEngine"
+        }
+
+        fn engine_version(&self) -> &'static str {
+            "1.0.0"
+        }
+
+        fn strategy(&self) -> StorageEngineStrategy {
+            StorageEngineStrategy::Sst
+        }
+
+        async fn do_flush(&self, _params: &FlushParameters) -> Result<FlushResult> {
+            Ok(FlushResult {
+                success: true,
+                collections_affected: Vec::new(),
+                entries_flushed: Some(0),
+                bytes_written: Some(0),
+                files_created: Some(0),
+                file_paths: Vec::new(),
+                duration_ms: Some(0),
+                completed_at: chrono::Utc::now(),
+                engine_metrics: HashMap::new(),
+                compaction_triggered: false,
+                compaction_error: None,
+                flushed_batch_ids: Vec::new(),
+            })
+        }
+
+        async fn do_compact(&self, _params: &CompactionParameters) -> Result<CompactionResult> {
+            Ok(CompactionResult {
+                success: true,
+                collections_affected: Vec::new(),
+                entries_processed: Some(0),
+                entries_removed: Some(0),
+                bytes_read: Some(0),
+                bytes_written: Some(0),
+                input_files: Some(0),
+                output_files: Some(0),
+                duration_ms: Some(0),
+                completed_at: chrono::Utc::now(),
+                engine_metrics: HashMap::new(),
+            })
+        }
+
+        async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
+            Ok(HashMap::new())
+        }
+
+        async fn vector_by_id(
+            &self,
+            _collection_id: &str,
+            _base_path: &str,
+            _vector_id: &str,
+        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+            Ok(None)
+        }
+
+        async fn search_vectors_unified(
+            &self,
+            _ctx: &crate::storage::traits::StorageQueryContext,
+        ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+            Ok(Vec::new())
+        }
+
+        fn get_filesystem_factory(
+            &self,
+        ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
+            unimplemented!("MockEngine does not provide a filesystem factory")
+        }
+    }
+
+    // =========================================================================
+    // Helpers
+    // =========================================================================
+
+    /// Create a DocumentService backed by the mock storage engine (no WAL)
+    fn create_test_service() -> DocumentService {
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(MockStorageEngine);
+        DocumentService::new(engine)
+    }
+
+    /// Build an SqlObject from key-value pairs (string values)
+    fn make_document(fields: Vec<(&str, SqlValue)>) -> SqlObject {
+        SqlObject {
+            fields: fields
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        }
+    }
+
+    /// Convenience: create a string SqlValue
+    fn sql_string(s: &str) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::StringValue(s.to_string())),
+        }
+    }
+
+    /// Convenience: create an i64 SqlValue
+    fn sql_int(n: i64) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::Int64Value(n)),
+        }
+    }
+
+    /// Convenience: create a numeric (f64) SqlValue
+    #[allow(dead_code)]
+    fn sql_number(n: f64) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::NumberValue(n)),
+        }
+    }
+
+    /// Create a default collection config for testing
+    fn test_collection_config() -> DocumentCollectionConfig {
+        DocumentCollectionConfig {
+            name: "test_collection".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Set up a service with a pre-created collection, ready for document operations
+    async fn service_with_collection(collection_name: &str) -> DocumentService {
+        let svc = create_test_service();
+        svc.create_collection(
+            collection_name,
+            DocumentCollectionConfig {
+                name: collection_name.to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("collection creation should succeed");
+        svc
+    }
+
+    // =========================================================================
+    // Document CRUD lifecycle tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_insert_and_get_document() {
+        let svc = service_with_collection("books").await;
+
+        let doc = make_document(vec![
+            ("title", sql_string("Rust Programming")),
+            ("year", sql_int(2024)),
+        ]);
+
+        let inserted = svc
+            .insert_document("books", Some("book-1"), doc)
+            .await
+            .expect("insert should succeed");
+
+        assert_eq!(inserted.id, "book-1");
+        assert_eq!(inserted.version, 1);
+        assert_eq!(inserted.collection_id, "books");
+
+        // Retrieve and verify
+        let fetched = svc
+            .get_document("books", "book-1", None)
+            .await
+            .expect("get should succeed")
+            .expect("document should exist");
+
+        assert_eq!(fetched.id, "book-1");
+        assert_eq!(fetched.version, 1);
+
+        // Verify field contents
+        let title_val = fetched.document.fields.get("title").expect("title field");
+        assert_eq!(
+            title_val.value,
+            Some(sql_value::Value::StringValue(
+                "Rust Programming".to_string()
+            ))
+        );
+
+        let year_val = fetched.document.fields.get("year").expect("year field");
+        assert_eq!(year_val.value, Some(sql_value::Value::Int64Value(2024)));
+    }
+
+    #[tokio::test]
+    async fn test_update_document() {
+        let svc = service_with_collection("users").await;
+
+        let doc = make_document(vec![
+            ("name", sql_string("Alice")),
+            ("email", sql_string("alice@example.com")),
+        ]);
+        svc.insert_document("users", Some("user-1"), doc)
+            .await
+            .expect("insert should succeed");
+
+        // Update the email field
+        let updates = vec![DocumentUpdate {
+            operation: UpdateOperation::Set as i32,
+            path: "email".to_string(),
+            value: Some(sql_string("alice@newdomain.com")),
+        }];
+
+        let updated = svc
+            .update_document("users", "user-1", updates, None)
+            .await
+            .expect("update should succeed");
+
+        assert_eq!(updated.version, 2, "version should be incremented");
+
+        // Verify the update persisted
+        let fetched = svc
+            .get_document("users", "user-1", None)
+            .await
+            .expect("get should succeed")
+            .expect("document should exist");
+
+        let email = fetched.document.fields.get("email").expect("email field");
+        assert_eq!(
+            email.value,
+            Some(sql_value::Value::StringValue(
+                "alice@newdomain.com".to_string()
+            ))
+        );
+
+        // Original field should still be present
+        let name = fetched.document.fields.get("name").expect("name field");
+        assert_eq!(
+            name.value,
+            Some(sql_value::Value::StringValue("Alice".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_delete_document() {
+        let svc = service_with_collection("items").await;
+
+        let doc = make_document(vec![("product", sql_string("Widget"))]);
+        svc.insert_document("items", Some("item-1"), doc)
+            .await
+            .expect("insert should succeed");
+
+        // Confirm it exists
+        let before = svc
+            .get_document("items", "item-1", None)
+            .await
+            .expect("get should succeed");
+        assert!(before.is_some(), "document should exist before delete");
+
+        // Delete
+        let deleted = svc
+            .delete_document("items", "item-1")
+            .await
+            .expect("delete should succeed");
+        assert!(deleted, "delete should return true for existing doc");
+
+        // Confirm it is gone
+        let after = svc
+            .get_document("items", "item-1", None)
+            .await
+            .expect("get should succeed");
+        assert!(after.is_none(), "document should be gone after delete");
+    }
+
+    #[tokio::test]
+    async fn test_insert_duplicate_id() {
+        let svc = service_with_collection("dup").await;
+
+        let doc1 = make_document(vec![("val", sql_string("first"))]);
+        svc.insert_document("dup", Some("same-id"), doc1)
+            .await
+            .expect("first insert should succeed");
+
+        // Inserting with the same ID acts as an upsert in the in-memory store
+        // because insert_document unconditionally inserts into the HashMap.
+        let doc2 = make_document(vec![("val", sql_string("second"))]);
+        svc.insert_document("dup", Some("same-id"), doc2)
+            .await
+            .expect("second insert (upsert) should succeed");
+
+        let fetched = svc
+            .get_document("dup", "same-id", None)
+            .await
+            .expect("get should succeed")
+            .expect("document should exist");
+
+        // The second insert should have overwritten the first
+        let val = fetched.document.fields.get("val").expect("val field");
+        assert_eq!(
+            val.value,
+            Some(sql_value::Value::StringValue("second".to_string())),
+            "second insert should overwrite the first"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_document() {
+        let svc = service_with_collection("empty_coll").await;
+
+        let result = svc
+            .get_document("empty_coll", "does-not-exist", None)
+            .await
+            .expect("get should not error");
+
+        assert!(result.is_none(), "nonexistent ID should return None");
+    }
+
+    #[tokio::test]
+    async fn test_insert_batch_documents() {
+        let svc = service_with_collection("batch").await;
+
+        let batch: Vec<(Option<String>, SqlObject)> = (0..5)
+            .map(|i| {
+                (
+                    Some(format!("doc-{}", i)),
+                    make_document(vec![("index", sql_int(i))]),
+                )
+            })
+            .collect();
+
+        let result = svc
+            .insert_documents("batch", batch)
+            .await
+            .expect("batch insert should succeed");
+
+        assert_eq!(result.ingested, 5);
+        assert_eq!(result.failed, 0);
+        assert!(result.errors.is_empty());
+
+        // Verify each document is retrievable
+        for i in 0..5 {
+            let doc = svc
+                .get_document("batch", &format!("doc-{}", i), None)
+                .await
+                .expect("get should succeed")
+                .expect("document should exist");
+            let idx_val = doc.document.fields.get("index").expect("index field");
+            assert_eq!(idx_val.value, Some(sql_value::Value::Int64Value(i)));
+        }
+    }
+
+    // =========================================================================
+    // Query tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_query_with_filter() {
+        let svc = service_with_collection("products").await;
+
+        // Insert 3 documents with different categories
+        svc.insert_document(
+            "products",
+            Some("p1"),
+            make_document(vec![
+                ("name", sql_string("Laptop")),
+                ("category", sql_string("electronics")),
+            ]),
+        )
+        .await
+        .expect("insert p1");
+
+        svc.insert_document(
+            "products",
+            Some("p2"),
+            make_document(vec![
+                ("name", sql_string("Shirt")),
+                ("category", sql_string("clothing")),
+            ]),
+        )
+        .await
+        .expect("insert p2");
+
+        svc.insert_document(
+            "products",
+            Some("p3"),
+            make_document(vec![
+                ("name", sql_string("Phone")),
+                ("category", sql_string("electronics")),
+            ]),
+        )
+        .await
+        .expect("insert p3");
+
+        // Query with filter: category == "electronics"
+        let filter = DocumentFilter {
+            conditions: vec![DocFilterCondition {
+                path: "category".to_string(),
+                operator: DocFilterOperator::Eq as i32,
+                value: Some(sql_string("electronics")),
+                values: Vec::new(),
+            }],
+            ..Default::default()
+        };
+
+        let result = svc
+            .query_documents(
+                "products",
+                DocumentQueryParams {
+                    filter: Some(filter),
+                    limit: 100,
+                    include_count: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("query should succeed");
+
+        assert_eq!(
+            result.documents.len(),
+            2,
+            "should return only electronics items"
+        );
+        assert_eq!(result.total_count, Some(2));
+
+        // Verify all returned docs are in the electronics category
+        for doc in &result.documents {
+            let cat = doc.document.fields.get("category").expect("category field");
+            assert_eq!(
+                cat.value,
+                Some(sql_value::Value::StringValue("electronics".to_string()))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_query_with_pagination() {
+        let svc = service_with_collection("paginated").await;
+
+        // Insert 10 documents
+        for i in 0..10 {
+            svc.insert_document(
+                "paginated",
+                Some(&format!("item-{:02}", i)),
+                make_document(vec![("seq", sql_int(i))]),
+            )
+            .await
+            .expect("insert should succeed");
+        }
+
+        // Query with limit=3, offset=2
+        let result = svc
+            .query_documents(
+                "paginated",
+                DocumentQueryParams {
+                    limit: 3,
+                    offset: 2,
+                    include_count: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("query should succeed");
+
+        assert_eq!(
+            result.documents.len(),
+            3,
+            "should return exactly 3 documents"
+        );
+        assert_eq!(
+            result.total_count,
+            Some(10),
+            "total count should be 10 (before pagination)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_query_all_documents() {
+        let svc = service_with_collection("all_docs").await;
+
+        // Insert 4 documents
+        for i in 0..4 {
+            svc.insert_document(
+                "all_docs",
+                Some(&format!("d{}", i)),
+                make_document(vec![("n", sql_int(i))]),
+            )
+            .await
+            .expect("insert should succeed");
+        }
+
+        // Query with no filter (limit=0 means "all")
+        let result = svc
+            .query_documents(
+                "all_docs",
+                DocumentQueryParams {
+                    include_count: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("query should succeed");
+
+        assert_eq!(result.documents.len(), 4, "should return all 4 documents");
+        assert_eq!(result.total_count, Some(4));
+    }
+
+    #[tokio::test]
+    async fn test_query_empty_collection() {
+        let svc = service_with_collection("empty").await;
+
+        let result = svc
+            .query_documents(
+                "empty",
+                DocumentQueryParams {
+                    include_count: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("query on empty collection should succeed");
+
+        assert!(result.documents.is_empty(), "should return no documents");
+        assert_eq!(result.total_count, Some(0));
+    }
+
+    // =========================================================================
+    // Collection management tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_create_and_list_collections() {
+        let svc = create_test_service();
+
+        // No collections initially
+        let before = svc.list_collections().await.expect("list should succeed");
+        assert!(before.is_empty(), "should start with no collections");
+
+        // Create two collections
+        svc.create_collection("alpha", test_collection_config())
+            .await
+            .expect("create alpha should succeed");
+        svc.create_collection(
+            "beta",
+            DocumentCollectionConfig {
+                name: "beta".to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("create beta should succeed");
+
+        let after = svc.list_collections().await.expect("list should succeed");
+        assert_eq!(after.len(), 2, "should have 2 collections");
+
+        let names: Vec<&str> = after.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"beta"));
+
+        // Verify get_collection returns metadata
+        let alpha = svc
+            .get_collection("alpha")
+            .await
+            .expect("get should succeed")
+            .expect("alpha should exist");
+        assert_eq!(alpha.name, "alpha");
+        assert_eq!(alpha.document_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_delete_collection() {
+        let svc = create_test_service();
+
+        svc.create_collection("ephemeral", test_collection_config())
+            .await
+            .expect("create should succeed");
+
+        // Insert a document so we can verify data is also removed
+        svc.insert_document(
+            "ephemeral",
+            Some("d1"),
+            make_document(vec![("x", sql_int(1))]),
+        )
+        .await
+        .expect("insert should succeed");
+
+        // Delete the collection
+        let deleted = svc
+            .delete_collection("ephemeral")
+            .await
+            .expect("delete should succeed");
+        assert!(deleted, "delete should return true for existing collection");
+
+        // Verify it is gone
+        let after = svc
+            .get_collection("ephemeral")
+            .await
+            .expect("get should succeed");
+        assert!(after.is_none(), "collection should be gone after delete");
+
+        // Listing should not include it
+        let list = svc.list_collections().await.expect("list should succeed");
+        assert!(list.is_empty(), "no collections should remain");
+
+        // Deleting again should return false
+        let again = svc
+            .delete_collection("ephemeral")
+            .await
+            .expect("delete should succeed");
+        assert!(!again, "deleting non-existent collection returns false");
+    }
 }

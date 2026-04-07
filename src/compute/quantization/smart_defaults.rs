@@ -337,11 +337,11 @@ impl QuantizationSmartDefaults {
     /// Calculate optimal number of subvectors for PQ based on dimension
     fn calculate_optimal_subvectors(dimension: usize) -> i32 {
         // Rule of thumb: subvectors = dimension / 8, with bounds [8, 64]
-        let optimal = (dimension / 8).max(8).min(64);
+        let optimal = (dimension / 8).clamp(8, 64);
 
         // Ensure dimension is divisible by subvectors for clean splits
         let mut subvectors = optimal;
-        while dimension % subvectors != 0 && subvectors > 8 {
+        while !dimension.is_multiple_of(subvectors) && subvectors > 8 {
             subvectors -= 1;
         }
 
@@ -422,7 +422,7 @@ impl QuantizationSmartDefaults {
         // Validate progressive search thresholds
         if config.enable_progressive_search.unwrap_or(true) {
             let selectivity = config.binary_filter_selectivity.unwrap_or(0.1);
-            if selectivity < 0.0 || selectivity > 1.0 {
+            if !(0.0..=1.0).contains(&selectivity) {
                 return Err(anyhow::anyhow!(
                     "Invalid binary filter selectivity: {:?} (must be 0.0-1.0)",
                     selectivity
@@ -478,7 +478,7 @@ impl QuantizationSmartDefaults {
                         ));
                     }
 
-                    if dimension % (level.num_subvectors as usize) != 0 {
+                    if !dimension.is_multiple_of(level.num_subvectors as usize) {
                         return Err(anyhow::anyhow!(
                             "PQ level {} subvectors {} must divide dimension {} evenly",
                             index,

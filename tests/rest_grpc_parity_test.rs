@@ -242,6 +242,8 @@ impl ParityTestHarness {
     async fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let http_client = HttpClient::builder()
             .timeout(Duration::from_secs(30))
+            // Avoid macOS system proxy discovery in test sandboxes.
+            .no_proxy()
             .build()?;
 
         // Generate unique test names to avoid conflicts
@@ -767,7 +769,7 @@ fn generate_test_vectors(
         .map(|i| {
             let id = format!("vec_{}", i);
             let vector: Vec<f32> = (0..dimension)
-                .map(|j| ((i * dimension + j) as f32 / (count * dimension) as f32))
+                .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
                 .collect();
             let mut metadata = HashMap::new();
             metadata.insert("category".to_string(), format!("cat_{}", i % 3));

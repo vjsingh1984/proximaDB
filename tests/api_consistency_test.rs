@@ -36,6 +36,8 @@ mod api_consistency_tests {
 
             let rest_client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
+                // Avoid platform system proxy discovery in test environments.
+                .no_proxy()
                 .build()
                 .unwrap();
 

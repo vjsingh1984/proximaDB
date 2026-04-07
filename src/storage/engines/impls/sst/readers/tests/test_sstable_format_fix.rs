@@ -9,7 +9,7 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tempfile::TempDir;
-use tracing::{debug, info};
+use tracing::debug;
 
 fn create_test_config() -> SstConfig {
     SstConfig {

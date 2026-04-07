@@ -95,8 +95,8 @@ impl CompactBatchId {
     pub fn new() -> Self {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
 
         // Use compare_exchange to atomically update timestamp and get counter
         let counter;
@@ -223,7 +223,7 @@ fn base62_encode(mut num: u128) -> String {
         num /= 62;
     }
     result.reverse();
-    String::from_utf8(result).unwrap()
+    String::from_utf8(result).unwrap_or_default()
 }
 
 fn base62_decode(s: &str) -> Option<u128> {
@@ -279,9 +279,9 @@ mod tests {
         let ids: Vec<_> = (0..100).map(|_| CompactBatchId::new()).collect();
 
         // All IDs should be unique
-        for i in 0..ids.len() {
+        for (i, id_i) in ids.iter().enumerate() {
             for j in (i + 1)..ids.len() {
-                assert_ne!(ids[i], ids[j]);
+                assert_ne!(*id_i, ids[j]);
             }
         }
     }

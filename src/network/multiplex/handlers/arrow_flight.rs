@@ -106,7 +106,7 @@ impl ProtocolHandler for ArrowFlightHandler {
                         "Arrow Flight handler not configured for unified port mode",
                     )
                     .body(Body::empty())
-                    .expect("response builder should not fail");
+                    .unwrap_or_else(|_| Response::new(Body::empty()));
             }
 
             // Placeholder - in a full implementation, this would route to Arrow Flight
@@ -119,7 +119,7 @@ impl ProtocolHandler for ArrowFlightHandler {
                     "Arrow Flight multiplexing not yet implemented",
                 )
                 .body(Body::empty())
-                .expect("response builder should not fail")
+                .unwrap_or_else(|_| Response::new(Body::empty()))
         })
     }
 

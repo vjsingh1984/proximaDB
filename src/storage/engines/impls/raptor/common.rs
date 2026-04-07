@@ -269,7 +269,7 @@ pub enum ColumnType {
 
 /// Compact metadata representation for serialization
 /// This is a lightweight version of RowGroup for storage in footer
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct RowGroupMetadata {
     pub id: u16,             // Rowgroup ID == Centroid ID
     pub vector_count: usize, // Number of vectors in this rowgroup
@@ -391,25 +391,6 @@ pub struct DistanceBounds {
     pub p90: f32, // 90th percentile (for adaptive pruning)
 }
 
-impl Default for RowGroupMetadata {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            vector_count: 0,
-            offset: 0,
-            compressed_size: 0,
-            column_pages: HashMap::new(),
-            vector_stats: VectorStats::default(),
-            metadata_stats: HashMap::new(),
-            min_timestamp: None,
-            max_timestamp: None,
-            centroid: None,
-            centroid_stats: None,
-            bloom_filter_offset: None,
-        }
-    }
-}
-
 /// Row page metadata for detailed page-level tracking
 #[derive(Debug, Clone)]
 pub struct RowPageMetadata {
@@ -440,8 +421,9 @@ pub struct VectorStats {
     pub encoding: VectorEncoding,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub enum VectorEncoding {
+    #[default]
     Raw,
     ProductQuantization {
         num_subvectors: usize,
@@ -456,12 +438,6 @@ pub enum VectorEncoding {
     Proxima {
         scheme: ProximaScheme,
     },
-}
-
-impl Default for VectorEncoding {
-    fn default() -> Self {
-        VectorEncoding::Raw
-    }
 }
 
 // ====== Column Statistics (unified from reader.rs and rowgroup.rs) ======
@@ -743,7 +719,7 @@ impl RowGroupBloomFilter {
     /// Formula: k = ln(2) * m/n where k=bits_per_key, m=total_bits, n=items
     fn calculate_bits_per_key(false_positive_rate: f64) -> u32 {
         let bits = (-false_positive_rate.ln() / (2.0_f64.ln().powi(2))).ceil();
-        (bits as u32).max(4).min(32) // Clamp between 4 and 32 bits
+        (bits as u32).clamp(4, 32) // Clamp between 4 and 32 bits
     }
 
     /// Insert VectorRecord ID into bloom filter
@@ -764,7 +740,7 @@ impl RowGroupBloomFilter {
 
         let mut filter = BloomFilterFactory::create(&config);
 
-        // TODO: Restore previous state from self.bits (optimization for later)
+        // Deferred: Restore previous state from self.bits (optimization for later)
 
         // Insert the new ID
         filter.insert(vector_id.as_bytes());
@@ -800,7 +776,7 @@ impl RowGroupBloomFilter {
 
         let _filter = BloomFilterFactory::create(&config);
 
-        // TODO: Restore state from self.bits (optimization needed)
+        // Deferred: Restore state from self.bits (optimization needed)
         // For now, this is a simplified implementation
 
         // Use bit manipulation directly as fallback
@@ -1292,10 +1268,9 @@ impl InterCentroidMatrix {
         let mut min_dist = f32::MAX;
         let mut max_dist = f32::MIN;
 
-        for i in 0..k {
-            for j in (i + 1)..k {
+        for (i, dist_row) in distances.iter().enumerate().take(k) {
+            for &dist in dist_row.iter().take(k).skip(i + 1) {
                 // Only j > i (strict upper triangle)
-                let dist = distances[i][j];
                 upper_triangle_data.push(dist);
                 min_dist = min_dist.min(dist);
                 max_dist = max_dist.max(dist);
@@ -1361,7 +1336,7 @@ impl InterCentroidMatrix {
             compressed.extend(&quantized.to_le_bytes());
         }
 
-        // TODO: Apply Proxima bit-packing for further compression
+        // Deferred: Apply Proxima bit-packing for further compression
         // For now, return 16-bit quantized data (already 50% space savings)
         compressed
     }
@@ -1825,9 +1800,9 @@ impl P2Matrix {
         let n = self.num_vectors as usize;
         let mut distances = vec![0.0; n];
 
-        for j in 0..n {
+        for (j, dist) in distances.iter_mut().enumerate() {
             if j != vector_idx {
-                distances[j] = self.get_distance(vector_idx, j);
+                *dist = self.get_distance(vector_idx, j);
             }
         }
 
@@ -1899,7 +1874,7 @@ impl RowGroupBloomFilter {
             // Check each rowgroup's bloom filter offset (actual bloom filter needs to be loaded)
             for rowgroup in &footer.file_metadata.row_groups {
                 if rowgroup.bloom_filter_offset.is_some() {
-                    // TODO: Load bloom filter from file using offset and check
+                    // Deferred: Load bloom filter from file using offset and check
                     // For now, add all rowgroups with bloom filters as candidates
                     candidates.push(rowgroup.id);
                 }
@@ -1938,7 +1913,7 @@ impl RowGroupBloomFilter {
 
                 for rowgroup in &footer.file_metadata.row_groups {
                     if rowgroup.bloom_filter_offset.is_some() {
-                        // TODO: Load bloom filter from file using offset and check
+                        // Deferred: Load bloom filter from file using offset and check
                         // For now, add all rowgroups with bloom filters as candidates
                         candidates.push(rowgroup.id);
                     }

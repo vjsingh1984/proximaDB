@@ -14,6 +14,7 @@
 //! - Automatic certificate generation for development
 //! - Certificate parsing and validation
 //! - Rustls configuration builders
+//! - TLS acceptor for client certificate extraction (TD-006)
 //!
 //! ## Quick Start
 //!
@@ -27,9 +28,18 @@
 //!
 //! // Build rustls server config (async)
 //! let rustls_config = config.build_server_config().await?;
+//!
+//! // Create TLS acceptor with certificate extraction
+//! let acceptor = TlsAcceptor::new(rustls_config)?;
 //! ```
 
+pub mod acceptor;
 pub mod certificate_manager;
+
+pub use acceptor::TlsAcceptor;
+
+#[cfg(feature = "network-rest")]
+pub use acceptor::{TlsAcceptorLayer, TlsAcceptorMiddleware};
 
 pub use certificate_manager::{
     CertificateConfig, CertificateManager, CertificateStatus, CertificateSubject,
@@ -43,7 +53,7 @@ use std::sync::Arc;
 use tracing::info;
 
 /// TLS configuration for ProximaDB
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TlsConfig {
     /// Certificate manager
     pub certificate_manager: Option<CertificateManager>,
@@ -57,19 +67,6 @@ pub struct TlsConfig {
     pub key_file: Option<PathBuf>,
     /// Path to CA certificate file (for mTLS client verification)
     pub ca_file: Option<PathBuf>,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            certificate_manager: None,
-            enabled: false,
-            require_client_certs: false,
-            cert_file: None,
-            key_file: None,
-            ca_file: None,
-        }
-    }
 }
 
 impl TlsConfig {
@@ -352,7 +349,7 @@ mod tests {
 
     #[test]
     fn test_tls_config_builder() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp directory for TLS config test");
         let config = TlsConfig::new(true)
             .with_auto_certificates(temp_dir.path().to_path_buf())
             .with_mtls();
@@ -369,7 +366,10 @@ mod tests {
             .with_key_file("/path/to/key.pem".into())
             .with_ca_file("/path/to/ca.pem".into());
 
-        let (cert, key) = config.get_certificate_paths().unwrap();
+        let (cert, key) = config
+            .get_certificate_paths()
+            .ok_or_else(|| anyhow::anyhow!("Expected certificate paths to be configured"))
+            .expect("Failed to get certificate paths");
         assert_eq!(cert, PathBuf::from("/path/to/cert.pem"));
         assert_eq!(key, PathBuf::from("/path/to/key.pem"));
         assert_eq!(config.get_ca_path(), Some(PathBuf::from("/path/to/ca.pem")));
@@ -377,16 +377,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_server_config() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir =
+            TempDir::new().expect("Failed to create temp directory for server config test");
 
         // Create certificate manager and generate certs
         let cert_config = CertificateConfig::default();
         let manager = CertificateManager::new(cert_config, temp_dir.path().to_path_buf());
-        manager.generate_and_save_certificates().await.unwrap();
+        manager
+            .generate_and_save_certificates()
+            .await
+            .expect("Failed to generate and save certificates");
 
         // Build TLS config
         let tls_config = TlsConfig::new(true).with_certificate_manager(manager);
-        let server_config = tls_config.build_server_config().await.unwrap();
+        let server_config = tls_config
+            .build_server_config()
+            .await
+            .expect("Failed to build server config");
 
         // Verify config was built
         assert!(server_config.alpn_protocols.is_empty()); // No ALPN set
@@ -394,41 +401,61 @@ mod tests {
 
     #[tokio::test]
     async fn test_build_server_config_with_alpn() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir =
+            TempDir::new().expect("Failed to create temp directory for ALPN config test");
 
         let cert_config = CertificateConfig::default();
         let manager = CertificateManager::new(cert_config, temp_dir.path().to_path_buf());
-        manager.generate_and_save_certificates().await.unwrap();
+        manager
+            .generate_and_save_certificates()
+            .await
+            .expect("Failed to generate and save certificates");
 
         let tls_config = TlsConfig::new(true).with_certificate_manager(manager);
         let server_config = TlsServerConfig::new(tls_config);
 
         // Test HTTP/2 config
-        let h2_config = server_config.for_http2().await.unwrap();
+        let h2_config = server_config
+            .for_http2()
+            .await
+            .expect("Failed to build HTTP/2 config");
         assert!(h2_config.alpn_protocols.contains(&b"h2".to_vec()));
 
         // Test HTTP/1.1 config
-        let h1_config = server_config.for_http1().await.unwrap();
+        let h1_config = server_config
+            .for_http1()
+            .await
+            .expect("Failed to build HTTP/1.1 config");
         assert!(h1_config.alpn_protocols.contains(&b"http/1.1".to_vec()));
     }
 
     #[tokio::test]
     async fn test_mtls_server_config() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir =
+            TempDir::new().expect("Failed to create temp directory for mTLS config test");
 
         // Create certificate manager
         let cert_config = CertificateConfig::default();
         let manager = CertificateManager::new(cert_config, temp_dir.path().to_path_buf());
 
         // Generate CA and server certificates
-        manager.generate_and_save_ca().await.unwrap();
-        manager.generate_and_save_certificates().await.unwrap();
+        manager
+            .generate_and_save_ca()
+            .await
+            .expect("Failed to generate and save CA certificate");
+        manager
+            .generate_and_save_certificates()
+            .await
+            .expect("Failed to generate and save server certificates");
 
         // Build mTLS config
         let tls_config = TlsConfig::new(true)
             .with_certificate_manager(manager)
             .with_mtls();
-        let _server_config = tls_config.build_server_config().await.unwrap();
+        let _server_config = tls_config
+            .build_server_config()
+            .await
+            .expect("Failed to build mTLS server config");
 
         // Config should be valid - verify by checking it's not empty
         // Note: modern rustls doesn't expose client_auth_mandatory() directly
@@ -437,7 +464,8 @@ mod tests {
 
     #[test]
     fn test_client_certificate_info() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir =
+            TempDir::new().expect("Failed to create temp directory for client cert info test");
         let cert_config = CertificateConfig {
             subject: CertificateSubject {
                 common_name: "test-client".to_string(),
@@ -448,13 +476,17 @@ mod tests {
         };
         let manager = CertificateManager::new(cert_config, temp_dir.path().to_path_buf());
 
-        let cert = manager.generate_self_signed().unwrap();
+        let cert = manager
+            .generate_self_signed()
+            .expect("Failed to generate self-signed certificate");
 
         // Parse the PEM to get DER
         let pem_data = cert.cert_pem.as_bytes();
-        let (_, pem_block) = x509_parser::pem::parse_x509_pem(pem_data).unwrap();
+        let (_, pem_block) =
+            x509_parser::pem::parse_x509_pem(pem_data).expect("Failed to parse PEM certificate");
 
-        let info = ClientCertificateInfo::from_der(&pem_block.contents).unwrap();
+        let info = ClientCertificateInfo::from_der(&pem_block.contents)
+            .expect("Failed to parse client certificate info from DER");
 
         assert_eq!(info.common_name, Some("test-client".to_string()));
         assert_eq!(info.organization, Some("Test Org".to_string()));

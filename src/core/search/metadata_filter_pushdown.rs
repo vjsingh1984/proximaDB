@@ -33,13 +33,21 @@ pub struct MetadataFilterPushdown {
 /// Statistics for a metadata column
 #[derive(Debug, Clone)]
 pub struct ColumnStatistics {
+    /// Name of the metadata column
     pub column_name: String,
+    /// Number of distinct values
     pub distinct_values: usize,
+    /// Number of null values
     pub null_count: usize,
+    /// Total row count
     pub total_count: usize,
+    /// Minimum value in the column
     pub min_value: Option<Value>,
+    /// Maximum value in the column
     pub max_value: Option<Value>,
+    /// Distribution of values (for selectivity estimation)
     pub value_histogram: HashMap<Value, usize>,
+    /// Optional bloom filter for membership testing
     pub bloom_filter: Option<Arc<BloomFilter>>,
 }
 
@@ -431,14 +439,18 @@ impl MetadataFilterPushdown {
                     *value_histogram.entry(value.clone()).or_insert(0) += 1;
 
                     // Update min/max for comparable values
-                    if min_value.is_none()
-                        || self.compare_values(value, min_value.as_ref().unwrap()) < 0
-                    {
+                    let update_min = match min_value.as_ref() {
+                        Some(current_min) => self.compare_values(value, current_min) < 0,
+                        None => true,
+                    };
+                    if update_min {
                         min_value = Some(value.clone());
                     }
-                    if max_value.is_none()
-                        || self.compare_values(value, max_value.as_ref().unwrap()) > 0
-                    {
+                    let update_max = match max_value.as_ref() {
+                        Some(current_max) => self.compare_values(value, current_max) > 0,
+                        None => true,
+                    };
+                    if update_max {
                         max_value = Some(value.clone());
                     }
                 }
@@ -487,15 +499,14 @@ impl MetadataFilterPushdown {
         let mut inverted_index = HashMap::new();
 
         for (i, value_opt) in values.iter().enumerate() {
-            if let Some(value) = value_opt {
-                if let Some(record) = records.get(i) {
-                    if !record.id.is_empty() {
-                        inverted_index
-                            .entry(value.clone())
-                            .or_insert_with(HashSet::new)
-                            .insert(record.id.clone());
-                    }
-                }
+            if let Some(value) = value_opt
+                && let Some(record) = records.get(i)
+                && !record.id.is_empty()
+            {
+                inverted_index
+                    .entry(value.clone())
+                    .or_insert_with(HashSet::new)
+                    .insert(record.id.clone());
             }
         }
 
@@ -582,6 +593,12 @@ impl MetadataFilterPushdown {
     }
 }
 
+impl Default for MetadataFilterPushdown {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SelectivityEstimator {
     fn new() -> Self {
         Self {
@@ -590,7 +607,7 @@ impl SelectivityEstimator {
     }
 }
 
-/// Enhanced bloom filter builder for metadata
+/// Builder for creating per-column bloom filters on metadata values
 pub struct MetadataBloomBuilder {
     builders: HashMap<String, BloomFilterBuilder>,
     expected_items: usize,
@@ -598,6 +615,7 @@ pub struct MetadataBloomBuilder {
 }
 
 impl MetadataBloomBuilder {
+    /// Create a new metadata bloom filter builder for the expected number of items
     pub fn new(expected_items: usize) -> Self {
         Self {
             builders: HashMap::new(),

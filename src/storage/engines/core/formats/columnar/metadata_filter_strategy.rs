@@ -219,15 +219,15 @@ impl MetadataFilterAnalyzer {
                 .ok_or_else(|| anyhow!("Missing extra_meta column for filtering"))?;
 
             // Apply filter to each row
-            for row_idx in 0..num_rows {
-                if !mask[row_idx] {
+            for (row_idx, mask_val) in mask.iter_mut().enumerate().take(num_rows) {
+                if !*mask_val {
                     continue; // Already filtered out
                 }
 
                 // Extract metadata for this row and check filter
                 let passes = self.check_filter_for_row(metadata_column, row_idx, filter)?;
 
-                mask[row_idx] &= passes;
+                *mask_val &= passes;
             }
         }
 
@@ -429,22 +429,16 @@ impl MetadataFilterAnalyzer {
             (serde_json::Value::Object(a), serde_json::Value::Object(e)) => {
                 a.len() == e.len()
                     && a.iter()
-                        .all(|(k, v)| e.get(k).map_or(false, |ev| self.values_equal(v, ev)))
+                        .all(|(k, v)| e.get(k).is_some_and(|ev| self.values_equal(v, ev)))
             }
 
             // Type mismatch - try numeric coercion
-            (serde_json::Value::Number(a), serde_json::Value::String(e)) => {
-                e.parse::<f64>().map_or(false, |e_num| {
-                    a.as_f64()
-                        .map_or(false, |a_num| (a_num - e_num).abs() < 1e-9)
-                })
-            }
-            (serde_json::Value::String(a), serde_json::Value::Number(e)) => {
-                a.parse::<f64>().map_or(false, |a_num| {
-                    e.as_f64()
-                        .map_or(false, |e_num| (a_num - e_num).abs() < 1e-9)
-                })
-            }
+            (serde_json::Value::Number(a), serde_json::Value::String(e)) => e
+                .parse::<f64>()
+                .is_ok_and(|e_num| a.as_f64().is_some_and(|a_num| (a_num - e_num).abs() < 1e-9)),
+            (serde_json::Value::String(a), serde_json::Value::Number(e)) => a
+                .parse::<f64>()
+                .is_ok_and(|a_num| e.as_f64().is_some_and(|e_num| (a_num - e_num).abs() < 1e-9)),
 
             // Default: no match for mismatched types
             _ => false,
@@ -557,7 +551,9 @@ mod tests {
             logic: FilterLogic::And,
         }];
 
-        let strategy = analyzer.analyze_filters(&filters).unwrap();
+        let strategy = analyzer
+            .analyze_filters(&filters)
+            .expect("Fast filterable strategy analysis should succeed");
         matches!(strategy, MetadataFilterStrategy::FastFilterable { .. });
 
         // Slow path: non-filterable
@@ -569,7 +565,9 @@ mod tests {
             logic: FilterLogic::And,
         }];
 
-        let strategy = analyzer.analyze_filters(&filters).unwrap();
+        let strategy = analyzer
+            .analyze_filters(&filters)
+            .expect("Slow full scan strategy analysis should succeed");
         matches!(strategy, MetadataFilterStrategy::SlowFullScan { .. });
 
         // Mixed path
@@ -591,7 +589,9 @@ mod tests {
             },
         ];
 
-        let strategy = analyzer.analyze_filters(&filters).unwrap();
+        let strategy = analyzer
+            .analyze_filters(&filters)
+            .expect("Mixed strategy analysis should succeed");
         matches!(strategy, MetadataFilterStrategy::Mixed { .. });
     }
 
@@ -634,21 +634,33 @@ mod tests {
             serde_json::Value::String("electronics".to_string()),
         );
 
-        assert!(analyzer.check_filter_json(json, &filter).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter)
+                .expect("JSON filter check for matching category should succeed")
+        );
 
         // Non-matching value
         let filter_no_match = FilterCondition::Equals(
             "category".to_string(),
             serde_json::Value::String("clothing".to_string()),
         );
-        assert!(!analyzer.check_filter_json(json, &filter_no_match).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(json, &filter_no_match)
+                .expect("JSON filter check for non-matching category should succeed")
+        );
 
         // Non-existing field
         let filter_missing = FilterCondition::Equals(
             "missing_field".to_string(),
             serde_json::Value::String("value".to_string()),
         );
-        assert!(!analyzer.check_filter_json(json, &filter_missing).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(json, &filter_missing)
+                .expect("JSON filter check for missing field should succeed")
+        );
     }
 
     #[test]
@@ -659,16 +671,28 @@ mod tests {
 
         // Float comparison
         let filter_float = FilterCondition::Equals("price".to_string(), serde_json::json!(99.99));
-        assert!(analyzer.check_filter_json(json, &filter_float).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter_float)
+                .expect("JSON filter check for float price should succeed")
+        );
 
         // Integer comparison
         let filter_int = FilterCondition::Equals("quantity".to_string(), serde_json::json!(5));
-        assert!(analyzer.check_filter_json(json, &filter_int).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter_int)
+                .expect("JSON filter check for integer quantity should succeed")
+        );
 
         // Non-matching number
         let filter_no_match =
             FilterCondition::Equals("price".to_string(), serde_json::json!(100.0));
-        assert!(!analyzer.check_filter_json(json, &filter_no_match).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(json, &filter_no_match)
+                .expect("JSON filter check for non-matching price should succeed")
+        );
     }
 
     #[test]
@@ -683,7 +707,11 @@ mod tests {
             serde_json::json!(50.0),
             serde_json::json!(100.0),
         );
-        assert!(analyzer.check_filter_json(json, &filter_in_range).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter_in_range)
+                .expect("JSON filter check for value within range should succeed")
+        );
 
         // Value at boundary (inclusive)
         let filter_boundary = FilterCondition::Range(
@@ -691,7 +719,11 @@ mod tests {
             serde_json::json!(75.0),
             serde_json::json!(75.0),
         );
-        assert!(analyzer.check_filter_json(json, &filter_boundary).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter_boundary)
+                .expect("JSON filter check for value at boundary should succeed")
+        );
 
         // Value outside range
         let filter_outside = FilterCondition::Range(
@@ -699,7 +731,11 @@ mod tests {
             serde_json::json!(100.0),
             serde_json::json!(200.0),
         );
-        assert!(!analyzer.check_filter_json(json, &filter_outside).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(json, &filter_outside)
+                .expect("JSON filter check for value outside range should succeed")
+        );
     }
 
     #[test]
@@ -716,7 +752,11 @@ mod tests {
                 serde_json::Value::String("pending".to_string()),
             ],
         );
-        assert!(analyzer.check_filter_json(json, &filter_in_list).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter_in_list)
+                .expect("JSON filter check for value in list should succeed")
+        );
 
         // Value not in list
         let filter_not_in = FilterCondition::In(
@@ -726,7 +766,11 @@ mod tests {
                 serde_json::Value::String("deleted".to_string()),
             ],
         );
-        assert!(!analyzer.check_filter_json(json, &filter_not_in).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(json, &filter_not_in)
+                .expect("JSON filter check for value not in list should succeed")
+        );
 
         // Numeric value in list
         let filter_num_in = FilterCondition::In(
@@ -737,7 +781,11 @@ mod tests {
                 serde_json::json!(3),
             ],
         );
-        assert!(analyzer.check_filter_json(json, &filter_num_in).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter_num_in)
+                .expect("JSON filter check for numeric value in list should succeed")
+        );
     }
 
     #[test]
@@ -752,14 +800,14 @@ mod tests {
         assert!(
             analyzer
                 .check_filter_json(json_with_null, &filter_is_null)
-                .unwrap()
+                .expect("JSON filter check for explicit null should succeed")
         );
 
         // Missing field treated as null
         assert!(
             analyzer
                 .check_filter_json(json_without_field, &filter_is_null)
-                .unwrap()
+                .expect("JSON filter check for missing field as null should succeed")
         );
 
         // Non-null field should not match IsNull
@@ -767,7 +815,7 @@ mod tests {
         assert!(
             !analyzer
                 .check_filter_json(json_with_null, &filter_value_null)
-                .unwrap()
+                .expect("JSON filter check for non-null field should succeed")
         );
     }
 
@@ -779,19 +827,27 @@ mod tests {
 
         // Non-null value
         let filter_not_null = FilterCondition::IsNotNull("name".to_string());
-        assert!(analyzer.check_filter_json(json, &filter_not_null).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter_not_null)
+                .expect("JSON filter check for non-null value should succeed")
+        );
 
         // Null value should not match IsNotNull
         let filter_empty_not_null = FilterCondition::IsNotNull("empty".to_string());
         assert!(
             !analyzer
                 .check_filter_json(json, &filter_empty_not_null)
-                .unwrap()
+                .expect("JSON filter check for null value should succeed")
         );
 
         // Missing field should not match IsNotNull
         let filter_missing = FilterCondition::IsNotNull("nonexistent".to_string());
-        assert!(!analyzer.check_filter_json(json, &filter_missing).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(json, &filter_missing)
+                .expect("JSON filter check for missing field should succeed")
+        );
     }
 
     #[test]
@@ -801,7 +857,11 @@ mod tests {
         // String "100" should match number 100
         let json = r#"{"amount": "100"}"#;
         let filter = FilterCondition::Equals("amount".to_string(), serde_json::json!(100));
-        assert!(analyzer.check_filter_json(json, &filter).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json, &filter)
+                .expect("JSON filter check for string-to-number coercion should succeed")
+        );
 
         // Number 100 should match string "100"
         let json2 = r#"{"amount": 100}"#;
@@ -809,7 +869,11 @@ mod tests {
             "amount".to_string(),
             serde_json::Value::String("100".to_string()),
         );
-        assert!(analyzer.check_filter_json(json2, &filter2).unwrap());
+        assert!(
+            analyzer
+                .check_filter_json(json2, &filter2)
+                .expect("JSON filter check for number-to-string coercion should succeed")
+        );
     }
 
     #[test]
@@ -823,7 +887,11 @@ mod tests {
         );
 
         // Invalid JSON should return false (not match), not error
-        assert!(!analyzer.check_filter_json(invalid_json, &filter).unwrap());
+        assert!(
+            !analyzer
+                .check_filter_json(invalid_json, &filter)
+                .expect("JSON filter check for invalid JSON should succeed")
+        );
     }
 
     #[test]

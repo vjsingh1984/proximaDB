@@ -55,7 +55,7 @@ impl U512 {
         let mut result = [0u128; 4];
         let mut borrow = false;
 
-        for i in 0..4 {
+        for (i, res_val) in result.iter_mut().enumerate() {
             let (diff, new_borrow) = if borrow {
                 let (sub1, b1) = self.parts[i].overflowing_sub(1);
                 let (sub2, b2) = sub1.overflowing_sub(other.parts[i]);
@@ -64,7 +64,7 @@ impl U512 {
                 self.parts[i].overflowing_sub(other.parts[i])
             };
 
-            result[i] = diff;
+            *res_val = diff;
             borrow = new_borrow;
         }
 
@@ -80,7 +80,7 @@ impl U512 {
         let mut result = [0u128; 4];
         let mut carry = false;
 
-        for i in 0..4 {
+        for (i, res_val) in result.iter_mut().enumerate() {
             let (sum, new_carry) = if carry {
                 let (add1, c1) = self.parts[i].overflowing_add(other.parts[i]);
                 let (add2, c2) = add1.overflowing_add(1);
@@ -89,7 +89,7 @@ impl U512 {
                 self.parts[i].overflowing_add(other.parts[i])
             };
 
-            result[i] = sum;
+            *res_val = sum;
             carry = new_carry;
         }
 
@@ -153,7 +153,7 @@ impl<'de> Deserialize<'de> for U512 {
         for (i, part) in parts.iter_mut().enumerate() {
             let start = i * 16;
             let end = start + 16;
-            *part = u128::from_le_bytes(bytes[start..end].try_into().unwrap());
+            *part = u128::from_le_bytes(bytes[start..end].try_into().unwrap_or([0; 16]));
         }
 
         Ok(Self::new(parts))
@@ -393,7 +393,7 @@ impl<'de> Deserialize<'de> for SpatialCode {
                     return Err(serde::de::Error::custom("Invalid 64-bit code length"));
                 }
                 Ok(Self::Code64(u64::from_le_bytes(
-                    bytes[1..9].try_into().unwrap(),
+                    bytes[1..9].try_into().unwrap_or([0; 8]),
                 )))
             }
             2 => {
@@ -401,7 +401,7 @@ impl<'de> Deserialize<'de> for SpatialCode {
                     return Err(serde::de::Error::custom("Invalid 128-bit code length"));
                 }
                 Ok(Self::Code128(u128::from_le_bytes(
-                    bytes[1..17].try_into().unwrap(),
+                    bytes[1..17].try_into().unwrap_or([0; 16]),
                 )))
             }
             3 => {
@@ -409,8 +409,8 @@ impl<'de> Deserialize<'de> for SpatialCode {
                     return Err(serde::de::Error::custom("Invalid 256-bit code length"));
                 }
                 Ok(Self::Code256 {
-                    low: u128::from_le_bytes(bytes[1..17].try_into().unwrap()),
-                    high: u128::from_le_bytes(bytes[17..33].try_into().unwrap()),
+                    low: u128::from_le_bytes(bytes[1..17].try_into().unwrap_or([0; 16])),
+                    high: u128::from_le_bytes(bytes[17..33].try_into().unwrap_or([0; 16])),
                 })
             }
             4 => {
@@ -421,7 +421,7 @@ impl<'de> Deserialize<'de> for SpatialCode {
                 for (i, part) in parts.iter_mut().enumerate() {
                     let start = 1 + i * 16;
                     let end = start + 16;
-                    *part = u128::from_le_bytes(bytes[start..end].try_into().unwrap());
+                    *part = u128::from_le_bytes(bytes[start..end].try_into().unwrap_or([0; 16]));
                 }
                 Ok(Self::Code512(U512::new(parts)))
             }
@@ -475,7 +475,11 @@ impl CodeType {
         } else if total_bits <= 512 {
             Self::Bits512
         } else {
-            panic!("Total bits ({}) exceeds maximum (512)", total_bits);
+            // API contract violation - exceeds maximum architectural limit
+            #[allow(clippy::panic)]
+            {
+                panic!("Total bits ({}) exceeds maximum (512)", total_bits);
+            }
         }
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! The StorageEngineFactory is the central point for creating storage engine
 //! instances in ProximaDB. It provides a unified interface for instantiating
-//! any of the 6 storage engines based on configuration or strategy.
+//! any of the supported storage engines based on configuration or strategy.
 //!
 //! ## Design Pattern:
 //!
@@ -32,11 +32,14 @@
 //! - **NOVA**: Advanced columnar analytics, 66+ tests, zone maps & predicate pushdown
 //! - **HELIX**: High-dimensional data, 38+ tests, PCA dimension reduction
 //!
-//! **Experimental (Requires `experimental-engines` feature flag):**
-//! - **SWIFT**: Fast traversal, 41+ tests, some methods return errors
-//! - **RAPTOR**: Matrix Trinity navigation, 23+ tests, several TODOs for optimization
+//! **⚠️ DEPRECATED - Experimental (Requires `experimental-engines` feature flag):**
+//! - **SWIFT**: ⚠️ DEPRECATED - Incomplete hierarchical storage, 30+ DEFERREDs
+//! - **RAPTOR**: ⚠️ DEPRECATED - Experimental Matrix Trinity, 35+ DEFERREDs
 //!
-//! To enable experimental engines: `cargo build --features experimental-engines`
+//! **IMPORTANT**: SWIFT and RAPTOR are deprecated and will be removed in v1.0.
+//! Use SST, VIPER, HELIX, or NOVA instead. See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
+//!
+//! To enable deprecated engines: `cargo build --features experimental-engines`
 //!
 //! ## Selection Criteria:
 //!
@@ -105,11 +108,36 @@ use tracing::{info, warn};
 
 use crate::metrics::collectors::EngineMetricsCollector;
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
+use crate::query::capability::CapabilityRegistry;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
 use super::impls::{nova::NovaEngine, sst::SstEngine, viper::ViperEngine};
 #[cfg(feature = "experimental-engines")]
 use super::impls::{raptor::RaptorEngine, swift::SwiftEngine};
+
+/// Global capability registry for storage engine capabilities
+///
+/// This singleton registry is initialized when the factory is first used
+/// and stores capability information for all storage engines.
+static GLOBAL_CAPABILITY_REGISTRY: once_cell::sync::Lazy<CapabilityRegistry> =
+    once_cell::sync::Lazy::new(CapabilityRegistry::new);
+
+/// Get the global capability registry
+pub fn global_capability_registry() -> &'static CapabilityRegistry {
+    &GLOBAL_CAPABILITY_REGISTRY
+}
+
+/// Register an engine's capabilities with the global registry
+///
+/// This function is called automatically when engines are created by the factory.
+/// It ensures that the capability registry has up-to-date information about
+/// what each engine supports.
+fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageEngine>) {
+    let caps = engine.capabilities();
+    let engine_name = engine.engine_name();
+    global_capability_registry().register_capabilities(engine_name, caps);
+    info!("✅ Registered capabilities for engine: {}", engine_name);
+}
 
 /// Storage engine factory for creating engine instances
 ///
@@ -117,8 +145,9 @@ use super::impls::{raptor::RaptorEngine, swift::SwiftEngine};
 ///
 /// 1. **Engine Creation**: Instantiate appropriate engine based on config
 /// 2. **Dependency Injection**: Provide filesystem, distance compute, caches
-/// 3. **Async Bridging**: Handle async engine initialization in sync context
-/// 4. **Error Reporting**: Return explicit errors for unimplemented/misconfigured engines
+/// 3. **Capability Registration**: Register engine capabilities with global registry
+/// 4. **Async Bridging**: Handle async engine initialization in sync context
+/// 5. **Error Reporting**: Return explicit errors for unimplemented/misconfigured engines
 ///
 /// ## Thread Safety:
 ///
@@ -178,6 +207,14 @@ impl StorageEngineFactory {
                     )
                 }
             }
+            ProtoStorageEngine::Tst => Self::create_tst(),
+            ProtoStorageEngine::Cedar => Self::create_cedar(),
+            ProtoStorageEngine::Chrono => Self::create_chrono(),
+            ProtoStorageEngine::Titan => {
+                // TITAN is primarily a GraphEngine; for UnifiedStorageEngine, use SST as backing
+                warn!("TITAN is a graph engine; using SST for vector storage operations");
+                Self::create_sst()
+            }
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
                 Self::create_sst()
@@ -229,6 +266,13 @@ impl StorageEngineFactory {
                          To enable: cargo build --features experimental-engines"
                     )
                 }
+            }
+            ProtoStorageEngine::Tst => Self::create_tst_async().await,
+            ProtoStorageEngine::Cedar => Self::create_cedar_async().await,
+            ProtoStorageEngine::Chrono => Self::create_chrono_async().await,
+            ProtoStorageEngine::Titan => {
+                warn!("TITAN is a graph engine; using SST for vector storage operations");
+                Self::create_sst_async().await
             }
             ProtoStorageEngine::Mmap => {
                 warn!("MMAP engine not yet implemented, using SST");
@@ -315,7 +359,75 @@ impl StorageEngineFactory {
                 info!("Creating HELIX engine");
                 Self::create_helix()
             }
+            StorageEngineStrategy::TimeSeries => {
+                info!("Creating TimeSeries (TST) engine");
+                Self::create_tst()
+            }
+            StorageEngineStrategy::Cedar => {
+                info!("Creating CEDAR (Document) engine");
+                Self::create_cedar()
+            }
+            StorageEngineStrategy::Chrono => {
+                info!("Creating CHRONO (Observability) engine");
+                Self::create_chrono()
+            }
         }
+    }
+
+    /// Create TimeSeries storage engine
+    ///
+    /// Time-series optimized engine with:
+    /// - Time-partitioned columnar storage
+    /// - OHLC aggregation for trading data
+    /// - ASOF joins for temporal queries
+    /// - Automatic downsampling
+    pub fn create_tst() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating TST (Time-Series) storage engine");
+        Ok(Arc::new(
+            crate::storage::engines::impls::tst::TimeSeriesEngine::new()?,
+        ))
+    }
+
+    /// Async version for use within async contexts (e.g., tests)
+    pub async fn create_tst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        Self::create_tst()
+    }
+
+    /// Create CEDAR document storage engine
+    ///
+    /// LSM-based engine optimized for:
+    /// - JSON document CRUD with MVCC versioning
+    /// - Secondary indexes on document fields
+    /// - BSON encoding with LZ4 compression
+    pub fn create_cedar() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating CEDAR (Document) storage engine");
+        Ok(Arc::new(
+            crate::storage::engines::impls::cedar::CedarEngine::new()?,
+        ))
+    }
+
+    /// Async version for CEDAR
+    pub async fn create_cedar_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        Self::create_cedar()
+    }
+
+    /// Create CHRONO observability storage engine
+    ///
+    /// LSM-based engine optimized for:
+    /// - Metrics with Gorilla timestamp/value encoding
+    /// - Logs with label indexing and text search
+    /// - Traces with span assembly
+    /// - Time-window compaction with downsampling
+    pub fn create_chrono() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        info!("Creating CHRONO (Observability) storage engine");
+        Ok(Arc::new(
+            crate::storage::engines::impls::chrono::ChronoEngine::new()?,
+        ))
+    }
+
+    /// Async version for CHRONO
+    pub async fn create_chrono_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+        Self::create_chrono()
     }
 
     /// Create VIPER engine with default configuration
@@ -333,14 +445,18 @@ impl StorageEngineFactory {
         info!("Creating VIPER storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { ViperEngine::new().await })?;
-        Ok(Arc::new(engine))
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_viper_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating VIPER storage engine");
         let engine = ViperEngine::new().await?;
-        Ok(Arc::new(engine))
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Create SST engine with default configuration
@@ -358,14 +474,18 @@ impl StorageEngineFactory {
         info!("Creating SST storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { SstEngine::new().await })?;
-        Ok(Arc::new(engine))
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_sst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating SST storage engine");
         let engine = SstEngine::new().await?;
-        Ok(Arc::new(engine))
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Create SWIFT engine (Storage With Instant Fast Traversal)
@@ -382,6 +502,7 @@ impl StorageEngineFactory {
     ///
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
+    #[allow(deprecated)]
     pub fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
@@ -394,6 +515,7 @@ impl StorageEngineFactory {
     ///
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
+    #[allow(deprecated)]
     pub async fn create_swift_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT storage engine");
@@ -445,14 +567,18 @@ impl StorageEngineFactory {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(NovaEngine::new())?;
-        Ok(Arc::new(engine))
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_nova_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating NOVA storage engine");
         let engine = NovaEngine::new().await?;
-        Ok(Arc::new(engine))
+        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        register_engine_capabilities(&engine);
+        Ok(engine)
     }
 
     /// Create RAPTOR engine (Row-Aligned Predicated Tensor Optimized Repository)
@@ -470,6 +596,7 @@ impl StorageEngineFactory {
     ///
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
+    #[allow(deprecated)]
     pub fn create_raptor() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("RAPTOR engine is experimental and not production-ready");
         let runtime = tokio::runtime::Runtime::new()?;
@@ -481,6 +608,7 @@ impl StorageEngineFactory {
     ///
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
+    #[allow(deprecated)]
     pub async fn create_raptor_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         warn!("RAPTOR engine is experimental and not production-ready");
         info!("Creating RAPTOR storage engine");
@@ -498,7 +626,7 @@ impl StorageEngineFactory {
         // Set up metrics for SWIFT and NOVA engines
         match engine_type {
             ProtoStorageEngine::Swift => {
-                // TODO: Fix trait object downcasting - this is complex with Arc<dyn Trait>
+                // Deferred: Fix trait object downcasting - this is complex with Arc<dyn Trait>
                 // Commented out until swift variable is properly defined
                 // if false { // Temporarily disable this complex downcasting
                 //     swift.set_metrics_collector(metrics_collector.clone());
@@ -852,7 +980,7 @@ impl StorageEngineFactory {
                 ],
                 cons: vec![
                     "Experimental (23+ tests)".to_string(),
-                    "Several TODOs remaining".to_string(),
+                    "Several DEFERREDs remaining".to_string(),
                     "Complex matrix computation".to_string(),
                 ],
                 best_for: vec![
@@ -870,6 +998,141 @@ impl StorageEngineFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // Engine creation tests via async factory methods
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_create_sst_engine() {
+        let engine = StorageEngineFactory::create_sst_async()
+            .await
+            .expect("Failed to create SST engine");
+        assert_eq!(engine.engine_name(), "sst");
+    }
+
+    #[tokio::test]
+    async fn test_create_viper_engine() {
+        let engine = StorageEngineFactory::create_viper_async()
+            .await
+            .expect("Failed to create VIPER engine");
+        assert_eq!(engine.engine_name(), "VIPER");
+    }
+
+    #[tokio::test]
+    async fn test_create_nova_engine() {
+        let engine = StorageEngineFactory::create_nova_async()
+            .await
+            .expect("Failed to create NOVA engine");
+        assert_eq!(engine.engine_name(), "NOVA");
+    }
+
+    #[tokio::test]
+    async fn test_create_helix_engine() {
+        let engine = StorageEngineFactory::create_helix_async()
+            .await
+            .expect("Failed to create HELIX engine");
+        assert_eq!(engine.engine_name(), "helix");
+    }
+
+    #[tokio::test]
+    async fn test_create_cedar_engine() {
+        let engine = StorageEngineFactory::create_cedar_async()
+            .await
+            .expect("Failed to create CEDAR engine");
+        assert_eq!(engine.engine_name(), "cedar");
+    }
+
+    #[tokio::test]
+    async fn test_create_chrono_engine() {
+        let engine = StorageEngineFactory::create_chrono_async()
+            .await
+            .expect("Failed to create CHRONO engine");
+        assert_eq!(engine.engine_name(), "chrono");
+    }
+
+    #[tokio::test]
+    async fn test_create_sequoia_engine() {
+        // Sequoia is not yet in the proto enum, so we create it directly
+        use super::super::impls::sequoia::SequoiaEngine;
+        let engine = SequoiaEngine::new();
+        assert_eq!(
+            crate::storage::traits::UnifiedStorageEngine::engine_name(&engine),
+            "sequoia"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_tst_engine() {
+        let engine = StorageEngineFactory::create_tst_async()
+            .await
+            .expect("Failed to create TST engine");
+        assert_eq!(engine.engine_name(), "tst");
+    }
+
+    #[tokio::test]
+    async fn test_factory_default_engine() {
+        // Unspecified proto engine should default to SST
+        let engine = StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Unspecified)
+            .await
+            .expect("Failed to create default engine");
+        assert_eq!(engine.engine_name(), "sst");
+    }
+
+    #[tokio::test]
+    async fn test_factory_invalid_config() {
+        // SWIFT and RAPTOR require experimental-engines feature flag.
+        // Without that feature, requesting them should produce a meaningful error.
+        #[cfg(not(feature = "experimental-engines"))]
+        {
+            let result =
+                StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Swift).await;
+            assert!(
+                result.is_err(),
+                "SWIFT should fail without experimental-engines feature"
+            );
+            let err_msg = format!("{}", result.err().unwrap());
+            assert!(
+                err_msg.contains("experimental"),
+                "Error should mention experimental: {}",
+                err_msg
+            );
+
+            let result =
+                StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Raptor).await;
+            assert!(
+                result.is_err(),
+                "RAPTOR should fail without experimental-engines feature"
+            );
+            let err_msg = format!("{}", result.err().unwrap());
+            assert!(
+                err_msg.contains("experimental"),
+                "Error should mention experimental: {}",
+                err_msg
+            );
+        }
+
+        // Mmap and Hybrid should fall back to SST (not error), verify they succeed
+        let mmap_engine =
+            StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Mmap).await;
+        assert!(
+            mmap_engine.is_ok(),
+            "Mmap should fallback to SST, not error"
+        );
+        assert_eq!(mmap_engine.as_ref().unwrap().engine_name(), "sst");
+
+        let hybrid_engine =
+            StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Hybrid).await;
+        assert!(
+            hybrid_engine.is_ok(),
+            "Hybrid should fallback to SST, not error"
+        );
+        assert_eq!(hybrid_engine.as_ref().unwrap().engine_name(), "sst");
+    }
+
+    // -----------------------------------------------------------------------
+    // Existing tests below
+    // -----------------------------------------------------------------------
 
     #[test]
     fn test_engine_recommendation() {

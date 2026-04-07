@@ -88,7 +88,7 @@ use crate::index::axis::eventlog::StorageEngineType;
 /// // Archive old data after 90 days
 /// engine.migrate_to_tier(old_data, PerformanceTier::Archive)?;
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PerformanceTier {
     /// Hot data - keep in memory/SSD, optimize for latency
     /// Target: <1ms latency, highest cost
@@ -96,6 +96,7 @@ pub enum PerformanceTier {
 
     /// Warm data - balance between latency and cost
     /// Target: <10ms latency, moderate cost
+    #[default]
     Warm,
 
     /// Cold data - optimize for cost, higher latency acceptable
@@ -107,11 +108,6 @@ pub enum PerformanceTier {
     Archive,
 }
 
-impl Default for PerformanceTier {
-    fn default() -> Self {
-        Self::Warm
-    }
-}
 // Core types imported as needed in implementations
 
 /// Strategy enum for selecting storage engine type
@@ -142,10 +138,11 @@ impl Default for PerformanceTier {
 /// | Swift    | 300K  | 2ms   | 2-3x        | High   |
 /// | Raptor   | 250K  | 3ms   | 4-6x        | Medium |
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum StorageEngineStrategy {
     /// VIPER: Vector-optimized Intelligent Parquet with Efficient Retrieval (Default)
     /// Best for: Analytics, batch operations, maximum compression
+    #[default]
     Viper,
 
     /// SST: Sorted String Table storage engine
@@ -168,15 +165,21 @@ pub enum StorageEngineStrategy {
     /// Best for: High-dimensional vectors (>1536D)
     Helix,
 
+    /// TST: Time-Series Storage (Trading/IoT workloads with OHLC, ASOF joins)
+    /// Best for: Time-series data, OHLC aggregation, temporal queries
+    TimeSeries,
+
     /// Hybrid: Uses VIPER for vectors, LSM for metadata (Future)
     /// Best for: Complex workloads with different access patterns
     Hybrid,
-}
 
-impl Default for StorageEngineStrategy {
-    fn default() -> Self {
-        Self::Viper // VIPER is the default strategy
-    }
+    /// CEDAR: Columnar Extensible Document Archive
+    /// Best for: JSON document CRUD, secondary indexes, document versioning
+    Cedar,
+
+    /// CHRONO: Chronological Hierarchical Record and Observation store
+    /// Best for: Metrics, logs, traces with label indexing and time-range queries
+    Chrono,
 }
 
 /// Core metadata provider trait for collection metadata operations
@@ -356,6 +359,12 @@ impl UnifiedMetricsCollector {
             success,
             if bytes > 0 { Some(bytes) } else { None },
         );
+    }
+}
+
+impl Default for UnifiedMetricsCollector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -547,6 +556,103 @@ pub trait InternalCollectionProvider: MetadataProvider + Send + Sync {
     // All methods are inherited from MetadataProvider.
 }
 
+/// Canonical statistics for cost-based query optimization
+///
+/// This is the **single source of truth** for collection statistics across
+/// ProximaDB. All components (query planner, optimizer, AutoML, EXPLAIN)
+/// should use this struct. Engine-specific or module-specific stat types
+/// should convert to/from this canonical form.
+///
+/// Used by the query planner's `CostModel` to estimate operation costs
+/// and select optimal join/fusion strategies.
+#[derive(Debug, Clone, Default)]
+pub struct CollectionStats {
+    /// Number of rows/vectors in the collection
+    pub row_count: u64,
+    /// Average vector size in bytes
+    pub avg_vector_bytes: u64,
+    /// Storage engine strategy used for this collection
+    pub engine_strategy: StorageEngineStrategy,
+    /// Whether a metadata index exists for fast filtering
+    pub has_metadata_index: bool,
+    /// Whether an HNSW index is available for approximate nearest neighbor search
+    pub has_hnsw_index: bool,
+    /// Total storage bytes consumed by this collection
+    pub total_bytes: u64,
+    /// Vector dimensionality (if known)
+    pub dimension: Option<u32>,
+    /// Index type in use (e.g., "hnsw", "ivf", "flat")
+    pub index_type: Option<String>,
+}
+
+impl From<crate::proto::proximadb_v1::CollectionStats> for CollectionStats {
+    fn from(proto: crate::proto::proximadb_v1::CollectionStats) -> Self {
+        Self {
+            row_count: proto.vector_count as u64,
+            total_bytes: proto.data_size_bytes as u64,
+            ..Self::default()
+        }
+    }
+}
+
+/// Macro to implement the engine identification boilerplate for `UnifiedStorageEngine`.
+///
+/// Every engine must implement `engine_name()`, `engine_version()`, `strategy()`,
+/// and `get_filesystem_factory()`. These are purely descriptive and follow the same
+/// pattern across all 7+ engines. This macro eliminates ~15 lines of repetitive code
+/// per engine and prevents drift (e.g., one engine forgetting to update its version).
+///
+/// # Usage
+/// ```ignore
+/// // Inside `impl UnifiedStorageEngine for MyEngine { ... }`:
+/// crate::impl_engine_identity!("NOVA", crate::version::PROXIMADB_VERSION, Nova, filesystem_factory);
+/// // For engines with private fields accessed via method:
+/// crate::impl_engine_identity!("sst", crate::version::PROXIMADB_VERSION, Sst, filesystem());
+/// ```
+#[macro_export]
+macro_rules! impl_engine_identity {
+    // Variant 1: field is accessed directly (public field)
+    ($name:expr, $version:expr, $strategy:ident, $fs_field:ident) => {
+        fn engine_name(&self) -> &'static str {
+            $name
+        }
+
+        fn engine_version(&self) -> &'static str {
+            $version
+        }
+
+        fn strategy(&self) -> $crate::storage::traits::StorageEngineStrategy {
+            $crate::storage::traits::StorageEngineStrategy::$strategy
+        }
+
+        fn get_filesystem_factory(
+            &self,
+        ) -> &$crate::storage::persistence::filesystem::FilesystemFactory {
+            &self.$fs_field
+        }
+    };
+    // Variant 2: field is accessed via method call (private field)
+    ($name:expr, $version:expr, $strategy:ident, $fs_method:ident ()) => {
+        fn engine_name(&self) -> &'static str {
+            $name
+        }
+
+        fn engine_version(&self) -> &'static str {
+            $version
+        }
+
+        fn strategy(&self) -> $crate::storage::traits::StorageEngineStrategy {
+            $crate::storage::traits::StorageEngineStrategy::$strategy
+        }
+
+        fn get_filesystem_factory(
+            &self,
+        ) -> &$crate::storage::persistence::filesystem::FilesystemFactory {
+            self.$fs_method()
+        }
+    };
+}
+
 /// Unified storage engine trait implementing Strategy Pattern
 ///
 /// Common operations have default implementations that can be overridden.
@@ -577,6 +683,8 @@ pub trait UnifiedStorageEngine: Send + Sync {
             StorageEngineStrategy::Nova => StorageEngineType::NOVA,
             StorageEngineStrategy::Swift => StorageEngineType::SWIFT,
             StorageEngineStrategy::Raptor => StorageEngineType::RAPTOR,
+            StorageEngineStrategy::Cedar => StorageEngineType::SST, // CEDAR uses SST-like indexing
+            StorageEngineStrategy::Chrono => StorageEngineType::SST, // CHRONO uses SST-like indexing
             // Default to SST for any unknown engines
             _ => StorageEngineType::SST,
         }
@@ -668,6 +776,19 @@ pub trait UnifiedStorageEngine: Send + Sync {
         CapabilityFactory::create(self.strategy()).scan_capabilities()
     }
 
+    /// Get collection statistics for cost-based query optimization
+    ///
+    /// Returns cardinality and index information used by the query planner's
+    /// `CostModel` to estimate operation costs and select optimal join/fusion
+    /// strategies. Default implementation returns basic stats; engines should
+    /// override for accurate cardinality data.
+    async fn collection_stats(&self, _collection_id: &str) -> Result<CollectionStats> {
+        Ok(CollectionStats {
+            engine_strategy: self.strategy(),
+            ..CollectionStats::default()
+        })
+    }
+
     // =============================================================================
     // ENGINE CAPABILITIES - Can be overridden, sensible defaults provided
     // =============================================================================
@@ -701,6 +822,173 @@ pub trait UnifiedStorageEngine: Send + Sync {
 
     fn supports_background_operations(&self) -> bool {
         true // All engines support background operations by default
+    }
+
+    /// Get comprehensive capability set for this engine
+    ///
+    /// Returns a CapabilitySet from the query capability registry that describes
+    /// all features this engine supports. This is used for query validation,
+    /// planning, and API parity checks.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let engine = StorageEngineFactory::create_sst()?;
+    /// let caps = engine.capabilities();
+    /// assert!(caps.contains(&CapabilitySet::from_capabilities(&[
+    ///     Capability::VectorSearch,
+    ///     Capability::Filter,
+    /// ])));
+    /// ```
+    ///
+    /// Default implementation provides capability sets based on engine strategy.
+    /// Engines can override this method to customize their declared capabilities.
+    fn capabilities(&self) -> crate::query::capability::CapabilitySet {
+        use crate::query::capability::{Capability, CapabilitySet};
+        use crate::storage::traits::StorageEngineStrategy;
+
+        match self.strategy() {
+            StorageEngineStrategy::Sst => CapabilitySet::from_capabilities(&[
+                // Core operations
+                Capability::Scan,
+                Capability::Filter,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::DotProduct,
+                Capability::Quantization,
+                // Features
+                Capability::WALRecovery,
+                Capability::BloomFilter,
+                // Index types
+                Capability::HNSWIndex,
+                Capability::IVFIndex,
+                Capability::AnnoyIndex,
+                Capability::LSHIndex,
+            ]),
+            StorageEngineStrategy::Viper => CapabilitySet::from_capabilities(&[
+                // Core operations
+                Capability::Scan,
+                Capability::Filter,
+                Capability::Project,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::DotProduct,
+                Capability::Quantization,
+                // Features
+                Capability::ColumnarAnalytics,
+                Capability::RowGroupPruning,
+                Capability::BloomFilter,
+                // Index types
+                Capability::HNSWIndex,
+                Capability::IVFIndex,
+            ]),
+            StorageEngineStrategy::Helix => CapabilitySet::from_capabilities(&[
+                // Core operations
+                Capability::Scan,
+                Capability::Filter,
+                Capability::PredicatePushdown,
+                // Vector operations (high-dimensional optimized)
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::Quantization,
+                // Features (spatial)
+                Capability::ColumnarAnalytics,
+                Capability::BloomFilter,
+            ]),
+            StorageEngineStrategy::Nova => CapabilitySet::from_capabilities(&[
+                // Core operations
+                Capability::Scan,
+                Capability::Filter,
+                Capability::Project,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::DotProduct,
+                Capability::HybridSearch,
+                Capability::Quantization,
+                // Features
+                Capability::ColumnarAnalytics,
+                Capability::RowGroupPruning,
+                Capability::BloomFilter,
+                // Index types
+                Capability::HNSWIndex,
+                Capability::IVFIndex,
+            ]),
+            StorageEngineStrategy::Swift => CapabilitySet::from_capabilities(&[
+                // Core operations (low-latency optimized)
+                Capability::Scan,
+                Capability::Filter,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                // Features
+                Capability::BloomFilter,
+            ]),
+            StorageEngineStrategy::Raptor => CapabilitySet::from_capabilities(&[
+                // Core operations (adaptive)
+                Capability::Scan,
+                Capability::Filter,
+                Capability::PredicatePushdown,
+                // Vector operations
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::Quantization,
+                // Features
+                Capability::ColumnarAnalytics,
+                Capability::BloomFilter,
+            ]),
+            StorageEngineStrategy::TimeSeries => CapabilitySet::from_capabilities(&[
+                // Time-series operations
+                Capability::TimeSeriesQuery,
+                Capability::Scan,
+                Capability::Filter,
+                // Features
+                Capability::Aggregate,
+            ]),
+            StorageEngineStrategy::Hybrid => CapabilitySet::from_capabilities(&[
+                Capability::Scan,
+                Capability::Filter,
+                Capability::Project,
+                Capability::PredicatePushdown,
+                Capability::VectorSearch,
+                Capability::CosineDistance,
+                Capability::EuclideanDistance,
+                Capability::DotProduct,
+                Capability::HybridSearch,
+                Capability::Quantization,
+                Capability::ColumnarAnalytics,
+                Capability::RowGroupPruning,
+                Capability::WALRecovery,
+                Capability::BloomFilter,
+                Capability::HNSWIndex,
+                Capability::IVFIndex,
+                Capability::AnnoyIndex,
+                Capability::LSHIndex,
+            ]),
+            StorageEngineStrategy::Cedar => CapabilitySet::from_capabilities(&[
+                Capability::Scan,
+                Capability::Filter,
+                Capability::WALRecovery,
+                Capability::BloomFilter,
+            ]),
+            StorageEngineStrategy::Chrono => CapabilitySet::from_capabilities(&[
+                Capability::Scan,
+                Capability::Filter,
+                Capability::TimeSeriesQuery,
+                Capability::Aggregate,
+                Capability::WALRecovery,
+            ]),
+        }
     }
 
     // =============================================================================
@@ -937,44 +1225,44 @@ pub trait UnifiedStorageEngine: Send + Sync {
         }
 
         // 🚀 INDEX UPDATES: Notify EventLog for AXIS indexing service
-        if result.success {
-            if let Some(collection_id) = &params.collection_id {
-                // Notify EventLog so AXIS consumer can build indexes asynchronously
-                if let Some(event_log) = crate::services::events::log::event_log_service() {
-                    // Use engine_type() method (OCP-compliant - no string matching)
-                    let storage_engine_type = self.engine_type();
+        if result.success
+            && let Some(collection_id) = &params.collection_id
+        {
+            // Notify EventLog so AXIS consumer can build indexes asynchronously
+            if let Some(event_log) = crate::services::events::log::event_log_service() {
+                // Use engine_type() method (OCP-compliant - no string matching)
+                let storage_engine_type = self.engine_type();
 
-                    let vector_count = result.entries_flushed.unwrap_or(0) as usize;
-                    // Use file_paths from FlushResult for AXIS index building
-                    if let Err(e) = event_log
-                        .notify_flush(
-                            collection_id,
-                            result.file_paths.clone(),
-                            vector_count,
-                            false, // has_quantized - TODO: pass from params
-                            true,  // has_fp32
-                            storage_engine_type,
-                        )
-                        .await
-                    {
-                        tracing::warn!(
-                            "⚠️ Failed to notify EventLog about flush for '{}': {}",
-                            collection_id,
-                            e
-                        );
-                    } else {
-                        tracing::info!(
-                            "📢 Notified EventLog for AXIS indexing: '{}' ({} vectors)",
-                            collection_id,
-                            vector_count
-                        );
-                    }
+                let vector_count = result.entries_flushed.unwrap_or(0) as usize;
+                // Use file_paths from FlushResult for AXIS index building
+                if let Err(e) = event_log
+                    .notify_flush(
+                        collection_id,
+                        result.file_paths.clone(),
+                        vector_count,
+                        false, // has_quantized - DEFERRED: pass from params
+                        true,  // has_fp32
+                        storage_engine_type,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        "⚠️ Failed to notify EventLog about flush for '{}': {}",
+                        collection_id,
+                        e
+                    );
                 } else {
-                    tracing::debug!(
-                        "🔄 Flush successful for collection: {} - EventLog not initialized",
-                        collection_id
+                    tracing::info!(
+                        "📢 Notified EventLog for AXIS indexing: '{}' ({} vectors)",
+                        collection_id,
+                        vector_count
                     );
                 }
+            } else {
+                tracing::debug!(
+                    "🔄 Flush successful for collection: {} - EventLog not initialized",
+                    collection_id
+                );
             }
         }
 
@@ -1058,6 +1346,21 @@ pub trait UnifiedStorageEngine: Send + Sync {
                 let stats = self.get_engine_stats().await?;
                 Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
             }
+            StorageEngineStrategy::TimeSeries => {
+                // TST: time-based flushing
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 64 * 1024 * 1024) // 64MB default
+            }
+            StorageEngineStrategy::Cedar => {
+                // CEDAR: document memtable size threshold
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 256 * 1024 * 1024) // 256MB default
+            }
+            StorageEngineStrategy::Chrono => {
+                // CHRONO: observability data flush threshold
+                let stats = self.get_engine_stats().await?;
+                Ok(stats.memory_usage_bytes > 128 * 1024 * 1024) // 128MB default
+            }
         }
     }
 
@@ -1128,6 +1431,36 @@ pub trait UnifiedStorageEngine: Send + Sync {
                     .unwrap_or(0.0)
                     < 0.7) // Compact when locality score drops below threshold
             }
+            StorageEngineStrategy::TimeSeries => {
+                // TST: compact based on partition count
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("total_partitions")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    > 100)
+            }
+            StorageEngineStrategy::Cedar => {
+                // CEDAR: compact when too many L0 blocks
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("block_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    > 4)
+            }
+            StorageEngineStrategy::Chrono => {
+                // CHRONO: compact based on time-window file count
+                let stats = self.get_engine_stats().await?;
+                Ok(stats
+                    .engine_specific
+                    .get("partition_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+                    > 24) // More than 24 hourly partitions
+            }
         }
     }
 
@@ -1157,11 +1490,11 @@ pub trait UnifiedStorageEngine: Send + Sync {
             last_flush: engine_metrics
                 .get("created_at")
                 .and_then(|v| v.as_i64())
-                .and_then(|ts| DateTime::from_timestamp_millis(ts)),
+                .and_then(DateTime::from_timestamp_millis),
             last_compaction: engine_metrics
                 .get("updated_at")
                 .and_then(|v| v.as_i64())
-                .and_then(|ts| DateTime::from_timestamp_millis(ts)),
+                .and_then(DateTime::from_timestamp_millis),
             pending_flushes: engine_metrics
                 .get("pending_flushes")
                 .and_then(|v| v.as_u64())
@@ -1197,13 +1530,12 @@ pub trait UnifiedStorageEngine: Send + Sync {
             .engine_specific
             .get("warnings")
             .and_then(|v| v.as_array())
-            .map(|arr| {
+            .map_or_else(Vec::new, |arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str())
                     .map(|s| s.to_string())
                     .collect()
-            })
-            .unwrap_or_else(Vec::new);
+            });
 
         Ok(EngineHealth {
             healthy,
@@ -1308,10 +1640,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
         }
 
         // Validate timeout
-        if let Some(timeout) = params.timeout_ms {
-            if timeout == 0 {
-                return Err(anyhow::anyhow!("Flush timeout cannot be zero"));
-            }
+        if let Some(timeout) = params.timeout_ms
+            && timeout == 0
+        {
+            return Err(anyhow::anyhow!("Flush timeout cannot be zero"));
         }
 
         Ok(())
@@ -1328,10 +1660,10 @@ pub trait UnifiedStorageEngine: Send + Sync {
         }
 
         // Validate timeout
-        if let Some(timeout) = params.timeout_ms {
-            if timeout == 0 {
-                return Err(anyhow::anyhow!("Compaction timeout cannot be zero"));
-            }
+        if let Some(timeout) = params.timeout_ms
+            && timeout == 0
+        {
+            return Err(anyhow::anyhow!("Compaction timeout cannot be zero"));
         }
 
         Ok(())
@@ -1670,16 +2002,16 @@ impl StorageQueryContext {
         let storage_strategy = config
             .and_then(|c| c.storage_engine)
             .and_then(|e| crate::proto::proximadb_v1::StorageEngine::try_from(e).ok())
-            .map(|engine| match engine {
+            .map_or(StorageEngineStrategy::Sst, |engine| match engine {
                 crate::proto::proximadb_v1::StorageEngine::Viper => StorageEngineStrategy::Viper,
                 crate::proto::proximadb_v1::StorageEngine::Sst => StorageEngineStrategy::Sst,
                 crate::proto::proximadb_v1::StorageEngine::Nova => StorageEngineStrategy::Nova,
                 crate::proto::proximadb_v1::StorageEngine::Helix => StorageEngineStrategy::Helix,
                 crate::proto::proximadb_v1::StorageEngine::Swift => StorageEngineStrategy::Swift,
                 crate::proto::proximadb_v1::StorageEngine::Raptor => StorageEngineStrategy::Raptor,
+                crate::proto::proximadb_v1::StorageEngine::Tst => StorageEngineStrategy::TimeSeries,
                 _ => StorageEngineStrategy::Sst, // Default to SST for unknown engines
-            })
-            .unwrap_or(StorageEngineStrategy::Sst);
+            });
 
         let mut adjusted_params = (*search_params).clone();
         if matches!(
@@ -1707,30 +2039,28 @@ impl StorageQueryContext {
                 })
                 .unwrap_or(false),
             has_quantization: config.and_then(|c| c.quantization.as_ref()).is_some(),
-            dimension: config.map(|c| c.dimension as usize).unwrap_or(0),
-            distance_metric: config
-                .map(|c| match c.distance_metric {
+            dimension: config.map_or(0, |c| c.dimension as usize),
+            distance_metric: config.map_or(
+                crate::compute::distance_computation::DistanceMetric::Cosine,
+                |c| match c.distance_metric {
                     Some(0) => crate::compute::distance_computation::DistanceMetric::Euclidean,
                     Some(1) => crate::compute::distance_computation::DistanceMetric::Cosine,
                     Some(2) => crate::compute::distance_computation::DistanceMetric::DotProduct,
                     _ => crate::compute::distance_computation::DistanceMetric::Cosine,
-                })
-                .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine),
+                },
+            ),
             storage_strategy,
             storage_path: storage_assignment
-                .map(|sa| sa.base_location.clone())
-                .unwrap_or_else(|| "./data".to_string()),
+                .map_or_else(|| "./data".to_string(), |sa| sa.base_location.clone()),
             estimated_vector_count: 0,
             estimated_size_bytes: 0,
             performance_tier: PerformanceTier::Warm, // Default since preset field doesn't exist
             compression_enabled: config
                 .and_then(|c| c.storage_config.as_ref())
-                .map(|s| s.compression.unwrap_or(0) != 0) // Assume 0 means no compression
-                .unwrap_or(false),
+                .is_some_and(|s| s.compression.unwrap_or(0) != 0),
             quantization_enabled: config
                 .and_then(|c| c.quantization.as_ref())
-                .map(|_| true)
-                .unwrap_or(false),
+                .is_some_and(|_| true),
             // Parse quantization config for progressive search
             quantization_config: config.and_then(|c| c.quantization.as_ref()).and_then(|qc| {
                 config
@@ -1786,8 +2116,7 @@ impl StorageQueryContext {
         self.metadata
             .quantization_config
             .as_ref()
-            .map(|qc| qc.progressive_search_enabled)
-            .unwrap_or(false)
+            .is_some_and(|qc| qc.progressive_search_enabled)
     }
 
     /// Get progressive quantization levels ordered by search priority
@@ -1803,8 +2132,7 @@ impl StorageQueryContext {
         self.metadata
             .quantization_config
             .as_ref()
-            .map(|qc| qc.binary_filter_selectivity)
-            .unwrap_or(0.1)
+            .map_or(0.1, |qc| qc.binary_filter_selectivity)
     }
 
     /// Check if SIMD acceleration should be used
@@ -1812,8 +2140,7 @@ impl StorageQueryContext {
         self.metadata
             .quantization_config
             .as_ref()
-            .map(|qc| qc.enable_simd_acceleration)
-            .unwrap_or(true)
+            .is_none_or(|qc| qc.enable_simd_acceleration)
     }
 
     /// Get the parsed quantization config
@@ -1877,9 +2204,8 @@ impl StorageQueryContext {
 
     /// Get collection-specific storage path
     pub fn collection_storage_path(&self) -> Option<String> {
-        self.storage_url().map(|base| {
-            crate::utils::StoragePath::collection_data_path(base, &self.collection_id())
-        })
+        self.storage_url()
+            .map(|base| crate::utils::StoragePath::collection_data_path(base, self.collection_id()))
     }
 }
 
@@ -2236,15 +2562,8 @@ pub trait MultiModelStorage:
     }
 }
 
-/// Supported data models
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DataModel {
-    Vector,
-    Document,
-    Graph,
-    Observability,
-    Relational,
-}
+/// Supported data models — re-exported from the canonical definition
+pub use crate::query::multimodel_router::StoreType as DataModel;
 
 /// Unified statistics across all data models
 #[derive(Debug, Clone, Default)]

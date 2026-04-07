@@ -302,8 +302,7 @@ impl MFAService {
     pub fn is_mfa_verified(&self, session_id: &str) -> bool {
         self.active_sessions
             .get(session_id)
-            .map(|session| session.verified && Utc::now() <= session.expires_at)
-            .unwrap_or(false)
+            .is_some_and(|session| session.verified && Utc::now() <= session.expires_at)
     }
 
     /// Clean up expired MFA sessions
@@ -408,10 +407,10 @@ impl RateLimitingService {
         }
 
         // Check tenant rate limit
-        if let Some(tenant_id) = &user_context.tenant_id {
-            if let Err(e) = self.check_tenant_rate_limit(tenant_id, now).await {
-                return Ok(RateLimitResult::denied("tenant", e.to_string()));
-            }
+        if let Some(tenant_id) = &user_context.tenant_id
+            && let Err(e) = self.check_tenant_rate_limit(tenant_id, now).await
+        {
+            return Ok(RateLimitResult::denied("tenant", e.to_string()));
         }
 
         // Check IP rate limit
@@ -483,6 +482,7 @@ impl RateLimitingService {
 }
 
 impl RateLimitCounter {
+    /// Create a new rate limit counter starting at the given time.
     fn new(now: DateTime<Utc>) -> Self {
         Self {
             requests: 0,
@@ -492,6 +492,7 @@ impl RateLimitCounter {
         }
     }
 
+    /// Reset the counter for a new rate limit window.
     fn reset(&mut self, now: DateTime<Utc>) {
         self.requests = 0;
         self.window_start = now;
@@ -608,17 +609,17 @@ impl IPAccessControlService {
         }
 
         // Check tenant-specific IP restrictions
-        if let Some(tenant_id) = tenant_id {
-            if let Some(allowed_ranges) = self.tenant_allowed_ips.get(tenant_id) {
-                let ip_allowed = allowed_ranges
-                    .iter()
-                    .any(|range| self.ip_in_range(ip, range));
+        if let Some(tenant_id) = tenant_id
+            && let Some(allowed_ranges) = self.tenant_allowed_ips.get(tenant_id)
+        {
+            let ip_allowed = allowed_ranges
+                .iter()
+                .any(|range| self.ip_in_range(ip, range));
 
-                if !ip_allowed {
-                    return Ok(IPAccessResult::blocked(
-                        "IP not in tenant allowed ranges".to_string(),
-                    ));
-                }
+            if !ip_allowed {
+                return Ok(IPAccessResult::blocked(
+                    "IP not in tenant allowed ranges".to_string(),
+                ));
             }
         }
 

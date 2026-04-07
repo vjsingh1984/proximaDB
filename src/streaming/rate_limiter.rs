@@ -161,11 +161,7 @@ impl RateLimiter {
             // Calculate wait time based on deficit
             let needed = count * 1000;
             let current = self.tokens.load(Ordering::Relaxed);
-            let deficit = if needed > current {
-                needed - current
-            } else {
-                0
-            };
+            let deficit = needed.saturating_sub(current);
 
             // How long to wait for the deficit tokens
             let wait_nanos = if self.rate > 0 {

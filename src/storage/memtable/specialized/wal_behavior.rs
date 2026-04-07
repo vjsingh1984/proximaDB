@@ -134,7 +134,7 @@ impl BatchCoordinator {
         // Store batch
         self.batches
             .entry(collection_id.to_string())
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(batch_id, batch);
 
         Ok(())
@@ -154,12 +154,12 @@ impl BatchCoordinator {
 
     /// Mark batch as flushed
     fn mark_batch_flushed(&mut self, collection_id: &str, batch_id: &str) -> Result<()> {
-        if let Some(collection_batches) = self.batches.get_mut(collection_id) {
-            if let Some(batch) = collection_batches.get_mut(batch_id) {
-                batch.is_flushed = true;
-                tracing::debug!("✅ Marked batch {} as flushed", batch_id);
-                return Ok(());
-            }
+        if let Some(collection_batches) = self.batches.get_mut(collection_id)
+            && let Some(batch) = collection_batches.get_mut(batch_id)
+        {
+            batch.is_flushed = true;
+            tracing::debug!("✅ Marked batch {} as flushed", batch_id);
+            return Ok(());
         }
         Err(anyhow::anyhow!(
             "Batch {}:{} not found",
@@ -418,7 +418,7 @@ impl WALBehaviorWrapper {
         // Store batch in Write Buffer-specific coordinator for backward compatibility and coordination
         tracing::debug!("🚀 WAL_BEHAVIOR: Updating batch_coordinator...");
         let mut coordinator = self.batch_coordinator.write().await;
-        coordinator.add_batch(&collection_id, batch.clone())?;
+        coordinator.add_batch(collection_id, batch.clone())?;
         drop(coordinator);
 
         // Update WAL metrics
@@ -510,7 +510,7 @@ impl WALBehaviorWrapper {
         );
 
         // Convert unified DistanceMetric to CoreDistanceMetric for now
-        // TODO: Update global partitioned memtable to accept unified DistanceMetric for all 13 metrics
+        // Deferred: Update global partitioned memtable to accept unified DistanceMetric for all 13 metrics
         let core_metric = match distance_metric {
             crate::compute::distance_computation::DistanceMetric::Unspecified => {
                 CoreDistanceMetric::Cosine
@@ -622,10 +622,7 @@ impl WALBehaviorWrapper {
     }
 
     /// Clear flushed entries for a specific collection
-    pub async fn clear_flushed_by_collection_id(
-        &self,
-        collection_id: &crate::core::String,
-    ) -> Result<usize> {
+    pub async fn clear_flushed_by_collection_id(&self, collection_id: &str) -> Result<usize> {
         // Delegate to the string-based method
         self.clear_flushed(collection_id).await
     }
@@ -645,7 +642,7 @@ impl WALBehaviorWrapper {
             .map(|batch_ref| {
                 // Create a new batch, handling bloom filter properly
                 let mut new_batch = WALVectorBatch {
-                    batch_id: batch_ref.batch_id.clone(),
+                    batch_id: batch_ref.batch_id,
                     vector_records: batch_ref.vector_records.clone(), // Arc clone (pointer copy)
                     timestamp: batch_ref.timestamp,
                     total_size_bytes: batch_ref.total_size_bytes,
@@ -804,15 +801,9 @@ impl WALBehaviorWrapper {
     }
 
     /// Get all vectors for a specific collection (MODERN)
-    pub async fn get_collection_vectors(
-        &self,
-        collection_id: &crate::core::String,
-    ) -> Result<Vec<VectorRecord>> {
+    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
         // Direct access to collection vectors from GlobalPartitionedMemtable
-        let vectors = self
-            .inner
-            .get_collection_vectors(&collection_id.to_string())
-            .await?;
+        let vectors = self.inner.get_collection_vectors(collection_id).await?;
 
         tracing::debug!(
             "🚀 MODERN_GET_ALL: Returning {} vectors for collection {} (direct VectorRecord access)",
@@ -913,13 +904,13 @@ impl WALBehaviorWrapper {
         let mut coordinator = self.batch_coordinator.write().await;
 
         // Remove batch from coordinator
-        if let Some(collection_batches) = coordinator.batches.get_mut(collection_id) {
-            if let Some(removed_batch) = collection_batches.remove(batch_id) {
-                // Remove vector index entries for this batch
-                for vector_record in removed_batch.vector_records.iter() {
-                    if !vector_record.id.is_empty() {
-                        coordinator.vector_index.remove(&vector_record.id);
-                    }
+        if let Some(collection_batches) = coordinator.batches.get_mut(collection_id)
+            && let Some(removed_batch) = collection_batches.remove(batch_id)
+        {
+            // Remove vector index entries for this batch
+            for vector_record in removed_batch.vector_records.iter() {
+                if !vector_record.id.is_empty() {
+                    coordinator.vector_index.remove(&vector_record.id);
                 }
             }
         }
@@ -984,7 +975,7 @@ impl WALBehaviorWrapper {
     /// Search for specific vector by ID (MODERN)
     pub async fn search_vector(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
         vector_id: &str,
     ) -> Result<Option<VectorRecord>> {
         self.inner.vector_by_id(collection_id, vector_id).await
@@ -993,7 +984,7 @@ impl WALBehaviorWrapper {
     /// Get vectors for specific collection with limit (MODERN)
     pub async fn get_collection_vectors_with_limit(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
         let mut vectors = self.inner.get_collection_vectors(collection_id).await?;
@@ -1009,7 +1000,7 @@ impl WALBehaviorWrapper {
     /// Get collection-specific statistics
     pub async fn get_collection_stats(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
     ) -> Result<crate::storage::persistence::write_ahead_log::WALStats> {
         let all_stats = WALBehaviorWrapper::get_stats(self).await?;
 
@@ -1031,7 +1022,7 @@ impl WALBehaviorWrapper {
     }
 
     /// Drop collection from memtable (MODERN)
-    pub async fn drop_collection(&self, collection_id: &crate::core::String) -> Result<usize> {
+    pub async fn drop_collection(&self, collection_id: &str) -> Result<usize> {
         // Use the collection-specific clear method for efficient removal
         self.inner.clear_flushed_batches(collection_id).await
     }
@@ -1069,7 +1060,7 @@ impl WALBehaviorWrapper {
     /// Get unflushed batches for atomic flush (MODERN)
     pub async fn atomic_mark_for_flush(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
         _up_to_sequence: u64,
     ) -> Result<Vec<WALVectorBatch>> {
         // Return unflushed batches directly for storage engine processing
@@ -1077,17 +1068,14 @@ impl WALBehaviorWrapper {
     }
 
     /// Complete flush and remove marked entries
-    pub async fn complete_flush_removal(
-        &self,
-        collection_id: &crate::core::String,
-    ) -> Result<usize> {
+    pub async fn complete_flush_removal(&self, collection_id: &str) -> Result<usize> {
         self.clear_flushed(collection_id).await
     }
 
     /// Abort flush and restore batches
     pub async fn abort_flush_restore(
         &self,
-        collection_id: &crate::core::String,
+        collection_id: &str,
         _batches: Vec<WALVectorBatch>,
     ) -> Result<()> {
         // In a real implementation, this would restore the batches

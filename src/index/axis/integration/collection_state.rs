@@ -20,39 +20,59 @@ use tracing::{debug, info};
 /// Collection-level tier state
 #[derive(Debug, Clone)]
 pub enum CollectionTierState {
-    /// Fully loaded in memory, ready for queries
+    /// Fully loaded in memory, ready for queries.
     Memory {
+        /// When the index was loaded into memory.
         loaded_at: Instant,
+        /// Memory footprint of the loaded index in bytes.
         memory_bytes: usize,
+        /// Total number of accesses since loading.
         access_count: u64,
+        /// Timestamp of the most recent access.
         last_access: Instant,
-        generation: u64, // Tracks index version
+        /// Index version generation for staleness detection.
+        generation: u64,
     },
 
-    /// On disk (local or persistent volume)
+    /// On disk (local or persistent volume).
     Disk {
+        /// When the index was stored to disk.
         stored_at: Instant,
+        /// Filesystem path of the stored index.
         disk_location: PathBuf,
+        /// Size of the on-disk index in bytes.
         disk_bytes: usize,
+        /// Timestamp of the most recent access, if any.
         last_access: Option<Instant>,
+        /// Whether this index is eligible for promotion to memory.
         promotion_eligible: bool,
     },
 
-    /// In cloud storage (S3/GCS/Azure)
+    /// In cloud storage (S3/GCS/Azure).
     Cloud {
+        /// Cloud storage class and provider.
         storage_type: CloudStorageType,
-        location: String, // S3 URL, GCS path, etc.
+        /// Cloud storage URL (e.g., S3 URI, GCS path).
+        location: String,
+        /// Size of the compressed index data in bytes.
         compressed_bytes: usize,
+        /// Timestamp of the last modification in cloud storage.
         last_modified: DateTime<Utc>,
+        /// Entity tag for cache validation.
         etag: String,
+        /// Estimated cost in dollars to retrieve this data.
         retrieval_cost: f64,
     },
 
-    /// Transitioning between tiers
+    /// Transitioning between tiers.
     Transitioning {
+        /// Source tier state being migrated from.
         from: Box<CollectionTierState>,
+        /// Target tier level being migrated to.
         to: TierLevel,
+        /// When the transition began.
         started_at: Instant,
+        /// Progress ratio from 0.0 to 1.0.
         progress: f32,
     },
 
@@ -63,22 +83,34 @@ pub enum CollectionTierState {
 /// Tier levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TierLevel {
+    /// In-memory tier for lowest latency access.
     Memory,
+    /// Local or persistent disk tier for warm data.
     Disk,
+    /// Cloud object storage tier for cold data.
     Cloud,
 }
 
 /// Cloud storage types
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CloudStorageType {
+    /// AWS S3 Standard storage class.
     S3Standard,
+    /// AWS S3 Express One Zone for single-digit-ms access.
     S3Express,
+    /// AWS S3 Glacier for archival storage.
     S3Glacier,
+    /// Google Cloud Storage Standard class.
     GCSStandard,
+    /// Google Cloud Storage Nearline for infrequent access.
     GCSNearline,
+    /// Google Cloud Storage Archive for long-term retention.
     GCSArchive,
+    /// Azure Blob Storage hot tier.
     AzureHot,
+    /// Azure Blob Storage cool tier.
     AzureCool,
+    /// Azure Blob Storage archive tier.
     AzureArchive,
 }
 
@@ -97,35 +129,54 @@ pub struct CollectionStateManager {
 /// Access history for a collection
 #[derive(Debug, Clone)]
 pub struct AccessHistory {
+    /// Timestamps of recent accesses for windowed analysis.
     pub recent_accesses: Vec<Instant>,
+    /// Number of accesses in the last hour.
     pub access_count_1h: u64,
+    /// Number of accesses in the last 24 hours.
     pub access_count_24h: u64,
+    /// Number of accesses in the last 7 days.
     pub access_count_7d: u64,
+    /// Average latency in milliseconds when falling back to lower tiers.
     pub avg_fallback_latency_ms: f64,
+    /// Computed importance score used for tier placement decisions.
     pub importance_score: f32,
 }
 
 /// Tier transition record
 #[derive(Debug, Clone)]
 pub struct TierTransition {
+    /// When the transition occurred.
     pub timestamp: DateTime<Utc>,
+    /// Tier the data was migrated from.
     pub from_tier: TierLevel,
+    /// Tier the data was migrated to.
     pub to_tier: TierLevel,
+    /// Reason that triggered this transition.
     pub reason: TransitionReason,
+    /// Duration of the migration in milliseconds.
     pub duration_ms: u64,
+    /// Amount of data transferred in bytes.
     pub data_size_bytes: usize,
 }
 
 /// Reasons for tier transitions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TransitionReason {
-    UserQuery,      // Promoted due to query
-    HighFrequency,  // Promoted due to access pattern
-    MemoryPressure, // Demoted due to memory limit
-    LowAccess,      // Demoted due to inactivity
-    Scheduled,      // Time-based policy
-    Manual,         // Admin-triggered
-    Preload,        // Proactive promotion
+    /// Promoted because a user query needed this data.
+    UserQuery,
+    /// Promoted due to high access frequency pattern.
+    HighFrequency,
+    /// Demoted to free memory under pressure.
+    MemoryPressure,
+    /// Demoted due to prolonged inactivity.
+    LowAccess,
+    /// Triggered by a time-based policy schedule.
+    Scheduled,
+    /// Explicitly triggered by an administrator.
+    Manual,
+    /// Proactively promoted based on predicted access.
+    Preload,
 }
 
 impl CollectionStateManager {
@@ -194,19 +245,18 @@ impl CollectionStateManager {
 
     /// Update transition progress
     pub fn update_transition_progress(&self, collection_id: &str, progress: f32) -> Result<()> {
-        if let Some(mut state) = self.states.get_mut(collection_id) {
-            if let CollectionTierState::Transitioning {
+        if let Some(mut state) = self.states.get_mut(collection_id)
+            && let CollectionTierState::Transitioning {
                 progress: ref mut p,
                 ..
             } = *state
-            {
-                *p = progress;
-                debug!(
-                    "📊 Transition progress for {}: {:.1}%",
-                    collection_id,
-                    progress * 100.0
-                );
-            }
+        {
+            *p = progress;
+            debug!(
+                "📊 Transition progress for {}: {:.1}%",
+                collection_id,
+                progress * 100.0
+            );
         }
         Ok(())
     }
@@ -227,7 +277,7 @@ impl CollectionStateManager {
                     started_at,
                     ..
                 } => {
-                    let from_tier = Self::state_to_tier(&*from);
+                    let from_tier = Self::state_to_tier(&from);
                     (from_tier, to, started_at)
                 }
                 _ => {
@@ -391,7 +441,7 @@ impl CollectionStateManager {
             })
             .collect();
 
-        collections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        collections.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         collections
     }
 
@@ -494,13 +544,24 @@ impl CollectionStateManager {
     }
 }
 
+impl Default for CollectionStateManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Memory usage statistics
 #[derive(Debug, Clone)]
 pub struct MemoryUsageStats {
+    /// Total memory consumed by all in-memory collections in bytes.
     pub total_memory_bytes: usize,
+    /// Number of collections currently loaded in memory.
     pub collections_in_memory: usize,
+    /// Number of collections stored on local disk.
     pub collections_on_disk: usize,
+    /// Number of collections stored in cloud object storage.
     pub collections_in_cloud: usize,
+    /// Number of collections currently transitioning between tiers.
     pub collections_transitioning: usize,
 }
 

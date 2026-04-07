@@ -15,55 +15,32 @@
  */
 
 //! Storage module unit tests
+//!
+//! **NOTE:** Most storage tests have been moved to tests/integration/storage/
+//! This directory now primarily contains inline unit tests within source modules.
 
-pub mod metadata_backend_tests;
-pub mod metadata_indexes_tests;
-pub mod single_index_tests;
-pub mod unified_index_tests;
-// pub mod test_wal_config_simple; // File doesn't exist
-// pub mod viper_flush_compaction_tests; // Removed - obsolete API
-// SST tests - now using unified test utilities
-pub mod sst_atomic_operations_test;
-// pub mod sst_bplustree_integration_test; // Commented: Uses deprecated SstableWriter/SstQueryEngine APIs
-pub mod sst_bplustree_tests; // B+ tree index tests - fixed for new API
-pub mod sst_core_tests;
-pub mod sst_sstable_format_test;
-// pub mod sst_flush_test; // Removed - duplicate of integration tests
+// All storage integration tests moved to tests/integration/storage/
+// - metadata_backend_tests → tests/integration/storage/metadata_backend_test
+// - schema_test → tests/integration/storage/schema_test
+// - sst_bplustree_integration_test → tests/integration/storage/sst_bplustree_integration_test
+// - sst_flush_idempotency_tdd_test → tests/integration/storage/sst_flush_idempotency_test
+// - sst_flush_recovery_tdd_test → tests/integration/storage/sst_flush_recovery_test
+// - sst_sstable_integration_test → tests/integration/storage/sst_sstable_integration_test
+// - test_cloud_url_routing → tests/integration/storage/cloud_url_routing_test
+// - test_compaction_config → tests/integration/storage/compaction_config_test
+// - test_flush_management → tests/integration/storage/flush_management_test
+// - test_global_flush → tests/integration/storage/global_flush_test
+// - test_threshold_triggers → tests/integration/storage/threshold_triggers_test
+// - test_write_buffer_config → tests/integration/storage/write_buffer_config_test
+// - test_write_buffer_config_simple → tests/integration/storage/write_buffer_config_simple_test
+// - table_provider_test → tests/integration/storage_table_provider_test
+// - engine_adapters_test → tests/integration/storage_engine_adapters_test
 
-// Phase 1 optimization tests
-// pub mod optimized_bloom_filter_test; // Module removed during bloom filter consolidation
-
-// Phase 2 optimization tests
-// pub mod unified_cache_test; // Removed - obsolete after cache refactoring
-// pub mod lockfree_test; // Removed - lockfree is now integrated in main implementation
-
-// Coverage improvement tests
-// pub mod storage_assignment_tests; // File not found - commented for now
-// pub mod assignment_service_advanced_tests; // File not found - commented for now
-
-// Threshold trigger tests
-pub mod test_threshold_triggers;
-
-// SST mmap tests
-// pub mod sst_mmap_tests;
-
-// MVCC resolution tests
-pub mod mvcc_resolution_tests;
-
-// SST flush and recovery TDD tests - moved to src/storage/engines/impls/sst/tests/
-// pub mod sst_flush_recovery_tdd_test;
-
-// Assignment service recovery tests
-// pub mod assignment_service_recovery_test; // File not found - commented for now
-
-// CentroidTree and pruning strategies tests (WS-1: Enhanced ProximaHeaderCache)
-pub mod centroid_tree_test;
-
-// DataFusion TableProvider integration tests (WS-4: DataFusion TableProvider)
-pub mod table_provider_test;
-
-// ProximaSchema migration and VectorRecord compatibility tests (WS-5)
-pub mod schema_test;
-
-// Engine-specific TableProvider adapters tests (WS-6: Engine TableProvider Adapters)
-pub mod engine_adapters_test;
+// Legacy inline tests (already inlined into source modules):
+// metadata_indexes_tests inlined into src/storage/metadata/indexes.rs
+// single_index_tests inlined into src/storage/metadata/single_index.rs
+// unified_index_tests inlined into src/storage/metadata/unified_index.rs
+// sst_bplustree_tests inlined into src/storage/engines/impls/sst/mod.rs
+// sst_sstable_format_test inlined into src/storage/engines/impls/sst/writer.rs
+// mvcc_resolution_tests inlined into src/core/search/mvcc_resolution.rs
+// centroid_tree_test inlined into src/storage/schema/centroid_tree.rs

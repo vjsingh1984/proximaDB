@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Main Business Intelligence Engine
 #[derive(Clone)]
@@ -31,126 +31,187 @@ pub struct BusinessIntelligenceEngine {
 /// Configuration for Business Intelligence Engine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BIEngineConfig {
+    /// Whether automated insight generation is enabled
     pub enable_automated_insights: bool,
+    /// Whether executive dashboard generation is enabled
     pub enable_executive_dashboards: bool,
+    /// Whether trend analysis is enabled
     pub enable_trend_analysis: bool,
+    /// Interval for refreshing insights in minutes
     pub insight_refresh_interval_minutes: u32,
+    /// Maximum number of insights per report
     pub max_insights_per_report: usize,
+    /// Whether predictive analytics is enabled
     pub enable_predictive_analytics: bool,
 }
 
 /// Executive dashboard data structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutiveDashboard {
+    /// Executive summary overview
     pub summary: ExecutiveSummary,
+    /// Key business metrics
     pub key_metrics: BusinessMetrics,
+    /// Trend analysis results
     pub trends: Vec<TrendAnalysis>,
+    /// Business insights generated
     pub insights: Vec<BusinessInsight>,
+    /// Actionable recommendations
     pub recommendations: Vec<BusinessRecommendation>,
+    /// Timestamp of dashboard generation
     pub generated_at: DateTime<Utc>,
+    /// Tenant this dashboard belongs to
     pub tenant_id: String,
+    /// Unique dashboard identifier
     pub dashboard_id: String,
 }
 
 /// Executive summary for dashboard
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutiveSummary {
+    /// Overall performance status
     pub performance_status: PerformanceStatus,
+    /// Key achievements in the period
     pub key_achievements: Vec<String>,
+    /// Critical alerts requiring attention
     pub critical_alerts: Vec<String>,
+    /// Growth indicator metrics
     pub growth_indicators: GrowthIndicators,
 }
 
 /// Business metrics collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BusinessMetrics {
+    /// Revenue-related metrics
     pub revenue_metrics: RevenueMetrics,
+    /// Customer-related metrics
     pub customer_metrics: CustomerMetrics,
+    /// Operational efficiency metrics
     pub operational_metrics: OperationalMetrics,
+    /// Performance and throughput metrics
     pub performance_metrics: PerformanceMetrics,
 }
 
 /// Revenue-related metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RevenueMetrics {
+    /// Total revenue amount
     pub total_revenue: Option<f64>,
+    /// Revenue growth rate as a percentage
     pub revenue_growth_percent: Option<f64>,
+    /// Average revenue per customer
     pub avg_revenue_per_customer: Option<f64>,
+    /// Revenue breakdown by business segment
     pub revenue_by_segment: HashMap<String, f64>,
 }
 
 /// Customer-related metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CustomerMetrics {
+    /// Total number of customers
     pub total_customers: Option<u64>,
+    /// Number of new customers acquired
     pub new_customers: Option<u64>,
+    /// Customer churn rate as a percentage
     pub churn_rate_percent: Option<f64>,
+    /// Customer satisfaction score (e.g., NPS)
     pub customer_satisfaction_score: Option<f64>,
 }
 
 /// Operational metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OperationalMetrics {
+    /// System uptime percentage
     pub system_uptime_percent: Option<f64>,
+    /// Average response time in milliseconds
     pub average_response_time_ms: Option<f64>,
+    /// Error rate as a percentage
     pub error_rate_percent: Option<f64>,
+    /// Resource utilization percentage
     pub resource_utilization_percent: Option<f64>,
 }
 
 /// Performance metrics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PerformanceMetrics {
+    /// Queries processed per second
     pub queries_per_second: Option<f64>,
+    /// Cache hit rate percentage
     pub cache_hit_rate_percent: Option<f64>,
+    /// Storage efficiency percentage
     pub storage_efficiency_percent: Option<f64>,
+    /// Number of concurrent users
     pub concurrent_users: Option<u32>,
 }
 
 /// Performance status indicator
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PerformanceStatus {
+    /// Exceeding all targets
     Excellent,
+    /// Meeting targets
     Good,
+    /// Within acceptable range
     Acceptable,
+    /// Below targets, needs attention
     NeedsAttention,
+    /// Critically below targets
     Critical,
 }
 
 /// Growth indicators
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrowthIndicators {
+    /// User growth rate percentage
     pub user_growth_percent: Option<f64>,
+    /// Revenue growth rate percentage
     pub revenue_growth_percent: Option<f64>,
+    /// Data volume growth rate percentage
     pub data_growth_percent: Option<f64>,
+    /// Market share percentage
     pub market_share_percent: Option<f64>,
 }
 
 /// Business recommendation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BusinessRecommendation {
+    /// Brief title of the recommendation
     pub title: String,
+    /// Detailed description
     pub description: String,
+    /// Priority level
     pub priority: RecommendationPriority,
+    /// Estimated business impact description
     pub estimated_impact: String,
+    /// Implementation effort estimate
     pub implementation_effort: ImplementationEffort,
+    /// Suggested implementation timeline
     pub timeline: String,
 }
 
 /// Priority levels for recommendations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecommendationPriority {
+    /// Low priority, can be deferred
     Low,
+    /// Medium priority
     Medium,
+    /// High priority, should be addressed soon
     High,
+    /// Critical priority, requires immediate attention
     Critical,
 }
 
 /// Implementation effort estimate
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImplementationEffort {
+    /// Low effort, quick to implement
     Low,
+    /// Medium effort
     Medium,
+    /// High effort, significant resources needed
     High,
+    /// Very high effort, major initiative
     VeryHigh,
 }
 
@@ -700,12 +761,16 @@ Recommendation:",
 /// Query result structure (placeholder)
 #[derive(Debug, Clone)]
 pub struct QueryResult {
+    /// Result rows as key-value maps
     pub rows: Vec<HashMap<String, String>>,
+    /// Column names in the result
     pub columns: Vec<String>,
+    /// Query execution time in milliseconds
     pub execution_time_ms: u64,
 }
 
 impl QueryResult {
+    /// Extract the first numeric value from the first row.
     pub fn extract_numeric_value(&self) -> Option<f64> {
         // Extract first numeric value from first row
         self.rows.first()?.values().next()?.parse().ok()
@@ -732,50 +797,6 @@ mod tests {
     fn test_performance_status_calculation() {
         // This test requires an async runtime and complex mocking
         // of LLM engine, translator, and other async components
-        // TODO: Implement with proper async test framework and mocks
-    }
-}
-
-impl Default for RevenueMetrics {
-    fn default() -> Self {
-        Self {
-            total_revenue: None,
-            revenue_growth_percent: None,
-            avg_revenue_per_customer: None,
-            revenue_by_segment: HashMap::new(),
-        }
-    }
-}
-
-impl Default for CustomerMetrics {
-    fn default() -> Self {
-        Self {
-            total_customers: None,
-            new_customers: None,
-            churn_rate_percent: None,
-            customer_satisfaction_score: None,
-        }
-    }
-}
-
-impl Default for OperationalMetrics {
-    fn default() -> Self {
-        Self {
-            system_uptime_percent: None,
-            average_response_time_ms: None,
-            error_rate_percent: None,
-            resource_utilization_percent: None,
-        }
-    }
-}
-
-impl Default for PerformanceMetrics {
-    fn default() -> Self {
-        Self {
-            queries_per_second: None,
-            cache_hit_rate_percent: None,
-            storage_efficiency_percent: None,
-            concurrent_users: None,
-        }
+        // Deferred: Implement with proper async test framework and mocks
     }
 }

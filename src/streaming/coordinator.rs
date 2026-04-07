@@ -341,7 +341,7 @@ impl StreamCoordinator {
         let timeout_secs = self.config.session_timeout.as_secs();
         let mut timed_out = Vec::new();
 
-        for entry in self.sessions.iter() {
+        for entry in &self.sessions {
             if entry.is_timed_out(timeout_secs) {
                 timed_out.push(entry.key().clone());
             }
@@ -856,7 +856,7 @@ mod tests {
         let session_id = coordinator
             .create_session("test_collection".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("Failed to create session");
 
         assert!(coordinator.get_session_info(&session_id).is_some());
         assert_eq!(coordinator.session_count(), 1);
@@ -869,7 +869,7 @@ mod tests {
         let session_id = coordinator
             .create_session("test_collection".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("Failed to create session");
 
         let records: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
@@ -883,7 +883,7 @@ mod tests {
         let result = coordinator
             .push_records(&session_id, records)
             .await
-            .unwrap();
+            .expect("Failed to push records");
 
         assert_eq!(result.pushed, 100);
         assert_eq!(result.dropped, 0);
@@ -897,7 +897,7 @@ mod tests {
         let session_id = coordinator
             .create_session("test_collection".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("Failed to create session");
 
         let records: Vec<VectorRecord> = (0..100)
             .map(|i| VectorRecord {
@@ -911,12 +911,16 @@ mod tests {
         coordinator
             .push_records(&session_id, records)
             .await
-            .unwrap();
+            .expect("Failed to push records");
 
-        let drained = coordinator.drain_records(&session_id, 50).unwrap();
+        let drained = coordinator
+            .drain_records(&session_id, 50)
+            .expect("Failed to drain records");
         assert_eq!(drained.len(), 50);
 
-        let remaining = coordinator.drain_records(&session_id, 100).unwrap();
+        let remaining = coordinator
+            .drain_records(&session_id, 100)
+            .expect("Failed to drain remaining records");
         assert_eq!(remaining.len(), 50);
     }
 
@@ -927,7 +931,7 @@ mod tests {
         let session_id = coordinator
             .create_session("test_collection".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("Failed to create session");
 
         assert_eq!(coordinator.session_count(), 1);
 
@@ -948,11 +952,11 @@ mod tests {
         coordinator
             .create_session("col1".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("Failed to create session col1");
         coordinator
             .create_session("col2".to_string(), SessionConfig::default())
             .await
-            .unwrap();
+            .expect("Failed to create session col2");
 
         let result = coordinator
             .create_session("col3".to_string(), SessionConfig::default())

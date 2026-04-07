@@ -108,7 +108,10 @@ impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
             StorageEngineStrategy::Nova => FormatType::Nova,
             StorageEngineStrategy::Swift => FormatType::Swift,
             StorageEngineStrategy::Raptor => FormatType::Raptor,
-            StorageEngineStrategy::Hybrid => FormatType::Sst, // Default to SST for hybrid
+            StorageEngineStrategy::TimeSeries => FormatType::Sst, // TimeSeries uses Arrow format
+            StorageEngineStrategy::Hybrid => FormatType::Sst,     // Default to SST for hybrid
+            StorageEngineStrategy::Cedar => FormatType::Sst, // CEDAR uses SST-like block format
+            StorageEngineStrategy::Chrono => FormatType::Sst, // CHRONO uses time-partitioned blocks
         }
     }
 }
@@ -210,6 +213,7 @@ impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<
                 StorageEngineStrategy::Sst
                     | StorageEngineStrategy::Nova
                     | StorageEngineStrategy::Helix
+                    | StorageEngineStrategy::TimeSeries
             ),
             _ => self.engine.supports_feature(feature),
         }
@@ -520,7 +524,7 @@ fn extract_collection_id_from_path(path: &str) -> Result<String> {
         Ok(parts[parts.len() - 2].to_string())
     } else {
         // Return last segment
-        Ok(parts.last().unwrap().to_string())
+        Ok(parts.last().copied().unwrap_or_default().to_string())
     }
 }
 
@@ -531,8 +535,7 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<ser
     value.value.as_ref().map(|v| match v {
         Value::StringValue(s) => serde_json::Value::String(s.clone()),
         Value::NumberValue(n) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
         Value::BoolValue(b) => serde_json::Value::Bool(*b),
         Value::Int64Value(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
         Value::NullValue(_) => serde_json::Value::Null,
@@ -576,10 +579,12 @@ pub type NovaFormatAdapter =
     InternalFormatAdapter<crate::storage::engines::impls::nova::NovaEngine>;
 
 /// Type alias for SWIFT format adapter
+#[allow(deprecated)]
 pub type SwiftFormatAdapter =
     InternalFormatAdapter<crate::storage::engines::impls::swift::SwiftEngine>;
 
 /// Type alias for RAPTOR format adapter
+#[allow(deprecated)]
 pub type RaptorFormatAdapter =
     InternalFormatAdapter<crate::storage::engines::impls::raptor::RaptorEngine>;
 
@@ -616,6 +621,7 @@ pub fn create_nova_adapter(
 }
 
 /// Create a SWIFT format adapter from an existing engine
+#[allow(deprecated)]
 pub fn create_swift_adapter(
     engine: Arc<crate::storage::engines::impls::swift::SwiftEngine>,
 ) -> SwiftFormatAdapter {
@@ -623,6 +629,7 @@ pub fn create_swift_adapter(
 }
 
 /// Create a RAPTOR format adapter from an existing engine
+#[allow(deprecated)]
 pub fn create_raptor_adapter(
     engine: Arc<crate::storage::engines::impls::raptor::RaptorEngine>,
 ) -> RaptorFormatAdapter {

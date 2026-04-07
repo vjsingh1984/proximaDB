@@ -33,7 +33,9 @@
 //! CSR (Compressed Sparse Row) format NEVER contains embedding data.
 //! Embeddings are optionally stored in separate vector storage engines.
 
+/// Generic graph traversal algorithms (BFS, DFS, Dijkstra, A*) usable across all engines.
 pub mod generic_traversal;
+/// ORION in-memory CSR graph engine for real-time traversal at 1M+ edges/sec.
 pub mod orion;
 
 // PULSAR: Distributed graph engine (experimental)
@@ -70,6 +72,12 @@ pub mod pulsar {
         pub shard_count: usize,
         /// Replication factor (stub field for API compatibility)
         pub replication_factor: u8,
+        /// Consistency level (stub - uses default Quorum)
+        pub consistency_level: u8,
+        /// Enable cross-shard query optimization (stub field for API compatibility)
+        pub cross_shard_optimization: bool,
+        /// Maximum concurrent queries (stub field for API compatibility)
+        pub max_concurrent_queries: usize,
     }
 
     /// PULSAR engine (stub - requires distributed-graph feature)
@@ -77,6 +85,7 @@ pub mod pulsar {
     pub struct PulsarGraphEngine;
 
     impl PulsarGraphEngine {
+        /// Create a new PULSAR engine (requires `distributed-graph` feature).
         pub fn new(_config: PulsarConfig) -> Result<Self, ProximaDBError> {
             Err(ProximaDBError::NotImplemented(
                 "PULSAR requires 'distributed-graph' feature. Build with: cargo build --features distributed-graph".to_string()
@@ -208,8 +217,18 @@ pub mod quasar {
     pub struct QuasarConfig {
         /// Maximum size of hot tier (in number of nodes) - stub field for API compatibility
         pub hot_tier_max_nodes: usize,
+        /// Maximum hot tier memory in MB (stub field for API compatibility)
+        pub hot_tier_max_memory_mb: usize,
         /// Cold tier storage path (stub field for API compatibility)
         pub cold_tier_path: std::path::PathBuf,
+        /// Cold migration threshold in seconds (stub field for API compatibility)
+        pub cold_migration_threshold_secs: u64,
+        /// Hot promotion threshold in seconds (stub field for API compatibility)
+        pub hot_promotion_threshold_secs: u64,
+        /// Migration interval in seconds (stub field for API compatibility)
+        pub migration_interval_secs: u64,
+        /// Cold storage backend (0=Sst, 1=Parquet, 2=Json) - stub field for API compatibility
+        pub cold_storage_backend: u8,
     }
 
     /// QUASAR engine (stub - requires tiered-graph feature)
@@ -217,6 +236,7 @@ pub mod quasar {
     pub struct QuasarGraphEngine;
 
     impl QuasarGraphEngine {
+        /// Create a new QUASAR engine (requires `tiered-graph` feature).
         pub async fn new(_config: QuasarConfig) -> Result<Self, ProximaDBError> {
             Err(ProximaDBError::NotImplemented(
                 "QUASAR requires 'tiered-graph' feature. Build with: cargo build --features tiered-graph".to_string()
@@ -360,7 +380,7 @@ pub enum EmbeddingMode {
 
 impl EmbeddingMode {
     /// Parse embedding mode from config string
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse_from_config(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "cold" => EmbeddingMode::Cold,
             "memory" => EmbeddingMode::Memory,
@@ -381,6 +401,88 @@ impl EmbeddingMode {
     /// Check if embeddings are in memory
     pub fn is_memory(&self) -> bool {
         matches!(self, EmbeddingMode::Memory)
+    }
+}
+
+#[cfg(test)]
+mod embedding_mode_tests {
+    use super::EmbeddingMode;
+
+    #[test]
+    fn test_embedding_mode_default() {
+        // Default mode should be None (pure graph, best performance)
+        let mode = EmbeddingMode::default();
+        assert_eq!(mode, EmbeddingMode::None);
+        assert!(!mode.stores_embeddings());
+    }
+
+    #[test]
+    fn test_embedding_mode_parse_from_config() {
+        // Test parsing from config strings
+        assert_eq!(
+            EmbeddingMode::parse_from_config("none"),
+            EmbeddingMode::None
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("None"),
+            EmbeddingMode::None
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("NONE"),
+            EmbeddingMode::None
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("cold"),
+            EmbeddingMode::Cold
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("Cold"),
+            EmbeddingMode::Cold
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("COLD"),
+            EmbeddingMode::Cold
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("memory"),
+            EmbeddingMode::Memory
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("Memory"),
+            EmbeddingMode::Memory
+        );
+        assert_eq!(
+            EmbeddingMode::parse_from_config("MEMORY"),
+            EmbeddingMode::Memory
+        );
+
+        // Invalid strings should default to None
+        assert_eq!(
+            EmbeddingMode::parse_from_config("invalid"),
+            EmbeddingMode::None
+        );
+        assert_eq!(EmbeddingMode::parse_from_config(""), EmbeddingMode::None);
+    }
+
+    #[test]
+    fn test_embedding_mode_stores_embeddings() {
+        assert!(!EmbeddingMode::None.stores_embeddings());
+        assert!(EmbeddingMode::Cold.stores_embeddings());
+        assert!(EmbeddingMode::Memory.stores_embeddings());
+    }
+
+    #[test]
+    fn test_embedding_mode_is_cold() {
+        assert!(!EmbeddingMode::None.is_cold());
+        assert!(EmbeddingMode::Cold.is_cold());
+        assert!(!EmbeddingMode::Memory.is_cold());
+    }
+
+    #[test]
+    fn test_embedding_mode_is_memory() {
+        assert!(!EmbeddingMode::None.is_memory());
+        assert!(!EmbeddingMode::Cold.is_memory());
+        assert!(EmbeddingMode::Memory.is_memory());
     }
 }
 
@@ -729,8 +831,11 @@ pub enum GraphEngineType {
 /// This avoids the dyn compatibility issues with async trait methods
 #[derive(Debug)]
 pub enum GraphEngineImpl {
+    /// ORION in-memory CSR engine instance.
     Orion(orion::OrionGraphEngine),
+    /// PULSAR distributed sharded engine instance.
     Pulsar(pulsar::PulsarGraphEngine),
+    /// QUASAR hybrid hot/cold tiering engine instance.
     Quasar(quasar::QuasarGraphEngine),
 }
 
@@ -994,17 +1099,24 @@ impl GraphEngineFactory {
 /// Configuration for graph engine creation
 #[derive(Debug, Clone, Default)]
 pub struct GraphEngineConfig {
+    /// Optional PULSAR distributed engine configuration.
     pub pulsar_config: Option<pulsar::PulsarConfig>,
+    /// Optional QUASAR hybrid tiering engine configuration.
     pub quasar_config: Option<quasar::QuasarConfig>,
 }
 
 /// Engine capabilities description
 #[derive(Debug, Clone)]
 pub struct EngineCapabilities {
+    /// Engine name (e.g. "ORION", "PULSAR", "QUASAR").
     pub name: String,
+    /// Human-readable description of the engine.
     pub description: String,
+    /// List of supported features (e.g. "CSR storage", "DashMap concurrent access").
     pub features: Vec<String>,
+    /// Recommended use cases for this engine.
     pub use_cases: Vec<String>,
+    /// Performance characteristics (e.g. "1M+ edges/second traversal").
     pub performance_characteristics: Vec<String>,
 }
 

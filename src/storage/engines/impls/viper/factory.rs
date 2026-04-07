@@ -28,14 +28,17 @@ use crate::core::{String, VectorRecord};
 // Index types imported as needed in implementations
 
 /// VIPER Factory - Main entry point for creating VIPER components
+///
+/// Factory for creating VIPER storage engine components with adaptive
+/// configuration based on collection characteristics.
 pub struct ViperFactory {
     /// Default configuration
     default_config: ViperConfiguration,
 
-    /// Strategy registry
+    /// Strategy registry for schema generation
     strategy_registry: HashMap<String, Box<dyn SchemaStrategyFactory>>,
 
-    /// Processor registry
+    /// Processor registry for vector processing
     processor_registry: HashMap<String, Box<dyn ProcessorFactory>>,
 
     /// Configuration builder cache
@@ -43,7 +46,10 @@ pub struct ViperFactory {
 }
 
 /// Complete VIPER configuration
-#[derive(Debug, Clone)]
+///
+/// Comprehensive configuration for VIPER storage engine including storage,
+/// schema, processing, TTL, compaction, and optimization settings.
+#[derive(Debug, Clone, Default)]
 pub struct ViperConfiguration {
     /// Core storage configuration
     pub storage_config: ViperStorageConfig,
@@ -65,6 +71,9 @@ pub struct ViperConfiguration {
 }
 
 /// VIPER storage configuration
+///
+/// Core storage settings for VIPER including clustering, compression,
+/// and Parquet-specific optimizations.
 #[derive(Debug, Clone)]
 pub struct ViperStorageConfig {
     /// Enable VIPER clustering
@@ -99,6 +108,8 @@ pub struct ViperStorageConfig {
 }
 
 /// VIPER schema configuration
+///
+/// Controls schema generation, dynamic fields, and evolution behavior.
 #[derive(Debug, Clone)]
 pub struct ViperSchemaConfig {
     /// Enable dynamic schema generation
@@ -121,6 +132,8 @@ pub struct ViperSchemaConfig {
 }
 
 /// VIPER processing configuration
+///
+/// Controls vector preprocessing, postprocessing, and optimization strategies.
 #[derive(Debug, Clone)]
 pub struct ViperProcessingConfig {
     /// Enable preprocessing optimizations
@@ -140,6 +153,8 @@ pub struct ViperProcessingConfig {
 }
 
 /// TTL (Time-To-Live) configuration
+///
+/// Configures automatic expiration and cleanup of vector data based on time.
 #[derive(Debug, Clone)]
 pub struct TTLConfig {
     /// Enable TTL functionality
@@ -162,6 +177,9 @@ pub struct TTLConfig {
 }
 
 /// Compaction configuration
+///
+/// Controls automatic compaction of Parquet files for optimal query performance
+/// and storage efficiency.
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {
     /// Enable automatic compaction
@@ -187,6 +205,8 @@ pub struct CompactionConfig {
 }
 
 /// Performance optimization configuration
+///
+/// Controls adaptive optimization features including ML-guided improvements.
 #[derive(Debug, Clone)]
 pub struct OptimizationConfig {
     /// Enable adaptive clustering
@@ -206,22 +226,26 @@ pub struct OptimizationConfig {
 }
 
 /// Strategy selection mode
+///
+/// Determines how VIPER selects processing and schema strategies.
 #[derive(Debug, Clone)]
 pub enum StrategySelectionMode {
     /// Automatic selection based on collection characteristics
     Adaptive,
 
-    /// Fixed strategy selection
+    /// Fixed strategy selection (named strategy)
     Fixed(String),
 
     /// ML-driven strategy selection
     MLGuided,
 
-    /// User-specified strategy
+    /// User-specified strategy (named strategy)
     UserDefined(String),
 }
 
 /// Batch processing configuration
+///
+/// Controls batching behavior for vector processing operations.
 #[derive(Debug, Clone)]
 pub struct BatchProcessingConfig {
     /// Default batch size
@@ -238,6 +262,9 @@ pub struct BatchProcessingConfig {
 }
 
 /// Configuration builder with fluent interface
+///
+/// Builder pattern for constructing ViperConfiguration with sensible defaults
+/// and fluent API for customization.
 #[derive(Debug, Clone)]
 pub struct ViperConfigurationBuilder {
     config: ViperConfiguration,
@@ -475,17 +502,10 @@ impl ViperFactory {
     fn select_schema_strategy(
         &self,
         _config: &ViperConfiguration,
-        collection_config: Option<&CollectionConfig>,
+        _collection_config: Option<&CollectionConfig>,
     ) -> String {
-        if let Some(config) = collection_config {
-            if !config.filterable_metadata_fields.is_empty() {
-                "viper".to_string()
-            } else {
-                "viper".to_string()
-            }
-        } else {
-            "viper".to_string()
-        }
+        // All VIPER engines use the same recommendation
+        "viper".to_string()
     }
 
     fn select_processor_strategy(
@@ -525,6 +545,12 @@ impl ViperFactory {
             .ok_or_else(|| anyhow::anyhow!("Unknown processor: {}", processor_name))?;
 
         Ok(factory.create_processor(&config.processing_config))
+    }
+}
+
+impl Default for ViperFactory {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -620,6 +646,12 @@ impl ViperConfigurationBuilder {
     }
 }
 
+impl Default for ViperConfigurationBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // Schema Strategy Implementations
 
 impl ViperSchemaStrategy {
@@ -647,7 +679,7 @@ impl SchemaGenerationStrategy for ViperSchemaStrategy {
             true,
         ));
         // Use FixedSizeList with a default dimension - actual dimension should come from collection config
-        // TODO: Get dimension from collection config context
+        // Deferred: Get dimension from collection config context
         let default_dimension = 128; // This should come from collection config
         fields.push(Field::new(
             crate::storage::engines::core::formats::columnar::FIELD_VECTOR_FP32,
@@ -854,19 +886,6 @@ impl ProcessorFactory for SimilarityProcessorFactory {
 }
 
 // Default implementations
-
-impl Default for ViperConfiguration {
-    fn default() -> Self {
-        Self {
-            storage_config: ViperStorageConfig::default(),
-            schema_config: ViperSchemaConfig::default(),
-            processing_config: ViperProcessingConfig::default(),
-            ttl_config: TTLConfig::default(),
-            compaction_config: CompactionConfig::default(),
-            optimization_config: OptimizationConfig::default(),
-        }
-    }
-}
 
 impl Default for ViperStorageConfig {
     fn default() -> Self {

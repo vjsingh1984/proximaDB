@@ -181,7 +181,8 @@ impl MmapVectorStorage {
             let vector: Vec<f32> = vector_bytes
                 .chunks_exact(4)
                 .map(|chunk| {
-                    let bytes: [u8; 4] = chunk.try_into().expect("Chunk size mismatch");
+                    let mut bytes = [0u8; 4];
+                    bytes.copy_from_slice(chunk);
                     f32::from_le_bytes(bytes)
                 })
                 .collect();
@@ -193,6 +194,13 @@ impl MmapVectorStorage {
     }
 
     /// Get a zero-copy slice of vectors
+    ///
+    /// # Safety
+    ///
+    /// Callers must ensure:
+    /// - `start_idx + count` does not exceed the number of vectors in the mmap
+    /// - The mmap contains valid vector data for the requested range
+    /// - `dimension` matches the actual dimension of vectors in the mmap
     pub unsafe fn get_vector_slice<'a>(
         mmap: &'a Mmap,
         start_idx: usize,

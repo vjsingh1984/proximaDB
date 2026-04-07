@@ -220,6 +220,12 @@ impl OperationMetrics {
     }
 }
 
+impl Default for OperationMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Overall flush status for monitoring
 #[derive(Debug, Clone)]
 pub struct FlushStatus {

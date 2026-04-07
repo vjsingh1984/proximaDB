@@ -298,13 +298,11 @@ impl ProgressiveRefinementPipeline {
                 target_count,
                 quality_threshold,
             } = config.search_strategy
+                && current_candidates.len() <= target_count
+                && stage_result.quality_score >= quality_threshold
             {
-                if current_candidates.len() <= target_count
-                    && stage_result.quality_score >= quality_threshold
-                {
-                    trace!("Early termination triggered at stage {:?}", stage);
-                    break;
-                }
+                trace!("Early termination triggered at stage {:?}", stage);
+                break;
             }
 
             // Check if we have enough candidates
@@ -413,7 +411,7 @@ impl ProgressiveRefinementPipeline {
 
         for candidate in candidates {
             // Convert candidate to binary if needed
-            let candidate_binary = if candidate.data.len() == (query_vector.len() + 7) / 8 {
+            let candidate_binary = if candidate.data.len() == query_vector.len().div_ceil(8) {
                 // Already in binary format
                 candidate.data.clone()
             } else {
@@ -688,7 +686,7 @@ impl ProgressiveRefinementPipeline {
 
     fn convert_to_fp32(&self, data: &[u8]) -> AdapterResult<Vec<f32>> {
         // Simplified conversion - assume 4 bytes per float
-        if data.len() % 4 != 0 {
+        if !data.len().is_multiple_of(4) {
             return Err(AdapterError::FormatConversion(
                 "Data length not compatible with FP32 format".to_string(),
             ));

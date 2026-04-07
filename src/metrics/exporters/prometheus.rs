@@ -196,6 +196,12 @@ impl PrometheusExporter {
     }
 }
 
+impl Default for PrometheusExporter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetricsExporter for PrometheusExporter {
     fn export(&self, metrics: &MetricsSnapshot) -> Result<String> {
         let mut output = String::new();

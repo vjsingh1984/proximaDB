@@ -21,7 +21,7 @@ use crate::storage::cache::base::BaseCacheImpl;
 use crate::storage::cache::traits::{BaseCache, CacheValue};
 
 // Temporary placeholder for MmappedMetadata
-// TODO: Import from zero_copy_io_system::metadata_cache when circular dependency is resolved
+// Deferred: Import from zero_copy_io_system::metadata_cache when circular dependency is resolved
 #[derive(Debug, Clone)]
 pub struct MmappedMetadata;
 
@@ -122,10 +122,10 @@ impl FilesystemMetadataStore {
 
         // Promote to hot cache if frequently accessed
         // (In real implementation, would track access frequency)
-        if self.hot_cache.len() < self.max_hot_entries {
-            if let Some(entry) = BaseCache::get_with_hooks(&self.base, &key).await {
-                self.hot_cache.insert(key, Arc::new(entry));
-            }
+        if self.hot_cache.len() < self.max_hot_entries
+            && let Some(entry) = BaseCache::get_with_hooks(&self.base, &key).await
+        {
+            self.hot_cache.insert(key, Arc::new(entry));
         }
 
         Ok(())

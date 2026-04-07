@@ -73,6 +73,13 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
         self._dimension: int = config.extra_config.get("dimension", 384)
         self.embedding_model: Optional[BaseEmbeddingModel] = None
 
+    def _get_embedding_model_name(self) -> Optional[str]:
+        return getattr(
+            self.config,
+            "embedding_model_name",
+            getattr(self.config, "embedding_model", None),
+        )
+
     async def initialize(self) -> None:
         """Load the embedding model and ensure the collection exists."""
         if self._initialized:
@@ -80,7 +87,7 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
 
         model_config = EmbeddingModelConfig(
             embedding_type=self.config.embedding_model_type,
-            embedding_model=self.config.embedding_model,
+            embedding_model=self._get_embedding_model_name(),
             dimension=self._dimension,
             api_key=self.config.embedding_api_key,
             batch_size=self.config.extra_config.get("batch_size", 16),
@@ -257,7 +264,7 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
             "collection_name": self._collection_name,
             "dimension": self._dimension,
             "embedding_model_type": self.config.embedding_model_type,
-            "embedding_model": self.config.embedding_model,
+            "embedding_model": self._get_embedding_model_name(),
             "distance_metric": self.config.distance_metric,
         }
 

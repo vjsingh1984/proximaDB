@@ -240,7 +240,7 @@ impl ThreeStageFilterPipeline {
         for entry in index_entries {
             block_index_map
                 .entry(entry.block_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(entry);
         }
 
@@ -425,11 +425,7 @@ impl ThreeStageFilterPipeline {
 
         for block in qualifying_blocks {
             // Convert SstRecord to VectorRecord for filtering
-            let vector_records: Vec<VectorRecord> = block
-                .records
-                .iter()
-                .map(|sst_record| sst_record.clone().into())
-                .collect();
+            let vector_records: Vec<VectorRecord> = block.records.to_vec();
 
             // Use batch evaluator for AND/OR support
             let block_indices = match filter_expr {
@@ -474,6 +470,12 @@ impl ThreeStageFilterPipeline {
 
     // Arc-wrapped filters are immutable for read operations
     // Cache management should be handled at the service level if needed
+}
+
+impl Default for ThreeStageFilterPipeline {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Global row index that can reconstruct the original record

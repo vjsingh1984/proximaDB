@@ -126,7 +126,7 @@ impl AlertRuleBuilder {
 }
 
 /// Rule condition types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum RuleCondition {
     /// Value above threshold
     Above(f64),
@@ -146,6 +146,24 @@ pub enum RuleCondition {
     Outside(f64, f64),
     /// Rate of change exceeds threshold
     RateOfChange(f64),
+    /// Composite condition combining multiple sub-conditions
+    Composite {
+        /// Logical operator to combine sub-conditions
+        operator: LogicalOp,
+        /// Sub-conditions to evaluate
+        conditions: Vec<RuleCondition>,
+    },
+}
+
+/// Logical operators for composite conditions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogicalOp {
+    /// All sub-conditions must match.
+    And,
+    /// At least one sub-condition must match.
+    Or,
+    /// Negates the first sub-condition.
+    Not,
 }
 
 impl RuleCondition {
@@ -161,6 +179,14 @@ impl RuleCondition {
             RuleCondition::Between(low, high) => value >= *low && value <= *high,
             RuleCondition::Outside(low, high) => value < *low || value > *high,
             RuleCondition::RateOfChange(_) => false, // Requires historical data
+            RuleCondition::Composite {
+                operator,
+                conditions,
+            } => match operator {
+                LogicalOp::And => conditions.iter().all(|c| c.matches(value)),
+                LogicalOp::Or => conditions.iter().any(|c| c.matches(value)),
+                LogicalOp::Not => conditions.first().map_or(true, |c| !c.matches(value)),
+            },
         }
     }
 
@@ -176,6 +202,21 @@ impl RuleCondition {
             RuleCondition::Between(low, high) => format!("between {} and {}", low, high),
             RuleCondition::Outside(low, high) => format!("outside {} - {}", low, high),
             RuleCondition::RateOfChange(rate) => format!("rate of change > {}", rate),
+            RuleCondition::Composite {
+                operator,
+                conditions,
+            } => {
+                let op_str = match operator {
+                    LogicalOp::And => "AND",
+                    LogicalOp::Or => "OR",
+                    LogicalOp::Not => "NOT",
+                };
+                let parts: Vec<_> = conditions
+                    .iter()
+                    .map(|c| c.threshold_description())
+                    .collect();
+                format!("({} {})", op_str, parts.join(", "))
+            }
         }
     }
 }
@@ -196,7 +237,16 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "HighCPU".to_string(),
+                metric_name: "cpu_usage".to_string(),
+                condition: RuleCondition::Above(threshold),
+                duration_ns: 0,
+                severity: AlertSeverity::High,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!("CPU usage is {{value}}% (threshold: {})", threshold),
+            })
     }
 
     /// Low memory rule
@@ -211,7 +261,19 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "LowMemory".to_string(),
+                metric_name: "memory_available_bytes".to_string(),
+                condition: RuleCondition::Below(threshold),
+                duration_ns: 0,
+                severity: AlertSeverity::Critical,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!(
+                    "Available memory is {{value}} bytes (threshold: {})",
+                    threshold
+                ),
+            })
     }
 
     /// High error rate rule
@@ -226,7 +288,16 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "HighErrorRate".to_string(),
+                metric_name: "error_rate".to_string(),
+                condition: RuleCondition::Above(threshold),
+                duration_ns: 0,
+                severity: AlertSeverity::High,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!("Error rate is {{value}}% (threshold: {})", threshold),
+            })
     }
 
     /// High latency rule
@@ -241,7 +312,19 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "HighLatency".to_string(),
+                metric_name: "request_latency_ms".to_string(),
+                condition: RuleCondition::Above(threshold_ms),
+                duration_ns: 0,
+                severity: AlertSeverity::Medium,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!(
+                    "Request latency is {{value}}ms (threshold: {}ms)",
+                    threshold_ms
+                ),
+            })
     }
 
     /// Disk usage rule
@@ -256,7 +339,16 @@ impl RuleTemplates {
                     .as_str(),
             )
             .build()
-            .unwrap()
+            .unwrap_or_else(|| AlertRule {
+                name: "HighDiskUsage".to_string(),
+                metric_name: "disk_usage_percent".to_string(),
+                condition: RuleCondition::Above(threshold),
+                duration_ns: 0,
+                severity: AlertSeverity::Medium,
+                labels: HashMap::new(),
+                annotations: HashMap::new(),
+                message_template: format!("Disk usage is {{value}}% (threshold: {})", threshold),
+            })
     }
 }
 
@@ -306,5 +398,55 @@ mod tests {
         let memory_rule = RuleTemplates::low_memory(1_000_000.0);
         assert_eq!(memory_rule.name, "LowMemory");
         assert_eq!(memory_rule.severity, AlertSeverity::Critical);
+    }
+
+    #[test]
+    fn test_composite_condition_and() {
+        let cond = RuleCondition::Composite {
+            operator: LogicalOp::And,
+            conditions: vec![RuleCondition::Above(80.0), RuleCondition::Below(100.0)],
+        };
+        assert!(cond.matches(90.0)); // 90 > 80 AND 90 < 100
+        assert!(!cond.matches(75.0)); // 75 > 80 is false
+        assert!(!cond.matches(105.0)); // 105 < 100 is false
+    }
+
+    #[test]
+    fn test_composite_condition_or() {
+        let cond = RuleCondition::Composite {
+            operator: LogicalOp::Or,
+            conditions: vec![RuleCondition::Above(95.0), RuleCondition::Below(5.0)],
+        };
+        assert!(cond.matches(99.0)); // 99 > 95
+        assert!(cond.matches(2.0)); // 2 < 5
+        assert!(!cond.matches(50.0)); // neither
+    }
+
+    #[test]
+    fn test_composite_condition_not() {
+        let cond = RuleCondition::Composite {
+            operator: LogicalOp::Not,
+            conditions: vec![RuleCondition::Above(90.0)],
+        };
+        assert!(cond.matches(85.0)); // NOT(85 > 90) = NOT(false) = true
+        assert!(!cond.matches(95.0)); // NOT(95 > 90) = NOT(true) = false
+    }
+
+    #[test]
+    fn test_composite_nested() {
+        // (Above(80) AND Below(100)) OR Equal(50)
+        let cond = RuleCondition::Composite {
+            operator: LogicalOp::Or,
+            conditions: vec![
+                RuleCondition::Composite {
+                    operator: LogicalOp::And,
+                    conditions: vec![RuleCondition::Above(80.0), RuleCondition::Below(100.0)],
+                },
+                RuleCondition::Equal(50.0),
+            ],
+        };
+        assert!(cond.matches(90.0)); // in range 80-100
+        assert!(cond.matches(50.0)); // equals 50
+        assert!(!cond.matches(70.0)); // neither
     }
 }

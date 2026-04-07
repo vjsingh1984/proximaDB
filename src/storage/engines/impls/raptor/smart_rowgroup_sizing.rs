@@ -256,7 +256,7 @@ impl SmartRowGroupSizer {
     fn apply_bounds(&self, size: usize) -> usize {
         // Minimum: 100 vectors (avoid too many small I/Os)
         // Maximum: 10,000 vectors (avoid excessive memory usage)
-        size.max(100).min(10_000)
+        size.clamp(100, 10_000)
     }
 
     /// Estimate read latency for a row group of this size
@@ -738,5 +738,214 @@ mod tests {
             high_result.vectors_per_rowgroup < low_result.vectors_per_rowgroup,
             "High-dim vectors should have smaller row groups for better semantic precision"
         );
+    }
+
+    // ========== NEW TESTS ==========
+
+    #[test]
+    fn test_cloud_io_profile_nvme() {
+        let nvme = CloudIOProfile::local_nvme();
+        assert_eq!(nvme.optimal_io_size_bytes, 64 * 1024); // 64KB
+        assert_eq!(nvme.latency_per_io_us, 100);
+        assert!(nvme.max_sequential_iops > 100_000);
+    }
+
+    #[test]
+    fn test_cloud_io_profile_s3() {
+        let s3 = CloudIOProfile::s3_standard();
+        assert_eq!(s3.optimal_io_size_bytes, 2 * 1024 * 1024); // 2MB
+        assert_eq!(s3.latency_per_io_us, 20_000);
+    }
+
+    #[test]
+    fn test_cloud_io_profile_gcs() {
+        let gcs = CloudIOProfile::gcs_standard();
+        assert_eq!(gcs.optimal_io_size_bytes, 4 * 1024 * 1024); // 4MB
+        assert!(gcs.latency_per_io_us < s3_latency());
+    }
+
+    fn s3_latency() -> u32 {
+        CloudIOProfile::s3_standard().latency_per_io_us
+    }
+
+    #[test]
+    fn test_cloud_io_profile_adls() {
+        let adls = CloudIOProfile::adls_gen2();
+        assert_eq!(adls.optimal_io_size_bytes, 2 * 1024 * 1024);
+        assert_eq!(adls.latency_per_io_us, 25_000);
+    }
+
+    #[test]
+    fn test_nvme_vs_cloud_sizing() {
+        let nvme_sizer = SmartRowGroupSizer::new(CloudIOProfile::local_nvme(), 768, 100);
+        let s3_sizer = SmartRowGroupSizer::for_s3_standard(768, 100);
+
+        let nvme_result = nvme_sizer.calculate_optimal_rowgroup_size().unwrap();
+        let s3_result = s3_sizer.calculate_optimal_rowgroup_size().unwrap();
+
+        // S3 needs larger row groups due to higher latency and larger optimal I/O
+        assert!(
+            s3_result.vectors_per_rowgroup >= nvme_result.vectors_per_rowgroup,
+            "S3 should use >= rowgroup size as NVMe: S3={} vs NVMe={}",
+            s3_result.vectors_per_rowgroup,
+            nvme_result.vectors_per_rowgroup
+        );
+    }
+
+    #[test]
+    fn test_query_pattern_high_selectivity_smaller() {
+        let mut sizer = SmartRowGroupSizer::for_s3_standard(768, 100);
+        sizer.query_pattern = QueryPattern::HighSelectivity;
+        let high_sel = sizer.calculate_optimal_rowgroup_size().unwrap();
+
+        sizer.query_pattern = QueryPattern::LowSelectivity;
+        let low_sel = sizer.calculate_optimal_rowgroup_size().unwrap();
+
+        assert!(
+            high_sel.vectors_per_rowgroup <= low_sel.vectors_per_rowgroup,
+            "HighSelectivity should produce smaller or equal rowgroups vs LowSelectivity"
+        );
+    }
+
+    #[test]
+    fn test_query_pattern_mixed_equals_medium() {
+        let mut sizer = SmartRowGroupSizer::for_s3_standard(768, 100);
+        sizer.query_pattern = QueryPattern::Mixed;
+        let mixed = sizer.calculate_optimal_rowgroup_size().unwrap();
+
+        sizer.query_pattern = QueryPattern::MediumSelectivity;
+        let medium = sizer.calculate_optimal_rowgroup_size().unwrap();
+
+        // Mixed and MediumSelectivity should produce the same result
+        assert_eq!(
+            mixed.vectors_per_rowgroup, medium.vectors_per_rowgroup,
+            "Mixed and MediumSelectivity should be equivalent"
+        );
+    }
+
+    #[test]
+    fn test_bounds_enforcement_minimum() {
+        // Use very large vector dimension with small I/O to force sub-100 result
+        let sizer = SmartRowGroupSizer::new(
+            CloudIOProfile::local_nvme(), // 64KB optimal I/O
+            4096,                         // Very high dimension = large bytes per vector
+            1000,                         // large metadata
+        );
+        let result = sizer.calculate_optimal_rowgroup_size().unwrap();
+        assert!(
+            result.vectors_per_rowgroup >= 100,
+            "Should enforce minimum of 100, got {}",
+            result.vectors_per_rowgroup
+        );
+    }
+
+    #[test]
+    fn test_bounds_enforcement_maximum() {
+        // Use very small vector dimension with large I/O to force very large result
+        let sizer = SmartRowGroupSizer::new(
+            CloudIOProfile::gcs_standard(), // 4MB optimal I/O
+            4,                              // Tiny dimension = 16 bytes per vector
+            1,                              // Minimal metadata
+        );
+        let result = sizer.calculate_optimal_rowgroup_size().unwrap();
+        assert!(
+            result.vectors_per_rowgroup <= 10_000,
+            "Should enforce maximum of 10000, got {}",
+            result.vectors_per_rowgroup
+        );
+    }
+
+    #[test]
+    fn test_read_latency_increases_with_tier_coldness() {
+        let hot_sizer = SmartRowGroupSizer::new(
+            CloudIOProfile {
+                storage_tier: DataTemperatureTier::Hot,
+                ..CloudIOProfile::s3_standard()
+            },
+            768,
+            100,
+        );
+        let warm_sizer = SmartRowGroupSizer::new(
+            CloudIOProfile {
+                storage_tier: DataTemperatureTier::Warm,
+                ..CloudIOProfile::s3_standard()
+            },
+            768,
+            100,
+        );
+        let cold_sizer = SmartRowGroupSizer::new(
+            CloudIOProfile {
+                storage_tier: DataTemperatureTier::Cold,
+                ..CloudIOProfile::s3_standard()
+            },
+            768,
+            100,
+        );
+
+        let hot_result = hot_sizer.calculate_optimal_rowgroup_size().unwrap();
+        let warm_result = warm_sizer.calculate_optimal_rowgroup_size().unwrap();
+        let cold_result = cold_sizer.calculate_optimal_rowgroup_size().unwrap();
+
+        assert!(
+            hot_result.estimated_read_latency_ms < warm_result.estimated_read_latency_ms,
+            "Hot latency should be less than Warm"
+        );
+        assert!(
+            warm_result.estimated_read_latency_ms < cold_result.estimated_read_latency_ms,
+            "Warm latency should be less than Cold"
+        );
+    }
+
+    #[test]
+    fn test_matrix_trinity_balanced_sizing_empty_dataset() {
+        let sizing = BalancedMatrixTrinitySizing::calculate(0, 128);
+        assert_eq!(sizing.vectors_per_rowgroup, 0);
+        assert_eq!(sizing.num_rowgroups, 0);
+        assert_eq!(sizing.total_query_ops, 0);
+        assert_eq!(sizing.speedup_vs_naive, 1.0);
+    }
+
+    #[test]
+    fn test_matrix_trinity_with_custom_nprobe() {
+        let sizing = BalancedMatrixTrinitySizing::calculate_with_nprobe(100_000, 128, 5);
+        assert!(sizing.p2_cost_per_query > 0);
+        assert!(sizing.pxk_cost_per_query > 0);
+        assert!(sizing.speedup_vs_naive > 1.0);
+
+        // Higher nprobe should increase P2 cost
+        let low_nprobe = BalancedMatrixTrinitySizing::calculate_with_nprobe(100_000, 128, 1);
+        let high_nprobe = BalancedMatrixTrinitySizing::calculate_with_nprobe(100_000, 128, 50);
+        assert!(
+            high_nprobe.p2_cost_per_query > low_nprobe.p2_cost_per_query,
+            "Higher nprobe should increase P2 cost"
+        );
+    }
+
+    #[test]
+    fn test_semantic_accuracy_factor_values() {
+        // Test specific dimension ranges
+        let sizer_64 = SmartRowGroupSizer::for_s3_standard(64, 100);
+        let sizer_384 = SmartRowGroupSizer::for_s3_standard(384, 100);
+        let sizer_768 = SmartRowGroupSizer::for_s3_standard(768, 100);
+        let sizer_1536 = SmartRowGroupSizer::for_s3_standard(1536, 100);
+        let sizer_4096 = SmartRowGroupSizer::for_s3_standard(4096, 100);
+
+        assert_eq!(sizer_64.calculate_semantic_accuracy_factor(), 1.3); // <= 128
+        assert_eq!(sizer_384.calculate_semantic_accuracy_factor(), 1.1); // <= 384
+        assert_eq!(sizer_768.calculate_semantic_accuracy_factor(), 1.0); // <= 768
+        assert_eq!(sizer_1536.calculate_semantic_accuracy_factor(), 0.8); // <= 1536
+        assert_eq!(sizer_4096.calculate_semantic_accuracy_factor(), 0.6); // > 2048
+    }
+
+    #[test]
+    fn test_research_adls_sizing() {
+        let sizer = CommonConfigurations::research_adls();
+        let result = sizer.calculate_optimal_rowgroup_size().unwrap();
+
+        // Research vectors on ADLS should produce reasonable sizing
+        assert!(result.vectors_per_rowgroup >= 100);
+        assert!(result.vectors_per_rowgroup <= 10_000);
+        assert!(result.bytes_per_vector > 0);
+        assert!(result.estimated_read_latency_ms > 0.0);
     }
 }

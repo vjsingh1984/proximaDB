@@ -20,7 +20,9 @@ use crate::metrics::collectors::MetricsCollector as MetricsCollectorTrait;
 use crate::index::axis::{AlertThresholds, AxisConfig, MonitoringConfig};
 
 // Type aliases for compatibility
+/// Type alias for backward compatibility.
 pub type AxisMonitor = PerformanceMonitor;
+/// Type alias for backward compatibility.
 pub type MonitoringMetrics = SystemMetrics;
 
 /// Performance monitor for AXIS with real-time alerting
@@ -116,55 +118,85 @@ struct HealthChecker {
 /// Collection-specific metrics
 #[derive(Debug, Clone)]
 pub struct CollectionMetrics {
+    /// Collection identifier.
     pub collection_id: String,
+    /// Query latency percentile metrics in milliseconds.
     pub query_latency_ms: LatencyMetrics,
+    /// Current queries per second throughput.
     pub throughput_qps: f64,
+    /// Current error rate as a ratio (0.0 to 1.0).
     pub error_rate: f64,
+    /// Index-specific performance metrics.
     pub index_performance: IndexPerformanceMetrics,
+    /// Resource consumption metrics.
     pub resource_usage: ResourceUsageMetrics,
+    /// When these metrics were last refreshed.
     pub last_updated: DateTime<Utc>,
 }
 
 /// Latency metrics with percentiles
 #[derive(Debug, Clone)]
 pub struct LatencyMetrics {
+    /// 50th percentile (median) latency.
     pub p50: f64,
+    /// 90th percentile latency.
     pub p90: f64,
+    /// 95th percentile latency.
     pub p95: f64,
+    /// 99th percentile latency.
     pub p99: f64,
+    /// 99.9th percentile latency.
     pub p999: f64,
+    /// Arithmetic mean latency.
     pub average: f64,
+    /// Maximum observed latency.
     pub max: f64,
 }
 
 /// Index performance metrics
 #[derive(Debug, Clone)]
 pub struct IndexPerformanceMetrics {
+    /// Time taken to build or rebuild the index in milliseconds.
     pub index_build_time_ms: f64,
+    /// On-disk size of the index in megabytes.
     pub index_size_mb: f64,
+    /// Fraction of queries served from cache (0.0 to 1.0).
     pub cache_hit_rate: f64,
+    /// False positive rate for approximate search (0.0 to 1.0).
     pub false_positive_rate: f64,
+    /// Recall rate measuring search accuracy (0.0 to 1.0).
     pub recall_rate: f64,
 }
 
 /// Resource usage metrics
 #[derive(Debug, Clone)]
 pub struct ResourceUsageMetrics {
+    /// CPU utilization as a percentage.
     pub cpu_usage_percent: f64,
+    /// Memory consumption in megabytes.
     pub memory_usage_mb: f64,
+    /// Disk space usage in megabytes.
     pub disk_usage_mb: f64,
+    /// Network bandwidth usage in megabits per second.
     pub network_bandwidth_mbps: f64,
 }
 
 /// System-wide metrics
 #[derive(Debug, Clone, Default)]
 pub struct SystemMetrics {
+    /// Total number of collections managed.
     pub total_collections: u64,
+    /// Total number of vectors across all collections.
     pub total_vectors: u64,
+    /// Aggregate query throughput across all collections.
     pub total_queries_per_second: f64,
+    /// System-wide CPU utilization as a percentage.
     pub overall_cpu_usage: f64,
+    /// System-wide memory usage in megabytes.
     pub overall_memory_usage_mb: f64,
+    /// Number of index migrations currently in progress.
     pub active_migrations: u64,
+    /// When these system metrics were last refreshed.
     pub last_updated: DateTime<Utc>,
 }
 
@@ -184,46 +216,72 @@ struct HistoricalMetric {
 /// Types of metrics
 #[derive(Debug, Clone)]
 pub enum MetricType {
+    /// Query response latency.
     QueryLatency,
+    /// Query throughput (QPS).
     Throughput,
+    /// Error rate ratio.
     ErrorRate,
+    /// CPU utilization.
     CpuUsage,
+    /// Memory consumption.
     MemoryUsage,
+    /// Cache hit rate.
     CacheHitRate,
 }
 
 /// Alert definition
 #[derive(Debug, Clone)]
 pub struct Alert {
+    /// Unique identifier for this alert instance.
     pub alert_id: String,
+    /// Category of the alert.
     pub alert_type: AlertType,
+    /// Severity level of the alert.
     pub severity: AlertSeverity,
+    /// Collection that triggered the alert, if collection-specific.
     pub collection_id: Option<String>,
+    /// Human-readable alert description.
     pub message: String,
+    /// When the alert was triggered.
     pub triggered_at: DateTime<Utc>,
+    /// Observed metric value that triggered the alert.
     pub metric_value: f64,
+    /// Threshold value that was exceeded.
     pub threshold_value: f64,
+    /// Whether the alert has been resolved.
     pub resolved: bool,
 }
 
 /// Types of alerts
 #[derive(Debug, Clone)]
 pub enum AlertType {
+    /// Query latency exceeding threshold.
     HighLatency,
+    /// Throughput dropping below threshold.
     LowThroughput,
+    /// Error rate exceeding threshold.
     HighErrorRate,
+    /// CPU, memory, or disk resources exhausted.
     ResourceExhaustion,
+    /// Index recall or quality degradation detected.
     IndexDegradation,
+    /// Index migration failed or stalled.
     MigrationFailure,
+    /// General system health issue.
     SystemHealth,
 }
 
 /// Alert severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AlertSeverity {
+    /// Informational alert, no action required.
     Info,
+    /// Warning that may require attention.
     Warning,
+    /// Critical issue requiring prompt action.
     Critical,
+    /// Emergency requiring immediate intervention.
     Emergency,
 }
 
@@ -241,7 +299,9 @@ struct AlertHistory {
 /// Alert subscriber trait
 #[async_trait::async_trait]
 pub trait AlertSubscriber {
+    /// Called when a new alert is triggered.
     async fn on_alert(&self, alert: &Alert) -> Result<()>;
+    /// Called when a previously triggered alert is resolved.
     async fn on_alert_resolved(&self, alert: &Alert) -> Result<()>;
 }
 
@@ -350,24 +410,39 @@ enum HealthStatus {
 /// Monitoring events
 #[derive(Debug, Clone)]
 pub enum MonitoringEvent {
+    /// Collection metrics have been refreshed.
     MetricsUpdated {
+        /// Collection whose metrics were updated.
         collection_id: String,
+        /// Updated metrics snapshot.
         metrics: CollectionMetrics,
     },
+    /// A new alert has been triggered.
     AlertTriggered {
+        /// The triggered alert.
         alert: Alert,
     },
+    /// A previously active alert has been resolved.
     AlertResolved {
+        /// Identifier of the resolved alert.
         alert_id: String,
     },
+    /// An anomalous metric value has been detected.
     AnomalyDetected {
+        /// Collection where the anomaly was detected.
         collection_id: String,
+        /// Type of metric exhibiting the anomaly.
         metric_type: MetricType,
+        /// Observed anomalous value.
         value: f64,
+        /// Expected normal range (min, max).
         expected_range: (f64, f64),
     },
+    /// Performance trend direction has changed.
     PerformanceTrendChanged {
+        /// Collection whose trend changed.
         collection_id: String,
+        /// New trend analysis result.
         trend: PerformanceTrend,
     },
 }
@@ -524,7 +599,8 @@ impl MetricsCollector {
         });
 
         // Clean up old metrics
-        let cutoff = Utc::now() - chrono::Duration::from_std(self.retention_period).unwrap();
+        let cutoff =
+            Utc::now() - chrono::Duration::from_std(self.retention_period).unwrap_or_default();
         historical.retain(|m| m.timestamp > cutoff);
     }
 
@@ -791,7 +867,7 @@ impl PerformanceTracker {
 
     /// Update performance trends
     async fn update_trends(&self, _collection_id: &str, _metrics: &CollectionMetrics) {
-        // TODO: Implement trend analysis
+        // Deferred: Implement trend analysis
     }
 }
 

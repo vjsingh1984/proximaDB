@@ -58,9 +58,12 @@ pub struct PipelineConfig {
 /// Thresholds for each progressive stage
 #[derive(Debug, Clone)]
 pub struct StageThresholds {
-    pub binary_selectivity: f32, // e.g., 0.1 = keep top 10%
-    pub int8_selectivity: f32,   // e.g., 0.2 = keep top 20%
-    pub pq_selectivity: f32,     // e.g., 0.3 = keep top 30%
+    /// Fraction of candidates to keep after binary stage (e.g., 0.1 = top 10%)
+    pub binary_selectivity: f32,
+    /// Fraction of candidates to keep after INT8 stage (e.g., 0.2 = top 20%)
+    pub int8_selectivity: f32,
+    /// Fraction of candidates to keep after PQ stage (e.g., 0.3 = top 30%)
+    pub pq_selectivity: f32,
 }
 
 /// Statistics for stage execution
@@ -157,7 +160,7 @@ impl Ord for StageCandidate {
 
 impl PartialOrd for StageCandidate {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.score.partial_cmp(&other.score)
+        Some(self.cmp(other))
     }
 }
 
@@ -203,11 +206,7 @@ impl UnifiedProgressiveSearchPipeline {
         // Preprocess query vector
         let query_cache = self
             .query_preprocessor
-            .preprocess(
-                query_vector,
-                distance_metric.clone(),
-                Some(quantization_config),
-            )
+            .preprocess(query_vector, distance_metric, Some(quantization_config))
             .await;
 
         // Determine stages to use
@@ -285,7 +284,7 @@ impl UnifiedProgressiveSearchPipeline {
         _top_k: usize,
     ) -> Vec<SearchStage> {
         let record_count = records.len();
-        let dimension = records.first().map(|r| r.vector.len()).unwrap_or(0);
+        let dimension = records.first().map_or(0, |r| r.vector.len());
 
         // Decision logic based on data size and dimension
         if record_count < 1000 || dimension < 64 {
@@ -440,7 +439,11 @@ impl UnifiedProgressiveSearchPipeline {
         // Extract top k candidates
         let mut final_candidates = Vec::new();
         while !candidates.is_empty() && final_candidates.len() < top_k {
-            final_candidates.push(candidates.pop().unwrap());
+            if let Some(candidate) = candidates.pop() {
+                final_candidates.push(candidate);
+            } else {
+                break;
+            }
         }
 
         Ok(final_candidates)
@@ -549,7 +552,7 @@ impl UnifiedProgressiveSearchPipeline {
     ) -> Result<Vec<StageCandidate>> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
-        let distance_compute = UnifiedDistanceCompute::new(distance_metric.clone());
+        let distance_compute = UnifiedDistanceCompute::new(*distance_metric);
         let mut candidates = Vec::new();
 
         for record in records {
@@ -631,7 +634,7 @@ impl UnifiedProgressiveSearchPipeline {
         let distance: u32 = a
             .iter()
             .zip(b.iter())
-            .map(|(x, y)| (*x as i32 - *y as i32).abs() as u32)
+            .map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs())
             .sum();
 
         // Normalize
@@ -653,11 +656,9 @@ impl UnifiedProgressiveSearchPipeline {
             SearchStage::Fp16 | SearchStage::Fp32 => 1.0,
         };
 
-        let candidates = ((current_count as f32 * selectivity) as usize)
+        ((current_count as f32 * selectivity) as usize)
             .max(top_k * 3)
-            .min(self.config.max_candidates);
-
-        candidates
+            .min(self.config.max_candidates)
     }
 
     /// Apply metadata filter to records
@@ -733,7 +734,7 @@ impl UnifiedProgressiveSearchPipeline {
         }
 
         // Check if top candidates have high enough scores
-        let top_score = candidates.peek().map(|c| c.score).unwrap_or(0.0);
+        let top_score = candidates.peek().map_or(0.0, |c| c.score);
         top_score >= self.config.early_termination_score
     }
 
@@ -746,8 +747,7 @@ impl UnifiedProgressiveSearchPipeline {
         candidates
             .into_iter()
             .take(top_k)
-            .enumerate()
-            .map(|(_rank, candidate)| {
+            .map(|candidate| {
                 let _json_metadata = self.convert_metadata(&candidate.record);
                 // Convert metadata directly to SqlValue format
                 let metadata: std::collections::HashMap<
@@ -810,8 +810,8 @@ impl UnifiedProgressiveSearchPipeline {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64
+            .map(|duration| duration.as_nanos() as u64)
+            .unwrap_or(0)
     }
 }
 
@@ -842,7 +842,7 @@ impl ThresholdAdjuster {
         let mut thresholds = self.current_thresholds.write();
 
         // If results are good and we used many stages, increase selectivity
-        if results.len() > 0 && stages.len() > 2 {
+        if !results.is_empty() && stages.len() > 2 {
             thresholds.binary_selectivity = (thresholds.binary_selectivity * 0.95).max(0.05);
             thresholds.int8_selectivity = (thresholds.int8_selectivity * 0.95).max(0.1);
             thresholds.pq_selectivity = (thresholds.pq_selectivity * 0.95).max(0.15);

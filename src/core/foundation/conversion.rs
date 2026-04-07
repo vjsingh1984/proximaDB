@@ -55,6 +55,7 @@ where
     result.map(|item| item.to_unified())
 }
 
-// Convenience type aliases
+/// Result type for type conversion operations
 pub type ConversionResult<T> = Result<T, String>;
+/// Error type for conversion failures (descriptive string)
 pub type ConversionError = String;

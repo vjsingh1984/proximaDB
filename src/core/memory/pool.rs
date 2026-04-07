@@ -43,14 +43,23 @@ impl Default for PoolConfig {
 /// Pool statistics for monitoring and optimization
 #[derive(Debug, Clone, Default)]
 pub struct PoolStats {
+    /// Total number of buffer acquisition requests
     pub total_acquisitions: u64,
+    /// Total number of buffers returned to the pool
     pub total_releases: u64,
+    /// Acquisitions served from the pool cache
     pub cache_hits: u64,
+    /// Acquisitions requiring new allocation
     pub cache_misses: u64,
+    /// Number of times the pool capacity was increased
     pub pool_grows: u64,
+    /// Number of times the pool capacity was decreased
     pub pool_shrinks: u64,
+    /// Current number of buffers in the pool
     pub current_size: usize,
+    /// Maximum number of buffers ever held in the pool
     pub peak_size: usize,
+    /// Average buffer size in bytes
     pub average_buffer_size: usize,
     /// Total buffers ever created (including those currently outstanding)
     pub total_buffers_created: usize,
@@ -61,6 +70,7 @@ pub struct PoolStats {
 }
 
 impl PoolStats {
+    /// Calculate the cache hit rate as a fraction (0.0 to 1.0)
     pub fn hit_rate(&self) -> f64 {
         if self.total_acquisitions == 0 {
             0.0
@@ -69,6 +79,7 @@ impl PoolStats {
         }
     }
 
+    /// Log a human-readable summary of pool statistics
     pub fn print_summary(&self) {
         info!("🏊 Memory Pool Statistics:");
         info!(
@@ -362,7 +373,7 @@ impl<T> PooledItem<T> {
     }
 
     /// Get mutable reference to the buffer
-    pub fn as_mut(&mut self) -> &mut T {
+    pub fn as_buffer_mut(&mut self) -> &mut T {
         self.buffer.as_mut().expect("Buffer should be present")
     }
 
@@ -574,8 +585,8 @@ impl VectorMemoryPool {
     /// Get a f32 buffer from the pool
     pub fn f32_buffer(&self, capacity: usize) -> PooledItem<Vec<f32>> {
         let mut item = self.vector_buffers.acquire();
-        (&mut *item).clear();
-        (&mut *item).reserve(capacity);
+        (*item).clear();
+        (*item).reserve(capacity);
         item
     }
 
@@ -610,13 +621,18 @@ impl Default for VectorMemoryPool {
 /// Comprehensive statistics for vector memory pools
 #[derive(Debug, Clone)]
 pub struct VectorPoolStats {
+    /// Statistics for the serialization buffer pool
     pub serialization: PoolStats,
+    /// Statistics for the vector data buffer pool
     pub vector: PoolStats,
+    /// Statistics for the compression buffer pool
     pub compression: PoolStats,
+    /// Statistics for the metadata buffer pool
     pub metadata: PoolStats,
 }
 
 impl VectorPoolStats {
+    /// Log a comprehensive summary of all pool statistics
     pub fn print_comprehensive_summary(&self) {
         info!("🏊 Vector Memory Pool Comprehensive Statistics:");
 

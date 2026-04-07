@@ -45,7 +45,10 @@ impl QueryCache {
         match self.strategy {
             CacheStrategy::None => None,
             CacheStrategy::LRU => {
-                let cache = self.cache.read().unwrap();
+                let cache = self
+                    .cache
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 let result = cache.get(key).cloned();
                 if result.is_some() {
                     self.stats.hits += 1;
@@ -63,7 +66,10 @@ impl QueryCache {
         match self.strategy {
             CacheStrategy::None => {}
             CacheStrategy::LRU => {
-                let mut cache = self.cache.write().unwrap();
+                let mut cache = self
+                    .cache
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
 
                 // Simple eviction: if cache is full, clear some entries
                 if cache.len() >= self.capacity {
@@ -84,7 +90,10 @@ impl QueryCache {
 
     /// Clear cache
     pub fn clear(&mut self) {
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self
+            .cache
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let len = cache.len();
         cache.clear();
         self.stats.evictions += len;

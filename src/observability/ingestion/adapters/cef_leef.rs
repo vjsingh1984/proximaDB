@@ -46,7 +46,9 @@ pub enum SecurityFormat {
 /// Transport protocol
 #[derive(Debug, Clone, Copy)]
 pub enum CefLeefProtocol {
+    /// TCP transport for reliable delivery.
     Tcp,
+    /// UDP transport for low-latency delivery.
     Udp,
 }
 
@@ -183,8 +185,7 @@ impl CefLeefAdapter {
                 .get("sev")
                 .or_else(|| extension.get("severity"))
                 .and_then(|s| s.parse::<u8>().ok())
-                .map(|n| self.leef_severity_to_severity(n))
-                .unwrap_or(Severity::Info);
+                .map_or(Severity::Info, |n| self.leef_severity_to_severity(n));
             attributes.extend(extension);
             sev
         } else {
@@ -348,15 +349,15 @@ impl CefLeefAdapter {
             while running.load(Ordering::Relaxed) {
                 match socket.recv_from(&mut buf).await {
                     Ok((len, _addr)) => {
-                        if let Ok(msg) = std::str::from_utf8(&buf[..len]) {
-                            if let Some(entry) = Self::parse_line_static(msg, format) {
-                                batch.push(entry);
-                                events.fetch_add(1, Ordering::Relaxed);
+                        if let Ok(msg) = std::str::from_utf8(&buf[..len])
+                            && let Some(entry) = Self::parse_line_static(msg, format)
+                        {
+                            batch.push(entry);
+                            events.fetch_add(1, Ordering::Relaxed);
 
-                                if batch.len() >= batch_size {
-                                    let _ = sender.send(std::mem::take(&mut batch)).await;
-                                    batch = Vec::with_capacity(batch_size);
-                                }
+                            if batch.len() >= batch_size {
+                                let _ = sender.send(std::mem::take(&mut batch)).await;
+                                batch = Vec::with_capacity(batch_size);
                             }
                         }
                     }

@@ -35,6 +35,7 @@ pub struct LdapAuthProvider {
 }
 
 impl LdapAuthProvider {
+    /// Create a new LDAP authentication provider with connection and search settings
     pub fn new(
         server_url: String,
         bind_dn: String,
@@ -201,8 +202,8 @@ impl LdapAuthProvider {
 
                 // Parse LDAP search results to extract group CNs
                 for line in output_str.lines() {
-                    if line.starts_with("cn: ") {
-                        let group_name = line[4..].trim();
+                    if let Some(group_name) = line.strip_prefix("cn: ") {
+                        let group_name = group_name.trim();
                         // Map LDAP groups to ProximaDB roles
                         if let Some(role) = self.role_mapping.get(group_name) {
                             roles.push(role.clone());
@@ -314,6 +315,7 @@ pub struct OAuth2AuthProvider {
 }
 
 impl OAuth2AuthProvider {
+    /// Create a new OAuth2 authentication provider with endpoint configuration
     pub fn new(
         client_id: String,
         client_secret: String,
@@ -484,6 +486,7 @@ struct SamlAssertion {
 }
 
 impl SamlAuthProvider {
+    /// Create a new SAML authentication provider with IdP configuration
     pub fn new(entity_id: String, sso_url: String, certificate: String) -> Self {
         Self {
             entity_id,
@@ -493,7 +496,7 @@ impl SamlAuthProvider {
     }
 
     fn decode_saml_response(&self, _credentials: &str) -> Result<SamlResponse, AuthError> {
-        // TODO: Implement SAML response decoding
+        // Deferred: Implement SAML response decoding
         Ok(SamlResponse {
             user_id: "placeholder_user".to_string(),
             tenant_id: "placeholder_tenant".to_string(),
@@ -504,7 +507,7 @@ impl SamlAuthProvider {
         &self,
         _response: &SamlResponse,
     ) -> Result<SamlAssertion, AuthError> {
-        // TODO: Implement SAML assertion validation
+        // Deferred: Implement SAML assertion validation
         Ok(SamlAssertion {
             user_id: "placeholder_user".to_string(),
             tenant_id: "placeholder_tenant".to_string(),
@@ -514,7 +517,7 @@ impl SamlAuthProvider {
     }
 
     fn map_roles_to_permissions(&self, _roles: &[String]) -> Vec<Permission> {
-        // TODO: Implement role to permission mapping
+        // Deferred: Implement role to permission mapping
         vec![Permission::SearchVectors, Permission::InsertVectors]
     }
 }
@@ -535,7 +538,7 @@ impl AuthProvider for SamlAuthProvider {
             permissions: self.map_roles_to_permissions(&assertion.roles),
             auth_method: AuthMethod::OAuth2, // SAML treated as OAuth2 equivalent
             token_expires_at: assertion.expires_at.map(|timestamp| {
-                chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(|| chrono::Utc::now())
+                chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now)
             }),
         })
     }
@@ -553,6 +556,7 @@ pub struct DatabaseAuthProvider {
 }
 
 impl DatabaseAuthProvider {
+    /// Create a new database authentication provider with a connection string
     pub fn new(connection_string: String) -> Self {
         Self { connection_string }
     }
@@ -562,7 +566,7 @@ impl DatabaseAuthProvider {
         username: &str,
         password: &str,
     ) -> Result<DatabaseUser, AuthError> {
-        // TODO: Implement database lookup
+        // Deferred: Implement database lookup
         // This would involve:
         // 1. Connect to database
         // 2. Query user table

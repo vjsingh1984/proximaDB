@@ -190,8 +190,7 @@ impl WriteSet {
     pub fn conflicts_with(&self, container: &str, id: &str) -> bool {
         self.entries
             .get(container)
-            .map(|ids| ids.contains(id))
-            .unwrap_or(false)
+            .is_some_and(|ids| ids.contains(id))
     }
 
     /// Get all entries
@@ -328,9 +327,7 @@ impl TransactionContext {
     /// Extract IDs affected by an operation
     fn extract_ids(operation: &MultiModelOperation) -> Vec<String> {
         match operation {
-            MultiModelOperation::Vector(op) => {
-                op.affected_ids().iter().map(|s| s.clone()).collect()
-            }
+            MultiModelOperation::Vector(op) => op.affected_ids().to_vec(),
             MultiModelOperation::Document(_) => vec!["*".to_string()], // Filter-based
             MultiModelOperation::Graph(op) => op
                 .affected_node_ids()

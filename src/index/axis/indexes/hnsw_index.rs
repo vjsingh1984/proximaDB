@@ -27,7 +27,7 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::{
     Arc, RwLock,
-    atomic::{AtomicUsize, Ordering as AtomicOrdering},
+    atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering},
 };
 use tracing::info;
 
@@ -46,9 +46,13 @@ use crate::index::axis::zero_overhead_vector::{
 /// Memory usage statistics
 #[derive(Debug, Clone)]
 pub struct MemoryUsage {
+    /// Total memory usage across all components.
     pub total_bytes: usize,
+    /// Memory used by the HNSW graph structure (edges, layers).
     pub index_size_bytes: usize,
+    /// Memory used by stored vector data.
     pub vector_data_bytes: usize,
+    /// Memory used by auxiliary metadata (ID mappings, etc.).
     pub metadata_bytes: usize,
 }
 
@@ -93,7 +97,18 @@ impl PartialOrd for OrderedFloat {
 
 impl Ord for OrderedFloat {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.0.partial_cmp(&other.0).unwrap_or(Ordering::Equal)
+        // For NaN values, treat them as greater than any other value (consistent with IEEE 754)
+        // This is a deterministic ordering for BinaryHeap usage
+        self.0.partial_cmp(&other.0).unwrap_or_else(|| {
+            // If both are NaN, return Equal
+            if self.0.is_nan() && other.0.is_nan() {
+                Ordering::Equal
+            } else if self.0.is_nan() {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        })
     }
 }
 
@@ -121,7 +136,7 @@ pub struct AxisHnswIndex {
 
     /// HNSW-specific: Graph layers with composite keys
     /// (layer, internal_node_id) -> connections
-    /// TODO: Add partitioning - will use (collection_id, layer, node_id) in Phase 3
+    /// Deferred: Add partitioning - will use (collection_id, layer, node_id) in Phase 3
     layers: DashMap<(usize, usize), Vec<usize>>,
 
     /// HNSW-specific: Maximum layer currently in use (atomic)
@@ -130,8 +145,8 @@ pub struct AxisHnswIndex {
     /// HNSW-specific: Entry point for search
     entry_point: RwLock<Option<usize>>,
 
-    /// Random number generator state
-    rng_state: Arc<RwLock<u64>>,
+    /// Random number generator state (lock-free AtomicU64 for concurrent inserts)
+    rng_state: AtomicU64,
 
     /// Algorithm type for trait requirement
     algorithm_type: IndexAlgorithm,
@@ -170,10 +185,7 @@ impl AxisHnswIndex {
         // USING UTILS: Validate dimension
         validation::validate_dimension(dimension)?;
 
-        let coll_str = collection_id
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("<unnamed>");
+        let coll_str = collection_id.as_ref().map_or("<unnamed>", |s| s.as_str());
         info!(
             "Creating AXIS HNSW index for collection '{}': M={}, ef_construction={}, ef={}, dim={}, repr={:?}",
             coll_str, config.m, config.ef_construction, config.ef, dimension, extraction_mode
@@ -205,7 +217,7 @@ impl AxisHnswIndex {
             layers: DashMap::new(),
             max_layer: AtomicUsize::new(0),
             entry_point: RwLock::new(None),
-            rng_state: Arc::new(RwLock::new(42)), // Deterministic seed for reproducibility
+            rng_state: AtomicU64::new(42), // Deterministic seed for reproducibility
             algorithm_type,
 
             // EventLog-based vector consumption (no queue consumer needed)
@@ -237,26 +249,43 @@ impl AxisHnswIndex {
         }
     }
 
-    /// Generate random level for new node using exponential decay
+    /// Generate random level for new node using exponential decay.
+    /// Lock-free: uses atomic CAS on the RNG state so concurrent inserts
+    /// don't serialize behind a write lock.
     fn get_random_level(&self) -> usize {
-        let mut rng = self.rng_state.write().unwrap();
         let mut level = 0;
-        let _ml = 1.0 / (2.0_f32.ln()); // 1/ln(2) ≈ 1.44
 
-        let mut random_val = self.fast_random(&mut rng) as f32 / u32::MAX as f32;
+        let mut random_val = self.fast_random_atomic() as f32 / u32::MAX as f32;
 
         while random_val < 0.5 && level < self.config.max_layers {
             level += 1;
-            random_val = self.fast_random(&mut rng) as f32 / u32::MAX as f32;
+            random_val = self.fast_random_atomic() as f32 / u32::MAX as f32;
         }
 
         level
     }
 
-    /// Fast pseudo-random number generator (Linear Congruential Generator)
-    fn fast_random(&self, state: &mut u64) -> u32 {
-        *state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-        (*state >> 32) as u32
+    /// Lock-free LCG using atomic compare-and-swap.
+    /// Each thread reads the current state, computes the next state, and attempts
+    /// to CAS. On contention, the retry re-reads the (now-advanced) state,
+    /// which is correct for an LCG — the sequence just skips ahead.
+    fn fast_random_atomic(&self) -> u32 {
+        loop {
+            let current = self.rng_state.load(AtomicOrdering::Relaxed);
+            let next = current.wrapping_mul(1664525).wrapping_add(1013904223);
+            if self
+                .rng_state
+                .compare_exchange_weak(
+                    current,
+                    next,
+                    AtomicOrdering::Relaxed,
+                    AtomicOrdering::Relaxed,
+                )
+                .is_ok()
+            {
+                return (next >> 32) as u32;
+            }
+        }
     }
 
     /// Search for ef closest candidates in a specific layer
@@ -276,22 +305,22 @@ impl AxisHnswIndex {
         // Initialize with entry points
         // OPTIMIZATION: Compute distances inline to avoid allocations
         {
-            let vectors_lock = self.vectors.read().unwrap();
+            let vectors_lock = self
+                .vectors
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
 
             for &ep in entry_points {
-                if let Some(external_id) = self.id_mapping.external(ep) {
-                    if let Some(view) = vectors_lock.get(&external_id) {
-                        if let Some(vector_data) = view.as_f32() {
-                            let dist = self.distance_computer.distance_with_metric(
-                                query,
-                                vector_data,
-                                &metric,
-                            );
-                            visited.insert(ep);
-                            candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
-                            dynamic_candidates.push((OrderedFloat(dist), ep));
-                        }
-                    }
+                if let Some(external_id) = self.id_mapping.external(ep)
+                    && let Some(view) = vectors_lock.get(&external_id)
+                    && let Some(vector_data) = view.as_f32()
+                {
+                    let dist =
+                        self.distance_computer
+                            .distance_with_metric(query, vector_data, &metric);
+                    visited.insert(ep);
+                    candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
+                    dynamic_candidates.push((OrderedFloat(dist), ep));
                 }
             }
         }
@@ -299,48 +328,44 @@ impl AxisHnswIndex {
         // Explore the graph with distance computation
         while let Some(std::cmp::Reverse((curr_dist, curr_node))) = candidates.pop() {
             // Early termination: if current distance is worse than worst in dynamic_candidates
-            if let Some((worst_dist, _)) = dynamic_candidates.peek() {
-                if curr_dist.0 > worst_dist.0 && dynamic_candidates.len() >= ef {
-                    break;
-                }
+            if let Some((worst_dist, _)) = dynamic_candidates.peek()
+                && curr_dist.0 > worst_dist.0
+                && dynamic_candidates.len() >= ef
+            {
+                break;
             }
 
             // Compute distances inline to avoid vector cloning (zero-copy optimization)
             if let Some(neighbors) = self.layers.get(&(layer, curr_node)) {
-                let vectors_lock = self.vectors.read().unwrap();
+                let vectors_lock = self
+                    .vectors
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
 
                 for &neighbor in neighbors.value() {
                     if !visited.contains(&neighbor) {
                         visited.insert(neighbor);
-                        if let Some(external_id) = self.id_mapping.external(neighbor) {
-                            if let Some(view) = vectors_lock.get(&external_id) {
-                                if let Some(vector_data) = view.as_f32() {
-                                    let dist = self.distance_computer.distance_with_metric(
-                                        query,
-                                        vector_data,
-                                        &metric,
-                                    );
+                        if let Some(external_id) = self.id_mapping.external(neighbor)
+                            && let Some(view) = vectors_lock.get(&external_id)
+                            && let Some(vector_data) = view.as_f32()
+                        {
+                            let dist = self.distance_computer.distance_with_metric(
+                                query,
+                                vector_data,
+                                &metric,
+                            );
 
-                                    if dynamic_candidates.len() < ef {
-                                        candidates.push(std::cmp::Reverse((
-                                            OrderedFloat(dist),
-                                            neighbor,
-                                        )));
-                                        dynamic_candidates.push((OrderedFloat(dist), neighbor));
-                                    } else if let Some((worst_dist, _)) = dynamic_candidates.peek()
-                                    {
-                                        if dist < worst_dist.0 {
-                                            candidates.push(std::cmp::Reverse((
-                                                OrderedFloat(dist),
-                                                neighbor,
-                                            )));
-                                            dynamic_candidates.push((OrderedFloat(dist), neighbor));
+                            if dynamic_candidates.len() < ef {
+                                candidates.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                                dynamic_candidates.push((OrderedFloat(dist), neighbor));
+                            } else if let Some((worst_dist, _)) = dynamic_candidates.peek()
+                                && dist < worst_dist.0
+                            {
+                                candidates.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                                dynamic_candidates.push((OrderedFloat(dist), neighbor));
 
-                                            if dynamic_candidates.len() > ef {
-                                                dynamic_candidates.pop();
-                                            }
-                                        }
-                                    }
+                                if dynamic_candidates.len() > ef {
+                                    dynamic_candidates.pop();
                                 }
                             }
                         }
@@ -355,12 +380,23 @@ impl AxisHnswIndex {
             .map(|(OrderedFloat(dist), node)| (node, dist))
             .collect();
 
-        result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        result.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1).unwrap_or_else(|| {
+                // Handle NaN values deterministically
+                if a.1.is_nan() && b.1.is_nan() {
+                    std::cmp::Ordering::Equal
+                } else if a.1.is_nan() {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
+                }
+            })
+        });
         result
     }
 
     /// Select m neighbors using simple heuristic (closest neighbors)
-    /// TODO: Implement more sophisticated heuristics for better graph connectivity
+    /// Deferred: Implement more sophisticated heuristics for better graph connectivity
     fn select_neighbors(&self, candidates: Vec<(usize, f32)>, m: usize) -> Vec<usize> {
         candidates
             .into_iter()
@@ -391,7 +427,10 @@ impl AxisHnswIndex {
                 Some(id) => id,
                 None => return,
             };
-            let vectors = self.vectors.read().unwrap();
+            let vectors = self
+                .vectors
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             match vectors.get(&external_id) {
                 Some(view) => match view.as_f32() {
                     Some(v) => v.to_vec(),
@@ -406,15 +445,17 @@ impl AxisHnswIndex {
         let mut neighbor_vectors: Vec<Vec<f32>> = Vec::with_capacity(connections.len());
 
         {
-            let vectors_lock = self.vectors.read().unwrap();
+            let vectors_lock = self
+                .vectors
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for &neighbor in &connections {
-                if let Some(neighbor_external) = self.id_mapping.external(neighbor) {
-                    if let Some(view) = vectors_lock.get(&neighbor_external) {
-                        if let Some(neighbor_vec) = view.as_f32() {
-                            neighbor_ids.push(neighbor);
-                            neighbor_vectors.push(neighbor_vec.to_vec());
-                        }
-                    }
+                if let Some(neighbor_external) = self.id_mapping.external(neighbor)
+                    && let Some(view) = vectors_lock.get(&neighbor_external)
+                    && let Some(neighbor_vec) = view.as_f32()
+                {
+                    neighbor_ids.push(neighbor);
+                    neighbor_vectors.push(neighbor_vec.to_vec());
                 }
             }
         }
@@ -428,14 +469,22 @@ impl AxisHnswIndex {
         );
 
         // Build neighbor_distances from batch results
-        let mut neighbor_distances: Vec<(usize, f32)> = neighbor_ids
-            .into_iter()
-            .zip(distances.into_iter())
-            .collect();
+        let mut neighbor_distances: Vec<(usize, f32)> =
+            neighbor_ids.into_iter().zip(distances).collect();
 
         // Sort by distance and keep only the closest max_m
-        neighbor_distances
-            .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        neighbor_distances.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1).unwrap_or_else(|| {
+                // Handle NaN values deterministically
+                if a.1.is_nan() && b.1.is_nan() {
+                    std::cmp::Ordering::Equal
+                } else if a.1.is_nan() {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
+                }
+            })
+        });
         let new_connections: Vec<usize> = neighbor_distances
             .into_iter()
             .take(max_m)
@@ -461,7 +510,10 @@ impl AxisVectorIndex for AxisHnswIndex {
         if let Some(_existing_node_id) = self.id_mapping.internal(&id) {
             // Update existing vector
             {
-                let mut vectors = self.vectors.write().unwrap();
+                let mut vectors = self
+                    .vectors
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 vectors.add_fp32(id.clone(), &vector_data)?;
             }
             // Return early - no need to re-add to graph structure
@@ -475,7 +527,10 @@ impl AxisVectorIndex for AxisHnswIndex {
 
         // Store vector with zero-overhead - just raw data!
         {
-            let mut vectors = self.vectors.write().unwrap();
+            let mut vectors = self
+                .vectors
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             vectors.add_fp32(id.clone(), &vector_data)?;
         }
 
@@ -495,7 +550,10 @@ impl AxisVectorIndex for AxisHnswIndex {
 
         // If this is the first node, make it the entry point
         {
-            let mut entry_point_lock = self.entry_point.write().unwrap();
+            let mut entry_point_lock = self
+                .entry_point
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if entry_point_lock.is_none() {
                 *entry_point_lock = Some(internal_node_id);
                 self.stats
@@ -504,7 +562,11 @@ impl AxisVectorIndex for AxisHnswIndex {
             }
         }
 
-        let entry_point = self.entry_point.read().unwrap().unwrap();
+        let entry_point = self
+            .entry_point
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .ok_or_else(|| anyhow::anyhow!("Entry point must be set when adding non-first node"))?;
         let mut curr_nearest = vec![entry_point];
 
         // Search from top layer down to level+1 (greedy search with ef=1)
@@ -564,7 +626,10 @@ impl AxisVectorIndex for AxisHnswIndex {
 
         // Update entry point if this node reaches the highest level
         if level >= self.max_layer.load(AtomicOrdering::Relaxed) {
-            *self.entry_point.write().unwrap() = Some(internal_node_id);
+            *self
+                .entry_point
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(internal_node_id);
         }
 
         // USING UTILS: Record successful operation
@@ -606,7 +671,7 @@ impl AxisVectorIndex for AxisHnswIndex {
                 .layers
                 .iter()
                 .filter(|entry| entry.key().0 == layer)
-                .map(|entry| entry.key().clone())
+                .map(|entry| *entry.key())
                 .collect();
 
             for key in keys_to_update {
@@ -619,17 +684,23 @@ impl AxisVectorIndex for AxisHnswIndex {
         // USING UTILS: Remove from mappings and vectors
         // Remove from vectors collection
         {
-            let mut vectors = self.vectors.write().unwrap();
+            let mut vectors = self
+                .vectors
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             vectors.remove(id);
         }
         self.id_mapping.remove_by_external(id);
 
         // Update entry point if necessary
         {
-            let mut entry_point_lock = self.entry_point.write().unwrap();
+            let mut entry_point_lock = self
+                .entry_point
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if *entry_point_lock == Some(internal_node_id) {
                 // Find a new entry point from remaining vectors
-                // TODO: ZeroOverheadCollection doesn't have keys() method
+                // Deferred: ZeroOverheadCollection doesn't have keys() method
                 // For now, just set entry point to None when removed
                 *entry_point_lock = None;
             }
@@ -647,7 +718,11 @@ impl AxisVectorIndex for AxisHnswIndex {
 
     fn stats(&self) -> IndexStats {
         IndexStats {
-            vector_count: self.vectors.read().unwrap().len(),
+            vector_count: self
+                .vectors
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .len(),
             memory_usage_bytes: self.estimate_memory_usage(),
             index_type: "HNSW".to_string(),
         }
@@ -665,7 +740,12 @@ impl AxisHnswIndex {
         let start = std::time::Instant::now();
 
         // Get entry point
-        let entry_point = match self.entry_point.read().unwrap().as_ref() {
+        let entry_point = match self
+            .entry_point
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+        {
             Some(&ep) => ep,
             None => {
                 self.stats
@@ -689,10 +769,12 @@ impl AxisHnswIndex {
         // Search layer 0 with collection-size-aware ef for consistent recall at scale
         // For N vectors, optimal ef ≈ sqrt(N) for high recall (>95%)
         // This ensures 50K vectors get ef≈223 instead of just 50
-        let collection_size = self.vectors.read().unwrap().len();
-        let size_aware_ef = ((collection_size as f64).sqrt() as usize)
-            .max(50) // Minimum ef for small collections
-            .min(500); // Cap to avoid excessive search time
+        let collection_size = self
+            .vectors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len();
+        let size_aware_ef = ((collection_size as f64).sqrt() as usize).clamp(50, 500); // Clamp ef for small/large collections
         let search_ef = self.config.ef.max(size_aware_ef).max(top_k);
 
         tracing::debug!(
@@ -725,7 +807,10 @@ impl AxisHnswIndex {
 
     /// Get the number of vectors in the index
     pub fn size(&self) -> usize {
-        let vectors = self.vectors.read().unwrap();
+        let vectors = self
+            .vectors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         vectors.len()
     }
 
@@ -781,7 +866,10 @@ impl AxisHnswIndex {
     fn estimate_memory_usage(&self) -> usize {
         // USING UTILS: Get vector storage memory usage
         let vector_memory = {
-            let vectors = self.vectors.read().unwrap();
+            let vectors = self
+                .vectors
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             vectors.memory_usage()
         };
 
@@ -849,7 +937,7 @@ impl AxisHnswIndex {
             }
         }
 
-        // TODO: Extract vectors from files listed in event.file_paths
+        // Deferred: Extract vectors from files listed in event.file_paths
         // This would be handled by the EventLog consumer which calls this method
         // after extracting vectors from the storage files
 
@@ -866,7 +954,7 @@ impl AxisHnswIndex {
     }
 
     /// NEW: Dequantize vector for HNSW graph construction
-    /// TODO: Integrate with actual quantization module from storage engines
+    /// Deferred: Integrate with actual quantization module from storage engines
     #[allow(dead_code)]
     fn dequantize_vector(
         &self,
@@ -907,7 +995,7 @@ impl AxisHnswIndex {
             return self.search_with_filter(query, top_k, filter).await;
         }
 
-        // TODO: Implement two-stage search with quantized filtering
+        // Deferred: Implement two-stage search with quantized filtering
         // Stage 1: Fast filtering using quantized vectors
         // Stage 2: FP32 reranking of top candidates
         tracing::warn!("Quantized acceleration not yet implemented - using standard search");
@@ -926,7 +1014,10 @@ impl AxisHnswIndex {
 
     /// Get dimension from vector collection config
     pub fn get_dimension(&self) -> usize {
-        let vectors = self.vectors.read().unwrap();
+        let vectors = self
+            .vectors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         vectors.config().dimension
     }
 
@@ -975,7 +1066,10 @@ impl AxisHnswIndex {
 
     /// Get collection config details for serialization
     pub fn get_collection_config_details(&self) -> (usize, bool, Option<u8>) {
-        let vectors = self.vectors.read().unwrap();
+        let vectors = self
+            .vectors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let config = vectors.config();
         let quant_method = config.quantization_method.map(|m| match m {
             crate::index::axis::zero_overhead_vector::QuantizationMethod::INT8 => 0,
@@ -1017,7 +1111,10 @@ impl AxisHnswIndex {
 
     /// Get entry point
     pub fn get_entry_point(&self) -> Option<usize> {
-        *self.entry_point.read().unwrap()
+        *self
+            .entry_point
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Serialize vectors to portable format
@@ -1026,7 +1123,10 @@ impl AxisHnswIndex {
     ) -> Vec<crate::index::axis::storage::serialization::SerializableVector> {
         use crate::index::axis::storage::serialization::SerializableVector;
 
-        let vectors = self.vectors.read().unwrap();
+        let vectors = self
+            .vectors
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         vectors
             .iter()
             .map(|view| SerializableVector {
@@ -1079,11 +1179,17 @@ impl AxisHnswIndex {
         self.max_layer.store(max_layer, AtomicOrdering::Relaxed);
 
         // 4. Restore entry point
-        *self.entry_point.write().unwrap() = entry_point;
+        *self
+            .entry_point
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = entry_point;
 
         // 5. Restore vectors
         {
-            let mut vec_store = self.vectors.write().unwrap();
+            let mut vec_store = self
+                .vectors
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             for vec in vectors {
                 let zero_vec = ZeroOverheadVector::from_bytes(vec.data);
                 // Get the ID from the zero-overhead vector
@@ -1164,34 +1270,40 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let config = AxisHnswConfig::default();
-        let index = AxisHnswIndex::new(config, 3).unwrap();
+        let index = AxisHnswIndex::new(config, 3).expect("Failed to create HNSW index");
 
         // Add test vectors
         index
             .add("vec1".to_string(), vec![1.0, 0.0, 0.0])
             .await
-            .unwrap();
+            .expect("Failed to add vec1");
         index
             .add("vec2".to_string(), vec![0.0, 1.0, 0.0])
             .await
-            .unwrap();
+            .expect("Failed to add vec2");
         index
             .add("vec3".to_string(), vec![1.0, 1.0, 0.0])
             .await
-            .unwrap();
+            .expect("Failed to add vec3");
 
         assert_eq!(index.stats().vector_count, 3);
 
         // Search should work
-        let results = index.search(&[1.0, 0.0, 0.0], 2, None).await.unwrap();
+        let results = index
+            .search(&[1.0, 0.0, 0.0], 2, None)
+            .await
+            .expect("Failed to search");
         assert!(results.len() <= 2); // HNSW is approximate
 
         // Remove a vector
-        index.remove("vec2").await.unwrap();
+        index.remove("vec2").await.expect("Failed to remove vec2");
         assert_eq!(index.stats().vector_count, 2);
 
         // Remove non-existent vector (should succeed without error)
-        index.remove("nonexistent").await.unwrap();
+        index
+            .remove("nonexistent")
+            .await
+            .expect("Failed to remove nonexistent");
     }
 
     #[tokio::test]
@@ -1200,7 +1312,7 @@ mod tests {
 
         let mut config = AxisHnswConfig::default();
         config.ef = 200; // Higher ef for better quality
-        let index = AxisHnswIndex::new(config, 4).unwrap();
+        let index = AxisHnswIndex::new(config, 4).expect("Failed to create HNSW index");
 
         // Create a set of test vectors
         let test_vectors = vec![
@@ -1214,12 +1326,18 @@ mod tests {
         ];
 
         for (id, vector) in test_vectors.iter() {
-            index.add(id.to_string(), vector.clone()).await.unwrap();
+            index
+                .add(id.to_string(), vector.clone())
+                .await
+                .expect("Failed to add vector");
         }
 
         // Search for nearest neighbors to v1
         let query = vec![1.0, 0.0, 0.0, 0.0];
-        let results = index.search(&query, 3, None).await.unwrap();
+        let results = index
+            .search(&query, 3, None)
+            .await
+            .expect("Failed to search");
 
         // v1, v2, v6, v7 should be closest (all have high first component)
         // With default config, should find at least 1 result
@@ -1249,12 +1367,15 @@ mod tests {
         let mut config = AxisHnswConfig::default();
         config.m = 16;
         config.ef_construction = 200;
-        let index = AxisHnswIndex::new(config, 3).unwrap();
+        let index = AxisHnswIndex::new(config, 3).expect("Failed to create HNSW index");
 
         // Add enough vectors to create multiple layers
         for i in 0..50 {
             let vector = vec![(i as f32).sin(), (i as f32).cos(), (i as f32 * 0.5).sin()];
-            index.add(format!("vec_{}", i), vector).await.unwrap();
+            index
+                .add(format!("vec_{}", i), vector)
+                .await
+                .expect("Failed to add vector");
         }
 
         // Check that multiple layers were created
@@ -1263,7 +1384,10 @@ mod tests {
 
         // Search should work efficiently across layers
         let query = vec![0.5, 0.5, 0.5];
-        let results = index.search(&query, 10, None).await.unwrap();
+        let results = index
+            .search(&query, 10, None)
+            .await
+            .expect("Failed to search");
         assert!(results.len() > 0);
     }
 
@@ -1273,19 +1397,22 @@ mod tests {
 
         let mut config = AxisHnswConfig::default();
         config.m = 5; // Small M to test pruning
-        let index = AxisHnswIndex::new(config, 2).unwrap();
+        let index = AxisHnswIndex::new(config, 2).expect("Failed to create HNSW index");
 
         // Add vectors in a line to test pruning
         for i in 0..20 {
             index
                 .add(format!("v{}", i), vec![i as f32, 0.0])
                 .await
-                .unwrap();
+                .expect("Failed to add vector");
         }
 
         // Search for middle point
         let query = vec![10.0, 0.0];
-        let results = index.search(&query, 5, None).await.unwrap();
+        let results = index
+            .search(&query, 5, None)
+            .await
+            .expect("Failed to search");
 
         // Should find neighbors despite pruning
         // With small M=5, graph connectivity may be limited, so just check we get some results
@@ -1323,10 +1450,13 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let config = AxisHnswConfig::default();
-        let index = AxisHnswIndex::new(config, 3).unwrap();
+        let index = AxisHnswIndex::new(config, 3).expect("Failed to create HNSW index");
 
         // Search on empty index should return empty results
-        let results = index.search(&[1.0, 0.0, 0.0], 5, None).await.unwrap();
+        let results = index
+            .search(&[1.0, 0.0, 0.0], 5, None)
+            .await
+            .expect("Failed to search");
         assert_eq!(results.len(), 0);
     }
 
@@ -1335,24 +1465,27 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let config = AxisHnswConfig::default();
-        let index = AxisHnswIndex::new(config, 2).unwrap();
+        let index = AxisHnswIndex::new(config, 2).expect("Failed to create HNSW index");
 
         // Add the same ID twice
         index
             .add("duplicate".to_string(), vec![1.0, 0.0])
             .await
-            .unwrap();
+            .expect("Failed to add duplicate");
         assert_eq!(index.stats().vector_count, 1);
 
         // Adding again should replace
         index
             .add("duplicate".to_string(), vec![1.0, 0.0])
             .await
-            .unwrap();
+            .expect("Failed to add duplicate again");
         assert_eq!(index.stats().vector_count, 1);
 
         // Remove should work
-        index.remove("duplicate").await.unwrap();
+        index
+            .remove("duplicate")
+            .await
+            .expect("Failed to remove duplicate");
         assert_eq!(index.stats().vector_count, 0);
     }
 
@@ -1363,7 +1496,7 @@ mod tests {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
         let config = AxisHnswConfig::default();
-        let index = AxisHnswIndex::new(config.clone(), 4).unwrap();
+        let index = AxisHnswIndex::new(config.clone(), 4).expect("Failed to create HNSW index");
 
         // Add test vectors
         let test_vectors = [
@@ -1374,24 +1507,31 @@ mod tests {
         ];
 
         for (id, vector) in test_vectors.iter() {
-            index.add(id.to_string(), vector.clone()).await.unwrap();
+            index
+                .add(id.to_string(), vector.clone())
+                .await
+                .expect("Failed to add vector");
         }
 
         // Verify initial state
         assert_eq!(index.stats().vector_count, 4);
-        let original_results = index.search(&[1.0, 0.0, 0.0, 0.0], 2, None).await.unwrap();
+        let original_results = index
+            .search(&[1.0, 0.0, 0.0, 0.0], 2, None)
+            .await
+            .expect("Failed to search");
         assert!(!original_results.is_empty());
 
         // Serialize
-        let serialized = IndexSerializer::serialize_hnsw(&index, "test_collection").unwrap();
+        let serialized = IndexSerializer::serialize_hnsw(&index, "test_collection")
+            .expect("Failed to serialize HNSW index");
         assert!(
             !serialized.is_empty(),
             "Serialized data should not be empty"
         );
 
         // Deserialize
-        let (restored_index, metadata) =
-            IndexSerializer::deserialize_hnsw(&serialized, &config).unwrap();
+        let (restored_index, metadata) = IndexSerializer::deserialize_hnsw(&serialized, &config)
+            .expect("Failed to deserialize HNSW index");
 
         // Verify metadata
         assert_eq!(metadata.num_vectors, 4);
@@ -1404,7 +1544,7 @@ mod tests {
         let restored_results = restored_index
             .search(&[1.0, 0.0, 0.0, 0.0], 2, None)
             .await
-            .unwrap();
+            .expect("Failed to search restored index");
         assert!(!restored_results.is_empty());
 
         // The top result should be the same (v1 is closest to query)

@@ -179,6 +179,12 @@ impl UnifiedMetricsCollector {
     }
 }
 
+impl Default for UnifiedMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Metrics summary for dashboard
 pub struct MetricsSummary {
     pub system_health: f64,

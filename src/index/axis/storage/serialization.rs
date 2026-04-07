@@ -23,47 +23,75 @@ use crate::index::axis::{AxisHnswConfig, AxisHnswIndex, UnifiedIvfConfig, Unifie
 use bincode;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Magic bytes for index format identification
 const AXIS_MAGIC: &[u8; 4] = b"AXIS";
 const VERSION: u16 = 1;
 
+fn unix_now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
+}
+
+fn unix_now_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default()
+}
+
 /// Serialization error types
 #[derive(Debug, thiserror::Error)]
 pub enum SerializationError {
+    /// Underlying I/O error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// Bincode encode/decode failure
     #[error("Bincode error: {0}")]
     Bincode(#[from] bincode::Error),
 
+    /// The file does not start with the expected `AXIS` magic bytes
     #[error("Invalid magic bytes")]
     InvalidMagic,
 
+    /// The format version is newer than this build can handle
     #[error("Unsupported version: {0}")]
     UnsupportedVersion(u16),
 
+    /// Stored CRC32 does not match the computed checksum
     #[error("Checksum mismatch")]
     ChecksumMismatch,
 
+    /// Unrecognised index type discriminant
     #[error("Unknown index type: {0}")]
     UnknownIndex(String),
 
+    /// Serialization is not implemented for the given index type
     #[error("Serialization not supported for index type: {0}")]
     NotSupported(String),
 }
 
+/// Convenience `Result` alias using [`SerializationError`] as the error type
 pub type Result<T> = std::result::Result<T, SerializationError>;
 
 /// Index types that can be serialized
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Index {
+    /// Hierarchical Navigable Small World graph index
     Hnsw,
+    /// Inverted File index with optional product quantization
     Ivf,
+    /// Locality Sensitive Hashing index
     Lsh,
+    /// Annoy tree-based approximate nearest neighbour index
     Annoy,
+    /// Product Quantization index
     Pq,
+    /// Flat brute-force index (exact search)
     Flat,
 }
 
@@ -147,16 +175,28 @@ pub struct IndexDelta {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum DeltaOperation {
     /// Add new vectors
-    AddVectors { vectors: Vec<(String, Vec<f32>)> },
+    AddVectors {
+        /// List of `(external_id, vector_data)` pairs to insert
+        vectors: Vec<(String, Vec<f32>)>,
+    },
 
     /// Remove vectors by ID
-    RemoveVectors { vector_ids: Vec<String> },
+    RemoveVectors {
+        /// External IDs of vectors to delete
+        vector_ids: Vec<String>,
+    },
 
     /// Update existing vectors
-    UpdateVectors { updates: Vec<(String, Vec<f32>)> },
+    UpdateVectors {
+        /// List of `(external_id, new_vector_data)` pairs
+        updates: Vec<(String, Vec<f32>)>,
+    },
 
     /// Rebuild specific parts
-    RebuildPartial { affected_nodes: Vec<usize> },
+    RebuildPartial {
+        /// Internal node IDs that need to be rebuilt
+        affected_nodes: Vec<usize>,
+    },
 }
 
 /// Main serialization handler for AXIS indexes
@@ -173,10 +213,7 @@ impl IndexSerializer {
             collection_id: collection_id.to_string(),
             num_vectors: index.len(),
             dimension: index.dimension(),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: unix_now_secs(),
             checksum: 0, // Will be calculated after serialization
             is_delta: false,
             base_checkpoint_id: None,
@@ -273,10 +310,7 @@ impl IndexSerializer {
             collection_id: collection_id.to_string(),
             num_vectors: index.len(),
             dimension: index.dimension(),
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+            timestamp: unix_now_secs(),
             checksum: 0,
             is_delta: false,
             base_checkpoint_id: None,
@@ -370,19 +404,9 @@ impl IndexSerializer {
         index_data: Vec<u8>,
         collection_id: &str,
     ) -> Result<IndexCheckpoint> {
-        let checkpoint_id = format!(
-            "chk_{}_{}",
-            collection_id,
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        );
+        let checkpoint_id = format!("chk_{}_{}", collection_id, unix_now_millis());
 
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = unix_now_secs();
 
         let metadata = IndexMetadata {
             index_type,
@@ -450,16 +474,26 @@ pub trait SerializableIndex: Send + Sync {
 
     /// Serialize internal data (without header)
     fn serialize_internal(&self) -> Result<Vec<u8>>;
+
+    /// Check if index is empty
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Serializable HNSW configuration (mirrors AxisHnswConfig)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableHnswConfig {
+    /// Number of bidirectional links per node (M parameter)
     pub m: usize,
+    /// Size of the candidate list during index construction
     pub ef_construction: usize,
+    /// Size of the candidate list during search
     pub ef: usize,
+    /// Maximum number of graph layers
     pub max_layers: usize,
-    pub distance_metric: u8, // 0=L2, 1=Cosine, 2=DotProduct
+    /// Distance metric code: 0=L2, 1=Cosine, 2=DotProduct
+    pub distance_metric: u8,
 }
 
 /// Serializable ID mapping data
@@ -474,16 +508,21 @@ pub struct SerializableIdMapping {
 /// Serializable vector data (ID + raw bytes)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableVector {
+    /// External vector identifier
     pub id: String,
+    /// Raw vector bytes (layout depends on quantization settings)
     pub data: Vec<u8>,
 }
 
 /// Serializable collection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableCollectionConfig {
+    /// Vector dimensionality
     pub dimension: usize,
+    /// Whether quantization is enabled for this collection
     pub is_quantized: bool,
-    pub quantization_method: Option<u8>, // 0=INT8, 1=PQ8, 2=PQ4, 3=Binary
+    /// Quantization method code: 0=INT8, 1=PQ8, 2=PQ4, 3=Binary
+    pub quantization_method: Option<u8>,
 }
 
 /// Complete serializable HNSW state
@@ -512,6 +551,7 @@ pub struct SerializableHnswState {
 }
 
 impl SerializableHnswState {
+    /// Current serialization format version; older versions are backward-compatible
     pub const CURRENT_VERSION: u32 = 1;
 }
 
@@ -586,7 +626,7 @@ impl SerializableIndex for AxisHnswIndex {
         };
 
         // Serialize with bincode
-        let bytes = bincode::serialize(&state).map_err(|e| SerializationError::Bincode(e))?;
+        let bytes = bincode::serialize(&state).map_err(SerializationError::Bincode)?;
 
         info!(
             "HNSW serialize_internal complete: {} bytes, {} vectors, {} layers",
@@ -607,7 +647,7 @@ impl AxisHnswIndex {
 
         // Deserialize the state
         let state: SerializableHnswState =
-            bincode::deserialize(data).map_err(|e| SerializationError::Bincode(e))?;
+            bincode::deserialize(data).map_err(SerializationError::Bincode)?;
 
         // Validate version
         if state.version > SerializableHnswState::CURRENT_VERSION {
@@ -618,10 +658,7 @@ impl AxisHnswIndex {
         let index = match AxisHnswIndex::new(config.clone(), state.dimension) {
             Ok(idx) => idx,
             Err(e) => {
-                return Err(SerializationError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )));
+                return Err(SerializationError::Io(std::io::Error::other(e.to_string())));
             }
         };
 
@@ -638,10 +675,10 @@ impl AxisHnswIndex {
             state.quantized_vectors,
             state.collection_config,
         ) {
-            return Err(SerializationError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to restore HNSW state: {}", e),
-            )));
+            return Err(SerializationError::Io(std::io::Error::other(format!(
+                "Failed to restore HNSW state: {}",
+                e
+            ))));
         }
 
         info!(
@@ -699,10 +736,7 @@ impl UnifiedIvfIndex {
         let collection_id = "default_collection".to_string(); // Placeholder collection ID
         match UnifiedIvfIndex::new(collection_id, config.clone()) {
             Ok(index) => Ok(index),
-            Err(e) => Err(SerializationError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))),
+            Err(e) => Err(SerializationError::Io(std::io::Error::other(e.to_string()))),
         }
     }
 }
@@ -720,6 +754,7 @@ pub struct DeltaManager {
 }
 
 impl DeltaManager {
+    /// Create a new delta manager with the given maximum delta count before a checkpoint is forced
     pub fn new(max_deltas: usize) -> Self {
         Self {
             base_checkpoint: None,
@@ -733,17 +768,8 @@ impl DeltaManager {
         if let Some(ref checkpoint) = self.base_checkpoint {
             let delta = IndexDelta {
                 base_checkpoint_id: checkpoint.checkpoint_id.clone(),
-                delta_id: format!(
-                    "delta_{}",
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_millis()
-                ),
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                delta_id: format!("delta_{}", unix_now_millis()),
+                timestamp: unix_now_secs(),
                 operations: vec![operation],
             };
 
@@ -795,6 +821,7 @@ mod tests {
 
     /// Index type enum for testing
     #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[allow(dead_code)]
     enum Index {
         Hnsw,
         Ivf,

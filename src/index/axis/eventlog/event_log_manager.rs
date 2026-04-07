@@ -355,11 +355,14 @@ impl EventLogManager {
     }
 }
 
-/// Service statistics
+/// Aggregate statistics for the event log manager service.
 #[derive(Debug, Clone)]
 pub struct QueueServiceStats {
+    /// Number of collections that have active event queues.
     pub collections_with_queues: usize,
+    /// Total number of unprocessed events across all queues.
     pub total_pending_events: usize,
+    /// Total number of files being tracked for indexing status.
     pub total_files_tracked: usize,
 }
 

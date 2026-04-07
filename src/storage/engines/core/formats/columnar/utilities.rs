@@ -123,8 +123,7 @@ impl ColumnarUtilities {
                     issue: "Oversized file".to_string(),
                     action: format!(
                         "Split into {} smaller files",
-                        (stats.total_vectors + optimal_row_group_size * 10 - 1)
-                            / (optimal_row_group_size * 10)
+                        stats.total_vectors.div_ceil(optimal_row_group_size * 10)
                     ),
                     priority: RecommendationPriority::Medium,
                 });
@@ -318,13 +317,13 @@ impl ColumnarUtilities {
             .max_by_key(|(_, count)| *count)
             .map(|(dim, _)| *dim);
 
-        if let Some(dim) = most_common_dimension {
-            if dim >= 512 {
-                recommendations.push(format!(
-                    "Consider PQ with more segments for {}-dimensional vectors",
-                    dim
-                ));
-            }
+        if let Some(dim) = most_common_dimension
+            && dim >= 512
+        {
+            recommendations.push(format!(
+                "Consider PQ with more segments for {}-dimensional vectors",
+                dim
+            ));
         }
 
         Ok(CompressionRecommendation {

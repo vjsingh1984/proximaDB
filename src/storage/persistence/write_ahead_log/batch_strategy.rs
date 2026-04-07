@@ -43,7 +43,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     fn get_filesystem(&self) -> Option<Arc<FilesystemFactory>>;
 
     /// Set storage engine for delegated flush/compaction operations
-    fn set_storage_engine(&self, storage_engine: Arc<dyn UnifiedStorageEngine>);
+    fn set_storage_engine(
+        &self,
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        collection_id: &str,
+    );
 
     /// Write Write Buffer batch to cloud storage with URL-based routing
     async fn write_batch_to_cloud(
@@ -148,7 +152,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Extract collection_id from cloud URL filename since VectorRecord no longer stores it
             // Expected format: write_buffer_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
             let _collection_id = {
-                if let Some(filename) = cloud_url.split('/').last() {
+                if let Some(filename) = cloud_url.split('/').next_back() {
                     let path_parts: Vec<&str> = filename.split('_').collect();
                     if path_parts.len() >= 4
                         && path_parts[0] == "write"
@@ -257,7 +261,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             metadata_bloom_filter: None,
         };
 
-        // TODO: Get base_location from VectorOperationsService collection metadata
+        // Deferred: Get base_location from VectorOperationsService collection metadata
         // For now, use a default fallback - this will break multi-collection with different backends
         let base_location = "file:///tmp/proximadb/data/wal";
 
@@ -326,14 +330,13 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 let current_time = chrono::Utc::now().timestamp();
                 let is_expired = wal_record
                     .expires_at
-                    .map(|expires| expires < current_time)
-                    .unwrap_or(false);
+                    .is_some_and(|expires| expires < current_time);
 
                 if !is_expired {
                     return Ok(Some(wal_record));
                 }
             }
-            // TODO: Add storage engine lookup for flushed data
+            // Deferred: Add storage engine lookup for flushed data
             Ok(None)
         } else {
             Err(anyhow::anyhow!("Write buffer behavior not available"))
@@ -462,9 +465,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     async fn drop_collection(&self, collection_id: &str) -> Result<()> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
-            wal_behavior
-                .drop_collection(&collection_id.to_string())
-                .await?;
+            wal_behavior.drop_collection(collection_id).await?;
             Ok(())
         } else {
             Err(anyhow::anyhow!("Write buffer behavior not available"))
@@ -547,7 +548,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 sequences.len()
             );
 
-            // TODO: Get storage location from collection metadata
+            // Deferred: Get storage location from collection metadata
             // For now, use a default path structure
             let base_location = "file:///data";
             let wal_dir = format!("{}/{}/write_ahead_log/logs", base_location, collection_id);
@@ -561,7 +562,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Get filesystem for this storage URL
             if let Ok(fs) = filesystem.get_filesystem(base_location) {
                 // Ensure Write Buffer directory exists
-                if let Err(_) = fs.create_dir_all(&wal_dir).await {
+                if fs.create_dir_all(&wal_dir).await.is_err() {
                     tracing::warn!("Failed to create Write Buffer directory: {}", wal_dir);
                 }
 
@@ -650,7 +651,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     /// Force immediate sync of in-memory data to disk
     async fn force_sync(&self, collection_id: Option<&String>) -> Result<()> {
         // Default implementation - placeholder for now
-        // TODO: Integrate with AtomicWalSync when fully enabled
+        // Deferred: Integrate with AtomicWalSync when fully enabled
         tracing::debug!(
             "🔄 Force sync requested for collection: {:?}",
             collection_id
@@ -925,7 +926,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             metadata_bloom_filter: None,
         };
 
-        // TODO: Get base_location from VectorOperationsService collection metadata
+        // Deferred: Get base_location from VectorOperationsService collection metadata
         // For now, use a default fallback
         let base_location = "file:///tmp/proximadb/data/wal";
 
@@ -982,7 +983,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
             for batch in &unflushed_batches {
                 all_vector_records.extend(batch.vector_records.iter().cloned());
-                batch_ids.push(batch.batch_id.clone());
+                batch_ids.push(batch.batch_id);
                 // CompactBatchId doesn't have sequence_range, use a placeholder
                 marked_sequences.push((0, 0));
             }

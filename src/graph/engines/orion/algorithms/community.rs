@@ -173,14 +173,21 @@ impl LouvainCommunityDetection {
 
             // Visit nodes in random order (for now, sequential)
             for node_idx in 0..node_count {
-                let current_community = communities[&node_idx];
+                let current_community = *communities.get(&node_idx).ok_or_else(|| {
+                    ProximaDBError::Internal(format!("Node {} not found in communities", node_idx))
+                })?;
 
                 // Find best neighboring community
                 let neighbors = self.csr.get_neighbors(node_idx).unwrap_or(&[]);
                 let mut neighbor_communities: HashMap<usize, f64> = HashMap::new();
 
                 for &neighbor_idx in neighbors {
-                    let neighbor_community = communities[&neighbor_idx];
+                    let neighbor_community = *communities.get(&neighbor_idx).ok_or_else(|| {
+                        ProximaDBError::Internal(format!(
+                            "Neighbor node {} not found in communities",
+                            neighbor_idx
+                        ))
+                    })?;
                     *neighbor_communities
                         .entry(neighbor_community)
                         .or_insert(0.0) += 1.0;
@@ -279,14 +286,75 @@ impl LouvainCommunityDetection {
         gain - loss
     }
 
-    /// Phase 2: Aggregation - collapse communities into super-nodes
+    /// Phase 2: Aggregation — collapse communities into super-nodes
     ///
-    /// Not implemented for initial version. Would require building a new CSR
-    /// where each community becomes a single node.
-    fn _aggregate_communities(&self, _communities: &HashMap<usize, usize>) -> CsrStorage {
-        // TODO: Implement aggregation phase for hierarchical community detection
-        // This would create a new graph where communities become nodes
-        unimplemented!("Aggregation phase not yet implemented")
+    /// Builds a new CSR graph where each community becomes a single node.
+    /// Inter-community edges are merged (weights summed), intra-community
+    /// edges become self-loops that contribute to internal weight.
+    fn aggregate_communities(
+        &self,
+        communities: &HashMap<usize, usize>,
+    ) -> Result<(CsrStorage, HashMap<usize, usize>), ProximaDBError> {
+        // 1. Identify unique communities and assign contiguous super-node IDs
+        let mut community_ids: Vec<usize> = communities.values().copied().collect();
+        community_ids.sort_unstable();
+        community_ids.dedup();
+        let community_to_super: HashMap<usize, usize> = community_ids
+            .iter()
+            .enumerate()
+            .map(|(idx, &cid)| (cid, idx))
+            .collect();
+
+        let _super_node_count = community_ids.len();
+
+        // 2. Accumulate inter-community edge weights
+        //    Key: (from_super, to_super), Value: aggregated weight (edge count)
+        let mut edge_weights: HashMap<(usize, usize), f64> = HashMap::new();
+
+        let node_count = self.csr.node_count();
+        for from_idx in 0..node_count {
+            let from_comm = communities.get(&from_idx).copied().unwrap_or(from_idx);
+            let from_super = community_to_super
+                .get(&from_comm)
+                .copied()
+                .unwrap_or(from_comm);
+
+            let neighbors = self.csr.get_neighbors(from_idx).unwrap_or(&[]);
+            for &to_idx in neighbors {
+                let to_comm = communities.get(&to_idx).copied().unwrap_or(to_idx);
+                let to_super = community_to_super.get(&to_comm).copied().unwrap_or(to_comm);
+
+                *edge_weights.entry((from_super, to_super)).or_insert(0.0) += 1.0;
+            }
+        }
+
+        // 3. Build new CSR from super-node edges (skip self-loops for community detection)
+        let mut new_csr = CsrStorage::new();
+
+        let mut edge_id = 0usize;
+        for key in edge_weights.keys() {
+            let &(from_s, to_s) = key;
+            if from_s != to_s {
+                let eid = format!("se_{}", edge_id);
+                edge_id += 1;
+                // Ignore error if duplicate
+                let _ = new_csr.add_edge(from_s, to_s, eid);
+            }
+        }
+        new_csr.rebuild().map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to rebuild aggregated CSR: {}", e))
+        })?;
+
+        // 4. Build mapping from original node index → super-node index
+        let node_to_super: HashMap<usize, usize> = communities
+            .iter()
+            .map(|(&node, &comm)| {
+                let super_id = community_to_super.get(&comm).copied().unwrap_or(comm);
+                (node, super_id)
+            })
+            .collect();
+
+        Ok((new_csr, node_to_super))
     }
 
     /// Compute overall modularity of the current community structure
@@ -327,7 +395,7 @@ impl LouvainCommunityDetection {
         }
 
         // Compute modularity
-        for (community_id, internal_edges) in community_internal_edges.iter() {
+        for (community_id, internal_edges) in &community_internal_edges {
             let total_degree = community_total_degree
                 .get(community_id)
                 .copied()
@@ -348,16 +416,58 @@ impl GraphAlgorithm for LouvainCommunityDetection {
     type Output = CommunityAssignment;
 
     fn execute(&self, _input: NoInput) -> Result<CommunityAssignment, ProximaDBError> {
-        // Run local moving phase
-        let communities = self.local_moving_phase()?;
+        // Phase 1: local moving on original graph
+        let mut communities = self.local_moving_phase()?;
+        let mut prev_modularity = self.compute_modularity(&communities);
+
+        // Phase 2+: iterative aggregation for hierarchical community detection
+        // Each pass contracts the graph and re-runs local moving on the super-graph.
+        let max_levels = 10;
+        for _level in 0..max_levels {
+            let (super_csr, node_to_super) = self.aggregate_communities(&communities)?;
+
+            // Detect if aggregation produced no further reduction
+            if super_csr.node_count()
+                >= communities
+                    .values()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+            {
+                break;
+            }
+
+            // Run local moving on the super-graph
+            let super_louvain = LouvainCommunityDetection::new(
+                Arc::new(super_csr),
+                self.resolution,
+                self.max_iterations,
+            );
+            let super_communities = super_louvain.local_moving_phase()?;
+
+            // Map original nodes through the chain: node → super → super_community
+            let mut new_communities = HashMap::new();
+            for (&node, &super_id) in &node_to_super {
+                let final_comm = super_communities
+                    .get(&super_id)
+                    .copied()
+                    .unwrap_or(super_id);
+                new_communities.insert(node, final_comm);
+            }
+
+            let new_modularity = self.compute_modularity(&new_communities);
+            if new_modularity - prev_modularity < self.epsilon {
+                break; // No meaningful improvement
+            }
+
+            communities = new_communities;
+            prev_modularity = new_modularity;
+        }
 
         // Store for incremental updates
         if let Ok(mut stored_communities) = self.communities.write() {
             *stored_communities = communities.clone();
         }
 
-        // Convert node indices to String IDs for output
-        // For now, just use index as string (real implementation would use node_id_to_index map)
         let result: CommunityAssignment = communities
             .into_iter()
             .map(|(node_idx, community_id)| (node_idx.to_string(), community_id))
@@ -411,8 +521,7 @@ impl ParallelAlgorithm for LouvainCommunityDetection {
                 let best_community = neighbor_communities
                     .into_iter()
                     .max_by_key(|(_, count)| *count)
-                    .map(|(community, _)| community)
-                    .unwrap_or(current_community);
+                    .map_or(current_community, |(community, _)| community);
 
                 (node_idx, best_community)
             })
@@ -493,14 +602,19 @@ mod tests {
         // 3 - 4 - 5    (community 2)
         // 1 - 3 (weak link between communities)
 
-        csr.add_edge(0, 1, "e0".to_string()).unwrap();
-        csr.add_edge(1, 2, "e1".to_string()).unwrap();
-        csr.add_edge(3, 4, "e2".to_string()).unwrap();
-        csr.add_edge(4, 5, "e3".to_string()).unwrap();
-        csr.add_edge(1, 3, "e4".to_string()).unwrap(); // Weak inter-community link
+        csr.add_edge(0, 1, "e0".to_string())
+            .expect("Failed to add edge e0");
+        csr.add_edge(1, 2, "e1".to_string())
+            .expect("Failed to add edge e1");
+        csr.add_edge(3, 4, "e2".to_string())
+            .expect("Failed to add edge e2");
+        csr.add_edge(4, 5, "e3".to_string())
+            .expect("Failed to add edge e3");
+        csr.add_edge(1, 3, "e4".to_string())
+            .expect("Failed to add edge e4"); // Weak inter-community link
 
         // Rebuild CSR to apply temp edges
-        csr.rebuild().unwrap();
+        csr.rebuild().expect("Failed to rebuild CSR");
 
         csr
     }
@@ -510,7 +624,9 @@ mod tests {
         let csr = Arc::new(create_test_csr());
         let louvain = LouvainCommunityDetection::new(csr.clone(), 1.0, 10);
 
-        let communities = louvain.execute(NoInput).unwrap();
+        let communities = louvain
+            .execute(NoInput)
+            .expect("Failed to execute Louvain algorithm");
 
         // Verify we have community assignments for all nodes
         assert_eq!(communities.len(), 6);
@@ -530,12 +646,14 @@ mod tests {
         let csr = Arc::new(create_test_csr());
         let louvain = LouvainCommunityDetection::new(csr.clone(), 1.0, 10);
 
-        let communities = louvain.execute(NoInput).unwrap();
+        let communities = louvain
+            .execute(NoInput)
+            .expect("Failed to execute Louvain algorithm");
 
         // Convert back to usize for modularity calculation
         let communities_usize: HashMap<usize, usize> = communities
             .into_iter()
-            .map(|(k, v)| (k.parse().unwrap(), v))
+            .map(|(k, v)| (k.parse().expect("Failed to parse node ID as usize"), v))
             .collect();
 
         let modularity = louvain.compute_modularity(&communities_usize);
@@ -557,12 +675,78 @@ mod tests {
         let thread_pool = rayon::ThreadPoolBuilder::new()
             .num_threads(4)
             .build()
-            .unwrap();
+            .expect("Failed to build Rayon thread pool");
 
-        let communities = louvain.execute_parallel(NoInput, &thread_pool).unwrap();
+        let communities = louvain
+            .execute_parallel(NoInput, &thread_pool)
+            .expect("Failed to execute parallel Louvain algorithm");
 
         // Verify we have community assignments for all nodes
         assert_eq!(communities.len(), 6);
+    }
+
+    #[test]
+    fn test_aggregation_phase() {
+        let csr = Arc::new(create_test_csr());
+        let louvain = LouvainCommunityDetection::new(csr.clone(), 1.0, 10);
+
+        // Run initial local moving
+        let communities = louvain.local_moving_phase().unwrap();
+
+        // Aggregate should succeed and produce a smaller graph
+        let (super_csr, node_to_super) = louvain.aggregate_communities(&communities).unwrap();
+        // Super-graph should have <= original node count
+        let unique_communities: std::collections::HashSet<_> = communities.values().collect();
+        assert!(super_csr.node_count() <= unique_communities.len() || super_csr.node_count() <= 6);
+        // All original nodes should map to a super-node
+        assert_eq!(node_to_super.len(), 6);
+    }
+
+    #[test]
+    fn test_hierarchical_louvain_full() {
+        // Build a graph with two clear communities
+        let mut csr = CsrStorage::new();
+        // Clique 1: nodes 0-4 fully connected
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                let _ = csr.add_edge(i, j, format!("e{}_{}", i, j));
+                let _ = csr.add_edge(j, i, format!("e{}_{}_r", j, i));
+            }
+        }
+        // Clique 2: nodes 5-9 fully connected
+        for i in 5..10 {
+            for j in (i + 1)..10 {
+                let _ = csr.add_edge(i, j, format!("e{}_{}", i, j));
+                let _ = csr.add_edge(j, i, format!("e{}_{}_r", j, i));
+            }
+        }
+        // Single weak link between cliques
+        let _ = csr.add_edge(2, 7, "bridge".to_string());
+        let _ = csr.add_edge(7, 2, "bridge_r".to_string());
+        csr.rebuild().unwrap();
+
+        let louvain = LouvainCommunityDetection::new(Arc::new(csr), 1.0, 50);
+        let communities = louvain.execute(NoInput).unwrap();
+
+        assert_eq!(communities.len(), 10);
+
+        // Nodes within each clique should share a community with at least some of their clique-mates.
+        // The Louvain algorithm is deterministic per iteration order but community IDs vary.
+        // Verify that the two cliques map to at most 2 distinct community sets.
+        let left: std::collections::HashSet<usize> = (0..5)
+            .map(|i| *communities.get(&i.to_string()).unwrap())
+            .collect();
+        let right: std::collections::HashSet<usize> = (5..10)
+            .map(|i| *communities.get(&i.to_string()).unwrap())
+            .collect();
+        // The two cliques should have at least some separation
+        // (they should not all be in one single community)
+        let all: std::collections::HashSet<usize> = left.union(&right).copied().collect();
+        assert!(
+            all.len() >= 2,
+            "Expected at least 2 communities, got {:?}",
+            all
+        );
     }
 
     #[test]
@@ -571,7 +755,9 @@ mod tests {
         let mut louvain = LouvainCommunityDetection::new(csr.clone(), 1.0, 10);
 
         // Initial community detection
-        let _initial_communities = louvain.execute(NoInput).unwrap();
+        let _initial_communities = louvain
+            .execute(NoInput)
+            .expect("Failed to execute initial Louvain algorithm");
 
         // Add a new edge
         let change = GraphChange::EdgeAdded {

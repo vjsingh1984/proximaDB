@@ -394,23 +394,75 @@ impl SstEngine {
                     sstable_path,
                     query_vector,
                     filter_expression.cloned(),
-                    k * 2,
+                    k, // Use exact k
                     distance_metric,
                 )
                 .await
             } else {
                 // Use SSTable reader for ProximaBlocks format
-                self.sstable_reader()
-                    .search_with_filter_and_pruning(
-                        sstable_path,
-                        query_vector,
-                        filter_expression.cloned(),
-                        k * 2, // Get more candidates for better accuracy
-                        distance_metric,
-                        Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
-                        block_prune, // Pass block pruning config for Z-order/centroid pruning
-                    )
-                    .await
+                // Choose execution strategy based on flags (TD-041, TD-039, TD-031)
+                let use_parallel_morsels =
+                    ctx.search_params.enable_parallel_morsels.unwrap_or(false);
+                let use_vectorized = ctx
+                    .search_params
+                    .enable_vectorized_execution
+                    .unwrap_or(false);
+                let use_pipeline = ctx.search_params.enable_pipeline_execution.unwrap_or(false);
+
+                if use_pipeline {
+                    trace!("SST: Using pipeline-based execution path (TD-031)");
+                    self.sstable_reader()
+                        .search_with_pipeline_execution(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k
+                            distance_metric,
+                            Some(&*ctx.collection),
+                            block_prune,
+                        )
+                        .await
+                } else if use_parallel_morsels {
+                    trace!("SST: Using parallel morsel execution path (TD-039)");
+                    self.sstable_reader()
+                        .search_with_filter_parallel_morsels(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k
+                            distance_metric,
+                            Some(&*ctx.collection),
+                            block_prune,
+                            None, // Use default worker count (CPU cores)
+                        )
+                        .await
+                } else if use_vectorized {
+                    trace!("SST: Using vectorized execution path (TD-041)");
+                    self.sstable_reader()
+                        .search_with_filter_vectorized(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k
+                            distance_metric,
+                            Some(&*ctx.collection),
+                            block_prune,
+                        )
+                        .await
+                } else {
+                    trace!("SST: Using scalar execution path");
+                    self.sstable_reader()
+                        .search_with_filter_and_pruning(
+                            sstable_path,
+                            query_vector,
+                            filter_expression.cloned(),
+                            k, // Use exact k
+                            distance_metric,
+                            Some(&*ctx.collection), // Pass collection for type-safe metadata deserialization
+                            block_prune, // Pass block pruning config for Z-order/centroid pruning
+                        )
+                        .await
+                }
             };
 
             match search_result {
@@ -517,10 +569,9 @@ impl SstEngine {
         if let SearchMode::Adaptive {
             threshold: _threshold,
         } = search_mode
+            && all_files.len() <= 3
         {
-            if all_files.len() <= 3 {
-                return Ok(all_files);
-            }
+            return Ok(all_files);
         }
 
         // Calculate effective nprobe based on search mode and number of files
@@ -635,8 +686,8 @@ impl SstEngine {
         match metric {
             DistanceMetric::Euclidean => {
                 let mut sum = 0.0f32;
-                for i in 0..query.len().min(centroid.len()) {
-                    let diff = query[i] - centroid[i];
+                for (q_val, c_val) in query.iter().zip(centroid.iter()) {
+                    let diff = q_val - c_val;
                     sum += diff * diff;
                 }
                 sum.sqrt()
@@ -647,10 +698,10 @@ impl SstEngine {
                 let mut dot = 0.0f32;
                 let mut norm_q = 0.0f32;
                 let mut norm_c = 0.0f32;
-                for i in 0..query.len().min(centroid.len()) {
-                    dot += query[i] * centroid[i];
-                    norm_q += query[i] * query[i];
-                    norm_c += centroid[i] * centroid[i];
+                for (q_val, c_val) in query.iter().zip(centroid.iter()) {
+                    dot += q_val * c_val;
+                    norm_q += q_val * q_val;
+                    norm_c += c_val * c_val;
                 }
                 let denom = (norm_q * norm_c).sqrt();
                 if denom > 0.0 {
@@ -662,8 +713,8 @@ impl SstEngine {
             _ => {
                 // Default to Euclidean for other metrics
                 let mut sum = 0.0f32;
-                for i in 0..query.len().min(centroid.len()) {
-                    let diff = query[i] - centroid[i];
+                for (q_val, c_val) in query.iter().zip(centroid.iter()) {
+                    let diff = q_val - c_val;
                     sum += diff * diff;
                 }
                 sum.sqrt()
@@ -749,6 +800,7 @@ impl SstEngine {
     }
 
     /// Filter search results based on include flags
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     fn filter_search_results(
         &self,
         results: &mut Vec<OptimizedSearchRecord>,
@@ -775,10 +827,10 @@ impl SstEngine {
         // Use filesystem to list files directly
         if let Ok(mut entries) = tokio::fs::read_dir(data_dir).await {
             while let Some(entry) = entries.next_entry().await? {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.ends_with(".sst") || name.ends_with(".arrow") {
-                        sstable_files.push(format!("{}/{}", data_dir, name));
-                    }
+                if let Some(name) = entry.file_name().to_str()
+                    && (name.ends_with(".sst") || name.ends_with(".arrow"))
+                {
+                    sstable_files.push(format!("{}/{}", data_dir, name));
                 }
             }
         }
@@ -833,7 +885,7 @@ impl SstEngine {
         let mut candidates: Vec<OptimizedSearchRecord> =
             Vec::with_capacity(records.len().min(limit));
 
-        for record in records.iter() {
+        for record in &records {
             // Compute raw distance
             let raw_distance = distance_computer.distance(query_vector, &record.vector);
 

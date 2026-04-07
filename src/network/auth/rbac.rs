@@ -75,10 +75,10 @@ impl RbacService {
             .user_roles
             .try_read()
             .map_err(|_| AuthError::InvalidCredentials)?;
-        let roles = user_roles
-            .get(user_id)
-            .map(|roles| roles.iter().cloned().collect())
-            .unwrap_or_else(|| vec![self.config.default_role.clone()]);
+        let roles = user_roles.get(user_id).map_or_else(
+            || vec![self.config.default_role.clone()],
+            |roles| roles.iter().cloned().collect(),
+        );
         Ok(roles)
     }
 
@@ -95,7 +95,7 @@ impl RbacService {
         let mut user_roles = self.user_roles.write().await;
         user_roles
             .entry(user_id.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(role.to_string());
 
         Ok(())
@@ -263,7 +263,7 @@ impl RbacService {
         let mut role_permissions = self.role_permissions.write().await;
         role_permissions
             .entry(role.to_string())
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(permission);
         Ok(())
     }
@@ -292,6 +292,12 @@ impl RbacService {
     }
 }
 
+impl Default for RbacService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Resource-based permission context
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionContext {
@@ -311,11 +317,17 @@ pub struct PermissionContext {
 /// Types of resources that can be protected
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ResourceType {
+    /// Vector collection resource
     Collection,
+    /// Individual vector resource
     Vector,
+    /// Graph database resource
     Graph,
+    /// System-level resource (configuration, metrics)
     System,
+    /// User account resource
     User,
+    /// RBAC role resource
     Role,
 }
 
@@ -337,13 +349,12 @@ impl RbacService {
         match context.resource_type {
             ResourceType::Collection => {
                 // Check if user has access to specific collection
-                if let Some(collection_id) = &context.resource_id {
-                    if !self
+                if let Some(collection_id) = &context.resource_id
+                    && !self
                         .user_has_collection_access(user_id, collection_id)
                         .await
-                    {
-                        return Err(AuthError::AuthorizationDenied(permission));
-                    }
+                {
+                    return Err(AuthError::AuthorizationDenied(permission));
                 }
             }
             ResourceType::System => {
@@ -383,14 +394,14 @@ impl RbacService {
             return true;
         }
 
-        // TODO: Implement collection-specific access control
+        // Deferred: Implement collection-specific access control
         // For now, all authenticated users with appropriate permissions can access all collections
         true
     }
 
     /// Check if user belongs to tenant
     async fn user_belongs_to_tenant(&self, _user_id: &str, _tenant_id: &str) -> bool {
-        // TODO: Implement tenant membership validation
+        // Deferred: Implement tenant membership validation
         // For now, assume all users can access all tenants
         true
     }

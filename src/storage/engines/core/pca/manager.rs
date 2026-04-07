@@ -323,7 +323,9 @@ impl PCAModelManager {
         if active_model.is_none() {
             return Ok(false);
         }
-        let model = active_model.as_ref().unwrap();
+        let Some(model) = active_model.as_ref() else {
+            return Ok(false);
+        };
 
         // Calculate reconstruction errors
         let mut errors = Vec::new();
@@ -351,8 +353,7 @@ impl PCAModelManager {
         let baseline_error = self
             .get_active_version_metadata()
             .await?
-            .map(|v| v.avg_reconstruction_error)
-            .unwrap_or(0.0);
+            .map_or(0.0, |v| v.avg_reconstruction_error);
 
         let drift_score = if baseline_error > 0.0 {
             (avg_error - baseline_error).abs() / baseline_error

@@ -214,8 +214,8 @@ mod tests {
 
     fn dense_l2_distance(a: &[f32], b: &[f32]) -> f32 {
         let mut sum = 0.0f32;
-        for i in 0..a.len().min(b.len()) {
-            let diff = a[i] - b[i];
+        for (a_val, b_val) in a.iter().zip(b.iter()) {
+            let diff = a_val - b_val;
             sum += diff * diff;
         }
         sum.sqrt()

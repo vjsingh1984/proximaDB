@@ -82,7 +82,7 @@ impl AccessPatternTracker {
                 read_count: 0,
                 write_count: 0,
                 metadata_count: 0,
-                last_operation: operation.clone(),
+                last_operation: operation,
                 file_size: None,
             });
 
@@ -111,11 +111,11 @@ impl AccessPatternTracker {
         global.total_accesses += 1;
 
         // Update hot files list
-        if entry.access_times.len() >= self.hot_threshold as usize {
-            if !global.hot_files.contains(&path.to_string()) {
-                global.hot_files.push(path.to_string());
-                debug!("File {} marked as hot", path);
-            }
+        if entry.access_times.len() >= self.hot_threshold as usize
+            && !global.hot_files.contains(&path.to_string())
+        {
+            global.hot_files.push(path.to_string());
+            debug!("File {} marked as hot", path);
         }
 
         trace!(
@@ -178,7 +178,9 @@ impl AccessPatternTracker {
                     }
 
                     let avg_interval = intervals.iter().sum::<Duration>() / intervals.len() as u32;
-                    let last_access = entry.access_times.back().unwrap();
+                    let Some(last_access) = entry.access_times.back() else {
+                        return AccessPrediction::Unlikely(0.0);
+                    };
                     let time_since_last = Instant::now().duration_since(*last_access);
 
                     if time_since_last < avg_interval * 2 {
@@ -206,39 +208,40 @@ impl AccessPatternTracker {
         let window = Duration::from_secs(10); // 10 second correlation window
 
         // Find recent accesses to the given file
-        if let Some(entry) = self.access_history.get(path) {
-            if let Some(last_access) = entry.access_times.back() {
-                // Find other files accessed around the same time
-                let mut correlated = Vec::new();
+        if let Some(entry) = self.access_history.get(path)
+            && let Some(last_access) = entry.access_times.back()
+        {
+            // Find other files accessed around the same time
+            let mut correlated = Vec::new();
 
-                for other_entry in self.access_history.iter() {
-                    if other_entry.key() == path {
-                        continue;
-                    }
-
-                    // Check if this file was accessed near our target file
-                    for access_time in &other_entry.value().access_times {
-                        if access_time.duration_since(*last_access) < window
-                            || last_access.duration_since(*access_time) < window
-                        {
-                            correlated.push(other_entry.key().clone());
-                            break;
-                        }
-                    }
+            for other_entry in self.access_history.iter() {
+                if other_entry.key() == path {
+                    continue;
                 }
 
-                // Sort by access frequency
-                correlated.sort_by_key(|k| {
-                    self.access_history
-                        .get(k)
-                        .map(|e| std::cmp::Reverse(e.total_accesses))
-                        .unwrap_or(std::cmp::Reverse(0))
-                });
-
-                // Return top 5 correlated files
-                correlated.truncate(5);
-                return correlated;
+                // Check if this file was accessed near our target file
+                for access_time in &other_entry.value().access_times {
+                    if access_time.duration_since(*last_access) < window
+                        || last_access.duration_since(*access_time) < window
+                    {
+                        correlated.push(other_entry.key().clone());
+                        break;
+                    }
+                }
             }
+
+            // Sort by access frequency
+            correlated.sort_by_key(|k| {
+                self.access_history
+                    .get(k)
+                    .map_or(std::cmp::Reverse(0), |e| {
+                        std::cmp::Reverse(e.total_accesses)
+                    })
+            });
+
+            // Return top 5 correlated files
+            correlated.truncate(5);
+            return correlated;
         }
 
         vec![]
@@ -284,10 +287,10 @@ impl AccessPatternTracker {
 
         // Find entries with no recent accesses
         for entry in self.access_history.iter() {
-            if let Some(last) = entry.value().access_times.back() {
-                if now.duration_since(*last) > Duration::from_secs(3600) {
-                    to_remove.push(entry.key().clone());
-                }
+            if let Some(last) = entry.value().access_times.back()
+                && now.duration_since(*last) > Duration::from_secs(3600)
+            {
+                to_remove.push(entry.key().clone());
             }
         }
 
@@ -310,6 +313,12 @@ impl AccessPatternTracker {
             total_accesses: global.total_accesses,
             hot_files: global.hot_files.clone(),
         }
+    }
+}
+
+impl Default for AccessPatternTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

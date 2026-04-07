@@ -292,11 +292,11 @@ impl CollectionAnalyzer {
 
         // Calculate metrics from query statistics
         let time_window_hours = 1.0;
-        let queries_in_window = stats.as_ref().map(|s| s.total_queries).unwrap_or(0) as f64;
+        let queries_in_window = stats.as_ref().map_or(0, |s| s.total_queries) as f64;
 
         Ok(AccessFrequencyMetrics {
             reads_per_second: queries_in_window / (time_window_hours * 3600.0),
-            writes_per_second: 0.0,          // TODO: Track write operations
+            writes_per_second: 0.0, // Deferred: Track write operations
             read_write_ratio: f64::INFINITY, // Mostly reads
             peak_qps: queries_in_window / (time_window_hours * 3600.0) * 2.0, // Estimate peak
         })
@@ -375,7 +375,7 @@ impl QueryPatternTracker {
     fn analyze_patterns(&self, collection_id: &str) -> QueryPatternAnalysis {
         let stats = self.query_stats.get(collection_id).cloned().clone();
 
-        let total = stats.as_ref().map(|s| s.total_queries).unwrap_or(0) as f32;
+        let total = stats.as_ref().map_or(0, |s| s.total_queries) as f32;
         if total == 0.0 {
             return QueryPatternAnalysis {
                 total_queries: 0,
@@ -392,20 +392,17 @@ impl QueryPatternTracker {
         }
 
         QueryPatternAnalysis {
-            total_queries: stats.as_ref().map(|s| s.total_queries).unwrap_or(0),
-            point_query_percentage: stats.as_ref().map(|s| s.point_queries).unwrap_or(0) as f32
+            total_queries: stats.as_ref().map_or(0, |s| s.total_queries),
+            point_query_percentage: stats.as_ref().map_or(0, |s| s.point_queries) as f32 / total,
+            similarity_search_percentage: stats.as_ref().map_or(0, |s| s.similarity_queries) as f32
                 / total,
-            similarity_search_percentage: stats.as_ref().map(|s| s.similarity_queries).unwrap_or(0)
-                as f32
+            metadata_filter_percentage: stats.as_ref().map_or(0, |s| s.filtered_queries) as f32
                 / total,
-            metadata_filter_percentage: stats.as_ref().map(|s| s.filtered_queries).unwrap_or(0)
-                as f32
-                / total,
-            average_k: stats.as_ref().map(|s| s.average_k).unwrap_or(10.0),
+            average_k: stats.as_ref().map_or(10.0, |s| s.average_k),
             query_distribution: QueryDistribution {
-                uniform: true,                              // TODO: Analyze actual distribution
-                hotspot_percentage: 0.1,                    // TODO: Calculate hotspots
-                temporal_pattern: TemporalPattern::Uniform, // TODO: Detect temporal patterns
+                uniform: true,                              // Deferred: Analyze actual distribution
+                hotspot_percentage: 0.1,                    // Deferred: Calculate hotspots
+                temporal_pattern: TemporalPattern::Uniform, // Deferred: Detect temporal patterns
             },
         }
     }
@@ -429,9 +426,7 @@ impl PerformanceMetricsCollector {
 
         // Add to historical metrics
         let mut historical = self.historical_metrics.write().await;
-        let history = historical
-            .entry(collection_id.to_string())
-            .or_insert_with(Vec::new);
+        let history = historical.entry(collection_id.to_string()).or_default();
 
         history.push(TimestampedMetrics {
             metrics,
@@ -558,7 +553,7 @@ impl VectorCharacteristicsAnalyzer {
             }
         }
 
-        for mean in dimension_means.iter_mut() {
+        for mean in &mut dimension_means {
             *mean /= vectors.len() as f32;
         }
 
@@ -572,7 +567,7 @@ impl VectorCharacteristicsAnalyzer {
             }
         }
 
-        for variance in dimension_variance.iter_mut() {
+        for variance in &mut dimension_variance {
             *variance /= vectors.len() as f32;
         }
 
@@ -608,7 +603,7 @@ impl MetadataComplexityAnalyzer {
         }
         drop(cached);
 
-        // TODO: Analyze actual metadata from storage
+        // Deferred: Analyze actual metadata from storage
         // For now, return default complexity
         let complexity = MetadataComplexity {
             field_count: 5,

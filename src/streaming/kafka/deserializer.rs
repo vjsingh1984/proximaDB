@@ -35,7 +35,12 @@ pub enum DeserializationError {
     /// Missing required field
     MissingField(String),
     /// Invalid vector dimension
-    InvalidDimension { expected: usize, actual: usize },
+    InvalidDimension {
+        /// Expected vector dimension.
+        expected: usize,
+        /// Actual dimension received.
+        actual: usize,
+    },
     /// Schema registry error
     SchemaRegistryError(String),
 }
@@ -226,7 +231,7 @@ impl MessageDeserializer {
     /// Deserialize raw bytes as vector
     fn deserialize_raw(&self, payload: &[u8]) -> Result<VectorMessage, DeserializationError> {
         // Interpret bytes as f32 array
-        if payload.len() % 4 != 0 {
+        if !payload.len().is_multiple_of(4) {
             return Err(DeserializationError::InvalidFormat(
                 "Raw payload size must be multiple of 4 bytes".to_string(),
             ));

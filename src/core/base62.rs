@@ -23,7 +23,7 @@ pub fn encode(mut num: u64) -> String {
     }
 
     result.reverse();
-    String::from_utf8(result).unwrap()
+    String::from_utf8(result).unwrap_or_default()
 }
 
 /// Decode a base62 string to u64 value

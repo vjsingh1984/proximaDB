@@ -59,14 +59,20 @@ impl std::error::Error for CacheError {}
 /// Internal node structure for doubly-linked list
 #[derive(Debug)]
 struct Node<K, V> {
+    /// Cache key for reverse lookup during eviction
     key: K,
+    /// Cached value
     value: V,
+    /// Optional expiration instant based on TTL
     expires_at: Option<Instant>,
+    /// Pointer to the previous node in the LRU list
     prev: Option<*mut Node<K, V>>,
+    /// Pointer to the next node in the LRU list
     next: Option<*mut Node<K, V>>,
 }
 
 impl<K, V> Node<K, V> {
+    /// Create a new node with the given key, value, and optional TTL
     fn new(key: K, value: V, ttl: Option<Duration>) -> Self {
         let expires_at = ttl.map(|duration| Instant::now() + duration);
         Node {
@@ -78,9 +84,10 @@ impl<K, V> Node<K, V> {
         }
     }
 
+    /// Check whether this node's TTL has expired
     fn is_expired(&self) -> bool {
         self.expires_at
-            .map_or(false, |expires| Instant::now() > expires)
+            .is_some_and(|expires| Instant::now() > expires)
     }
 }
 
@@ -169,7 +176,11 @@ where
     /// Create a new LRU cache with specified capacity
     pub fn new(capacity: usize) -> Self {
         if capacity == 0 {
-            panic!("Cache capacity must be greater than 0");
+            // API contract violation - cache requires capacity > 0
+            #[allow(clippy::panic)]
+            {
+                panic!("Cache capacity must be greater than 0");
+            }
         }
 
         LruCache {
@@ -357,10 +368,10 @@ where
         for (key, &node_ptr) in &self.map {
             unsafe {
                 let node = &*node_ptr;
-                if let Some(expires_at) = node.expires_at {
-                    if now > expires_at {
-                        expired_keys.push(key.clone());
-                    }
+                if let Some(expires_at) = node.expires_at
+                    && now > expires_at
+                {
+                    expired_keys.push(key.clone());
                 }
             }
         }
@@ -613,6 +624,7 @@ where
 
 /// Thread-safe wrapper for LruCache
 pub struct ThreadSafeLruCache<K, V> {
+    /// Mutex-protected inner LRU cache shared via Arc
     cache: Arc<Mutex<LruCache<K, V>>>,
 }
 

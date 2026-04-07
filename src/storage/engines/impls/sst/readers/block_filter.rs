@@ -141,11 +141,11 @@ impl IntelligentBlockFilter {
         if let Some(ref target_id) = filter.target_id {
             if self.search_strategy.use_bloom_filters {
                 // Check global bloom first
-                if let Some(bloom) = global_bloom {
-                    if !bloom.might_contain_key(target_id)? {
-                        debug!("🚫 Global bloom filter: ID '{}' not in file", target_id);
-                        return Ok(false);
-                    }
+                if let Some(bloom) = global_bloom
+                    && !bloom.might_contain_key(target_id)?
+                {
+                    debug!("🚫 Global bloom filter: ID '{}' not in file", target_id);
+                    return Ok(false);
                 }
 
                 // Check block-level bloom if available
@@ -172,18 +172,18 @@ impl IntelligentBlockFilter {
         }
 
         // Check range query with min/max
-        if let Some((ref _min_id, ref max_id)) = filter.id_range {
-            if self.search_strategy.use_min_max_stats {
-                // Block's minimum key is after our max range
-                if &index_entry.key > max_id {
-                    debug!(
-                        "🚫 Block {} range: min key '{}' > max range '{}'",
-                        index_entry.block_id, index_entry.key, max_id
-                    );
-                    return Ok(false);
-                }
-                // Note: We can't skip if block's max < min_id without storing max_key per block
+        if let Some((ref _min_id, ref max_id)) = filter.id_range
+            && self.search_strategy.use_min_max_stats
+        {
+            // Block's minimum key is after our max range
+            if &index_entry.key > max_id {
+                debug!(
+                    "🚫 Block {} range: min key '{}' > max range '{}'",
+                    index_entry.block_id, index_entry.key, max_id
+                );
+                return Ok(false);
             }
+            // Note: We can't skip if block's max < min_id without storing max_key per block
         }
 
         // Check metadata filters with min/max statistics
@@ -267,10 +267,10 @@ impl IntelligentBlockFilter {
 
             MetadataFilter::IsNull => {
                 // Check if there are any nulls
-                if let Some(null_count) = index_entry.metadata_null_counts.get(column) {
-                    if *null_count == 0 {
-                        return Ok(false);
-                    }
+                if let Some(null_count) = index_entry.metadata_null_counts.get(column)
+                    && *null_count == 0
+                {
+                    return Ok(false);
                 }
             }
         }

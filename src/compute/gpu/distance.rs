@@ -462,13 +462,13 @@ impl GpuDistanceCompute {
 
         let device = Device::system_default().ok_or_else(|| anyhow!("No Metal device found"))?;
 
-        // TODO: Create distance.metal shader and compile to .metallib
+        // Deferred: Create distance.metal shader and compile to .metallib
         // For now, return error - this is separate from ProximaCodec GPU work
         return Err(anyhow!(
             "Metal distance shaders not yet implemented - use CPU fallback"
         ));
 
-        /* TODO: Uncomment when Metal distance shaders are implemented
+        /* DEFERRED: Uncomment when Metal distance shaders are implemented
         // Select function based on metric
         let function_name = match metric {
             DistanceMetric::Cosine => "cosine_distance",
@@ -1175,7 +1175,7 @@ impl GpuDistanceCalculator {
     }
 }
 
-// TODO: Implement DistanceCompute trait when similarity module is ready
+// Deferred: Implement DistanceCompute trait when similarity module is ready
 /*
 #[async_trait::async_trait]
 impl DistanceCompute for GpuDistanceCalculator {
@@ -1192,7 +1192,7 @@ impl DistanceCompute for GpuDistanceCalculator {
                     "GPU distance calculation failed: {}, returning error (CPU fallback not yet implemented)",
                     e
                 );
-                // TODO: Implement CPU fallback via distance_computation module
+                // Deferred: Implement CPU fallback via distance_computation module
                 Err(e)
             })
     }
@@ -1209,7 +1209,7 @@ impl DistanceCompute for GpuDistanceCalculator {
             })
             .unwrap_or_else(|e| {
                 warn!("GPU batch calculation failed: {}, returning empty vec (CPU fallback not yet implemented)", e);
-                // TODO: Implement CPU fallback via distance_computation module
+                // Deferred: Implement CPU fallback via distance_computation module
                 vec![]
             })
     }

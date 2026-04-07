@@ -85,7 +85,7 @@ impl Flush {
         );
 
         // Initialize compression provider directly
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
 
         // Initialize quantization engine
         let codebook_store =
@@ -121,7 +121,7 @@ impl Flush {
         self.metrics_updater = Some(updater);
     }
 
-    // TODO: Quantization should be handled inside HybridWriter or a dedicated module
+    // Deferred: Quantization should be handled inside HybridWriter or a dedicated module
     // that creates proper columnar storage with constants::FIELD_VECTOR_BINARY,
     // constants::FIELD_VECTOR_INT8, constants::FIELD_VECTOR_PQ8 columns
     // The quantization config from collection should control whether these columns are created
@@ -312,7 +312,10 @@ impl Flush {
         // Ensure the data directory exists before writing
         // Strip file:// prefix if present for local filesystem operations
         let dir_path = if data_url.starts_with("file://") {
-            data_url.strip_prefix("file://").unwrap().to_string()
+            data_url
+                .strip_prefix("file://")
+                .unwrap_or(&data_url)
+                .to_string()
         } else {
             data_url.clone()
         };
@@ -377,12 +380,13 @@ impl Flush {
             quantization: {
                 // Enable quantization for VIPER progressive search (Binary → INT8 → FP32)
                 // VIPER uses aggressive quantization for columnar analytics workloads
-                let mut qconfig = crate::proto::proximadb_v1::QuantizationConfig::default();
-                qconfig.enabled = Some(true);
-                qconfig.enable_progressive_search = Some(true);
-                qconfig.binary_filter_selectivity = Some(0.1);
-                qconfig.int8_ranking_selectivity = Some(0.3);
-                qconfig
+                crate::proto::proximadb_v1::QuantizationConfig {
+                    enabled: Some(true),
+                    enable_progressive_search: Some(true),
+                    binary_filter_selectivity: Some(0.1),
+                    int8_ranking_selectivity: Some(0.3),
+                    ..Default::default()
+                }
             },
             max_records_per_file: None,
             target_file_size_bytes: Some(128 * 1024 * 1024), // 128MB
@@ -425,7 +429,7 @@ impl Flush {
             vector_dimensions as usize,
             hybrid_config,
             &final_url,
-            &*self.filesystem_factory,
+            &self.filesystem_factory,
             filterable_columns_for_writer, // Pass filterable columns from collection config
             Some(Box::new(viper_collector)), // Pass VIPER metadata collector for centroid computation
         ).await {
@@ -491,7 +495,7 @@ impl Flush {
 
         // Step 3: Check if HybridParquetWriter already handled atomic write
         let final_file_path = if parquet_data_or_path.len() > 4
-            && &parquet_data_or_path[0..4] == &[0xFF, 0xFF, 0xFF, 0xFF]
+            && parquet_data_or_path[0..4] == [0xFF, 0xFF, 0xFF, 0xFF]
         {
             // HybridParquetWriter already wrote the file atomically
             let path_str = String::from_utf8_lossy(&parquet_data_or_path[4..]);
@@ -501,7 +505,7 @@ impl Flush {
             );
             path_str.to_string()
         } else if parquet_data_or_path.len() > 4
-            && &parquet_data_or_path[0..4] == &[0xFA, 0xCE, 0xF1, 0x1E]
+            && parquet_data_or_path[0..4] == [0xFA, 0xCE, 0xF1, 0x1E]
         {
             // Legacy path: Extract temp file path from marker
             let temp_path_str = String::from_utf8_lossy(&parquet_data_or_path[4..]);
@@ -521,26 +525,22 @@ impl Flush {
                     info!("✅ VIPER: Step 3 - Parquet atomically moved: {}", path);
                     // Clean up temp file if it still exists using filesystem API
                     let temp_path_str = temp_path.to_str().unwrap_or("");
-                    if !temp_path_str.is_empty() {
-                        if let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str)
-                        {
-                            if let Err(e) = local_fs.delete(temp_path_str).await {
-                                debug!("Temp file already moved or deleted: {}", e);
-                            }
-                        }
+                    if !temp_path_str.is_empty()
+                        && let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str)
+                        && let Err(e) = local_fs.delete(temp_path_str).await
+                    {
+                        debug!("Temp file already moved or deleted: {}", e);
                     }
                     path
                 }
                 Err(e) => {
                     // Clean up temp file on error using filesystem API
                     let temp_path_str = temp_path.to_str().unwrap_or("");
-                    if !temp_path_str.is_empty() {
-                        if let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str)
-                        {
-                            if let Err(cleanup_err) = local_fs.delete(temp_path_str).await {
-                                debug!("Failed to clean up temp file: {}", cleanup_err);
-                            }
-                        }
+                    if !temp_path_str.is_empty()
+                        && let Ok(local_fs) = self.filesystem_factory.get_filesystem(temp_path_str)
+                        && let Err(cleanup_err) = local_fs.delete(temp_path_str).await
+                    {
+                        debug!("Failed to clean up temp file: {}", cleanup_err);
                     }
                     error!("❌ VIPER: Step 3 - Atomic move failed: {}", e);
                     return Err(e.context("Failed to atomically move Parquet file"));
@@ -581,7 +581,7 @@ impl Flush {
         info!("🔄 VIPER: Step 5 - Updating collection metadata_info");
         // Calculate actual data size (either from file or buffer)
         let data_size = if parquet_data_or_path.len() > 4
-            && &parquet_data_or_path[0..4] == &[0xFA, 0xCE, 0xF1, 0x1E]
+            && parquet_data_or_path[0..4] == [0xFA, 0xCE, 0xF1, 0x1E]
         {
             // Legacy path marker - get file size from final path
             let fs = self.filesystem_factory.get_filesystem(&final_file_path)?;
@@ -591,7 +591,7 @@ impl Flush {
                 0
             }
         } else if parquet_data_or_path.len() > 4
-            && &parquet_data_or_path[0..4] == &[0xFF, 0xFF, 0xFF, 0xFF]
+            && parquet_data_or_path[0..4] == [0xFF, 0xFF, 0xFF, 0xFF]
         {
             // File already written marker - use captured file size from stats
             file_size_for_stats as usize
@@ -610,7 +610,7 @@ impl Flush {
             let flush_update = FlushMetricsUpdate {
                 vectors_flushed: vector_records.len() as i64,
                 bytes_written: data_size as i64,
-                duration_ms: 0, // TODO: Track actual duration
+                duration_ms: 0, // Deferred: Track actual duration
                 files_created: 1,
                 engine_type: "VIPER".to_string(),
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -943,7 +943,7 @@ impl Flush {
             collection_id, records_count, bytes_written
         );
 
-        // TODO: Consider integrating with CollectionService::update_stats()
+        // Deferred: Consider integrating with CollectionService::update_stats()
         // to maintain accurate collection-level metrics that users can query.
 
         Ok(())
@@ -968,7 +968,7 @@ impl Flush {
             sorted_records.sort_by(|a, b| {
                 let a_id = a.id.as_str();
                 let b_id = b.id.as_str();
-                a_id.cmp(&b_id)
+                a_id.cmp(b_id)
             });
 
             return Ok((

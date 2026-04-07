@@ -4,7 +4,7 @@
 :icons: font
 :sectnums:
 :author: ProximaDB Team
-:revdate: February 2026
+:revdate: March 2026
 :revnumber: 0.2.0
 
 == Product Overview
@@ -644,23 +644,27 @@ Theme: Make ProximaDB usable for AI application developers.
 
 | Hybrid Search (BM25 + Vector)
 | tantivy integration, RRF fusion, SQL syntax, Python SDK support
-| Not started
+| ✅ Complete (Feb 2025, TD-008)
 
 | Event Sourcing Engine
 | Append-only WAL, hash chaining, indexed queries, retention policies
-| Not started
+| ✅ Complete (Feb 2025, TD-010)
 
 | Framework Integrations
 | LangChain VectorStore+Retriever, LlamaIndex VectorStoreIndex, PyPI packages
-| Not started
+| ✅ Complete (Mar 2026, TD-011; 7 frameworks)
 
 | Quality: unwrap reduction
 | Reduce production-path `unwrap()`/`expect()` from 11,536 to <1,000
-| Not started
+| ✅ Complete (Mar 2026, TD-007; 0 unwrap in prod)
 
 | Quality: API handler tests
 | Increase API handler test coverage from 5% to >50%
-| Not started
+| 🔄 In Progress (54.9% overall coverage)
+
+| **Phase 2.5: Foundational Performance**
+| **Vectorized execution, morsel parallelism, pipeline operators, Arrow cross-model format, SIMD batch distance, 2PC participants (TD-031 through TD-042)**
+| **✅ Complete (Mar 2026)**
 |===
 
 === v0.4.0 -- "Trading" (Target: Q3 2026)
@@ -673,11 +677,11 @@ Theme: Enable ibkrtrading SQLite replacement and financial-grade time-series.
 
 | Time-Series Engine (TST)
 | Columnar time-partitioned storage, ASOF joins, downsampling, OHLCV aggregation
-| Not started
+| ✅ Complete (Feb 2025, TD-009)
 
 | ibkrtrading SQLite Replacement
 | Event sourcing for order management, state reconstruction, embedded mode integration
-| Not started
+| 📅 Planned (depends on production validation)
 
 | Integrated Inference
 | ONNX Runtime, sentence-transformer models, batch embedding
@@ -685,7 +689,7 @@ Theme: Enable ibkrtrading SQLite replacement and financial-grade time-series.
 
 | Backup / Point-in-Time Recovery
 | Incremental snapshots, S3/GCS targets, LSN-based restore
-| Not started
+| ✅ Complete (Mar 2026, TD-014)
 |===
 
 === v0.5.0 -- "Consolidation" (Target: Q4 2026)
@@ -706,15 +710,15 @@ Theme: Complete ibkrtrading database consolidation and operational maturity.
 
 | Streaming Subscriptions
 | WebSocket and SSE delivery, cursor-based replay, filter predicates
-| Not started
+| ✅ Complete (Mar 2026, TD-003)
 
 | mTLS Completion
 | Client certificates, rotation, FIPS ciphers, CRL/OCSP
-| Not started
+| ✅ Complete (Mar 2026, TD-006)
 
 | Quality: 80% coverage
 | Core module test coverage >80%, all production `unwrap()` calls <100
-| Not started
+| 🔄 In Progress (54.9% coverage, 0 unwrap in prod)
 |===
 
 === v1.0.0 -- "Production" (Target: Q1 2027)
@@ -727,11 +731,11 @@ Theme: Production-ready with distributed consensus and security hardening.
 
 | Raft Consensus
 | Multi-Raft per shard, leader election, log replication, automatic rebalancing
-| Not started
+| ✅ Complete (Mar 2026; state machine, snapshot/restore, shard rebalancing)
 
 | Cross-Model ACID Transactions
 | Saga pattern, compensating transactions, read-your-writes consistency
-| Not started
+| ✅ Complete (Mar 2026, TD-038; 2PC with durable participants, MVCC isolation)
 
 | SOC 2 Type II Compliance
 | Encryption at rest, complete RBAC, audit trail integrity, change management

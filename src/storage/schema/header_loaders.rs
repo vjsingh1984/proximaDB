@@ -33,7 +33,9 @@ use crate::storage::persistence::filesystem::FileSystem;
 /// Header loader for Parquet-based engines (VIPER, NOVA, RAPTOR).
 /// Reuses SharedParquetFormatReader infrastructure for footer caching.
 pub struct ParquetHeaderLoader {
+    /// Filesystem for I/O operations
     filesystem: Arc<dyn FileSystem>,
+    /// Engine type identifier
     engine_type: String,
 }
 
@@ -199,29 +201,26 @@ impl HeaderLoader for ParquetHeaderLoader {
         // Extract schema version from Parquet key-value metadata
         if let Some(kv_metadata) = metadata.file_metadata().key_value_metadata() {
             for kv in kv_metadata {
-                if kv.key == "proximadb.schema_version" {
-                    if let Some(ref value) = kv.value {
-                        if let Ok(v) = value.parse::<u32>() {
-                            header.schema_version = v;
-                        }
-                    }
+                if kv.key == "proximadb.schema_version"
+                    && let Some(ref value) = kv.value
+                    && let Ok(v) = value.parse::<u32>()
+                {
+                    header.schema_version = v;
                 }
-                if kv.key == "proximadb.schema_fingerprint" {
-                    if let Some(ref value) = kv.value {
-                        if let Ok(v) = value.parse::<u64>() {
-                            header.schema_fingerprint = v;
-                        }
-                    }
+                if kv.key == "proximadb.schema_fingerprint"
+                    && let Some(ref value) = kv.value
+                    && let Ok(v) = value.parse::<u64>()
+                {
+                    header.schema_fingerprint = v;
                 }
                 // Store all ProximaDB metadata
-                if kv.key.starts_with("proximadb.") {
-                    if let Some(ref value) = kv.value {
-                        if let Some(key_suffix) = kv.key.strip_prefix("proximadb.") {
-                            header
-                                .engine_metadata
-                                .insert(key_suffix.to_string(), value.clone());
-                        }
-                    }
+                if kv.key.starts_with("proximadb.")
+                    && let Some(ref value) = kv.value
+                    && let Some(key_suffix) = kv.key.strip_prefix("proximadb.")
+                {
+                    header
+                        .engine_metadata
+                        .insert(key_suffix.to_string(), value.clone());
                 }
             }
         }
@@ -251,7 +250,9 @@ impl HeaderLoader for ParquetHeaderLoader {
 /// Header loader for ProximaBlocks-based engines (SST, HELIX, SWIFT).
 /// Reuses RowBasedHeader parsing infrastructure.
 pub struct ProximaBlocksHeaderLoader {
+    /// Filesystem for I/O operations
     filesystem: Arc<dyn FileSystem>,
+    /// Engine type identifier
     engine_type: String,
 }
 
@@ -481,10 +482,8 @@ impl ProximaBlocksHeaderLoader {
             serde_json::Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     Some(ColumnValue::Int64(i))
-                } else if let Some(f) = n.as_f64() {
-                    Some(ColumnValue::Float64(f))
                 } else {
-                    None
+                    n.as_f64().map(ColumnValue::Float64)
                 }
             }
             serde_json::Value::String(s) => Some(ColumnValue::String(s.clone())),
@@ -579,6 +578,7 @@ impl HeaderLoader for ProximaBlocksHeaderLoader {
 
 /// Registry of all header loaders for different engine types.
 pub struct HeaderLoaderRegistry {
+    /// Registered header loaders
     loaders: Vec<Arc<dyn HeaderLoader>>,
 }
 
@@ -629,10 +629,10 @@ impl HeaderLoaderRegistry {
         format_hint: Option<&str>,
     ) -> anyhow::Result<CachedHeader> {
         // Try format hint first
-        if let Some(fmt) = format_hint {
-            if let Some(loader) = self.find_loader(fmt) {
-                return loader.load_header(path).await;
-            }
+        if let Some(fmt) = format_hint
+            && let Some(loader) = self.find_loader(fmt)
+        {
+            return loader.load_header(path).await;
         }
 
         // Auto-detect from file extension

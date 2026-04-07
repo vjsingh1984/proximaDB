@@ -30,8 +30,9 @@
 //! registry.register("my_strategy", Arc::new(MyCustomStrategy::new()));
 //!
 //! // Execute search with strategy
-//! let strategy = registry.get("approximate").unwrap();
-//! let results = strategy.execute(&ctx, &candidates).await?;
+//! if let Some(strategy) = registry.get("approximate") {
+//!     let results = strategy.execute(&ctx, &candidates).await?;
+//! }
 //! ```
 
 mod adaptive;
@@ -63,6 +64,7 @@ pub struct ScoredCandidate {
 }
 
 impl ScoredCandidate {
+    /// Create a scored candidate with just ID and score
     pub fn new(id: String, score: f32) -> Self {
         Self {
             id,
@@ -72,11 +74,13 @@ impl ScoredCandidate {
         }
     }
 
+    /// Attach vector data to this candidate
     pub fn with_vector(mut self, vector: Vec<f32>) -> Self {
         self.vector = Some(vector);
         self
     }
 
+    /// Attach metadata to this candidate
     pub fn with_metadata(
         mut self,
         metadata: std::collections::HashMap<String, serde_json::Value>,

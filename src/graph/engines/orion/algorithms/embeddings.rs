@@ -60,7 +60,7 @@ pub type NodeEmbeddings = HashMap<String, Vec<f32>>;
 ///     10,   // walks per node
 ///     128,  // embedding dimension
 /// );
-/// let embeddings = node2vec.execute(()).unwrap();
+/// let embeddings = node2vec.execute(())?;
 /// ```
 pub struct Node2VecEmbeddings {
     engine: Arc<OrionGraphEngine>,
@@ -250,7 +250,7 @@ impl Node2VecEmbeddings {
         let mut embeddings = vec![vec![0.0f32; self.embedding_dim]; node_count];
         let mut rng = rand::thread_rng();
 
-        for node_embedding in embeddings.iter_mut() {
+        for node_embedding in &mut embeddings {
             for dim in node_embedding.iter_mut() {
                 let random_val: f32 = rng.r#gen();
                 *dim = (random_val - 0.5) / self.embedding_dim as f32;
@@ -266,12 +266,12 @@ impl Node2VecEmbeddings {
                     let window_end = (i + self.window_size + 1).min(walk.len());
 
                     // Update embeddings based on context
-                    for j in window_start..window_end {
+                    for (j, &context_idx) in
+                        walk.iter().enumerate().take(window_end).skip(window_start)
+                    {
                         if i == j {
                             continue;
                         }
-
-                        let context_idx = walk[j];
 
                         // Simplified gradient update (positive sample)
                         // In practice, would use negative sampling for efficiency
@@ -300,7 +300,7 @@ impl Node2VecEmbeddings {
         }
 
         // Normalize embeddings
-        for node_embedding in embeddings.iter_mut() {
+        for node_embedding in &mut embeddings {
             let norm: f32 = node_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
             if norm > 0.0 {
                 for dim in node_embedding.iter_mut() {
@@ -415,7 +415,7 @@ impl ParallelAlgorithm for Node2VecEmbeddings {
 
         // Small graphs have thread overhead
         let csr_out = self.engine.csr_outgoing.read().ok();
-        let node_count = csr_out.map(|csr| csr.node_count()).unwrap_or(0);
+        let node_count = csr_out.map_or(0, |csr| csr.node_count());
         let overhead_penalty = if node_count < 1000 { 0.85 } else { 1.0 };
 
         max_speedup * overhead_penalty

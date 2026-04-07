@@ -132,10 +132,15 @@ impl RateLimitConfig {
 /// Internal rate limiting configuration used by middleware logic
 #[derive(Debug, Clone)]
 pub struct MiddlewareRateLimitConfig {
+    /// Enable rate limiting
     pub enabled: bool,
+    /// Maximum requests per IP per window
     pub max_requests: u32,
+    /// Sliding window duration for rate limit tracking
     pub window_duration: Duration,
+    /// Whether to apply rate limits to health check endpoints
     pub limit_health_endpoints: bool,
+    /// Global maximum requests across all clients (optional)
     pub global_max_requests: Option<u32>,
 }
 
@@ -187,6 +192,7 @@ pub struct RateLimitState {
 }
 
 impl RateLimitState {
+    /// Create a new rate limit state with the given configuration
     pub fn new(config: MiddlewareRateLimitConfig) -> Self {
         Self {
             config,
@@ -210,6 +216,7 @@ pub struct RateLimitLayer {
 }
 
 impl RateLimitLayer {
+    /// Create a new rate limiting layer with the given configuration
     pub fn new(config: RateLimitConfig) -> Self {
         Self {
             _state: Arc::new(RateLimitState::new(config.to_middleware_config())),
@@ -311,28 +318,27 @@ pub async fn rate_limit_middleware<B>(
 /// Extract client IP from request
 fn get_client_ip<B>(request: &Request<B>) -> IpAddr {
     // Try to get IP from X-Forwarded-For header first (for proxies)
-    if let Some(forwarded_for) = request.headers().get("X-Forwarded-For") {
-        if let Ok(forwarded_str) = forwarded_for.to_str() {
-            if let Some(first_ip) = forwarded_str.split(',').next() {
-                if let Ok(ip) = first_ip.trim().parse::<IpAddr>() {
-                    return ip;
-                }
-            }
-        }
+    if let Some(forwarded_for) = request.headers().get("X-Forwarded-For")
+        && let Ok(forwarded_str) = forwarded_for.to_str()
+        && let Some(first_ip) = forwarded_str.split(',').next()
+        && let Ok(ip) = first_ip.trim().parse::<IpAddr>()
+    {
+        return ip;
     }
 
     // Try X-Real-IP header
-    if let Some(real_ip) = request.headers().get("X-Real-IP") {
-        if let Ok(ip_str) = real_ip.to_str() {
-            if let Ok(ip) = ip_str.parse::<IpAddr>() {
-                return ip;
-            }
-        }
+    if let Some(real_ip) = request.headers().get("X-Real-IP")
+        && let Ok(ip_str) = real_ip.to_str()
+        && let Ok(ip) = ip_str.parse::<IpAddr>()
+    {
+        return ip;
     }
 
     // Fall back to connection remote address
     // Note: This would need to be set by the server, for now use localhost
-    "127.0.0.1".parse().unwrap()
+    "127.0.0.1"
+        .parse()
+        .unwrap_or_else(|_| std::net::IpAddr::from([127, 0, 0, 1]))
 }
 
 /// Check if the path is a health endpoint
@@ -398,5 +404,145 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.requests_per_minute, 10000);
         assert_eq!(config.burst_size, 1000);
+    }
+
+    // ============================================================
+    // Extended rate limit tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_rate_limit_config_production_global_limit() {
+        let config = RateLimitConfig::production(2000, 200);
+        assert_eq!(config.requests_per_minute, 2000);
+        assert_eq!(config.burst_size, 200);
+        assert_eq!(config.global_requests_per_minute, Some(20000));
+        assert!(config.by_ip);
+        assert!(!config.limit_health_endpoints);
+    }
+
+    #[test]
+    fn test_to_middleware_config() {
+        let config = RateLimitConfig {
+            enabled: true,
+            requests_per_minute: 500,
+            burst_size: 50,
+            by_ip: true,
+            limit_health_endpoints: true,
+            global_requests_per_minute: Some(5000),
+        };
+        let mw = config.to_middleware_config();
+        assert!(mw.enabled);
+        assert_eq!(mw.max_requests, 50); // burst_size
+        assert_eq!(mw.window_duration, Duration::from_secs(60));
+        assert!(mw.limit_health_endpoints);
+        assert_eq!(mw.global_max_requests, Some(5000));
+    }
+
+    #[test]
+    fn test_to_middleware_config_disabled() {
+        let config = RateLimitConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let mw = config.to_middleware_config();
+        assert!(!mw.enabled);
+    }
+
+    #[test]
+    fn test_rate_limit_bucket_within_limit() {
+        let mut bucket = RateLimitBucket::new();
+        let window = Duration::from_secs(60);
+
+        // Under limit
+        for _ in 0..5 {
+            bucket.increment(window);
+        }
+        assert!(bucket.is_within_limit(10, window));
+        assert_eq!(bucket.count, 5);
+    }
+
+    #[test]
+    fn test_rate_limit_bucket_exceeds_limit() {
+        let mut bucket = RateLimitBucket::new();
+        let window = Duration::from_secs(60);
+
+        for _ in 0..11 {
+            bucket.increment(window);
+        }
+        assert!(!bucket.is_within_limit(10, window));
+        assert_eq!(bucket.count, 11);
+    }
+
+    #[test]
+    fn test_rate_limit_bucket_exactly_at_limit() {
+        let mut bucket = RateLimitBucket::new();
+        let window = Duration::from_secs(60);
+
+        for _ in 0..10 {
+            bucket.increment(window);
+        }
+        assert!(bucket.is_within_limit(10, window));
+        assert_eq!(bucket.count, 10);
+
+        // One more pushes it over
+        bucket.increment(window);
+        assert!(!bucket.is_within_limit(10, window));
+    }
+
+    #[test]
+    fn test_rate_limit_layer_disabled() {
+        let layer = RateLimitLayer::disabled();
+        // Should not panic
+        let _ = layer;
+    }
+
+    #[test]
+    fn test_rate_limit_layer_with_limits() {
+        let layer = RateLimitLayer::with_limits(500, 50);
+        let _ = layer;
+    }
+
+    #[test]
+    fn test_is_health_endpoint_various_paths() {
+        assert!(is_health_endpoint("/health"));
+        assert!(is_health_endpoint("/health/ready"));
+        assert!(is_health_endpoint("/health/live"));
+        assert!(is_health_endpoint("/health/startup"));
+        assert!(!is_health_endpoint("/api/v1/collections"));
+        assert!(!is_health_endpoint("/metrics"));
+        assert!(!is_health_endpoint("/"));
+        assert!(is_health_endpoint("/healthcheck")); // starts with /health so it IS a health endpoint
+    }
+
+    #[test]
+    fn test_rate_limit_state_creation() {
+        let config = MiddlewareRateLimitConfig {
+            enabled: true,
+            max_requests: 100,
+            window_duration: Duration::from_secs(60),
+            limit_health_endpoints: false,
+            global_max_requests: None,
+        };
+        let state = RateLimitState::new(config);
+        assert!(state.config.enabled);
+        assert_eq!(state.config.max_requests, 100);
+    }
+
+    #[test]
+    fn test_rate_limit_error_response_serialization() {
+        let err = RateLimitErrorResponse {
+            error: "rate_limit_exceeded".to_string(),
+            message: "Too many requests".to_string(),
+            retry_after: 60,
+        };
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("rate_limit_exceeded"));
+        assert!(json.contains("60"));
+    }
+
+    #[test]
+    fn test_high_throughput_global_limit() {
+        let config = RateLimitConfig::high_throughput();
+        assert_eq!(config.global_requests_per_minute, Some(100000));
     }
 }

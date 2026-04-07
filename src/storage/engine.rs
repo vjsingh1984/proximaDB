@@ -1,4 +1,4 @@
-use crate::core::{SstConfig, StorageConfig, String, VectorId, VectorRecord};
+use crate::core::{StorageConfig, String, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
@@ -101,12 +101,7 @@ impl StorageEngine {
                 crate::storage::persistence::filesystem::FilesystemConfig::default(),
             )
             .await
-            .map_err(|e| {
-                crate::core::StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?,
+            .map_err(|e| crate::core::StorageError::DiskIO(std::io::Error::other(e.to_string())))?,
         );
 
         // Create WAL manager using modern batch factory pattern
@@ -147,17 +142,11 @@ impl StorageEngine {
         info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
 
         // Initialize compaction manager with default config if not provided
-        let sst_config = config
-            .sst_config
-            .clone()
-            .unwrap_or_else(|| SstConfig::default());
+        let sst_config = config.sst_config.clone().unwrap_or_default();
         let compaction_manager = Arc::new(Compaction::new(sst_config).await?);
 
         // Create singleton SST storage instance
-        let _sst_config_for_storage = config
-            .sst_config
-            .clone()
-            .unwrap_or_else(|| SstConfig::default());
+        let _sst_config_for_storage = config.sst_config.clone().unwrap_or_default();
         let _sst_storage = Arc::new(SstEngine::new().await.map_err(|e| {
             crate::core::error::StorageError::SstEngine(format!(
                 "Failed to create SST storage: {}",
@@ -219,11 +208,7 @@ impl StorageEngine {
 
         // Start compaction workers
         // We need to replace the compaction manager to start workers
-        let sst_config = self
-            .config
-            .sst_config
-            .clone()
-            .unwrap_or_else(|| SstConfig::default());
+        let sst_config = self.config.sst_config.clone().unwrap_or_default();
         let mut temp_manager = Compaction::new(sst_config).await?;
         temp_manager.start_workers(2).await?; // Start 2 worker threads
         self.compaction_manager = Arc::new(temp_manager);
@@ -572,7 +557,7 @@ impl StorageEngine {
         );
         // Implement stats update functionality using metadata provider
         if let Some(_provider) = self.get_metadata_provider().await {
-            // TODO: Implement stats update when MetadataProvider supports it
+            // Deferred: Implement stats update when MetadataProvider supports it
             // provider.update_stats(collection_id, 1, vector_size as i64).await?;
         } else {
             tracing::warn!(
@@ -598,10 +583,11 @@ impl StorageEngine {
     /// Check if a vector exists in the storage engine
     pub async fn exists(&self, collection_id: &str, id: &VectorId) -> crate::storage::Result<bool> {
         // Check WAL for unflushed vectors first
-        if let Some(_) = self
+        if self
             .write_ahead_log_manager
             .search_vector_by_id(collection_id, id)
             .await?
+            .is_some()
         {
             return Ok(true);
         }
@@ -650,7 +636,7 @@ impl StorageEngine {
 
             // Update metadata statistics
             if let Some(_provider) = self.get_metadata_provider().await {
-                // TODO: Implement stats update when MetadataProvider supports it
+                // Deferred: Implement stats update when MetadataProvider supports it
                 // provider.update_stats(collection_id, -1, 0).await?;
             } else {
                 tracing::warn!(
@@ -680,8 +666,7 @@ impl StorageEngine {
             .storage_locations
             .choose(&mut rand::thread_rng())
             .ok_or_else(|| {
-                crate::core::StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                crate::core::StorageError::DiskIO(std::io::Error::other(
                     "No storage locations configured",
                 ))
             })?
@@ -721,8 +706,7 @@ impl StorageEngine {
                     Err(e) => {
                         // Check if already exists
                         if !fs.exists(&dir_url).await.unwrap_or(false) {
-                            return Err(crate::core::StorageError::DiskIO(std::io::Error::new(
-                                std::io::ErrorKind::Other,
+                            return Err(crate::core::StorageError::DiskIO(std::io::Error::other(
                                 format!("Failed to create directory {}: {}", dir_url, e),
                             )));
                         }
@@ -789,8 +773,7 @@ impl StorageEngine {
             let collection_name = collection
                 .config
                 .as_ref()
-                .map(|c| c.name.as_str())
-                .unwrap_or("unknown");
+                .map_or("unknown", |c| c.name.as_str());
 
             // Storage assignment is now part of collection metadata
             if let Some(ref assignment) = collection.storage_assignment {
@@ -820,7 +803,7 @@ impl StorageEngine {
         // Determine optimal parallelism based on CPU cores
         let num_cpus = num_cpus::get();
         let chunk_size = total_collections.div_ceil(num_cpus);
-        let chunk_size = chunk_size.max(1).min(10); // Between 1 and 10 collections per task
+        let chunk_size = chunk_size.clamp(1, 10); // Between 1 and 10 collections per task
 
         tracing::info!(
             "🚀 Loading collections in parallel with chunk size: {}",
@@ -878,7 +861,7 @@ impl StorageEngine {
                 for collection_id in potential_collection_names {
                     match self
                         .write_ahead_log_manager
-                        .get_collection_entries(&collection_id.to_string())
+                        .get_collection_entries(collection_id)
                         .await
                     {
                         Ok(entries) if !entries.is_empty() => {
@@ -891,30 +874,30 @@ impl StorageEngine {
 
                                 // Extract metadata from the first vector entry
                                 if let Some(record) = entries.first() {
-                                    let mut collection =
-                                        crate::proto::proximadb_v1::Collection::default();
-                                    collection.id = collection_id.to_string();
-                                    collection.config =
-                                        Some(crate::proto::proximadb_v1::CollectionConfig {
-                                            name: collection_id.to_string(),
-                                            dimension: record.vector.len() as u32,
-                                            distance_metric: Some(
-                                                crate::proto::proximadb_v1::DistanceMetric::Cosine
-                                                    as i32,
-                                            ),
+                                    let collection =
+                                        crate::proto::proximadb_v1::Collection {
+                                            id: collection_id.to_string(),
+                                            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                                                name: collection_id.to_string(),
+                                                dimension: record.vector.len() as u32,
+                                                distance_metric: Some(
+                                                    crate::proto::proximadb_v1::DistanceMetric::Cosine
+                                                        as i32,
+                                                ),
+                                                ..Default::default()
+                                            }),
+                                            stats: Some(crate::proto::proximadb_v1::CollectionStats {
+                                                vector_count: entries.len() as i64,
+                                                data_size_bytes: (entries.len()
+                                                    * record.vector.len()
+                                                    * 4)
+                                                    as i64,
+                                                ..Default::default()
+                                            }),
+                                            created_at: chrono::Utc::now().timestamp_micros(),
+                                            updated_at: chrono::Utc::now().timestamp_micros(),
                                             ..Default::default()
-                                        });
-                                    collection.stats =
-                                        Some(crate::proto::proximadb_v1::CollectionStats {
-                                            vector_count: entries.len() as i64,
-                                            data_size_bytes: (entries.len()
-                                                * record.vector.len()
-                                                * 4)
-                                                as i64,
-                                            ..Default::default()
-                                        });
-                                    collection.created_at = chrono::Utc::now().timestamp_micros();
-                                    collection.updated_at = chrono::Utc::now().timestamp_micros();
+                                        };
 
                                     collections_metadata
                                         .push((collection_id.to_string(), collection));
@@ -1125,7 +1108,7 @@ impl StorageEngine {
         let collections: Vec<CollectionMetadata> =
             match self.metadata_provider.read().await.as_ref() {
                 Some(_provider) => {
-                    // TODO: Add list_collections method to InternalCollectionProvider trait
+                    // Deferred: Add list_collections method to InternalCollectionProvider trait
                     // For now, return empty list to allow compilation
                     warn!("Collection listing not yet implemented for test cleanup");
                     Vec::new()
@@ -1175,7 +1158,7 @@ impl StorageEngine {
         for collection in collections {
             // Use metadata provider for collection deletion
             if let Some(_provider) = self.metadata_provider.read().await.as_ref() {
-                // TODO: Add delete_collection method to InternalCollectionProvider trait
+                // Deferred: Add delete_collection method to InternalCollectionProvider trait
                 tracing::debug!(
                     "Collection deletion would happen through metadata provider for {}",
                     collection.collection_id

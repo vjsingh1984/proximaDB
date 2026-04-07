@@ -337,7 +337,7 @@ fn create_query_response_for_nodes(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> BatchResponse {
-    let has_more = limit.map(|l| nodes.len() as u32 == l).unwrap_or(false);
+    let has_more = limit.is_some_and(|l| nodes.len() as u32 == l);
     let next_token = if has_more {
         let next_offset = offset.unwrap_or(0).saturating_add(limit.unwrap_or(0));
         Some(format!("offset:{}", next_offset))
@@ -366,7 +366,7 @@ fn create_query_response_for_edges(
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> BatchResponse {
-    let has_more = limit.map(|l| edges.len() as u32 == l).unwrap_or(false);
+    let has_more = limit.is_some_and(|l| edges.len() as u32 == l);
     let next_token = if has_more {
         let next_offset = offset.unwrap_or(0).saturating_add(limit.unwrap_or(0));
         Some(format!("offset:{}", next_offset))
@@ -697,14 +697,12 @@ impl GraphService for GraphServiceImpl {
             query.graph_id, query.labels
         );
         // Continuation token parsing: format "offset:<n>"
-        if query.offset.is_none() {
-            if let Some(token) = &query.continuation_token {
-                if let Some(rest) = token.strip_prefix("offset:") {
-                    if let Ok(n) = rest.parse::<u32>() {
-                        query.offset = Some(n);
-                    }
-                }
-            }
+        if query.offset.is_none()
+            && let Some(token) = &query.continuation_token
+            && let Some(rest) = token.strip_prefix("offset:")
+            && let Ok(n) = rest.parse::<u32>()
+        {
+            query.offset = Some(n);
         }
 
         match self
@@ -734,14 +732,12 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<BatchResponse>, Status> {
         let mut query = request.into_inner();
         debug!("gRPC QueryEdges request for graph: {}", query.graph_id);
-        if query.offset.is_none() {
-            if let Some(token) = &query.continuation_token {
-                if let Some(rest) = token.strip_prefix("offset:") {
-                    if let Ok(n) = rest.parse::<u32>() {
-                        query.offset = Some(n);
-                    }
-                }
-            }
+        if query.offset.is_none()
+            && let Some(token) = &query.continuation_token
+            && let Some(rest) = token.strip_prefix("offset:")
+            && let Ok(n) = rest.parse::<u32>()
+        {
+            query.offset = Some(n);
         }
 
         match self
@@ -822,10 +818,10 @@ impl GraphService for GraphServiceImpl {
             Ok(mut response) => {
                 info!("Successfully completed graph traversal via gRPC");
                 // Ensure execution_time_microseconds is populated if stats exist
-                if let Some(ref mut stats) = response.stats {
-                    if stats.execution_time_microseconds == 0 {
-                        stats.execution_time_microseconds = start_time.elapsed().as_micros() as u64;
-                    }
+                if let Some(ref mut stats) = response.stats
+                    && stats.execution_time_microseconds == 0
+                {
+                    stats.execution_time_microseconds = start_time.elapsed().as_micros() as u64;
                 }
                 Ok(Response::new(response))
             }
@@ -869,7 +865,7 @@ impl GraphService for GraphServiceImpl {
                         if end == total {
                             chunk.edges = resp.edges.clone();
                             chunk.paths = resp.paths.clone();
-                            chunk.stats = resp.stats.clone();
+                            chunk.stats = resp.stats;
                             chunk.done = true;
                         }
                         if tx.send(Ok(chunk)).await.is_err() {

@@ -87,8 +87,7 @@ pub async fn request_id_middleware(mut request: Request<Body>, next: Next<Body>)
         .get(X_REQUEST_ID)
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty())
-        .map(|s| RequestId::new(s.to_string()))
-        .unwrap_or_else(RequestId::generate);
+        .map_or_else(RequestId::generate, |s| RequestId::new(s.to_string()));
 
     // Store in request extensions for handler access
     request.extensions_mut().insert(request_id.clone());
@@ -175,8 +174,7 @@ where
             .get(X_REQUEST_ID)
             .and_then(|v| v.to_str().ok())
             .filter(|s| !s.is_empty())
-            .map(|s| RequestId::new(s.to_string()))
-            .unwrap_or_else(RequestId::generate);
+            .map_or_else(RequestId::generate, |s| RequestId::new(s.to_string()));
 
         // Store in request extensions
         request.extensions_mut().insert(request_id.clone());

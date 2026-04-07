@@ -132,7 +132,7 @@ impl ObservabilityStrategy {
         let content = content.trim();
 
         // Find the closing paren or comma
-        let end = content.find(|c| c == ')' || c == ',')?;
+        let end = content.find([')', ','])?;
         let arg = content[..end].trim();
 
         // Remove quotes
@@ -609,10 +609,10 @@ impl ObservabilityStrategy {
         let mut end_time_result = default_end;
 
         // Check for interval patterns like "now() - interval '1h'"
-        if upper.contains("INTERVAL") {
-            if let Some(duration) = self.extract_interval_duration(content) {
-                start_time_result = now - duration;
-            }
+        if upper.contains("INTERVAL")
+            && let Some(duration) = self.extract_interval_duration(content)
+        {
+            start_time_result = now - duration;
         }
 
         // Check for explicit timestamp conditions
@@ -636,15 +636,15 @@ impl ObservabilityStrategy {
 
         // Also check for PromQL range in the expression (e.g., [5m])
         // This helps with rate() and similar functions
-        if let Some(bracket_start) = content.find('[') {
-            if let Some(bracket_end) = content[bracket_start..].find(']') {
-                let range_str = &content[bracket_start + 1..bracket_start + bracket_end];
-                if let Ok(duration) = PromQLParser::parse_duration(range_str) {
-                    // For range vectors, we need data going back at least this far
-                    let range_start = now - duration.nanoseconds;
-                    if range_start < start_time_result {
-                        start_time_result = range_start;
-                    }
+        if let Some(bracket_start) = content.find('[')
+            && let Some(bracket_end) = content[bracket_start..].find(']')
+        {
+            let range_str = &content[bracket_start + 1..bracket_start + bracket_end];
+            if let Ok(duration) = PromQLParser::parse_duration(range_str) {
+                // For range vectors, we need data going back at least this far
+                let range_start = now - duration.nanoseconds;
+                if range_start < start_time_result {
+                    start_time_result = range_start;
                 }
             }
         }
@@ -677,8 +677,8 @@ impl ObservabilityStrategy {
         // Check for operators
         let ops = [">=", "<=", ">", "<", "="];
         for op in &ops {
-            if s.starts_with(op) {
-                let rest = s[op.len()..].trim();
+            if let Some(rest) = s.strip_prefix(op) {
+                let rest = rest.trim();
                 // Try to parse the number
                 let num_str: String = rest.chars().take_while(|c| c.is_numeric()).collect();
                 if let Ok(value) = num_str.parse::<i64>() {
@@ -834,15 +834,15 @@ impl ObservabilityStrategy {
                 }
 
                 // Apply duration filters
-                if let Some(min) = query.min_duration_ns {
-                    if summary.duration_ns < min {
-                        return false;
-                    }
+                if let Some(min) = query.min_duration_ns
+                    && summary.duration_ns < min
+                {
+                    return false;
                 }
-                if let Some(max) = query.max_duration_ns {
-                    if summary.duration_ns > max {
-                        return false;
-                    }
+                if let Some(max) = query.max_duration_ns
+                    && summary.duration_ns > max
+                {
+                    return false;
                 }
 
                 true
@@ -920,26 +920,25 @@ impl ObservabilityStrategy {
         let mut end_ns = i64::MAX;
 
         // Look for start_time_ns > N or start_time_ns >= N
-        if let Some(pos) = upper.find("START_TIME_NS") {
-            if let Some(value) = self.extract_numeric_comparison(&content[pos + 13..]) {
-                start_ns = value;
-            }
+        if let Some(pos) = upper.find("START_TIME_NS")
+            && let Some(value) = self.extract_numeric_comparison(&content[pos + 13..])
+        {
+            start_ns = value;
         }
 
         // Look for end_time_ns < N or end_time_ns <= N
-        if let Some(pos) = upper.find("END_TIME_NS") {
-            if let Some(value) = self.extract_numeric_comparison(&content[pos + 11..]) {
-                end_ns = value;
-            }
+        if let Some(pos) = upper.find("END_TIME_NS")
+            && let Some(value) = self.extract_numeric_comparison(&content[pos + 11..])
+        {
+            end_ns = value;
         }
 
         // Look for timestamp > N style
-        if let Some(pos) = upper.find("TIMESTAMP") {
-            if upper[pos..].starts_with("TIMESTAMP >") || upper[pos..].starts_with("TIMESTAMP >") {
-                if let Some(value) = self.extract_numeric_comparison(&content[pos + 9..]) {
-                    start_ns = value;
-                }
-            }
+        if let Some(pos) = upper.find("TIMESTAMP")
+            && (upper[pos..].starts_with("TIMESTAMP >") || upper[pos..].starts_with("TIMESTAMP >"))
+            && let Some(value) = self.extract_numeric_comparison(&content[pos + 9..])
+        {
+            start_ns = value;
         }
 
         (start_ns, end_ns)
@@ -1133,7 +1132,7 @@ impl QueryStrategy for ObservabilityStrategy {
 
         info!(
             query_type = ?query_type,
-            time_ms = result.metrics.as_ref().map(|m| m.execution_time_ms).unwrap_or(0),
+            time_ms = result.metrics.as_ref().map_or(0, |m| m.execution_time_ms),
             "Observability query completed"
         );
 

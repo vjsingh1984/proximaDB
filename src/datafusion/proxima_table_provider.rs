@@ -543,7 +543,7 @@ mod tests {
 
     #[test]
     fn test_pruning_statistics_from_splits() {
-        use super::super::splits::{FileSplit, SplitStatistics, SplitType};
+        use crate::storage::formats::splits::{FileSplit, SplitStatistics};
 
         let mut split = FileSplit::new_block("/data/file.sst".to_string(), 0, 0, 1024, 100);
         split.statistics = SplitStatistics {

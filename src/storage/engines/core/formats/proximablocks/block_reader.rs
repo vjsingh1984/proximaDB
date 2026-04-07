@@ -174,7 +174,7 @@ impl ProximaBlockReader {
         let blocks = self.deserialize_blocks(&data)?;
 
         // Prefetch ahead if requested (this would be done via access pattern tracking)
-        // TODO: Implement prefetch logic via access_tracker when available
+        // Deferred: Implement prefetch logic via access_tracker when available
 
         Ok(blocks)
     }
@@ -202,19 +202,17 @@ impl ProximaBlockReader {
         let mut filtered_blocks = Vec::new();
         for block in all_blocks {
             // Check bloom filter if enabled
-            if use_bloom_filters {
-                if let Some(bloom) = &block.bloom_filter {
-                    if !self.check_bloom_filter(bloom, &filter_expression) {
-                        continue; // Skip this block
-                    }
-                }
+            if use_bloom_filters
+                && let Some(bloom) = &block.bloom_filter
+                && !self.check_bloom_filter(bloom, &filter_expression)
+            {
+                continue; // Skip this block
             }
 
             // Check metadata statistics if enabled
-            if use_metadata_stats {
-                if !self.check_metadata_stats(&block.metadata, &filter_expression) {
-                    continue; // Skip this block
-                }
+            if use_metadata_stats && !self.check_metadata_stats(&block.metadata, &filter_expression)
+            {
+                continue; // Skip this block
             }
 
             // Block passed all filters
@@ -249,7 +247,7 @@ impl ProximaBlockReader {
             let block_idx = idx as u32;
             if block_idx >= start_block && block_idx <= end_block {
                 // Check for overlaps if requested
-                // TODO: Implement overlap checking with bloom filters
+                // Deferred: Implement overlap checking with bloom filters
                 range_blocks.push(block);
             }
         }
@@ -281,20 +279,17 @@ impl ProximaBlockReader {
 
         for block in all_blocks {
             // Check bloom filter for each target key
-            if use_bloom_filters {
-                if let Some(bloom) = &block.bloom_filter {
-                    let mut has_match = false;
-                    for key in target_keys {
-                        // SstableBloomFilter uses might_contain_key() method
-                        if !found_keys.contains(key) && bloom.might_contain_key(key).unwrap_or(true)
-                        {
-                            has_match = true;
-                            found_keys.insert(key.clone());
-                        }
+            if use_bloom_filters && let Some(bloom) = &block.bloom_filter {
+                let mut has_match = false;
+                for key in target_keys {
+                    // SstableBloomFilter uses might_contain_key() method
+                    if !found_keys.contains(key) && bloom.might_contain_key(key).unwrap_or(true) {
+                        has_match = true;
+                        found_keys.insert(key.clone());
                     }
-                    if !has_match {
-                        continue; // Skip this block
-                    }
+                }
+                if !has_match {
+                    continue; // Skip this block
                 }
             }
 
@@ -328,7 +323,7 @@ impl ProximaBlockReader {
         // Deserialize blocks in batches to respect memory budget
         let all_blocks = self.deserialize_blocks(&data)?;
 
-        // TODO: Implement actual streaming with parallel_streams and memory_budget_mb
+        // Deferred: Implement actual streaming with parallel_streams and memory_budget_mb
         // For now, return all blocks (could be batched in future)
         Ok(all_blocks)
     }
@@ -354,6 +349,7 @@ impl ProximaBlockReader {
     }
 
     /// Check bloom filter for potential matches
+    #[allow(clippy::only_used_in_recursion)]
     fn check_bloom_filter(
         &self,
         bloom: &crate::core::bloom::SstableBloomFilter,
@@ -371,7 +367,7 @@ impl ProximaBlockReader {
                 // Bloom filters typically store record IDs or field keys
                 let _check_key = format!("{field}:{value}");
                 // SstableBloomFilter doesn't have proper implementation yet
-                // TODO: Implement once bloom filter strategies are fixed
+                // Deferred: Implement once bloom filter strategies are fixed
                 true
             }
             FilterExpression::And(exprs) => {
@@ -481,7 +477,8 @@ impl ProximaBlockReader {
                             (&col_stats.min_value, &col_stats.max_value)
                         {
                             // Try numeric comparison first, fall back to string comparison
-                            let can_include = if let (Ok(val_num), Ok(min_num), Ok(max_num)) = (
+
+                            if let (Ok(val_num), Ok(min_num), Ok(max_num)) = (
                                 serde_json::from_value::<f64>(value.clone()),
                                 serde_json::from_value::<f64>(min_val.clone()),
                                 serde_json::from_value::<f64>(max_val.clone()),
@@ -516,8 +513,7 @@ impl ProximaBlockReader {
                             } else {
                                 // Can't compare types, conservatively include
                                 true
-                            };
-                            can_include
+                            }
                         } else {
                             true // No stats available
                         }

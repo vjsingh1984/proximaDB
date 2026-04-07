@@ -243,7 +243,7 @@ impl SstEngine {
         let mut error_count = 0;
 
         // Clean up SST files, bloom filters, and metadata files
-        for entry in files.iter() {
+        for entry in &files {
             if entry.name.ends_with(".sst")
                 || entry.name.ends_with(".bloom")
                 || entry.name.ends_with(".meta")
@@ -367,11 +367,11 @@ impl SstEngine {
         let mut file_sizes = HashMap::new();
 
         for file_path in &files {
-            if let Ok(fs) = self.filesystem().get_filesystem(file_path) {
-                if let Ok(metadata) = fs.metadata(file_path).await {
-                    total_size += metadata.size;
-                    file_sizes.insert(file_path.clone(), metadata.size);
-                }
+            if let Ok(fs) = self.filesystem().get_filesystem(file_path)
+                && let Ok(metadata) = fs.metadata(file_path).await
+            {
+                total_size += metadata.size;
+                file_sizes.insert(file_path.clone(), metadata.size);
             }
         }
 

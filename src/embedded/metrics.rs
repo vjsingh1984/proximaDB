@@ -261,6 +261,16 @@ impl EmbeddedMetricsCollector {
         self.cache_stats.entries.store(count, Ordering::Relaxed);
     }
 
+    /// Update total cache hits from an external cache provider.
+    pub fn set_cache_hits(&self, hits: u64) {
+        self.cache_stats.hits.store(hits, Ordering::Relaxed);
+    }
+
+    /// Update total cache misses from an external cache provider.
+    pub fn set_cache_misses(&self, misses: u64) {
+        self.cache_stats.misses.store(misses, Ordering::Relaxed);
+    }
+
     /// Update cache memory usage
     pub fn set_cache_memory_bytes(&self, bytes: u64) {
         self.cache_stats
@@ -717,10 +727,15 @@ pub struct LatencyTimer<'a> {
 
 /// Operation type for latency timer
 pub enum OperationType {
+    /// Vector similarity search operation.
     Search,
+    /// Vector insert/upsert operation.
     Insert,
+    /// Memtable flush to persistent storage.
     Flush,
+    /// Vector deletion operation.
     Delete,
+    /// Point lookup by vector ID.
     Get,
 }
 
@@ -1093,6 +1108,19 @@ mod tests {
     }
 
     #[test]
+    fn test_set_cache_hit_and_miss_totals() {
+        let collector = EmbeddedMetricsCollector::new();
+
+        collector.set_cache_hits(9);
+        collector.set_cache_misses(3);
+
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        assert_eq!(metrics.cache_hits, 9);
+        assert_eq!(metrics.cache_misses, 3);
+        assert!((metrics.cache_hit_rate - 0.75).abs() < f64::EPSILON);
+    }
+
+    #[test]
     fn test_record_cache_eviction() {
         let collector = EmbeddedMetricsCollector::new();
 
@@ -1461,7 +1489,7 @@ mod tests {
 
         let metrics = collector.snapshot(RollingWindow::AllTime);
         // Uptime should be at least 0 seconds (could be 0 if < 1 second elapsed)
-        assert!(metrics.uptime_secs >= 0);
+        let _ = metrics.uptime_secs; // always non-negative (u64)
     }
 
     #[test]
@@ -1492,5 +1520,124 @@ mod tests {
 
         assert_eq!(cloned.total_searches, metrics.total_searches);
         assert_eq!(cloned.cache_hits, metrics.cache_hits);
+    }
+
+    // ============================================================
+    // LatencyTimer tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_latency_timer_search() {
+        let collector = EmbeddedMetricsCollector::new();
+        {
+            let _timer = LatencyTimer::search(&collector);
+            // Timer records on drop
+        }
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        assert_eq!(metrics.total_searches, 1);
+    }
+
+    #[test]
+    fn test_latency_timer_insert_records_vectors() {
+        let collector = EmbeddedMetricsCollector::new();
+        {
+            let _timer = LatencyTimer::insert(&collector, 5);
+        }
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        assert_eq!(metrics.total_inserts, 1);
+        assert_eq!(metrics.total_vectors_inserted, 5);
+    }
+
+    #[test]
+    fn test_latency_timer_delete_records_count() {
+        let collector = EmbeddedMetricsCollector::new();
+        {
+            let _timer = LatencyTimer::delete(&collector, 3);
+        }
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        assert_eq!(metrics.total_deletes, 1);
+    }
+
+    #[test]
+    fn test_latency_timer_get_records_count() {
+        let collector = EmbeddedMetricsCollector::new();
+        {
+            let _timer = LatencyTimer::get(&collector);
+        }
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        assert_eq!(metrics.total_gets, 1);
+    }
+
+    #[test]
+    fn test_latency_timer_flush() {
+        let collector = EmbeddedMetricsCollector::new();
+        {
+            let _timer = LatencyTimer::flush(&collector);
+        }
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        assert_eq!(metrics.total_flushes, 1);
+    }
+
+    #[test]
+    fn test_latency_timer_with_bytes() {
+        let collector = EmbeddedMetricsCollector::new();
+        {
+            let _timer = LatencyTimer::flush(&collector).with_bytes(4096);
+        }
+        // Verify flush was recorded (bytes tracking may go to different counters)
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        assert_eq!(metrics.total_flushes, 1);
+    }
+
+    // ============================================================
+    // Prometheus export tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_prometheus_export_format_with_data() {
+        let collector = EmbeddedMetricsCollector::new();
+        collector.record_search_us(500);
+        collector.record_insert_us(200, 10);
+        collector.record_cache_hit();
+
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        let prom = metrics.to_prometheus();
+
+        assert!(prom.contains("proximadb_"), "Should use proximadb_ prefix");
+        assert!(
+            prom.contains("searches_total"),
+            "Should include search count"
+        );
+        assert!(
+            prom.contains("inserts_total"),
+            "Should include insert count"
+        );
+    }
+
+    #[test]
+    fn test_prometheus_export_empty() {
+        let collector = EmbeddedMetricsCollector::new();
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        let prom = metrics.to_prometheus();
+        // Even empty metrics should produce valid output
+        assert!(!prom.is_empty(), "Prometheus output should not be empty");
+    }
+
+    // ============================================================
+    // LatencyStats tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_latency_stats_from_histogram() {
+        let collector = EmbeddedMetricsCollector::new();
+        // Record some search latencies
+        for i in 0..100 {
+            collector.record_search_us(i * 10);
+        }
+        let metrics = collector.snapshot(RollingWindow::AllTime);
+        assert!(
+            metrics.search_latency.mean_ms > 0.0,
+            "Average latency should be positive"
+        );
     }
 }

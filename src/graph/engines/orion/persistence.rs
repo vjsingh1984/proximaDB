@@ -113,6 +113,22 @@ impl std::fmt::Debug for OrionPersistence {
 }
 
 impl OrionPersistence {
+    fn read_lock<'a, T>(
+        lock: &'a std::sync::RwLock<T>,
+        lock_name: &str,
+    ) -> Result<std::sync::RwLockReadGuard<'a, T>> {
+        lock.read()
+            .map_err(|_| ProximaDBError::Internal(format!("{lock_name} read lock poisoned")))
+    }
+
+    fn write_lock<'a, T>(
+        lock: &'a std::sync::RwLock<T>,
+        lock_name: &str,
+    ) -> Result<std::sync::RwLockWriteGuard<'a, T>> {
+        lock.write()
+            .map_err(|_| ProximaDBError::Internal(format!("{lock_name} write lock poisoned")))
+    }
+
     /// Create a new persistence manager for a specific graph
     pub async fn new(graph_id: String, base_url: String, enable_wal: bool) -> Result<Self> {
         // Create filesystem factory with default configuration and initialize filesystems
@@ -162,7 +178,9 @@ impl OrionPersistence {
 
             // Extract path component for WAL writer (strip file:// prefix if present)
             let wal_path_str = if wal_url.starts_with("file://") {
-                wal_url.strip_prefix("file://").unwrap().to_string()
+                wal_url
+                    .strip_prefix("file://")
+                    .map_or_else(|| wal_url.clone(), |s| s.to_string())
             } else {
                 wal_url.clone()
             };
@@ -230,16 +248,6 @@ impl OrionPersistence {
             .map(|entry| (*entry.value()).clone())
             .collect::<Vec<_>>();
 
-        // Get CSR data
-        let csr_outgoing = engine
-            .csr_outgoing
-            .read()
-            .expect("CSR outgoing read lock poisoned");
-        let csr_incoming = engine
-            .csr_incoming
-            .read()
-            .expect("CSR incoming read lock poisoned");
-
         // Build node_to_index mapping
         let node_to_index = engine
             .node_to_index
@@ -247,15 +255,37 @@ impl OrionPersistence {
             .map(|entry| (entry.key().clone(), *entry.value()))
             .collect::<HashMap<_, _>>();
 
+        // Clone data needed for snapshot - guards are dropped when block ends
+        let (
+            csr_outgoing_offsets,
+            csr_outgoing_targets,
+            csr_incoming_offsets,
+            csr_incoming_sources,
+        ) = {
+            let csr_outgoing = Self::read_lock(&engine.csr_outgoing, "CSR outgoing")?;
+            let csr_incoming = Self::read_lock(&engine.csr_incoming, "CSR incoming")?;
+            let csr_outgoing_offsets = csr_outgoing.offsets.clone();
+            let csr_outgoing_targets = csr_outgoing.targets.clone();
+            let csr_incoming_offsets = csr_incoming.offsets.clone();
+            let csr_incoming_sources = csr_incoming.targets.clone();
+            // Guards dropped here when block ends
+            Ok::<(Vec<_>, Vec<_>, Vec<_>, Vec<_>), ProximaDBError>((
+                csr_outgoing_offsets,
+                csr_outgoing_targets,
+                csr_incoming_offsets,
+                csr_incoming_sources,
+            ))
+        }?;
+
         // Create snapshot
         let snapshot = OrionSnapshot {
             version: 1,
             nodes: nodes.into_iter().map(|n| (*n).clone()).collect(),
             edges: edges.into_iter().map(|e| (*e).clone()).collect(),
-            csr_outgoing_offsets: csr_outgoing.offsets.clone(),
-            csr_outgoing_targets: csr_outgoing.targets.clone(),
-            csr_incoming_offsets: csr_incoming.offsets.clone(),
-            csr_incoming_sources: csr_incoming.targets.clone(), // Note: 'targets' stores sources for incoming
+            csr_outgoing_offsets,
+            csr_outgoing_targets,
+            csr_incoming_offsets,
+            csr_incoming_sources, // Note: 'targets' stores sources for incoming
             node_to_index,
             timestamp: chrono::Utc::now().timestamp(),
         };
@@ -323,13 +353,12 @@ impl OrionPersistence {
         info!("Loading ORION snapshot from {:?}", snapshot_path.as_ref());
 
         // Read compressed snapshot
-        let compressed = self
-            .filesystem_factory
-            .read(snapshot_path.as_ref().to_str().unwrap())
-            .await
-            .map_err(|e| {
-                ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
-            })?;
+        let path_str = snapshot_path.as_ref().to_str().ok_or_else(|| {
+            ProximaDBError::InvalidInput("Snapshot path contains invalid UTF-8".to_string())
+        })?;
+        let compressed = self.filesystem_factory.read(path_str).await.map_err(|e| {
+            ProximaDBError::Storage(crate::core::error::StorageError::SstEngine(e.to_string()))
+        })?;
 
         // Decompress data
         let decompressed = self.decompress_data(&compressed)?;
@@ -361,19 +390,13 @@ impl OrionPersistence {
 
         // Restore CSR structures
         {
-            let mut csr_out = engine
-                .csr_outgoing
-                .write()
-                .expect("CSR outgoing write lock poisoned");
+            let mut csr_out = Self::write_lock(&engine.csr_outgoing, "CSR outgoing")?;
             csr_out.offsets = snapshot.csr_outgoing_offsets;
             csr_out.targets = snapshot.csr_outgoing_targets;
         }
 
         {
-            let mut csr_in = engine
-                .csr_incoming
-                .write()
-                .expect("CSR incoming write lock poisoned");
+            let mut csr_in = Self::write_lock(&engine.csr_incoming, "CSR incoming")?;
             csr_in.offsets = snapshot.csr_incoming_offsets;
             csr_in.targets = snapshot.csr_incoming_sources;
         }
@@ -385,10 +408,7 @@ impl OrionPersistence {
 
         // Rebuild index_to_node
         {
-            let mut index_to_node = engine
-                .index_to_node
-                .write()
-                .expect("index_to_node write lock poisoned");
+            let mut index_to_node = Self::write_lock(&engine.index_to_node, "index_to_node")?;
             index_to_node.clear();
             let mut node_indices: Vec<(NodeId, usize)> = engine
                 .node_to_index
@@ -404,7 +424,10 @@ impl OrionPersistence {
 
         // Update stats
         {
-            let mut stats = engine.stats.write().expect("stats write lock poisoned");
+            let mut stats = engine
+                .stats
+                .write()
+                .map_err(|_| ProximaDBError::Internal("stats write lock poisoned".to_string()))?;
             stats.nodes_created = engine.memory_pool.nodes.len() as u64;
             stats.edges_created = engine.edge_metadata.len() as u64;
         }
@@ -758,11 +781,10 @@ impl OrionPersistence {
             );
 
             for entry in entries {
-                if entry.is_graph_operation() {
-                    if let crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation::GraphOp(graph_op) = entry.operation {
+                if entry.is_graph_operation()
+                    && let crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation::GraphOp(graph_op) = entry.operation {
                         self.apply_graph_operation(engine, graph_op).await?;
                     }
-                }
             }
 
             tracing::info!("WAL replay completed for graph {}", self.graph_id);
@@ -877,12 +899,33 @@ impl OrionPersistence {
     }
 
     /// Create a checkpoint (snapshot + truncate WAL)
+    ///
+    /// Saves a full snapshot, then truncates the WAL directory so that
+    /// replay after a restart starts from this checkpoint.
     pub async fn checkpoint(&self, engine: &OrionGraphEngine) -> Result<PathBuf> {
         let snapshot_path = self.save_snapshot(engine).await?;
 
-        // WAL truncation will be implemented when WAL is added
-        if self.wal_path.is_some() {
-            debug!("WAL truncation placeholder - to be implemented");
+        // Truncate WAL: remove all segment files so replay is a no-op after
+        // a clean checkpoint.  The next write re-creates segment files.
+        if let Some(ref wal_path) = self.wal_path
+            && wal_path.exists()
+        {
+            match std::fs::read_dir(wal_path) {
+                Ok(entries) => {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file()
+                            && let Err(e) = std::fs::remove_file(&path)
+                        {
+                            tracing::warn!("Failed to truncate WAL segment {:?}: {}", path, e);
+                        }
+                    }
+                    info!("WAL truncated after checkpoint for graph {}", self.graph_id);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to read WAL directory for truncation: {}", e);
+                }
+            }
         }
 
         Ok(snapshot_path)
@@ -1108,4 +1151,4 @@ impl OrionPersistence {
 }
 
 // Tests temporarily removed due to compilation issues
-// TODO: Fix tests once OrionGraphEngine methods are properly implemented
+// Deferred: Fix tests once OrionGraphEngine methods are properly implemented

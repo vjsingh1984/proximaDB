@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tracing::warn;
 
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::error::ProximaDBError;
@@ -310,21 +311,51 @@ impl MetadataSerializer for SstMetadataSerializer {
         }
 
         let global = SstGlobalHeader {
-            file_size: u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap()),
-            num_blocks: u32::from_le_bytes(data[offset + 8..offset + 12].try_into().unwrap()),
+            file_size: u64::from_le_bytes(data[offset..offset + 8].try_into().map_err(|_| {
+                ProximaDBError::InvalidInput("Invalid byte slice size for file_size".into())
+            })?),
+            num_blocks: u32::from_le_bytes(data[offset + 8..offset + 12].try_into().map_err(
+                |_| ProximaDBError::InvalidInput("Invalid byte slice size for num_blocks".into()),
+            )?),
             bloom_filter_offset: u32::from_le_bytes(
-                data[offset + 12..offset + 16].try_into().unwrap(),
+                data[offset + 12..offset + 16].try_into().map_err(|_| {
+                    ProximaDBError::InvalidInput(
+                        "Invalid byte slice size for bloom_filter_offset".into(),
+                    )
+                })?,
             ),
             bloom_filter_size: u32::from_le_bytes(
-                data[offset + 16..offset + 20].try_into().unwrap(),
+                data[offset + 16..offset + 20].try_into().map_err(|_| {
+                    ProximaDBError::InvalidInput(
+                        "Invalid byte slice size for bloom_filter_size".into(),
+                    )
+                })?,
             ),
-            index_offset: u32::from_le_bytes(data[offset + 20..offset + 24].try_into().unwrap()),
-            index_size: u32::from_le_bytes(data[offset + 24..offset + 28].try_into().unwrap()),
-            total_records: u64::from_le_bytes(data[offset + 28..offset + 36].try_into().unwrap()),
-            min_timestamp: u64::from_le_bytes(data[offset + 36..offset + 44].try_into().unwrap()),
-            max_timestamp: u64::from_le_bytes(data[offset + 44..offset + 52].try_into().unwrap()),
+            index_offset: u32::from_le_bytes(data[offset + 20..offset + 24].try_into().map_err(
+                |_| ProximaDBError::InvalidInput("Invalid byte slice size for index_offset".into()),
+            )?),
+            index_size: u32::from_le_bytes(data[offset + 24..offset + 28].try_into().map_err(
+                |_| ProximaDBError::InvalidInput("Invalid byte slice size for index_size".into()),
+            )?),
+            total_records: u64::from_le_bytes(data[offset + 28..offset + 36].try_into().map_err(
+                |_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for total_records".into())
+                },
+            )?),
+            min_timestamp: u64::from_le_bytes(data[offset + 36..offset + 44].try_into().map_err(
+                |_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for min_timestamp".into())
+                },
+            )?),
+            max_timestamp: u64::from_le_bytes(data[offset + 44..offset + 52].try_into().map_err(
+                |_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for max_timestamp".into())
+                },
+            )?),
             compression_ratio: data[offset + 52],
-            reserved: data[offset + 53..offset + 60].try_into().unwrap(),
+            reserved: data[offset + 53..offset + 60].try_into().map_err(|_| {
+                ProximaDBError::InvalidInput("Invalid byte slice size for reserved".into())
+            })?,
         };
         offset += 60;
 
@@ -353,28 +384,62 @@ impl MetadataSerializer for SstMetadataSerializer {
         let mut blocks = Vec::new();
         for _ in 0..block_count {
             let block = SstBlockHeader {
-                offset: u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap()),
+                offset: u64::from_le_bytes(data[offset..offset + 8].try_into().map_err(|_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for offset".into())
+                })?),
                 compressed_size: u32::from_le_bytes(
-                    data[offset + 8..offset + 12].try_into().unwrap(),
+                    data[offset + 8..offset + 12].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for compressed_size".into(),
+                        )
+                    })?,
                 ),
                 uncompressed_size: u32::from_le_bytes(
-                    data[offset + 12..offset + 16].try_into().unwrap(),
+                    data[offset + 12..offset + 16].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for uncompressed_size".into(),
+                        )
+                    })?,
                 ),
                 record_count: u32::from_le_bytes(
-                    data[offset + 16..offset + 20].try_into().unwrap(),
+                    data[offset + 16..offset + 20].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for record_count".into(),
+                        )
+                    })?,
                 ),
                 bloom_offset: u32::from_le_bytes(
-                    data[offset + 20..offset + 24].try_into().unwrap(),
+                    data[offset + 20..offset + 24].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for bloom_offset".into(),
+                        )
+                    })?,
                 ),
-                bloom_size: u32::from_le_bytes(data[offset + 24..offset + 28].try_into().unwrap()),
+                bloom_size: u32::from_le_bytes(data[offset + 24..offset + 28].try_into().map_err(
+                    |_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for bloom_size".into(),
+                        )
+                    },
+                )?),
                 min_key_hash: u64::from_le_bytes(
-                    data[offset + 28..offset + 36].try_into().unwrap(),
+                    data[offset + 28..offset + 36].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for min_key_hash".into(),
+                        )
+                    })?,
                 ),
                 max_key_hash: u64::from_le_bytes(
-                    data[offset + 36..offset + 44].try_into().unwrap(),
+                    data[offset + 36..offset + 44].try_into().map_err(|_| {
+                        ProximaDBError::InvalidInput(
+                            "Invalid byte slice size for max_key_hash".into(),
+                        )
+                    })?,
                 ),
                 priority: data[offset + 44],
-                reserved: data[offset + 45..offset + 52].try_into().unwrap(),
+                reserved: data[offset + 45..offset + 52].try_into().map_err(|_| {
+                    ProximaDBError::InvalidInput("Invalid byte slice size for reserved".into())
+                })?,
             };
             blocks.push(block);
             offset += block_header_size;
@@ -414,15 +479,17 @@ impl MetadataSerializer for SstMetadataSerializer {
     }
 
     fn can_skip_file(&self, metadata: &dyn EngineMetadata, query_context: &QueryContext) -> bool {
-        let sst_metadata = metadata.as_any().downcast_ref::<SstMetadata>().unwrap();
+        let Some(sst_metadata) = metadata.as_any().downcast_ref::<SstMetadata>() else {
+            warn!("Invalid metadata type for SST serializer in can_skip_file; cannot skip");
+            return false;
+        };
 
         // Check TTL first (fastest filter)
-        if let Some(ttl_threshold) = query_context.metadata_filters.get("ttl_threshold") {
-            if let Ok(threshold) = ttl_threshold.parse::<u64>() {
-                if sst_metadata.global.max_timestamp < threshold {
-                    return true; // Entire file is expired
-                }
-            }
+        if let Some(ttl_threshold) = query_context.metadata_filters.get("ttl_threshold")
+            && let Ok(threshold) = ttl_threshold.parse::<u64>()
+            && sst_metadata.global.max_timestamp < threshold
+        {
+            return true; // Entire file is expired
         }
 
         // Check global bloom filter for ID lookups
@@ -463,7 +530,12 @@ impl MetadataSerializer for SstMetadataSerializer {
         metadata: &dyn EngineMetadata,
         query_context: &QueryContext,
     ) -> Option<Vec<DataRange>> {
-        let sst_metadata = metadata.as_any().downcast_ref::<SstMetadata>().unwrap();
+        let Some(sst_metadata) = metadata.as_any().downcast_ref::<SstMetadata>() else {
+            warn!(
+                "Invalid metadata type for SST serializer in get_required_ranges; falling back to full read"
+            );
+            return None;
+        };
 
         // If we can read everything, return None (signals read entire file)
         if query_context.id_lookups.is_empty() && query_context.query_vector.is_some() {
@@ -482,7 +554,7 @@ impl MetadataSerializer for SstMetadataSerializer {
             });
 
             // Check each block against ID lookups
-            for (_i, block) in sst_metadata.blocks.iter().enumerate() {
+            for block in sst_metadata.blocks.iter() {
                 let mut need_block = false;
 
                 for id in &query_context.id_lookups {

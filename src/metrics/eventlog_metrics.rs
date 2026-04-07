@@ -7,93 +7,169 @@
 
 //! EventLog metrics and monitoring
 
-use prometheus::{
-    register_counter_vec, register_gauge_vec, register_histogram_vec,
-    CounterVec, GaugeVec, HistogramVec, exponential_buckets,
-};
 use lazy_static::lazy_static;
+use prometheus::{
+    CounterVec, GaugeVec, HistogramOpts, HistogramVec, Opts, exponential_buckets,
+    register_counter_vec, register_gauge_vec, register_histogram_vec,
+};
 use std::sync::Arc;
 use tracing::{debug, error};
 
+fn register_counter_vec_safe(name: &str, help: &str, labels: &[&str]) -> CounterVec {
+    match register_counter_vec!(name, help, labels) {
+        Ok(metric) => metric,
+        Err(reg_err) => {
+            error!("Failed to register {}: {}", name, reg_err);
+            match CounterVec::new(Opts::new(name, help), labels) {
+                Ok(metric) => metric,
+                Err(local_err) => {
+                    error!(
+                        "Failed to create local fallback for {}: {}",
+                        name, local_err
+                    );
+                    let fallback_name = format!("{}_fallback", name);
+                    CounterVec::new(Opts::new(fallback_name, help), labels)
+                        .unwrap_or_else(|_| unreachable!("valid counter metric descriptor"))
+                }
+            }
+        }
+    }
+}
+
+fn register_gauge_vec_safe(name: &str, help: &str, labels: &[&str]) -> GaugeVec {
+    match register_gauge_vec!(name, help, labels) {
+        Ok(metric) => metric,
+        Err(reg_err) => {
+            error!("Failed to register {}: {}", name, reg_err);
+            match GaugeVec::new(Opts::new(name, help), labels) {
+                Ok(metric) => metric,
+                Err(local_err) => {
+                    error!(
+                        "Failed to create local fallback for {}: {}",
+                        name, local_err
+                    );
+                    let fallback_name = format!("{}_fallback", name);
+                    GaugeVec::new(Opts::new(fallback_name, help), labels)
+                        .unwrap_or_else(|_| unreachable!("valid gauge metric descriptor"))
+                }
+            }
+        }
+    }
+}
+
+fn register_histogram_vec_safe(
+    name: &str,
+    help: &str,
+    labels: &[&str],
+    buckets: Vec<f64>,
+) -> HistogramVec {
+    match register_histogram_vec!(name, help, labels, buckets.clone()) {
+        Ok(metric) => metric,
+        Err(reg_err) => {
+            error!("Failed to register {}: {}", name, reg_err);
+            match HistogramVec::new(
+                HistogramOpts::new(name, help).buckets(buckets.clone()),
+                labels,
+            ) {
+                Ok(metric) => metric,
+                Err(local_err) => {
+                    error!(
+                        "Failed to create local fallback for {}: {}",
+                        name, local_err
+                    );
+                    let fallback_name = format!("{}_fallback", name);
+                    HistogramVec::new(
+                        HistogramOpts::new(fallback_name, help).buckets(buckets),
+                        labels,
+                    )
+                    .unwrap_or_else(|_| unreachable!("valid histogram metric descriptor"))
+                }
+            }
+        }
+    }
+}
+
 lazy_static! {
     /// Total events created by type
-    pub static ref EVENTLOG_EVENTS_CREATED: CounterVec = register_counter_vec!(
+    pub static ref EVENTLOG_EVENTS_CREATED: CounterVec = register_counter_vec_safe(
         "proximadb_eventlog_events_created_total",
         "Total number of events created in EventLog",
         &["collection_id", "event_type", "storage_engine"]
-    ).expect("Failed to register proximadb_eventlog_events_created metric");
+    );
 
     /// Total events processed by type
-    pub static ref EVENTLOG_EVENTS_PROCESSED: CounterVec = register_counter_vec!(
+    pub static ref EVENTLOG_EVENTS_PROCESSED: CounterVec = register_counter_vec_safe(
         "proximadb_eventlog_events_processed_total",
         "Total number of events processed from EventLog",
         &["collection_id", "event_type", "storage_engine", "status"]
-    ).expect("Failed to register proximadb_eventlog_events_processed metric");
+    );
 
     /// Current pending events
-    pub static ref EVENTLOG_PENDING_EVENTS: GaugeVec = register_gauge_vec!(
+    pub static ref EVENTLOG_PENDING_EVENTS: GaugeVec = register_gauge_vec_safe(
         "proximadb_eventlog_pending_events",
         "Current number of pending events in EventLog",
         &["collection_id", "event_type"]
-    ).expect("Failed to register proximadb_eventlog_pending_events metric");
+    );
 
     /// Event processing time
-    pub static ref EVENTLOG_PROCESSING_TIME: HistogramVec = register_histogram_vec!(
+    pub static ref EVENTLOG_PROCESSING_TIME: HistogramVec = register_histogram_vec_safe(
         "proximadb_eventlog_processing_time_seconds",
         "Time taken to process EventLog events",
         &["collection_id", "event_type", "operation"],
-        exponential_buckets(0.001, 2.0, 15).unwrap() // 1ms to 16s
-    ).expect("Failed to register proximadb_eventlog_processing_time metric");
+        exponential_buckets(0.001, 2.0, 15)
+            .unwrap_or_else(|_| vec![0.001, 0.01, 0.1, 1.0, 10.0]),
+    );
 
     /// Vector extraction count
-    pub static ref EVENTLOG_VECTORS_EXTRACTED: CounterVec = register_counter_vec!(
+    pub static ref EVENTLOG_VECTORS_EXTRACTED: CounterVec = register_counter_vec_safe(
         "proximadb_eventlog_vectors_extracted_total",
         "Total number of vectors extracted from storage files",
         &["collection_id", "storage_engine", "extraction_mode"]
-    ).expect("Failed to register proximadb_eventlog_vectors_extracted metric");
+    );
 
     /// Files pending indexing
-    pub static ref EVENTLOG_FILES_PENDING: GaugeVec = register_gauge_vec!(
+    pub static ref EVENTLOG_FILES_PENDING: GaugeVec = register_gauge_vec_safe(
         "proximadb_eventlog_files_pending_indexing",
         "Current number of files pending AXIS indexing",
         &["collection_id", "storage_engine"]
-    ).expect("Failed to register proximadb_eventlog_files_pending metric");
+    );
 
     /// EventLog WAL size
-    pub static ref EVENTLOG_WAL_SIZE_BYTES: GaugeVec = register_gauge_vec!(
+    pub static ref EVENTLOG_WAL_SIZE_BYTES: GaugeVec = register_gauge_vec_safe(
         "proximadb_eventlog_wal_size_bytes",
         "Current size of EventLog WAL in bytes",
         &["wal_type"]
-    ).expect("Failed to register proximadb_eventlog_wal_size metric");
+    );
 
     /// EventLog queue depth
-    pub static ref EVENTLOG_QUEUE_DEPTH: GaugeVec = register_gauge_vec!(
+    pub static ref EVENTLOG_QUEUE_DEPTH: GaugeVec = register_gauge_vec_safe(
         "proximadb_eventlog_queue_depth",
         "Current depth of EventLog queue",
         &["priority"]
-    ).expect("Failed to register proximadb_eventlog_queue_depth metric");
+    );
 
     /// Consumer batch size
-    pub static ref EVENTLOG_CONSUMER_BATCH_SIZE: HistogramVec = register_histogram_vec!(
+    pub static ref EVENTLOG_CONSUMER_BATCH_SIZE: HistogramVec = register_histogram_vec_safe(
         "proximadb_eventlog_consumer_batch_size",
         "Number of events processed in each consumer batch",
         &["consumer_id"],
-        exponential_buckets(1.0, 2.0, 10).unwrap() // 1 to 512
-    ).expect("Failed to register proximadb_eventlog_consumer_batch_size metric");
+        exponential_buckets(1.0, 2.0, 10)
+            .unwrap_or_else(|_| vec![1.0, 2.0, 4.0, 8.0, 16.0]),
+    );
 
     /// Compaction blocked files
-    pub static ref EVENTLOG_COMPACTION_BLOCKED_FILES: GaugeVec = register_gauge_vec!(
+    pub static ref EVENTLOG_COMPACTION_BLOCKED_FILES: GaugeVec = register_gauge_vec_safe(
         "proximadb_eventlog_compaction_blocked_files",
         "Number of files blocked from compaction due to pending indexing",
         &["collection_id", "storage_engine"]
-    ).expect("Failed to register proximadb_eventlog_compaction_blocked_files metric");
+    );
 
     /// Self-healing transitions
-    pub static ref EVENTLOG_SELF_HEALING_TRANSITIONS: CounterVec = register_counter_vec!(
+    pub static ref EVENTLOG_SELF_HEALING_TRANSITIONS: CounterVec = register_counter_vec_safe(
         "proximadb_eventlog_self_healing_transitions_total",
         "Total number of files transitioning from pending to ready",
         &["collection_id", "storage_engine"]
-    ).expect("Failed to register proximadb_eventlog_self_healing_transitions metric");
+    );
 }
 
 /// EventLog metrics collector
@@ -109,14 +185,14 @@ impl EventLogMetricsCollector {
             collection_id: None,
         }
     }
-    
+
     /// Create collector for specific collection
     pub fn for_collection(collection_id: impl Into<String>) -> Self {
         Self {
             collection_id: Some(collection_id.into()),
         }
     }
-    
+
     /// Record event creation
     pub fn record_event_created(
         &self,
@@ -127,17 +203,17 @@ impl EventLogMetricsCollector {
         EVENTLOG_EVENTS_CREATED
             .with_label_values(&[collection_id, event_type, storage_engine])
             .inc();
-        
+
         EVENTLOG_PENDING_EVENTS
             .with_label_values(&[collection_id, event_type])
             .inc();
-        
+
         debug!(
             "📊 EventLog metric: Event created - collection={}, type={}, engine={}",
             collection_id, event_type, storage_engine
         );
     }
-    
+
     /// Record event processing
     pub fn record_event_processed(
         &self,
@@ -148,27 +224,27 @@ impl EventLogMetricsCollector {
         duration_secs: f64,
     ) {
         let status = if success { "success" } else { "failure" };
-        
+
         EVENTLOG_EVENTS_PROCESSED
             .with_label_values(&[collection_id, event_type, storage_engine, status])
             .inc();
-        
+
         if success {
             EVENTLOG_PENDING_EVENTS
                 .with_label_values(&[collection_id, event_type])
                 .dec();
         }
-        
+
         EVENTLOG_PROCESSING_TIME
             .with_label_values(&[collection_id, event_type, "total"])
             .observe(duration_secs);
-        
+
         debug!(
             "📊 EventLog metric: Event processed - collection={}, type={}, status={}, duration={}s",
             collection_id, event_type, status, duration_secs
         );
     }
-    
+
     /// Record vector extraction
     pub fn record_vectors_extracted(
         &self,
@@ -180,13 +256,13 @@ impl EventLogMetricsCollector {
         EVENTLOG_VECTORS_EXTRACTED
             .with_label_values(&[collection_id, storage_engine, extraction_mode])
             .inc_by(count);
-        
+
         debug!(
             "📊 EventLog metric: Vectors extracted - collection={}, engine={}, mode={}, count={}",
             collection_id, storage_engine, extraction_mode, count
         );
     }
-    
+
     /// Record file pending status change
     pub fn record_file_pending_change(
         &self,
@@ -203,49 +279,49 @@ impl EventLogMetricsCollector {
                 .with_label_values(&[collection_id, storage_engine])
                 .sub((-delta) as f64);
         }
-        
+
         debug!(
             "📊 EventLog metric: Files pending change - collection={}, engine={}, delta={}",
             collection_id, storage_engine, delta
         );
     }
-    
+
     /// Record WAL size
     pub fn record_wal_size(&self, wal_type: &str, size_bytes: u64) {
         EVENTLOG_WAL_SIZE_BYTES
             .with_label_values(&[wal_type])
             .set(size_bytes as f64);
-        
+
         debug!(
             "📊 EventLog metric: WAL size - type={}, size={}",
             wal_type, size_bytes
         );
     }
-    
+
     /// Record queue depth
     pub fn record_queue_depth(&self, priority: &str, depth: u64) {
         EVENTLOG_QUEUE_DEPTH
             .with_label_values(&[priority])
             .set(depth as f64);
-        
+
         debug!(
             "📊 EventLog metric: Queue depth - priority={}, depth={}",
             priority, depth
         );
     }
-    
+
     /// Record consumer batch size
     pub fn record_consumer_batch(&self, consumer_id: &str, batch_size: u64) {
         EVENTLOG_CONSUMER_BATCH_SIZE
             .with_label_values(&[consumer_id])
             .observe(batch_size as f64);
-        
+
         debug!(
             "📊 EventLog metric: Consumer batch - id={}, size={}",
             consumer_id, batch_size
         );
     }
-    
+
     /// Record compaction blocked files
     pub fn record_compaction_blocked(
         &self,
@@ -256,25 +332,25 @@ impl EventLogMetricsCollector {
         EVENTLOG_COMPACTION_BLOCKED_FILES
             .with_label_values(&[collection_id, storage_engine])
             .set(blocked_count as f64);
-        
+
         debug!(
             "📊 EventLog metric: Compaction blocked - collection={}, engine={}, count={}",
             collection_id, storage_engine, blocked_count
         );
     }
-    
+
     /// Record self-healing transition
     pub fn record_self_healing(&self, collection_id: &str, storage_engine: &str) {
         EVENTLOG_SELF_HEALING_TRANSITIONS
             .with_label_values(&[collection_id, storage_engine])
             .inc();
-        
+
         debug!(
             "📊 EventLog metric: Self-healing transition - collection={}, engine={}",
             collection_id, storage_engine
         );
     }
-    
+
     /// Record operation timing
     pub fn record_operation_time(
         &self,
@@ -286,11 +362,17 @@ impl EventLogMetricsCollector {
         EVENTLOG_PROCESSING_TIME
             .with_label_values(&[collection_id, event_type, operation])
             .observe(duration_secs);
-        
+
         debug!(
             "📊 EventLog metric: Operation time - collection={}, type={}, op={}, duration={}s",
             collection_id, event_type, operation, duration_secs
         );
+    }
+}
+
+impl Default for EventLogMetricsCollector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -306,13 +388,13 @@ pub async fn start_metrics_reporter(
     tokio::spawn(async move {
         let mut shutdown = shutdown;
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        
+
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     // Log summary metrics
                     debug!("📊 EventLog Metrics Summary:");
-                    
+
                     // Get pending events count
                     // In production, we'd query actual metrics
                     debug!("  Pending events: (queried from metrics)");
@@ -333,11 +415,11 @@ pub async fn start_metrics_reporter(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_metrics_recording() {
         let collector = EventLogMetricsCollector::new();
-        
+
         // Record various metrics
         collector.record_event_created("test_collection", "flush", "sst");
         collector.record_event_processed("test_collection", "flush", "sst", true, 0.125);
@@ -348,15 +430,15 @@ mod tests {
         collector.record_consumer_batch("consumer_1", 10);
         collector.record_compaction_blocked("test_collection", "sst", 2);
         collector.record_self_healing("test_collection", "sst");
-        
+
         // Metrics should be recorded without panicking
         // In production tests, we'd verify actual metric values
     }
-    
+
     #[test]
     fn test_collection_scoped_metrics() {
         let collector = EventLogMetricsCollector::for_collection("scoped_collection");
-        
+
         // Collection-scoped collector should work the same way
         collector.record_event_created("scoped_collection", "compaction_info", "viper");
         collector.record_vectors_extracted("scoped_collection", "viper", "quantized_only", 50);

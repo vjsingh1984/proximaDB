@@ -17,33 +17,58 @@ use tracing::{debug, info, instrument};
 // Import types from refactored quantized_columns module
 
 // Create compatibility types for progressive search
+/// Binary sketch representation for fast approximate distance computation
+///
+/// Stores a compressed binary representation of vectors for Hamming distance
+/// calculations in the first stage of progressive search.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct BinarySketch {
+    /// Bit-packed binary representation
     bits: Vec<u8>,
 }
 
+/// INT8 quantized vector representation
+///
+/// Stores vectors quantized to 8-bit integers with scale and zero point
+/// for efficient distance computation with reduced memory footprint.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct Int8Vector {
+    /// Quantized values
     values: Vec<i8>,
+    /// Scale factor for dequantization
     scale: f32,
+    /// Zero point for quantization
     zero_point: i8,
 }
 
+/// Product Quantization (PQ) code representation
+///
+/// Stores PQ codes for highly compressed vector representation,
+/// enabling fast approximate distance computation via lookup tables.
 #[derive(Debug, Clone)]
 struct PQCode {
+    /// PQ codes (one per segment)
     codes: Vec<u8>,
 }
 
+/// Distance lookup table for Product Quantization
+///
+/// Pre-computed distance table for efficient PQ distance computation.
+/// Maps (segment, centroid) pairs to distance values.
 #[derive(Debug, Clone)]
 struct DistanceTable {
+    /// 2D table: segment -> centroid -> distance
     table: Vec<Vec<f32>>,
 }
 
 /// Simple quantization adapter that wraps UnifiedQuantizationEngine
-/// Provides the specific methods needed for progressive search
+///
+/// Provides the specific methods needed for progressive search, bridging
+/// the unified quantization engine with NOVA's multi-stage search pipeline.
 struct QuantizationAdapter {
+    /// Underlying unified quantization engine
     engine: Arc<UnifiedQuantizationEngine>,
 }
 
@@ -118,74 +143,110 @@ impl QuantizationAdapter {
     }
 }
 /// Configuration for progressive columnar search
+///
+/// Configures the multi-stage progressive search pipeline with parameters
+/// for each quantization stage and overall search behavior.
 #[derive(Debug, Clone)]
 pub struct ProgressiveSearchConfig {
-    /// Stage configurations
+    /// Binary quantization stage configuration
     pub binary_config: StageConfig,
+    /// INT8 quantization stage configuration
     pub int8_config: StageConfig,
+    /// Product Quantization stage configuration
     pub pq_config: StageConfig,
+    /// Full precision final stage configuration
     pub full_precision_config: StageConfig,
 
-    /// Streaming configuration
+    /// Streaming configuration for memory-efficient processing
     pub streaming_config: StreamingConfig,
-    /// Search optimization settings
+    /// Enable cost-based row group ordering
     pub cost_based_ordering: bool,
+    /// Enable adaptive distance thresholds
     pub adaptive_thresholds: bool,
+    /// Enable superblock-level pruning
     pub enable_superblock_pruning: bool,
-    /// Quality vs Performance trade-offs
-    pub quality_target: f32, // 0.0 (speed) to 1.0 (quality_level)
+    /// Quality vs performance trade-off (0.0 = fastest, 1.0 = best quality)
+    pub quality_target: f32,
+    /// Optional latency budget in milliseconds
     pub latency_budget_ms: Option<u64>,
+    /// Optional memory budget in bytes
     pub memory_budget_bytes: Option<usize>,
 }
 /// Configuration for a single search stage
+///
+/// Defines the behavior and constraints for one stage in the progressive
+/// search pipeline (binary, INT8, PQ, or full precision).
 #[derive(Debug, Clone, Default)]
 pub struct StageConfig {
     /// Maximum candidates to pass to next stage
     pub max_candidates: usize,
-    /// Distance threshold for filtering
+    /// Distance threshold for filtering (candidates above threshold are rejected)
     pub distance_threshold: Option<f32>,
-    /// Memory limit for this stage
+    /// Memory limit for this stage in bytes
     pub memory_limit: usize,
-    /// Enable parallel processing
+    /// Enable parallel processing within the stage
     pub enable_parallelism: bool,
-    /// Timeout for stage completion
+    /// Timeout for stage completion in milliseconds
     pub timeout_ms: u64,
 }
 
 /// Result of progressive search
+///
+/// Contains the final search results along with detailed performance
+/// metrics for each stage of the progressive search pipeline.
 #[derive(Debug)]
 pub struct ProgressiveSearchResult {
-    /// Final results
+    /// Final top-k results
     pub results: Vec<VectorRecord>,
     /// Performance metrics per stage
     pub stage_metrics: Vec<StageMetrics>,
-    /// Overall search metrics
+    /// Total search time in milliseconds
     pub total_time_ms: u64,
+    /// Total candidates processed across all stages
     pub total_candidates_processed: usize,
+    /// Total candidates filtered out across all stages
     pub total_candidates_filtered: usize,
+    /// Peak memory usage during search (bytes)
     pub memory_peak_usage: usize,
+    /// Number of row groups scanned
     pub row_groups_scanned: usize,
+    /// Number of superblocks pruned
     pub superblocks_pruned: usize,
 }
 
 /// Metrics for a single search stage
 #[derive(Debug, Clone)]
 pub struct StageMetrics {
+    /// Processing stage type
     pub stage: ProcessingStage,
+    /// Stage duration in milliseconds
     pub duration_ms: u64,
+    /// Number of candidates entering the stage
     pub candidates_in: usize,
+    /// Number of candidates exiting the stage
     pub candidates_out: usize,
+    /// Memory used during this stage (bytes)
     pub memory_used: usize,
+    /// Number of row groups processed
     pub row_groups_processed: usize,
-    pub effectiveness: f32, // Filtering effectiveness (0.0-1.0)
+    /// Filtering effectiveness (0.0 = no filtering, 1.0 = perfect filtering)
+    pub effectiveness: f32,
 }
 
 /// Progressive search candidate with stage information
+///
+/// Represents a search candidate progressing through the multi-stage
+/// search pipeline, with location and similarity information.
 pub struct ProgressiveCandidate {
+    /// Row group identifier
     pub row_group_id: u32,
+    /// Row offset within the row group
     pub row_offset: u32,
+    /// Similarity score (higher is better)
     pub similarity: f32,
+    /// Optional vector identifier
     pub vector_id: Option<String>,
+    /// Optional full vector record (loaded in final stage)
     pub record: Option<VectorRecord>,
 }
 
@@ -196,25 +257,37 @@ impl PartialEq for ProgressiveCandidate {
 }
 
 impl Eq for ProgressiveCandidate {}
-impl PartialOrd for ProgressiveCandidate {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        // Reverse for min-heap (best candidates first)
-        other.similarity.partial_cmp(&self.similarity)
-    }
-}
 
 impl Ord for ProgressiveCandidate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+        // Reverse for min-heap (best candidates first)
+        other
+            .similarity
+            .partial_cmp(&self.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }
+}
+
+impl PartialOrd for ProgressiveCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
 /// Main progressive columnar search engine
+///
+/// Implements a multi-stage search pipeline that progressively refines
+/// candidates through binary, INT8, PQ, and full precision stages.
 pub struct ProgressiveColumnarSearch {
+    /// Search configuration
     config: ProgressiveSearchConfig,
+    /// Streaming row group processor
     streaming_processor: StreamingRowGroupProcessor,
+    /// Distance metric for similarity computation
     distance_metric: DistanceMetric,
+    /// Unified distance computation engine
     distance_compute: Arc<UnifiedDistanceCompute>,
+    /// Quantization adapter for multi-stage processing
     quantization_adapter: QuantizationAdapter,
 }
 
@@ -451,15 +524,15 @@ impl ProgressiveColumnarSearch {
                 .compute_hamming_distance(&binary_query, &binary_sketch)
                 .await?;
             // Check threshold
-            if let Some(threshold) = self.config.binary_config.distance_threshold {
-                if binary_distance > threshold {
-                    continue;
-                }
+            if let Some(threshold) = self.config.binary_config.distance_threshold
+                && binary_distance > threshold
+            {
+                continue;
             }
 
             let updated_candidate = ProgressiveCandidate {
                 row_group_id: candidate.row_group_id,
-                row_offset: candidate.row_offset as u32,
+                row_offset: candidate.row_offset,
                 similarity: binary_distance,
                 vector_id: None,
                 record: None,
@@ -542,10 +615,10 @@ impl ProgressiveColumnarSearch {
                 .await?;
 
             // Check threshold
-            if let Some(threshold) = self.config.int8_config.distance_threshold {
-                if int8_distance > threshold {
-                    continue;
-                }
+            if let Some(threshold) = self.config.int8_config.distance_threshold
+                && int8_distance > threshold
+            {
+                continue;
             }
 
             let updated_candidate = ProgressiveCandidate {
@@ -633,10 +706,10 @@ impl ProgressiveColumnarSearch {
                 .await?;
 
             // Check threshold
-            if let Some(threshold) = self.config.pq_config.distance_threshold {
-                if pq_distance > threshold {
-                    continue;
-                }
+            if let Some(threshold) = self.config.pq_config.distance_threshold
+                && pq_distance > threshold
+            {
+                continue;
             }
 
             let updated_candidate = ProgressiveCandidate {
@@ -929,7 +1002,7 @@ impl DistanceTable {
 impl BinarySketch {
     fn from_vector(vector: &[f32], threshold: f32) -> Self {
         let dimension = vector.len();
-        let num_bytes = (dimension + 7) / 8;
+        let num_bytes = dimension.div_ceil(8);
         let mut bits = vec![0u8; num_bytes];
         for (i, &value) in vector.iter().enumerate() {
             if value > threshold {

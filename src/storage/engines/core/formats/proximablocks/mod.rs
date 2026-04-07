@@ -560,9 +560,7 @@ pub mod utils {
         };
 
         // Clamp to practical I/O bounds
-        target_block_size
-            .max(MIN_TARGET_BLOCK_SIZE_BYTES) // 2MB min
-            .min(MAX_TARGET_BLOCK_SIZE_BYTES) // 4MB max
+        target_block_size.clamp(MIN_TARGET_BLOCK_SIZE_BYTES, MAX_TARGET_BLOCK_SIZE_BYTES) // 2MB min, 4MB max
     }
 
     /// Calculate optimal block size based on dimension and record count
@@ -607,8 +605,10 @@ pub mod utils {
         _expected_scale: u64,
         workload_type: WorkloadType,
     ) -> RowBasedConfig {
-        let mut config = RowBasedConfig::default();
-        config.dimension = dimension;
+        let mut config = RowBasedConfig {
+            dimension,
+            ..Default::default()
+        };
 
         match workload_type {
             WorkloadType::HighThroughputWrite => {

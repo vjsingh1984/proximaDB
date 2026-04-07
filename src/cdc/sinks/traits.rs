@@ -246,8 +246,8 @@ fn rand_simple() -> f64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos();
+        .map(|duration| duration.subsec_nanos())
+        .unwrap_or_default();
     nanos as f64 / u32::MAX as f64
 }
 
@@ -283,8 +283,8 @@ impl SinkStats {
         self.last_send_time = Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+                .map(|duration| duration.as_secs())
+                .unwrap_or_default(),
         );
     }
 
@@ -300,8 +300,8 @@ impl SinkStats {
         self.last_send_time = Some(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+                .map(|duration| duration.as_secs())
+                .unwrap_or_default(),
         );
     }
 

@@ -203,7 +203,7 @@ impl ProgressiveSearchExecutor {
                     );
                     // Perform quantization based on the first level requested
                     let first_level = levels
-                        .get(0)
+                        .first()
                         .ok_or_else(|| anyhow::anyhow!("No quantization levels provided"))?;
                     let quantized_data = match first_level.quantization_type {
                         QuantizationType::Binary => {
@@ -349,14 +349,12 @@ impl ProgressiveSearchExecutor {
                 .metadata
                 .quantization_config
                 .as_ref()
-                .map(|qc| qc.int8_ranking_selectivity)
-                .unwrap_or(0.5), // Default selectivity
+                .map_or(0.5, |qc| qc.int8_ranking_selectivity), // Default selectivity
             SearchStage::PqRanking => ctx
                 .metadata
                 .quantization_config
                 .as_ref()
-                .map(|qc| qc.pq_ranking_selectivity)
-                .unwrap_or(0.2),
+                .map_or(0.2, |qc| qc.pq_ranking_selectivity),
             SearchStage::FullPrecision => 1.0,
         };
 
@@ -399,7 +397,11 @@ impl ProgressiveSearchExecutor {
         }
 
         // Sort by score (ascending for distance, descending for similarity)
-        candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        candidates.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         // Keep top candidates
         candidates.truncate(keep_count);
@@ -561,7 +563,11 @@ impl ProgressiveSearchExecutor {
             .await?;
 
         // Sort and truncate to top_k
-        candidates.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        candidates.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates.truncate(ctx.top_k());
 
         // Mark as full precision
@@ -666,7 +672,11 @@ impl ProgressiveSearchExecutor {
         }
 
         // Sort and truncate
-        results.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap());
+        results.sort_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(ctx.top_k());
 
         Ok(results)
@@ -697,7 +707,7 @@ impl ProgressiveSearchExecutor {
 
     /// Determine if runtime quantization should be allowed based on multiple factors
     fn should_allow_runtime_quantization(&self, _ctx: &StorageQueryContext) -> Result<bool> {
-        // TODO: Implement proper collection config and search hints checking
+        // Deferred: Implement proper collection config and search hints checking
         // For now, always allow runtime quantization to make it compile
         Ok(true)
     }
@@ -709,7 +719,7 @@ impl ProgressiveSearchExecutor {
         _data: &[u8],
         _levels: &[QuantizationLevel],
     ) -> Result<Vec<QuantizedRepresentation>> {
-        // TODO: Implement parsing of serialized quantized data
+        // Deferred: Implement parsing of serialized quantized data
         // For now, return empty vec
         Ok(Vec::new())
     }
@@ -795,5 +805,11 @@ impl ProgressiveSearchBuilder {
             self.distance_compute
                 .ok_or_else(|| anyhow::anyhow!("Distance compute required"))?,
         ))
+    }
+}
+
+impl Default for ProgressiveSearchBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }

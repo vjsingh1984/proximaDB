@@ -2,14 +2,14 @@
 // Tools for migrating data between different storage engines (VIPER ↔ SST ↔ SWIFT ↔ NOVA)
 
 pub mod migrator;
-// TODO: Implement missing modules for full migration support
+// Deferred: Implement missing modules for full migration support
 // pub mod compatibility;
 // pub mod validation;
 // pub mod rollback;
 
 // Re-exports
 pub use migrator::{EngineMigrator, MigrationPlan, MigrationProgress, MigrationResult};
-// TODO: Re-enable once modules are implemented
+// Deferred: Re-enable once modules are implemented
 // pub use compatibility::{EngineCompatibilityChecker, CompatibilityReport, CompatibilityIssue};
 // pub use validation::{MigrationValidator, ValidationReport, ValidationResult};
 // pub use rollback::{RollbackManager, RollbackPlan, RollbackResult};

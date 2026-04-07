@@ -189,7 +189,7 @@ fn bitpack_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
     }
 
     let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
+    let total_bytes = total_bits.div_ceil(8);
     let mut result = vec![0u8; total_bytes];
 
     let mut bit_offset = 0;
@@ -221,7 +221,7 @@ fn bitpack_u64(values: &[u64], bits: u8) -> Result<Vec<u8>> {
     }
 
     let total_bits = values.len() * bits as usize;
-    let total_bytes = (total_bits + 7) / 8;
+    let total_bytes = total_bits.div_ceil(8);
     let mut result = vec![0u8; total_bytes];
 
     let mut bit_offset = 0;
@@ -332,48 +332,51 @@ mod tests {
     }
 
     #[test]
-    fn test_zigzag_i32_roundtrip() {
+    fn test_zigzag_i32_roundtrip() -> Result<()> {
         // Small signed values around zero
         let values = vec![-5i32, -2, 0, 1, 3, 5, -10, 8];
 
-        let encoded = encode_i32(&values, 8).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 8)?;
+        let decoded = decode_i32(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_i64_roundtrip() {
+    fn test_zigzag_i64_roundtrip() -> Result<()> {
         // Negative and positive values
         let values = vec![-100i64, -50, -1, 0, 1, 50, 100, -75, 25];
 
-        let encoded = encode_i64(&values, 16).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values, 16)?;
+        let decoded = decode_i64(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_f32_roundtrip() {
+    fn test_zigzag_f32_roundtrip() -> Result<()> {
         // f32 values (interpreted as bit patterns)
         let values = vec![1.0f32, -1.0, 2.5, -2.5, 0.0, 10.0, -10.0];
 
-        let encoded = encode_f32(&values, 32).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values, 32)?;
+        let decoded = decode_f32(&encoded, values.len())?;
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
             assert_eq!(orig.to_bits(), dec.to_bits());
         }
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_compression() {
+    fn test_zigzag_compression() -> Result<()> {
         // Test compression efficiency for small signed values
         let values: Vec<i32> = (-50..50).collect();
 
-        let encoded = encode_i32(&values, 8).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 8)?;
+        let decoded = decode_i32(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
 
@@ -385,69 +388,76 @@ mod tests {
             "Compression inefficient: {} bytes",
             encoded.len()
         );
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_all_negative() {
+    fn test_zigzag_all_negative() -> Result<()> {
         // All negative values
         let values = vec![-100i32, -200, -300, -400, -500];
 
-        let encoded = encode_i32(&values, 16).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 16)?;
+        let decoded = decode_i32(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_all_positive() {
+    fn test_zigzag_all_positive() -> Result<()> {
         // All positive values
         let values = vec![100i32, 200, 300, 400, 500];
 
-        let encoded = encode_i32(&values, 16).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 16)?;
+        let decoded = decode_i32(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_zeros() {
+    fn test_zigzag_zeros() -> Result<()> {
         // All zeros - should compress to minimum
         let values = vec![0i32; 100];
 
-        let encoded = encode_i32(&values, 1).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 1)?;
+        let decoded = decode_i32(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
 
         // Should be very small: 1 byte (bits) + 13 bytes (100 bits packed)
         assert!(encoded.len() < 20);
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_empty() {
+    fn test_zigzag_empty() -> Result<()> {
         let values: Vec<i32> = vec![];
-        let encoded = encode_i32(&values, 8).unwrap();
+        let encoded = encode_i32(&values, 8)?;
         assert!(encoded.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_single_value() {
+    fn test_zigzag_single_value() -> Result<()> {
         let values = vec![-42i32];
 
-        let encoded = encode_i32(&values, 8).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 8)?;
+        let decoded = decode_i32(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 
     #[test]
-    fn test_zigzag_large_range() {
+    fn test_zigzag_large_range() -> Result<()> {
         // Values with large positive and negative values
         let values = vec![i32::MIN, i32::MIN / 2, -1, 0, 1, i32::MAX / 2, i32::MAX];
 
-        let encoded = encode_i32(&values, 32).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values, 32)?;
+        let decoded = decode_i32(&encoded, values.len())?;
 
         assert_eq!(values, decoded);
+        Ok(())
     }
 }

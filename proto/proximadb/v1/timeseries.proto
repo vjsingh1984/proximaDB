@@ -1,0 +1,248 @@
+/*
+ * Copyright 2025 ProximaDB
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+syntax = "proto3";
+
+package proximadb.v1;
+
+import "google/protobuf/timestamp.proto";
+import "proximadb/v1/types.proto";
+
+// Time-series value types
+enum TimeSeriesValueType {
+  TIME_SERIES_VALUE_TYPE_UNSPECIFIED = 0;
+  TIME_SERIES_VALUE_TYPE_FLOAT = 1;    // 64-bit float
+  TIME_SERIES_VALUE_TYPE_INT = 2;      // 64-bit integer
+  TIME_SERIES_VALUE_TYPE_STRING = 5;   // String value
+}
+
+// Aggregation types for time-series data
+enum TimeSeriesAggregationType {
+  TIME_SERIES_AGGREGATION_TYPE_UNSPECIFIED = 0;
+  TIME_SERIES_AGGREGATION_TYPE_SUM = 1;
+  TIME_SERIES_AGGREGATION_TYPE_AVG = 2;
+  TIME_SERIES_AGGREGATION_TYPE_MIN = 3;
+  TIME_SERIES_AGGREGATION_TYPE_MAX = 4;
+  TIME_SERIES_AGGREGATION_TYPE_COUNT = 5;
+  TIME_SERIES_AGGREGATION_TYPE_OHLC = 6;     // Open-High-Low-Close (for financial data)
+  TIME_SERIES_AGGREGATION_TYPE_VWAP = 7;     // Volume-Weighted Average Price
+  TIME_SERIES_AGGREGATION_TYPE_STDDEV = 8;   // Standard Deviation
+  TIME_SERIES_AGGREGATION_TYPE_P50 = 9;      // 50th percentile (median)
+  TIME_SERIES_AGGREGATION_TYPE_P90 = 10;     // 90th percentile
+  TIME_SERIES_AGGREGATION_TYPE_P95 = 11;     // 95th percentile
+  TIME_SERIES_AGGREGATION_TYPE_P99 = 12;     // 99th percentile
+}
+
+// Compression codecs for time-series data
+enum CompressionCodec {
+  COMPRESSION_CODEC_UNSPECIFIED = 0;
+  COMPRESSION_CODEC_NONE = 1;
+  COMPRESSION_CODEC_GORILLA = 2;    // Gorilla compression for floats
+  COMPRESSION_CODEC_ZSTD = 3;       // Zstandard compression
+  COMPRESSION_CODEC_SNAPPY = 4;     // Snappy compression
+  COMPRESSION_CODEC_LZ4 = 5;        // LZ4 compression
+}
+
+// Downsample modes for time-series data
+enum DownsampleMode {
+  DOWNSAMPLE_MODE_UNSPECIFIED = 0;
+  DOWNSAMPLE_MODE_NONE = 1;
+  DOWNSAMPLE_MODE_AVERAGE = 2;
+  DOWNSAMPLE_MODE_MIN = 3;
+  DOWNSAMPLE_MODE_MAX = 4;
+  DOWNSAMPLE_MODE_FIRST = 5;
+  DOWNSAMPLE_MODE_LAST = 6;
+}
+
+// Value column definition
+message ValueColumn {
+  string name = 1;                           // Column name
+  TimeSeriesValueType data_type = 2;         // Data type
+  TimeSeriesAggregationType default_aggregation = 3;   // Default aggregation
+  CompressionCodec compression = 4;          // Compression codec
+}
+
+// Time-series collection configuration
+message TimeSeriesCollectionConfig {
+  string name = 1;                           // Collection name
+  string timestamp_column = 2;               // Timestamp column name
+  repeated ValueColumn value_columns = 3;    // Value columns
+  repeated string tag_columns = 4;           // Tag/dimension columns
+  uint64 retention_ms = 5;                   // Data retention period (ms)
+  uint64 resolution_ms = 6;                  // Resolution/bucket size (ms)
+  CompressionCodec default_compression = 7;  // Default compression
+}
+
+// Time-series data point
+message TimeSeriesPoint {
+  google.protobuf.Timestamp timestamp = 1;   // Point timestamp
+  map<string, SqlValue> values = 2;          // Value column data
+  map<string, string> tags = 3;              // Tag/dimension values
+}
+
+// Time-series filter for queries
+message TimeSeriesFilter {
+  google.protobuf.Timestamp start_time = 1;   // Query start time
+  google.protobuf.Timestamp end_time = 2;     // Query end time
+  map<string, string> tag_filters = 3;        // Tag filters (exact match)
+  repeated string tag_regex = 4;              // Tag regex patterns
+  double value_min = 5;                       // Value range filter (min)
+  double value_max = 6;                       // Value range filter (max)
+  string value_column = 7;                    // Column for value filter
+}
+
+// Aggregated time-series metric
+message AggregatedMetric {
+  google.protobuf.Timestamp timestamp = 1;    // Bucket timestamp
+  double value = 2;                           // Aggregated value
+  uint64 count = 3;                           // Number of points in bucket
+  double min = 4;                             // Minimum value in bucket
+  double max = 5;                             // Maximum value in bucket
+  double sum = 6;                             // Sum of values in bucket
+  // For OHLC aggregation
+  double open = 7;
+  double high = 8;
+  double low = 9;
+  double close = 10;
+}
+
+// Create time-series collection
+message CreateTimeSeriesCollectionRequest {
+  TimeSeriesCollectionConfig config = 1;
+}
+
+message CreateTimeSeriesCollectionResponse {
+  string collection_id = 1;
+  bool success = 2;
+}
+
+// Ingest time-series data
+message IngestTimeSeriesRequest {
+  string collection = 1;
+  repeated TimeSeriesPoint points = 2;
+}
+
+message IngestTimeSeriesResponse {
+  uint64 ingested_count = 1;
+  uint64 failed_count = 2;
+  repeated string error_messages = 3;
+}
+
+// Query time-series data
+message QueryTimeSeriesRequest {
+  string collection = 1;
+  TimeSeriesFilter filter = 2;
+  TimeSeriesAggregationType aggregation = 3;
+  uint64 bucket_ms = 4;                       // Aggregation bucket size (ms)
+  repeated string value_columns = 5;          // Columns to retrieve
+  uint32 limit = 6;                           // Maximum results
+}
+
+message QueryTimeSeriesResponse {
+  repeated AggregatedMetric metrics = 1;
+  repeated TimeSeriesPoint raw_points = 2;
+  uint64 total_points = 3;
+  uint64 query_time_ms = 4;
+}
+
+// List time-series collections
+message ListTimeSeriesCollectionsRequest {}
+
+message ListTimeSeriesCollectionsResponse {
+  repeated TimeSeriesCollectionInfo collections = 1;
+}
+
+message TimeSeriesCollectionInfo {
+  string name = 1;
+  uint64 point_count = 2;
+  uint64 storage_size_bytes = 3;
+  google.protobuf.Timestamp oldest_timestamp = 4;
+  google.protobuf.Timestamp newest_timestamp = 5;
+  repeated ValueColumn value_columns = 6;
+}
+
+// Delete time-series collection
+message DeleteTimeSeriesCollectionRequest {
+  string collection = 1;
+}
+
+message DeleteTimeSeriesCollectionResponse {
+  bool success = 1;
+  uint64 deleted_count = 2;
+}
+
+// Delete time-series data
+message DeleteTimeSeriesRequest {
+  string collection = 1;
+  TimeSeriesFilter filter = 2;
+}
+
+message DeleteTimeSeriesResponse {
+  uint64 deleted_count = 1;
+}
+
+// Time-series aggregation query (pipeline)
+message AggregateTimeSeriesRequest {
+  string collection = 1;
+  TimeSeriesFilter filter = 2;
+  repeated AggregationOperation operations = 3;
+}
+
+message AggregationOperation {
+  oneof operation {
+    DownsampleOperation downsample = 1;
+    GroupByOperation group_by = 2;
+    RollupOperation rollup = 3;
+  }
+}
+
+message DownsampleOperation {
+  uint64 bucket_ms = 1;
+  TimeSeriesAggregationType aggregation = 2;
+  repeated string value_columns = 3;
+}
+
+message GroupByOperation {
+  repeated string tag_columns = 1;
+  TimeSeriesAggregationType aggregation = 2;
+  uint64 bucket_ms = 3;
+}
+
+message RollupOperation {
+  uint64 interval_ms = 1;
+  TimeSeriesAggregationType aggregation = 2;
+}
+
+message AggregateTimeSeriesResponse {
+  repeated AggregatedMetric results = 1;
+  uint64 query_time_ms = 2;
+}
+
+// Time-Series Service
+service TimeSeriesService {
+  // Collection operations
+  rpc CreateCollection(CreateTimeSeriesCollectionRequest) returns (CreateTimeSeriesCollectionResponse);
+  rpc ListCollections(ListTimeSeriesCollectionsRequest) returns (ListTimeSeriesCollectionsResponse);
+  rpc DeleteCollection(DeleteTimeSeriesCollectionRequest) returns (DeleteTimeSeriesCollectionResponse);
+
+  // Data operations
+  rpc Ingest(IngestTimeSeriesRequest) returns (IngestTimeSeriesResponse);
+  rpc Query(QueryTimeSeriesRequest) returns (QueryTimeSeriesResponse);
+  rpc DeleteData(DeleteTimeSeriesRequest) returns (DeleteTimeSeriesResponse);
+
+  // Aggregation operations
+  rpc Aggregate(AggregateTimeSeriesRequest) returns (AggregateTimeSeriesResponse);
+}

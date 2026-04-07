@@ -32,12 +32,13 @@
 
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::{Extension, Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{CollectionConfig, CollectionOperation, CollectionRequest};
 
@@ -70,7 +71,7 @@ pub struct CreateCollectionV2Request {
     pub dimension: u32,
     /// Storage engine selection
     ///
-    /// Options: "auto", "sst", "helix", "viper", "swift", "nova", "raptor"
+    /// Options: "auto", "sst", "helix", "viper", "swift", "nova", "raptor", "tst"
     /// Default: "auto" (system selects optimal engine)
     pub engine: Option<String>,
     /// Schema definition with column types
@@ -202,6 +203,7 @@ pub struct CreateCollectionV2Response {
 /// - `409 Conflict`: Collection already exists
 /// - `500 Internal Server Error`: Creation failed
 pub async fn create_collection_v2(
+    Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
     Json(request): Json<CreateCollectionV2Request>,
 ) -> ApiResult<Json<CreateCollectionV2Response>> {
@@ -225,7 +227,9 @@ pub async fn create_collection_v2(
 
     // Validate engine if specified
     let engine = request.engine.as_deref().unwrap_or("auto");
-    let valid_engines = ["auto", "sst", "helix", "viper", "swift", "nova", "raptor"];
+    let valid_engines = [
+        "auto", "sst", "helix", "viper", "swift", "nova", "raptor", "tst",
+    ];
     if !valid_engines.contains(&engine) {
         return Err(ApiError::InvalidArgument(format!(
             "Invalid storage engine '{}'. Valid engines: {:?}",
@@ -348,14 +352,12 @@ pub async fn create_collection_v2(
 
     // Create collection config for unified handlers
     // Map engine name to StorageEngine enum value
-    let storage_engine_value = match engine {
-        "sst" => 1,    // StorageEngine::Sst
-        "helix" => 2,  // StorageEngine::Helix
-        "viper" => 3,  // StorageEngine::Viper
-        "swift" => 4,  // StorageEngine::Swift
-        "nova" => 5,   // StorageEngine::Nova
-        "raptor" => 6, // StorageEngine::Raptor
-        _ => 0,        // StorageEngine::Auto
+    let storage_engine_value = if engine == "auto" {
+        crate::proto::proximadb_v1::StorageEngine::Unspecified as i32
+    } else {
+        crate::core::conversions::parse_storage_engine(engine)
+            .map(|engine| engine as i32)
+            .map_err(|e| ApiError::InvalidArgument(e.to_string()))?
     };
 
     // Map distance metric name to DistanceMetric enum value
@@ -385,7 +387,7 @@ pub async fn create_collection_v2(
     // Create collection via unified handlers
     match state
         .unified_handlers
-        .handle_collection_operation(collection_request)
+        .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(_resp) => {
@@ -478,6 +480,7 @@ pub struct CollectionStatsV2 {
 /// - `500 Internal Server Error`: Retrieval failed
 pub async fn get_collection_v2(
     Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
 ) -> ApiResult<Json<CollectionV2Response>> {
     debug!("V2 API: Getting collection '{}'", collection_id);
@@ -500,7 +503,7 @@ pub async fn get_collection_v2(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
@@ -622,6 +625,7 @@ pub struct CollectionV2Summary {
 /// - `500 Internal Server Error`: List operation failed
 pub async fn list_collections_v2(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Query(params): Query<ListCollectionsV2Query>,
 ) -> ApiResult<Json<ListCollectionsV2Response>> {
     let limit = params.limit.unwrap_or(100);
@@ -651,7 +655,7 @@ pub async fn list_collections_v2(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
@@ -673,11 +677,11 @@ pub async fn list_collections_v2(
                     CollectionV2Summary {
                         collection_id: c.id.clone(),
                         name: c.id.clone(),
-                        dimension: cfg.map(|cfg| cfg.dimension).unwrap_or(0),
+                        dimension: cfg.map_or(0, |cfg| cfg.dimension),
                         engine: engine_str.to_string(),
                         proxima_record_enabled: false,
                         record_count: if include_stats {
-                            Some(c.stats.as_ref().map(|s| s.vector_count as u64).unwrap_or(0))
+                            Some(c.stats.as_ref().map_or(0, |s| s.vector_count as u64))
                         } else {
                             None
                         },
@@ -773,5 +777,17 @@ mod tests {
         let column: ColumnDefinition = serde_json::from_str(json).unwrap();
         assert_eq!(column.precision, Some(10));
         assert_eq!(column.scale, Some(2));
+    }
+
+    #[test]
+    fn test_v2_storage_engine_mapping_uses_proto_enum_values() {
+        assert_eq!(
+            crate::core::conversions::parse_storage_engine("sst").unwrap() as i32,
+            crate::proto::proximadb_v1::StorageEngine::Sst as i32
+        );
+        assert_eq!(
+            crate::core::conversions::parse_storage_engine("tst").unwrap() as i32,
+            crate::proto::proximadb_v1::StorageEngine::Tst as i32
+        );
     }
 }

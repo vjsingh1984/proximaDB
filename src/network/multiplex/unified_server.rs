@@ -49,7 +49,9 @@ pub struct UnifiedServerConfig {
 impl Default for UnifiedServerConfig {
     fn default() -> Self {
         Self {
-            bind_address: "0.0.0.0:5678".parse().expect("valid default address"),
+            bind_address: "0.0.0.0:5678"
+                .parse()
+                .unwrap_or_else(|_| std::net::SocketAddr::from(([0, 0, 0, 0], 5678))),
             enable_http1: true,
             enable_http2: true,
             max_connections: 10000,
@@ -80,7 +82,7 @@ impl Service<Request<Body>> for HyperService {
     fn call(&mut self, request: Request<Body>) -> Self::Future {
         // Convert hyper::Body to axum::body::Body for the MultiplexService
         let (parts, body) = request.into_parts();
-        let axum_body = axum::body::Body::from(body);
+        let axum_body = body;
         let request = Request::from_parts(parts, axum_body);
 
         let mut service = self.inner.clone();

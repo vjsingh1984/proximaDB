@@ -9,6 +9,33 @@
 // Write Buffer-specific configuration uses the unified type
 pub use crate::core::CompressionAlgorithm;
 
+/// Encryption configuration for WAL (TD-016)
+#[derive(Debug, Clone)]
+pub struct EncryptionConfig {
+    /// Enable encryption for WAL segments
+    pub enabled: bool,
+
+    /// Master key environment variable name
+    pub master_key_env_var: String,
+
+    /// Key rotation interval in seconds (default: 30 days)
+    pub key_rotation_interval_secs: u64,
+
+    /// Chunk size for encryption (default: 4KB)
+    pub chunk_size: usize,
+}
+
+impl Default for EncryptionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false, // Disabled by default for backward compatibility
+            master_key_env_var: "PROXIMADB_MASTER_KEY".to_string(),
+            key_rotation_interval_secs: 30 * 24 * 3600, // 30 days
+            chunk_size: 4096,                           // 4KB
+        }
+    }
+}
+
 /// Compression configuration
 #[derive(Debug, Clone)]
 pub struct CompressionConfig {
@@ -149,26 +176,15 @@ pub enum DurabilityLevel {
 }
 
 /// WAL strategy type selection
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum WriteBufferStrategyType {
     /// Modern Avro batch strategy with zero-copy optimization
     AvroBatch,
     /// Modern Bincode batch strategy with optimal Rust performance
+    #[default]
     BincodeBatch,
     /// Modern Proto batch strategy for proto-first architecture
     ProtoBatch,
-}
-
-impl Default for WriteBufferStrategyType {
-    fn default() -> Self {
-        // Default to BincodeBatch for maximum performance with vector workloads
-        // Bincode provides:
-        // - Fastest serialization/deserialization (critical for high-throughput ingestion)
-        // - Most compact format (20-40% space savings vs Proto)
-        // - Zero-copy deserialization potential
-        // - Native Rust types with no conversion overhead
-        Self::BincodeBatch
-    }
 }
 
 impl std::fmt::Display for WriteBufferStrategyType {
@@ -237,23 +253,17 @@ pub struct MemTableConfig {
 }
 
 /// Memtable strategy type selection
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum MemTableType {
     /// Skip List - High write throughput, ordered data (RocksDB/LevelDB default)
     SkipList,
     /// B+ Tree - Stable inserts/queries, general use, memory efficient
     BTree,
     /// ART - Concurrent Adaptive Radix Tree, high performance for range queries
+    #[default]
     Art,
     /// Hash Map - Write-heavy, unordered ingestion, point lookups only
     HashMap,
-}
-
-impl Default for MemTableType {
-    fn default() -> Self {
-        // ART (Adaptive Radix Tree) for efficient metadata filtering and space efficiency
-        Self::Art
-    }
 }
 
 impl Default for MemTableConfig {
@@ -289,6 +299,9 @@ pub struct WALConfig {
 
     /// Compression settings
     pub compression: CompressionConfig,
+
+    /// Encryption settings (TD-016)
+    pub encryption: EncryptionConfig,
 
     /// Performance tuning
     pub performance: PerformanceConfig,
@@ -328,6 +341,7 @@ impl Default for WALConfig {
             memtable: MemTableConfig::default(), // ART for metadata filtering efficiency
             multi_disk: MultiDiskConfig::default(), // LoadBalanced for bulk insert optimization
             compression: CompressionConfig::default(), // Snappy for balanced performance
+            encryption: EncryptionConfig::default(), // Encryption disabled by default (TD-016)
             performance: PerformanceConfig::default(), // Optimized for large vectors and bulk processing
             enable_mvcc: true, // Enable for consistency and document versioning
             enable_ttl: true,  // Enable for data lifecycle management
@@ -362,12 +376,9 @@ pub struct CollectionWalConfig {
 // Conversion from core config to WAL config
 impl From<&crate::core::config::WalStorageConfig> for WALConfig {
     fn from(core_config: &crate::core::config::WalStorageConfig) -> Self {
-        let mut wal_config = WALConfig::default();
-
         // WAL uses storage_locations - will be populated by caller
         // Default to a safe fallback
-        wal_config.multi_disk.data_directories = vec!["file://./data".to_string()];
-        wal_config.multi_disk.distribution_strategy = match core_config.distribution_strategy {
+        let distribution_strategy = match core_config.distribution_strategy {
             crate::core::config::WalDistributionStrategy::RoundRobin => {
                 DiskDistributionStrategy::RoundRobin
             }
@@ -376,11 +387,19 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
                 DiskDistributionStrategy::LoadBalanced
             }
         };
-        wal_config.multi_disk.collection_affinity = core_config.collection_affinity;
-
-        // Set performance thresholds
-        wal_config.performance.memory_flush_size_bytes = core_config.memory_flush_size_bytes;
-        wal_config.performance.global_flush_threshold = core_config.global_flush_threshold;
+        let mut wal_config = WALConfig {
+            multi_disk: MultiDiskConfig {
+                data_directories: vec!["file://./data".to_string()],
+                distribution_strategy,
+                collection_affinity: core_config.collection_affinity,
+            },
+            performance: PerformanceConfig {
+                memory_flush_size_bytes: core_config.memory_flush_size_bytes,
+                global_flush_threshold: core_config.global_flush_threshold,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         // Apply optional configuration overrides from config.toml
         if let Some(strategy_type) = &core_config.strategy_type {
@@ -443,8 +462,10 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
 impl WALConfig {
     /// Create configuration optimized for high-throughput writes
     pub fn high_throughput() -> Self {
-        let mut config = Self::default();
-        config.strategy_type = WriteBufferStrategyType::BincodeBatch; // Faster serialization
+        let mut config = Self {
+            strategy_type: WriteBufferStrategyType::BincodeBatch, // Faster serialization
+            ..Default::default()
+        };
         config.memtable.memtable_type = MemTableType::HashMap; // Fastest writes for unordered data
         config.compression.algorithm = CompressionAlgorithm::Lz4; // Faster compression
         config.performance.memory_flush_size_bytes = 256 * 1024 * 1024; // 256MB
@@ -566,22 +587,17 @@ impl Default for CloudBackupConfig {
 }
 
 /// Cloud backup strategy
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CloudBackupStrategy {
     /// Real-time backup on every write
     RealTime,
     /// Periodic batch backup
     Periodic { interval_secs: u64 },
     /// Backup on flush events
+    #[default]
     OnFlush,
     /// Backup on demand only
     OnDemand,
-}
-
-impl Default for CloudBackupStrategy {
-    fn default() -> Self {
-        Self::OnFlush
-    }
 }
 
 /// Backup frequency configuration
@@ -647,5 +663,140 @@ impl Default for CloudRetryConfig {
             max_delay_ms: 5000,
             backoff_multiplier: 2.0,
         }
+    }
+}
+
+// --- Tests inlined from tests/unit/config/test_flush_config.rs ---
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_default_flush_configuration() {
+        let config = WALConfig::default();
+
+        // Test default performance settings
+        let perf = config.performance;
+        assert!(
+            perf.memory_flush_size_bytes > 0,
+            "Should have positive memory flush size"
+        );
+        assert!(
+            perf.disk_segment_size > 0,
+            "Should have positive disk segment size"
+        );
+
+        // Test default memtable settings
+        let memtable = config.memtable;
+        assert!(
+            memtable.global_memory_limit > 0,
+            "Should have positive global memory limit"
+        );
+    }
+
+    #[test]
+    fn test_collection_specific_overrides() {
+        // Create collection-specific configurations
+        let mut collection_configs = HashMap::new();
+
+        // Large collection needs higher threshold
+        collection_configs.insert(
+            "embeddings".to_string(),
+            CollectionWalConfig {
+                memory_flush_size_bytes: Some(50 * 1024 * 1024), // 50MB
+                disk_segment_size: Some(1024 * 1024 * 1024),     // 1GB
+                compression: None,
+                default_ttl_days: Some(30),
+            },
+        );
+
+        // Small collection can use lower threshold
+        collection_configs.insert(
+            "metadata".to_string(),
+            CollectionWalConfig {
+                memory_flush_size_bytes: Some(5 * 1024 * 1024), // 5MB
+                disk_segment_size: Some(100 * 1024 * 1024),     // 100MB
+                compression: None,
+                default_ttl_days: Some(7),
+            },
+        );
+
+        // Verify overrides
+        let embeddings_config = collection_configs.get("embeddings").unwrap();
+        assert_eq!(
+            embeddings_config.memory_flush_size_bytes,
+            Some(50 * 1024 * 1024)
+        );
+        assert_eq!(embeddings_config.default_ttl_days, Some(30));
+
+        let metadata_config = collection_configs.get("metadata").unwrap();
+        assert_eq!(
+            metadata_config.memory_flush_size_bytes,
+            Some(5 * 1024 * 1024)
+        );
+        assert_eq!(metadata_config.default_ttl_days, Some(7));
+    }
+
+    #[test]
+    fn test_performance_config_limits() {
+        let mut perf_config = PerformanceConfig::default();
+
+        // Test setting custom limits
+        perf_config.memory_flush_size_bytes = 1000 * 1024 * 1024; // 1000MB
+        perf_config.disk_segment_size = 2048 * 1024 * 1024; // 2048MB
+        perf_config.batch_threshold = 5000;
+
+        assert_eq!(perf_config.memory_flush_size_bytes, 1000 * 1024 * 1024);
+        assert_eq!(perf_config.disk_segment_size, 2048 * 1024 * 1024);
+        assert_eq!(perf_config.batch_threshold, 5000);
+    }
+
+    #[test]
+    fn test_memtable_config() {
+        let mut memtable_config = MemTableConfig::default();
+
+        // Test setting memtable parameters
+        memtable_config.global_memory_limit = 4096 * 1024 * 1024; // 4GB
+        memtable_config.mvcc_versions_retained = 10;
+
+        assert_eq!(memtable_config.global_memory_limit, 4096 * 1024 * 1024);
+        assert_eq!(memtable_config.mvcc_versions_retained, 10);
+    }
+
+    #[test]
+    fn test_effective_config_resolution() {
+        // Test how collection-specific configs override defaults
+        let default_config = CollectionWalConfig {
+            memory_flush_size_bytes: Some(10 * 1024 * 1024), // 10MB default
+            disk_segment_size: Some(256 * 1024 * 1024),      // 256MB default
+            compression: None,
+            default_ttl_days: None,
+        };
+
+        let override_config = CollectionWalConfig {
+            memory_flush_size_bytes: Some(20 * 1024 * 1024), // Override to 20MB
+            disk_segment_size: None,                         // Keep default
+            compression: None,
+            default_ttl_days: Some(14), // Add TTL
+        };
+
+        // Simulate resolving effective config
+        let effective_memory = override_config
+            .memory_flush_size_bytes
+            .or(default_config.memory_flush_size_bytes)
+            .unwrap();
+        let effective_disk = override_config
+            .disk_segment_size
+            .or(default_config.disk_segment_size)
+            .unwrap();
+        let effective_ttl = override_config
+            .default_ttl_days
+            .or(default_config.default_ttl_days);
+
+        assert_eq!(effective_memory, 20 * 1024 * 1024, "Should use override");
+        assert_eq!(effective_disk, 256 * 1024 * 1024, "Should use default");
+        assert_eq!(effective_ttl, Some(14), "Should use override");
     }
 }

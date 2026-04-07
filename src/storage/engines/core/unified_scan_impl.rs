@@ -208,7 +208,7 @@ impl UnifiedScanImpl {
         engine: &dyn UnifiedStorageEngine,
         collection_id: &str,
     ) -> Result<Vec<String>> {
-        // TODO: Get actual file paths from engine
+        // Deferred: Get actual file paths from engine
         Ok(Vec::new())
     }
 }
@@ -238,7 +238,7 @@ impl EngineToArrowConverter for SSTToArrowConverter {
         // Read SSTable blocks and convert to Arrow format
         // SST stores data in blocks with VectorRecords
         
-        // TODO: Implement actual SST reading
+        // Deferred: Implement actual SST reading
         Ok(Vec::new())
     }
     
@@ -305,7 +305,7 @@ impl EngineToArrowConverter for RaptorToArrowConverter {
         // RAPTOR uses Proxima columnar encoding
         // Convert rowgroups to Arrow batches
         
-        // TODO: Implement RAPTOR Proxima decoding
+        // Deferred: Implement RAPTOR Proxima decoding
         Ok(Vec::new())
     }
     
@@ -334,7 +334,7 @@ impl EngineToArrowConverter for PrismToArrowConverter {
         // PRISM uses tree structure with Proxima
         // Traverse tree and collect into batches
         
-        // TODO: Implement PRISM tree traversal
+        // Deferred: Implement PRISM tree traversal
         Ok(Vec::new())
     }
     
@@ -363,7 +363,7 @@ impl EngineToArrowConverter for SwiftToArrowConverter {
         // SWIFT uses hierarchical superblocks
         // Convert blocks to Arrow batches
         
-        // TODO: Implement SWIFT superblock reading
+        // Deferred: Implement SWIFT superblock reading
         Ok(Vec::new())
     }
     
@@ -433,7 +433,7 @@ impl ArrowIpcFullScanIterator {
         // Update statistics
         self.stats.records_scanned += batch.num_rows();
         
-        // TODO: Implement actual conversion
+        // Deferred: Implement actual conversion
         Ok(Vec::new())
     }
 }

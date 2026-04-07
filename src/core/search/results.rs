@@ -67,23 +67,34 @@ fn convert_json_map_to_sql_value_map(
 // All functionality moved to OptimizedSearchRecord for better performance
 
 // Type definitions needed by OptimizedSearchRecord
+/// Debug information attached to individual search results
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SearchDebugInfo {
+    /// Storage engine that served this result
     pub engine_used: String,
+    /// Time to retrieve this result in milliseconds
     pub search_time_ms: f64,
+    /// Number of candidate vectors evaluated
     pub candidates_evaluated: usize,
 }
 
+/// Quantization information for a search result
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QuantizationInfo {
+    /// Quantization method used (e.g., "pq", "binary", "int8")
     pub quantization_type: String,
+    /// Compression ratio achieved
     pub compression_ratio: f32,
 }
 
+/// Per-engine performance statistics for a search result
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EngineStats {
+    /// Number of vectors scanned
     pub vectors_scanned: usize,
+    /// Number of cache hits during search
     pub cache_hits: usize,
+    /// Number of I/O operations performed
     pub io_operations: usize,
 }
 
@@ -156,7 +167,7 @@ impl OptimizedSearchRecord {
                 if distance.is_infinite() {
                     0.0 // Zero vectors get worst similarity score
                 } else {
-                    1.0 - (distance / 2.0).min(1.0).max(0.0)
+                    1.0 - (distance / 2.0).clamp(0.0, 1.0)
                 }
             }
             DistanceMetric::Euclidean => {
@@ -166,7 +177,7 @@ impl OptimizedSearchRecord {
             DistanceMetric::DotProduct => {
                 // Dot product similarity is already in similarity form (higher = better)
                 // Just ensure it's in [0,1] range
-                ((distance + 1.0) / 2.0).min(1.0).max(0.0)
+                ((distance + 1.0) / 2.0).clamp(0.0, 1.0)
             }
             DistanceMetric::Manhattan => {
                 // Manhattan distance is in [0, ∞), use exponential decay

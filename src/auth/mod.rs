@@ -82,8 +82,11 @@ impl EnterpriseAuthManager {
 /// Operations requiring authorization
 #[derive(Debug, Clone)]
 pub enum AuthorizedOperation {
+    /// Access a collection with a specific operation type.
     CollectionAccess {
+        /// Target collection identifier.
         collection_id: String,
+        /// Type of operation to perform on the collection.
         operation_type: rbac::CollectionOperation,
     },
     // Additional operations to be added
@@ -92,8 +95,11 @@ pub enum AuthorizedOperation {
 /// Authorized context for operations
 #[derive(Debug, Clone)]
 pub struct AuthorizedContext {
+    /// Resolved enterprise user from SSO token validation.
     pub enterprise_user: EnterpriseUserContext,
+    /// RBAC validation result for the requested operation.
     pub authorization_result: rbac::AccessValidationResult,
+    /// Timestamp when authentication was performed.
     pub authenticated_at: chrono::DateTime<chrono::Utc>,
 }
 

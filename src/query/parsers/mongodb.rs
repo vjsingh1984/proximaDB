@@ -62,82 +62,123 @@ use super::{QueryParser, ToFilter};
 /// Token types for the MongoDB query lexer
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Structural tokens
+    /// Opening brace `{`
     LeftBrace,
+    /// Closing brace `}`
     RightBrace,
+    /// Opening bracket `[`
     LeftBracket,
+    /// Closing bracket `]`
     RightBracket,
+    /// Colon separator `:`
     Colon,
+    /// Comma separator `,`
     Comma,
 
-    // Literal tokens
+    /// String literal
     String(String),
+    /// Floating point number
     Number(f64),
+    /// Integer number
     Integer(i64),
+    /// Boolean literal
     Boolean(bool),
+    /// Null literal
     Null,
 
-    // MongoDB operators (prefixed with $)
+    /// MongoDB operator (prefixed with `$`)
     Operator(MongoOperator),
 }
 
 /// MongoDB query operators
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MongoOperator {
-    // Comparison operators
+    /// `$eq` - equality comparison
     Eq,
+    /// `$ne` - not equal comparison
     Ne,
+    /// `$gt` - greater than comparison
     Gt,
+    /// `$gte` - greater than or equal comparison
     Gte,
+    /// `$lt` - less than comparison
     Lt,
+    /// `$lte` - less than or equal comparison
     Lte,
+    /// `$in` - set membership test
     In,
+    /// `$nin` - negated set membership test
     Nin,
 
-    // Logical operators
+    /// `$and` - logical AND of conditions
     And,
+    /// `$or` - logical OR of conditions
     Or,
+    /// `$not` - logical NOT
     Not,
+    /// `$nor` - logical NOR of conditions
     Nor,
 
-    // Element operators
+    /// `$exists` - field existence check
     Exists,
+    /// `$type` - BSON type check
     Type,
 
-    // Array operators
+    /// `$all` - array contains all elements
     All,
+    /// `$elemMatch` - array element matching
     ElemMatch,
+    /// `$size` - array size comparison
     Size,
 
-    // Evaluation operators
+    /// `$regex` - regular expression match
     Regex,
+    /// `$text` - full text search
     Text,
+    /// `$options` - regex options
     Options,
+    /// `$search` - text search query
     Search,
 
-    // Aggregation pipeline stages
+    /// `$match` - pipeline filter stage
     Match,
+    /// `$project` - pipeline projection stage
     Project,
+    /// `$group` - pipeline grouping stage
     Group,
+    /// `$sort` - pipeline sort stage
     Sort,
+    /// `$limit` - pipeline limit stage
     Limit,
+    /// `$skip` - pipeline skip stage
     Skip,
+    /// `$unwind` - pipeline array unwind stage
     Unwind,
+    /// `$lookup` - pipeline join stage
     Lookup,
+    /// `$count` - count aggregation
     Count,
+    /// `$sum` - sum aggregation
     Sum,
+    /// `$avg` - average aggregation
     Avg,
+    /// `$min` - minimum aggregation
     Min,
+    /// `$max` - maximum aggregation
     Max,
+    /// `$first` - first value in group
     First,
+    /// `$last` - last value in group
     Last,
+    /// `$push` - push to array in group
     Push,
+    /// `$addToSet` - add unique to set in group
     AddToSet,
 }
 
 impl MongoOperator {
     /// Parse a MongoDB operator from its string representation
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_operator(s: &str) -> Option<Self> {
         match s {
             // Comparison
             "$eq" => Some(Self::Eq),
@@ -202,12 +243,20 @@ impl MongoOperator {
 #[derive(Debug, Clone, PartialEq)]
 pub enum MongoDBExpression {
     /// Field equality: {"field": value}
-    FieldEquals { field: String, value: MongoDBValue },
+    FieldEquals {
+        /// Field name
+        field: String,
+        /// Value to match
+        value: MongoDBValue,
+    },
 
     /// Field with operator: {"field": {"$op": value}}
     FieldOperator {
+        /// Field name
         field: String,
+        /// Comparison operator
         operator: MongoOperator,
+        /// Operand value
         value: MongoDBValue,
     },
 
@@ -225,14 +274,19 @@ pub enum MongoDBExpression {
 
     /// Element match: {"field": {"$elemMatch": {...}}}
     ElemMatch {
+        /// Array field name
         field: String,
+        /// Sub-query to match array elements against
         query: Box<MongoDBExpression>,
     },
 
     /// Text search: {"$text": {"$search": "..."}}
     TextSearch {
+        /// Search query text
         search: String,
+        /// Optional language for text analysis
         language: Option<String>,
+        /// Whether search is case-sensitive
         case_sensitive: Option<bool>,
     },
 
@@ -243,14 +297,27 @@ pub enum MongoDBExpression {
 /// MongoDB value types
 #[derive(Debug, Clone, PartialEq)]
 pub enum MongoDBValue {
+    /// Null value
     Null,
+    /// Boolean value
     Bool(bool),
+    /// Integer value
     Integer(i64),
+    /// Floating point value
     Float(f64),
+    /// String value
     String(String),
+    /// Array of values
     Array(Vec<MongoDBValue>),
+    /// Nested object
     Object(HashMap<String, MongoDBValue>),
-    Regex { pattern: String, options: String },
+    /// Regular expression with pattern and options
+    Regex {
+        /// Regex pattern string
+        pattern: String,
+        /// Regex options (e.g., "i" for case-insensitive)
+        options: String,
+    },
 }
 
 impl MongoDBValue {
@@ -331,6 +398,7 @@ pub struct MongoDBProjection {
 }
 
 impl MongoDBProjection {
+    /// Create a new empty projection.
     pub fn new() -> Self {
         Self {
             include: Vec::new(),
@@ -366,7 +434,9 @@ pub enum MongoDBPipelineStage {
 
     /// $group stage
     Group {
+        /// Group key expression
         id_expression: MongoDBValue,
+        /// Accumulator expressions by output field name
         accumulators: HashMap<String, GroupAccumulator>,
     },
 
@@ -381,15 +451,21 @@ pub enum MongoDBPipelineStage {
 
     /// $unwind stage
     Unwind {
+        /// Array field path to unwind
         path: String,
+        /// Whether to preserve documents with null or empty arrays
         preserve_null_and_empty: bool,
     },
 
     /// $lookup stage
     Lookup {
+        /// Collection to join with
         from: String,
+        /// Local field for join
         local_field: String,
+        /// Foreign field for join
         foreign_field: String,
+        /// Output array field name
         as_field: String,
     },
 
@@ -400,35 +476,52 @@ pub enum MongoDBPipelineStage {
 /// Group accumulator operators
 #[derive(Debug, Clone, PartialEq)]
 pub enum GroupAccumulator {
+    /// Sum of values
     Sum(MongoDBValue),
+    /// Average of values
     Avg(MongoDBValue),
+    /// Minimum value
     Min(MongoDBValue),
+    /// Maximum value
     Max(MongoDBValue),
+    /// First value in group
     First(MongoDBValue),
+    /// Last value in group
     Last(MongoDBValue),
+    /// Push all values to array
     Push(MongoDBValue),
+    /// Add unique values to set
     AddToSet(MongoDBValue),
+    /// Count of documents
     Count,
 }
 
 /// Sort order
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortOrder {
+    /// Sort ascending (1)
     Ascending,
+    /// Sort descending (-1)
     Descending,
 }
 
 /// Complete MongoDB query with optional projection
 #[derive(Debug, Clone, PartialEq)]
 pub struct MongoDBQuery {
+    /// Filter expression to match documents
     pub filter: Option<MongoDBExpression>,
+    /// Projection to select fields
     pub projection: Option<MongoDBProjection>,
+    /// Sort specification
     pub sort: Option<Vec<(String, SortOrder)>>,
+    /// Maximum number of results
     pub limit: Option<i64>,
+    /// Number of results to skip
     pub skip: Option<i64>,
 }
 
 impl MongoDBQuery {
+    /// Create a new empty query.
     pub fn new() -> Self {
         Self {
             filter: None,
@@ -449,7 +542,9 @@ impl Default for MongoDBQuery {
 /// Result of parsing a MongoDB query
 #[derive(Debug, Clone)]
 pub struct MongoDBParseResult {
+    /// Parsed find-style query, if present
     pub query: Option<MongoDBQuery>,
+    /// Parsed aggregation pipeline, if present
     pub pipeline: Option<Vec<MongoDBPipelineStage>>,
 }
 
@@ -519,7 +614,7 @@ impl MongoDBLexer {
         )(input)?;
 
         // Check if this is an operator
-        if let Some(op) = MongoOperator::from_str(s) {
+        if let Some(op) = MongoOperator::parse_operator(s) {
             Ok((remaining, Token::Operator(op)))
         } else {
             Ok((remaining, Token::String(s.to_string())))
@@ -782,8 +877,8 @@ impl MongoDBParser {
                 continue; // Already handled above
             }
 
-            let operator =
-                MongoOperator::from_str(key).ok_or_else(|| anyhow!("Unknown operator: {}", key))?;
+            let operator = MongoOperator::parse_operator(key)
+                .ok_or_else(|| anyhow!("Unknown operator: {}", key))?;
 
             match operator {
                 MongoOperator::ElemMatch => {
@@ -972,29 +1067,23 @@ impl MongoDBParser {
                         continue;
                     }
 
-                    if let JsonValue::Object(acc_obj) = acc_value {
-                        if let Some((acc_op, acc_expr)) = acc_obj.iter().next() {
-                            let accumulator = match acc_op.as_str() {
-                                "$sum" => GroupAccumulator::Sum(MongoDBValue::from_json(acc_expr)),
-                                "$avg" => GroupAccumulator::Avg(MongoDBValue::from_json(acc_expr)),
-                                "$min" => GroupAccumulator::Min(MongoDBValue::from_json(acc_expr)),
-                                "$max" => GroupAccumulator::Max(MongoDBValue::from_json(acc_expr)),
-                                "$first" => {
-                                    GroupAccumulator::First(MongoDBValue::from_json(acc_expr))
-                                }
-                                "$last" => {
-                                    GroupAccumulator::Last(MongoDBValue::from_json(acc_expr))
-                                }
-                                "$push" => {
-                                    GroupAccumulator::Push(MongoDBValue::from_json(acc_expr))
-                                }
-                                "$addToSet" => {
-                                    GroupAccumulator::AddToSet(MongoDBValue::from_json(acc_expr))
-                                }
-                                _ => return Err(anyhow!("Unknown accumulator: {}", acc_op)),
-                            };
-                            accumulators.insert(field.clone(), accumulator);
-                        }
+                    if let JsonValue::Object(acc_obj) = acc_value
+                        && let Some((acc_op, acc_expr)) = acc_obj.iter().next()
+                    {
+                        let accumulator = match acc_op.as_str() {
+                            "$sum" => GroupAccumulator::Sum(MongoDBValue::from_json(acc_expr)),
+                            "$avg" => GroupAccumulator::Avg(MongoDBValue::from_json(acc_expr)),
+                            "$min" => GroupAccumulator::Min(MongoDBValue::from_json(acc_expr)),
+                            "$max" => GroupAccumulator::Max(MongoDBValue::from_json(acc_expr)),
+                            "$first" => GroupAccumulator::First(MongoDBValue::from_json(acc_expr)),
+                            "$last" => GroupAccumulator::Last(MongoDBValue::from_json(acc_expr)),
+                            "$push" => GroupAccumulator::Push(MongoDBValue::from_json(acc_expr)),
+                            "$addToSet" => {
+                                GroupAccumulator::AddToSet(MongoDBValue::from_json(acc_expr))
+                            }
+                            _ => return Err(anyhow!("Unknown accumulator: {}", acc_op)),
+                        };
+                        accumulators.insert(field.clone(), accumulator);
                     }
                 }
 
@@ -1492,7 +1581,9 @@ mod tests {
     #[test]
     fn test_parse_simple_equality() {
         let parser = MongoDBParser::new();
-        let result = parser.parse_query(r#"{"name": "John"}"#).unwrap();
+        let result = parser
+            .parse_query(r#"{"name": "John"}"#)
+            .expect("Failed to parse query");
 
         match result {
             MongoDBExpression::FieldEquals { field, value } => {
@@ -1508,7 +1599,9 @@ mod tests {
         let parser = MongoDBParser::new();
 
         // $gte operator
-        let result = parser.parse_query(r#"{"age": {"$gte": 18}}"#).unwrap();
+        let result = parser
+            .parse_query(r#"{"age": {"$gte": 18}}"#)
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1525,7 +1618,7 @@ mod tests {
         // $in operator
         let result = parser
             .parse_query(r#"{"status": {"$in": ["active", "pending"]}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1552,7 +1645,7 @@ mod tests {
         // $and operator
         let result = parser
             .parse_query(r#"{"$and": [{"age": {"$gte": 18}}, {"active": true}]}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::And(exprs) => {
                 assert_eq!(exprs.len(), 2);
@@ -1563,7 +1656,7 @@ mod tests {
         // $or operator
         let result = parser
             .parse_query(r#"{"$or": [{"age": {"$lt": 18}}, {"premium": true}]}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::Or(exprs) => {
                 assert_eq!(exprs.len(), 2);
@@ -1579,7 +1672,7 @@ mod tests {
         // $exists operator
         let result = parser
             .parse_query(r#"{"email": {"$exists": true}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1596,7 +1689,7 @@ mod tests {
         // $type operator
         let result = parser
             .parse_query(r#"{"age": {"$type": "number"}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1617,7 +1710,7 @@ mod tests {
 
         let result = parser
             .parse_query(r#"{"name": {"$regex": "^John", "$options": "i"}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::FieldOperator {
                 field,
@@ -1644,7 +1737,7 @@ mod tests {
 
         let result = parser
             .parse_query(r#"{"$text": {"$search": "hello world"}}"#)
-            .unwrap();
+            .expect("Failed to parse query");
         match result {
             MongoDBExpression::TextSearch { search, .. } => {
                 assert_eq!(search, "hello world");
@@ -1659,7 +1752,7 @@ mod tests {
 
         let result = parser
             .parse_projection(r#"{"name": 1, "age": 1, "password": 0}"#)
-            .unwrap();
+            .expect("Failed to parse projection");
 
         assert!(result.include.contains(&"name".to_string()));
         assert!(result.include.contains(&"age".to_string()));
@@ -1677,7 +1770,9 @@ mod tests {
             {"$limit": 10}
         ]"#;
 
-        let result = parser.parse_pipeline(pipeline).unwrap();
+        let result = parser
+            .parse_pipeline(pipeline)
+            .expect("Failed to parse pipeline");
         assert_eq!(result.len(), 4);
 
         // Check $match stage
@@ -1723,23 +1818,33 @@ mod tests {
         let parser = MongoDBParser::new();
 
         // Simple equality
-        let expr = parser.parse_query(r#"{"name": "John"}"#).unwrap();
-        let filter = expr.to_document_filter().unwrap();
+        let expr = parser
+            .parse_query(r#"{"name": "John"}"#)
+            .expect("Failed to parse query");
+        let filter = expr
+            .to_document_filter()
+            .expect("Failed to convert to document filter");
         assert_eq!(filter.conditions.len(), 1);
         assert_eq!(filter.conditions[0].path, "name");
         assert_eq!(filter.conditions[0].operator, DocFilterOperator::Eq as i32);
 
         // Comparison operator
-        let expr = parser.parse_query(r#"{"age": {"$gte": 18}}"#).unwrap();
-        let filter = expr.to_document_filter().unwrap();
+        let expr = parser
+            .parse_query(r#"{"age": {"$gte": 18}}"#)
+            .expect("Failed to parse query");
+        let filter = expr
+            .to_document_filter()
+            .expect("Failed to convert to document filter");
         assert_eq!(filter.conditions.len(), 1);
         assert_eq!(filter.conditions[0].operator, DocFilterOperator::Gte as i32);
 
         // $or operator
         let expr = parser
             .parse_query(r#"{"$or": [{"status": "active"}, {"premium": true}]}"#)
-            .unwrap();
-        let filter = expr.to_document_filter().unwrap();
+            .expect("Failed to parse query");
+        let filter = expr
+            .to_document_filter()
+            .expect("Failed to convert to document filter");
         assert_eq!(filter.or_filters.len(), 2);
     }
 
@@ -1753,7 +1858,7 @@ mod tests {
             "tags": {"$in": ["premium", "verified"]}
         }"#;
 
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
         match result {
             MongoDBExpression::Compound(exprs) => {
                 assert_eq!(exprs.len(), 3);
@@ -1773,7 +1878,7 @@ mod tests {
             ]
         }"#;
 
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
         match result {
             MongoDBExpression::And(exprs) => {
                 assert_eq!(exprs.len(), 2);
@@ -1790,7 +1895,8 @@ mod tests {
 
     #[test]
     fn test_lexer_tokenize() {
-        let tokens = MongoDBLexer::tokenize(r#"{"age": 25, "active": true}"#).unwrap();
+        let tokens =
+            MongoDBLexer::tokenize(r#"{"age": 25, "active": true}"#).expect("Failed to tokenize");
 
         assert!(matches!(tokens[0], Token::LeftBrace));
         assert!(matches!(tokens[1], Token::String(ref s) if s == "age"));
@@ -1808,7 +1914,7 @@ mod tests {
         let parser = MongoDBParser::new();
 
         let query = r#"{"items": {"$elemMatch": {"price": {"$gt": 100}}}}"#;
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
 
         match result {
             MongoDBExpression::ElemMatch { field, query } => {
@@ -1833,7 +1939,7 @@ mod tests {
 
         // $all operator
         let query = r#"{"tags": {"$all": ["a", "b", "c"]}}"#;
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
 
         match result {
             MongoDBExpression::FieldOperator {
@@ -1853,7 +1959,7 @@ mod tests {
 
         // $size operator
         let query = r#"{"items": {"$size": 5}}"#;
-        let result = parser.parse_query(query).unwrap();
+        let result = parser.parse_query(query).expect("Failed to parse query");
 
         match result {
             MongoDBExpression::FieldOperator {
@@ -1876,13 +1982,26 @@ mod tests {
         let query = r#"{"status": "active"}"#;
         let options = r#"{"projection": {"name": 1, "email": 1}, "sort": {"createdAt": -1}, "limit": 10, "skip": 5}"#;
 
-        let result = parser.parse_full_query(query, Some(options)).unwrap();
+        let result = parser
+            .parse_full_query(query, Some(options))
+            .expect("Failed to parse full query");
 
         assert!(result.filter.is_some());
         assert!(result.projection.is_some());
-        assert_eq!(result.projection.as_ref().unwrap().include.len(), 2);
+        assert_eq!(
+            result
+                .projection
+                .as_ref()
+                .expect("Projection should be Some")
+                .include
+                .len(),
+            2
+        );
         assert!(result.sort.is_some());
-        assert_eq!(result.sort.as_ref().unwrap()[0].1, SortOrder::Descending);
+        assert_eq!(
+            result.sort.as_ref().expect("Sort should be Some")[0].1,
+            SortOrder::Descending
+        );
         assert_eq!(result.limit, Some(10));
         assert_eq!(result.skip, Some(5));
     }

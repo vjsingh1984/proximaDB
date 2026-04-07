@@ -54,7 +54,7 @@ pub trait EntityStore: Send + Sync {
         collection_id: &str,
         query_vector: Option<Vec<f32>>,
         metadata_filter: Option<MetadataFilter>,
-        // temporal_filter: Option<TemporalFilter>, // TODO: Add when proto is available
+        // temporal_filter: Option<TemporalFilter>, // Deferred: Add when proto is available
         top_k: usize,
     ) -> Result<Vec<(Entity, f32)>>;
 
@@ -154,16 +154,32 @@ impl ProximaEntityStore {
 
     /// Get vector IDs for an entity (public accessor)
     pub fn get_entity_vectors(&self, entity_id: &str) -> Option<Vec<String>> {
-        self.entity_to_vectors
+        let lock = self
+            .entity_to_vectors
             .read()
-            .unwrap()
-            .get(entity_id)
-            .cloned()
+            .map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for entity_to_vectors is poisoned: {}",
+                    e
+                ))
+            })
+            .ok()?;
+        lock.get(entity_id).cloned()
     }
 
     /// Get embedding vector for a vector ID (public accessor)
     pub fn get_embedding(&self, vector_id: &str) -> Option<Vec<f32>> {
-        self.embeddings.read().unwrap().get(vector_id).cloned()
+        let lock = self
+            .embeddings
+            .read()
+            .map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for embeddings is poisoned: {}",
+                    e
+                ))
+            })
+            .ok()?;
+        lock.get(vector_id).cloned()
     }
 
     /// Generate entity storage key
@@ -188,7 +204,12 @@ impl ProximaEntityStore {
         entity_id: &str,
     ) -> Result<Vec<EmbeddingVersion>> {
         let prefix = format!("{}/{}", collection_id, entity_id);
-        let store = self.embeddings.read().unwrap();
+        let store = self.embeddings.read().map_err(|e| {
+            crate::core::error::VectorDBError::Internal(format!(
+                "RwLock for embeddings is poisoned: {}",
+                e
+            ))
+        })?;
         let mut out = Vec::new();
         for (k, v) in store.iter() {
             if k.starts_with(&prefix) {
@@ -239,8 +260,13 @@ impl ProximaEntityStore {
                                     serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
                                         value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
                                     },
-                                    serde_json::Value::Number(n) => crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))),
+                                    serde_json::Value::Number(n) => {
+                                        // unwrap_or(0.0) is acceptable here: JSON numbers are almost always valid f64 values.
+                                        // as_f64() only returns None for numbers beyond f64 range (extremely rare).
+                                        // Defaulting to 0.0 provides a valid value for edge cases in metadata.
+                                        crate::proto::proximadb_v1::SqlValue {
+                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))),
+                                        }
                                     },
                                     serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
                                         value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
@@ -284,10 +310,13 @@ impl EntityStore for ProximaEntityStore {
                 &format!("{:?}", embedding.modality),
             );
             // In-memory embedding store (temporary v1)
-            self.embeddings
-                .write()
-                .unwrap()
-                .insert(key, embedding.vector.clone());
+            let mut embeddings_store = self.embeddings.write().map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for embeddings is poisoned: {}",
+                    e
+                ))
+            })?;
+            embeddings_store.insert(key, embedding.vector.clone());
             if let Some(orch) = CrossCacheOrchestrator::global() {
                 orch.pattern_tracker().track_access_async(
                     format!("{}::{}", collection_id, &entity.id),
@@ -302,8 +331,18 @@ impl EntityStore for ProximaEntityStore {
 
         // Update entity↔vector index
         {
-            let mut e2v = self.entity_to_vectors.write().unwrap();
-            let mut v2e = self.vector_to_entity.write().unwrap();
+            let mut e2v = self.entity_to_vectors.write().map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for entity_to_vectors is poisoned: {}",
+                    e
+                ))
+            })?;
+            let mut v2e = self.vector_to_entity.write().map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for vector_to_entity is poisoned: {}",
+                    e
+                ))
+            })?;
             let entry = e2v.entry(entity.id.clone()).or_default();
             for embedding in &entity.embeddings {
                 let _modality = embedding.modality;
@@ -338,18 +377,25 @@ impl EntityStore for ProximaEntityStore {
         ))?;
 
         // Store in memory cache
-        self.headers
-            .write()
-            .unwrap()
-            .insert(header_key.clone(), header_bytes.clone());
+        {
+            let mut headers_store = self.headers.write().map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for headers is poisoned: {}",
+                    e
+                ))
+            })?;
+            headers_store.insert(header_key.clone(), header_bytes.clone());
+        } // Lock dropped here
 
         // In test mode, also store the actual header for easier debugging
         #[cfg(test)]
         {
-            self.test_entity_headers
+            let mut test_headers = self
+                .test_entity_headers
                 .write()
-                .unwrap()
-                .insert(header_key.clone(), header);
+                .expect("RwLock for test_entity_headers should not be poisoned in test code");
+            test_headers.insert(header_key.clone(), header);
+            drop(test_headers); // Explicit drop before await
         }
 
         // Persist to KV store
@@ -389,13 +435,21 @@ impl EntityStore for ProximaEntityStore {
         // Try KV first, then in-memory cache
         let opt = match self.kv.get(&header_key).await? {
             Some(bytes) => Some(bytes),
-            None => self.headers.read().unwrap().get(&header_key).cloned(),
-        };
-        if opt.is_some() {
-            if let Some(orch) = CrossCacheOrchestrator::global() {
-                orch.pattern_tracker()
-                    .track_access_async(header_key.clone(), CacheType::EntityHeader);
+            None => {
+                let headers = self.headers.read().map_err(|e| {
+                    crate::core::error::VectorDBError::Internal(format!(
+                        "RwLock for headers is poisoned: {}",
+                        e
+                    ))
+                })?;
+                headers.get(&header_key).cloned()
             }
+        };
+        if opt.is_some()
+            && let Some(orch) = CrossCacheOrchestrator::global()
+        {
+            orch.pattern_tracker()
+                .track_access_async(header_key.clone(), CacheType::EntityHeader);
         }
         let header: EntityHeader = if let Some(bytes) = opt {
             // Deserialize header using serde_json
@@ -417,7 +471,9 @@ impl EntityStore for ProximaEntityStore {
                     #[cfg(test)]
                     {
                         if let Some(test_header) =
-                            self.test_entity_headers.read().unwrap().get(&header_key)
+                            self.test_entity_headers.read()
+                                .expect("RwLock for test_entity_headers should not be poisoned in test code")
+                                .get(&header_key)
                         {
                             test_header.clone()
                         } else {
@@ -482,14 +538,24 @@ impl EntityStore for ProximaEntityStore {
 
         if hard_delete {
             // Remove header from in-memory caches
-            self.headers.write().unwrap().remove(&header_key);
+            {
+                let mut headers = self.headers.write().map_err(|e| {
+                    crate::core::error::VectorDBError::Internal(format!(
+                        "RwLock for headers is poisoned: {}",
+                        e
+                    ))
+                })?;
+                headers.remove(&header_key);
+            } // Lock dropped here
 
             #[cfg(test)]
             {
-                self.test_entity_headers
+                let mut test_headers = self
+                    .test_entity_headers
                     .write()
-                    .unwrap()
-                    .remove(&header_key);
+                    .expect("RwLock for test_entity_headers should not be poisoned in test code");
+                test_headers.remove(&header_key);
+                drop(test_headers); // Explicit drop before await
             }
 
             // Remove from KV store
@@ -497,17 +563,42 @@ impl EntityStore for ProximaEntityStore {
 
             // Remove embeddings from memory cache
             // Get all embedding keys for this entity
-            if let Some(vector_keys) = self.entity_to_vectors.read().unwrap().get(entity_id) {
-                let mut embeddings = self.embeddings.write().unwrap();
-                for key in vector_keys {
+            let vector_keys = {
+                let entity_to_vectors = self.entity_to_vectors.read().map_err(|e| {
+                    crate::core::error::VectorDBError::Internal(format!(
+                        "RwLock for entity_to_vectors is poisoned: {}",
+                        e
+                    ))
+                })?;
+                entity_to_vectors.get(entity_id).cloned()
+            }; // Lock dropped here
+
+            if let Some(vector_keys) = vector_keys {
+                let mut embeddings = self.embeddings.write().map_err(|e| {
+                    crate::core::error::VectorDBError::Internal(format!(
+                        "RwLock for embeddings is poisoned: {}",
+                        e
+                    ))
+                })?;
+                for key in &vector_keys {
                     embeddings.remove(key);
                 }
             }
 
             // Remove from entity↔vector index
             {
-                let mut e2v = self.entity_to_vectors.write().unwrap();
-                let mut v2e = self.vector_to_entity.write().unwrap();
+                let mut e2v = self.entity_to_vectors.write().map_err(|e| {
+                    crate::core::error::VectorDBError::Internal(format!(
+                        "RwLock for entity_to_vectors is poisoned: {}",
+                        e
+                    ))
+                })?;
+                let mut v2e = self.vector_to_entity.write().map_err(|e| {
+                    crate::core::error::VectorDBError::Internal(format!(
+                        "RwLock for vector_to_entity is poisoned: {}",
+                        e
+                    ))
+                })?;
 
                 // Get vector keys and remove from v2e
                 if let Some(vector_keys) = e2v.remove(entity_id) {
@@ -539,7 +630,7 @@ impl EntityStore for ProximaEntityStore {
         collection_id: &str,
         query_vector: Option<Vec<f32>>,
         metadata_filter: Option<MetadataFilter>,
-        // temporal_filter: Option<TemporalFilter>, // TODO: Add when proto is available
+        // temporal_filter: Option<TemporalFilter>, // Deferred: Add when proto is available
         top_k: usize,
     ) -> Result<Vec<(Entity, f32)>> {
         let mut results: Vec<(Entity, f32)> = Vec::new();
@@ -571,23 +662,34 @@ impl EntityStore for ProximaEntityStore {
 
                 for search_set in vos_results {
                     for record in search_set.results {
-                        let entity_id = record
-                            .metadata
-                            .get("entity_id")
-                            .and_then(|sv| match &sv.value {
-                                Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
-                                ) => Some(s.clone()),
-                                _ => None,
-                            })
-                            .or_else(|| {
-                                self.vector_to_entity
-                                    .read()
-                                    .unwrap()
-                                    .get(&record.id)
-                                    .cloned()
-                            })
-                            .unwrap_or_default();
+                        // Get entity_id from metadata or vector_to_entity mapping
+                        let entity_id_from_metadata =
+                            record
+                                .metadata
+                                .get("entity_id")
+                                .and_then(|sv| match &sv.value {
+                                    Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                            s,
+                                        ),
+                                    ) => Some(s.clone()),
+                                    _ => None,
+                                });
+
+                        let entity_id = if entity_id_from_metadata.is_some() {
+                            entity_id_from_metadata
+                        } else {
+                            // Try to find entity_id via vector_to_entity mapping
+                            let v2e = match self.vector_to_entity.read() {
+                                Ok(guard) => guard,
+                                Err(e) => {
+                                    tracing::warn!("RwLock for vector_to_entity is poisoned: {}, using empty mapping", e);
+                                    continue;
+                                }
+                            };
+                            v2e.get(&record.id).cloned()
+                        }.unwrap_or_default();
+
                         if entity_id.is_empty() {
                             continue;
                         }
@@ -627,13 +729,18 @@ impl EntityStore for ProximaEntityStore {
 
         // Collect entity IDs first to avoid holding lock across await
         let entity_ids = {
-            let headers = self.headers.read().unwrap();
+            let headers = self.headers.read().map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for headers is poisoned: {}",
+                    e
+                ))
+            })?;
             let mut ids = Vec::new();
             for key in headers.keys() {
-                if key.starts_with(&format!("{}:", collection_id)) {
-                    if let Some(entity_id) = key.split(':').nth(1) {
-                        ids.push(entity_id.to_string());
-                    }
+                if key.starts_with(&format!("{}:", collection_id))
+                    && let Some(entity_id) = key.split(':').nth(1)
+                {
+                    ids.push(entity_id.to_string());
                 }
             }
             ids
@@ -673,7 +780,12 @@ impl ProximaEntityStore {
 
         // First pass: Get candidate entity IDs (simplified for now)
         let candidate_ids = {
-            let headers = self.headers.read().unwrap();
+            let headers = self.headers.read().map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for headers is poisoned: {}",
+                    e
+                ))
+            })?;
             let mut candidate_ids = Vec::new();
             for key in headers.keys() {
                 if let Some(entity_id) = key.strip_prefix(&prefix) {
@@ -689,13 +801,13 @@ impl ProximaEntityStore {
 
         // Second pass: Load entities and apply detailed metadata filtering
         for entity_id in candidate_ids.into_iter().take(limit * 2) {
-            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await {
-                if self.entity_matches_metadata_filter(&entity, filter) {
-                    results.push((entity, 0.0f32)); // 0.0 since no similarity scoring
+            if let Ok(Some(entity)) = self.get_entity(collection_id, &entity_id, true, true).await
+                && self.entity_matches_metadata_filter(&entity, filter)
+            {
+                results.push((entity, 0.0f32)); // 0.0 since no similarity scoring
 
-                    if results.len() >= limit {
-                        break;
-                    }
+                if results.len() >= limit {
+                    break;
                 }
             }
         }
@@ -766,22 +878,21 @@ impl ProximaEntityStore {
             let mut field_found = false;
 
             // Search in typed metadata
-            if let Some(ref typed_metadata) = entity.typed_metadata {
-                if let Some(typed_field) = typed_metadata.fields.get(&clause.field) {
-                    field_found = true;
-                    if !self.typed_field_matches(typed_field, clause) {
-                        return false;
-                    }
+            if let Some(ref typed_metadata) = entity.typed_metadata
+                && let Some(typed_field) = typed_metadata.fields.get(&clause.field)
+            {
+                field_found = true;
+                if !self.typed_field_matches(typed_field, clause) {
+                    return false;
                 }
             }
 
             // If field not found in typed metadata, check flexible metadata
-            if !field_found {
-                if let Some(flexible_value) = entity.flexible_metadata.get(&clause.field) {
-                    if !self.sql_values_match(flexible_value, clause) {
-                        return false;
-                    }
-                }
+            if !field_found
+                && let Some(flexible_value) = entity.flexible_metadata.get(&clause.field)
+                && !self.sql_values_match(flexible_value, clause)
+            {
+                return false;
             }
         }
 
@@ -808,39 +919,50 @@ impl ProximaEntityStore {
     ) -> Result<Vec<Entity>> {
         let mut results = Vec::new();
         let mut count = 0;
+        // unwrap_or(usize::MAX) is safe: limit is optional, defaulting to no limit is correct behavior
         let max_count = limit.unwrap_or(usize::MAX);
 
         // Pre-allocate with reasonable capacity to reduce reallocations
         results.reserve(std::cmp::min(max_count, 1000));
 
         // Use simplified approach since entity_headers field doesn't exist
-        let headers = self.headers.read().unwrap();
-        for key in headers.keys() {
+        // Clone the keys to drop the lock before await
+        let keys: Vec<String> = {
+            let headers = self.headers.read().map_err(|e| {
+                crate::core::error::VectorDBError::Internal(format!(
+                    "RwLock for headers is poisoned: {}",
+                    e
+                ))
+            })?;
+            headers.keys().cloned().collect()
+            // Guard dropped here when block ends
+        };
+        for key in keys {
             if count >= max_count {
                 break;
             }
 
-            if key.starts_with(&format!("{}/entity/", collection_id)) {
-                if let Some(entity_id) = key.strip_prefix(&format!("{}/entity/", collection_id)) {
-                    // For now, retrieve entity and apply filters (could be optimized)
-                    if let Ok(Some(entity)) = self
-                        .get_entity(collection_id, entity_id, false, false)
-                        .await
-                    {
-                        // If no filters provided, include all entities
-                        // Otherwise check that entity matches all filters
-                        let matches = if filters.is_empty() {
-                            true
-                        } else {
-                            filters
-                                .iter()
-                                .all(|filter| self.entity_matches_metadata_filter(&entity, filter))
-                        };
+            if key.starts_with(&format!("{}/entity/", collection_id))
+                && let Some(entity_id) = key.strip_prefix(&format!("{}/entity/", collection_id))
+            {
+                // For now, retrieve entity and apply filters (could be optimized)
+                if let Ok(Some(entity)) = self
+                    .get_entity(collection_id, entity_id, false, false)
+                    .await
+                {
+                    // If no filters provided, include all entities
+                    // Otherwise check that entity matches all filters
+                    let matches = if filters.is_empty() {
+                        true
+                    } else {
+                        filters
+                            .iter()
+                            .all(|filter| self.entity_matches_metadata_filter(&entity, filter))
+                    };
 
-                        if matches {
-                            results.push(entity);
-                            count += 1;
-                        }
+                    if matches {
+                        results.push(entity);
+                        count += 1;
                     }
                 }
             }
@@ -855,118 +977,150 @@ impl ProximaEntityStore {
         collection_id: &'a str,
         filters: &'a [MetadataFilter],
         batch_size: usize,
-    ) -> impl futures::Stream<Item = Result<Vec<Entity>>> + 'a {
+    ) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<Entity>>> + 'a>> {
         use futures::{StreamExt, stream};
 
         #[cfg(test)]
-        let total_count = self.test_entity_headers.read().unwrap().len();
+        let total_count = self
+            .test_entity_headers
+            .read()
+            .expect("RwLock for test_entity_headers should not be poisoned in test code")
+            .len();
         #[cfg(not(test))]
-        let total_count = self.headers.read().unwrap().len();
+        let total_count = match self.headers.read() {
+            Ok(guard) => guard.len(),
+            Err(e) => {
+                // Return error stream
+                return Box::pin(stream::once(async move {
+                    Err(anyhow::anyhow!("RwLock for headers is poisoned: {}", e))
+                }));
+            }
+        };
 
         let num_batches = total_count.div_ceil(batch_size);
 
-        stream::iter(0..num_batches).then(move |batch_idx| async move {
-            let start_idx = batch_idx * batch_size;
-            let _end_idx = std::cmp::min(start_idx + batch_size, total_count);
+        Box::pin(
+            stream::iter(0..num_batches).then(move |batch_idx| async move {
+                let start_idx = batch_idx * batch_size;
+                let _end_idx = std::cmp::min(start_idx + batch_size, total_count);
 
-            let mut results = Vec::with_capacity(batch_size);
-            let mut count = 0;
+                let mut results = Vec::with_capacity(batch_size);
+                let mut count = 0;
 
-            // Stream through entities in batches to avoid loading everything into memory
-            #[cfg(test)]
-            {
-                // In test mode, use test_entity_headers
-                for (entity_id, header) in self
-                    .test_entity_headers
-                    .read()
-                    .unwrap()
-                    .iter()
-                    .skip(start_idx)
+                // Stream through entities in batches to avoid loading everything into memory
+                #[cfg(test)]
                 {
-                    if count >= batch_size {
-                        break;
-                    }
-
-                    if entity_id.starts_with(&format!("{}/entity/", collection_id)) {
-                        let entity_id_only = entity_id
-                            .strip_prefix(&format!("{}/entity/", collection_id))
-                            .unwrap_or(entity_id);
-
-                        // Convert EntityHeader back to Entity
-                        let entity = Entity {
-                            id: entity_id_only.to_string(),
-                            typed_metadata: None,
-                            flexible_metadata: header.flexible_metadata.clone(),
-                            embeddings: vec![],
-                            relations: vec![],
-                            provenance: None,
-                            temporal: None,
-                            collection_id: collection_id.to_string(),
-                        };
-
-                        let mut all_match = true;
-                        for filter in filters {
-                            if !self.entity_matches_metadata_filter(&entity, filter) {
-                                all_match = false;
-                                break;
-                            }
+                    // In test mode, use test_entity_headers
+                    for (entity_id, header) in self
+                        .test_entity_headers
+                        .read()
+                        .expect(
+                            "RwLock for test_entity_headers should not be poisoned in test code",
+                        )
+                        .iter()
+                        .skip(start_idx)
+                    {
+                        if count >= batch_size {
+                            break;
                         }
 
-                        if all_match {
-                            results.push(entity);
-                            count += 1;
-                        }
-                    }
-                }
+                        if entity_id.starts_with(&format!("{}/entity/", collection_id)) {
+                            // unwrap_or is safe: strip_prefix returns None if prefix doesn't match,
+                            // but we've already verified it starts_with the prefix. Fallback to full ID.
+                            let entity_id_only = entity_id
+                                .strip_prefix(&format!("{}/entity/", collection_id))
+                                .unwrap_or(entity_id);
 
-                Ok(results)
-            }
+                            // Convert EntityHeader back to Entity
+                            let entity = Entity {
+                                id: entity_id_only.to_string(),
+                                typed_metadata: None,
+                                flexible_metadata: header.flexible_metadata.clone(),
+                                embeddings: vec![],
+                                relations: vec![],
+                                provenance: None,
+                                temporal: None,
+                                collection_id: collection_id.to_string(),
+                            };
 
-            #[cfg(not(test))]
-            {
-                for (entity_id, _header_bytes) in
-                    self.headers.read().unwrap().iter().skip(start_idx)
-                {
-                    if count >= batch_size {
-                        break;
-                    }
-
-                    if entity_id.starts_with(&format!("{}_", collection_id)) {
-                        let mut all_match = true;
-
-                        // Early exit on first non-matching filter
-                        // TODO: Implement header-level filtering once EntityHeader serialization is resolved
-                        // For now, defer to entity-level filtering
-                        for filter in filters {
-                            if let Ok(Some(_entity)) = self
-                                .get_entity(collection_id, entity_id, false, false)
-                                .await
-                            {
-                                if !self.entity_matches_metadata_filter(&_entity, filter) {
+                            let mut all_match = true;
+                            for filter in filters {
+                                if !self.entity_matches_metadata_filter(&entity, filter) {
                                     all_match = false;
                                     break;
                                 }
-                            } else {
-                                all_match = false;
-                                break;
+                            }
+
+                            if all_match {
+                                results.push(entity);
+                                count += 1;
                             }
                         }
+                    }
 
-                        if all_match {
-                            if let Ok(Some(entity)) = self
-                                .get_entity(collection_id, entity_id, false, false)
-                                .await
+                    Ok(results)
+                }
+
+                #[cfg(not(test))]
+                {
+                    let entity_ids: Vec<String> = {
+                        let headers = match self.headers.read() {
+                            Ok(guard) => guard,
+                            Err(e) => {
+                                return Err(anyhow::anyhow!(
+                                    "RwLock for headers is poisoned: {}",
+                                    e
+                                ));
+                            }
+                        };
+                        // Clone the data we need before dropping the lock
+                        let entity_ids: Vec<String> =
+                            headers.keys().skip(start_idx).cloned().collect();
+                        drop(headers); // Explicitly drop the lock before awaits
+                        entity_ids
+                    };
+
+                    for entity_id in entity_ids {
+                        if count >= batch_size {
+                            break;
+                        }
+
+                        if entity_id.starts_with(&format!("{}_", collection_id)) {
+                            let mut all_match = true;
+
+                            // Early exit on first non-matching filter
+                            // Deferred: Implement header-level filtering once EntityHeader serialization is resolved
+                            // For now, defer to entity-level filtering
+                            for filter in filters {
+                                if let Ok(Some(_entity)) = self
+                                    .get_entity(collection_id, &entity_id, false, false)
+                                    .await
+                                {
+                                    if !self.entity_matches_metadata_filter(&_entity, filter) {
+                                        all_match = false;
+                                        break;
+                                    }
+                                } else {
+                                    all_match = false;
+                                    break;
+                                }
+                            }
+
+                            if all_match
+                                && let Ok(Some(entity)) = self
+                                    .get_entity(collection_id, &entity_id, false, false)
+                                    .await
                             {
                                 results.push(entity);
                                 count += 1;
                             }
                         }
                     }
-                }
 
-                Ok(results)
-            }
-        })
+                    Ok(results)
+                }
+            }),
+        )
     }
 }
 
@@ -996,6 +1150,8 @@ impl ProximaEntityStore {
                 Some(filter_clause::Value::BoolValue(b)) => serde_json::json!(*b),
                 None => serde_json::Value::Null,
             };
+            // unwrap_or(Eq) is safe: ComparisonOp::try_from can fail for unknown enum values
+            // from future protobuf versions. Defaulting to Eq provides backward-compatible behavior.
             let op = match ComparisonOp::try_from(c.op).unwrap_or(ComparisonOp::Eq) {
                 ComparisonOp::Eq => Op::Equals,
                 ComparisonOp::Ne => Op::NotEquals,
@@ -1013,16 +1169,15 @@ impl ProximaEntityStore {
                 value: val,
             });
         }
+        // unwrap_or(And) is safe: LogicalOp::try_from can fail for unknown enum values
+        // from future protobuf versions. Defaulting to And provides backward-compatible behavior.
         match LogicalOp::try_from(f.op).unwrap_or(LogicalOp::And) {
             LogicalOp::And => Some(FE::And(terms)),
             LogicalOp::Or => Some(FE::Or(terms)),
-            LogicalOp::Not => {
-                if let Some(first) = terms.into_iter().next() {
-                    Some(FE::Not(Box::new(first)))
-                } else {
-                    None
-                }
-            }
+            LogicalOp::Not => terms
+                .into_iter()
+                .next()
+                .map(|first| FE::Not(Box::new(first))),
         }
     }
 }
@@ -1055,10 +1210,21 @@ impl CsrRelationsStore {
     }
 }
 
+impl Default for CsrRelationsStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl RelationsStore for CsrRelationsStore {
     async fn add_relation(&self, collection_id: &str, relation: Relation) -> Result<()> {
-        let mut guard = self.adj.write().unwrap();
+        let mut guard = self.adj.write().map_err(|e| {
+            crate::core::error::VectorDBError::Internal(format!(
+                "RwLock for adj is poisoned: {}",
+                e
+            ))
+        })?;
         let col = guard.entry(collection_id.to_string()).or_default();
         col.entry(relation.source_entity_id.clone())
             .or_default()
@@ -1067,7 +1233,12 @@ impl RelationsStore for CsrRelationsStore {
     }
 
     async fn get_relations(&self, collection_id: &str, entity_id: &str) -> Result<Vec<Relation>> {
-        let guard = self.adj.read().unwrap();
+        let guard = self.adj.read().map_err(|e| {
+            crate::core::error::VectorDBError::Internal(format!(
+                "RwLock for adj is poisoned: {}",
+                e
+            ))
+        })?;
         Ok(guard
             .get(collection_id)
             .and_then(|m| m.get(entity_id))
@@ -1076,7 +1247,12 @@ impl RelationsStore for CsrRelationsStore {
     }
 
     async fn delete_all_relations(&self, collection_id: &str, entity_id: &str) -> Result<()> {
-        let mut guard = self.adj.write().unwrap();
+        let mut guard = self.adj.write().map_err(|e| {
+            crate::core::error::VectorDBError::Internal(format!(
+                "RwLock for adj is poisoned: {}",
+                e
+            ))
+        })?;
         if let Some(m) = guard.get_mut(collection_id) {
             m.remove(entity_id);
         }
@@ -1097,18 +1273,33 @@ impl InMemoryProvenanceRegistry {
     }
 }
 
+impl Default for InMemoryProvenanceRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl ProvenanceRegistry for InMemoryProvenanceRegistry {
     async fn register_provenance(&self, entity_id: &str, provenance: Provenance) -> Result<()> {
-        self.map
-            .write()
-            .unwrap()
-            .insert(entity_id.to_string(), provenance);
+        let mut map = self.map.write().map_err(|e| {
+            crate::core::error::VectorDBError::Internal(format!(
+                "RwLock for map is poisoned: {}",
+                e
+            ))
+        })?;
+        map.insert(entity_id.to_string(), provenance);
         Ok(())
     }
 
     async fn remove_provenance(&self, entity_id: &str) -> Result<()> {
-        self.map.write().unwrap().remove(entity_id);
+        let mut map = self.map.write().map_err(|e| {
+            crate::core::error::VectorDBError::Internal(format!(
+                "RwLock for map is poisoned: {}",
+                e
+            ))
+        })?;
+        map.remove(entity_id);
         Ok(())
     }
 }
@@ -1127,7 +1318,9 @@ mod tests {
     impl NoopEngine {
         async fn new() -> Self {
             let config = FilesystemConfig::default();
-            let filesystem_factory = FilesystemFactory::create(config).await.unwrap();
+            let filesystem_factory = FilesystemFactory::create(config)
+                .await
+                .expect("Failed to create FilesystemFactory in test helper");
             Self { filesystem_factory }
         }
     }
@@ -1231,7 +1424,7 @@ mod tests {
         let entity_id = store
             .upsert_entity("test_collection", entity.clone())
             .await
-            .unwrap();
+            .expect("Failed to upsert entity in test");
 
         // Skip file existence check for NoopEngine - it doesn't write files
         // The test is primarily about the entity store's ability to manage entities
@@ -1241,9 +1434,10 @@ mod tests {
         let got = store
             .get_entity("test_collection", &entity_id, true, false)
             .await
-            .unwrap();
+            .expect("Failed to get entity in test");
         assert!(got.is_some());
-        assert_eq!(got.as_ref().unwrap().id, entity_id);
+        let got_entity = got.as_ref().expect("Entity should exist in test");
+        assert_eq!(got_entity.id, entity_id);
 
         // NoopEngine doesn't persist embeddings, so they won't be returned
         // The test should verify that the entity can be stored and retrieved
@@ -1261,12 +1455,22 @@ mod tests {
             created_at_ms: 0,
             properties: Default::default(),
         };
-        csr.add_relation("c1", rel.clone()).await.unwrap();
-        let got = csr.get_relations("c1", "e1").await.unwrap();
+        csr.add_relation("c1", rel.clone())
+            .await
+            .expect("Failed to add relation in test");
+        let got = csr
+            .get_relations("c1", "e1")
+            .await
+            .expect("Failed to get relations in test");
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].target_entity_id, "e2");
-        csr.delete_all_relations("c1", "e1").await.unwrap();
-        let got2 = csr.get_relations("c1", "e1").await.unwrap();
+        csr.delete_all_relations("c1", "e1")
+            .await
+            .expect("Failed to delete relations in test");
+        let got2 = csr
+            .get_relations("c1", "e1")
+            .await
+            .expect("Failed to get relations after delete in test");
         assert!(got2.is_empty());
     }
 
@@ -1327,11 +1531,11 @@ mod tests {
         store
             .upsert_entity("test_collection", entity1)
             .await
-            .unwrap();
+            .expect("Failed to upsert entity1 in test");
         store
             .upsert_entity("test_collection", entity2)
             .await
-            .unwrap();
+            .expect("Failed to upsert entity2 in test");
 
         // Create filter for electronics category
         let filter = MetadataFilter {
@@ -1351,7 +1555,7 @@ mod tests {
         let results = store
             .batch_filter_entities("test_collection", &[filter], Some(10))
             .await
-            .unwrap();
+            .expect("Failed to batch filter entities in test");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "test_entity_1");
     }
@@ -1390,7 +1594,7 @@ mod tests {
             store
                 .upsert_entity("stream_collection", entity)
                 .await
-                .unwrap();
+                .expect("Failed to upsert streaming entity in test");
         }
 
         // Test streaming with batch size of 2
@@ -1404,7 +1608,7 @@ mod tests {
         use futures::pin_mut;
         pin_mut!(stream);
         while let Some(batch_result) = stream.next().await {
-            let batch = batch_result.unwrap();
+            let batch = batch_result.expect("Failed to get batch in streaming test");
             total_entities += batch.len();
             batch_count += 1;
             let _end_idx = batch.len(); // For future pagination support

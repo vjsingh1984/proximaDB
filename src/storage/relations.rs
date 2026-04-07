@@ -139,7 +139,7 @@ impl InMemoryRelationsStore {
         // Use ORION graph engine to load relationships from persistent storage
         // This leverages the existing graph storage infrastructure
 
-        // TODO: Implement proper graph storage integration when ORION engine is ready
+        // Deferred: Implement proper graph storage integration when ORION engine is ready
         debug!(
             "Relationships loading deferred for collection: {}",
             collection_id
@@ -219,7 +219,7 @@ impl InMemoryRelationsStore {
                 updated_at_ms: chrono::Utc::now().timestamp_millis(),
             };
 
-            // TODO: Implement graph persistence when graph storage is available
+            // Deferred: Implement graph persistence when graph storage is available
             let _graph_engine = &self.storage_engine;
             debug!(
                 "Persisted relation to ORION: {} -> {} (collection: {})",
@@ -239,7 +239,7 @@ impl InMemoryRelationsStore {
                 "{}:{}:{}",
                 relation.source_entity_id, relation.relation_type, relation.target_entity_id
             );
-            // TODO: Implement graph deletion when graph storage is available
+            // Deferred: Implement graph deletion when graph storage is available
             // graph_engine.delete_edge(&edge_id)?;
             debug!(
                 "Removed relation from ORION: {} (collection: {})",
@@ -262,7 +262,7 @@ impl InMemoryRelationsStore {
             &relation.target_entity_id,
         );
 
-        // TODO: Serialize and store relation
+        // Deferred: Serialize and store relation
         // self.storage_engine.put(&key, serialize(relation)?).await?;
 
         Ok(())
@@ -319,18 +319,18 @@ impl RelationsStore for InMemoryRelationsStore {
         let forward_key = Self::edge_key(collection_id, &relation.source_entity_id);
         self.forward_edges
             .entry(forward_key)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(relation.relation_type.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(forward_edge);
 
         // Update reverse edges
         let reverse_key = Self::edge_key(collection_id, &relation.target_entity_id);
         self.reverse_edges
             .entry(reverse_key)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .entry(relation.relation_type.clone())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(reverse_edge);
 
         // Persist to storage
@@ -376,18 +376,18 @@ impl RelationsStore for InMemoryRelationsStore {
         let key = Self::edge_key(collection_id, entity_id);
         let mut relations = Vec::new();
 
-        if let Some(forward) = self.forward_edges.get(&key) {
-            if let Some(edges) = forward.get(relation_type) {
-                for edge in edges {
-                    relations.push(Relation {
-                        source_entity_id: entity_id.to_string(),
-                        target_entity_id: edge.entity_id.clone(),
-                        relation_type: relation_type.to_string(),
-                        weight: edge.weight,
-                        created_at_ms: edge.created_at as i64 * 1000,
-                        properties: edge.properties.clone(),
-                    });
-                }
+        if let Some(forward) = self.forward_edges.get(&key)
+            && let Some(edges) = forward.get(relation_type)
+        {
+            for edge in edges {
+                relations.push(Relation {
+                    source_entity_id: entity_id.to_string(),
+                    target_entity_id: edge.entity_id.clone(),
+                    relation_type: relation_type.to_string(),
+                    weight: edge.weight,
+                    created_at_ms: edge.created_at as i64 * 1000,
+                    properties: edge.properties.clone(),
+                });
             }
         }
 
@@ -403,7 +403,7 @@ impl RelationsStore for InMemoryRelationsStore {
         // Remove from reverse edges
         self.reverse_edges.remove(&key);
 
-        // TODO: Remove from persistent storage
+        // Deferred: Remove from persistent storage
 
         debug!("Deleted all relations for entity: {}", entity_id);
         Ok(())
@@ -418,21 +418,21 @@ impl RelationsStore for InMemoryRelationsStore {
     ) -> Result<()> {
         // Remove from forward edges
         let forward_key = Self::edge_key(collection_id, source_id);
-        if let Some(mut forward) = self.forward_edges.get_mut(&forward_key) {
-            if let Some(edges) = forward.get_mut(relation_type) {
-                edges.retain(|e| e.entity_id != target_id);
-            }
+        if let Some(mut forward) = self.forward_edges.get_mut(&forward_key)
+            && let Some(edges) = forward.get_mut(relation_type)
+        {
+            edges.retain(|e| e.entity_id != target_id);
         }
 
         // Remove from reverse edges
         let reverse_key = Self::edge_key(collection_id, target_id);
-        if let Some(mut reverse) = self.reverse_edges.get_mut(&reverse_key) {
-            if let Some(edges) = reverse.get_mut(relation_type) {
-                edges.retain(|e| e.entity_id != source_id);
-            }
+        if let Some(mut reverse) = self.reverse_edges.get_mut(&reverse_key)
+            && let Some(edges) = reverse.get_mut(relation_type)
+        {
+            edges.retain(|e| e.entity_id != source_id);
         }
 
-        // TODO: Remove from persistent storage
+        // Deferred: Remove from persistent storage
 
         Ok(())
     }
@@ -456,7 +456,9 @@ impl RelationsStore for InMemoryRelationsStore {
                 continue;
             }
 
-            let current_entity = entities.last().unwrap();
+            let Some(current_entity) = entities.last() else {
+                continue;
+            };
             if visited.contains(current_entity) {
                 continue;
             }

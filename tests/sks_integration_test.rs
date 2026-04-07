@@ -10,20 +10,18 @@
 #[cfg(test)]
 mod sks_integration_tests {
     use anyhow::Result;
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
     use proximadb::core::VectorRecord;
     use proximadb::proto::proximadb_v1::{
         EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
     };
-    use proximadb::storage::entity_store::{
-        EntityStore, ProvenanceRegistry, ProximaEntityStore, RelationsStore,
-    };
+    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
     use proximadb::storage::provenance::InMemoryProvenanceRegistry;
     use proximadb::storage::relations::InMemoryRelationsStore;
+    use proximadb::storage::traits::StorageEngineStrategy;
     use proximadb::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
     };
-    use proximadb::storage::traits::{PerformanceTier, StorageEngineStrategy};
     use std::collections::HashMap;
     use std::sync::Arc;
 

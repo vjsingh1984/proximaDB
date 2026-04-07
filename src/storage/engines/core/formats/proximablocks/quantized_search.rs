@@ -1,12 +1,12 @@
+use anyhow::{Context, Result};
 use std::sync::Arc;
-use anyhow::{Result, Context};
-use tracing::{info, debug, trace};
+use tracing::{debug, info, trace};
 
-use crate::proto::proximadb_v1::{VectorRecord, Collection};
-use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, QuantizedSection};
-use crate::compute::distance_computation::engine::{UnifiedDistanceCompute, DistanceMetric};
+use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::precompute::QuantizationPrecomputeService;
 use crate::core::search::results::OptimizedSearchRecord;
+use crate::proto::proximadb_v1::{Collection, VectorRecord};
+use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, QuantizedSection};
 
 /// Search using precomputed quantized vectors for massive speedup
 pub struct QuantizedProximaSearch {
@@ -39,35 +39,36 @@ impl QuantizedProximaSearch {
         );
 
         // 1. Check if blocks have quantization
-        let has_quantization = blocks.iter()
-            .any(|b| b.quantized_section.is_some());
+        let has_quantization = blocks.iter().any(|b| b.quantized_section.is_some());
 
         if !has_quantization {
             info!("⚠️ No precomputed quantization found, falling back to full precision");
-            return self.search_full_precision(query_vector, blocks, top_k, metric).await;
+            return self
+                .search_full_precision(query_vector, blocks, top_k, metric)
+                .await;
         }
 
         // 2. Quantize query vector once
-        let query_quantized = self.quantization_service
+        let query_quantized = self
+            .quantization_service
             .quantize_query_vector(query_vector, collection)
             .await?;
 
         // 3. Perform cascading search with progressive refinement
-        let candidates = self.cascading_quantized_search(
-            query_vector,
-            &query_quantized,
-            blocks,
-            top_k * 3, // Get more candidates for reranking
-            metric,
-        ).await?;
+        let candidates = self
+            .cascading_quantized_search(
+                query_vector,
+                &query_quantized,
+                blocks,
+                top_k * 3, // Get more candidates for reranking
+                metric,
+            )
+            .await?;
 
         // 4. Rerank with full precision
-        let final_results = self.rerank_with_full_precision(
-            query_vector,
-            candidates,
-            top_k,
-            metric,
-        ).await?;
+        let final_results = self
+            .rerank_with_full_precision(query_vector, candidates, top_k, metric)
+            .await?;
 
         info!(
             "✅ QUANTIZED SEARCH: Found {} results using precomputed quantization",
@@ -92,7 +93,8 @@ impl QuantizedProximaSearch {
             if let Some(ref quantized_section) = block.quantized_section {
                 // Stage 1: Binary filtering (if available) - Ultra fast
                 let binary_candidates = if let (Some(ref binary_query), Some(ref binary_vectors)) =
-                    (&query_quantized.binary, &quantized_section.binary_vectors) {
+                    (&query_quantized.binary, &quantized_section.binary_vectors)
+                {
                     debug!("🏃 Stage 1: Binary filtering for block {}", block.block_id);
                     self.binary_filter(
                         binary_query,
@@ -107,8 +109,12 @@ impl QuantizedProximaSearch {
 
                 // Stage 2: INT8 scoring (if available) - Fast approximate
                 let int8_candidates = if let (Some(ref int8_query), Some(ref int8_vectors)) =
-                    (&query_quantized.int8, &quantized_section.int8_vectors) {
-                    debug!("🏃 Stage 2: INT8 scoring for {} candidates", binary_candidates.len());
+                    (&query_quantized.int8, &quantized_section.int8_vectors)
+                {
+                    debug!(
+                        "🏃 Stage 2: INT8 scoring for {} candidates",
+                        binary_candidates.len()
+                    );
                     self.int8_score_and_filter(
                         int8_query,
                         int8_vectors,
@@ -123,8 +129,12 @@ impl QuantizedProximaSearch {
 
                 // Stage 3: PQ refinement (if available) - Higher precision
                 let pq_candidates = if let (Some(ref pq_query), Some(ref pq_vectors)) =
-                    (&query_quantized.pq8, &quantized_section.pq_vectors) {
-                    debug!("🏃 Stage 3: PQ refinement for {} candidates", int8_candidates.len());
+                    (&query_quantized.pq8, &quantized_section.pq_vectors)
+                {
+                    debug!(
+                        "🏃 Stage 3: PQ refinement for {} candidates",
+                        int8_candidates.len()
+                    );
                     self.pq_refine(
                         pq_query,
                         pq_vectors,
@@ -146,7 +156,10 @@ impl QuantizedProximaSearch {
                 all_candidates.extend(pq_candidates);
             } else {
                 // No quantization in this block, compute full precision
-                debug!("⚠️ Block {} has no quantization, using full precision", block.block_id);
+                debug!(
+                    "⚠️ Block {} has no quantization, using full precision",
+                    block.block_id
+                );
                 let full_scores = self.compute_full_precision_scores(
                     query_full,
                     &block.records,
@@ -158,7 +171,7 @@ impl QuantizedProximaSearch {
         }
 
         // Sort and take top candidates
-        all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         all_candidates.truncate(candidates_needed);
 
         Ok(all_candidates)
@@ -206,7 +219,7 @@ impl QuantizedProximaSearch {
         }
 
         // Sort by score and take top candidates
-        scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        scores.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         scores.truncate(max_candidates);
 
         Ok(scores.into_iter().map(|(idx, _)| idx).collect())
@@ -252,11 +265,9 @@ impl QuantizedProximaSearch {
 
         for idx in indices {
             if idx < records.len() {
-                let distance = self.distance_compute.compute_distance(
-                    query,
-                    &records[idx].values,
-                    metric,
-                )?;
+                let distance =
+                    self.distance_compute
+                        .compute_distance(query, &records[idx].values, metric)?;
                 results.push((records[idx].clone(), distance));
             }
         }
@@ -272,21 +283,22 @@ impl QuantizedProximaSearch {
         top_k: usize,
         metric: DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
-        debug!("🎯 Reranking {} candidates with full precision", candidates.len());
+        debug!(
+            "🎯 Reranking {} candidates with full precision",
+            candidates.len()
+        );
 
         let mut reranked: Vec<(VectorRecord, f32)> = Vec::with_capacity(candidates.len());
 
         for (record, _approximate_score) in candidates {
-            let exact_distance = self.distance_compute.compute_distance(
-                query,
-                &record.values,
-                metric,
-            )?;
+            let exact_distance =
+                self.distance_compute
+                    .compute_distance(query, &record.values, metric)?;
             reranked.push((record, exact_distance));
         }
 
         // Sort by exact distance
-        reranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        reranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         reranked.truncate(top_k);
 
         // Convert to OptimizedSearchRecord
@@ -316,17 +328,15 @@ impl QuantizedProximaSearch {
 
         for block in blocks {
             for record in block.records {
-                let distance = self.distance_compute.compute_distance(
-                    query,
-                    &record.values,
-                    metric,
-                )?;
+                let distance =
+                    self.distance_compute
+                        .compute_distance(query, &record.values, metric)?;
                 all_results.push((record, distance));
             }
         }
 
         // Sort and take top-k
-        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         all_results.truncate(top_k);
 
         // Convert to OptimizedSearchRecord
@@ -356,7 +366,8 @@ impl QuantizedProximaSearch {
     fn compute_int8_distance(&self, a: &[i8], b: &[i8], metric: DistanceMetric) -> Result<f32> {
         match metric {
             DistanceMetric::L2 => {
-                let sum: i32 = a.iter()
+                let sum: i32 = a
+                    .iter()
                     .zip(b.iter())
                     .map(|(x, y)| {
                         let diff = *x as i32 - *y as i32;
@@ -364,9 +375,10 @@ impl QuantizedProximaSearch {
                     })
                     .sum();
                 Ok((sum as f32).sqrt())
-            },
+            }
             DistanceMetric::Cosine => {
-                let dot: i32 = a.iter()
+                let dot: i32 = a
+                    .iter()
                     .zip(b.iter())
                     .map(|(x, y)| *x as i32 * *y as i32)
                     .sum();
@@ -376,12 +388,13 @@ impl QuantizedProximaSearch {
 
                 let similarity = dot as f32 / ((norm_a as f32).sqrt() * (norm_b as f32).sqrt());
                 Ok(1.0 - similarity)
-            },
+            }
             _ => {
                 // Fall back to converting to f32
                 let a_f32: Vec<f32> = a.iter().map(|&x| x as f32).collect();
                 let b_f32: Vec<f32> = b.iter().map(|&x| x as f32).collect();
-                self.distance_compute.compute_distance(&a_f32, &b_f32, metric)
+                self.distance_compute
+                    .compute_distance(&a_f32, &b_f32, metric)
             }
         }
     }

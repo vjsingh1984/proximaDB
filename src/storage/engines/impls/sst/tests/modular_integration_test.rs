@@ -315,7 +315,7 @@ mod tests {
             .collect();
 
         // Sort by distance (ascending)
-        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         // Get ground truth top-k
         let ground_truth: HashSet<usize> = distances.iter().take(k).map(|(i, _)| *i).collect();

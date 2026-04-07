@@ -16,10 +16,15 @@ use crate::core::config_loader::ConfigLoader;
 /// Configuration change event
 #[derive(Debug, Clone)]
 pub struct ConfigChangeEvent {
+    /// Kind of configuration change that occurred
     pub change_type: ConfigChangeType,
+    /// Names of configuration sections that were modified
     pub affected_sections: Vec<String>,
+    /// Previous configuration before the change
     pub old_config: Option<Config>,
+    /// Updated configuration after the change
     pub new_config: Config,
+    /// Wall-clock time when the change was detected
     pub timestamp: SystemTime,
 }
 
@@ -29,7 +34,10 @@ pub enum ConfigChangeType {
     /// Complete configuration reload
     FullReload,
     /// Specific section updated
-    SectionUpdate { section: String },
+    SectionUpdate {
+        /// Name of the configuration section that changed
+        section: String,
+    },
     /// Server settings changed
     ServerConfigUpdate,
     /// Storage settings changed
@@ -76,10 +84,10 @@ impl ConfigReloader {
         let (change_tx, _) = broadcast::channel(100);
 
         // Get initial file modification time
-        let last_modified = tokio::fs::metadata(&config_path)
-            .await
-            .map(|m| m.modified().unwrap_or(SystemTime::now()))
-            .unwrap_or_else(|_| SystemTime::now());
+        let last_modified = tokio::fs::metadata(&config_path).await.map_or_else(
+            |_| SystemTime::now(),
+            |m| m.modified().unwrap_or(SystemTime::now()),
+        );
 
         Ok(Self {
             config: Arc::new(RwLock::new(initial_config)),

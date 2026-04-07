@@ -1,0 +1,755 @@
+= ProximaDB Cloud-Hosted Managed Service Design
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: pygments
+
+**Status**: 📋 Design Phase
+**Version**: 1.0
+**Last Updated**: 2026-03-31
+**Author**: ProximaDB Team
+
+== Executive Summary
+
+This document outlines the design for a cloud-hosted, fully managed ProximaDB service. The service will provide a turnkey vector database solution with automatic scaling, high availability, and enterprise-grade security.
+
+**Target Launch**: Q3 2026 (8 weeks development)
+**Target Availability**: 99.9% uptime SLA
+**Target Regions**: 3 (us-east-1, eu-west-1, ap-southeast-1)
+
+== Service Overview
+
+=== Value Proposition
+
+**For Developers**:
+- Zero infrastructure management
+- Automatic scaling and optimizations
+- Pay-as-you-go pricing
+- 5-minute setup time
+
+**For Enterprises**:
+- SOC 2 Type II compliant
+- VPC peering and private endpoints
+- Role-based access control (RBAC)
+- 24/7 support and SLAs
+
+=== Service Tiers
+
+[cols="2,2,2,2,1"]
+|===
+|Tier |Use Case |Price |Features |SLA
+
+|Developer
+|Small projects, learning
+|$49/month
+|- 1 GB storage
+- 10M queries/month
+- Community support
+|99%
+
+|Professional
+|Production workloads
+|$299/month
+|- 10 GB storage
+- 100M queries/month
+- Email support
+|99.5%
+
+|Business
+|Growing teams
+|$999/month
+|- 100 GB storage
+- 1B queries/month
+- 24/7 support
+- VPC peering
+|99.9%
+
+|Enterprise
+|Large scale, custom
+|Custom pricing
+|- Unlimited storage
+- Unlimited queries
+- Dedicated support
+- On-premise option
+|99.99%
+|===
+
+== Architecture Design
+
+=== High-Level Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TB
+    subgraph "Client Layer"
+        A[Web Applications]
+        B[Mobile Apps]
+        C[CLI Tools]
+    end
+
+    subgraph "API Gateway Layer"
+        D[Load Balancer]
+        E[API Gateway<br/>REST/gRPC/WebSocket]
+        F[Authentication<br/>OAuth2/JWT/API Keys]
+    end
+
+    subgraph "Application Layer"
+        G[Control Plane<br/>Kubernetes]
+        H[Query Router<br/>Stateless]
+        I[Metadata Service<br/>PostgreSQL]
+    end
+
+    subgraph "Data Plane Layer"
+        J[ProximaDB Nodes<br/>Kubernetes Pods]
+        K[Vector Storage<br/>EBS volumes]
+        L[WAL Storage<br/>S3]
+    end
+
+    subgraph "Observability Layer"
+        M[Prometheus/Grafana]
+        N[ELK Stack]
+        O[Jaeger Tracing]
+    end
+
+    A --> D
+    B --> D
+    C --> D
+    D --> E
+    E --> F
+    F --> H
+    H --> I
+    H --> J
+    J --> K
+    J --> L
+    G --> M
+    G --> N
+    G --> O
+
+    style D fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style G fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style J fill:#5ba3f5,stroke:#3d7ab8,stroke-width:2px,color:#000
+----
+
+=== Multi-Region Deployment
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph LR
+    subgraph "Global Traffic"
+        DNS[Route53<br/>GeoDNS]
+    end
+
+    subgraph "US East"
+        US1[API Gateway]
+        US2[ProximaDB Cluster]
+        US3[Replica]
+    end
+
+    subgraph "EU West"
+        EU1[API Gateway]
+        EU2[ProximaDB Cluster]
+        EU3[Replica]
+    end
+
+    subgraph "AP Southeast"
+        AP1[API Gateway]
+        AP2[ProximaDB Cluster]
+        AP3[Replica]
+    end
+
+    DNS --> US1
+    DNS --> EU1
+    DNS --> AP1
+
+    US1 --> US2
+    EU1 --> EU2
+    AP1 --> AP2
+
+    US2 <--> EU2
+    EU2 <--> AP2
+    US2 <--> AP2
+
+    US2 --> US3
+    EU2 --> EU3
+    AP2 --> AP3
+
+    style DNS fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+----
+
+== Infrastructure Components
+
+=== 1. Control Plane (Kubernetes)
+
+**Purpose**: Orchestrate and manage all ProximaDB resources
+
+**Components**:
+- **API Server**: Exposes REST/gRPC APIs for cluster management
+- **Controller Manager**: Reconciles desired state (collections, scaling)
+- **Scheduler**: Places pods based on resources and constraints
+- **Operator**: Custom ProximaDB operator for lifecycle management
+
+**Technologies**:
+- Kubernetes 1.29+
+- Custom Resource Definitions (CRDs) for ProximaDB resources
+- Helm charts for deployment
+
+**Scaling**:
+- Horizontal Pod Autoscaler (HPA) for query nodes
+- Cluster Autoscaler for node provisioning
+- Vertical Pod Autoscaler (VPA) for resource tuning
+
+=== 2. API Gateway Layer
+
+**Purpose**: Secure, scalable entry point for all client requests
+
+**Components**:
+- **Load Balancer**: AWS ALB or Google Cloud Load Balancing
+- **API Gateway**: Kong or AWS API Gateway
+- **Authentication**: OAuth2, JWT, API Key validation
+- **Rate Limiting**: Per-tenant rate limits
+- **Request Routing**: Route to appropriate data plane
+
+**Features**:
+- TLS termination
+- Web Application Firewall (WAF)
+- DDoS protection
+- Request/response logging
+- Circuit breakers
+
+=== 3. Data Plane (ProximaDB Clusters)
+
+**Purpose**: Store and query vector data
+
+**Architecture**:
+- **Stateless Query Nodes**: Horizontal scaling for read queries
+- **Stateful Storage Nodes**: LSM-tree storage with WAL
+- **In-Memory Cache**: Redis for hot data
+- **Object Storage**: S3/GCS for long-term archival
+
+**Storage Engines**:
+- **SST**: LSM-tree for write-heavy workloads
+- **HELIX**: Columnar for analytics
+- **VIPER**: Hybrid for mixed workloads
+
+**High Availability**:
+- Replication factor: 3 (configurable)
+- Automatic failover
+- Cross-AZ deployment
+- Point-in-time recovery
+
+=== 4. Metadata Service
+
+**Purpose**: Store cluster metadata, schemas, and configuration
+
+**Technologies**:
+- PostgreSQL 15+ (primary)
+- Read replicas for scale
+- Logical replication for backups
+
+**Data Stored**:
+- Collection schemas and configurations
+- Tenant information and quotas
+- User authentication and RBAC
+- Cluster state and health
+
+=== 5. Observability Stack
+
+**Purpose**: Monitor, alert, and debug the entire system
+
+**Components**:
+
+*Metrics*:
+- Prometheus (metrics collection)
+- Grafana (visualization)
+- AlertManager (alerting)
+
+*Logging*:
+- Elasticsearch (log storage)
+- Fluentd (log collection)
+- Kibana (log visualization)
+
+*Tracing*:
+- Jaeger (distributed tracing)
+- OpenTelemetry (instrumentation)
+
+**Dashboards**:
+- Cluster health overview
+- Query performance metrics
+- Resource utilization
+- Cost analysis
+- Security audit logs
+
+== Multi-Tenancy Model
+
+=== Isolation Levels
+
+[cols="2,3,2,1"]
+|===
+|Level |Description |Implementation |Cost
+
+|Compute Isolation
+|Dedicated nodes per tenant
+|Kubernetes namespaces + node selectors
+|High
+
+|Storage Isolation
+|Dedicated EBS volumes
+|Separate PVCs per tenant
+|Medium
+
+|Network Isolation
+|VPC peering, private endpoints
+|Kubernetes NetworkPolicies
+|Medium
+
+|Logical Isolation
+|Shared resources, logical separation
+|Tenant ID in all queries
+|Low
+|===
+
+=== Tenant Onboarding Flow
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+sequenceDiagram
+    participant C as Customer
+    participant W as Web Console
+    participant A as API
+    participant K as Kubernetes
+    participant M as Metadata DB
+
+    C->>W: Sign up / Create account
+    W->>A: POST /tenants
+    A->>M: Store tenant metadata
+    M-->>A: Tenant ID created
+    A->>K: Create namespace
+    K-->>A: Namespace provisioned
+    A->>K: Deploy ProximaDB cluster
+    K-->>A: Cluster ready
+    A-->>W: Connection string
+    W-->>C: Credentials and endpoint
+    C->>A: Connect and query
+----
+
+== Security Architecture
+
+=== Defense in Depth
+
+[cols="1,3"]
+|===
+|Layer |Mechanism
+
+|Network
+|VPC isolation, security groups, private endpoints
+
+|Application
+|Authentication (OAuth2/JWT), authorization (RBAC)
+
+|Data
+|Encryption at rest (KMS), encryption in transit (TLS 1.3)
+
+|Infrastructure
+|IAM roles, least privilege, audit logging
+
+|Compliance
+|SOC 2 Type II controls, annual audits
+|===
+
+=== Authentication & Authorization
+
+**Authentication Methods**:
+- OAuth 2.0 / OpenID Connect
+- JWT tokens (with refresh tokens)
+- API keys (with rotation)
+- Mutual TLS (mTLS) for enterprise
+
+**Authorization Model**:
+- Role-Based Access Control (RBAC)
+- Fine-grained permissions (collections, queries, admin)
+- Resource-level policies
+- Audit logging for all access
+
+**Roles**:
+- *Owner*: Full access to all resources
+- *Admin*: Manage collections and users
+- *Developer*: Read/write data
+- *Viewer*: Read-only access
+- *Custom*: Custom permission sets
+
+=== Data Protection
+
+**Encryption**:
+- At rest: AES-256 (AWS KMS managed keys)
+- In transit: TLS 1.3
+- Key rotation: Quarterly
+
+**Backup & Recovery**:
+- Continuous WAL archiving to S3
+- Daily snapshots (30-day retention)
+- Point-in-time recovery (PITR)
+- Cross-region replication (optional)
+
+**Compliance**:
+- SOC 2 Type II certified
+- GDPR compliant (data residency)
+- HIPAA ready (BAA available)
+- SOC 3 report available
+
+== Deployment Automation
+
+=== Infrastructure as Code
+
+**Terraform Modules**:
+- `network`: VPC, subnets, security groups
+- `kubernetes`: EKS/GKE cluster
+- `application`: ProximaDB deployment
+- `monitoring`: Observability stack
+- `dns`: Route53 configuration
+
+**Example Hierarchy**:
+----
+terraform/
+├── modules/
+│   ├── vpc/
+│   ├── eks/
+│   ├── proximadb/
+│   └── monitoring/
+├── environments/
+│   ├── dev/
+│   ├── staging/
+│   └── production/
+└── examples/
+    ├── single-region/
+    └── multi-region/
+----
+
+=== CI/CD Pipeline
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph LR
+    A[Code Push] --> B[Unit Tests]
+    B --> C[Integration Tests]
+    C --> D[Build Docker Image]
+    D --> E[Push to ECR]
+    E --> F[Update Helm Chart]
+    F --> G[Deploy to Staging]
+    G --> H[E2E Tests]
+    H --> I[Manual Approval]
+    I --> J[Deploy to Production]
+    J --> K[Smoke Tests]
+    K --> L[Monitor Rollback]
+
+    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px,color:#000
+    style J fill:#e74c3c,stroke:#c0392b,stroke-width:2px,color:#000
+----
+
+**Stages**:
+1. **Build**: Compile Rust code, build Docker image
+2. **Test**: Unit, integration, E2E tests
+3. **Deploy**: Rolling update with health checks
+4. **Verify**: Smoke tests, canary analysis
+5. **Monitor**: Metrics, alerts, rollback if needed
+
+**Deployment Strategies**:
+- Rolling update (default): 25% at a time
+- Blue-green: Zero downtime cutover
+- Canary: 10% traffic to new version
+- Shadow: Duplicate traffic without affecting users
+
+=== Disaster Recovery
+
+**RTO/RPO Targets**:
+- Recovery Time Objective (RTO): 1 hour
+- Recovery Point Objective (RPO): 5 minutes
+
+**DR Scenarios**:
+- *AZ failure*: Automatic failover to another AZ
+- *Region failure*: Manual failover to DR region
+- *Data corruption*: Restore from snapshot + WAL replay
+- *Complete loss*: Restore from cross-region backup
+
+**DR Testing**:
+- Quarterly failover drills
+- Annual full disaster recovery test
+- Automated restoration testing
+
+== Monitoring & Alerting
+
+=== Key Metrics
+
+**Cluster Health**:
+- Node availability (target: 99.9%)
+- Query latency (p50: <10ms, p99: <100ms)
+- Error rate (target: <0.1%)
+- Storage utilization (alert at 80%)
+
+**Query Performance**:
+- Throughput (queries/second)
+- Latency percentiles (p50, p95, p99)
+- Cache hit rate (target: >90%)
+- Query queue depth
+
+**Resource Utilization**:
+- CPU usage (alert at 80%)
+- Memory usage (alert at 85%)
+- Disk IOPS and throughput
+- Network bandwidth
+
+**Business Metrics**:
+- Active tenants
+- Queries per day
+- Storage consumption
+- Cost per query
+
+=== Alerting Strategy
+
+**Severity Levels**:
+- *P0 Critical*: Page immediately, data loss risk
+- *P1 High*: Page within 15 min, service degradation
+- *P2 Medium*: Email within 1 hour, potential issue
+- *P3 Low*: Email within 24 hours, informational
+
+**Alert Channels**:
+- PagerDuty (on-call rotations)
+- Slack (team notifications)
+- Email (non-urgent)
+- Dashboard (visual indicators)
+
+**Runbooks**:
+- Automated runbooks for common issues
+- Manual intervention procedures
+- Escalation paths
+- Post-mortem templates
+
+== Pricing Model
+
+=== Cost Components
+
+**Compute**:
+- Query nodes: $0.10/vCPU-hour
+- Control plane: $0.05/vCPU-hour
+- Load balancer: $0.025/ALB-hour
+
+**Storage**:
+- EBS volumes: $0.10/GB-month
+- S3 storage: $0.023/GB-month
+- Backup storage: $0.023/GB-month
+
+**Network**:
+- Data transfer: $0.09/GB (first 10TB free)
+- Private endpoints: $0.01/hour
+
+**Support**:
+- Community: Free
+- Email: $49/month
+- 24/7: Included in Business+
+
+=== Pricing Calculator
+
+**Example 1: Developer Tier**
+- 1 vCPU, 4 GB RAM
+- 1 GB storage
+- 1M queries/month
+- **Total**: ~$20/month cost → $49/month price
+
+**Example 2: Professional Tier**
+- 4 vCPU, 16 GB RAM
+- 10 GB storage
+- 10M queries/month
+- **Total**: ~$120/month cost → $299/month price
+
+**Example 3: Business Tier**
+- 16 vCPU, 64 GB RAM
+- 100 GB storage
+- 100M queries/month
+- **Total**: ~$400/month cost → $999/month price
+
+**Gross Margins**:
+- Developer: 60%
+- Professional: 60%
+- Business: 60%
+- Enterprise: 70%+
+
+== Implementation Roadmap
+
+=== Phase 1: MVP (4 weeks)
+- Infrastructure setup (Terraform, Kubernetes)
+- Basic multi-tenancy
+- Authentication and authorization
+- Monitoring and alerting
+- Single region deployment
+
+=== Phase 2: Production Hardening (2 weeks)
+- High availability (multi-AZ)
+- Backup and recovery
+- Security hardening
+- Performance optimization
+- Load testing
+
+=== Phase 3: Scale (2 weeks)
+- Auto-scaling
+- Multi-region deployment
+- Advanced observability
+- Cost optimization
+- Documentation and runbooks
+
+=== Phase 4: Launch (1 week)
+- Beta testing with select customers
+- Security audit (SOC 2 prep)
+- Pricing finalization
+- Marketing materials
+- GA launch
+
+== Success Metrics
+
+=== Technical Metrics
+- **Availability**: 99.9% uptime (8.76 hours downtime/year)
+- **Performance**: p95 latency < 100ms
+- **Scalability**: Support 10,000+ concurrent queries
+- **Efficiency**: >70% resource utilization
+
+=== Business Metrics
+- **Customer Acquisition**: 100 paying customers in first 3 months
+- **Revenue**: $50K MRR by end of 2026
+- **Retention**: >90% monthly retention
+- **NPS**: >50 customer satisfaction score
+
+=== Operational Metrics
+- **Deployment Frequency**: Daily production deployments
+- **Lead Time**: <1 hour from commit to production
+- **MTTR**: <1 hour mean time to recovery
+- **Change Failure Rate**: <5% deployment failures
+
+== Risks and Mitigations
+
+=== Technical Risks
+
+*Risk*: Kubernetes complexity
+*Mitigation*: Use managed EKS/GKE, hire experienced engineers
+
+*Risk*: Database performance at scale
+*Mitigation*: Extensive load testing, performance engineering
+
+*Risk*: Multi-tenancy security
+*Mitigation*: Defense in depth, regular security audits
+
+=== Business Risks
+
+*Risk*: Cloud provider lock-in
+*Mitigation*: Multi-cloud support, portable IaC
+
+*Risk*: Pricing not competitive
+*Mitigation*: Regular market analysis, flexible pricing
+
+*Risk*: Slow adoption
+*Mitigation*: Free tier, excellent documentation, responsive support
+
+=== Operational Risks
+
+*Risk*: Data breaches
+*Mitigation*: Encryption, RBAC, audit logs, penetration testing
+
+*Risk*: Downtime
+*Mitigation*: Multi-AZ, automated failover, 24/7 on-call
+
+*Risk*: Cost overruns
+*Mitigation*: Cost monitoring, auto-scaling, reserved instances
+
+== Next Steps
+
+1. **Review and approve architecture** (Week 1)
+2. **Set up development environment** (Week 1)
+3. **Implement MVP** (Weeks 2-5)
+4. **Production hardening** (Weeks 6-7)
+5. **Beta testing** (Week 8)
+6. **GA Launch** (Week 9)
+
+== Appendix
+
+=== A. Technology Choices
+
+**Why Kubernetes?**
+- Industry standard for orchestration
+- Excellent multi-cloud support
+- Rich ecosystem of tools
+- Auto-scaling capabilities
+
+**Why AWS?**
+- Market leader, proven at scale
+- Comprehensive service portfolio
+- Strong compliance certifications
+- Global infrastructure
+
+**Why Terraform?**
+- Declarative IaC
+- Multi-cloud support
+- Large provider ecosystem
+- State management
+
+=== B. Competitor Analysis
+
+[cols="2,2,2,1"]
+|===
+|Feature |Pinecone |Weaviate |Milvus |ProximaDB
+
+|Storage Options
+|Proprietary only
+|Multiple
+|Multiple
+|Multiple (6 engines)
+
+|Open Source
+|No
+|Yes
+|Yes
+|Yes
+
+|Self-Hosted
+|No
+|Yes
+|Yes
+|Yes
+
+|Cloud
+|Yes
+|Yes (optional)
+|Yes (optional)
+|Yes (upcoming)
+
+|Pricing
+|$70/month
+|Custom
+|Infrastructure only
+|$49-$999/month
+
+|Graph Support
+|No
+|No
+|No
+|Yes (native)
+
+|SQL Support
+|No
+|No
+|Yes
+|Yes (federated)
+|===
+
+=== C. References
+
+- https://kubernetes.io/docs/[Kubernetes Documentation]
+- https://www.terraform.io/docs/[Terraform Documentation]
+- https://aws.amazon.com/documentation/[AWS Documentation]
+- https://www.soc2.org/[SOC 2 Compliance Guide]
+
+----
+
+*Document Owner*: Infrastructure Team
+*Review Cycle*: Monthly
+*Next Review*: 2026-04-30

@@ -149,6 +149,7 @@ impl std::fmt::Debug for ExecutionState {
 }
 
 impl ExecutionState {
+    /// Create a new empty execution state with zeroed counters.
     fn new() -> Self {
         Self {
             active_count: AtomicUsize::new(0),
@@ -159,6 +160,7 @@ impl ExecutionState {
         }
     }
 
+    /// Register a new execution, increment counters, and return a cancellation receiver.
     fn start_execution(&self, id: &str) -> broadcast::Receiver<()> {
         self.active_count.fetch_add(1, Ordering::SeqCst);
         self.total_count.fetch_add(1, Ordering::SeqCst);
@@ -176,6 +178,7 @@ impl ExecutionState {
         rx
     }
 
+    /// Mark an execution as finished and release its memory allocation.
     fn finish_execution(&self, id: &str) {
         self.active_count.fetch_sub(1, Ordering::SeqCst);
         self.cancel_channels.write().remove(id);
@@ -186,6 +189,7 @@ impl ExecutionState {
         }
     }
 
+    /// Send a cancellation signal to the execution with the given id.
     fn cancel_execution(&self, id: &str) -> bool {
         if let Some(tx) = self.cancel_channels.read().get(id) {
             tx.send(()).is_ok()
@@ -194,6 +198,7 @@ impl ExecutionState {
         }
     }
 
+    /// Track additional memory allocated for the given execution.
     #[allow(dead_code)]
     fn allocate_memory(&self, id: &str, bytes: u64) {
         self.memory_usage.fetch_add(bytes, Ordering::SeqCst);
@@ -203,10 +208,13 @@ impl ExecutionState {
     }
 }
 
+/// Metadata tracked for a single in-flight execution.
 #[derive(Debug)]
 struct ExecutionInfo {
+    /// Timestamp when the execution started
     #[allow(dead_code)]
     started_at: std::time::Instant,
+    /// Cumulative memory allocated by this execution in bytes
     memory_allocated: u64,
 }
 
@@ -635,6 +643,7 @@ impl LocalComputeProvider {
 }
 
 impl Default for LocalComputeProvider {
+    #[allow(clippy::expect_used)] // Default impl cannot return Result, panic on error is acceptable
     fn default() -> Self {
         Self::new().expect("Failed to create default LocalComputeProvider")
     }
@@ -643,7 +652,11 @@ impl Default for LocalComputeProvider {
 #[async_trait]
 impl ComputeProvider for LocalComputeProvider {
     fn provider_name(&self) -> &str {
-        self.config.provider_name.as_deref().unwrap_or("local")
+        self.config
+            .provider_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Provider name should be set"))
+            .unwrap_or("local")
     }
 
     fn provider_version(&self) -> &str {
@@ -835,7 +848,7 @@ mod tests {
 
     #[test]
     fn test_provider_creation() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         assert_eq!(provider.provider_name(), "local");
     }
 
@@ -846,37 +859,40 @@ mod tests {
             max_parallelism: 4,
             ..Default::default()
         };
-        let provider = LocalComputeProvider::with_config(config).unwrap();
+        let provider = LocalComputeProvider::with_config(config)
+            .expect("Failed to create LocalComputeProvider with config");
         assert_eq!(provider.provider_name(), "custom-local");
         assert_eq!(provider.capabilities().max_parallelism, 4);
     }
 
     #[test]
     fn test_can_execute_simple() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         let plan = create_simple_plan();
         assert!(provider.can_execute(&plan));
     }
 
     #[test]
     fn test_can_execute_vector() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         let plan = create_vector_plan();
         assert!(provider.can_execute(&plan));
     }
 
     #[test]
     fn test_can_execute_graph() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         let plan = create_graph_plan();
         assert!(provider.can_execute(&plan));
     }
 
     #[test]
     fn test_cost_estimation_simple() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         let plan = create_simple_plan();
-        let cost = provider.estimate_cost(&plan).unwrap();
+        let cost = provider
+            .estimate_cost(&plan)
+            .expect("Failed to estimate cost");
 
         assert!(cost.cpu_cost > 0.0);
         assert!(cost.io_cost > 0.0);
@@ -885,7 +901,7 @@ mod tests {
 
     #[test]
     fn test_cost_estimation_complex() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
 
         let plan = ComputePlan {
             id: "complex".to_string(),
@@ -910,14 +926,16 @@ mod tests {
             hints: PlanHints::default(),
         };
 
-        let cost = provider.estimate_cost(&plan).unwrap();
+        let cost = provider
+            .estimate_cost(&plan)
+            .expect("Failed to estimate cost for complex plan");
         // Sort should add to the base scan cost
         assert!(cost.cpu_cost > 1.0);
     }
 
     #[test]
     fn test_capabilities() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         let caps = provider.capabilities();
 
         assert!(caps.supports_filter_pushdown);
@@ -930,8 +948,10 @@ mod tests {
 
     #[test]
     fn test_resource_usage() {
-        let provider = LocalComputeProvider::new().unwrap();
-        let usage = provider.resource_usage().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
+        let usage = provider
+            .resource_usage()
+            .expect("Failed to get resource usage");
 
         assert_eq!(usage.active_executions, 0);
         assert_eq!(usage.total_executions, 0);
@@ -939,7 +959,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_simple() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         let plan = create_simple_plan();
         let ctx = ExecutionContext::default();
 
@@ -949,25 +969,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_metrics() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         let plan = create_simple_plan();
         let ctx = ExecutionContext::default().with_metrics(true);
 
-        let result = provider.execute(&plan, &ctx).await.unwrap();
+        let result = provider
+            .execute(&plan, &ctx)
+            .await
+            .expect("Failed to execute plan with metrics");
         assert!(result.metrics.is_some());
     }
 
     #[tokio::test]
     async fn test_cancel_execution() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         // For this test, we just verify cancel doesn't panic on non-existent ID
-        let result = provider.cancel("non-existent").await.unwrap();
+        let result = provider
+            .cancel("non-existent")
+            .await
+            .expect("Failed to cancel execution");
         assert!(!result);
     }
 
     #[tokio::test]
     async fn test_shutdown() {
-        let provider = LocalComputeProvider::new().unwrap();
+        let provider = LocalComputeProvider::new().expect("Failed to create LocalComputeProvider");
         let result = provider.shutdown().await;
         assert!(result.is_ok());
     }

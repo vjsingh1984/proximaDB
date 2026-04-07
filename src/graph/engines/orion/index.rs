@@ -67,12 +67,16 @@ pub struct EdgeTypeIndex {
     pub stats: IndexStats,
 }
 
-/// Index statistics
+/// Index statistics tracking size, cardinality, and memory consumption.
 #[derive(Debug, Default)]
 pub struct IndexStats {
+    /// Total number of entries in the index.
     pub total_entries: usize,
+    /// Number of distinct key values in the index.
     pub unique_values: usize,
+    /// Estimated heap memory consumed by the index in bytes.
     pub memory_usage_bytes: usize,
+    /// Timestamp of the last index update, if any.
     pub last_updated: Option<std::time::SystemTime>,
 }
 
@@ -153,8 +157,7 @@ impl PropertyIndex {
         Ok(self
             .btree_index
             .get(&value_str)
-            .map(|ids| ids.iter().cloned().collect())
-            .unwrap_or_else(Vec::new))
+            .map_or_else(Vec::new, |ids| ids.iter().cloned().collect()))
     }
 
     /// Query the index for range queries (for comparable types)
@@ -261,8 +264,7 @@ impl LabelIndex {
         Ok(self
             .label_to_nodes
             .get(label)
-            .map(|nodes| nodes.iter().cloned().collect())
-            .unwrap_or_else(Vec::new))
+            .map_or_else(Vec::new, |nodes| nodes.iter().cloned().collect()))
     }
 
     /// Query nodes having all specified labels (AND operation)
@@ -372,8 +374,7 @@ impl EdgeTypeIndex {
         Ok(self
             .type_to_edges
             .get(edge_type)
-            .map(|edges| edges.iter().cloned().collect())
-            .unwrap_or_else(Vec::new))
+            .map_or_else(Vec::new, |edges| edges.iter().cloned().collect()))
     }
 
     /// Update statistics
@@ -558,16 +559,24 @@ mod tests {
         };
 
         // Add entry
-        index.add_entry(&value, "node1".to_string()).unwrap();
+        index
+            .add_entry(&value, "node1".to_string())
+            .expect("Failed to add entry to property index");
 
         // Query exact
-        let results = index.query_exact(&value).unwrap();
+        let results = index
+            .query_exact(&value)
+            .expect("Failed to query exact match in property index");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], "node1");
 
         // Remove entry
-        index.remove_entry(&value, "node1").unwrap();
-        let results = index.query_exact(&value).unwrap();
+        index
+            .remove_entry(&value, "node1")
+            .expect("Failed to remove entry from property index");
+        let results = index
+            .query_exact(&value)
+            .expect("Failed to query exact match after removal");
         assert_eq!(results.len(), 0);
     }
 
@@ -577,20 +586,28 @@ mod tests {
 
         // Add node with labels
         let labels = vec!["Person".to_string(), "Employee".to_string()];
-        index.add_node("node1".to_string(), &labels).unwrap();
+        index
+            .add_node("node1".to_string(), &labels)
+            .expect("Failed to add node to label index");
 
         // Query by single label
-        let results = index.query_by_label("Person").unwrap();
+        let results = index
+            .query_by_label("Person")
+            .expect("Failed to query label index by label");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], "node1");
 
         // Query by multiple labels (AND)
-        let results = index.query_by_labels_and(&labels).unwrap();
+        let results = index
+            .query_by_labels_and(&labels)
+            .expect("Failed to query label index with AND");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], "node1");
 
         // Query by labels (OR)
-        let results = index.query_by_labels_or(&["Person".to_string()]).unwrap();
+        let results = index
+            .query_by_labels_or(&["Person".to_string()])
+            .expect("Failed to query label index with OR");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], "node1");
     }
@@ -600,16 +617,24 @@ mod tests {
         let mut index = EdgeTypeIndex::new();
 
         // Add edge
-        index.add_edge("edge1".to_string(), "KNOWS").unwrap();
+        index
+            .add_edge("edge1".to_string(), "KNOWS")
+            .expect("Failed to add edge to edge type index");
 
         // Query by type
-        let results = index.query_by_type("KNOWS").unwrap();
+        let results = index
+            .query_by_type("KNOWS")
+            .expect("Failed to query edge type index");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], "edge1");
 
         // Remove edge
-        index.remove_edge(&"edge1".to_string(), "KNOWS").unwrap();
-        let results = index.query_by_type("KNOWS").unwrap();
+        index
+            .remove_edge(&"edge1".to_string(), "KNOWS")
+            .expect("Failed to remove edge from edge type index");
+        let results = index
+            .query_by_type("KNOWS")
+            .expect("Failed to query edge type index after removal");
         assert_eq!(results.len(), 0);
     }
 }

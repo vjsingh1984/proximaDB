@@ -176,17 +176,14 @@ impl AtomicWriteExecutor for DirectWriteExecutor {
         _options: Option<FileOptions>,
     ) -> FsResult<()> {
         // Create parent directories if needed
-        if let Some(parent) = Path::new(final_path).parent() {
-            if let Err(e) = filesystem.create_dir_all(&parent.to_string_lossy()).await {
-                return Err(FilesystemError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!(
-                        "Failed to create parent directory {}: {}",
-                        parent.display(),
-                        e
-                    ),
-                )));
-            }
+        if let Some(parent) = Path::new(final_path).parent()
+            && let Err(e) = filesystem.create_dir_all(&parent.to_string_lossy()).await
+        {
+            return Err(FilesystemError::Io(std::io::Error::other(format!(
+                "Failed to create parent directory {}: {}",
+                parent.display(),
+                e
+            ))));
         }
 
         // Direct write - fastest but not atomic
@@ -289,44 +286,40 @@ impl AtomicWriteExecutor for SameMountTempExecutor {
         // Extract parent directory handling URLs properly
         let temp_parent = if temp_path.contains("://") {
             // For URLs, find the parent directory part
-            if let Some(last_slash) = temp_path.rfind('/') {
-                Some(temp_path[..last_slash].to_string())
-            } else {
-                None
-            }
+            temp_path
+                .rfind('/')
+                .map(|last_slash| temp_path[..last_slash].to_string())
         } else {
             Path::new(&temp_path)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
         };
 
-        if let Some(parent) = temp_parent {
-            if let Err(e) = filesystem.create_dir_all(&parent).await {
-                tracing::warn!("Failed to create temp parent directory {}: {}", parent, e);
-                // Try to continue, as the directory might already exist
-            }
+        if let Some(parent) = temp_parent
+            && let Err(e) = filesystem.create_dir_all(&parent).await
+        {
+            tracing::warn!("Failed to create temp parent directory {}: {}", parent, e);
+            // Try to continue, as the directory might already exist
         }
 
         let final_parent = if final_path.contains("://") {
             // For URLs, find the parent directory part
-            if let Some(last_slash) = final_path.rfind('/') {
-                Some(final_path[..last_slash].to_string())
-            } else {
-                None
-            }
+            final_path
+                .rfind('/')
+                .map(|last_slash| final_path[..last_slash].to_string())
         } else {
             Path::new(final_path)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
         };
 
-        if let Some(parent) = final_parent {
-            if let Err(e) = filesystem.create_dir_all(&parent).await {
-                return Err(FilesystemError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to create parent directory {}: {}", parent, e),
-                )));
-            }
+        if let Some(parent) = final_parent
+            && let Err(e) = filesystem.create_dir_all(&parent).await
+        {
+            return Err(FilesystemError::Io(std::io::Error::other(format!(
+                "Failed to create parent directory {}: {}",
+                parent, e
+            ))));
         }
 
         // Write to temp file
@@ -398,10 +391,8 @@ impl CloudOptimizedExecutor {
         use std::io::Write;
 
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
-        encoder
-            .write_all(data)
-            .map_err(|e| FilesystemError::Io(e))?;
-        encoder.finish().map_err(|e| FilesystemError::Io(e))
+        encoder.write_all(data).map_err(FilesystemError::Io)?;
+        encoder.finish().map_err(FilesystemError::Io)
     }
 }
 

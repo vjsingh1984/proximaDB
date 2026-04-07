@@ -119,7 +119,9 @@ impl Default for UnifiedColumnarConfig {
             enable_column_statistics: true,
             enable_page_index: true,
             enable_column_index: true,
-            parquet_compression: Compression::ZSTD(ZstdLevel::try_new(3).unwrap()),
+            parquet_compression: Compression::ZSTD(
+                ZstdLevel::try_new(3).unwrap_or_else(|_| ZstdLevel::default()),
+            ),
             enable_dictionary: true,
             enable_delta_encoding: true,
             enable_byte_stream_split: true,
@@ -321,7 +323,7 @@ impl UnifiedColumnarReader {
 
             // Use column statistics for pruning
             if let Some(_stats) = stats {
-                // TODO: Implement actual predicate evaluation against statistics
+                // Deferred: Implement actual predicate evaluation against statistics
                 // For now, include all row groups
                 qualified.push(idx);
             } else {
@@ -341,7 +343,7 @@ impl UnifiedColumnarReader {
         row_groups: Vec<usize>,
         _predicates: Option<&crate::core::search::FilterExpression>,
     ) -> Result<Vec<usize>> {
-        // TODO: Implement bloom filter checking
+        // Deferred: Implement bloom filter checking
         // For now, return all row groups
         Ok(row_groups)
     }
@@ -410,7 +412,10 @@ impl UnifiedColumnarReader {
     ) -> Result<Arc<parquet::file::metadata::ParquetMetaData>> {
         // Check cache first
         {
-            let cache = self.parquet_metadata_cache.read().unwrap();
+            let cache = self
+                .parquet_metadata_cache
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             if let Some(metadata) = cache.get(file_path) {
                 return Ok(Arc::clone(metadata));
             }
@@ -423,7 +428,10 @@ impl UnifiedColumnarReader {
         let metadata = Arc::new(metadata);
 
         {
-            let mut cache = self.parquet_metadata_cache.write().unwrap();
+            let mut cache = self
+                .parquet_metadata_cache
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.insert(file_path.to_string(), Arc::clone(&metadata));
         }
 
@@ -631,7 +639,7 @@ impl UnifiedColumnarWriter {
 
     /// Create schema for Parquet
     fn create_parquet_schema(&self, _records: &[VectorRecord]) -> Result<Schema> {
-        // TODO: Implement schema creation based on records
+        // Deferred: Implement schema creation based on records
         Ok(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
             Field::new("vector", DataType::Binary, false),
@@ -647,7 +655,7 @@ impl UnifiedColumnarWriter {
 
     /// Convert records to Arrow RecordBatch
     fn records_to_batch(&self, _records: &[VectorRecord]) -> Result<RecordBatch> {
-        // TODO: Implement conversion
+        // Deferred: Implement conversion
         Err(anyhow::anyhow!(
             "Record to batch conversion not implemented"
         ))
@@ -677,7 +685,7 @@ impl IpcStreamIterator {
 #[async_trait::async_trait]
 impl ScanIterator for IpcStreamIterator {
     async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
-        // TODO: Implement IPC to VectorRecord conversion
+        // Deferred: Implement IPC to VectorRecord conversion
         Ok(None)
     }
 
@@ -709,7 +717,7 @@ impl IpcFileIterator {
 #[async_trait::async_trait]
 impl ScanIterator for IpcFileIterator {
     async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
-        // TODO: Implement
+        // Deferred: Implement
         Ok(None)
     }
 
@@ -751,7 +759,7 @@ impl ParquetFilteredIterator {
 #[async_trait::async_trait]
 impl ScanIterator for ParquetFilteredIterator {
     async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
-        // TODO: Implement filtered Parquet reading
+        // Deferred: Implement filtered Parquet reading
         Ok(None)
     }
 
@@ -780,7 +788,7 @@ impl ParquetStandardIterator {
 #[async_trait::async_trait]
 impl ScanIterator for ParquetStandardIterator {
     async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
-        // TODO: Implement standard Parquet reading
+        // Deferred: Implement standard Parquet reading
         Ok(None)
     }
 

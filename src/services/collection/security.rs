@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::audit::logger::{AuditConfig, AuditLogger};
 use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
@@ -124,7 +124,12 @@ impl SecureCollectionService {
         user_context: &UnifiedUserContext,
         user_filter: Option<FilterExpression>,
     ) -> Result<Option<FilterExpression>> {
-        let security_config = self.get_collection_security(collection).unwrap_or_default();
+        let security_config = self.get_collection_security(collection).ok_or_else(|| {
+            anyhow!(
+                "Collection '{}' security configuration not found and no default available",
+                collection
+            )
+        })?;
 
         let rls_filter = self
             .secure_ops
@@ -141,7 +146,12 @@ impl SecureCollectionService {
         user_context: &UnifiedUserContext,
         records: &mut Vec<VectorRecord>,
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection).unwrap_or_default();
+        let security_config = self.get_collection_security(collection).ok_or_else(|| {
+            anyhow!(
+                "Collection '{}' security configuration not found and no default available",
+                collection
+            )
+        })?;
 
         // Check write permission
         self.secure_ops
@@ -162,7 +172,12 @@ impl SecureCollectionService {
         collection: &str,
         records: &mut [VectorRecord],
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection).unwrap_or_default();
+        let security_config = self.get_collection_security(collection).ok_or_else(|| {
+            anyhow!(
+                "Collection '{}' security configuration not found and no default available",
+                collection
+            )
+        })?;
 
         self.secure_ops
             .decrypt_search_results(records, &security_config)
@@ -175,7 +190,12 @@ impl SecureCollectionService {
         collection: &str,
         user_context: &UnifiedUserContext,
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection).unwrap_or_default();
+        let security_config = self.get_collection_security(collection).ok_or_else(|| {
+            anyhow!(
+                "Collection '{}' security configuration not found and no default available",
+                collection
+            )
+        })?;
 
         self.secure_ops
             .check_write_permission(collection, user_context, &security_config)
@@ -188,7 +208,12 @@ impl SecureCollectionService {
         collection: &str,
         user_context: &UnifiedUserContext,
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection).unwrap_or_default();
+        let security_config = self.get_collection_security(collection).ok_or_else(|| {
+            anyhow!(
+                "Collection '{}' security configuration not found and no default available",
+                collection
+            )
+        })?;
 
         self.secure_ops
             .check_delete_permission(collection, user_context, &security_config)
@@ -204,7 +229,12 @@ impl SecureCollectionService {
         success: bool,
         details: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<()> {
-        let security_config = self.get_collection_security(collection).unwrap_or_default();
+        let security_config = self.get_collection_security(collection).ok_or_else(|| {
+            anyhow!(
+                "Collection '{}' security configuration not found and no default available",
+                collection
+            )
+        })?;
 
         if !security_config.audit_enabled {
             return Ok(());
@@ -269,7 +299,7 @@ impl SecureCollectionService {
                 Ok(())
             }
             None => {
-                warn!("No security config found for collection '{}'", collection);
+                tracing::warn!("No security config found for collection '{}'", collection);
                 Err(anyhow!(
                     "Collection '{}' not found in security registry",
                     collection
@@ -395,14 +425,15 @@ mod tests {
 
         let user_context = create_test_user_context();
 
-        // No security config registered - should use defaults (RLS disabled)
-        let filter = service
+        // No security config registered - should return error
+        let result = service
             .secure_search("unregistered", &user_context, None)
-            .await
-            .unwrap();
+            .await;
 
-        // With default config (RLS disabled), no additional filter
-        assert!(filter.is_none());
+        // Should fail with appropriate error message
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("security configuration not found"));
     }
 
     #[tokio::test]

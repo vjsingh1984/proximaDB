@@ -49,11 +49,11 @@ impl ColumnarSchema {
         // Check cache first
         let cache_key =
             self.generate_cache_key(collection_id, dimension, quantization, filterable_columns);
-        if let Some(cached) = self.get_cached_schema(&cache_key).await {
-            if !cached.is_expired() {
-                debug!("Schema cache hit for collection: {}", collection_id);
-                return Ok(cached.schema);
-            }
+        if let Some(cached) = self.get_cached_schema(&cache_key).await
+            && !cached.is_expired()
+        {
+            debug!("Schema cache hit for collection: {}", collection_id);
+            return Ok(cached.schema);
         }
 
         info!(

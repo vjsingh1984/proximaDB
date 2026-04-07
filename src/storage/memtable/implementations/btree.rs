@@ -112,7 +112,9 @@ where
         );
 
         let old_size = if key_exists {
-            let old_entry_size = Self::estimate_entry_size(&key, data.get(&key).unwrap());
+            let old_entry_size = data
+                .get(&key)
+                .map_or(0, |existing| Self::estimate_entry_size(&key, existing));
             tracing::info!(
                 "🌲 *** OLD_BTREE_MEMTABLE_INSERT_TRACE *** 🌲: Replacing existing entry (old size: {} bytes)",
                 old_entry_size
@@ -137,11 +139,7 @@ where
         let old_total_size = *size;
         *size = size.saturating_sub(old_size).saturating_add(entry_size);
         let new_total_size = *size;
-        let size_delta = if entry_size > old_size {
-            entry_size - old_size
-        } else {
-            0
-        };
+        let size_delta = entry_size.saturating_sub(old_size);
         drop(size);
 
         tracing::info!(
@@ -178,10 +176,10 @@ where
         let mut results = Vec::new();
 
         for (key, value) in data.range(from..) {
-            if let Some(limit) = limit {
-                if results.len() >= limit {
-                    break;
-                }
+            if let Some(limit) = limit
+                && results.len() >= limit
+            {
+                break;
             }
             results.push((key.clone(), value.clone()));
         }

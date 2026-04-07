@@ -196,10 +196,12 @@
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// Temporarily disabled due to arrow-arith compilation conflicts - Deferred: re-enable when arrow-arith resolved
 // use parquet::file::properties::WriterProperties;
 
 // Stub types for parquet since it's disabled
+// These must match the external parquet crate's API (ALL CAPS)
+#[expect(clippy::upper_case_acronyms)]
 mod parquet {
     pub mod basic {
         #[derive(Debug, Clone)]
@@ -257,10 +259,12 @@ mod parquet {
         pub mod properties {
             use super::super::basic;
 
+            /// Parquet-compatible writer properties for compression configuration
             #[derive(Debug, Clone)]
             pub struct WriterProperties;
 
             impl WriterProperties {
+                /// Create a new builder for configuring writer properties
                 pub fn builder() -> WriterPropertiesBuilder {
                     WriterPropertiesBuilder
                 }
@@ -498,7 +502,7 @@ impl CompressionProvider for StandardCompression {
         // Log compression results
         match &result {
             Ok(compressed) => {
-                let ratio = if compressed.len() > 0 {
+                let ratio = if !compressed.is_empty() {
                     data.len() as f32 / compressed.len() as f32
                 } else {
                     0.0
@@ -650,6 +654,7 @@ pub fn compress(
     COMPRESSION.compress(data, algorithm, level, context)
 }
 
+/// Decompress data using the specified algorithm
 pub fn decompress(
     data: &[u8],
     algorithm: CompressionAlgorithm,
@@ -658,6 +663,7 @@ pub fn decompress(
     COMPRESSION.decompress(data, algorithm, context)
 }
 
+/// Estimate the compression ratio for the given data and algorithm
 pub fn estimate_ratio(data: &[u8], algorithm: CompressionAlgorithm) -> f32 {
     COMPRESSION.estimate_ratio(data, algorithm)
 }

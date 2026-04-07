@@ -522,8 +522,8 @@ impl ViperRowGroupStream {
         let output_schema = if let Some(ref proj) = projection {
             let fields: Vec<_> = proj
                 .iter()
-                .filter_map(|&i| schema.field(i).ok())
-                .cloned()
+                .filter_map(|&i| schema.fields().get(i))
+                .map(|f| f.as_ref().clone())
                 .collect();
             Arc::new(arrow_schema::Schema::new(fields))
         } else {

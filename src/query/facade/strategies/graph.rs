@@ -151,10 +151,7 @@ impl GraphStrategy {
             if let Some(bracket_end) = bracket_rest.find(']') {
                 let edge_type = &bracket_rest[..bracket_end];
                 // Handle type with properties like :KNOWS {weight: 1}
-                let type_name = edge_type
-                    .split(|c| c == ' ' || c == '{')
-                    .next()
-                    .unwrap_or(edge_type);
+                let type_name = edge_type.split([' ', '{']).next().unwrap_or(edge_type);
                 if !type_name.is_empty() {
                     types.push(type_name.to_string());
                 }
@@ -204,8 +201,7 @@ impl GraphStrategy {
             Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
             Some(Value::IntValue(i)) => serde_json::json!(*i),
             Some(Value::DoubleValue(f)) => serde_json::Number::from_f64(*f)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null),
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
             Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
             Some(Value::BytesValue(bytes)) => {
                 use base64::Engine;

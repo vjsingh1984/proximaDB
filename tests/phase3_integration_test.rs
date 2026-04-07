@@ -44,8 +44,7 @@ mod streaming_flush_tests {
     use super::*;
     use proximadb::proto::proximadb_v1::VectorRecord;
     use proximadb::streaming::{
-        BackpressureLevel, CoordinatorStats, FlushRetryConfig, SessionConfig, StreamConfig,
-        StreamCoordinator,
+        BackpressureLevel, FlushRetryConfig, SessionConfig, StreamConfig, StreamCoordinator,
     };
 
     /// Helper to create test vectors
@@ -1063,7 +1062,7 @@ mod mtls_tests {
     use super::*;
     use proximadb::network::middleware::{TlsClientCertConfig, matches_cn_pattern};
     use proximadb::network::tls::{
-        CertificateConfig, CertificateManager, CertificateSubject, TlsConfig, TlsServerConfig,
+        CertificateConfig, CertificateManager, CertificateSubject, TlsConfig,
     };
 
     #[test]
@@ -1315,8 +1314,8 @@ mod mtls_tests {
 // =============================================================================
 
 mod catalog_tests {
-    use super::*;
-    use proximadb::catalog::{CatalogManager, TableIdentifier};
+
+    use proximadb::catalog::CatalogManager;
 
     fn temp_catalog_dir(name: &str) -> std::path::PathBuf {
         std::env::temp_dir()

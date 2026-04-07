@@ -63,6 +63,7 @@ pub struct ProximaFlightService {
 }
 
 impl ProximaFlightService {
+    /// Create a new Arrow Flight service backed by unified handlers
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
         // Get storage locations from config
         let storage_locations = unified_handlers
@@ -191,7 +192,7 @@ impl ProximaFlightService {
 
         // Trigger compaction if requested
         if trigger_compaction {
-            // TODO: Implement explicit compaction trigger
+            // Deferred: Implement explicit compaction trigger
             debug!(
                 collection_id = %collection_id,
                 "Compaction trigger requested (not yet implemented)"
@@ -634,6 +635,7 @@ impl FlightService for ProximaFlightService {
                     "swift" => crate::proto::proximadb_v1::StorageEngine::Swift,
                     "nova" => crate::proto::proximadb_v1::StorageEngine::Nova,
                     "raptor" => crate::proto::proximadb_v1::StorageEngine::Raptor,
+                    "tst" => crate::proto::proximadb_v1::StorageEngine::Tst,
                     _ => crate::proto::proximadb_v1::StorageEngine::Sst,
                 };
 
@@ -817,7 +819,7 @@ impl FlightService for ProximaFlightService {
                         serde_json::json!({
                             "id": c.id,
                             "name": name,
-                            "dimension": c.config.as_ref().map(|cfg| cfg.dimension).unwrap_or(0)
+                            "dimension": c.config.as_ref().map_or(0, |cfg| cfg.dimension)
                         })
                     })
                     .collect();
@@ -924,7 +926,7 @@ impl FlightService for ProximaFlightService {
 
                 let result_bytes = serde_json::to_vec(&serde_json::json!({
                     "success": response.success,
-                    "inserted_count": response.metrics.as_ref().map(|m| m.successful_count).unwrap_or(0),
+                    "inserted_count": response.metrics.as_ref().map_or(0, |m| m.successful_count),
                     "vector_ids": response.vector_ids,
                     "error_message": response.error_message,
                     "error_code": response.error_code
@@ -1472,8 +1474,7 @@ impl ProximaFlightService {
             total_vectors += response
                 .metrics
                 .as_ref()
-                .map(|m| m.successful_count as u64)
-                .unwrap_or(0);
+                .map_or(0, |m| m.successful_count as u64);
 
             // Send progress update as FlightData
             let progress = serde_json::json!({

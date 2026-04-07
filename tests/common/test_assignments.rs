@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_imports, unused_variables)]
 //! Centralized test assignment helper for all ProximaDB tests
 //!
 //! This module provides persistent disk-based storage for test assignments

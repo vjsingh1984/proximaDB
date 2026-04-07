@@ -244,6 +244,8 @@ pub struct WebhookSink {
     stats: Mutex<SinkStats>,
     /// Buffer for batching
     buffer: Mutex<Vec<ChangeEvent>>,
+    /// When true, skip real HTTP requests (for unit testing without network)
+    dry_run: bool,
 }
 
 impl WebhookSink {
@@ -253,6 +255,19 @@ impl WebhookSink {
             config,
             stats: Mutex::new(SinkStats::default()),
             buffer: Mutex::new(Vec::new()),
+            dry_run: false,
+        }
+    }
+
+    /// Create a new webhook sink in dry-run mode (no real HTTP requests)
+    ///
+    /// Useful for testing without network access.
+    pub fn new_dry_run(config: WebhookConfig) -> Self {
+        Self {
+            config,
+            stats: Mutex::new(SinkStats::default()),
+            buffer: Mutex::new(Vec::new()),
+            dry_run: true,
         }
     }
 
@@ -261,13 +276,83 @@ impl WebhookSink {
         &self.config
     }
 
-    /// Send an HTTP request (simulated)
+    /// Send an HTTP request via reqwest
+    ///
+    /// In dry-run mode, skips the actual HTTP request and simulates success.
     async fn http_request(&self, url: &str, payload: &[u8]) -> SinkResult<()> {
-        // In production, would use reqwest here
-        let _ = (url, payload);
+        if self.dry_run {
+            let _ = (url, payload);
+            let mut stats = self
+                .stats
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            stats.record_send(payload.len() as u64, 10.0);
+            return Ok(());
+        }
 
-        // Simulate successful send
-        let mut stats = self.stats.lock().unwrap();
+        let client = reqwest::Client::new();
+
+        let mut request = match self.config.method {
+            HttpMethod::Get => client.get(url),
+            HttpMethod::Post => client.post(url),
+            HttpMethod::Put => client.put(url),
+            HttpMethod::Patch => client.patch(url),
+        };
+
+        // Set content type
+        request = request.header("Content-Type", &self.config.content_type);
+
+        // Set custom headers
+        for (key, value) in &self.config.headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+
+        // Set authentication
+        if let Some(ref auth) = self.config.auth {
+            match auth {
+                WebhookAuth::Basic { username, password } => {
+                    request = request.basic_auth(username, Some(password));
+                }
+                WebhookAuth::Bearer { token } => {
+                    request = request.bearer_auth(token);
+                }
+                WebhookAuth::ApiKey { header, key } => {
+                    request = request.header(header.as_str(), key.as_str());
+                }
+                WebhookAuth::OAuth2 { .. } => {
+                    // OAuth2 token refresh not yet implemented
+                    tracing::warn!("OAuth2 authentication not yet supported for webhook sink");
+                }
+                WebhookAuth::Custom { headers } => {
+                    for (k, v) in headers {
+                        request = request.header(k.as_str(), v.as_str());
+                    }
+                }
+            }
+        }
+
+        // Set timeout
+        request = request.timeout(self.config.timeout());
+
+        // Send with body
+        let response = request
+            .body(payload.to_vec())
+            .send()
+            .await
+            .map_err(|e| SinkError::Send(format!("Webhook HTTP request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(SinkError::Send(format!(
+                "Webhook returned error status: {}",
+                response.status()
+            )));
+        }
+
+        // Update stats
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_send(payload.len() as u64, 10.0);
 
         Ok(())
@@ -288,7 +373,10 @@ impl WebhookSink {
                     let backoff = self.config.retry.backoff_for_attempt(attempt);
                     tokio::time::sleep(Duration::from_millis(backoff)).await;
 
-                    let mut stats = self.stats.lock().unwrap();
+                    let mut stats = self
+                        .stats
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                     stats.record_retry();
 
                     attempt += 1;
@@ -389,7 +477,10 @@ impl CdcSink for WebhookSink {
 
             self.send_with_retry(url, &batch_payload).await?;
 
-            let mut stats = self.stats.lock().unwrap();
+            let mut stats = self
+                .stats
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             stats.events_sent += events.len() as u64 - 1; // Already counted 1 in send_with_retry
         } else {
             // Send individually
@@ -403,7 +494,10 @@ impl CdcSink for WebhookSink {
 
     async fn flush(&self) -> SinkResult<()> {
         let events = {
-            let mut buffer = self.buffer.lock().unwrap();
+            let mut buffer = self
+                .buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             std::mem::take(&mut *buffer)
         };
 
@@ -419,7 +513,10 @@ impl CdcSink for WebhookSink {
     }
 
     fn stats(&self) -> SinkStats {
-        self.stats.lock().unwrap().clone()
+        self.stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 
@@ -513,7 +610,7 @@ mod tests {
     #[tokio::test]
     async fn test_webhook_sink_send() {
         let config = WebhookConfig::new("https://api.example.com/events");
-        let sink = WebhookSink::new(config);
+        let sink = WebhookSink::new_dry_run(config);
 
         let event = create_test_event();
         sink.send(event).await.unwrap();
@@ -525,7 +622,7 @@ mod tests {
     #[tokio::test]
     async fn test_webhook_sink_send_batch() {
         let config = WebhookConfig::new("https://api.example.com/events");
-        let sink = WebhookSink::new(config);
+        let sink = WebhookSink::new_dry_run(config);
 
         let events = vec![create_test_event(), create_test_event()];
         sink.send_batch(events).await.unwrap();
@@ -537,7 +634,7 @@ mod tests {
     #[tokio::test]
     async fn test_webhook_sink_batching() {
         let config = WebhookConfig::new("https://api.example.com/events").with_batching(true);
-        let sink = WebhookSink::new(config);
+        let sink = WebhookSink::new_dry_run(config);
 
         let events = vec![
             create_test_event(),

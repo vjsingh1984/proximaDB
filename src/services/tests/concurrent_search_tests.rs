@@ -140,6 +140,7 @@ mod tests {
             CheckIndexConfig,
             ScanWal,
             SearchIndexes,
+            #[allow(dead_code)]
             SearchStorage,
             MergeResults,
         }
@@ -304,6 +305,7 @@ mod tests {
                 self.index_filters.write().await.push(filter);
             }
 
+            #[allow(dead_code)]
             async fn add_storage_filter(&self, filter: String) {
                 self.storage_filters.write().await.push(filter);
             }

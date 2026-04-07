@@ -65,11 +65,12 @@ use crate::services::schema::{InferenceConfig, InferredSchema, SchemaInferenceSe
 /// Migration mode for collection
 ///
 /// Defines the current state of a collection in the migration process.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum MigrationMode {
     /// VectorRecord only (legacy format)
     ///
     /// This is the original format. Collections start in this mode.
+    #[default]
     Legacy,
 
     /// Dual-write: both formats maintained
@@ -87,12 +88,6 @@ pub enum MigrationMode {
     /// - VectorRecord data has been cleaned up
     /// - New writes only create ProximaRecord
     Migrated,
-}
-
-impl Default for MigrationMode {
-    fn default() -> Self {
-        Self::Legacy
-    }
 }
 
 /// Migration statistics
@@ -308,6 +303,7 @@ struct MigrationState {
 }
 
 impl MigrationState {
+    /// Create a new migration state for the given collection and mode.
     fn new(collection_name: String, mode: MigrationMode) -> Self {
         Self {
             collection_name,
@@ -323,34 +319,42 @@ impl MigrationState {
         }
     }
 
+    /// Return whether the migration is currently paused.
     fn is_paused(&self) -> bool {
         self.is_paused.load(Ordering::Relaxed)
     }
 
+    /// Pause the in-progress migration.
     fn pause(&self) {
         self.is_paused.store(true, Ordering::Relaxed);
     }
 
+    /// Resume a previously paused migration.
     fn resume(&self) {
         self.is_paused.store(false, Ordering::Relaxed);
     }
 
+    /// Return whether a stop has been requested.
     fn should_stop(&self) -> bool {
         self.should_stop.load(Ordering::Relaxed)
     }
 
+    /// Signal the migration to stop at the next safe checkpoint.
     fn request_stop(&self) {
         self.should_stop.store(true, Ordering::Relaxed);
     }
 
+    /// Atomically increment the count of successfully migrated records.
     fn increment_migrated(&self) {
         self.migrated_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Atomically increment the count of failed migration attempts.
     fn increment_failed(&self) {
         self.failed_count.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Build a `MigrationStatus` snapshot from the current atomic counters.
     fn to_status(&self) -> MigrationStatus {
         let migrated = self.migrated_count.load(Ordering::Relaxed);
         let failed = self.failed_count.load(Ordering::Relaxed);
@@ -375,22 +379,26 @@ impl MigrationState {
         }
     }
 
+    /// Record the schema ID associated with this migration.
     fn set_schema_id(&self, id: String) {
         if let Ok(mut schema_id) = self.schema_id.write() {
             *schema_id = Some(id);
         }
     }
 
+    /// Record the migration start time as the current instant.
     fn set_start_time(&self) {
         if let Ok(mut start_time) = self.start_time.write() {
             *start_time = Some(Instant::now());
         }
     }
 
+    /// Set the total number of records to be migrated.
     fn set_total_records(&self, total: u64) {
         self.total_records.store(total, Ordering::Relaxed);
     }
 
+    /// Store the most recent error message encountered during migration.
     fn set_error(&self, error: String) {
         if let Ok(mut last_error) = self.last_error.write() {
             *last_error = Some(error);
@@ -534,7 +542,9 @@ pub enum MigrationError {
     /// Invalid migration mode transition
     #[error("Invalid mode transition: {from:?} -> {to:?}")]
     InvalidModeTransition {
+        /// The current (source) migration mode.
         from: MigrationMode,
+        /// The requested (target) migration mode.
         to: MigrationMode,
     },
 
@@ -903,18 +913,18 @@ impl RecordMigrationService {
         }
 
         // Validate vector dimensions if specified
-        if let Some(dim) = record.vector_dimension {
-            if record.vector.len() != dim as usize {
-                errors.push(ValidationError {
-                    field: "vector".to_string(),
-                    message: format!(
-                        "Vector dimension mismatch: expected {}, got {}",
-                        dim,
-                        record.vector.len()
-                    ),
-                    code: ValidationErrorCode::DimensionMismatch,
-                });
-            }
+        if let Some(dim) = record.vector_dimension
+            && record.vector.len() != dim as usize
+        {
+            errors.push(ValidationError {
+                field: "vector".to_string(),
+                message: format!(
+                    "Vector dimension mismatch: expected {}, got {}",
+                    dim,
+                    record.vector.len()
+                ),
+                code: ValidationErrorCode::DimensionMismatch,
+            });
         }
 
         // Schema-based validation
@@ -1108,8 +1118,7 @@ impl RecordMigrationService {
     /// Check if a migration is paused for a collection
     pub fn is_migration_paused(&self, collection_id: &str) -> bool {
         self.get_active_migration(collection_id)
-            .map(|s| s.is_paused())
-            .unwrap_or(false)
+            .is_some_and(|s| s.is_paused())
     }
 
     /// Get all active migrations

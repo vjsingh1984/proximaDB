@@ -418,7 +418,7 @@ impl UnifiedSwiftReader {
             self.file_path, self.collection_id, superblock_id
         );
 
-        // TODO: UnifiedCachingFilesystem doesn't expose direct cache access yet
+        // Deferred: UnifiedCachingFilesystem doesn't expose direct cache access yet
         // For now, always load from file
         debug!(
             "Loading SWIFT SuperBlock {} from file: {}",
@@ -504,7 +504,7 @@ impl UnifiedSwiftReader {
         }
 
         let magic = &data[0..4];
-        if magic != &super::SWIFT_MAGIC {
+        if magic != super::SWIFT_MAGIC {
             return Err(anyhow!("Invalid magic bytes: expected SWFT"));
         }
 
@@ -667,7 +667,7 @@ impl UnifiedSwiftReader {
             let superblock_id = block_id / 64;
             blocks_by_superblock
                 .entry(superblock_id)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(block_id);
         }
 

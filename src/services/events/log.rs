@@ -243,9 +243,13 @@ impl EventLogService {
 /// EventLog statistics
 #[derive(Debug, Default, Clone)]
 pub struct EventLogStats {
+    /// Number of events queued but not yet processed.
     pub pending_events: usize,
+    /// Cumulative number of events that have been processed since startup.
     pub processed_events: usize,
+    /// Number of collections currently tracked by the EventLog service.
     pub active_collections: usize,
+    /// How long the EventLog service has been running, in seconds.
     pub uptime_seconds: u64,
 }
 

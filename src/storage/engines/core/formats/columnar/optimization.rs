@@ -273,11 +273,9 @@ impl ColumnarOptimizer {
         row_group: &RowGroupMetaData,
         filter: Option<&MetadataFilter>,
     ) -> Result<bool> {
-        if filter.is_none() {
+        let Some(filter) = filter else {
             return Ok(true);
-        }
-
-        let filter = filter.unwrap();
+        };
         // Check each filter condition against row group statistics
         for condition in &filter.conditions {
             match condition {
@@ -633,7 +631,7 @@ impl StreamingRowGroupIterator {
 
         let row_group_idx = self.selected_row_groups[self.current_index];
         self.current_index += 1;
-        // TODO: StreamingRowGroupIterator needs refactoring to use zero-copy filesystem
+        // Deferred: StreamingRowGroupIterator needs refactoring to use zero-copy filesystem
         // For now, keeping direct file access but this breaks cloud compatibility
         let file = std::fs::File::open(&self.file_path)?;
         let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
@@ -646,19 +644,18 @@ impl StreamingRowGroupIterator {
             let needs_projection = if let Some(ref columns) = self.column_projection {
                 let mut projection_indices = Vec::new();
                 for name in columns {
-                    if let Ok(field) = schema.field_with_name(name) {
-                        if let Some(index) = schema
+                    if let Ok(field) = schema.field_with_name(name)
+                        && let Some(index) = schema
                             .fields()
                             .iter()
                             .position(|f| f.name() == field.name())
-                        {
-                            projection_indices.push(index);
-                        }
+                    {
+                        projection_indices.push(index);
                     }
                 }
                 if !projection_indices.is_empty() {
                     Some(parquet::arrow::ProjectionMask::leaves(
-                        &parquet_schema,
+                        parquet_schema,
                         projection_indices,
                     ))
                 } else {
@@ -737,6 +734,7 @@ impl BloomFilterProxy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(dead_code)]
     async fn test_columnar_optimizer_creation() {
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
         let _hardware = crate::core::hardware_capabilities::get_hardware_capabilities();

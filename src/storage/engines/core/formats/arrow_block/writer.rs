@@ -148,8 +148,8 @@ impl ArrowBlockWriter {
         self.current_offset += estimated_size;
 
         // Create index entry
-        let (min_id, max_id) = self.get_id_range(records);
-        let (min_ts, max_ts) = self.get_timestamp_range(records);
+        let (min_id, max_id) = self.get_id_range(records)?;
+        let (min_ts, max_ts) = self.get_timestamp_range(records)?;
 
         let entry = ArrowIndexEntry::new(
             self.current_block,
@@ -194,10 +194,9 @@ impl ArrowBlockWriter {
         // Take ownership of inner writer temporarily
         // Note: We create a temp file as placeholder - it will be replaced immediately
         let temp_file = File::create("/dev/null").map_err(|e| {
-            ArrowBlockError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to create temp file: {e}"),
-            ))
+            ArrowBlockError::Io(std::io::Error::other(format!(
+                "Failed to create temp file: {e}"
+            )))
         })?;
         let inner = std::mem::replace(&mut self.inner, BufWriter::new(temp_file));
 
@@ -308,21 +307,28 @@ impl ArrowBlockWriter {
     }
 
     /// Get ID range from records
-    fn get_id_range(&self, records: &[VectorRecord]) -> (String, String) {
+    fn get_id_range(&self, records: &[VectorRecord]) -> ArrowBlockResult<(String, String)> {
         let mut ids: Vec<_> = records.iter().map(|r| r.id.as_str()).collect();
         ids.sort();
-        (
-            ids.first().unwrap_or(&"").to_string(),
-            ids.last().unwrap_or(&"").to_string(),
-        )
+        let min = ids.first().copied().ok_or_else(|| {
+            ArrowBlockError::ConversionError("No IDs found in records".to_string())
+        })?;
+        let max = ids.last().copied().ok_or_else(|| {
+            ArrowBlockError::ConversionError("No IDs found in records".to_string())
+        })?;
+        Ok((min.to_string(), max.to_string()))
     }
 
     /// Get timestamp range from records
-    fn get_timestamp_range(&self, records: &[VectorRecord]) -> (i64, i64) {
+    fn get_timestamp_range(&self, records: &[VectorRecord]) -> ArrowBlockResult<(i64, i64)> {
         let timestamps: Vec<i64> = records.iter().filter_map(|r| r.timestamp).collect();
-        let min = timestamps.iter().min().copied().unwrap_or(0);
-        let max = timestamps.iter().max().copied().unwrap_or(0);
-        (min, max)
+        let min = timestamps.iter().min().copied().ok_or_else(|| {
+            ArrowBlockError::ConversionError("No timestamps found in records".to_string())
+        })?;
+        let max = timestamps.iter().max().copied().ok_or_else(|| {
+            ArrowBlockError::ConversionError("No timestamps found in records".to_string())
+        })?;
+        Ok((min, max))
     }
 
     /// Estimate batch size in bytes
@@ -360,18 +366,19 @@ mod tests {
 
     #[test]
     fn test_write_single_block() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create tempdir");
         let path = dir.path().join("test.arrow");
 
         let config = ArrowBlockConfig::new(128);
-        let mut writer = ArrowBlockWriter::new(&path, config).unwrap();
+        let mut writer =
+            ArrowBlockWriter::new(&path, config).expect("Failed to create ArrowBlockWriter");
 
         let records: Vec<_> = (0..100)
             .map(|i| create_test_record(&format!("vec_{:05}", i), 128))
             .collect();
 
-        writer.write_block(&records).unwrap();
-        let metadata = writer.finalize().unwrap();
+        writer.write_block(&records).expect("Failed to write block");
+        let metadata = writer.finalize().expect("Failed to finalize writer");
 
         assert_eq!(metadata.num_blocks, 1);
         assert_eq!(metadata.total_records, 100);
@@ -380,7 +387,7 @@ mod tests {
 
     #[test]
     fn test_write_multiple_blocks() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create tempdir");
         let path = dir.path().join("test_multi.arrow");
 
         let config = ArrowBlockConfig {
@@ -388,16 +395,17 @@ mod tests {
             records_per_block: 50,
             ..Default::default()
         };
-        let mut writer = ArrowBlockWriter::new(&path, config).unwrap();
+        let mut writer =
+            ArrowBlockWriter::new(&path, config).expect("Failed to create ArrowBlockWriter");
 
         // Add 200 records (should create 4 blocks)
         for i in 0..200 {
             writer
                 .add_record(create_test_record(&format!("vec_{:05}", i), 64))
-                .unwrap();
+                .expect("Failed to add record");
         }
 
-        let metadata = writer.finalize().unwrap();
+        let metadata = writer.finalize().expect("Failed to finalize writer");
 
         assert_eq!(metadata.num_blocks, 4);
         assert_eq!(metadata.total_records, 200);
@@ -405,11 +413,12 @@ mod tests {
 
     #[test]
     fn test_id_range_tracking() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create tempdir");
         let path = dir.path().join("test_range.arrow");
 
         let config = ArrowBlockConfig::new(32);
-        let mut writer = ArrowBlockWriter::new(&path, config).unwrap();
+        let mut writer =
+            ArrowBlockWriter::new(&path, config).expect("Failed to create ArrowBlockWriter");
 
         let records = vec![
             create_test_record("aaa", 32),
@@ -417,8 +426,8 @@ mod tests {
             create_test_record("zzz", 32),
         ];
 
-        writer.write_block(&records).unwrap();
-        let metadata = writer.finalize().unwrap();
+        writer.write_block(&records).expect("Failed to write block");
+        let metadata = writer.finalize().expect("Failed to finalize writer");
 
         assert_eq!(
             metadata.id_range,

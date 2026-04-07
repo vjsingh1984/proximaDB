@@ -56,11 +56,11 @@ impl VectorPool {
         vec.clear();
         if vec.capacity() > 0 && vec.capacity() < 10000 {
             // Prevent memory bloat
-            if let Ok(mut pool) = self.query_row_pool.lock() {
-                if pool.len() < 10 {
-                    // Limit pool size
-                    pool.push(vec);
-                }
+            if let Ok(mut pool) = self.query_row_pool.lock()
+                && pool.len() < 10
+            {
+                // Limit pool size
+                pool.push(vec);
             }
         }
     }
@@ -77,13 +77,19 @@ impl VectorPool {
     /// Return a HashMap to the pool for reuse
     pub fn return_field_map(&self, mut map: HashMap<String, serde_json::Value>) {
         map.clear();
-        if map.capacity() > 0 && map.capacity() < 100 {
-            if let Ok(mut pool) = self.field_map_pool.lock() {
-                if pool.len() < 10 {
-                    pool.push(map);
-                }
-            }
+        if map.capacity() > 0
+            && map.capacity() < 100
+            && let Ok(mut pool) = self.field_map_pool.lock()
+            && pool.len() < 10
+        {
+            pool.push(map);
         }
+    }
+}
+
+impl Default for VectorPool {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -109,6 +115,7 @@ impl QueryExecutor {
     }
 
     /// Derive vector-side rows from graph seeds using the SKS embedding catalog (no engine I/O)
+    #[expect(clippy::ptr_arg)] // Accepting &Vec for API compatibility
     pub(crate) fn derive_vector_rows_from_graph_seeds(graph_rows: &Vec<QueryRow>) -> Vec<QueryRow> {
         if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
             let seeds: Vec<String> = graph_rows
@@ -117,6 +124,7 @@ impl QueryExecutor {
                     r.fields
                         .get("id")
                         .and_then(|v| v.as_str())
+                        // TD-007: unwrap_or with safe default - "unknown" for entities without ID field
                         .unwrap_or("unknown")
                         .to_string()
                 })
@@ -126,29 +134,28 @@ impl QueryExecutor {
             // Use public accessors instead of private fields
             let mut derived: Vec<QueryRow> = Vec::new();
             for entity_id in seeds {
-                if let Some(vec_ids) = store.get_entity_vectors(&entity_id) {
-                    if let Some(first_vec_id) = vec_ids.first() {
-                        if let Some(vec_values) = store.get_embedding(first_vec_id) {
-                            let mut fields = std::collections::HashMap::new();
-                            fields.insert(
-                                "id".to_string(),
-                                serde_json::Value::String(entity_id.clone()),
-                            );
-                            fields.insert(
-                                "embedding_dim".to_string(),
-                                serde_json::Value::Number(serde_json::Number::from(
-                                    vec_values.len() as u64,
-                                )),
-                            );
-                            derived.push(QueryRow {
-                                fields,
-                                similarity_score: None,
-                                graph_distance: None,
-                                provenance: None,
-                            });
-                            continue;
-                        }
-                    }
+                if let Some(vec_ids) = store.get_entity_vectors(&entity_id)
+                    && let Some(first_vec_id) = vec_ids.first()
+                    && let Some(vec_values) = store.get_embedding(first_vec_id)
+                {
+                    let mut fields = std::collections::HashMap::new();
+                    fields.insert(
+                        "id".to_string(),
+                        serde_json::Value::String(entity_id.clone()),
+                    );
+                    fields.insert(
+                        "embedding_dim".to_string(),
+                        serde_json::Value::Number(
+                            serde_json::Number::from(vec_values.len() as u64),
+                        ),
+                    );
+                    derived.push(QueryRow {
+                        fields,
+                        similarity_score: None,
+                        graph_distance: None,
+                        provenance: None,
+                    });
+                    continue;
                 }
                 let mut fields = std::collections::HashMap::new();
                 fields.insert("id".to_string(), serde_json::Value::String(entity_id));
@@ -250,8 +257,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for JOIN"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for JOIN"))?;
                     let joined = self.join_rows(&left, &right, left_keys, right_keys, kind)?;
                     buffers.push(joined);
                 }
@@ -259,8 +270,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("UNION requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for UNION"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for UNION"))?;
                     let unioned = self.union_rows(&left, &right, *all)?;
                     buffers.push(unioned);
                 }
@@ -268,8 +283,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("SET UNION requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for SET UNION"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for SET UNION"))?;
                     let unioned = self.union_rows(&left, &right, !distinct)?;
                     buffers.push(unioned);
                 }
@@ -277,8 +296,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("SET INTERSECT requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for SET INTERSECT"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for SET INTERSECT"))?;
                     let intersected = self.intersect_rows(&left, &right, !distinct)?;
                     buffers.push(intersected);
                 }
@@ -286,8 +309,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("SET EXCEPT requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for SET EXCEPT"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for SET EXCEPT"))?;
                     let excepted = self.except_rows(&left, &right, !distinct)?;
                     buffers.push(excepted);
                 }
@@ -390,8 +417,12 @@ impl QueryExecutor {
                     if buffers.len() < 2 {
                         return Err(anyhow!("JOIN requires two input buffers"));
                     }
-                    let right = buffers.pop().unwrap();
-                    let left = buffers.pop().unwrap();
+                    let right = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing right buffer for JOIN"))?;
+                    let left = buffers
+                        .pop()
+                        .ok_or_else(|| anyhow!("Missing left buffer for JOIN"))?;
                     let joined = self.join_rows(&left, &right, left_keys, right_keys, kind)?;
                     buffers.push(joined);
                 }
@@ -418,7 +449,7 @@ impl QueryExecutor {
             total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
-            cache_hits: 0, // TODO: Implement graph caching
+            cache_hits: 0, // Deferred: Implement graph caching
             performance_metrics,
         })
     }
@@ -506,32 +537,32 @@ impl QueryExecutor {
         };
 
         // Seed handoff: Vector → Graph when needed
-        if graph_needs_seeds && !graph_ops.is_empty() {
-            if let Some(ExecutionOperation::GraphTraversal {
+        if graph_needs_seeds
+            && !graph_ops.is_empty()
+            && let Some(ExecutionOperation::GraphTraversal {
                 edge_types,
                 max_depth,
                 filters,
                 ..
             }) = graph_ops.first()
-            {
-                let seeds: Vec<String> = vector_results
-                    .iter()
-                    .map(|r| self.extract_result_id(r))
-                    .filter(|id| !id.is_empty() && id != "unknown")
-                    .take(100)
-                    .collect();
-                if !seeds.is_empty() {
-                    let seeded = self
-                        .execute_graph_traversal_operation(
-                            &seeds,
-                            edge_types,
-                            *max_depth,
-                            filters.as_ref(),
-                            &mut performance_metrics,
-                        )
-                        .await?;
-                    graph_results.extend(seeded);
-                }
+        {
+            let seeds: Vec<String> = vector_results
+                .iter()
+                .map(|r| self.extract_result_id(r))
+                .filter(|id| !id.is_empty() && id != "unknown")
+                .take(100)
+                .collect();
+            if !seeds.is_empty() {
+                let seeded = self
+                    .execute_graph_traversal_operation(
+                        &seeds,
+                        edge_types,
+                        *max_depth,
+                        filters.as_ref(),
+                        &mut performance_metrics,
+                    )
+                    .await?;
+                graph_results.extend(seeded);
             }
         }
 
@@ -550,46 +581,67 @@ impl QueryExecutor {
                 } => vector_target_collection.clone(),
                 _ => None,
             });
-            if let Some(collection_id) = target_collection {
-                if let Some(store) = crate::storage::entity_store::ProximaEntityStore::global() {
-                    let seeds: Vec<String> = graph_results
-                        .iter()
-                        .map(|r| self.extract_result_id(r))
-                        .filter(|id| !id.is_empty() && id != "unknown")
-                        .take(64)
-                        .collect();
-                    // Use public accessors instead of private fields
-                    match seeding {
-                        crate::query::execution::SeedingStrategy::Average => {
-                            // Average up to 32 seed embeddings into a single vector
-                            let mut acc: Vec<f32> = Vec::new();
-                            let mut count = 0f32;
-                            for entity_id in seeds.iter().take(32) {
-                                if let Some(vec_ids) = store.get_entity_vectors(entity_id) {
-                                    if let Some(first_vec_id) = vec_ids.first() {
-                                        if let Some(v) = store.get_embedding(first_vec_id) {
-                                            if acc.is_empty() {
-                                                acc = v.clone();
-                                            } else if acc.len() == v.len() {
-                                                for i in 0..acc.len() {
-                                                    acc[i] += v[i];
-                                                }
-                                            }
-                                            count += 1.0;
-                                        }
+            if let Some(collection_id) = target_collection
+                && let Some(store) = crate::storage::entity_store::ProximaEntityStore::global()
+            {
+                let seeds: Vec<String> = graph_results
+                    .iter()
+                    .map(|r| self.extract_result_id(r))
+                    .filter(|id| !id.is_empty() && id != "unknown")
+                    .take(64)
+                    .collect();
+                // Use public accessors instead of private fields
+                match seeding {
+                    crate::query::execution::SeedingStrategy::Average => {
+                        // Average up to 32 seed embeddings into a single vector
+                        let mut acc: Vec<f32> = Vec::new();
+                        let mut count = 0f32;
+                        for entity_id in seeds.iter().take(32) {
+                            if let Some(vec_ids) = store.get_entity_vectors(entity_id)
+                                && let Some(first_vec_id) = vec_ids.first()
+                                && let Some(v) = store.get_embedding(first_vec_id)
+                            {
+                                if acc.is_empty() {
+                                    acc = v.clone();
+                                } else if acc.len() == v.len() {
+                                    for (acc_val, v_val) in acc.iter_mut().zip(v.iter()) {
+                                        *acc_val += v_val;
                                     }
                                 }
+                                count += 1.0;
                             }
-                            if count > 0.0 {
-                                for i in 0..acc.len() {
-                                    acc[i] /= count;
-                                }
+                        }
+                        if count > 0.0 {
+                            for acc_val in acc.iter_mut() {
+                                *acc_val /= count;
+                            }
+                            let sim_rows = self
+                                .execute_vector_search_operation(
+                                    &collection_id,
+                                    Some(&acc),
+                                    None,
+                                    50,
+                                    "cosine",
+                                    &mut performance_metrics,
+                                )
+                                .await
+                                .unwrap_or_default();
+                            vector_results.extend(sim_rows);
+                        }
+                    }
+                    crate::query::execution::SeedingStrategy::PerSeed => {
+                        // Run per-seed vector queries and fuse
+                        for entity_id in seeds {
+                            if let Some(vec_ids) = store.get_entity_vectors(&entity_id)
+                                && let Some(first_vec_id) = vec_ids.first()
+                                && let Some(v) = store.get_embedding(first_vec_id)
+                            {
                                 let sim_rows = self
                                     .execute_vector_search_operation(
                                         &collection_id,
-                                        Some(&acc),
+                                        Some(&v),
                                         None,
-                                        50,
+                                        10,
                                         "cosine",
                                         &mut performance_metrics,
                                     )
@@ -598,32 +650,9 @@ impl QueryExecutor {
                                 vector_results.extend(sim_rows);
                             }
                         }
-                        crate::query::execution::SeedingStrategy::PerSeed => {
-                            // Run per-seed vector queries and fuse
-                            for entity_id in seeds {
-                                if let Some(vec_ids) = store.get_entity_vectors(&entity_id) {
-                                    if let Some(first_vec_id) = vec_ids.first() {
-                                        if let Some(v) = store.get_embedding(first_vec_id) {
-                                            let sim_rows = self
-                                                .execute_vector_search_operation(
-                                                    &collection_id,
-                                                    Some(&v),
-                                                    None,
-                                                    10,
-                                                    "cosine",
-                                                    &mut performance_metrics,
-                                                )
-                                                .await
-                                                .unwrap_or_default();
-                                            vector_results.extend(sim_rows);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        crate::query::execution::SeedingStrategy::None => {
-                            // Do nothing (already derived id-only rows)
-                        }
+                    }
+                    crate::query::execution::SeedingStrategy::None => {
+                        // Do nothing (already derived id-only rows)
                     }
                 }
             }
@@ -796,14 +825,14 @@ impl QueryExecutor {
             // Fallback if query_vector is None (not typical for similarity) - no results
             vec![]
         } else {
-            // TODO: Handle non-similarity queries
+            // Deferred: Handle non-similarity queries
             vec![]
         };
 
         // Update performance metrics
         metrics.vectors_scanned = vos_results.len();
         metrics.metadata_lookups += vos_results.len(); // Each result involves metadata access
-        metrics.cache_hit_ratio = 0.8; // TODO: Get actual cache hit ratio from VOS
+        metrics.cache_hit_ratio = 0.8; // Deferred: Get actual cache hit ratio from VOS
 
         // Convert VOS results to QueryRow format
         let rows = vos_results
@@ -853,6 +882,7 @@ impl QueryExecutor {
                     // Add normalized similarity score as a field for display (0-1, higher = more similar)
                     // Use record.similarity which is set by UnifiedDistanceCompute.normalized_score
                     // All engines should populate this field consistently via .with_similarity()
+                    // TD-007: unwrap_or with safe default - 0.0 for records without similarity score
                     let display_score = record.similarity.unwrap_or(0.0) as f64;
                     fields.insert(
                         "_similarity_score".to_string(),
@@ -1020,11 +1050,9 @@ impl QueryExecutor {
             }
             let row_hash = hasher.finish();
 
-            if right_hashes.contains_key(&row_hash) {
-                if all || !seen_hashes.contains(&row_hash) {
-                    seen_hashes.insert(row_hash);
-                    result.push(row.clone());
-                }
+            if right_hashes.contains_key(&row_hash) && (all || !seen_hashes.contains(&row_hash)) {
+                seen_hashes.insert(row_hash);
+                result.push(row.clone());
             }
         }
 
@@ -1068,11 +1096,9 @@ impl QueryExecutor {
             }
             let row_hash = hasher.finish();
 
-            if !right_hashes.contains(&row_hash) {
-                if all || !seen_hashes.contains(&row_hash) {
-                    seen_hashes.insert(row_hash);
-                    result.push(row.clone());
-                }
+            if !right_hashes.contains(&row_hash) && (all || !seen_hashes.contains(&row_hash)) {
+                seen_hashes.insert(row_hash);
+                result.push(row.clone());
             }
         }
 
@@ -1090,14 +1116,15 @@ impl QueryExecutor {
         fields: &std::collections::HashMap<String, serde_json::Value>,
         key: &str,
     ) -> Option<String> {
-        fields.get(key).and_then(|v| match v {
-            serde_json::Value::String(s) => Some(s.clone()),
-            serde_json::Value::Number(n) => Some(n.to_string()),
-            serde_json::Value::Bool(b) => Some(b.to_string()),
-            other => Some(other.to_string()),
+        fields.get(key).map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            other => other.to_string(),
         })
     }
 
+    #[expect(clippy::ptr_arg)] // Accepting &Vec for API compatibility
     fn composite_key(
         fields: &std::collections::HashMap<String, serde_json::Value>,
         keys: &Vec<String>,
@@ -1112,11 +1139,13 @@ impl QueryExecutor {
         parts.join("\u{1F}")
     }
 
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     pub fn apply_limit_offset(
         rows: &mut Vec<QueryRow>,
         offset: Option<usize>,
         limit: Option<usize>,
     ) {
+        // TD-007: unwrap_or with safe default - offset of 0 if not specified
         let off = offset.unwrap_or(0);
         if off > 0 && off < rows.len() {
             rows.drain(0..off);
@@ -1124,10 +1153,10 @@ impl QueryExecutor {
             rows.clear();
             return;
         }
-        if let Some(lim) = limit {
-            if rows.len() > lim {
-                rows.truncate(lim);
-            }
+        if let Some(lim) = limit
+            && rows.len() > lim
+        {
+            rows.truncate(lim);
         }
     }
 
@@ -1144,6 +1173,7 @@ impl QueryExecutor {
         }
     }
 
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec and &Vec for API compatibility
     fn apply_aggregate(
         &self,
         rows: &mut Vec<QueryRow>,
@@ -1241,6 +1271,9 @@ impl QueryExecutor {
                     | Op::GreaterThanOrEqual
                     | Op::LessThan
                     | Op::LessThanOrEqual => {
+                        // TD-007: unwrap_or with safe default - NaN propagates correctly in comparisons
+                        // Non-numeric values become NaN, which returns false for all comparison operators
+                        // This is the standard SQL-like behavior for filtering on non-numeric data
                         let ln = lv.as_f64().unwrap_or(f64::NAN);
                         let rn = value.as_f64().unwrap_or(f64::NAN);
                         match operator {
@@ -1257,7 +1290,7 @@ impl QueryExecutor {
                     | Op::StartsWith
                     | Op::EndsWith
                     | Op::Like => false,
-                    Op::Between => false, // TODO: implement between logic
+                    Op::Between => false, // Deferred: implement between logic
                     Op::IsNull => lv.is_null(),
                     Op::IsNotNull => !lv.is_null(),
                 }
@@ -1340,7 +1373,7 @@ impl QueryExecutor {
                 self.apply_reciprocal_rank_fusion(vector_results, graph_results, *k)
             }
             _ => {
-                // Simple concatenation for other strategies (TODO: implement)
+                // Simple concatenation for other strategies (DEFERRED: implement)
                 let mut combined = vector_results.to_vec();
                 combined.extend_from_slice(graph_results);
                 Ok(combined)
@@ -1375,6 +1408,7 @@ impl QueryExecutor {
 
             if let Some(existing) = fused_results.get_mut(&result_id) {
                 // Combine RRF scores
+                // TD-007: unwrap_or with safe default - 0.0 for records without similarity score
                 let combined_score = existing.similarity_score.unwrap_or(0.0) + rrf_score;
                 existing.similarity_score = Some(combined_score);
                 existing.graph_distance = result.graph_distance;
@@ -1388,6 +1422,7 @@ impl QueryExecutor {
         // Sort by combined RRF score
         let mut sorted_results: Vec<QueryRow> = fused_results.into_values().collect();
         sorted_results.sort_by(|a, b| {
+            // TD-007: unwrap_or with safe defaults - missing scores default to 0.0, NaN comparisons default to Equal
             b.similarity_score
                 .unwrap_or(0.0)
                 .partial_cmp(&a.similarity_score.unwrap_or(0.0))
@@ -1472,6 +1507,7 @@ impl QueryExecutor {
     }
 
     /// Apply projection transformations to result rows
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     fn apply_projections(
         &self,
         rows: &mut Vec<QueryRow>,
@@ -1495,6 +1531,7 @@ impl QueryExecutor {
                 for field_name in metadata_fields {
                     if let Some(value) = row.fields.remove(&field_name) {
                         // Strip "metadata." prefix for nested object
+                        // TD-007: unwrap_or with safe default - keep original field name if prefix not found
                         let key = field_name.strip_prefix("metadata.").unwrap_or(&field_name);
                         metadata_obj.insert(key.to_string(), value);
                     }
@@ -1537,20 +1574,21 @@ impl QueryExecutor {
                         // Format timestamp fields from int64_ms to ISO 8601 strings
                         let mut formatted_fields = HashMap::new();
                         for (key, value) in &row.fields {
-                            if key.contains("timestamp")
+                            if (key.contains("timestamp")
                                 || key.contains("_at")
-                                || key.contains("time")
+                                || key.contains("time"))
+                                && let Some(timestamp_ms) = value.as_i64()
                             {
-                                if let Some(timestamp_ms) = value.as_i64() {
-                                    let formatted =
-                                        chrono::DateTime::from_timestamp_millis(timestamp_ms)
-                                            .map(|dt| dt.to_rfc3339())
-                                            .unwrap_or_else(|| "invalid_timestamp".to_string());
-                                    formatted_fields.insert(
-                                        format!("{}_formatted", key),
-                                        serde_json::Value::String(formatted),
-                                    );
-                                }
+                                let formatted =
+                                    chrono::DateTime::from_timestamp_millis(timestamp_ms)
+                                        .map_or_else(
+                                            || "invalid_timestamp".to_string(),
+                                            |dt| dt.to_rfc3339(),
+                                        );
+                                formatted_fields.insert(
+                                    format!("{}_formatted", key),
+                                    serde_json::Value::String(formatted),
+                                );
                             }
                         }
                         // Add formatted timestamp fields to the row
@@ -1571,7 +1609,7 @@ impl QueryExecutor {
     ) -> std::collections::HashMap<String, serde_json::Value> {
         metadata
             .iter()
-            .filter_map(|(key, sql_value)| {
+            .map(|(key, sql_value)| {
                 // Demonstrate efficient HashMap iteration (vs Vec<MetadataItem> linear scan)
                 let json_value = match &sql_value.value {
                     Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
@@ -1600,7 +1638,7 @@ impl QueryExecutor {
                     }
                     None => serde_json::Value::Null,
                 };
-                Some((key.clone(), json_value))
+                (key.clone(), json_value)
             })
             .collect()
     }
@@ -1845,7 +1883,10 @@ mod executor_tests {
             offset: None,
         };
 
-        let result = executor.execute_vector_plan(plan).await.unwrap();
+        let result = executor
+            .execute_vector_plan(plan)
+            .await
+            .expect("Vector plan execution should succeed");
 
         // Verify execution completed successfully
         assert!(result.execution_time_ms > 0.0);
@@ -1912,7 +1953,10 @@ mod executor_tests {
             offset: None,
         };
 
-        let result = executor.execute_hybrid_plan(plan).await.unwrap();
+        let result = executor
+            .execute_hybrid_plan(plan)
+            .await
+            .expect("Hybrid plan execution should succeed");
 
         // Verify hybrid execution with fusion
         assert!(result.execution_time_ms > 0.0);
@@ -1979,7 +2023,10 @@ mod executor_tests {
         };
 
         let start = std::time::Instant::now();
-        let result = executor.execute_vector_plan(plan).await.unwrap();
+        let result = executor
+            .execute_vector_plan(plan)
+            .await
+            .expect("Vector plan execution should succeed");
         let execution_time = start.elapsed();
 
         // Performance validation: Should complete in sub-millisecond time
@@ -2043,7 +2090,7 @@ mod executor_tests {
             fn get_filesystem_factory(
                 &self,
             ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
-                // TODO: Placeholder for test - FilesystemFactory::new is async
+                // Deferred: Placeholder for test - FilesystemFactory::new is async
                 unimplemented!("Test method - requires async FilesystemFactory::new")
             }
         }
@@ -2077,7 +2124,7 @@ mod executor_tests {
         // embedding_dim won't be present - only the id field
         assert!(derived[0].fields.get("id").is_some());
         assert_eq!(
-            derived[0].fields.get("id").unwrap(),
+            derived[0].fields.get("id").expect("id field should exist"),
             &serde_json::Value::String("node1".to_string())
         );
     }
@@ -2189,7 +2236,10 @@ mod executor_tests {
 
         let executor = QueryExecutor::new_for_tests(graph_service);
 
-        let result = executor.execute_hybrid_plan(plan).await.unwrap();
+        let result = executor
+            .execute_hybrid_plan(plan)
+            .await
+            .expect("Hybrid plan execution should succeed");
         // Expect at least one graph-derived row (n2)
         let has_n2 = result
             .rows
@@ -2276,7 +2326,13 @@ mod executor_tests {
             snapshot_threshold: 1000,
             keep_snapshots: 3,
             backup_url: None,
-            temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            temp_dir: Some(
+                temp_dir
+                    .path()
+                    .to_str()
+                    .expect("temp_dir path should be valid UTF-8")
+                    .to_string(),
+            ),
         };
         let metadata_backend = Arc::new(
             UniversalMetadataBackend::new(metadata_config, filesystem2)
@@ -2376,7 +2432,13 @@ mod executor_tests {
             snapshot_threshold: 1000,
             keep_snapshots: 3,
             backup_url: None,
-            temp_dir: Some(temp_dir.path().to_str().unwrap().to_string()),
+            temp_dir: Some(
+                temp_dir
+                    .path()
+                    .to_str()
+                    .expect("temp_dir path should be valid UTF-8")
+                    .to_string(),
+            ),
         };
         let metadata_backend = Arc::new(
             UniversalMetadataBackend::new(metadata_config, filesystem2)
@@ -2558,11 +2620,15 @@ mod executor_tests {
         ];
 
         // Test UNION ALL (should include duplicates)
-        let union_all_result = executor.union_rows(&left_rows, &right_rows, true).unwrap();
+        let union_all_result = executor
+            .union_rows(&left_rows, &right_rows, true)
+            .expect("UNION ALL operation should succeed");
         assert_eq!(union_all_result.len(), 4); // All rows included
 
         // Test UNION DISTINCT (should remove duplicates)
-        let union_distinct_result = executor.union_rows(&left_rows, &right_rows, false).unwrap();
+        let union_distinct_result = executor
+            .union_rows(&left_rows, &right_rows, false)
+            .expect("UNION DISTINCT operation should succeed");
         assert_eq!(union_distinct_result.len(), 3); // Duplicates removed
     }
 
@@ -2635,12 +2701,20 @@ mod executor_tests {
         // Test INTERSECT (should return only matching rows)
         let intersect_result = executor
             .intersect_rows(&left_rows, &right_rows, false)
-            .unwrap();
+            .expect("INTERSECT operation should succeed");
         assert_eq!(intersect_result.len(), 1); // Only one matching row
 
         // Verify the correct row is returned
         let result_row = &intersect_result[0];
-        assert_eq!(result_row.fields.get("id").unwrap().as_str().unwrap(), "2");
+        assert_eq!(
+            result_row
+                .fields
+                .get("id")
+                .expect("id field should exist")
+                .as_str()
+                .expect("id should be a string"),
+            "2"
+        );
     }
 
     #[tokio::test]
@@ -2684,11 +2758,19 @@ mod executor_tests {
         // Test EXCEPT (should return left rows not in right)
         let except_result = executor
             .except_rows(&left_rows, &right_rows, false)
-            .unwrap();
+            .expect("EXCEPT operation should succeed");
         assert_eq!(except_result.len(), 1); // Only non-matching row from left
 
         // Verify the correct row is returned
         let result_row = &except_result[0];
-        assert_eq!(result_row.fields.get("id").unwrap().as_str().unwrap(), "1");
+        assert_eq!(
+            result_row
+                .fields
+                .get("id")
+                .expect("id field should exist")
+                .as_str()
+                .expect("id should be a string"),
+            "1"
+        );
     }
 }

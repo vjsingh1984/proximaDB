@@ -328,10 +328,9 @@ impl RecoveryManager {
         info!("🧹 Cleaning up global manifest after recovery...");
         if let Ok(removed) =
             crate::storage::persistence::write_ahead_log::manifest::cleanup_checkpointed().await
+            && removed > 0
         {
-            if removed > 0 {
-                info!("🧹 Removed {} flushed manifest entries", removed);
-            }
+            info!("🧹 Removed {} flushed manifest entries", removed);
         }
 
         Ok(stats)
@@ -375,7 +374,7 @@ impl RecoveryManager {
             total_vectors_recovered: vectors_recovered,
             total_collections_recovered: if vectors_recovered > 0 { 1 } else { 0 },
             recovery_errors: 0,
-            total_bytes_processed: 0, // TODO: Track bytes if needed
+            total_bytes_processed: 0, // Deferred: Track bytes if needed
         })
     }
 
@@ -504,10 +503,11 @@ impl RecoveryManager {
 
             let file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
-                batch_id: BatchId::from_base62(&e.batch_id).unwrap_or(BatchId::new()),
+                batch_id: BatchId::from_base62(&e.batch_id).unwrap_or_default(),
                 file_url: file_url.clone(),
                 size_bytes: e.size_bytes,
                 format,
+                encryption_metadata: None, // Recovery doesn't have encryption metadata
             };
 
             debug!(
@@ -559,7 +559,7 @@ impl RecoveryManager {
                         // CRITICAL: Mark as flushed BEFORE deleting WAL file
                         // This ensures manifest is updated even if deletion fails
                         match crate::storage::persistence::write_ahead_log::manifest::mark_flushed(
-                            &[e.batch_id.clone()],
+                            std::slice::from_ref(&e.batch_id),
                         )
                         .await
                         {
@@ -632,10 +632,10 @@ impl RecoveryManager {
             .await
             .unwrap_or_default();
         for fi in listed {
-            if let Some(name) = fi.file_url.split('/').last() {
-                if entries.iter().any(|m| m.file_path.ends_with(name)) {
-                    continue;
-                }
+            if let Some(name) = fi.file_url.split('/').next_back()
+                && entries.iter().any(|m| m.file_path.ends_with(name))
+            {
+                continue;
             }
             let count =
                 Self::recover_file_internal(&fi, &disk_manager, &storage_engines, recovery_mode)
@@ -803,7 +803,7 @@ impl RecoveryManager {
             force: true,
             synchronous: true,
             vector_records: vectors,
-            batch_ids: vec![file_info.batch_id.clone()],
+            batch_ids: vec![file_info.batch_id],
             ..Default::default()
         };
 
@@ -854,7 +854,7 @@ impl RecoveryManager {
         for entry in entries {
             if entry.metadata.is_directory {
                 // Assume directories are collection IDs for now
-                // TODO: Add more robust validation for collection IDs
+                // Deferred: Add more robust validation for collection IDs
                 collections.push(entry.name);
             }
         }
@@ -965,7 +965,7 @@ impl ParallelRecoveryManager {
         }
 
         // Split files into chunks for parallel processing
-        let chunk_size = (wal_files.len() + self.num_workers - 1) / self.num_workers;
+        let chunk_size = wal_files.len().div_ceil(self.num_workers);
         let file_chunks: Vec<Vec<_>> = wal_files
             .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())

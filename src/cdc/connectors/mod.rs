@@ -61,20 +61,14 @@
 //! - **Sinks**: Kafka and webhook sinks for event delivery
 //! - **Transforms**: Schema mapping, filtering, embedding pipeline
 
-#[cfg(feature = "experimental-cdc-connectors")]
 pub mod mongodb;
-#[cfg(feature = "experimental-cdc-connectors")]
 pub mod mysql;
-#[cfg(feature = "experimental-cdc-connectors")]
 pub mod postgres;
 
-// Re-export main connector types (only when feature is enabled)
-#[cfg(feature = "experimental-cdc-connectors")]
+// Re-export main connector types
 pub use mongodb::{
     ChangeStreamOperation, DocumentKey, FullDocumentOption, MongoChangeEvent,
     MongoCollectionConfig, MongoDbConfig, MongoDbConnector, UpdateDescription,
 };
-#[cfg(feature = "experimental-cdc-connectors")]
 pub use mysql::{BinlogPosition, GtidMode, MySqlConfig, MySqlConnector, MySqlTableConfig};
-#[cfg(feature = "experimental-cdc-connectors")]
 pub use postgres::{PostgresConfig, PostgresConnector, SnapshotMode, TableConfig};

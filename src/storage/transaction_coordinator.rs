@@ -262,7 +262,7 @@ impl ActiveTransaction {
 
     /// Check if transaction has expired
     pub fn is_expired(&self) -> bool {
-        self.deadline.map_or(false, |d| Instant::now() > d)
+        self.deadline.is_some_and(|d| Instant::now() > d)
     }
 
     /// Add participant to transaction
@@ -345,10 +345,9 @@ impl TransactionCoordinator {
         };
 
         // Create metadata-optimized write strategy
-        let fs = filesystem.get_filesystem("file://").unwrap_or_else(|_| {
-            // Fallback to any available filesystem
-            panic!("No filesystem available")
-        });
+        let fs = filesystem
+            .get_filesystem("file://")
+            .map_err(|_| anyhow::anyhow!("No filesystem available for transaction coordinator"))?;
         let write_strategy =
             WriteStrategyFactory::create_metadata_strategy(fs.as_ref(), temp_directory.as_deref())?;
 
@@ -736,13 +735,13 @@ impl TransactionCoordinator {
                 for entry in entries {
                     if entry.metadata.is_directory {
                         // Check if directory is older than cutoff
-                        if let Some(created) = entry.metadata.created {
-                            if created < cutoff_time {
-                                let old_dir_url = format!("{}/{}", pattern_url, entry.name);
-                                if let Ok(()) = self.filesystem.delete(&old_dir_url).await {
-                                    cleaned_count += 1;
-                                    debug!("🧹 Cleaned orphaned staging dir: {}", old_dir_url);
-                                }
+                        if let Some(created) = entry.metadata.created
+                            && created < cutoff_time
+                        {
+                            let old_dir_url = format!("{}/{}", pattern_url, entry.name);
+                            if let Ok(()) = self.filesystem.delete(&old_dir_url).await {
+                                cleaned_count += 1;
+                                debug!("🧹 Cleaned orphaned staging dir: {}", old_dir_url);
                             }
                         }
                     }
@@ -1104,8 +1103,7 @@ impl TransactionCoordinator {
         let staging_dir = config
             .custom_staging_dir
             .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or_else(|| config.operation_type.staging_dir_name());
+            .map_or_else(|| config.operation_type.staging_dir_name(), |s| s.as_str());
 
         // For metadata operations with custom staging dir containing path separators,
         // we need special handling
@@ -1247,10 +1245,16 @@ impl<'a> TransactionHandle<'a> {
 /// Generate unique transaction ID
 pub fn generate_transaction_id(prefix: &str) -> String {
     let counter = TRANSACTION_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
+    let timestamp = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis(),
+        Err(error) => {
+            warn!(
+                error = %error,
+                "System clock is before Unix epoch while generating transaction ID; using timestamp 0"
+            );
+            0
+        }
+    };
     format!("{}_{}_{}", prefix, timestamp, counter)
 }
 

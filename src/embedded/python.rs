@@ -33,9 +33,10 @@
 
 use pyo3::exceptions::{PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
-use pyo3::{PyErr, PyTypeInfo};
+use pyo3::types::{PyAny, PyDict, PyList, PyModule};
+use pyo3::{Bound, IntoPyObject, PyErr};
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::sync::Arc;
 
 // Zero-copy numpy support
@@ -323,7 +324,11 @@ impl PyGraphNode {
     ///     properties: Dictionary of properties
     #[new]
     #[pyo3(signature = (id, labels=None, properties=None))]
-    fn new(id: String, labels: Option<Vec<String>>, properties: Option<&PyDict>) -> PyResult<Self> {
+    fn new(
+        id: String,
+        labels: Option<Vec<String>>,
+        properties: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
         let properties_map = if let Some(dict) = properties {
             let mut map = HashMap::new();
             for (k, v) in dict.iter() {
@@ -367,7 +372,7 @@ impl PyGraphNode {
 
     /// Set properties from a dictionary
     #[setter]
-    fn set_properties(&mut self, properties: &PyDict) -> PyResult<()> {
+    fn set_properties(&mut self, properties: &Bound<'_, PyDict>) -> PyResult<()> {
         self.properties_map.clear();
         for (k, v) in properties.iter() {
             let key: String = k.extract()?;
@@ -444,7 +449,7 @@ impl PyGraphEdge {
         edge_type: String,
         id: Option<String>,
         weight: Option<f64>,
-        properties: Option<&PyDict>,
+        properties: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let properties_map = if let Some(dict) = properties {
             let mut map = HashMap::new();
@@ -1019,12 +1024,12 @@ impl PyProximaDB {
     ))]
     fn new(
         py: Python,
-        data_dirs: Option<&PyAny>,
+        data_dirs: Option<&Bound<'_, PyAny>>,
         metadata_dir: Option<String>,
         cache_size_mb: usize,
         default_engine: &str,
         enable_wal: bool,
-        prune_mode: Option<&PyAny>,
+        prune_mode: Option<&Bound<'_, PyAny>>,
         mode: &str,
         node_id: Option<String>,
     ) -> PyResult<Self> {
@@ -1038,9 +1043,8 @@ impl PyProximaDB {
                 } else if s_lower == "approximate" || s_lower == "sqrt" || s_lower == "ratio" {
                     final_prune_config = Some(PruneModeConfig::Simple(s_lower));
                 } else {
-                    PyErr::warn(
+                    warn_user(
                         py,
-                        PyUserWarning::type_object(py),
                         "Invalid 'prune_mode' string provided. Falling back to 'exact' mode.",
                         1,
                     )?;
@@ -1100,9 +1104,8 @@ impl PyProximaDB {
             "leader" | "leader_follower" | "writer" => AccessMode::LeaderFollower,
             "follower" | "shared_read" | "shared" | "reader" => AccessMode::SharedRead,
             _ => {
-                PyErr::warn(
+                warn_user(
                     py,
-                    PyUserWarning::type_object(py),
                     &format!("Invalid 'mode' '{}'. Using 'exclusive' mode.", mode),
                     1,
                 )?;
@@ -1264,8 +1267,8 @@ impl PyProximaDB {
         &self,
         collection: &str,
         ids: Vec<String>,
-        vectors: &PyAny,
-        metadata: Option<&PyList>,
+        vectors: &Bound<'_, PyAny>,
+        metadata: Option<&Bound<'_, PyList>>,
     ) -> PyResult<usize> {
         // Convert vectors from Python to Rust
         let rust_vectors: Vec<Vec<f32>> = if vectors.hasattr("tolist")? {
@@ -1281,11 +1284,11 @@ impl PyProximaDB {
             if let Some(meta_list) = metadata {
                 let mut result = Vec::with_capacity(meta_list.len());
                 for item in meta_list.iter() {
-                    let dict: &PyDict = item.downcast()?;
+                    let dict = item.downcast::<PyDict>()?;
                     let mut map = HashMap::new();
                     for (k, v) in dict.iter() {
                         let key: String = k.extract()?;
-                        let value = python_to_json(v)?;
+                        let value = python_to_json(&v)?;
                         map.insert(key, value);
                     }
                     result.push(map);
@@ -1335,7 +1338,7 @@ impl PyProximaDB {
     fn search(
         &self,
         collection: &str,
-        query: &PyAny,
+        query: &Bound<'_, PyAny>,
         top_k: usize,
         filter: Option<&str>,
         search_mode: Option<&str>,
@@ -1392,7 +1395,7 @@ impl PyProximaDB {
         collection: &str,
         ids: Vec<String>,
         vectors: PyReadonlyArray2<f32>,
-        metadata: Option<&PyList>,
+        metadata: Option<&Bound<'_, PyList>>,
     ) -> PyResult<usize> {
         // Zero-copy access to numpy buffer
         let array = vectors.as_array();
@@ -1419,11 +1422,11 @@ impl PyProximaDB {
             if let Some(meta_list) = metadata {
                 let mut result = Vec::with_capacity(meta_list.len());
                 for item in meta_list.iter() {
-                    let dict: &PyDict = item.downcast()?;
+                    let dict = item.downcast::<PyDict>()?;
                     let mut map = HashMap::new();
                     for (k, v) in dict.iter() {
                         let key: String = k.extract()?;
-                        let value = python_to_json(v)?;
+                        let value = python_to_json(&v)?;
                         map.insert(key, value);
                     }
                     result.push(map);
@@ -1561,7 +1564,7 @@ impl PyProximaDB {
     fn search_streaming(
         &self,
         collection: &str,
-        query: &PyAny,
+        query: &Bound<'_, PyAny>,
         top_k: usize,
         batch_size: usize,
         search_mode: Option<&str>,
@@ -1809,8 +1812,8 @@ impl PyProximaDB {
         &self,
         collection: &str,
         ids: Vec<String>,
-        vectors: &PyAny,
-        metadata: Option<&PyList>,
+        vectors: &Bound<'_, PyAny>,
+        metadata: Option<&Bound<'_, PyList>>,
     ) -> PyResult<(usize, usize)> {
         // Convert vectors from Python to Rust
         let rust_vectors: Vec<Vec<f32>> = if vectors.hasattr("tolist")? {
@@ -1826,11 +1829,11 @@ impl PyProximaDB {
             if let Some(meta_list) = metadata {
                 let mut result = Vec::with_capacity(meta_list.len());
                 for item in meta_list.iter() {
-                    let dict: &PyDict = item.downcast()?;
+                    let dict = item.downcast::<PyDict>()?;
                     let mut map = HashMap::new();
                     for (k, v) in dict.iter() {
                         let key: String = k.extract()?;
-                        let value = python_to_json(v)?;
+                        let value = python_to_json(&v)?;
                         map.insert(key, value);
                     }
                     result.push(map);
@@ -1871,7 +1874,7 @@ impl PyProximaDB {
         collection: &str,
         ids: Vec<String>,
         vectors: PyReadonlyArray2<f32>,
-        metadata: Option<&PyList>,
+        metadata: Option<&Bound<'_, PyList>>,
     ) -> PyResult<(usize, usize)> {
         // Zero-copy access to numpy buffer
         let array = vectors.as_array();
@@ -1883,11 +1886,11 @@ impl PyProximaDB {
             if let Some(meta_list) = metadata {
                 let mut result = Vec::with_capacity(meta_list.len());
                 for item in meta_list.iter() {
-                    let dict: &PyDict = item.downcast()?;
+                    let dict = item.downcast::<PyDict>()?;
                     let mut map = HashMap::new();
                     for (k, v) in dict.iter() {
                         let key: String = k.extract()?;
-                        let value = python_to_json(v)?;
+                        let value = python_to_json(&v)?;
                         map.insert(key, value);
                     }
                     result.push(map);
@@ -2128,9 +2131,9 @@ impl PyProximaDB {
     /// Context manager exit - ensures flush on exit
     fn __exit__(
         &self,
-        _exc_type: Option<&PyAny>,
-        _exc_val: Option<&PyAny>,
-        _exc_tb: Option<&PyAny>,
+        _exc_type: Option<&Bound<'_, PyAny>>,
+        _exc_val: Option<&Bound<'_, PyAny>>,
+        _exc_tb: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         self.flush()?;
         Ok(false) // Don't suppress exceptions
@@ -2409,11 +2412,11 @@ impl PyProximaDB {
     fn insert_document(
         &self,
         collection: &str,
-        document: &PyDict,
+        document: &Bound<'_, PyDict>,
         doc_id: Option<&str>,
     ) -> PyResult<(String, u64)> {
         // Convert Python dict to serde_json::Value
-        let json_doc = python_to_json(document.as_ref())?;
+        let json_doc = python_to_json(document.as_any())?;
 
         self.inner
             .insert_document(collection, doc_id, json_doc)
@@ -2558,12 +2561,12 @@ impl PyProximaDB {
     ///     ]
     ///     count = db.ingest_logs("production", logs)
     ///     ```
-    fn ingest_logs(&self, namespace: &str, logs: &PyList) -> PyResult<u64> {
+    fn ingest_logs(&self, namespace: &str, logs: &Bound<'_, PyList>) -> PyResult<u64> {
         use super::EmbeddedLogEntry;
 
         let mut rust_logs = Vec::with_capacity(logs.len());
         for item in logs.iter() {
-            let dict: &PyDict = item.downcast()?;
+            let dict = item.downcast::<PyDict>()?;
 
             let timestamp_ns: i64 = dict
                 .get_item("timestamp_ns")?
@@ -2591,7 +2594,7 @@ impl PyProximaDB {
                 if let Ok(d) = fields_dict.downcast::<PyDict>() {
                     for (k, v) in d.iter() {
                         let key: String = k.extract()?;
-                        let value = python_to_json(v)?;
+                        let value = python_to_json(&v)?;
                         fields.insert(key, value);
                     }
                 }
@@ -2695,12 +2698,12 @@ impl PyProximaDB {
     ///     ]
     ///     count = db.ingest_metrics("production", samples)
     ///     ```
-    fn ingest_metrics(&self, namespace: &str, samples: &PyList) -> PyResult<u64> {
+    fn ingest_metrics(&self, namespace: &str, samples: &Bound<'_, PyList>) -> PyResult<u64> {
         use super::EmbeddedMetricSample;
 
         let mut rust_samples = Vec::with_capacity(samples.len());
         for item in samples.iter() {
-            let dict: &PyDict = item.downcast()?;
+            let dict = item.downcast::<PyDict>()?;
 
             let metric_name: String = dict
                 .get_item("metric_name")?
@@ -2944,7 +2947,14 @@ impl PyProximaDB {
 }
 
 /// Convert Python value to serde_json::Value
-fn python_to_json(value: &PyAny) -> PyResult<serde_json::Value> {
+fn warn_user(py: Python<'_>, message: &str, stacklevel: i32) -> PyResult<()> {
+    let warning = CString::new(message)
+        .map_err(|_| PyValueError::new_err("warning message contains embedded NUL byte"))?;
+    let category = py.get_type::<PyUserWarning>();
+    PyErr::warn(py, category.as_any(), &warning, stacklevel)
+}
+
+fn python_to_json(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     if value.is_none() {
         Ok(serde_json::Value::Null)
     } else if let Ok(b) = value.extract::<bool>() {
@@ -2958,14 +2968,14 @@ fn python_to_json(value: &PyAny) -> PyResult<serde_json::Value> {
     } else if let Ok(list) = value.downcast::<PyList>() {
         let arr: Vec<serde_json::Value> = list
             .iter()
-            .map(|item| python_to_json(item))
+            .map(|item| python_to_json(&item))
             .collect::<PyResult<_>>()?;
         Ok(serde_json::Value::Array(arr))
     } else if let Ok(dict) = value.downcast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
-            map.insert(key, python_to_json(v)?);
+            map.insert(key, python_to_json(&v)?);
         }
         Ok(serde_json::Value::Object(map))
     } else {
@@ -2978,30 +2988,30 @@ fn python_to_json(value: &PyAny) -> PyResult<serde_json::Value> {
 fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
-        serde_json::Value::Bool(b) => Ok(b.into_py(py)),
+        serde_json::Value::Bool(b) => Ok((*b).into_pyobject(py)?.to_owned().into_any().unbind()),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Ok(i.into_py(py))
+                Ok(i.into_pyobject(py)?.into_any().unbind())
             } else if let Some(f) = n.as_f64() {
-                Ok(f.into_py(py))
+                Ok(f.into_pyobject(py)?.into_any().unbind())
             } else {
-                Ok(n.to_string().into_py(py))
+                Ok(n.to_string().into_pyobject(py)?.into_any().unbind())
             }
         }
-        serde_json::Value::String(s) => Ok(s.into_py(py)),
+        serde_json::Value::String(s) => Ok(s.as_str().into_pyobject(py)?.into_any().unbind()),
         serde_json::Value::Array(arr) => {
             let list = PyList::empty(py);
             for item in arr {
                 list.append(json_to_python(py, item)?)?;
             }
-            Ok(list.into())
+            Ok(list.into_any().unbind())
         }
         serde_json::Value::Object(obj) => {
             let dict = PyDict::new(py);
             for (k, v) in obj {
                 dict.set_item(k, json_to_python(py, v)?)?;
             }
-            Ok(dict.into())
+            Ok(dict.into_any().unbind())
         }
     }
 }
@@ -3058,7 +3068,7 @@ fn init_logging(level: &str) -> PyResult<()> {
 /// Python module definition
 /// This exports as "proximadb" which is the module name used by benchmarks
 #[pymodule]
-fn proximadb(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn proximadb(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core classes
     m.add_class::<PyProximaDB>()?;
     m.add_class::<PyDiskConfig>()?;

@@ -101,7 +101,9 @@ pub struct CollectionRLS {
 
 /// Cached filter result (uses Arc to avoid expensive cloning of FilterExpression)
 struct CachedFilter {
+    /// The cached RLS filter result, shared via Arc for cheap cloning
     filter: Arc<RLSFilterResult>,
+    /// Unix timestamp when this entry was cached, used for TTL expiry
     cached_at: i64,
 }
 
@@ -121,7 +123,7 @@ impl CollectionRLS {
         let policy_name = policy.name.clone();
 
         let mut policies = self.policies.write().await;
-        let collection_policies = policies.entry(collection.clone()).or_insert_with(Vec::new);
+        let collection_policies = policies.entry(collection.clone()).or_default();
 
         // Check for duplicate policy name
         if collection_policies.iter().any(|p| p.name == policy_name) {
@@ -249,7 +251,9 @@ impl CollectionRLS {
         } else {
             // Combine all filters with AND (all policies must be satisfied)
             let combined_filter = if filters.len() == 1 {
-                filters.pop().unwrap()
+                filters.into_iter().next().ok_or_else(|| {
+                    anyhow!("Failed to extract filter from non-empty filters vector")
+                })?
             } else {
                 FilterExpression::And(filters)
             };
@@ -409,7 +413,9 @@ impl CollectionRLS {
 
                 match filters.len() {
                     0 => Ok(None),
-                    1 => Ok(Some(filters.pop().unwrap())),
+                    1 => Ok(Some(filters.into_iter().next().ok_or_else(|| {
+                        anyhow!("Failed to extract filter from non-empty filters vector")
+                    })?)),
                     _ => Ok(Some(FilterExpression::And(filters))),
                 }
             }
@@ -424,7 +430,9 @@ impl CollectionRLS {
 
                 match filters.len() {
                     0 => Ok(None),
-                    1 => Ok(Some(filters.pop().unwrap())),
+                    1 => Ok(Some(filters.into_iter().next().ok_or_else(|| {
+                        anyhow!("Failed to extract filter from non-empty filters vector")
+                    })?)),
                     _ => Ok(Some(FilterExpression::Or(filters))),
                 }
             }
@@ -572,22 +580,28 @@ mod tests {
             .for_read()
             .with_predicate(SecurityPredicate::owner_only("owner_id"))
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
-        rls.register_policy(policy).await.unwrap();
+        rls.register_policy(policy)
+            .await
+            .expect("Failed to register test policy");
 
         let user = create_test_user("user123", None, vec![]);
         let result = rls
             .apply_security_filter("documents", &Operation::Read, &user)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         assert!(result.filters_applied);
         assert!(!result.access_denied);
         assert_eq!(result.applied_policies, vec!["owner_only"]);
 
         // Verify the filter structure
-        match result.filter.as_ref().unwrap() {
+        match result
+            .filter
+            .as_ref()
+            .expect("Expected filter to be present")
+        {
             FilterExpression::Comparison {
                 field,
                 operator,
@@ -609,19 +623,25 @@ mod tests {
             .for_all_operations()
             .with_predicate(SecurityPredicate::tenant_isolation("tenant_id"))
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
-        rls.register_policy(policy).await.unwrap();
+        rls.register_policy(policy)
+            .await
+            .expect("Failed to register test policy");
 
         // User with tenant
         let user = create_test_user("user1", Some("tenant_abc"), vec![]);
         let result = rls
             .apply_security_filter("data", &Operation::Read, &user)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         assert!(result.filters_applied);
-        match result.filter.as_ref().unwrap() {
+        match result
+            .filter
+            .as_ref()
+            .expect("Expected filter to be present")
+        {
             FilterExpression::Comparison { value, .. } => {
                 assert_eq!(*value, serde_json::Value::String("tenant_abc".to_string()));
             }
@@ -633,7 +653,7 @@ mod tests {
         let result = rls
             .apply_security_filter("data", &Operation::Read, &user_no_tenant)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         assert!(result.access_denied);
         assert!(result.denial_reason.is_some());
@@ -650,16 +670,18 @@ mod tests {
                 allowed_values: vec!["admin".to_string(), "superuser".to_string()],
             })
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
-        rls.register_policy(policy).await.unwrap();
+        rls.register_policy(policy)
+            .await
+            .expect("Failed to register test policy");
 
         // Admin user - should have access without filter
         let admin = create_test_user("admin1", None, vec!["admin"]);
         let result = rls
             .apply_security_filter("config", &Operation::Read, &admin)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         // Role-based with matching role returns no filter (full access)
         assert!(!result.filters_applied);
@@ -669,7 +691,7 @@ mod tests {
         let result = rls
             .apply_security_filter("config", &Operation::Read, &regular)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         assert!(result.filters_applied);
     }
@@ -685,18 +707,24 @@ mod tests {
                 record_dept_field: "project_dept".to_string(),
             })
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
-        rls.register_policy(policy).await.unwrap();
+        rls.register_policy(policy)
+            .await
+            .expect("Failed to register test policy");
 
         let user = create_user_with_dept("user1", "engineering");
         let result = rls
             .apply_security_filter("projects", &Operation::Read, &user)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         assert!(result.filters_applied);
-        match result.filter.as_ref().unwrap() {
+        match result
+            .filter
+            .as_ref()
+            .expect("Expected filter to be present")
+        {
             FilterExpression::Comparison { field, value, .. } => {
                 assert_eq!(field, "project_dept");
                 assert_eq!(*value, serde_json::Value::String("engineering".to_string()));
@@ -715,29 +743,37 @@ mod tests {
             .priority(10)
             .with_predicate(SecurityPredicate::owner_only("owner_id"))
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
         let tenant_policy = RLSPolicy::builder("tenant", "docs")
             .for_read()
             .priority(20)
             .with_predicate(SecurityPredicate::tenant_isolation("tenant_id"))
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
-        rls.register_policy(owner_policy).await.unwrap();
-        rls.register_policy(tenant_policy).await.unwrap();
+        rls.register_policy(owner_policy)
+            .await
+            .expect("Failed to register test policy");
+        rls.register_policy(tenant_policy)
+            .await
+            .expect("Failed to register test policy");
 
         let user = create_test_user("user1", Some("tenant_x"), vec![]);
         let result = rls
             .apply_security_filter("docs", &Operation::Read, &user)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         assert!(result.filters_applied);
         assert_eq!(result.applied_policies.len(), 2);
 
         // Should be AND of both filters
-        match result.filter.as_ref().unwrap() {
+        match result
+            .filter
+            .as_ref()
+            .expect("Expected filter to be present")
+        {
             FilterExpression::And(filters) => {
                 assert_eq!(filters.len(), 2);
             }
@@ -753,9 +789,11 @@ mod tests {
             .for_read()
             .with_predicate(SecurityPredicate::owner_only("owner_id"))
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
-        rls.register_policy(policy).await.unwrap();
+        rls.register_policy(policy)
+            .await
+            .expect("Failed to register test policy");
 
         let user = create_test_user("user1", None, vec![]);
 
@@ -763,14 +801,14 @@ mod tests {
         let read_result = rls
             .apply_security_filter("data", &Operation::Read, &user)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
         assert!(read_result.filters_applied);
 
         // Write should not apply this policy
         let write_result = rls
             .apply_security_filter("data", &Operation::Write, &user)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
         assert!(!write_result.filters_applied);
     }
 
@@ -786,9 +824,11 @@ mod tests {
             .for_read()
             .with_predicate(SecurityPredicate::owner_only("owner_id"))
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
-        rls.register_policy(policy).await.unwrap();
+        rls.register_policy(policy)
+            .await
+            .expect("Failed to register test policy");
 
         let user = create_test_user("user1", None, vec![]);
 
@@ -796,13 +836,13 @@ mod tests {
         let result1 = rls
             .apply_security_filter("data", &Operation::Read, &user)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         // Second call should use cache
         let result2 = rls
             .apply_security_filter("data", &Operation::Read, &user)
             .await
-            .unwrap();
+            .expect("Failed to apply security filter");
 
         assert_eq!(result1.applied_policies, result2.applied_policies);
     }
@@ -815,12 +855,16 @@ mod tests {
             .for_read()
             .with_predicate(SecurityPredicate::owner_only("owner_id"))
             .build()
-            .unwrap();
+            .expect("Failed to build test policy");
 
-        rls.register_policy(policy).await.unwrap();
+        rls.register_policy(policy)
+            .await
+            .expect("Failed to register test policy");
         assert_eq!(rls.get_policies("data").await.len(), 1);
 
-        rls.remove_policy("data", "test_policy").await.unwrap();
+        rls.remove_policy("data", "test_policy")
+            .await
+            .expect("Failed to remove test policy");
         assert_eq!(rls.get_policies("data").await.len(), 0);
     }
 }

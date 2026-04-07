@@ -404,7 +404,10 @@ impl DeltaCatalog {
             CatalogDataType::Decimal => "decimal(38,18)".to_string(),
             CatalogDataType::Json => "string".to_string(),
             CatalogDataType::Vector => {
-                let _dim = properties.get("dimension").cloned().unwrap_or_default();
+                let _dim = properties
+                    .get("dimension")
+                    .cloned()
+                    .ok_or_else(|| anyhow!("Vector dimension property not found"))?;
                 "array<float>".to_string()
             }
             CatalogDataType::SparseVector => "map<integer,float>".to_string(),
@@ -413,23 +416,23 @@ impl DeltaCatalog {
     }
 
     /// Generate a UUID for tables
-    fn generate_uuid() -> String {
+    fn generate_uuid() -> Result<String> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
+            .map_err(|e| anyhow!("System time error: {}", e))?
             .as_nanos();
 
-        format!("{:032x}", timestamp)
+        Ok(format!("{:032x}", timestamp))
     }
 
     /// Get current timestamp in milliseconds
-    fn now_ms() -> i64 {
+    fn now_ms() -> Result<i64> {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64
+            .map_err(|e| anyhow!("System time error: {}", e))
+            .map(|d| d.as_millis() as i64)
     }
 
     /// Build schema string for Delta log
@@ -505,7 +508,7 @@ impl Catalog for DeltaCatalog {
         self.namespaces.write().await.insert(key.clone(), ns);
         self.save_catalog_metadata().await?;
 
-        let now = Self::now_ms();
+        let now = Self::now_ms()?;
 
         info!("Created Delta namespace: {}", key);
 
@@ -553,7 +556,7 @@ impl Catalog for DeltaCatalog {
     }
 
     async fn list_namespaces(&self, _parent: Option<&[String]>) -> Result<Vec<CatalogNamespace>> {
-        let now = Self::now_ms();
+        let now = Self::now_ms()?;
 
         let namespaces = self.namespaces.read().await;
         let results: Vec<CatalogNamespace> = namespaces
@@ -578,7 +581,7 @@ impl Catalog for DeltaCatalog {
 
     async fn get_namespace(&self, namespace: &[String]) -> Result<CatalogNamespace> {
         let key = Self::namespace_key(namespace);
-        let now = Self::now_ms();
+        let now = Self::now_ms()?;
 
         let namespaces = self.namespaces.read().await;
         let ns = namespaces
@@ -638,7 +641,7 @@ impl Catalog for DeltaCatalog {
             return Err(anyhow!("Table '{}' already exists", identifier));
         }
 
-        let now = Self::now_ms();
+        let now = Self::now_ms()?;
         let location = self
             .table_data_path(identifier)
             .to_string_lossy()
@@ -700,7 +703,7 @@ impl Catalog for DeltaCatalog {
                 min_writer_version: 2,
             },
             DeltaAction::Metadata {
-                id: Self::generate_uuid(),
+                id: Self::generate_uuid()?,
                 name: Some(identifier.name.clone()),
                 description: None,
                 format: DeltaFormat {
@@ -839,7 +842,7 @@ impl Catalog for DeltaCatalog {
 
         table.identifier.namespace = to.namespace.clone();
         table.identifier.name = to.name.clone();
-        table.last_modified_ms = Self::now_ms();
+        table.last_modified_ms = Self::now_ms()?;
 
         // Update location
         table.location = self.table_data_path(to).to_string_lossy().to_string();
@@ -879,7 +882,7 @@ impl Catalog for DeltaCatalog {
         let new_schema = apply_evolution(&current_schema, &evolution)?;
 
         let key = Self::table_key(identifier);
-        let now = Self::now_ms();
+        let now = Self::now_ms()?;
 
         let mut tables = self.tables.write().await;
         let table = tables
@@ -925,7 +928,7 @@ impl Catalog for DeltaCatalog {
         let schema_string = Self::build_schema_string(&new_delta_schema);
         let actions = vec![
             DeltaAction::Metadata {
-                id: Self::generate_uuid(),
+                id: Self::generate_uuid()?,
                 name: Some(identifier.name.clone()),
                 description: None,
                 format: DeltaFormat {
@@ -1050,7 +1053,7 @@ impl Catalog for DeltaCatalog {
         let index_key = format!("delta.proximadb.index.{}", index.name);
         let index_json = serde_json::to_string(&index)?;
         table.properties.insert(index_key, index_json);
-        table.last_modified_ms = Self::now_ms();
+        table.last_modified_ms = Self::now_ms()?;
 
         drop(tables);
         self.save_catalog_metadata().await?;
@@ -1067,7 +1070,7 @@ impl Catalog for DeltaCatalog {
 
         let index_key = format!("delta.proximadb.index.{}", index_name);
         let removed = table.properties.remove(&index_key).is_some();
-        table.last_modified_ms = Self::now_ms();
+        table.last_modified_ms = Self::now_ms()?;
 
         drop(tables);
         self.save_catalog_metadata().await?;
@@ -1343,20 +1346,22 @@ mod tests {
 
     #[test]
     fn test_parse_storage_url_local() {
-        let path = DeltaCatalog::parse_storage_url("file:///tmp/delta").unwrap();
+        let path = DeltaCatalog::parse_storage_url("file:///tmp/delta")
+            .expect("Failed to parse storage URL");
         assert_eq!(path.to_string_lossy(), "/tmp/delta");
     }
 
     #[test]
     fn test_parse_storage_url_s3() {
-        let path = DeltaCatalog::parse_storage_url("s3://bucket/path").unwrap();
+        let path = DeltaCatalog::parse_storage_url("s3://bucket/path")
+            .expect("Failed to parse storage URL");
         assert!(path.to_string_lossy().contains("proximadb_delta_cache"));
     }
 
     #[test]
     fn test_generate_uuid() {
-        let uuid1 = DeltaCatalog::generate_uuid();
-        let uuid2 = DeltaCatalog::generate_uuid();
+        let uuid1 = DeltaCatalog::generate_uuid().expect("Failed to generate UUID");
+        let uuid2 = DeltaCatalog::generate_uuid().expect("Failed to generate UUID");
 
         assert_eq!(uuid1.len(), 32);
         assert_eq!(uuid2.len(), 32);
@@ -1427,7 +1432,7 @@ mod tests {
         let catalog = DeltaCatalog::new("test".to_string(), config, cache).await;
 
         assert!(catalog.is_ok());
-        let catalog = catalog.unwrap();
+        let catalog = catalog.expect("Failed to create Delta catalog");
         assert_eq!(catalog.name(), "test");
         assert_eq!(catalog.catalog_type(), "delta");
 
@@ -1448,13 +1453,13 @@ mod tests {
         let cache = Arc::new(CatalogCache::new(1000, 300));
         let catalog = DeltaCatalog::new("test".to_string(), config, cache)
             .await
-            .unwrap();
+            .expect("Failed to create Delta catalog");
 
         // Create namespace
         let ns = catalog
             .create_namespace(&["test_db".to_string()], HashMap::new())
             .await
-            .unwrap();
+            .expect("Failed to create namespace");
         assert_eq!(ns.levels, vec!["test_db"]);
 
         // Check exists
@@ -1462,11 +1467,14 @@ mod tests {
             catalog
                 .namespace_exists(&["test_db".to_string()])
                 .await
-                .unwrap()
+                .expect("Failed to check namespace exists")
         );
 
         // List namespaces
-        let namespaces = catalog.list_namespaces(None).await.unwrap();
+        let namespaces = catalog
+            .list_namespaces(None)
+            .await
+            .expect("Failed to list namespaces");
         assert_eq!(namespaces.len(), 1);
 
         // Drop namespace
@@ -1474,7 +1482,7 @@ mod tests {
             catalog
                 .drop_namespace(&["test_db".to_string()], false)
                 .await
-                .unwrap()
+                .expect("Failed to drop namespace")
         );
 
         // Cleanup
@@ -1494,13 +1502,13 @@ mod tests {
         let cache = Arc::new(CatalogCache::new(1000, 300));
         let catalog = DeltaCatalog::new("test".to_string(), config, cache)
             .await
-            .unwrap();
+            .expect("Failed to create Delta catalog");
 
         // Create namespace first
         catalog
             .create_namespace(&["mydb".to_string()], HashMap::new())
             .await
-            .unwrap();
+            .expect("Failed to create namespace");
 
         // Create table
         let schema = CatalogTableSchema::new("users")
@@ -1509,24 +1517,48 @@ mod tests {
 
         let identifier = TableIdentifier::new(vec!["mydb".to_string()], "users".to_string());
 
-        let created = catalog.create_table(&identifier, schema).await.unwrap();
+        let created = catalog
+            .create_table(&identifier, schema)
+            .await
+            .expect("Failed to create table");
         assert_eq!(created.name, "users");
 
         // Check table exists
-        assert!(catalog.table_exists(&identifier).await.unwrap());
+        assert!(
+            catalog
+                .table_exists(&identifier)
+                .await
+                .expect("Failed to check table exists")
+        );
 
         // Get table
-        let retrieved = catalog.get_table(&identifier).await.unwrap();
+        let retrieved = catalog
+            .get_table(&identifier)
+            .await
+            .expect("Failed to get table");
         assert_eq!(retrieved.columns.len(), 2);
         assert_eq!(retrieved.columns[0].name, "id");
 
         // List tables
-        let tables = catalog.list_tables(&["mydb".to_string()]).await.unwrap();
+        let tables = catalog
+            .list_tables(&["mydb".to_string()])
+            .await
+            .expect("Failed to list tables");
         assert_eq!(tables.len(), 1);
 
         // Drop table
-        assert!(catalog.drop_table(&identifier, true).await.unwrap());
-        assert!(!catalog.table_exists(&identifier).await.unwrap());
+        assert!(
+            catalog
+                .drop_table(&identifier, true)
+                .await
+                .expect("Failed to drop table")
+        );
+        assert!(
+            !catalog
+                .table_exists(&identifier)
+                .await
+                .expect("Failed to check table exists after drop")
+        );
 
         // Cleanup
         let _ = fs::remove_dir_all(&temp_dir).await;

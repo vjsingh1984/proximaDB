@@ -42,7 +42,7 @@ pub struct AvroSerializer;
 impl AvroSerializer {
     /// Create a new Avro serializer
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
 }
 
@@ -194,65 +194,64 @@ impl super::VectorBatchSerializer for AvroSerializer {
                 value.map_err(|e| anyhow::anyhow!("Failed to read Avro value: {}", e))?;
 
             // Parse the Avro value into VectorRecord structs
-            if let Value::Record(record) = avro_value {
-                if let Some((_, Value::Array(vectors))) =
+            if let Value::Record(record) = avro_value
+                && let Some((_, Value::Array(vectors))) =
                     record.iter().find(|(key, _)| *key == "vectors")
-                {
-                    for vector_value in vectors {
-                        if let Value::Record(vector_record) = vector_value {
-                            let id = vector_record
-                                .iter()
-                                .find(|(key, _)| key == "id")
-                                .and_then(|(_, v)| match v {
-                                    Value::Union(_, inner) => {
-                                        if let Value::String(s) = inner.as_ref() {
-                                            Some(s.clone())
-                                        } else {
-                                            None
-                                        }
-                                    }
-                                    Value::String(s) => Some(s.clone()),
-                                    _ => None,
-                                })
-                                .filter(|s| !s.is_empty());
-
-                            let vector = vector_record
-                                .iter()
-                                .find(|(key, _)| key == "vector")
-                                .and_then(|(_, v)| {
-                                    if let Value::Array(arr) = v {
-                                        Some(
-                                            arr.iter()
-                                                .map(|f| {
-                                                    match f {
-                                                        // Direct float (backward compatibility)
-                                                        Value::Float(f) => *f,
-                                                        // Union with float (new sparse vector support)
-                                                        Value::Union(idx, inner) => {
-                                                            if *idx == 1 {
-                                                                if let Value::Float(f) =
-                                                                    inner.as_ref()
-                                                                {
-                                                                    *f
-                                                                } else {
-                                                                    0.0 // Default for invalid union value
-                                                                }
-                                                            } else {
-                                                                0.0 // Null value (idx == 0) becomes 0.0 for sparse vectors
-                                                            }
-                                                        }
-                                                        _ => 0.0, // Default for any other type
-                                                    }
-                                                })
-                                                .collect(),
-                                        )
+            {
+                for vector_value in vectors {
+                    if let Value::Record(vector_record) = vector_value {
+                        let id = vector_record
+                            .iter()
+                            .find(|(key, _)| key == "id")
+                            .and_then(|(_, v)| match v {
+                                Value::Union(_, inner) => {
+                                    if let Value::String(s) = inner.as_ref() {
+                                        Some(s.clone())
                                     } else {
                                         None
                                     }
-                                })
-                                .clone();
+                                }
+                                Value::String(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                            .filter(|s| !s.is_empty());
 
-                            let metadata = vector_record
+                        let vector = vector_record
+                            .iter()
+                            .find(|(key, _)| key == "vector")
+                            .and_then(|(_, v)| {
+                                if let Value::Array(arr) = v {
+                                    Some(
+                                        arr.iter()
+                                            .map(|f| {
+                                                match f {
+                                                    // Direct float (backward compatibility)
+                                                    Value::Float(f) => *f,
+                                                    // Union with float (new sparse vector support)
+                                                    Value::Union(idx, inner) => {
+                                                        if *idx == 1 {
+                                                            if let Value::Float(f) = inner.as_ref()
+                                                            {
+                                                                *f
+                                                            } else {
+                                                                0.0 // Default for invalid union value
+                                                            }
+                                                        } else {
+                                                            0.0 // Null value (idx == 0) becomes 0.0 for sparse vectors
+                                                        }
+                                                    }
+                                                    _ => 0.0, // Default for any other type
+                                                }
+                                            })
+                                            .collect(),
+                                    )
+                                } else {
+                                    None
+                                }
+                            })
+                            .clone();
+
+                        let metadata = vector_record
                                 .iter()
                                 .find(|(key, _)| key == "metadata_info")
                                 .and_then(|(_, v)| match v {
@@ -328,47 +327,46 @@ impl super::VectorBatchSerializer for AvroSerializer {
                                 })
                                 .clone();
 
-                            let timestamp_seconds = vector_record
-                                .iter()
-                                .find(|(key, _)| key == "timestamp")
-                                .and_then(|(_, v)| match v {
-                                    Value::Int(ts) => Some(*ts as i64),
-                                    Value::Long(ts) => Some(*ts),
-                                    _ => None,
-                                });
-
-                            // Convert seconds back to microseconds
-                            let timestamp_micros = timestamp_seconds.unwrap_or(0) * 1_000_000;
-
-                            result.push(VectorRecord {
-                                id: id.unwrap_or_default(),
-                                vector: vector.unwrap_or_default(),
-                                metadata: metadata.unwrap_or_default(),
-                                timestamp: Some(timestamp_micros as i64),
-                                updated_at: Some(timestamp_micros as i64),
-                                expires_at: vector_record
-                                    .iter()
-                                    .find(|(key, _)| key == "expires_at")
-                                    .and_then(|(_, v)| match v {
-                                        Value::Union(idx, inner) if *idx == 1 => {
-                                            if let Value::Int(exp) = inner.as_ref() {
-                                                Some((*exp as i64) * 1_000_000) // Convert back to microseconds
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        _ => None,
-                                    }),
-                                version: vector_record
-                                    .iter()
-                                    .find(|(key, _)| key == "version")
-                                    .and_then(|(_, v)| match v {
-                                        Value::Int(ver) => Some(*ver as u32),
-                                        _ => None,
-                                    }),
-                                source: None,
+                        let timestamp_seconds = vector_record
+                            .iter()
+                            .find(|(key, _)| key == "timestamp")
+                            .and_then(|(_, v)| match v {
+                                Value::Int(ts) => Some(*ts as i64),
+                                Value::Long(ts) => Some(*ts),
+                                _ => None,
                             });
-                        }
+
+                        // Convert seconds back to microseconds
+                        let timestamp_micros = timestamp_seconds.unwrap_or(0) * 1_000_000;
+
+                        result.push(VectorRecord {
+                            id: id.unwrap_or_default(),
+                            vector: vector.unwrap_or_default(),
+                            metadata: metadata.unwrap_or_default(),
+                            timestamp: Some(timestamp_micros),
+                            updated_at: Some(timestamp_micros),
+                            expires_at: vector_record
+                                .iter()
+                                .find(|(key, _)| key == "expires_at")
+                                .and_then(|(_, v)| match v {
+                                    Value::Union(idx, inner) if *idx == 1 => {
+                                        if let Value::Int(exp) = inner.as_ref() {
+                                            Some((*exp as i64) * 1_000_000) // Convert back to microseconds
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    _ => None,
+                                }),
+                            version: vector_record
+                                .iter()
+                                .find(|(key, _)| key == "version")
+                                .and_then(|(_, v)| match v {
+                                    Value::Int(ver) => Some(*ver as u32),
+                                    _ => None,
+                                }),
+                            source: None,
+                        });
                     }
                 }
             }
@@ -471,7 +469,7 @@ mod tests {
         let keys: std::collections::HashSet<String> = deserialized[0]
             .metadata
             .iter()
-            .map(|(key, value)| key.clone())
+            .map(|(key, _value)| key.clone())
             .collect();
         assert!(keys.contains("key1"));
         assert!(keys.contains("key2"));

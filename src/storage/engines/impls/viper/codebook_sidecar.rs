@@ -52,8 +52,11 @@ impl ViperCodebookSidecarManager {
         let json = self.serializer.serialize_for_sidecar(metadata)?;
 
         // Write through unified filesystem
+        let sidecar_path_str = sidecar_path.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid UTF-8 in sidecar path: {}", sidecar_path.display())
+        })?;
         self.filesystem
-            .write(sidecar_path.to_str().unwrap(), json.as_bytes(), None)
+            .write(sidecar_path_str, json.as_bytes(), None)
             .await
             .context("Failed to write codebook sidecar file")?;
 
@@ -74,11 +77,10 @@ impl ViperCodebookSidecarManager {
         let sidecar_path = Self::sidecar_path(parquet_path);
 
         // Check if sidecar exists
-        if !self
-            .filesystem
-            .exists(sidecar_path.to_str().unwrap())
-            .await?
-        {
+        let sidecar_path_str = sidecar_path.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid UTF-8 in sidecar path: {}", sidecar_path.display())
+        })?;
+        if !self.filesystem.exists(sidecar_path_str).await? {
             debug!(
                 "VIPER: No codebook sidecar found for {}",
                 parquet_path.display()
@@ -89,7 +91,7 @@ impl ViperCodebookSidecarManager {
         // Read through unified filesystem
         let json_bytes = self
             .filesystem
-            .read(sidecar_path.to_str().unwrap())
+            .read(sidecar_path_str)
             .await
             .context("Failed to read codebook sidecar file")?;
 
@@ -111,13 +113,12 @@ impl ViperCodebookSidecarManager {
     pub async fn delete_sidecar(&self, parquet_path: &Path) -> Result<()> {
         let sidecar_path = Self::sidecar_path(parquet_path);
 
-        if self
-            .filesystem
-            .exists(sidecar_path.to_str().unwrap())
-            .await?
-        {
+        let sidecar_path_str = sidecar_path.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid UTF-8 in sidecar path: {}", sidecar_path.display())
+        })?;
+        if self.filesystem.exists(sidecar_path_str).await? {
             self.filesystem
-                .delete(sidecar_path.to_str().unwrap())
+                .delete(sidecar_path_str)
                 .await
                 .context("Failed to delete codebook sidecar file")?;
 
@@ -132,9 +133,12 @@ impl ViperCodebookSidecarManager {
 
     /// List all sidecar files in a directory
     pub async fn list_sidecars(&self, directory: &Path) -> Result<Vec<PathBuf>> {
+        let directory_str = directory.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid UTF-8 in directory path: {}", directory.display())
+        })?;
         let dir_entries = self
             .filesystem
-            .list(directory.to_str().unwrap())
+            .list(directory_str)
             .await
             .context("Failed to list codebook sidecar files")?;
 
@@ -197,13 +201,14 @@ impl ViperCodebookSidecarManager {
 
         for source_file in source_files {
             if let Some(metadata) = self.read_sidecar(source_file).await? {
-                if merged_metadata.is_none() {
-                    merged_metadata = Some(metadata);
-                } else {
-                    // Merge codebooks (take latest)
-                    // In production, might want more sophisticated merging
-                    if metadata.created_at > merged_metadata.as_ref().unwrap().created_at {
-                        merged_metadata = Some(metadata);
+                match &merged_metadata {
+                    None => merged_metadata = Some(metadata),
+                    Some(existing) => {
+                        // Merge codebooks (take latest)
+                        // In production, might want more sophisticated merging
+                        if metadata.created_at > existing.created_at {
+                            merged_metadata = Some(metadata);
+                        }
                     }
                 }
             }
@@ -272,9 +277,12 @@ impl NovaCodebookSidecarManager {
 
         let json = self.base.serializer.serialize_for_sidecar(metadata)?;
 
+        let sidecar_path_str = sidecar_path.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid UTF-8 in sidecar path: {}", sidecar_path.display())
+        })?;
         self.base
             .filesystem
-            .write(sidecar_path.to_str().unwrap(), json.as_bytes(), None)
+            .write(sidecar_path_str, json.as_bytes(), None)
             .await
             .context("Failed to write progressive codebook sidecar")?;
 
@@ -298,11 +306,10 @@ impl NovaCodebookSidecarManager {
             .unwrap_or_default()
             .to_string_lossy();
 
-        let dir_entries = self
-            .base
-            .filesystem
-            .list(directory.to_str().unwrap())
-            .await?;
+        let directory_str = directory.to_str().ok_or_else(|| {
+            anyhow::anyhow!("Invalid UTF-8 in directory path: {}", directory.display())
+        })?;
+        let dir_entries = self.base.filesystem.list(directory_str).await?;
         let pattern = format!("{}.*.codebook.json", base_name);
 
         let mut results = Vec::new();

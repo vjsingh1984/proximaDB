@@ -157,7 +157,7 @@ impl ArrowBlockIndex {
             Vec::new()
         };
 
-        let depth = if internal_nodes.is_empty() { 1 } else { 2 };
+        let depth = internal_nodes.is_empty().then(|| 1).unwrap_or(2);
 
         self.bplus_tree = Some(BPlusTree {
             internal_nodes,
@@ -176,10 +176,11 @@ impl ArrowBlockIndex {
 
             // Search within leaf's entries
             for i in leaf.start_idx..leaf.start_idx + leaf.len {
-                if let Some(entry) = self.block_entries.get(i) {
-                    if id >= entry.min_id.as_str() && id <= entry.max_id.as_str() {
-                        return Some(entry);
-                    }
+                if let Some(entry) = self.block_entries.get(i)
+                    && id >= entry.min_id.as_str()
+                    && id <= entry.max_id.as_str()
+                {
+                    return Some(entry);
                 }
             }
         } else {

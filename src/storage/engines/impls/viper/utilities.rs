@@ -86,7 +86,7 @@ pub struct PerformanceStatsCollector {
 
     /// Collection-level statistics
     #[allow(dead_code)]
-    collection_stats: Arc<RwLock<HashMap<String, CollectionStats>>>,
+    collection_stats: Arc<RwLock<HashMap<String, ViperCollectionStats>>>,
 
     /// Global VIPER statistics
     #[allow(dead_code)]
@@ -132,9 +132,13 @@ pub struct OperationMetrics {
     pub timestamp: DateTime<Utc>,
 }
 
-/// Collection-level statistics
+/// VIPER engine operational statistics per collection
+///
+/// Tracks operational metrics (latency, throughput, errors) — distinct from
+/// the canonical `storage::traits::CollectionStats` which carries cardinality
+/// and index info for query planning.
 #[derive(Debug, Clone)]
-pub struct CollectionStats {
+pub struct ViperCollectionStats {
     pub collection_id: String,
     pub total_operations: u64,
     pub total_records: u64,
@@ -667,7 +671,7 @@ impl ViperUtilities {
 #[derive(Debug)]
 pub struct PerformanceReport {
     pub global_stats: GlobalViperStats,
-    pub collection_stats: Option<CollectionStats>,
+    pub collection_stats: Option<ViperCollectionStats>,
     pub recent_operations: Vec<OperationMetrics>,
     pub recommendations: Vec<PerformanceRecommendation>,
 }

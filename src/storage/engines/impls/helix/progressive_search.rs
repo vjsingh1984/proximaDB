@@ -109,13 +109,9 @@ impl ProgressiveSearchCoordinator {
                 .filter(|sstable| {
                     if let Some((min_key, max_key)) = sstable.hilbert_range {
                         // Calculate distance to range
-                        let distance_to_range = if query_key < min_key {
-                            min_key - query_key
-                        } else if query_key > max_key {
-                            query_key - max_key
-                        } else {
-                            0 // Within range
-                        };
+                        let distance_to_range = min_key
+                            .saturating_sub(query_key)
+                            .max(query_key.saturating_sub(max_key));
 
                         // Use configurable threshold
                         let threshold = 1000u64 * (self.config.max_levels as u64);
@@ -290,8 +286,8 @@ impl ProgressiveSearchCoordinator {
         debug!(
             "Progressive search complete: {} results with scores {:.4}-{:.4}",
             final_results.len(),
-            final_results.last().map(|r| r.score).unwrap_or(0.0),
-            final_results.first().map(|r| r.score).unwrap_or(0.0),
+            final_results.last().map_or(0.0, |r| r.score),
+            final_results.first().map_or(0.0, |r| r.score),
         );
 
         Ok(final_results)

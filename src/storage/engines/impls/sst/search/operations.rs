@@ -147,13 +147,13 @@ impl SearchOperations {
 
         for file_path in file_paths {
             // Check if vector exists in this file using bloom filter
-            if let Ok(exists) = self.check_vector_exists_in_file(file_path, vector_id).await {
-                if exists {
-                    // Perform detailed lookup in this file
-                    if let Ok(result) = self.lookup_vector_in_file(file_path, vector_id).await {
-                        debug!("✅ SearchOps: Found vector {} in {}", vector_id, file_path);
-                        return Ok(Some(result));
-                    }
+            if let Ok(exists) = self.check_vector_exists_in_file(file_path, vector_id).await
+                && exists
+            {
+                // Perform detailed lookup in this file
+                if let Ok(result) = self.lookup_vector_in_file(file_path, vector_id).await {
+                    debug!("✅ SearchOps: Found vector {} in {}", vector_id, file_path);
+                    return Ok(Some(result));
                 }
             }
         }
@@ -198,17 +198,17 @@ impl SearchOperations {
                 debug!("✅ Found vector {} in {}", vector_id, file_path);
 
                 // Convert VectorRecord to OptimizedSearchRecord
-                let mut result = OptimizedSearchRecord::default();
-                result.id = record.id;
-                result.score = 1.0; // Perfect match for point lookup
-                result.vector = Some(Arc::new(record.vector));
-                result.timestamp = record.timestamp;
-                result.updated_at = record.updated_at;
-                result.expires_at = record.expires_at;
-                result.version = record.version;
-
-                // VectorRecord.metadata is already HashMap<String, SqlValue>, just clone
-                result.metadata = record.metadata;
+                let result = OptimizedSearchRecord {
+                    id: record.id,
+                    score: 1.0, // Perfect match for point lookup
+                    vector: Some(Arc::new(record.vector)),
+                    timestamp: record.timestamp,
+                    updated_at: record.updated_at,
+                    expires_at: record.expires_at,
+                    version: record.version,
+                    metadata: record.metadata,
+                    ..Default::default()
+                };
 
                 Ok(result)
             }

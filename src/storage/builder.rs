@@ -18,20 +18,15 @@ use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Storage layout strategy
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum StorageLayoutStrategy {
     /// Traditional LSM-tree based storage
+    #[default]
     Regular,
     /// VIPER - clustered vector storage with intelligent partitioning
     Viper,
     /// Hybrid - VIPER for vectors, Regular for metadata
     Hybrid,
-}
-
-impl Default for StorageLayoutStrategy {
-    fn default() -> Self {
-        Self::Regular // Default to regular for compatibility
-    }
 }
 
 // NOTE: Indexing, distance metrics, and hardware acceleration have been moved to their respective modules:
@@ -217,7 +212,7 @@ impl Default for StorageSystemConfig {
                 enable_zero_copy: true,
                 buffer_config: StorageBufferConfig {
                     read_buffer_size: 2 * 1024 * 1024,       // 2MB
-                    write_buffer_size: 1 * 1024 * 1024,      // 1MB
+                    write_buffer_size: 1024 * 1024,          // 1MB
                     compaction_buffer_size: 4 * 1024 * 1024, // 4MB
                 },
             },

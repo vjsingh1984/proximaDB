@@ -26,6 +26,9 @@ use super::nova_meta_collector::NovaMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// NOVA metadata reader for sidecar files
+///
+/// Reads and caches .nova_meta sidecar files containing hierarchical statistics
+/// for query optimization. Provides row group pruning and query cost estimation.
 pub struct NovaMetaReader {
     /// Filesystem factory for reading sidecar files
     filesystem: Arc<FilesystemFactory>,
@@ -126,7 +129,7 @@ impl NovaMetaReader {
             let max_variance = zone_map
                 .variance
                 .iter()
-                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or(&0.0);
             if distance - max_variance.sqrt() > threshold {
                 return false;
@@ -181,8 +184,8 @@ impl NovaMetaReader {
     fn vector_in_bounds(&self, vector: &[f32], min_values: &[f32], max_values: &[f32]) -> bool {
         // Conservative check: allow some tolerance for floating point
         const TOLERANCE: f32 = 1e-6;
-        for i in 0..vector.len().min(min_values.len()) {
-            if vector[i] < min_values[i] - TOLERANCE || vector[i] > max_values[i] + TOLERANCE {
+        for (i, &v_val) in vector.iter().enumerate().take(min_values.len()) {
+            if v_val < min_values[i] - TOLERANCE || v_val > max_values[i] + TOLERANCE {
                 return false;
             }
         }
@@ -234,21 +237,24 @@ impl NovaMetaReader {
 }
 
 /// Query optimization hints based on NOVA metadata
+///
+/// Provides recommendations for query execution based on hierarchical
+/// statistics, including which row groups to read and which search strategy to use.
 #[derive(Debug, Clone)]
 pub struct QueryOptimizationHints {
     /// Recommended row groups to read
     pub row_groups: Vec<usize>,
 
-    /// Estimated query cost
+    /// Estimated query cost (lower is better)
     pub estimated_cost: f32,
 
-    /// Pruning effectiveness (0.0 to 1.0)
+    /// Pruning effectiveness (0.0 = no pruning, 1.0 = perfect pruning)
     pub pruning_ratio: f32,
 
     /// Suggested quantization level for progressive search
     pub suggested_quantization: Option<String>,
 
-    /// Whether to use streaming search
+    /// Whether to use streaming search for memory efficiency
     pub use_streaming: bool,
 }
 

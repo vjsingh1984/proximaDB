@@ -51,21 +51,29 @@
 //! ```
 
 pub mod ast;
+pub mod cypher_ast;
+pub mod cypher_functions;
+pub mod cypher_parser;
 pub mod execution_traits;
 pub mod executor;
 pub mod operators;
 pub mod parser;
 pub mod pattern;
 pub mod planner;
+pub mod unified_parser;
 
 // Re-export public types
 pub use ast::{CompiledPattern, FoundPath, MatchResult};
+pub use cypher_ast::{CypherClause, CypherStatement, MatchClause, ReturnClause};
+pub use cypher_functions::CypherFunctionRegistry;
+pub use cypher_parser::CypherParser;
 pub use execution_traits::{
     ColumnSpec, ExecutionContext, ExecutionStats, PathElement, PhysicalOperator, QueryValue,
     ResultTuple, ValueType,
 };
 pub use pattern::PatternMatcher;
 pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
+pub use unified_parser::{parse_cypher, parse_cypher_with_context};
 
 use crate::core::error::ProximaDBError;
 use serde::Serialize;
@@ -104,6 +112,12 @@ impl QueryStats {
             index_hits: 0,
             cache_hits: 0,
         }
+    }
+}
+
+impl Default for QueryStats {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -151,6 +165,12 @@ impl QueryContext {
     pub fn with_stats(mut self) -> Self {
         self.collect_stats = true;
         self
+    }
+}
+
+impl Default for QueryContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

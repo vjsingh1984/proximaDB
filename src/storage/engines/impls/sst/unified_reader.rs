@@ -57,9 +57,14 @@ impl UnifiedSSTReader {
         // Create the appropriate inner reader based on strategy
         let inner_reader = if strategy.should_use_cache() {
             // Use cached filesystem for selective reads
+            let Some(cached_fs) = cached_filesystem.as_ref() else {
+                return Err(anyhow::Error::msg(
+                    "Cache strategy requested but cached filesystem was not initialized",
+                ));
+            };
             Arc::new(UnifiedSstableReader::new(
                 filesystem_factory.clone(),
-                cached_filesystem.as_ref().unwrap().clone(),
+                cached_fs.clone(),
                 collection_id.clone(),
             ))
         } else {
@@ -138,7 +143,7 @@ impl UnifiedSSTReader {
         // For cached strategies, we can use the cache
         match &self.strategy {
             ReadAccessStrategy::DirectStream => {
-                // TODO: Implement true streaming read that bypasses cache
+                // Deferred: Implement true streaming read that bypasses cache
                 // For now, use the inner reader
                 self.inner_reader
                     .read_all_records_for_compaction(&[file_path.to_string()])
@@ -171,14 +176,15 @@ impl StrategyAwareReader for UnifiedSSTReader {
 
         if strategy_changed {
             // Recreate cached filesystem if strategy changed
-            if self.strategy.should_use_cache() && self.cached_filesystem.is_none() {
-                if let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
-                    self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
-                        base_fs,
-                        self.collection_id.clone(),
-                        "sst".to_string(),
-                    )));
-                }
+            if self.strategy.should_use_cache()
+                && self.cached_filesystem.is_none()
+                && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://")
+            {
+                self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
+                    base_fs,
+                    self.collection_id.clone(),
+                    "sst".to_string(),
+                )));
             }
             // Note: We should also recreate inner_reader here, but that requires &mut self throughout
         }
@@ -216,7 +222,7 @@ impl DirectSSTReader {
 
     /// Stream records directly from file
     pub async fn stream_records(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
-        // TODO: Implement true streaming that reads blocks sequentially
+        // Deferred: Implement true streaming that reads blocks sequentially
         // without caching or loading entire file into memory
         let _data = self.read_file_direct(file_path).await?;
 

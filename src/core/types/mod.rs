@@ -72,56 +72,88 @@ pub use validators::*;
 /// Column data type enumeration with rich type support
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ColumnDataType {
-    // Text types
+    /// Variable-length UTF-8 text
     Text,
+    /// Large text with sidecar storage
     TextLarge,
 
-    // Numeric types
+    /// 64-bit signed integer
     Integer,
+    /// 64-bit floating-point number
     Float,
-    Decimal { precision: u8, scale: u8 },
+    /// Fixed-precision decimal number
+    Decimal {
+        /// Number of significant digits (1-38)
+        precision: u8,
+        /// Number of digits after the decimal point
+        scale: u8,
+    },
 
-    // Boolean
+    /// Boolean true/false value
     Boolean,
 
-    // Temporal types
+    /// Timestamp in microseconds since Unix epoch (no timezone)
     Timestamp,
-    TimestampTz { timezone: String },
+    /// Timestamp with timezone information
+    TimestampTz {
+        /// IANA timezone identifier
+        timezone: String,
+    },
+    /// Calendar date (days since epoch)
     Date,
+    /// Time of day (microseconds since midnight)
     Time,
+    /// Duration interval
     Duration,
+    /// Calendar interval (months, days, nanoseconds)
     Interval,
 
-    // Identifier types
+    /// RFC 4122 UUID stored as 16-byte fixed binary
     Uuid,
 
-    // Binary types
+    /// Variable-length binary data
     Binary,
+    /// Large binary data with sidecar storage
     BinaryLarge,
 
-    // Structured types
+    /// Validated JSON stored as UTF-8 text
     Json,
 
-    // Array types
+    /// Homogeneous array of text values
     ArrayText,
+    /// Homogeneous array of integer values
     ArrayInteger,
+    /// Homogeneous array of float values
     ArrayFloat,
+    /// Homogeneous array of boolean values
     ArrayBoolean,
+    /// Homogeneous array of UUID values
     ArrayUuid,
 
-    // Map types
+    /// Map from string keys to string values
     MapStringString,
+    /// Map from string keys to any JSON value
     MapStringAny,
+    /// Map from string keys to integer values
     MapStringInteger,
+    /// Map from string keys to float values
     MapStringFloat,
 
-    // Geospatial types
+    /// Geographic point (latitude, longitude)
     GeoPoint,
+    /// Geographic polygon (ring of coordinates)
     GeoPolygon,
 
-    // Vector types
-    Vector { dimension: u32 },
-    SparseVector { dimension: u32 },
+    /// Dense vector with fixed dimension
+    Vector {
+        /// Number of dimensions in the vector
+        dimension: u32,
+    },
+    /// Sparse vector with fixed maximum dimension
+    SparseVector {
+        /// Maximum number of dimensions
+        dimension: u32,
+    },
 }
 
 impl ColumnDataType {
@@ -333,7 +365,7 @@ impl ColumnDataType {
 }
 
 /// TEXT storage strategy for columnar storage
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TextStorageStrategy {
     /// Store inline in main Parquet column (<4KB)
     Inline,
@@ -342,19 +374,15 @@ pub enum TextStorageStrategy {
     /// Store in separate sidecar file (>1MB)
     Sidecar,
     /// Auto-select based on actual size (default)
+    #[default]
     Adaptive,
 }
 
-impl Default for TextStorageStrategy {
-    fn default() -> Self {
-        Self::Adaptive
-    }
-}
-
 impl TextStorageStrategy {
-    /// Size thresholds for adaptive strategy
-    pub const INLINE_MAX_SIZE: usize = 4 * 1024; // 4KB
-    pub const CHUNKED_MAX_SIZE: usize = 1024 * 1024; // 1MB
+    /// Maximum size in bytes for inline text storage (4KB)
+    pub const INLINE_MAX_SIZE: usize = 4 * 1024;
+    /// Maximum size in bytes for chunked text storage (1MB)
+    pub const CHUNKED_MAX_SIZE: usize = 1024 * 1024;
 
     /// Determine strategy based on content size
     pub fn for_size(size: usize) -> Self {
@@ -451,20 +479,15 @@ impl Default for TextColumnOptions {
 }
 
 /// Schema enforcement mode
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SchemaEnforcementMode {
     /// All columns must match schema exactly
     Strict,
     /// Schema on read, no validation at insert
     Flexible,
     /// Core columns enforced, additional fields allowed
+    #[default]
     Hybrid,
-}
-
-impl Default for SchemaEnforcementMode {
-    fn default() -> Self {
-        Self::Hybrid
-    }
 }
 
 /// Record schema with enforcement rules
@@ -555,50 +578,91 @@ impl RecordSchema {
 /// Typed value wrapper for ProximaRecord fields
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TypedValue {
+    /// Null / absent value
     Null,
+    /// UTF-8 text value
     Text(String),
+    /// 64-bit signed integer
     Integer(i64),
+    /// 64-bit floating-point number
     Float(f64),
+    /// Fixed-precision decimal value
     Decimal {
+        /// Unscaled integer value
         value: i128,
+        /// Total significant digits
         precision: u8,
+        /// Digits after the decimal point
         scale: u8,
     },
+    /// Boolean value
     Boolean(bool),
+    /// Timestamp in microseconds since epoch
     Timestamp(i64),
+    /// Timestamp with timezone
     TimestampTz {
+        /// Microseconds since epoch
         timestamp: i64,
+        /// IANA timezone identifier
         timezone: String,
     },
+    /// Calendar date as days since epoch
     Date(i32),
+    /// Time of day in microseconds since midnight
     Time(i64),
+    /// Duration in microseconds
     Duration(i64),
+    /// Calendar interval
     Interval {
+        /// Number of months
         months: i32,
+        /// Number of days
         days: i32,
+        /// Sub-day nanoseconds
         nanos: i64,
     },
+    /// UUID as 16-byte binary
     Uuid(Vec<u8>),
+    /// Raw binary data
     Binary(Vec<u8>),
+    /// Validated JSON string
     Json(String),
+    /// Array of text values
     ArrayText(Vec<String>),
+    /// Array of integer values
     ArrayInteger(Vec<i64>),
+    /// Array of float values
     ArrayFloat(Vec<f64>),
+    /// Array of boolean values
     ArrayBoolean(Vec<bool>),
+    /// Array of UUID values
     ArrayUuid(Vec<Vec<u8>>),
+    /// Map from string keys to string values
     MapStringString(HashMap<String, String>),
+    /// Map from string keys to integer values
     MapStringInteger(HashMap<String, i64>),
+    /// Map from string keys to float values
     MapStringFloat(HashMap<String, f64>),
+    /// Geographic point coordinate
     GeoPoint {
+        /// Latitude in degrees (-90 to 90)
         latitude: f64,
+        /// Longitude in degrees (-180 to 180)
         longitude: f64,
+        /// Optional altitude in meters
         altitude: Option<f64>,
     },
+    /// Geographic polygon as ordered coordinate pairs
     GeoPolygon(Vec<(f64, f64)>),
+    /// Dense floating-point vector
     Vector(Vec<f32>),
+    /// Sparse vector with explicit index-value pairs
     SparseVector {
+        /// Non-zero dimension indices
         indices: Vec<u32>,
+        /// Values at the specified indices
         values: Vec<f32>,
+        /// Total vector dimension
         dimension: u32,
     },
 }
@@ -680,19 +744,19 @@ impl TypedValue {
     pub fn validate_constraints(&self, constraints: &ColumnConstraints) -> Result<()> {
         match self {
             TypedValue::Text(s) | TypedValue::Json(s) => {
-                if let Some(max) = constraints.max_length {
-                    if s.len() > max as usize {
-                        return Err(anyhow!("Text length {} exceeds maximum {}", s.len(), max));
-                    }
+                if let Some(max) = constraints.max_length
+                    && s.len() > max as usize
+                {
+                    return Err(anyhow!("Text length {} exceeds maximum {}", s.len(), max));
                 }
-                if let Some(min) = constraints.min_length {
-                    if s.len() < min as usize {
-                        return Err(anyhow!(
-                            "Text length {} is less than minimum {}",
-                            s.len(),
-                            min
-                        ));
-                    }
+                if let Some(min) = constraints.min_length
+                    && s.len() < min as usize
+                {
+                    return Err(anyhow!(
+                        "Text length {} is less than minimum {}",
+                        s.len(),
+                        min
+                    ));
                 }
                 if let Some(pattern) = &constraints.regex_pattern {
                     let re = regex::Regex::new(pattern)
@@ -703,34 +767,34 @@ impl TypedValue {
                 }
             }
             TypedValue::Integer(v) => {
-                if let Some(min) = constraints.min_value {
-                    if *v < min {
-                        return Err(anyhow!("Value {v} is less than minimum {min}"));
-                    }
+                if let Some(min) = constraints.min_value
+                    && *v < min
+                {
+                    return Err(anyhow!("Value {v} is less than minimum {min}"));
                 }
-                if let Some(max) = constraints.max_value {
-                    if *v > max {
-                        return Err(anyhow!("Value {v} exceeds maximum {max}"));
-                    }
+                if let Some(max) = constraints.max_value
+                    && *v > max
+                {
+                    return Err(anyhow!("Value {v} exceeds maximum {max}"));
                 }
             }
             TypedValue::Float(v) => {
-                if let Some(min) = constraints.min_float_value {
-                    if *v < min {
-                        return Err(anyhow!("Value {v} is less than minimum {min}"));
-                    }
+                if let Some(min) = constraints.min_float_value
+                    && *v < min
+                {
+                    return Err(anyhow!("Value {v} is less than minimum {min}"));
                 }
-                if let Some(max) = constraints.max_float_value {
-                    if *v > max {
-                        return Err(anyhow!("Value {v} exceeds maximum {max}"));
-                    }
+                if let Some(max) = constraints.max_float_value
+                    && *v > max
+                {
+                    return Err(anyhow!("Value {v} exceeds maximum {max}"));
                 }
             }
             TypedValue::Binary(b) => {
-                if let Some(max) = constraints.max_length {
-                    if b.len() > max as usize {
-                        return Err(anyhow!("Binary length {} exceeds maximum {max}", b.len()));
-                    }
+                if let Some(max) = constraints.max_length
+                    && b.len() > max as usize
+                {
+                    return Err(anyhow!("Binary length {} exceeds maximum {max}", b.len()));
                 }
             }
             TypedValue::ArrayText(_) | TypedValue::ArrayInteger(_) | TypedValue::ArrayFloat(_) => {
@@ -750,14 +814,14 @@ impl TypedValue {
                 // Validate array text for Text arrays
                 if let TypedValue::ArrayText(arr) = self {
                     for s in arr {
-                        if let Some(max) = constraints.max_length {
-                            if s.len() > max as usize {
-                                return Err(anyhow!(
-                                    "Array element length {} exceeds maximum {}",
-                                    s.len(),
-                                    max
-                                ));
-                            }
+                        if let Some(max) = constraints.max_length
+                            && s.len() > max as usize
+                        {
+                            return Err(anyhow!(
+                                "Array element length {} exceeds maximum {}",
+                                s.len(),
+                                max
+                            ));
                         }
                     }
                 }

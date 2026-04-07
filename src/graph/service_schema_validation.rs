@@ -32,7 +32,12 @@ impl super::GraphOperationsService {
                 if label_schema.is_none() {
                     continue;
                 }
-                let ls = label_schema.unwrap();
+                let ls = label_schema.as_ref().ok_or_else(|| {
+                    ProximaDBError::Internal(format!(
+                        "Label schema not found for label '{}'",
+                        label
+                    ))
+                })?;
                 // Required properties present
                 for req in &ls.required_properties {
                     if !node.properties.contains_key(req) {
@@ -62,7 +67,7 @@ impl super::GraphOperationsService {
                     for s in &ls.optional_properties {
                         allowed.insert(s.as_str());
                     }
-                    for (p, _) in &ls.property_constraints {
+                    for p in ls.property_constraints.keys() {
                         allowed.insert(p.as_str());
                     }
                     for key in node.properties.keys() {
@@ -105,7 +110,12 @@ impl super::GraphOperationsService {
             if ets.is_none() {
                 return Ok(());
             }
-            let ets = ets.unwrap();
+            let ets = ets.as_ref().ok_or_else(|| {
+                ProximaDBError::Internal(format!(
+                    "Edge type schema not found for edge type '{}'",
+                    edge.edge_type
+                ))
+            })?;
             // Required properties present
             for req in &ets.required_properties {
                 if !edge.properties.contains_key(req) {
@@ -151,7 +161,7 @@ impl super::GraphOperationsService {
                 for s in &ets.optional_properties {
                     allowed.insert(s.as_str());
                 }
-                for (p, _) in &ets.property_constraints {
+                for p in ets.property_constraints.keys() {
                     allowed.insert(p.as_str());
                 }
                 for key in edge.properties.keys() {
@@ -208,24 +218,27 @@ impl super::GraphOperationsService {
     ) -> Result<()> {
         use crate::proto::proximadb_v1::property_constraint::Constraint as C;
         use crate::proto::proximadb_v1::property_value::Value as PV;
-        match constraint.constraint.as_ref().unwrap() {
+        let constraint_type = constraint.constraint.as_ref().ok_or_else(|| {
+            ProximaDBError::InvalidInput("Property constraint has no type specified".to_string())
+        })?;
+        match constraint_type {
             C::StringConstraint(sc) => {
                 if let Some(PV::StringValue(s)) = &value.value {
-                    if let Some(min) = sc.min_length {
-                        if s.len() < min as usize {
-                            return Err(ProximaDBError::InvalidInput(format!(
-                                "'{}' shorter than min_length",
-                                key
-                            )));
-                        }
+                    if let Some(min) = sc.min_length
+                        && s.len() < min as usize
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "'{}' shorter than min_length",
+                            key
+                        )));
                     }
-                    if let Some(max) = sc.max_length {
-                        if s.len() > max as usize {
-                            return Err(ProximaDBError::InvalidInput(format!(
-                                "'{}' longer than max_length",
-                                key
-                            )));
-                        }
+                    if let Some(max) = sc.max_length
+                        && s.len() > max as usize
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "'{}' longer than max_length",
+                            key
+                        )));
                     }
                 }
             }
@@ -242,49 +255,50 @@ impl super::GraphOperationsService {
                         key
                     )));
                 }
-                if let Some(min) = nc.min_value {
-                    if num < min {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "'{}' less than min_value",
-                            key
-                        )));
-                    }
+                if let Some(min) = nc.min_value
+                    && num < min
+                {
+                    return Err(ProximaDBError::InvalidInput(format!(
+                        "'{}' less than min_value",
+                        key
+                    )));
                 }
-                if let Some(max) = nc.max_value {
-                    if num > max {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "'{}' greater than max_value",
-                            key
-                        )));
-                    }
+                if let Some(max) = nc.max_value
+                    && num > max
+                {
+                    return Err(ProximaDBError::InvalidInput(format!(
+                        "'{}' greater than max_value",
+                        key
+                    )));
                 }
-                if let Some(m) = nc.multiple_of {
-                    if m != 0.0 && (num / m).fract() != 0.0 {
-                        return Err(ProximaDBError::InvalidInput(format!(
-                            "'{}' not a multiple_of {}",
-                            key, m
-                        )));
-                    }
+                if let Some(m) = nc.multiple_of
+                    && m != 0.0
+                    && (num / m).fract() != 0.0
+                {
+                    return Err(ProximaDBError::InvalidInput(format!(
+                        "'{}' not a multiple_of {}",
+                        key, m
+                    )));
                 }
             }
             C::ArrayConstraint(ac) => {
                 if let Some(PV::ArrayValue(arr)) = &value.value {
                     let len = arr.values.len() as i32;
-                    if let Some(min) = ac.min_items {
-                        if len < min {
-                            return Err(ProximaDBError::InvalidInput(format!(
-                                "'{}' array smaller than min_items",
-                                key
-                            )));
-                        }
+                    if let Some(min) = ac.min_items
+                        && len < min
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "'{}' array smaller than min_items",
+                            key
+                        )));
                     }
-                    if let Some(max) = ac.max_items {
-                        if len > max {
-                            return Err(ProximaDBError::InvalidInput(format!(
-                                "'{}' array larger than max_items",
-                                key
-                            )));
-                        }
+                    if let Some(max) = ac.max_items
+                        && len > max
+                    {
+                        return Err(ProximaDBError::InvalidInput(format!(
+                            "'{}' array larger than max_items",
+                            key
+                        )));
                     }
                 }
             }

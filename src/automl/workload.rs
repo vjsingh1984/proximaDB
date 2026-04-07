@@ -112,8 +112,7 @@ impl WorkloadTimeSeries {
             sum_x2 += x * x;
         }
 
-        let slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x);
-        slope
+        (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x)
     }
 
     /// Calculate the variance of a time series
@@ -123,22 +122,27 @@ impl WorkloadTimeSeries {
         }
 
         let mean = series.iter().map(|p| p.value).sum::<f64>() / series.len() as f64;
-        let variance =
-            series.iter().map(|p| (p.value - mean).powi(2)).sum::<f64>() / series.len() as f64;
 
-        variance
+        series.iter().map(|p| (p.value - mean).powi(2)).sum::<f64>() / series.len() as f64
     }
 }
 
 /// Workload statistics
 #[derive(Debug, Clone)]
 pub struct WorkloadStatistics {
+    /// Mean read throughput over the observation window (operations per second)
     pub avg_reads_per_sec: f64,
+    /// Mean write throughput over the observation window (operations per second)
     pub avg_writes_per_sec: f64,
+    /// Ratio of average reads to average writes; `INFINITY` when there are no writes
     pub read_write_ratio: f64,
+    /// Median (P50) query latency observed during the window (milliseconds)
     pub query_latency_p50: f64,
+    /// 99th-percentile query latency observed during the window (milliseconds)
     pub query_latency_p99: f64,
+    /// Square-root of the sum of read and write throughput variances; higher means more bursty traffic
     pub burstiness_score: f64,
+    /// Stability of the workload pattern (0.0 = volatile, 1.0 = perfectly stable)
     pub pattern_stability: f64,
 }
 
@@ -481,49 +485,59 @@ mod tests {
 
     #[tokio::test]
     async fn test_workload_pattern_detection() {
-        let analyzer = WorkloadAnalyzer::new().await.unwrap();
+        let analyzer = WorkloadAnalyzer::new()
+            .await
+            .expect("Failed to create workload analyzer");
 
         // Simulate read-heavy workload
         for i in 0..20 {
             analyzer
                 .record_metric("test_collection", "reads_per_sec", 1000.0 + i as f64)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
             analyzer
                 .record_metric("test_collection", "writes_per_sec", 10.0)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
             analyzer
                 .record_metric("test_collection", "query_latency_ms", 5.0)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
         }
 
-        let pattern = analyzer.analyze_workload("test_collection").await.unwrap();
+        let pattern = analyzer
+            .analyze_workload("test_collection")
+            .await
+            .expect("Failed to analyze workload");
         assert_eq!(pattern, WorkloadPattern::ReadHeavy);
     }
 
     #[tokio::test]
     async fn test_workload_statistics() {
-        let analyzer = WorkloadAnalyzer::new().await.unwrap();
+        let analyzer = WorkloadAnalyzer::new()
+            .await
+            .expect("Failed to create workload analyzer");
 
         // Record metrics
         for i in 0..10 {
             analyzer
                 .record_metric("test_collection", "reads_per_sec", 100.0 * (i + 1) as f64)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
             analyzer
                 .record_metric("test_collection", "writes_per_sec", 50.0)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
             analyzer
                 .record_metric("test_collection", "query_latency_ms", 10.0 + i as f64)
                 .await
-                .unwrap();
+                .expect("Failed to record metric");
         }
 
-        let stats = analyzer.get_statistics("test_collection").await.unwrap();
+        let stats = analyzer
+            .get_statistics("test_collection")
+            .await
+            .expect("Failed to get statistics");
         assert!(stats.avg_reads_per_sec > 0.0);
         assert!(stats.read_write_ratio > 1.0);
         assert!(stats.query_latency_p50 > 0.0);

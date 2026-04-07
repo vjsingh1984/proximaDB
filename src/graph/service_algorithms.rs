@@ -442,7 +442,12 @@ impl GraphOperationsService {
         let result = self.run_centrality(graph_id, algorithm, None).await?;
 
         let mut scores_vec: Vec<(String, f64)> = result.scores.into_iter().collect();
-        scores_vec.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scores_vec.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1).unwrap_or({
+                // If either score is NaN, treat them as equal
+                std::cmp::Ordering::Equal
+            })
+        });
         scores_vec.truncate(n);
 
         Ok(scores_vec)
@@ -469,7 +474,10 @@ mod tests {
             engine_config: None,
             access_control: None,
         };
-        service.create_graph_collection(req).await.unwrap();
+        service
+            .create_graph_collection(req)
+            .await
+            .expect("Failed to create test graph collection");
 
         // Create nodes
         for i in 0..5 {
@@ -481,7 +489,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            service.create_node(&graph_id, node).await.unwrap();
+            service
+                .create_node(&graph_id, node)
+                .await
+                .expect("Failed to create test node");
         }
 
         // Create edges (star topology with n0 at center)
@@ -497,7 +508,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            service.create_edge(&graph_id, edge).await.unwrap();
+            service
+                .create_edge(&graph_id, edge)
+                .await
+                .expect("Failed to create test edge");
         }
 
         graph_id
@@ -508,7 +522,10 @@ mod tests {
         let service = GraphOperationsService::new();
         let graph_id = create_test_graph(&service).await;
 
-        let scores = service.pagerank(&graph_id).await.unwrap();
+        let scores = service
+            .pagerank(&graph_id)
+            .await
+            .expect("PageRank should succeed");
 
         // All nodes should have scores
         assert_eq!(scores.len(), 5);
@@ -528,7 +545,7 @@ mod tests {
         let result = service
             .run_centrality(&graph_id, CentralityAlgorithm::Closeness, None)
             .await
-            .unwrap();
+            .expect("Closeness centrality should succeed");
 
         assert_eq!(result.node_count, 5);
         assert!(result.execution_time_ms >= 0.0);
@@ -542,7 +559,7 @@ mod tests {
         let result = service
             .run_centrality(&graph_id, CentralityAlgorithm::Harmonic, None)
             .await
-            .unwrap();
+            .expect("Harmonic centrality should succeed");
 
         assert_eq!(result.node_count, 5);
     }
@@ -555,7 +572,7 @@ mod tests {
         let result = service
             .run_community_detection(&graph_id, CommunityAlgorithm::Louvain, None)
             .await
-            .unwrap();
+            .expect("Louvain community detection should succeed");
 
         // All nodes should have community assignments
         assert_eq!(result.communities.len(), 5);
@@ -564,7 +581,11 @@ mod tests {
         assert!(result.community_count >= 1);
 
         // Modularity should be finite
-        assert!(result.modularity.unwrap().is_finite());
+        let modularity = match result.modularity {
+            Some(value) => value,
+            None => panic!("Modularity should be present for Louvain"),
+        };
+        assert!(modularity.is_finite());
     }
 
     #[tokio::test]
@@ -575,13 +596,13 @@ mod tests {
         let top_3 = service
             .top_central_nodes(&graph_id, CentralityAlgorithm::PageRank, 3)
             .await
-            .unwrap();
+            .expect("top_central_nodes should succeed");
 
         assert_eq!(top_3.len(), 3);
 
         // Scores should be sorted descending
-        for i in 0..top_3.len() - 1 {
-            assert!(top_3[i].1 >= top_3[i + 1].1);
+        for window in top_3.windows(2) {
+            assert!(window[0].1 >= window[1].1);
         }
     }
 
@@ -598,7 +619,7 @@ mod tests {
         let scores = service
             .get_node_centrality(&graph_id, CentralityAlgorithm::PageRank, &node_ids)
             .await
-            .unwrap();
+            .expect("get_node_centrality should succeed");
 
         // Should only return scores for existing nodes
         assert!(scores.contains_key("n0"));

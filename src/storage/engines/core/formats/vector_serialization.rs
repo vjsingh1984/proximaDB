@@ -167,7 +167,7 @@ impl VectorSerializer {
                 }
 
                 // Try as raw bytes (fixed dimension without prefix)
-                if data.len() % 4 == 0 {
+                if data.len().is_multiple_of(4) {
                     let float_slice: &[f32] = bytemuck::cast_slice(data);
                     Ok(float_slice.to_vec())
                 } else {
@@ -185,7 +185,7 @@ impl VectorSerializer {
     /// This is the fastest path - direct bytemuck cast with minimal validation.
     #[inline(always)]
     pub fn deserialize_raw(data: &[u8]) -> Result<Vec<f32>> {
-        if data.len() % 4 != 0 {
+        if !data.len().is_multiple_of(4) {
             return Err(anyhow::anyhow!(
                 "Invalid vector binary data: length {} is not divisible by 4",
                 data.len()

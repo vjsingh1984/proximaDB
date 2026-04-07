@@ -521,7 +521,10 @@ mod tests {
             .with_primary_key(vec!["id".to_string()]);
 
         let identifier = TableIdentifier::new(vec![], "users".to_string());
-        let obj = registry.create_table(&identifier, schema).await.unwrap();
+        let obj = registry
+            .create_table(&identifier, schema)
+            .await
+            .expect("table creation should succeed");
 
         assert_eq!(obj.object_type, ObjectType::RdbmsTable);
         assert_eq!(obj.enforcement_mode, SchemaEnforcementMode::Strict);
@@ -535,7 +538,7 @@ mod tests {
         let obj = registry
             .create_vector_collection("embeddings", 768, "cosine")
             .await
-            .unwrap();
+            .expect("vector collection creation should succeed");
 
         assert_eq!(obj.object_type, ObjectType::VectorCollection);
         assert_eq!(obj.enforcement_mode, SchemaEnforcementMode::Hybrid);
@@ -548,7 +551,7 @@ mod tests {
         let obj = registry
             .create_document_collection("products", None)
             .await
-            .unwrap();
+            .expect("document collection creation should succeed");
 
         assert_eq!(obj.object_type, ObjectType::DocumentCollection);
         assert_eq!(obj.enforcement_mode, SchemaEnforcementMode::Flexible);
@@ -558,7 +561,10 @@ mod tests {
     async fn test_create_graph() {
         let registry = InternalSchemaRegistry::new();
 
-        let obj = registry.create_graph("social", true).await.unwrap();
+        let obj = registry
+            .create_graph("social", true)
+            .await
+            .expect("graph creation should succeed");
 
         assert_eq!(obj.object_type, ObjectType::Graph);
     }
@@ -570,12 +576,15 @@ mod tests {
         registry
             .create_vector_collection("vec1", 128, "l2")
             .await
-            .unwrap();
+            .expect("vec1 creation should succeed");
         registry
             .create_vector_collection("vec2", 256, "cosine")
             .await
-            .unwrap();
-        registry.create_graph("graph1", true).await.unwrap();
+            .expect("vec2 creation should succeed");
+        registry
+            .create_graph("graph1", true)
+            .await
+            .expect("graph1 creation should succeed");
 
         let vectors = registry.list_vector_collections().await;
         assert_eq!(vectors.len(), 2);
@@ -591,9 +600,12 @@ mod tests {
         registry
             .create_vector_collection("test_vec", 128, "l2")
             .await
-            .unwrap();
+            .expect("test_vec creation should succeed");
 
-        let obj = registry.get("default.public.test_vec").await.unwrap();
+        let obj = registry
+            .get("default.public.test_vec")
+            .await
+            .expect("test_vec should exist");
         assert_eq!(obj.name, "test_vec");
     }
 
@@ -604,11 +616,14 @@ mod tests {
         registry
             .create_vector_collection("to_drop", 128, "l2")
             .await
-            .unwrap();
+            .expect("to_drop creation should succeed");
 
         assert!(registry.exists("default.public.to_drop").await);
 
-        let dropped = registry.drop("default.public.to_drop").await.unwrap();
+        let dropped = registry
+            .drop("default.public.to_drop")
+            .await
+            .expect("drop should succeed");
         assert!(dropped);
 
         assert!(!registry.exists("default.public.to_drop").await);
@@ -623,7 +638,10 @@ mod tests {
             .with_primary_key(vec!["id".to_string()]);
 
         let identifier = TableIdentifier::new(vec![], "evolving".to_string());
-        registry.create_table(&identifier, schema).await.unwrap();
+        registry
+            .create_table(&identifier, schema)
+            .await
+            .expect("evolving table creation should succeed");
 
         // Update schema
         let new_schema = ObjectSchema {
@@ -643,9 +661,12 @@ mod tests {
                 Some("admin".to_string()),
             )
             .await
-            .unwrap();
+            .expect("schema update should succeed");
 
-        let obj = registry.get("default.public.evolving").await.unwrap();
+        let obj = registry
+            .get("default.public.evolving")
+            .await
+            .expect("evolving table should exist");
         assert_eq!(obj.schema_version, 2);
         assert_eq!(obj.schema_history.len(), 1);
     }
@@ -660,16 +681,22 @@ mod tests {
             .with_primary_key(vec!["id".to_string()]);
 
         let identifier = TableIdentifier::new(vec![], "constrained".to_string());
-        registry.create_table(&identifier, schema).await.unwrap();
+        registry
+            .create_table(&identifier, schema)
+            .await
+            .expect("constrained table creation should succeed");
 
         // Add unique constraint
         let constraint = TableConstraint::unique("uq_email", vec!["email".to_string()]);
         registry
             .add_constraint("default.public.constrained", constraint)
             .await
-            .unwrap();
+            .expect("constraint addition should succeed");
 
-        let obj = registry.get("default.public.constrained").await.unwrap();
+        let obj = registry
+            .get("default.public.constrained")
+            .await
+            .expect("constrained table should exist");
         assert_eq!(obj.schema.constraints.len(), 1);
     }
 
@@ -677,7 +704,10 @@ mod tests {
     async fn test_duplicate_registration_fails() {
         let registry = InternalSchemaRegistry::new();
 
-        registry.create_graph("unique_graph", true).await.unwrap();
+        registry
+            .create_graph("unique_graph", true)
+            .await
+            .expect("unique_graph creation should succeed");
 
         let result = registry.create_graph("unique_graph", true).await;
         assert!(result.is_err());

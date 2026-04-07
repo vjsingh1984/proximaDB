@@ -218,31 +218,30 @@ impl CacheWarmer {
             // Parse cache key: "vector:collection_id:vector_id" (consistent format across all engines)
             if let Some((collection_id, vector_id)) = self.parse_vector_cache_key(&cache_key) {
                 // Check if already cached in VectorCache (not QueryCache)
-                if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
-                    if vector_cache.get(&cache_key).await.is_some() {
-                        continue; // Already cached
-                    }
+                if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache()
+                    && vector_cache.get(&cache_key).await.is_some()
+                {
+                    continue; // Already cached
                 }
 
                 // Load from storage and cache
                 if let Some(engine) = self.get_best_engine_for_collection(&collection_id) {
                     // We need base_path for storage engines - get from collection metadata
                     if let Ok(Some(vector)) = self
-                        .load_vector_with_base_path(&engine, &collection_id, &vector_id)
+                        .load_vector_with_base_path(engine, &collection_id, &vector_id)
                         .await
+                        && let Some(vector_cache) = self.cache_orchestrator.get_vector_cache()
                     {
-                        if let Some(vector_cache) = self.cache_orchestrator.get_vector_cache() {
-                            let _ = vector_cache.put(cache_key.clone(), vector).await;
-                            warmed_count += 1;
+                        let _ = vector_cache.put(cache_key.clone(), vector).await;
+                        warmed_count += 1;
 
-                            // Track warming success
-                            self.metrics_collector.record(
-                                MetricsOperationType::Write,
-                                0,
-                                true,
-                                Some(1),
-                            );
-                        }
+                        // Track warming success
+                        self.metrics_collector.record(
+                            MetricsOperationType::Write,
+                            0,
+                            true,
+                            Some(1),
+                        );
                     }
                 }
             }
@@ -298,7 +297,7 @@ impl CacheWarmer {
             similarity_count, similarity_threshold
         );
 
-        // TODO: Implement similarity-based warming using vector embeddings
+        // Deferred: Implement similarity-based warming using vector embeddings
         // This would require:
         // 1. Get recently accessed vectors
         // 2. Find similar vectors using vector search
@@ -319,7 +318,7 @@ impl CacheWarmer {
             prefetch_count, window_hours
         );
 
-        // TODO: Implement temporal pattern analysis
+        // Deferred: Implement temporal pattern analysis
         // This would require:
         // 1. Analyze access patterns within time window
         // 2. Predict likely next accesses
@@ -345,7 +344,7 @@ impl CacheWarmer {
         _collection_id: &str,
     ) -> Option<&Arc<dyn UnifiedStorageEngine>> {
         // For now, return first available engine
-        // TODO: Implement engine selection based on collection metadata
+        // Deferred: Implement engine selection based on collection metadata
         self.storage_engines.values().next()
     }
 
@@ -356,7 +355,7 @@ impl CacheWarmer {
         collection_id: &str,
         vector_id: &str,
     ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
-        // TODO: Get base_path from collection metadata service
+        // Deferred: Get base_path from collection metadata service
         // For now, use default path
         let _base_path = "/data/collections";
         engine
@@ -366,7 +365,7 @@ impl CacheWarmer {
 
     /// Helper: Warm specific collection
     async fn warm_collection(&self, __collection_id: &str, __max_vectors: usize) -> Result<u64> {
-        // TODO: Implement collection warming by:
+        // Deferred: Implement collection warming by:
         // 1. List all vectors in collection
         // 2. Load up to max_vectors
         // 3. Cache them

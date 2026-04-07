@@ -7,7 +7,7 @@
 //! - Permission inheritance (wildcards)
 //! - Multi-tenant isolation
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -16,8 +16,8 @@ use tokio;
 use crate::query::unified::{
     ast::{
         DataModel, DistanceMetric, DocumentQueryExpr, GraphTraversalExpr, LogQueryExpr,
-        MetricQueryExpr, ModelOperation, MultiModelQuery, QueryComponent, StartNodeSpec,
-        TraversalDirection, VectorSearchExpr, VectorSearchParams,
+        ModelOperation, MultiModelQuery, QueryComponent, StartNodeSpec, TraversalDirection,
+        VectorSearchExpr, VectorSearchParams,
     },
     executor::ParallelExecutor,
 };
@@ -55,6 +55,7 @@ fn create_admin_user() -> UnifiedUserContext {
 }
 
 /// Helper function to create restricted user with limited permissions
+#[allow(dead_code)]
 fn create_restricted_user() -> UnifiedUserContext {
     // Note: Permissions are granted through RBAC manager in create_test_rbac_manager
     create_test_user("restricted_user", Some("tenant1"))
@@ -642,7 +643,7 @@ mod rbac_integration_tests {
         let result1 = rbac_manager
             .check_permission_cached("cache_test_user", &permission)
             .await;
-        let duration1 = start1.elapsed();
+        let _duration1 = start1.elapsed();
 
         assert!(result1.is_ok());
         let allowed1 = result1.unwrap();
@@ -652,7 +653,7 @@ mod rbac_integration_tests {
         let result2 = rbac_manager
             .check_permission_cached("cache_test_user", &permission)
             .await;
-        let duration2 = start2.elapsed();
+        let _duration2 = start2.elapsed();
 
         assert!(result2.is_ok());
         let allowed2 = result2.unwrap();

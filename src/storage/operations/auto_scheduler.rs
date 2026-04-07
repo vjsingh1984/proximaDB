@@ -613,7 +613,8 @@ impl AutoScheduler {
                 let mut queue = self.pending_queue.lock().await;
 
                 // Find the highest priority operation that's ready to run
-                let ready_op = queue
+
+                queue
                     .iter()
                     .position(|op| op.run_after <= now)
                     .map(|_| {
@@ -633,9 +634,7 @@ impl AutoScheduler {
                         *queue = temp;
                         found
                     })
-                    .flatten();
-
-                ready_op
+                    .flatten()
             };
 
             if let Some(mut op) = operation {
@@ -734,25 +733,22 @@ impl AutoScheduler {
         let metrics = self.system_metrics.read().await.clone();
 
         // Check flush triggers
-        if self.should_trigger_flush(&metrics).await {
-            if let Err(e) = self
+        if self.should_trigger_flush(&metrics).await
+            && let Err(e) = self
                 .schedule_flush("__global__", OperationPriority::Normal)
                 .await
-            {
-                warn!("⏰ Failed to schedule flush: {}", e);
-            }
+        {
+            warn!("⏰ Failed to schedule flush: {}", e);
         }
 
         // Check compaction triggers (prefer idle/low-activity periods)
-        if analysis.is_idle || analysis.is_low_activity_window {
-            if self.should_trigger_compaction(&metrics).await {
-                if let Err(e) = self
-                    .schedule_compaction("__global__", OperationPriority::Low)
-                    .await
-                {
-                    warn!("⏰ Failed to schedule compaction: {}", e);
-                }
-            }
+        if (analysis.is_idle || analysis.is_low_activity_window)
+            && self.should_trigger_compaction(&metrics).await
+            && let Err(e) = self
+                .schedule_compaction("__global__", OperationPriority::Low)
+                .await
+        {
+            warn!("⏰ Failed to schedule compaction: {}", e);
         }
 
         // Schedule periodic health checks
@@ -776,18 +772,16 @@ impl AutoScheduler {
             .get_last_operation_time(OperationType::HealthCheck)
             .await;
 
-        if now - last_health_check > Duration::minutes(5) {
-            let _ = self
-                .schedule(
-                    self.create_operation(
-                        OperationType::HealthCheck,
-                        OperationPriority::Background,
-                        None,
-                    )
-                    .await
-                    .unwrap(),
+        if now - last_health_check > Duration::minutes(5)
+            && let Ok(operation) = self
+                .create_operation(
+                    OperationType::HealthCheck,
+                    OperationPriority::Background,
+                    None,
                 )
-                .await;
+                .await
+        {
+            let _ = self.schedule(operation).await;
         }
 
         // Schedule periodic stats collection (every minute)
@@ -795,18 +789,16 @@ impl AutoScheduler {
             .get_last_operation_time(OperationType::StatsCollection)
             .await;
 
-        if now - last_stats > Duration::minutes(1) {
-            let _ = self
-                .schedule(
-                    self.create_operation(
-                        OperationType::StatsCollection,
-                        OperationPriority::Background,
-                        None,
-                    )
-                    .await
-                    .unwrap(),
+        if now - last_stats > Duration::minutes(1)
+            && let Ok(operation) = self
+                .create_operation(
+                    OperationType::StatsCollection,
+                    OperationPriority::Background,
+                    None,
                 )
-                .await;
+                .await
+        {
+            let _ = self.schedule(operation).await;
         }
     }
 
@@ -817,8 +809,7 @@ impl AutoScheduler {
             .iter()
             .rev()
             .find(|op| op.operation_type == op_type)
-            .map(|op| op.scheduled_at)
-            .unwrap_or_else(|| Utc::now() - Duration::hours(1))
+            .map_or_else(|| Utc::now() - Duration::hours(1), |op| op.scheduled_at)
     }
 
     async fn analyze_workload(&self) {

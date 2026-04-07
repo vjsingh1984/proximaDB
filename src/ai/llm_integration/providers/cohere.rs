@@ -51,6 +51,7 @@ struct CohereBilledUnits {
 }
 
 impl CohereClient {
+    /// Create a new Cohere client with the given API key.
     pub async fn new(api_key: &str) -> Result<Self, LLMError> {
         if api_key.is_empty() {
             return Err(LLMError::ConfigurationError(
@@ -147,12 +148,9 @@ impl LLMClient for CohereClient {
                     .as_ref()
                     .and_then(|b| b.output_tokens)
                     .unwrap_or(0),
-                total_tokens: cohere_response
-                    .meta
-                    .billed_units
-                    .as_ref()
-                    .map(|b| b.input_tokens.unwrap_or(0) + b.output_tokens.unwrap_or(0))
-                    .unwrap_or(0),
+                total_tokens: cohere_response.meta.billed_units.as_ref().map_or(0, |b| {
+                    b.input_tokens.unwrap_or(0) + b.output_tokens.unwrap_or(0)
+                }),
             },
             confidence_score: Some(0.85),
             finish_reason: FinishReason::Stop,

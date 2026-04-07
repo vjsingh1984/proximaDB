@@ -168,7 +168,7 @@ impl TieringManager {
                     self.calculate_cold_priority_score(time_since_access, access_info.access_count);
 
                 // Determine if this is a node or edge (simplified logic)
-                // TODO: Implement proper node/edge detection when OrionGraphEngine methods are available
+                // Deferred: Implement proper node/edge detection when OrionGraphEngine methods are available
                 let item_type = ItemType::Node; // Default to node for now
 
                 candidates.push(MigrationCandidate {

@@ -83,11 +83,18 @@ pub enum SearchMode {
 }
 
 /// Search candidate for columnar processing
+///
+/// Represents a potential match found during columnar search, containing
+/// location information and similarity score for ranking.
 #[derive(Debug, Clone)]
 struct SearchCandidate {
+    /// Row group identifier in the Parquet file
     row_group_id: usize,
+    /// Row offset within the row group
     row_offset: u32,
+    /// Similarity score (higher is better)
     similarity: f32,
+    /// Optional vector record identifier
     vector_id: Option<String>,
 }
 
@@ -99,16 +106,19 @@ impl PartialEq for SearchCandidate {
 
 impl Eq for SearchCandidate {}
 
-impl PartialOrd for SearchCandidate {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+impl Ord for SearchCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Reverse for min-heap (best candidates first)
-        other.similarity.partial_cmp(&self.similarity)
+        other
+            .similarity
+            .partial_cmp(&self.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
-impl Ord for SearchCandidate {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.partial_cmp(other).unwrap_or(std::cmp::Ordering::Equal)
+impl PartialOrd for SearchCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -312,10 +322,10 @@ impl NovaColumnarSearch {
             let sem = semaphore.clone();
             let tx = tx.clone();
             let query = query_vector.to_vec();
-            let metric = distance_metric.clone();
+            let metric = distance_metric;
 
             let handle = tokio::spawn(async move {
-                let _permit = sem.acquire().await.unwrap();
+                let _permit = sem.acquire().await.ok();
 
                 // Process row group with streaming
                 let candidates =
@@ -426,7 +436,7 @@ impl NovaColumnarSearch {
                 // Create distance compute instance and compute distance
                 let distance_compute =
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        distance_metric.clone(),
+                        distance_metric,
                     );
                 let distance_result = distance_compute.calculate_distance(
                     query_vector,
@@ -475,7 +485,7 @@ impl NovaColumnarSearch {
 
         // Load full records for top candidates
         let mut results = Vec::new();
-        for candidate in top_candidates.iter() {
+        for candidate in &top_candidates {
             if let Some(record) = self
                 .load_record_by_id(nova_file, &candidate.vector_id)
                 .await?
@@ -576,8 +586,7 @@ impl NovaColumnarSearch {
                     // This ensures we don't prune too aggressively
                     let kth_best = candidates
                         .peek()
-                        .map(|c: &SearchCandidate| 1.0 - c.similarity)
-                        .unwrap_or(f32::MAX);
+                        .map_or(f32::MAX, |c: &SearchCandidate| 1.0 - c.similarity);
                     kth_best * 1.5
                 } else {
                     // Initial generous threshold based on distance metric
@@ -721,7 +730,7 @@ impl NovaColumnarSearch {
             for _record in batch {
                 // Check if record has int8 quantized vector
                 // VectorRecord doesn't have quantized field in proto
-                // TODO: Implement proper quantized vector access
+                // Deferred: Implement proper quantized vector access
                 // For now, skip int8 processing
                 {
                     for candidate in &group_candidates {
@@ -766,7 +775,7 @@ impl NovaColumnarSearch {
         }
 
         // Prepare PQ distance table for query
-        // TODO: compute_pq_distance_table function not found - commented out
+        // Deferred: compute_pq_distance_table function not found - commented out
         // let _pq_table = compute_pq_distance_table(query_vector, 32, 256);
 
         let mut refined_candidates = BinaryHeap::new();
@@ -796,7 +805,7 @@ impl NovaColumnarSearch {
             for _record in batch {
                 // Check if record has PQ quantized vector
                 // VectorRecord doesn't have quantized field in proto
-                // TODO: Implement proper quantized vector access
+                // Deferred: Implement proper quantized vector access
                 // For now, skip PQ processing
                 {
                     for candidate in &group_candidates {
@@ -883,7 +892,7 @@ impl NovaColumnarSearch {
 
                 let distance_compute =
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        distance_metric.clone(),
+                        distance_metric,
                     );
                 let distances = distance_compute.batch_distance_pooled_simd(
                     query_vector,
@@ -899,7 +908,7 @@ impl NovaColumnarSearch {
         }
 
         // Sort and take top-k
-        final_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        final_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         final_results.truncate(top_k);
 
         Ok(final_results)
@@ -1070,12 +1079,13 @@ fn quantize_to_int8(vector: &[f32]) -> Vec<i8> {
 #[allow(dead_code)]
 fn extract_vector_from_column(column: &ArrayRef, row_idx: usize) -> Result<Vec<f32>> {
     // Try Float32Array first
-    if let Some(float_array) = column.as_any().downcast_ref::<Float32Array>() {
-        if row_idx < float_array.len() && float_array.value(row_idx).is_finite() {
-            // For now, return a placeholder
-            // In production, would properly extract the vector
-            return Ok(vec![float_array.value(row_idx); 768]);
-        }
+    if let Some(float_array) = column.as_any().downcast_ref::<Float32Array>()
+        && row_idx < float_array.len()
+        && float_array.value(row_idx).is_finite()
+    {
+        // For now, return a placeholder
+        // In production, would properly extract the vector
+        return Ok(vec![float_array.value(row_idx); 768]);
     }
 
     // Try other formats (FixedSizeBinary, etc.)

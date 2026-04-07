@@ -54,19 +54,30 @@ impl Default for StreamingConfig {
 /// Performance metrics for streaming compression
 #[derive(Debug, Clone, Default)]
 pub struct StreamingMetrics {
+    /// Total number of vectors processed
     pub vectors_processed: u64,
+    /// Number of batches processed
     pub batches_processed: u64,
+    /// Total compressed output bytes
     pub total_compressed_bytes: u64,
+    /// Total uncompressed input bytes
     pub total_uncompressed_bytes: u64,
+    /// Average per-batch latency in microseconds
     pub average_latency_us: u64,
+    /// Maximum per-batch latency in microseconds
     pub max_latency_us: u64,
+    /// Overall compression ratio (compressed / uncompressed)
     pub compression_ratio: f32,
+    /// Sustained throughput in vectors per second
     pub throughput_vectors_per_sec: f32,
+    /// Number of currently active compression workers
     pub active_workers: usize,
+    /// Current depth of the pending work queue
     pub queue_depth: usize,
 }
 
 impl StreamingMetrics {
+    /// Log a human-readable summary of streaming compression metrics
     pub fn print_summary(&self) {
         info!("🌊 Streaming Compression Metrics:");
         info!(
@@ -105,11 +116,17 @@ struct CompressionWork {
 /// Result of compression work
 #[derive(Debug)]
 pub struct CompressionResult {
+    /// Batch identifier for correlation
     pub batch_id: u64,
+    /// Compressed output bytes
     pub compressed_data: Vec<u8>,
+    /// Original uncompressed size in bytes
     pub original_size: usize,
+    /// Compressed size in bytes
     pub compressed_size: usize,
+    /// Compression ratio (compressed / original)
     pub compression_ratio: f32,
+    /// Time taken to compress this batch
     pub processing_time: Duration,
 }
 
@@ -398,7 +415,7 @@ impl StreamingCompressor {
                     }
 
                     // Send result
-                    if let Err(_) = work.response_tx.send(result) {
+                    if work.response_tx.send(result).is_err() {
                         warn!(
                             "🚫 Worker {}: Failed to send result for batch {}",
                             worker_id, work.batch_id
@@ -534,14 +551,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_streaming_compression_basic() {
+    async fn test_streaming_compression_basic() -> Result<()> {
         let config = StreamingConfig {
             worker_count: 2,
             buffer_size: 10,
             ..Default::default()
         };
 
-        let compressor = StreamingCompressor::new(config).unwrap();
+        let compressor =
+            StreamingCompressor::new(config).context("Failed to create streaming compressor")?;
         let vectors = create_test_vectors(25, 128);
 
         let vector_config = VectorSerializationConfig {
@@ -552,23 +570,32 @@ mod tests {
         let results = compressor
             .compress_stream(vectors.clone(), vector_config.clone())
             .await
-            .unwrap();
+            .context("Failed to compress stream")?;
 
         assert!(!results.is_empty());
 
         // Test decompression
         let decompressor = StreamingDecompressor::new(vector_config);
-        let decompressed = decompressor.decompress_results(results).await.unwrap();
+        let decompressed = decompressor
+            .decompress_results(results)
+            .await
+            .context("Failed to decompress results")?;
 
         assert_eq!(vectors.len(), decompressed.len());
 
-        compressor.shutdown().await.unwrap();
+        compressor
+            .shutdown()
+            .await
+            .context("Failed to shutdown compressor")?;
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_batch_compression() {
+    async fn test_batch_compression() -> Result<()> {
         let config = StreamingConfig::default();
-        let compressor = StreamingCompressor::new(config).unwrap();
+        let compressor =
+            StreamingCompressor::new(config).context("Failed to create streaming compressor")?;
 
         let vectors = create_test_vectors(50, 256);
         let vector_config = VectorSerializationConfig::default();
@@ -576,7 +603,7 @@ mod tests {
         let result = compressor
             .compress_batch(vectors.clone(), vector_config.clone())
             .await
-            .unwrap();
+            .context("Failed to compress batch")?;
 
         assert!(result.compression_ratio > 0.0);
         assert!(result.processing_time.as_millis() < 1000);
@@ -586,27 +613,33 @@ mod tests {
         let decompressed = decompressor
             .decompress_batch(&result.compressed_data)
             .await
-            .unwrap();
+            .context("Failed to decompress batch")?;
 
         assert_eq!(vectors.len(), decompressed.len());
 
-        compressor.shutdown().await.unwrap();
+        compressor
+            .shutdown()
+            .await
+            .context("Failed to shutdown compressor")?;
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_performance_monitoring() {
+    async fn test_performance_monitoring() -> Result<()> {
         let mut config = StreamingConfig::default();
         config.enable_monitoring = true;
         config.worker_count = 1;
 
-        let compressor = StreamingCompressor::new(config).unwrap();
+        let compressor =
+            StreamingCompressor::new(config).context("Failed to create streaming compressor")?;
         let vectors = create_test_vectors(100, 512);
         let vector_config = VectorSerializationConfig::default();
 
         let _results = compressor
             .compress_stream(vectors, vector_config)
             .await
-            .unwrap();
+            .context("Failed to compress stream")?;
 
         let metrics = compressor.metrics();
         assert!(metrics.vectors_processed > 0);
@@ -615,17 +648,23 @@ mod tests {
 
         metrics.print_summary();
 
-        compressor.shutdown().await.unwrap();
+        compressor
+            .shutdown()
+            .await
+            .context("Failed to shutdown compressor")?;
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_adaptive_sizing() {
+    async fn test_adaptive_sizing() -> Result<()> {
         let mut config = StreamingConfig::default();
         config.adaptive_sizing = true;
         config.target_latency_us = 1000; // 1ms target
         config.buffer_size = 20;
 
-        let compressor = StreamingCompressor::new(config).unwrap();
+        let compressor =
+            StreamingCompressor::new(config).context("Failed to create streaming compressor")?;
 
         // Process multiple batches to trigger adaptation
         for _ in 0..5 {
@@ -635,32 +674,42 @@ mod tests {
             let _results = compressor
                 .compress_stream(vectors, vector_config)
                 .await
-                .unwrap();
+                .context("Failed to compress stream")?;
 
             // Trigger optimization
-            compressor.optimize_performance().await.unwrap();
+            compressor
+                .optimize_performance()
+                .await
+                .context("Failed to optimize performance")?;
         }
 
         let metrics = compressor.metrics();
         assert!(metrics.vectors_processed > 0);
 
-        compressor.shutdown().await.unwrap();
+        compressor
+            .shutdown()
+            .await
+            .context("Failed to shutdown compressor")?;
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_concurrent_compression() {
+    async fn test_concurrent_compression() -> Result<()> {
         let config = StreamingConfig {
             worker_count: 4,
             channel_capacity: 100,
             ..Default::default()
         };
 
-        let compressor = Arc::new(StreamingCompressor::new(config).unwrap());
+        let compressor = Arc::new(
+            StreamingCompressor::new(config).context("Failed to create streaming compressor")?,
+        );
 
         // Start multiple concurrent compression tasks
         let mut handles = Vec::new();
 
-        for i in 0..10 {
+        for _i in 0..10 {
             let compressor = compressor.clone();
             let handle = tokio::spawn(async move {
                 let vectors = create_test_vectors(20, 256);
@@ -673,11 +722,20 @@ mod tests {
 
         // Wait for all tasks to complete
         for handle in handles {
-            let result = handle.await.unwrap().unwrap();
+            let result = handle
+                .await
+                .context("Failed to join compression task")?
+                .context("Failed to compress batch")?;
             assert!(result.compression_ratio > 0.0);
         }
 
-        let final_compressor = Arc::try_unwrap(compressor).ok().unwrap();
-        final_compressor.shutdown().await.unwrap();
+        let final_compressor = Arc::try_unwrap(compressor)
+            .map_err(|_| anyhow::anyhow!("Failed to unwrap Arc: still has multiple references"))?;
+        final_compressor
+            .shutdown()
+            .await
+            .context("Failed to shutdown compressor")?;
+
+        Ok(())
     }
 }

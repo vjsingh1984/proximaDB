@@ -154,20 +154,15 @@ pub struct LogEntry {
 }
 
 /// Types of log entries
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LogEntryType {
     /// Normal command entry
+    #[default]
     Command,
     /// No-op entry for leader establishment
     Noop,
     /// Configuration change entry
     Config,
-}
-
-impl Default for LogEntryType {
-    fn default() -> Self {
-        Self::Command
-    }
 }
 
 /// Request for Raft InstallSnapshot RPC
@@ -277,22 +272,17 @@ pub enum ReplicationOperation {
 }
 
 /// Consistency levels for replication
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ConsistencyLevel {
     /// Only one node needs to acknowledge
     One,
     /// Majority of nodes must acknowledge
+    #[default]
     Quorum,
     /// All nodes must acknowledge
     All,
     /// Local datacenter quorum
     LocalQuorum,
-}
-
-impl Default for ConsistencyLevel {
-    fn default() -> Self {
-        Self::Quorum
-    }
 }
 
 /// Request to pull missed entries
@@ -522,20 +512,15 @@ pub struct HealthCheckResponse {
 }
 
 /// Serving status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ServingStatus {
     /// Node is healthy and serving requests
+    #[default]
     Serving,
     /// Node is not serving requests
     NotServing,
     /// Service is unknown
     ServiceUnknown,
-}
-
-impl Default for ServingStatus {
-    fn default() -> Self {
-        Self::Serving
-    }
 }
 
 /// Request for detailed status
@@ -583,9 +568,10 @@ pub struct StatusResponse {
 }
 
 /// Node roles
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum NodeRole {
     /// Raft follower
+    #[default]
     Follower,
     /// Raft candidate
     Candidate,
@@ -593,12 +579,6 @@ pub enum NodeRole {
     Leader,
     /// Observer (non-voting member)
     Observer,
-}
-
-impl Default for NodeRole {
-    fn default() -> Self {
-        Self::Follower
-    }
 }
 
 /// Status of a shard on a node
@@ -627,11 +607,12 @@ pub struct ShardStatus {
 }
 
 /// Shard states
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ShardState {
     /// Shard is active and serving requests
     Active,
     /// Shard is being created/initialized
+    #[default]
     Initializing,
     /// Shard is catching up (replica behind primary)
     CatchingUp,
@@ -639,12 +620,6 @@ pub enum ShardState {
     Relocating,
     /// Shard is inactive/offline
     Inactive,
-}
-
-impl Default for ShardState {
-    fn default() -> Self {
-        Self::Initializing
-    }
 }
 
 #[cfg(test)]

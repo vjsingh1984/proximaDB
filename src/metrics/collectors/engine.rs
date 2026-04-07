@@ -257,6 +257,12 @@ impl EngineMetricsCollector {
     }
 }
 
+impl Default for EngineMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl MetricsCollector for EngineMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {

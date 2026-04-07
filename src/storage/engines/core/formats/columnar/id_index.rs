@@ -171,7 +171,7 @@ impl ColumnarIdIndex {
             let mut bloom = BloomFilter::new(row_group.num_rows() as usize, 0.01);
 
             // TEMPORARY: Map test IDs for testing
-            // TODO: Read actual IDs from Parquet file
+            // Deferred: Read actual IDs from Parquet file
             // This implementation assumes test data uses predictable ID patterns
 
             let total_offset = rg_idx * row_group.num_rows() as usize;
@@ -286,7 +286,7 @@ impl ColumnarIdIndex {
     pub async fn lookup(&self, id: &str) -> Option<ParquetLocation> {
         // If bloom filters exist, use them for optimization
         if !self.bloom_filters.is_empty() {
-            for (_idx, bloom) in self.bloom_filters.iter().enumerate() {
+            for bloom in self.bloom_filters.iter() {
                 if bloom.contains(id) {
                     // Potential match in this row group
                     let map = self.id_to_location.read().await;

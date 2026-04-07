@@ -59,6 +59,7 @@ impl Default for AdaptiveSearchStrategy {
 }
 
 impl AdaptiveSearchStrategy {
+    /// Create a new adaptive search strategy with default thresholds
     pub fn new() -> Self {
         Self::default()
     }

@@ -6,9 +6,13 @@
 // - R-tree style spatial index for efficient queries
 // - Query operators: distance, within, intersects
 
+/// Geohash encoding and decoding for spatial partitioning.
 pub mod geohash;
+/// Geo-spatial index implementation (R-tree style).
 pub mod index;
+/// Geo-spatial query types and builders.
 pub mod queries;
+/// Core geo-spatial types (points, bounding boxes, polygons).
 pub mod types;
 
 pub use geohash::{GeoHash, decode_geohash, encode_geohash, geohash_neighbors};

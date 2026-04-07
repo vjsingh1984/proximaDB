@@ -6,6 +6,7 @@
 // - Project stage: Field projection
 // - Sort stage: Sorting results
 // - Limit/Skip stages: Pagination
+// - Lookup stage: Left outer join with another collection
 // - Unwind stage: Array expansion
 // - Full-text search scoring
 
@@ -18,14 +19,15 @@ use tracing::debug;
 
 use crate::proto::proximadb_v1::{
     Aggregation, AggregationStage, AggregationType, DocumentFilter, GroupStage, LimitStage,
-    MatchStage, ProjectStage, SkipStage, SortOrder, SortStage, SqlArray, SqlObject, SqlValue,
-    UnwindStage, aggregation_stage::Stage, sql_value::Value as SqlValueVariant,
+    LookupStage, MatchStage, ProjectStage, SkipStage, SortOrder, SortStage, SqlArray, SqlObject,
+    SqlValue, UnwindStage, aggregation_stage::Stage, sql_value::Value as SqlValueVariant,
 };
 
 #[cfg(test)]
 use crate::proto::proximadb_v1::SortField;
 
 use super::DocumentRecord;
+use super::aggregation_extensions::{LookupConfig, LookupFetcher, execute_lookup};
 use super::query::filter::FilterEvaluator;
 
 /// Aggregation pipeline executor
@@ -74,8 +76,8 @@ impl AggregationExecutor {
         Ok(working_set)
     }
 
-    /// Process a single pipeline stage
-    fn process_stage(
+    /// Process a single pipeline stage (public for external use with lookups)
+    pub fn process_stage(
         &self,
         documents: &[SqlObject],
         stage: &AggregationStage,
@@ -88,6 +90,13 @@ impl AggregationExecutor {
             Some(Stage::Sort(sort_stage)) => self.process_sort(documents, sort_stage),
             Some(Stage::Limit(limit_stage)) => self.process_limit(documents, limit_stage),
             Some(Stage::Skip(skip_stage)) => self.process_skip(documents, skip_stage),
+            Some(Stage::Lookup(_lookup_stage)) => {
+                // For now, return an error - lookup requires a fetcher callback
+                // In production, this would be passed through the executor context
+                Err(anyhow!(
+                    "Lookup stage requires document fetcher - use DocumentService::aggregate_with_lookup instead"
+                ))
+            }
             Some(Stage::Unwind(unwind_stage)) => self.process_unwind(documents, unwind_stage),
             None => Err(anyhow!("Empty stage at index {}", stage_idx)),
         }
@@ -388,10 +397,8 @@ impl AggregationExecutor {
         if has_inclusions {
             // Include mode: only include specified fields
             for (field, &include) in &project_stage.fields {
-                if include {
-                    if let Some(val) = doc.fields.get(field) {
-                        result.fields.insert(field.clone(), val.clone());
-                    }
+                if include && let Some(val) = doc.fields.get(field) {
+                    result.fields.insert(field.clone(), val.clone());
                 }
             }
         } else if has_exclusions {
@@ -592,6 +599,42 @@ impl AggregationExecutor {
         Ok(results)
     }
 
+    // =========================================================================
+    // LOOKUP STAGE - Left outer join with another collection
+    // =========================================================================
+
+    /// Process a lookup stage (requires a fetcher callback)
+    pub fn process_lookup(
+        &self,
+        documents: &[SqlObject],
+        lookup_stage: &LookupStage,
+        fetcher: &dyn LookupFetcher,
+    ) -> Result<Vec<SqlObject>> {
+        let config = LookupConfig {
+            from_collection: lookup_stage.from_collection.clone(),
+            local_field: lookup_stage.local_field.clone(),
+            foreign_field: lookup_stage.foreign_field.clone(),
+            output_field: lookup_stage.as_field.clone(),
+        };
+
+        execute_lookup(documents, &config, fetcher)
+    }
+
+    /// Check if a document matches a filter (helper for pipeline processing)
+    pub fn matches_filter(&self, doc: &DocumentRecord, filter: &DocumentFilter) -> bool {
+        // Create a temporary DocumentRecord for filter evaluation
+        let record = DocumentRecord {
+            id: String::new(),
+            document: doc.document.clone(),
+            version: 0,
+            collection_id: String::new(),
+            updated_at_ns: 0,
+            schema_id: None,
+            document_type: None,
+        };
+        self.filter_evaluator.evaluate(filter, &record)
+    }
+
     /// Set a value at a path in a document (simplified for top-level paths)
     fn set_path_value(&self, doc: &mut SqlObject, path: &str, value: SqlValue) {
         // Handle simple paths (no nested objects for now)
@@ -661,10 +704,10 @@ impl AggregationExecutor {
     /// Check if a document contains a term in any of the specified paths
     fn document_contains_term(&self, doc: &SqlObject, term: &str, paths: &[String]) -> bool {
         for path in paths {
-            if let Some(text) = self.extract_text_value(doc, path) {
-                if text.to_lowercase().contains(term) {
-                    return true;
-                }
+            if let Some(text) = self.extract_text_value(doc, path)
+                && text.to_lowercase().contains(term)
+            {
+                return true;
             }
         }
         false
@@ -739,9 +782,7 @@ impl AggregationExecutor {
 
     /// Normalize a JSON path expression
     fn normalize_path(&self, path: &str) -> String {
-        if path.starts_with("$.") {
-            path.to_string()
-        } else if path.starts_with('$') {
+        if path.starts_with("$.") || path.starts_with('$') {
             path.to_string()
         } else {
             format!("$.{}", path)
@@ -800,12 +841,10 @@ impl AggregationExecutor {
                     Some(SqlValue {
                         value: Some(SqlValueVariant::Int64Value(i)),
                     })
-                } else if let Some(f) = n.as_f64() {
-                    Some(SqlValue {
+                } else {
+                    n.as_f64().map(|f| SqlValue {
                         value: Some(SqlValueVariant::NumberValue(f)),
                     })
-                } else {
-                    None
                 }
             }
             JsonValue::String(s) => Some(SqlValue {
@@ -931,7 +970,9 @@ mod tests {
         };
 
         let doc_refs: Vec<&SqlObject> = docs.iter().collect();
-        let result = executor.compute_aggregation(&doc_refs, &agg).unwrap();
+        let result = executor
+            .compute_aggregation(&doc_refs, &agg)
+            .expect("COUNT aggregation should succeed");
 
         if let Some(SqlValueVariant::Int64Value(count)) = result.value {
             assert_eq!(count, 3);
@@ -957,7 +998,9 @@ mod tests {
         };
 
         let doc_refs: Vec<&SqlObject> = docs.iter().collect();
-        let result = executor.compute_aggregation(&doc_refs, &agg).unwrap();
+        let result = executor
+            .compute_aggregation(&doc_refs, &agg)
+            .expect("SUM aggregation should succeed");
 
         if let Some(SqlValueVariant::NumberValue(sum)) = result.value {
             assert!((sum - 600.0).abs() < f64::EPSILON);
@@ -983,7 +1026,9 @@ mod tests {
         };
 
         let doc_refs: Vec<&SqlObject> = docs.iter().collect();
-        let result = executor.compute_aggregation(&doc_refs, &agg).unwrap();
+        let result = executor
+            .compute_aggregation(&doc_refs, &agg)
+            .expect("AVG aggregation should succeed");
 
         if let Some(SqlValueVariant::NumberValue(avg)) = result.value {
             assert!((avg - 90.0).abs() < f64::EPSILON);
@@ -1010,7 +1055,9 @@ mod tests {
             r#type: AggregationType::Min as i32,
             input_path: "value".to_string(),
         };
-        let min_result = executor.compute_aggregation(&doc_refs, &min_agg).unwrap();
+        let min_result = executor
+            .compute_aggregation(&doc_refs, &min_agg)
+            .expect("MIN aggregation should succeed");
         if let Some(SqlValueVariant::NumberValue(min)) = min_result.value {
             assert!((min - 3.0).abs() < f64::EPSILON);
         } else {
@@ -1023,7 +1070,9 @@ mod tests {
             r#type: AggregationType::Max as i32,
             input_path: "value".to_string(),
         };
-        let max_result = executor.compute_aggregation(&doc_refs, &max_agg).unwrap();
+        let max_result = executor
+            .compute_aggregation(&doc_refs, &max_agg)
+            .expect("MAX aggregation should succeed");
         if let Some(SqlValueVariant::NumberValue(max)) = max_result.value {
             assert!((max - 8.0).abs() < f64::EPSILON);
         } else {
@@ -1066,7 +1115,9 @@ mod tests {
             ],
         };
 
-        let results = executor.process_group(&docs, &group_stage).unwrap();
+        let results = executor
+            .process_group(&docs, &group_stage)
+            .expect("GROUP stage should succeed");
 
         assert_eq!(results.len(), 2); // Two categories: A and B
 
@@ -1111,7 +1162,9 @@ mod tests {
             }],
         };
 
-        let sorted = executor.process_sort(&docs, &sort_stage).unwrap();
+        let sorted = executor
+            .process_sort(&docs, &sort_stage)
+            .expect("SORT stage should succeed");
 
         // Should be sorted: 10, 20, 30
         let values: Vec<i64> = sorted
@@ -1137,16 +1190,22 @@ mod tests {
 
         // Test SKIP
         let skip_stage = SkipStage { skip: 3 };
-        let skipped = executor.process_skip(&docs, &skip_stage).unwrap();
+        let skipped = executor
+            .process_skip(&docs, &skip_stage)
+            .expect("SKIP stage should succeed");
         assert_eq!(skipped.len(), 7);
 
         // Test LIMIT
         let limit_stage = LimitStage { limit: 5 };
-        let limited = executor.process_limit(&docs, &limit_stage).unwrap();
+        let limited = executor
+            .process_limit(&docs, &limit_stage)
+            .expect("LIMIT stage should succeed");
         assert_eq!(limited.len(), 5);
 
         // Test SKIP + LIMIT (pagination)
-        let skipped_then_limited = executor.process_limit(&skipped, &limit_stage).unwrap();
+        let skipped_then_limited = executor
+            .process_limit(&skipped, &limit_stage)
+            .expect("LIMIT stage (after SKIP) should succeed");
         assert_eq!(skipped_then_limited.len(), 5);
     }
 

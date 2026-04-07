@@ -125,7 +125,7 @@ impl DiskCacheManager {
         if *current_size + size > self.max_size_bytes {
             self.evict_lru(*current_size + size - self.max_size_bytes)
                 .await;
-            *current_size = self.current_size.read().await.clone();
+            *current_size = *self.current_size.read().await;
         }
 
         // Generate cache file path

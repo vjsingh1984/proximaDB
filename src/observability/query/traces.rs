@@ -162,15 +162,15 @@ impl TraceQuery {
 
         // Duration filters
         let duration = span.end_time_ns - span.start_time_ns;
-        if let Some(min) = self.min_duration_ns {
-            if duration < min {
-                return false;
-            }
+        if let Some(min) = self.min_duration_ns
+            && duration < min
+        {
+            return false;
         }
-        if let Some(max) = self.max_duration_ns {
-            if duration > max {
-                return false;
-            }
+        if let Some(max) = self.max_duration_ns
+            && duration > max
+        {
+            return false;
         }
 
         // Error filter (status != 0 indicates error)

@@ -93,12 +93,13 @@ impl NovaFlushOperations {
             quantization: {
                 // Enable quantization for NOVA progressive search (Binary → INT8 → FP32)
                 // This creates quantized columns during flush for 10-50x search speedup
-                let mut qconfig = crate::proto::proximadb_v1::QuantizationConfig::default();
-                qconfig.enabled = Some(true);
-                qconfig.enable_progressive_search = Some(true);
-                qconfig.binary_filter_selectivity = Some(0.1); // Keep 10% after binary stage
-                qconfig.int8_ranking_selectivity = Some(0.3); // Keep 30% after INT8 stage
-                qconfig
+                crate::proto::proximadb_v1::QuantizationConfig {
+                    enabled: Some(true),
+                    enable_progressive_search: Some(true),
+                    binary_filter_selectivity: Some(0.1), // Keep 10% after binary stage
+                    int8_ranking_selectivity: Some(0.3),  // Keep 30% after INT8 stage
+                    ..Default::default()
+                }
             },
             max_records_per_file: None,
             target_file_size_bytes: Some(128 * 1024 * 1024),
@@ -149,7 +150,7 @@ impl NovaFlushOperations {
             dimension,
             hybrid_config,
             &full_path,
-            &*self.filesystem,
+            &self.filesystem,
             filterable_columns,
             metadata_collector,
         )
@@ -236,8 +237,7 @@ impl NovaFlushOperations {
             .collection_config
             .as_ref()
             .and_then(|c| c.storage_assignment.as_ref())
-            .map(|s| s.base_location.as_str())
-            .unwrap_or("/data/collections");
+            .map_or("/data/collections", |s| s.base_location.as_str());
 
         // Extract filterable_columns from collection config
         let filterable_columns = params

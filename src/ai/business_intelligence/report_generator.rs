@@ -22,8 +22,9 @@ pub struct ExecutiveReport {
 }
 
 /// Report output formats
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum ReportFormat {
+    #[default]
     Html,
     Markdown,
     Json,
@@ -35,11 +36,5 @@ impl ReportGenerator {
         Ok(Self {
             _llm_engine: llm_engine,
         })
-    }
-}
-
-impl Default for ReportFormat {
-    fn default() -> Self {
-        ReportFormat::Html
     }
 }

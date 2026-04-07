@@ -672,7 +672,7 @@ pub fn create_columnar_schema(
     if config.enable_binary.unwrap_or(false) {
         fields.push(Field::new(
             "vector_binary",
-            DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
+            DataType::FixedSizeBinary(dimension.div_ceil(8) as i32),
             true,
         ));
     }
@@ -835,6 +835,7 @@ impl ColumnarFactory {
     }
 
     /// Create columnar optimizer with hardware-specific settings
+    #[allow(clippy::todo)] // Deferred: Refactor to async and provide proper arguments (5 args required)
     pub fn create_optimizer(
         _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         _config: ColumnarConfig,
@@ -844,7 +845,7 @@ impl ColumnarFactory {
                 crate::compute::distance_computation::engine::DistanceMetric::Cosine,
             ),
         );
-        // TODO: Fix this to be async and provide proper arguments
+        // Deferred: Fix this to be async and provide proper arguments
         todo!("ColumnarOptimizer::new requires async and 5 arguments - needs refactoring")
     }
 }

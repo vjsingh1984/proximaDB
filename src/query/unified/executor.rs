@@ -29,8 +29,6 @@ use crate::security::unified_rbac::{
 };
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentQueryParams, DocumentService};
-use crate::storage::traits::UnifiedStorageEngine;
-
 /// Parallel executor for multi-model queries
 pub struct ParallelExecutor {
     /// Maximum concurrent queries
@@ -160,29 +158,16 @@ impl ParallelExecutor {
         .await
     }
 
-    /// Execute query components in parallel
-    ///
-    /// Note: This is a simplified version that doesn't perform actual vector searches.
-    /// For full vector search integration, use `execute_parallel_with_services` with
-    /// a properly initialized VectorOperationsService.
-    pub async fn execute_parallel(
-        &self,
-        query: &MultiModelQuery,
-        _storage_engine: Arc<dyn UnifiedStorageEngine>,
-        document_service: Arc<DocumentService>,
-    ) -> Result<Vec<SubQueryResult>> {
-        // Without VectorOperationsService, we can only execute document queries
-        // Vector searches will return empty results
-        self.execute_parallel_with_services(query, None, document_service)
-            .await
-    }
-
     /// Execute query components in parallel with explicit service references
     ///
     /// # Arguments
     /// * `query` - The multi-model query to execute
     /// * `vector_ops` - Optional VectorOperationsService for vector searches
     /// * `document_service` - Document service for document queries
+    ///
+    /// # Note
+    /// This is the primary entry point for parallel query execution. For graph and
+    /// observability queries, use `execute_parallel_with_all_services` instead.
     pub async fn execute_parallel_with_services(
         &self,
         query: &MultiModelQuery,
@@ -485,7 +470,8 @@ async fn execute_component_with_context_full(
     let elapsed = start.elapsed();
 
     // Apply join predicates if dependencies exist
-    let result = match raw_result {
+
+    match raw_result {
         Ok(mut r) => {
             r.execution_time_us = elapsed.as_micros() as u64;
 
@@ -502,9 +488,7 @@ async fn execute_component_with_context_full(
             }
         }
         Err(e) => Err(e),
-    };
-
-    result
+    }
 }
 
 /// Execute a vector search query
@@ -547,7 +531,7 @@ async fn execute_vector_search(
                     // Build metadata from the search result
                     let mut metadata = HashMap::new();
                     // metadata is a HashMap<String, SqlValue>, iterate over it
-                    for (k, v) in r.metadata.iter() {
+                    for (k, v) in &r.metadata {
                         metadata.insert(k.clone(), format!("{:?}", v));
                     }
 
@@ -667,8 +651,7 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json
         Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
         Some(Value::NumberValue(f)) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
         Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
         Some(Value::BytesValue(b)) => {
             // Encode bytes as hex string (simpler than base64)
@@ -954,7 +937,7 @@ async fn execute_graph_traversal_with_context(
             max_depth: expr.max_depth,
             edge_types: expr.edge_types.clone(),
             node_labels: extract_node_labels(&expr.node_filters),
-            filters: Vec::new(), // TODO: Convert property filters
+            filters: Vec::new(), // Deferred: Convert property filters
             algorithm: match expr.direction {
                 TraversalDirection::Outgoing => {
                     crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32

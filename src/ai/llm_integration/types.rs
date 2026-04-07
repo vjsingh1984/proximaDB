@@ -10,143 +10,207 @@ use thiserror::Error;
 /// Configuration for LLM integration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMConfig {
-    // Commercial API keys
+    /// OpenAI API key
     pub openai_api_key: String,
+    /// Anthropic API key
     pub anthropic_api_key: String,
+    /// Cohere API key
     pub cohere_api_key: String,
 
-    // Cloud provider configurations
+    /// AWS Bedrock configuration
     pub aws_bedrock_config: Option<AWSBedrockConfig>,
+    /// Azure OpenAI configuration
     pub azure_openai_config: Option<AzureOpenAIConfig>,
+    /// Google Vertex AI configuration
     pub google_vertex_config: Option<GoogleVertexConfig>,
 
-    // Self-hosted configurations
+    /// Ollama self-hosted configuration
     pub ollama_config: Option<OllamaConfig>,
+    /// vLLM self-hosted configuration
     pub vllm_config: Option<VLLMConfig>,
+    /// HuggingFace configuration
     pub huggingface_config: Option<HuggingFaceConfig>,
 
-    // General configuration
+    /// Ordered list of providers to try
     pub provider_priority: Vec<LLMProvider>,
+    /// Request timeout in seconds
     pub timeout_seconds: u64,
+    /// Maximum number of retries per request
     pub max_retries: u32,
+    /// Rate limit in requests per minute
     pub rate_limit_per_minute: u32,
+    /// Whether to fall back to the next provider on failure
     pub enable_fallback: bool,
+    /// Whether to cache LLM responses
     pub enable_caching: bool,
 }
 
 /// AWS Bedrock configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AWSBedrockConfig {
+    /// AWS region for Bedrock service
     pub region: String,
+    /// Bedrock model identifier
     pub model_id: String,
+    /// AWS access key ID for authentication
     pub access_key_id: Option<String>,
+    /// AWS secret access key for authentication
     pub secret_access_key: Option<String>,
+    /// AWS session token for temporary credentials
     pub session_token: Option<String>,
 }
 
 /// Azure OpenAI configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AzureOpenAIConfig {
+    /// Azure OpenAI service endpoint URL
     pub endpoint: String,
+    /// Azure OpenAI API key
     pub api_key: String,
+    /// Name of the deployed model
     pub deployment_name: String,
+    /// API version string
     pub api_version: String,
 }
 
 /// Google Vertex AI configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoogleVertexConfig {
+    /// Google Cloud project ID
     pub project_id: String,
+    /// GCP region/location for the Vertex AI endpoint
     pub location: String,
+    /// Model name to use
     pub model_name: String,
+    /// Service account JSON key for authentication
     pub service_account_json: Option<String>,
 }
 
 /// Ollama configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OllamaConfig {
+    /// Base URL for the Ollama server
     pub base_url: String,
+    /// Model name to use
     pub model_name: String,
+    /// Request timeout in seconds
     pub timeout_seconds: u64,
 }
 
 /// vLLM configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VLLMConfig {
+    /// Base URL for the vLLM server
     pub base_url: String,
+    /// Model name to use
     pub model_name: String,
+    /// Optional API key for authentication
     pub api_key: Option<String>,
+    /// Request timeout in seconds
     pub timeout_seconds: u64,
 }
 
 /// HuggingFace configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HuggingFaceConfig {
+    /// HuggingFace API key
     pub api_key: String,
+    /// Model name or identifier
     pub model_name: String,
+    /// Whether to use the hosted Inference API
     pub use_inference_api: bool,
+    /// Custom endpoint URL for dedicated inference
     pub endpoint_url: Option<String>,
 }
 
 /// Supported LLM providers
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum LLMProvider {
-    // Commercial APIs
+    /// OpenAI commercial API
     OpenAI,
+    /// Anthropic commercial API
     Anthropic,
+    /// Cohere commercial API
     Cohere,
 
-    // Cloud Provider APIs
+    /// AWS Bedrock managed LLM service
     AWSBedrock,
+    /// Azure OpenAI managed service
     AzureOpenAI,
+    /// Google Vertex AI managed service
     GoogleVertexAI,
 
-    // Self-hosted and Open Source
+    /// Ollama self-hosted inference
     Ollama,
+    /// vLLM self-hosted inference
     VLLM,
+    /// HuggingFace inference API or self-hosted
     HuggingFace,
 }
 
 /// Request to an LLM provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMRequest {
+    /// The prompt text to send to the LLM
     pub prompt: String,
+    /// Maximum number of tokens to generate
     pub max_tokens: Option<u32>,
+    /// Sampling temperature (0.0 to 2.0)
     pub temperature: Option<f32>,
+    /// Specific model to use (overrides provider default)
     pub model: Option<String>,
+    /// System prompt for role/behavior configuration
     pub system_prompt: Option<String>,
+    /// Additional metadata key-value pairs
     pub metadata: HashMap<String, String>,
+    /// Timestamp when the request was created
     pub created_at: DateTime<Utc>,
 }
 
 /// Response from an LLM provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMResponse {
+    /// Generated text content
     pub content: String,
+    /// Provider that generated the response
     pub provider: LLMProvider,
+    /// Specific model that was used
     pub model_used: String,
+    /// Token usage statistics
     pub tokens_used: TokenUsage,
+    /// Confidence score, if available
     pub confidence_score: Option<f32>,
+    /// Reason why generation stopped
     pub finish_reason: FinishReason,
+    /// Response time in milliseconds
     pub response_time_ms: u64,
+    /// Timestamp when the response was created
     pub created_at: DateTime<Utc>,
 }
 
 /// Token usage information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TokenUsage {
+    /// Number of tokens in the input prompt
     pub prompt_tokens: u32,
+    /// Number of tokens in the generated completion
     pub completion_tokens: u32,
+    /// Total tokens used (prompt + completion)
     pub total_tokens: u32,
 }
 
 /// Reason why the LLM finished generating
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum FinishReason {
+    /// Model finished generating naturally
     Stop,
+    /// Output truncated due to max token limit
     Length,
+    /// Output filtered by content safety
     ContentFilter,
+    /// Model wants to invoke a tool
     ToolCalls,
+    /// Generation failed due to an error
     Error,
 }
 
@@ -205,35 +269,52 @@ pub enum LLMError {
 /// Result of provider health check
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderHealthStatus {
+    /// Provider being monitored
     pub provider: LLMProvider,
+    /// Whether the provider is currently healthy
     pub is_healthy: bool,
+    /// Timestamp of the last health check
     pub last_check: DateTime<Utc>,
+    /// Latest response time in milliseconds
     pub response_time_ms: Option<u64>,
+    /// Error rate as a percentage
     pub error_rate_percent: f32,
+    /// Remaining rate limit quota
     pub rate_limit_remaining: Option<u32>,
 }
 
 /// Request context for LLM operations
 #[derive(Debug, Clone)]
 pub struct LLMRequestContext {
+    /// User making the request
     pub user_id: Option<String>,
+    /// Tenant the request belongs to
     pub tenant_id: Option<String>,
+    /// Unique request identifier
     pub request_id: String,
+    /// Priority level for this request
     pub priority: RequestPriority,
+    /// Optional timeout override in seconds
     pub timeout_override: Option<u64>,
 }
 
 /// Priority levels for LLM requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum RequestPriority {
+    /// Low priority, can be delayed
     Low,
+    /// Normal priority (default)
+    #[default]
     Normal,
+    /// High priority, process ahead of normal requests
     High,
+    /// Critical priority, process immediately
     Critical,
 }
 
 // Implementation of core functionality
 impl LLMRequest {
+    /// Create a new LLM request with the given prompt.
     pub fn new(prompt: String) -> Self {
         Self {
             prompt,
@@ -246,21 +327,25 @@ impl LLMRequest {
         }
     }
 
+    /// Set the system prompt for this request.
     pub fn with_system_prompt(mut self, system_prompt: String) -> Self {
         self.system_prompt = Some(system_prompt);
         self
     }
 
+    /// Set the maximum number of tokens to generate.
     pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
         self.max_tokens = Some(max_tokens);
         self
     }
 
+    /// Set the sampling temperature for generation.
     pub fn with_temperature(mut self, temperature: f32) -> Self {
         self.temperature = Some(temperature);
         self
     }
 
+    /// Add a metadata key-value pair to the request.
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
         self.metadata.insert(key, value);
         self
@@ -268,10 +353,12 @@ impl LLMRequest {
 }
 
 impl LLMResponse {
+    /// Check if the response completed successfully.
     pub fn is_successful(&self) -> bool {
         matches!(self.finish_reason, FinishReason::Stop)
     }
 
+    /// Estimate the dollar cost of this response based on provider pricing.
     pub fn total_cost_estimate(&self) -> f64 {
         // Rough cost estimation (would be provider-specific in real implementation)
         match self.provider {
@@ -438,13 +525,8 @@ impl Default for GoogleVertexConfig {
     }
 }
 
-impl Default for RequestPriority {
-    fn default() -> Self {
-        RequestPriority::Normal
-    }
-}
-
 impl LLMRequestContext {
+    /// Create a new request context with the given request ID.
     pub fn new(request_id: String) -> Self {
         Self {
             user_id: None,
@@ -455,16 +537,19 @@ impl LLMRequestContext {
         }
     }
 
+    /// Set the user ID for this request context.
     pub fn with_user(mut self, user_id: String) -> Self {
         self.user_id = Some(user_id);
         self
     }
 
+    /// Set the tenant ID for this request context.
     pub fn with_tenant(mut self, tenant_id: String) -> Self {
         self.tenant_id = Some(tenant_id);
         self
     }
 
+    /// Set the priority level for this request.
     pub fn with_priority(mut self, priority: RequestPriority) -> Self {
         self.priority = priority;
         self

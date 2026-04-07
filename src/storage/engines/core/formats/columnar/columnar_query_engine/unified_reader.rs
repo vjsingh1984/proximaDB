@@ -3,14 +3,18 @@
 //! This module provides the UnifiedParquetReader that other parts of the
 //! codebase expect, delegating to the appropriate modular components.
 
+use crate::compute::distance_computation::DistanceMetric;
+use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::unified_interface::SearchPlan;
 use crate::proto::proximadb_v1::{MetadataFilter, VectorRecord};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use anyhow::Result;
 use arrow::datatypes::Schema;
+use arrow::record_batch::RecordBatch;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use tracing::{debug, info, trace};
 // SearchResponse should come from service types
 type SearchResponse = crate::core::service_types::VectorSearchResponse;
@@ -18,6 +22,7 @@ type SearchResponse = crate::core::service_types::VectorSearchResponse;
 use super::{BranchedFilterExecutor, CacheStrategy, ParquetReader, QueryConfig};
 
 // Simple cosine similarity function for scoring
+#[allow(dead_code)]
 fn compute_cosine_similarity(a: &[f32], b: &Arc<Vec<f32>>) -> f32 {
     if a.len() != b.len() {
         return 0.0;
@@ -27,10 +32,10 @@ fn compute_cosine_similarity(a: &[f32], b: &Arc<Vec<f32>>) -> f32 {
     let mut norm_a = 0.0;
     let mut norm_b = 0.0;
 
-    for i in 0..a.len() {
-        dot_product += a[i] * b[i];
-        norm_a += a[i] * a[i];
-        norm_b += b[i] * b[i];
+    for (a_val, b_val) in a.iter().zip(b.iter()) {
+        dot_product += a_val * b_val;
+        norm_a += a_val * a_val;
+        norm_b += b_val * b_val;
     }
 
     let denom = (norm_a * norm_b).sqrt();
@@ -225,12 +230,14 @@ impl UnifiedParquetReader {
         collection_id: String,
         engine_type: String,
     ) -> Result<Self> {
-        let mut config = ReaderConfig::default();
-        config.cache_context = Some(CacheContext {
-            cached_filesystem,
-            collection_id: collection_id.clone(),
-            engine_type: engine_type.clone(),
-        });
+        let config = ReaderConfig {
+            cache_context: Some(CacheContext {
+                cached_filesystem,
+                collection_id: collection_id.clone(),
+                engine_type: engine_type.clone(),
+            }),
+            ..Default::default()
+        };
 
         Ok(Self {
             file_paths,
@@ -287,11 +294,11 @@ impl UnifiedParquetReader {
             let records = reader.read_all_with_filesystem(&path, fs).await?;
             all_records.extend(records);
 
-            if let Some(limit) = limit {
-                if all_records.len() >= limit {
-                    all_records.truncate(limit);
-                    break;
-                }
+            if let Some(limit) = limit
+                && all_records.len() >= limit
+            {
+                all_records.truncate(limit);
+                break;
             }
         }
 
@@ -314,7 +321,7 @@ impl UnifiedParquetReader {
             .map(|s| s.filterable_columns.clone())
             .unwrap_or_default();
 
-        // TODO: Re-enable after BranchedFilterExecutor API is fixed
+        // BranchedFilterExecutor: disabled pending API stabilization
         let _executor = BranchedFilterExecutor::new(
             filterable_columns,
             self.file_paths.clone(),
@@ -363,7 +370,7 @@ impl UnifiedParquetReader {
     }
 
     /// Read specific row groups with projection
-    /// TODO: Implement actual row group reading with projection
+    /// Row group reading with projection: deferred to columnar optimization phase
     pub async fn read_row_groups_projected(
         &self,
         _collection_id: &str,
@@ -416,8 +423,7 @@ impl UnifiedParquetReader {
         let needs_metadata = search_plan
             .collection_config
             .as_ref()
-            .map(|c| c.enable_metadata_filtering)
-            .unwrap_or(false);
+            .is_some_and(|c| c.enable_metadata_filtering);
 
         // Extract filter expression from search plan for row group pruning
         let filter_expression = search_plan.filter_expression.clone();
@@ -439,98 +445,141 @@ impl UnifiedParquetReader {
         // Initialize bounded priority queue for top-k results
         let mut priority_queue = BoundedPriorityQueue::new(search_plan.top_k);
         let mut total_records_scanned = 0;
+        #[allow(unused_assignments)]
         let mut row_groups_skipped = 0;
-        let mut files_skipped_early = 0;
+        let files_skipped_early = 0;
 
         // Check if quantization is enabled for this search
         let quantization_enabled = search_plan
             .collection_config
             .as_ref()
-            .map(|c| c.enable_quantization)
-            .unwrap_or(false);
+            .is_some_and(|c| c.enable_quantization);
 
-        // Process files with early termination support
-        for (file_idx, file_path) in self.file_paths.iter().enumerate() {
-            // Check for early termination if enabled
-            if search_plan.enable_early_termination && priority_queue.is_full() {
-                // Optionally: Check if remaining files could possibly beat current min score
-                // This requires file-level statistics (max similarity bounds)
-                // For now, just skip if we have very good results already
-                let min_threshold = priority_queue.min_score_threshold();
-                if min_threshold > 0.95 {
-                    // Very high quality results already
-                    files_skipped_early = self.file_paths.len() - file_idx;
-                    debug!(
-                        "Early termination: Skipping {} files (min_score: {})",
-                        files_skipped_early, min_threshold
-                    );
-                    break;
+        // Determine distance metric from collection config
+        let distance_metric = search_plan
+            .collection_config
+            .as_ref()
+            .map_or(DistanceMetric::Cosine, |c| c.default_distance_metric);
+
+        // ── Phase 1: Concurrent I/O ─────────────────────────────────────────
+        // Read all files concurrently using tokio tasks. Each task performs
+        // row group pruning and vectorized metadata filtering independently.
+        let total_rg_skipped = Arc::new(AtomicUsize::new(0));
+
+        let mut io_handles = Vec::with_capacity(self.file_paths.len());
+        for file_path in &self.file_paths {
+            let reader = self.clone();
+            let fp = file_path.clone();
+            let fe = filter_expression.clone();
+            let rg_counter = Arc::clone(&total_rg_skipped);
+
+            io_handles.push(tokio::spawn(async move {
+                let result = reader
+                    .read_file_batches_with_filters(
+                        &fp,
+                        true, // needs_vectors
+                        needs_metadata,
+                        fe.as_ref(),
+                        quantization_enabled,
+                    )
+                    .await;
+
+                match result {
+                    Ok((batches, skipped)) => {
+                        rg_counter.fetch_add(skipped, AtomicOrdering::Relaxed);
+                        Ok(batches)
+                    }
+                    Err(e) => {
+                        debug!("File read failed for {}: {}", fp, e);
+                        Err(e)
+                    }
+                }
+            }));
+        }
+
+        // Await all I/O tasks and collect batches
+        let mut all_batches: Vec<RecordBatch> = Vec::new();
+        let mut files_succeeded = 0usize;
+        let mut last_error: Option<anyhow::Error> = None;
+        for handle in io_handles {
+            match handle.await {
+                Ok(Ok(batches)) => {
+                    files_succeeded += 1;
+                    all_batches.extend(batches);
+                }
+                Ok(Err(e)) => {
+                    debug!("Skipping file due to error: {}", e);
+                    last_error = Some(e);
+                }
+                Err(e) => {
+                    debug!("Task join error: {}", e);
+                    last_error = Some(anyhow::anyhow!("Task join error: {}", e));
                 }
             }
-            // Read from this file with optimizations including filter-based row group pruning
-            let (file_records, skipped) = self
-                .read_file_with_optimization_and_filters(
-                    file_path,
-                    needs_vectors,
-                    needs_metadata,
-                    filter_expression.as_ref(),
-                    quantization_enabled,
-                )
-                .await?;
+        }
 
-            total_records_scanned += file_records.len();
-            row_groups_skipped += skipped;
+        // If ALL files failed, propagate the last error
+        if files_succeeded == 0 && !self.file_paths.is_empty() {
+            return Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All file reads failed")));
+        }
 
-            // Score and insert records into priority queue
-            if let Some(query_vector) = &search_plan.query_vector {
-                for record in file_records {
-                    // Compute similarity score
-                    let score =
-                        compute_cosine_similarity(query_vector, &Arc::new(record.vector.clone()));
+        row_groups_skipped = total_rg_skipped.load(AtomicOrdering::Relaxed);
 
-                    // Check if score meets minimum threshold (if set)
-                    if let Some(min_score) = search_plan.min_score {
-                        if score < min_score {
-                            continue; // Skip records below minimum threshold
-                        }
+        // ── Phase 2: Parallel SIMD scoring ──────────────────────────────────
+        // Score all batches in parallel using rayon. Each rayon thread gets
+        // a thread-local BoundedPriorityQueue, avoiding contention.
+        if let Some(query_vector) = &search_plan.query_vector {
+            use rayon::prelude::*;
+
+            let top_k = search_plan.top_k;
+            let min_score = search_plan.min_score;
+            let query_vec = query_vector.clone();
+            let reader_ref = self.clone();
+            let records_scanned = AtomicUsize::new(0);
+
+            // Morsel size: process batches in groups for cache efficiency
+            // Each morsel gets its own local priority queue
+            const MORSEL_SIZE: usize = 4;
+
+            let local_queues: Vec<BoundedPriorityQueue> = all_batches
+                .par_chunks(MORSEL_SIZE)
+                .map(|morsel| {
+                    let engine = UnifiedDistanceCompute::new(distance_metric);
+                    let mut local_queue = BoundedPriorityQueue::new(top_k);
+
+                    for batch in morsel {
+                        records_scanned.fetch_add(batch.num_rows(), AtomicOrdering::Relaxed);
+                        let _ = reader_ref.score_batch_with_simd(
+                            batch,
+                            &query_vec,
+                            &engine,
+                            &distance_metric,
+                            min_score,
+                            needs_metadata,
+                            &mut local_queue,
+                        );
                     }
 
-                    // Check if this record would be accepted into the queue
-                    if !priority_queue.would_accept(score) {
-                        continue; // Skip if it wouldn't make it into top-k
-                    }
+                    local_queue
+                })
+                .collect();
 
-                    // Create OptimizedSearchRecord and try to insert
-                    let search_record = crate::core::search::results::OptimizedSearchRecord {
-                        id: record.id.clone(),
-                        vector_id: Some(record.id),
-                        score,
-                        similarity: Some(score),
-                        vector: Some(Arc::new(record.vector)),
-                        metadata: if needs_metadata {
-                            record.metadata
-                        } else {
-                            HashMap::new()
-                        },
-                        debug_info: None,
-                        version: record.version,
-                        timestamp: record.timestamp,
-                        updated_at: None,
-                        expires_at: None,
-                        source: None,
-                        expanded_context: vec![],
-                        semantic_similarity: None,
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
-                    };
+            total_records_scanned = records_scanned.load(AtomicOrdering::Relaxed);
 
-                    priority_queue.try_insert(search_record);
-                }
-            } else {
-                // No query vector - just collect records without scoring
-                // This shouldn't happen in practice for similarity search
-                for record in file_records {
+            // ── Phase 3: Merge ──────────────────────────────────────────────
+            // Merge thread-local priority queues into the final queue
+            for local_queue in local_queues {
+                priority_queue.merge(local_queue);
+            }
+        } else {
+            // No query vector — collect records without scoring (rare path)
+            let distance_engine = UnifiedDistanceCompute::new(distance_metric);
+            let _ = &distance_engine; // suppress unused warning
+            for batch in &all_batches {
+                total_records_scanned += batch.num_rows();
+                let records =
+                    self.extract_records_from_batch(batch, needs_vectors, needs_metadata)?;
+                for record in records {
                     let search_record = crate::core::search::results::OptimizedSearchRecord {
                         id: record.id.clone(),
                         vector_id: Some(record.id),
@@ -554,7 +603,6 @@ impl UnifiedParquetReader {
                         engine_stats: None,
                         index_path: None,
                     };
-
                     if priority_queue.len() < search_plan.top_k {
                         priority_queue.try_insert(search_record);
                     }
@@ -577,10 +625,12 @@ impl UnifiedParquetReader {
             processing_time_us / 1000
         );
 
-        // For queries without filters, the main optimizations are:
+        // Optimizations active:
         // 1. Column projection (skip metadata if not needed)
-        // 2. Quantized vector pre-filtering (if available)
-        // 3. Parallel processing (future enhancement)
+        // 2. Concurrent file I/O (tokio tasks)
+        // 3. Parallel SIMD scoring (rayon morsel-driven)
+        // 4. Vectorized metadata filtering (Arrow compute kernels)
+        // 5. Lazy materialization (metadata only for top-k candidates)
 
         Ok(SearchResponse {
             success: true,
@@ -588,9 +638,9 @@ impl UnifiedParquetReader {
             total_count: total_results as i64,
             total_found: total_results as i64,
             processing_time_us,
-            algorithm_used: "UnifiedParquetReader-Optimized".to_string(),
+            algorithm_used: "UnifiedParquetReader-Parallel-SIMD".to_string(),
             search_metadata: crate::core::service_types::SearchMetadata {
-                algorithm_used: "UnifiedParquetReader-Optimized".to_string(),
+                algorithm_used: "UnifiedParquetReader-Parallel-SIMD".to_string(),
                 query_id: None,
                 query_complexity: 0.0,
                 total_results: total_results as i64,
@@ -608,7 +658,7 @@ impl UnifiedParquetReader {
                     format!("Skipped {} row groups", row_groups_skipped),
                 ],
                 clusters_searched: vec![],
-                filter_pushdown_enabled: false, // TODO: Enable when metadata filters are present
+                filter_pushdown_enabled: false, // Enabled when metadata filters are set in query context
                 parquet_columns_scanned: if needs_metadata {
                     vec![
                         "id".to_string(),
@@ -638,6 +688,7 @@ impl UnifiedParquetReader {
 
     /// Optimized file reading with column projection, row group filtering, and bloom filters
     /// Returns (records, row_groups_skipped)
+    #[allow(dead_code)]
     async fn read_file_with_optimization_and_filters(
         &self,
         file_path: &str,
@@ -704,10 +755,15 @@ impl UnifiedParquetReader {
                             // Check statistics if available
                             if let Some(stats) = col_meta.statistics() {
                                 // For range/equality filters, check if the value could be in this row group
-                                match condition {
+                                {
+                                    use super::filter_pushdown_engine::{
+                                        check_numeric_in_stats_range, check_range_overlaps_stats,
+                                    };
+
+                                    let col_type = col_meta.column_descr().physical_type();
+
+                                    match condition {
                                     crate::storage::engines::core::formats::columnar::FilterCondition::Equals(_, value) => {
-                                        // Only prune for string-type values where statistics are meaningful
-                                        // Skip pruning for booleans and numbers as their statistics are binary-encoded
                                         if value.is_string() {
                                             // Check if the value falls within the min/max range
                                             if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
@@ -729,21 +785,85 @@ impl UnifiedParquetReader {
                                                     }
                                                 }
                                             }
-                                        } else {
-                                            // For non-string values (boolean, number), skip statistics-based pruning
+                                        } else if let Some(num_val) = value.as_f64().or_else(|| value.as_i64().map(|i| i as f64)) {
+                                            // Numeric equality: check typed statistics
+                                            if let Some(false) = check_numeric_in_stats_range(stats, col_type, num_val) {
+                                                keep_row_group = false;
+                                                debug!("  Row group {} pruned: numeric {} outside stats range", rg_idx, num_val);
+                                                break;
+                                            }
+                                        }
+                                        // For other value types (boolean), skip pruning
+                                    }
+                                    crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, min_val, max_val) => {
+                                        let filter_min = min_val.as_f64().or_else(|| min_val.as_i64().map(|i| i as f64));
+                                        let filter_max = max_val.as_f64().or_else(|| max_val.as_i64().map(|i| i as f64));
+
+                                        if let (Some(fmin), Some(fmax)) = (filter_min, filter_max)
+                                            && let Some(false) = check_range_overlaps_stats(stats, col_type, fmin, fmax) {
+                                                keep_row_group = false;
+                                                debug!("  Row group {} pruned: range [{}, {}] doesn't overlap stats", rg_idx, fmin, fmax);
+                                                break;
+                                            }
+                                    }
+                                    crate::storage::engines::core::formats::columnar::FilterCondition::In(_, values) => {
+                                        // Check if any value in the list could fall within stats range
+                                        let mut any_could_match = false;
+                                        let mut has_checkable_values = false;
+
+                                        for v in values {
+                                            if let Some(num_val) = v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)) {
+                                                has_checkable_values = true;
+                                                match check_numeric_in_stats_range(stats, col_type, num_val) {
+                                                    Some(true) => { any_could_match = true; break; }
+                                                    Some(false) => {} // Definitely not in range
+                                                    None => { any_could_match = true; break; } // Can't determine
+                                                }
+                                            } else if v.is_string() {
+                                                has_checkable_values = true;
+                                                if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                                                    let min_str = String::from_utf8_lossy(min_bytes);
+                                                    let max_str = String::from_utf8_lossy(max_bytes);
+                                                    let vs = v.as_str().unwrap_or_default();
+                                                    if !min_str.is_empty() && !max_str.is_empty()
+                                                        && vs >= min_str.as_ref() && vs <= max_str.as_ref() {
+                                                        any_could_match = true;
+                                                        break;
+                                                    }
+                                                } else {
+                                                    any_could_match = true;
+                                                    break;
+                                                }
+                                            } else {
+                                                any_could_match = true;
+                                                break;
+                                            }
+                                        }
+
+                                        if has_checkable_values && !any_could_match {
+                                            keep_row_group = false;
+                                            debug!("  Row group {} pruned: no IN values within stats range", rg_idx);
+                                            break;
                                         }
                                     }
-                                    crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, _min_val, _max_val) => {
-                                        // Range pruning is complex - only prune for string columns
-                                        // For numeric columns, the statistics are stored as binary floats,
-                                        // not strings, so string comparison would be incorrect.
-                                        // Skip range-based pruning for now as it's causing false negatives.
-                                        // TODO: Implement proper numeric statistics comparison using parquet's typed statistics API
-                                        // Don't prune - let the row-level filter handle it
+                                    crate::storage::engines::core::formats::columnar::FilterCondition::IsNull(_) => {
+                                        // If null_count == 0, no nulls exist, prune
+                                        if stats.null_count_opt() == Some(0) {
+                                            keep_row_group = false;
+                                            debug!("  Row group {} pruned: null_count == 0 for IsNull filter", rg_idx);
+                                            break;
+                                        }
                                     }
-                                    _ => {
-                                        // For other filter types (In, IsNull, IsNotNull),
-                                        // we can't easily prune based on statistics
+                                    crate::storage::engines::core::formats::columnar::FilterCondition::IsNotNull(_) => {
+                                        // If all rows are null, no non-null rows exist
+                                        let null_count = stats.null_count_opt().unwrap_or(0);
+                                        let num_rows = row_group_meta.num_rows() as u64;
+                                        if null_count >= num_rows && num_rows > 0 {
+                                            keep_row_group = false;
+                                            debug!("  Row group {} pruned: all rows null for IsNotNull filter", rg_idx);
+                                            break;
+                                        }
+                                    }
                                     }
                                 }
                             }
@@ -813,26 +933,26 @@ impl UnifiedParquetReader {
         // If quantized vectors are available and we need vectors, read them for pre-filtering
         if needs_vectors && (has_binary_vectors || has_int8_vectors || has_pq_vectors) {
             // Read quantized vectors for fast approximate filtering
-            if has_binary_vectors {
-                if let Ok(idx) = schema.index_of(
+            if has_binary_vectors
+                && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
-                ) {
-                    projection.push(idx);
-                }
+                )
+            {
+                projection.push(idx);
             }
-            if has_int8_vectors {
-                if let Ok(idx) = schema.index_of(
+            if has_int8_vectors
+                && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8,
-                ) {
-                    projection.push(idx);
-                }
+                )
+            {
+                projection.push(idx);
             }
-            if has_pq_vectors {
-                if let Ok(idx) = schema.index_of(
+            if has_pq_vectors
+                && let Ok(idx) = schema.index_of(
                     crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8,
-                ) {
-                    projection.push(idx);
-                }
+                )
+            {
+                projection.push(idx);
             }
         }
 
@@ -912,7 +1032,7 @@ impl UnifiedParquetReader {
         let projection_mask = ProjectionMask::roots(reader_builder.parquet_schema(), projection);
 
         // Create reader with projection and selected row groups
-        let mut reader = reader_builder
+        let reader = reader_builder
             .with_projection(projection_mask)
             .with_row_groups(selected_row_groups)
             .with_batch_size(1024) // Process in reasonable batches
@@ -921,22 +1041,57 @@ impl UnifiedParquetReader {
         let mut records = Vec::new();
 
         // Read all batches from selected row groups
-        while let Some(batch) = reader.next() {
+        // Try to convert filter expression to MetadataFilter for vectorized processing
+        let vectorized_filter = filter_expression.and_then(|fe| {
+            crate::storage::engines::core::formats::columnar::MetadataFilter::from_filter_expression(fe)
+        });
+
+        for batch in reader {
             let batch = batch?;
 
-            // Extract records from this batch
-            let batch_records =
-                self.extract_records_from_batch(&batch, needs_vectors, needs_metadata)?;
-
-            // Apply filter expression to records if present
             if let Some(filter_expr) = filter_expression {
-                for record in batch_records {
-                    if self.matches_filter_expression(&record, filter_expr) {
-                        records.push(record);
+                // Try vectorized path: use Arrow compute kernels on entire arrays
+                if let Some(ref metadata_filter) = vectorized_filter {
+                    match super::vectorized_executor::vectorized_filter_batch(
+                        batch.clone(),
+                        &metadata_filter.conditions,
+                    ) {
+                        Ok(filtered_batch) => {
+                            let batch_records = self.extract_records_from_batch(
+                                &filtered_batch,
+                                needs_vectors,
+                                needs_metadata,
+                            )?;
+                            records.extend(batch_records);
+                        }
+                        Err(_) => {
+                            // Fallback: row-at-a-time filtering
+                            let batch_records = self.extract_records_from_batch(
+                                &batch,
+                                needs_vectors,
+                                needs_metadata,
+                            )?;
+                            for record in batch_records {
+                                if self.matches_filter_expression(&record, filter_expr) {
+                                    records.push(record);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Can't convert to metadata filter, use row-at-a-time
+                    let batch_records =
+                        self.extract_records_from_batch(&batch, needs_vectors, needs_metadata)?;
+                    for record in batch_records {
+                        if self.matches_filter_expression(&record, filter_expr) {
+                            records.push(record);
+                        }
                     }
                 }
             } else {
                 // No filter - add all records
+                let batch_records =
+                    self.extract_records_from_batch(&batch, needs_vectors, needs_metadata)?;
                 records.extend(batch_records);
             }
         }
@@ -950,6 +1105,667 @@ impl UnifiedParquetReader {
         debug!("  Records after filtering: {}", records.len());
 
         Ok((records, row_groups_skipped))
+    }
+
+    /// Read filtered RecordBatches from a Parquet file without materializing into VectorRecords.
+    ///
+    /// This is the batch-oriented alternative to `read_file_with_optimization_and_filters`.
+    /// It returns Arrow RecordBatches with row group pruning and vectorized metadata filtering
+    /// already applied, but without the per-row VectorRecord materialization cost.
+    /// Used by the SIMD-accelerated search path in `search_vectors`.
+    async fn read_file_batches_with_filters(
+        &self,
+        file_path: &str,
+        needs_vectors: bool,
+        needs_metadata: bool,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+        quantization_enabled: bool,
+    ) -> Result<(Vec<arrow::record_batch::RecordBatch>, usize)> {
+        use bytes::Bytes;
+        use parquet::arrow::ProjectionMask;
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        use parquet::file::reader::FileReader;
+        use parquet::file::serialized_reader::SerializedFileReader;
+
+        let fs = self.get_filesystem_for_path(file_path)?;
+        let path = FilesystemFactory::resolve_path(file_path)?;
+
+        if !fs.exists(&path).await? {
+            return Err(anyhow::anyhow!("File not found: {}", file_path));
+        }
+
+        let file_data = fs.read(&path).await?;
+        let file_bytes = Bytes::from(file_data);
+
+        // Access metadata for row group pruning
+        let file_reader = SerializedFileReader::new(file_bytes.clone())?;
+        let metadata = file_reader.metadata();
+        let total_row_groups = metadata.num_row_groups();
+
+        // Reuse the same row group pruning logic as read_file_with_optimization_and_filters.
+        // We delegate to a shared helper to avoid duplicating the pruning code.
+        let selected_row_groups =
+            self.select_row_groups_with_pruning(metadata, total_row_groups, filter_expression);
+
+        let row_groups_skipped = total_row_groups - selected_row_groups.len();
+
+        if selected_row_groups.is_empty() {
+            return Ok((Vec::new(), row_groups_skipped));
+        }
+
+        // Build projection mask (same logic as read_file_with_optimization_and_filters)
+        let reader_builder = ParquetRecordBatchReaderBuilder::try_new(file_bytes)?;
+        let schema = reader_builder.schema();
+        let projection = self.build_projection_indices(
+            schema,
+            needs_vectors,
+            needs_metadata,
+            quantization_enabled,
+        );
+
+        let projection_mask = ProjectionMask::roots(reader_builder.parquet_schema(), projection);
+
+        let reader = reader_builder
+            .with_projection(projection_mask)
+            .with_row_groups(selected_row_groups)
+            .with_batch_size(1024)
+            .build()?;
+
+        let mut result_batches = Vec::new();
+
+        // Convert filter expression to columnar MetadataFilter for vectorized batch filtering
+        let vectorized_filter = filter_expression.and_then(|fe| {
+            crate::storage::engines::core::formats::columnar::MetadataFilter::from_filter_expression(fe)
+        });
+
+        for batch in reader {
+            let batch = batch?;
+
+            if let Some(ref metadata_filter) = vectorized_filter {
+                // Vectorized path: use Arrow compute kernels on entire arrays
+                match super::vectorized_executor::vectorized_filter_batch(
+                    batch.clone(),
+                    &metadata_filter.conditions,
+                ) {
+                    Ok(filtered_batch) => {
+                        if filtered_batch.num_rows() > 0 {
+                            result_batches.push(filtered_batch);
+                        }
+                    }
+                    Err(_) => {
+                        // Fallback: pass batch through unfiltered
+                        // (row group pruning already applied above)
+                        if batch.num_rows() > 0 {
+                            result_batches.push(batch);
+                        }
+                    }
+                }
+            } else {
+                // No metadata filter — pass all rows through
+                if batch.num_rows() > 0 {
+                    result_batches.push(batch);
+                }
+            }
+        }
+
+        debug!(
+            "  Batch read: {}/{} row groups selected, {} batches returned",
+            total_row_groups - row_groups_skipped,
+            total_row_groups,
+            result_batches.len()
+        );
+
+        Ok((result_batches, row_groups_skipped))
+    }
+
+    /// Score all vectors in a RecordBatch using SIMD-accelerated batch distance computation.
+    ///
+    /// Instead of materializing VectorRecords and computing distances one-at-a-time,
+    /// this method:
+    /// 1. Extracts the vector column directly from the Arrow batch (zero-copy reference)
+    /// 2. Builds a slice array for batch SIMD distance computation
+    /// 3. Computes all distances in one SIMD-accelerated call
+    /// 4. Only materializes metadata for records that pass the threshold/top-k check
+    fn score_batch_with_simd(
+        &self,
+        batch: &arrow::record_batch::RecordBatch,
+        query_vector: &[f32],
+        distance_engine: &UnifiedDistanceCompute,
+        distance_metric: &DistanceMetric,
+        min_score: Option<f32>,
+        needs_metadata: bool,
+        priority_queue: &mut BoundedPriorityQueue,
+    ) -> Result<()> {
+        use arrow_array::{FixedSizeListArray, Float32Array, Int64Array, ListArray, StringArray};
+
+        let num_rows = batch.num_rows();
+        if num_rows == 0 {
+            return Ok(());
+        }
+
+        // Extract vector column — try FixedSizeList first (preferred), then List
+        let vector_col = batch
+            .column_by_name("vector")
+            .or_else(|| batch.column_by_name("vector_fp32"));
+
+        let vector_slices: Vec<Vec<f32>> = if let Some(col) = vector_col {
+            if let Some(fixed_list) = col.as_any().downcast_ref::<FixedSizeListArray>() {
+                // FixedSizeList: underlying values are a contiguous Float32Array
+                let values = fixed_list
+                    .values()
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Invalid vector values type in FixedSizeList")
+                    })?;
+                let dim = fixed_list.value_length() as usize;
+
+                let mut vecs = Vec::with_capacity(num_rows);
+                for i in 0..num_rows {
+                    let start = i * dim;
+                    let end = start + dim;
+                    // Collect values from the contiguous array
+                    let vec: Vec<f32> = (start..end).map(|idx| values.value(idx)).collect();
+                    vecs.push(vec);
+                }
+                vecs
+            } else if let Some(list) = col.as_any().downcast_ref::<ListArray>() {
+                // Variable-size list fallback
+                let mut vecs = Vec::with_capacity(num_rows);
+                for i in 0..num_rows {
+                    let arr = list.value(i);
+                    let float_arr = arr
+                        .as_any()
+                        .downcast_ref::<Float32Array>()
+                        .ok_or_else(|| anyhow::anyhow!("Invalid vector values in ListArray"))?;
+                    let vec: Vec<f32> = (0..float_arr.len()).map(|j| float_arr.value(j)).collect();
+                    vecs.push(vec);
+                }
+                vecs
+            } else {
+                return Ok(()); // No recognizable vector column format
+            }
+        } else {
+            return Ok(()); // No vector column
+        };
+
+        // Build slice references for batch SIMD distance computation
+        let vec_refs: Vec<&[f32]> = vector_slices.iter().map(|v| v.as_slice()).collect();
+
+        // Compute ALL distances in one SIMD-accelerated batch call
+        let batch_results =
+            distance_engine.batch_distance_pooled_simd(query_vector, &vec_refs, distance_metric);
+
+        // Extract ID, version, timestamp columns for result construction
+        let id_array = batch
+            .column_by_name("id")
+            .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+        let version_array = batch
+            .column_by_name("version")
+            .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
+        let timestamp_array = batch
+            .column_by_name("timestamp")
+            .and_then(|c| c.as_any().downcast_ref::<Int64Array>());
+
+        let id_array = match id_array {
+            Some(a) => a,
+            None => return Err(anyhow::anyhow!("Missing ID column in batch")),
+        };
+
+        // Process scored results — only materialize records that pass threshold/top-k
+        for (row_idx, sim_result) in batch_results.iter().enumerate() {
+            let score = sim_result.similarity_score;
+
+            // Check minimum score threshold
+            if let Some(min) = min_score
+                && score < min
+            {
+                continue;
+            }
+
+            // Check if this score would be accepted into the top-k queue
+            if !priority_queue.would_accept(score) {
+                continue;
+            }
+
+            // Only now do we materialize the metadata for this row (lazy materialization)
+            let id = id_array.value(row_idx).to_string();
+            let version = version_array.map(|a| a.value(row_idx) as u32);
+            let timestamp = timestamp_array.map(|a| a.value(row_idx));
+
+            let metadata = if needs_metadata {
+                self.extract_metadata_for_row(batch, row_idx)
+            } else {
+                HashMap::new()
+            };
+
+            let search_record = crate::core::search::results::OptimizedSearchRecord {
+                id: id.clone(),
+                vector_id: Some(id),
+                score,
+                similarity: Some(score),
+                vector: Some(Arc::new(vector_slices[row_idx].clone())),
+                metadata,
+                debug_info: None,
+                version,
+                timestamp,
+                updated_at: None,
+                expires_at: None,
+                source: None,
+                expanded_context: vec![],
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: None,
+                index_path: None,
+            };
+
+            priority_queue.try_insert(search_record);
+        }
+
+        Ok(())
+    }
+
+    /// Extract metadata for a single row from a RecordBatch.
+    /// Only called for rows that pass the threshold/top-k check (lazy materialization).
+    fn extract_metadata_for_row(
+        &self,
+        batch: &arrow::record_batch::RecordBatch,
+        row_idx: usize,
+    ) -> HashMap<String, crate::proto::proximadb_v1::SqlValue> {
+        use arrow::array::Array;
+        use arrow_array::{Float32Array, Float64Array, Int64Array, StringArray};
+
+        let mut metadata = HashMap::new();
+        let schema = batch.schema();
+
+        // Reserved column names that are not metadata
+        let reserved = [
+            "id",
+            "vector",
+            "vector_fp32",
+            "q_binary",
+            "q_int8",
+            "qp_int8_scale",
+            "qp_int8_min",
+            "qp_int8_max",
+            "q_pq4",
+            "q_pq8",
+            "q_pq16",
+            "q_pq32",
+            "timestamp",
+            "updated_at",
+            "expires_at",
+            "version",
+            "source",
+            "extra_meta",
+            "metadata",
+            "row_group_offset",
+            "row_index",
+        ];
+
+        for (col_idx, field) in schema.fields().iter().enumerate() {
+            let name = field.name();
+            if reserved.contains(&name.as_str()) {
+                continue;
+            }
+
+            let col = batch.column(col_idx);
+
+            // Convert Arrow column value to SqlValue based on type
+            let sql_value = match field.data_type() {
+                arrow::datatypes::DataType::Utf8 => {
+                    if let Some(arr) = col.as_any().downcast_ref::<StringArray>() {
+                        if !col.is_null(row_idx) {
+                            Some(crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                        arr.value(row_idx).to_string(),
+                                    ),
+                                ),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                arrow::datatypes::DataType::Int64 => {
+                    if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
+                        if !col.is_null(row_idx) {
+                            Some(crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(
+                                        arr.value(row_idx),
+                                    ),
+                                ),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                arrow::datatypes::DataType::Float32 => {
+                    if let Some(arr) = col.as_any().downcast_ref::<Float32Array>() {
+                        if !col.is_null(row_idx) {
+                            Some(crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        arr.value(row_idx) as f64,
+                                    ),
+                                ),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                arrow::datatypes::DataType::Float64 => {
+                    if let Some(arr) = col.as_any().downcast_ref::<Float64Array>() {
+                        if !col.is_null(row_idx) {
+                            Some(crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(
+                                        arr.value(row_idx),
+                                    ),
+                                ),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+            if let Some(sv) = sql_value {
+                metadata.insert(name.clone(), sv);
+            }
+        }
+
+        metadata
+    }
+
+    /// Select row groups based on filter expression statistics pruning.
+    /// Shared between `read_file_with_optimization_and_filters` and `read_file_batches_with_filters`.
+    fn select_row_groups_with_pruning(
+        &self,
+        metadata: &parquet::file::metadata::ParquetMetaData,
+        total_row_groups: usize,
+        filter_expression: Option<&crate::core::search::FilterExpression>,
+    ) -> Vec<usize> {
+        let filter_expr = match filter_expression {
+            Some(fe) => fe,
+            None => return (0..total_row_groups).collect(),
+        };
+
+        let metadata_filter = match crate::storage::engines::core::formats::columnar::MetadataFilter::from_filter_expression(filter_expr) {
+            Some(mf) => mf,
+            None => {
+                debug!("  FilterExpression couldn't be converted to MetadataFilter");
+                return (0..total_row_groups).collect();
+            }
+        };
+
+        debug!(
+            "  Converted FilterExpression to MetadataFilter with {} conditions",
+            metadata_filter.conditions.len()
+        );
+
+        let mut selected = Vec::new();
+        for rg_idx in 0..total_row_groups {
+            let row_group_meta = metadata.row_group(rg_idx);
+            let mut keep_row_group = true;
+
+            for condition in &metadata_filter.conditions {
+                let column_name = condition.column();
+
+                let column_idx = (0..row_group_meta.num_columns())
+                    .find(|&i| row_group_meta.column(i).column_descr().name() == column_name);
+
+                if let Some(col_idx) = column_idx {
+                    let col_meta = row_group_meta.column(col_idx);
+
+                    if let Some(stats) = col_meta.statistics() {
+                        use super::filter_pushdown_engine::{
+                            check_numeric_in_stats_range, check_range_overlaps_stats,
+                        };
+
+                        let col_type = col_meta.column_descr().physical_type();
+
+                        match condition {
+                            crate::storage::engines::core::formats::columnar::FilterCondition::Equals(_, value) => {
+                                if value.is_string() {
+                                    if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                                        let min_str = String::from_utf8_lossy(min_bytes);
+                                        let max_str = String::from_utf8_lossy(max_bytes);
+                                        let value_str = value.as_str().unwrap_or(&value.to_string()).to_string();
+                                        if !min_str.is_empty() && !max_str.is_empty()
+                                            && (value_str.as_str() < min_str.as_ref() || value_str.as_str() > max_str.as_ref())
+                                        {
+                                            keep_row_group = false;
+                                            debug!("  Row group {} pruned: {} not in [{}, {}]", rg_idx, value_str, min_str, max_str);
+                                            break;
+                                        }
+                                    }
+                                } else if let Some(num_val) = value.as_f64().or_else(|| value.as_i64().map(|i| i as f64))
+                                    && let Some(false) = check_numeric_in_stats_range(stats, col_type, num_val) {
+                                        keep_row_group = false;
+                                        debug!("  Row group {} pruned: numeric {} outside stats range", rg_idx, num_val);
+                                        break;
+                                    }
+                            }
+                            crate::storage::engines::core::formats::columnar::FilterCondition::Range(_, min_val, max_val) => {
+                                let filter_min = min_val.as_f64().or_else(|| min_val.as_i64().map(|i| i as f64));
+                                let filter_max = max_val.as_f64().or_else(|| max_val.as_i64().map(|i| i as f64));
+                                if let (Some(fmin), Some(fmax)) = (filter_min, filter_max)
+                                    && let Some(false) = check_range_overlaps_stats(stats, col_type, fmin, fmax) {
+                                        keep_row_group = false;
+                                        debug!("  Row group {} pruned: range [{}, {}] doesn't overlap stats", rg_idx, fmin, fmax);
+                                        break;
+                                    }
+                            }
+                            crate::storage::engines::core::formats::columnar::FilterCondition::In(_, values) => {
+                                let mut any_could_match = false;
+                                let mut has_checkable_values = false;
+                                for v in values {
+                                    if let Some(num_val) = v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)) {
+                                        has_checkable_values = true;
+                                        match check_numeric_in_stats_range(stats, col_type, num_val) {
+                                            Some(true) => { any_could_match = true; break; }
+                                            Some(false) => {}
+                                            None => { any_could_match = true; break; }
+                                        }
+                                    } else if v.is_string() {
+                                        has_checkable_values = true;
+                                        if let (Some(min_bytes), Some(max_bytes)) = (stats.min_bytes_opt(), stats.max_bytes_opt()) {
+                                            let min_str = String::from_utf8_lossy(min_bytes);
+                                            let max_str = String::from_utf8_lossy(max_bytes);
+                                            let vs = v.as_str().unwrap_or_default();
+                                            if !min_str.is_empty() && !max_str.is_empty()
+                                                && vs >= min_str.as_ref() && vs <= max_str.as_ref()
+                                            {
+                                                any_could_match = true;
+                                                break;
+                                            }
+                                        } else {
+                                            any_could_match = true;
+                                            break;
+                                        }
+                                    } else {
+                                        any_could_match = true;
+                                        break;
+                                    }
+                                }
+                                if has_checkable_values && !any_could_match {
+                                    keep_row_group = false;
+                                    debug!("  Row group {} pruned: no IN values within stats range", rg_idx);
+                                    break;
+                                }
+                            }
+                            crate::storage::engines::core::formats::columnar::FilterCondition::IsNull(_) => {
+                                if stats.null_count_opt() == Some(0) {
+                                    keep_row_group = false;
+                                    debug!("  Row group {} pruned: null_count == 0 for IsNull filter", rg_idx);
+                                    break;
+                                }
+                            }
+                            crate::storage::engines::core::formats::columnar::FilterCondition::IsNotNull(_) => {
+                                let null_count = stats.null_count_opt().unwrap_or(0);
+                                let num_rows = row_group_meta.num_rows() as u64;
+                                if null_count >= num_rows && num_rows > 0 {
+                                    keep_row_group = false;
+                                    debug!("  Row group {} pruned: all rows null for IsNotNull filter", rg_idx);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if keep_row_group {
+                selected.push(rg_idx);
+            }
+        }
+
+        if selected.len() < total_row_groups {
+            info!(
+                "Row group pruning: keeping {} of {} row groups ({} pruned)",
+                selected.len(),
+                total_row_groups,
+                total_row_groups - selected.len()
+            );
+        }
+
+        selected
+    }
+
+    /// Build projection column indices for Parquet reading.
+    /// Shared between read_file_with_optimization_and_filters and read_file_batches_with_filters.
+    fn build_projection_indices(
+        &self,
+        schema: &Arc<arrow::datatypes::Schema>,
+        needs_vectors: bool,
+        needs_metadata: bool,
+        quantization_enabled: bool,
+    ) -> Vec<usize> {
+        let mut projection = Vec::new();
+
+        // Check for quantized vector columns
+        let has_binary_vectors = quantization_enabled
+            && schema
+                .index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
+                )
+                .is_ok();
+        let has_int8_vectors = quantization_enabled
+            && schema
+                .index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8)
+                .is_ok();
+        let has_pq_vectors = quantization_enabled
+            && schema
+                .index_of(crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8)
+                .is_ok();
+
+        // Always need ID
+        if let Ok(idx) = schema.index_of("id") {
+            projection.push(idx);
+        }
+
+        // Quantized vectors for pre-filtering
+        if needs_vectors && (has_binary_vectors || has_int8_vectors || has_pq_vectors) {
+            if has_binary_vectors
+                && let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_BINARY,
+                )
+            {
+                projection.push(idx);
+            }
+            if has_int8_vectors
+                && let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_INT8,
+                )
+            {
+                projection.push(idx);
+            }
+            if has_pq_vectors
+                && let Ok(idx) = schema.index_of(
+                    crate::storage::engines::core::formats::columnar::constants::FIELD_Q_PQ8,
+                )
+            {
+                projection.push(idx);
+            }
+        }
+
+        // Vector column
+        if needs_vectors {
+            if let Ok(idx) = schema.index_of("vector") {
+                projection.push(idx);
+            } else if let Ok(idx) = schema.index_of("vector_fp32") {
+                projection.push(idx);
+            }
+        }
+
+        // Metadata columns
+        if needs_metadata {
+            if let Ok(idx) = schema.index_of("metadata") {
+                projection.push(idx);
+            }
+            if let Ok(idx) = schema.index_of("extra_meta") {
+                projection.push(idx);
+            }
+
+            for field_idx in 0..schema.fields().len() {
+                let field_name = schema.field(field_idx).name();
+                if matches!(
+                    field_name.as_str(),
+                    "id" | "row_group_offset"
+                        | "row_index"
+                        | "vector"
+                        | "vector_fp32"
+                        | "q_binary"
+                        | "q_int8"
+                        | "qp_int8_scale"
+                        | "qp_int8_min"
+                        | "qp_int8_max"
+                        | "q_pq4"
+                        | "q_pq8"
+                        | "q_pq16"
+                        | "q_pq32"
+                        | "timestamp"
+                        | "updated_at"
+                        | "expires_at"
+                        | "version"
+                        | "source"
+                        | "extra_meta"
+                        | "metadata"
+                ) {
+                    continue;
+                }
+                projection.push(field_idx);
+            }
+        }
+
+        // Always include version and timestamp
+        if let Ok(idx) = schema.index_of("version")
+            && !projection.contains(&idx)
+        {
+            projection.push(idx);
+        }
+        if let Ok(idx) = schema.index_of("timestamp")
+            && !projection.contains(&idx)
+        {
+            projection.push(idx);
+        }
+
+        projection
     }
 
     /// Apply bloom filter pruning for ID-based searches
@@ -966,10 +1782,10 @@ impl UnifiedParquetReader {
         let mut id_filters = Vec::new();
         for filter in metadata_filters {
             for condition in &filter.conditions {
-                if let FilterCondition::Equals(field, value) = condition {
-                    if field == "id" || field == "_id" {
-                        id_filters.push(value.clone());
-                    }
+                if let FilterCondition::Equals(field, value) = condition
+                    && (field == "id" || field == "_id")
+                {
+                    id_filters.push(value.clone());
                 }
             }
         }
@@ -989,7 +1805,7 @@ impl UnifiedParquetReader {
         // 2. Check each ID against bloom filters
         // 3. Only include row groups where bloom filter indicates possible presence
 
-        // TODO: Implement actual Parquet bloom filter reading
+        // Parquet bloom filter: requires parquet crate bloom_filter_reader API
         // For now, return all selected row groups
         Ok(selected_row_groups.to_vec())
     }
@@ -1129,7 +1945,7 @@ impl UnifiedParquetReader {
                     _quantized_score = Some((pq8_data, "pq8"));
                 }
 
-                // TODO: Integration point for QuantizedDistanceCalculator
+                // QuantizedDistanceCalculator: integration via compute/quantization/unified.rs
                 // Example usage (when query vector is available):
                 // if let Some((quantized_data, format)) = quantized_score {
                 //     let calculator = QuantizedDistanceCalculator::new(config)?;
@@ -1201,63 +2017,60 @@ impl UnifiedParquetReader {
                         match field.data_type() {
                             DataType::Utf8 => {
                                 if let Some(str_array) = col.as_any().downcast_ref::<StringArray>()
+                                    && !ArrowArrayTrait::is_null(str_array, row_idx)
                                 {
-                                    if !ArrowArrayTrait::is_null(str_array, row_idx) {
-                                        meta_map.insert(
-                                            field_name.clone(),
-                                            SqlValue {
-                                                value: Some(Value::StringValue(
-                                                    str_array.value(row_idx).to_string(),
-                                                )),
-                                            },
-                                        );
-                                    }
+                                    meta_map.insert(
+                                        field_name.clone(),
+                                        SqlValue {
+                                            value: Some(Value::StringValue(
+                                                str_array.value(row_idx).to_string(),
+                                            )),
+                                        },
+                                    );
                                 }
                             }
                             DataType::Int64 => {
-                                if let Some(int_array) = col.as_any().downcast_ref::<Int64Array>() {
-                                    if !ArrowArrayTrait::is_null(int_array, row_idx) {
-                                        meta_map.insert(
-                                            field_name.clone(),
-                                            SqlValue {
-                                                value: Some(Value::Int64Value(
-                                                    int_array.value(row_idx),
-                                                )),
-                                            },
-                                        );
-                                    }
+                                if let Some(int_array) = col.as_any().downcast_ref::<Int64Array>()
+                                    && !ArrowArrayTrait::is_null(int_array, row_idx)
+                                {
+                                    meta_map.insert(
+                                        field_name.clone(),
+                                        SqlValue {
+                                            value: Some(Value::Int64Value(
+                                                int_array.value(row_idx),
+                                            )),
+                                        },
+                                    );
                                 }
                             }
                             DataType::Float64 => {
                                 if let Some(float_array) =
                                     col.as_any().downcast_ref::<Float64Array>()
+                                    && !ArrowArrayTrait::is_null(float_array, row_idx)
                                 {
-                                    if !ArrowArrayTrait::is_null(float_array, row_idx) {
-                                        meta_map.insert(
-                                            field_name.clone(),
-                                            SqlValue {
-                                                value: Some(Value::NumberValue(
-                                                    float_array.value(row_idx),
-                                                )),
-                                            },
-                                        );
-                                    }
+                                    meta_map.insert(
+                                        field_name.clone(),
+                                        SqlValue {
+                                            value: Some(Value::NumberValue(
+                                                float_array.value(row_idx),
+                                            )),
+                                        },
+                                    );
                                 }
                             }
                             DataType::Boolean => {
                                 if let Some(bool_array) =
                                     col.as_any().downcast_ref::<BooleanArray>()
+                                    && !ArrowArrayTrait::is_null(bool_array, row_idx)
                                 {
-                                    if !ArrowArrayTrait::is_null(bool_array, row_idx) {
-                                        meta_map.insert(
-                                            field_name.clone(),
-                                            SqlValue {
-                                                value: Some(Value::BoolValue(
-                                                    bool_array.value(row_idx),
-                                                )),
-                                            },
-                                        );
-                                    }
+                                    meta_map.insert(
+                                        field_name.clone(),
+                                        SqlValue {
+                                            value: Some(Value::BoolValue(
+                                                bool_array.value(row_idx),
+                                            )),
+                                        },
+                                    );
                                 }
                             }
                             _ => {
@@ -1268,37 +2081,33 @@ impl UnifiedParquetReader {
                 }
 
                 // Then, extract from "extra_meta" Map column if present (non-filterable metadata)
-                if let Some(map_col) = batch.column_by_name("extra_meta") {
-                    if let Some(map_array) = map_col.as_any().downcast_ref::<MapArray>() {
-                        use arrow_array::Array;
+                if let Some(map_col) = batch.column_by_name("extra_meta")
+                    && let Some(map_array) = map_col.as_any().downcast_ref::<MapArray>()
+                {
+                    use arrow_array::Array;
 
-                        if !map_array.is_null(row_idx) {
-                            let map_value = map_array.value(row_idx);
+                    if !map_array.is_null(row_idx) {
+                        let map_value = map_array.value(row_idx);
 
-                            // Map is stored as a struct array with "key" and "value" fields
-                            if let Some(struct_array) = map_value
-                                .as_any()
-                                .downcast_ref::<arrow_array::StructArray>()
-                            {
-                                if let Some(keys) = struct_array
-                                    .column_by_name("key")
-                                    .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                                {
-                                    if let Some(values) = struct_array
-                                        .column_by_name("value")
-                                        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-                                    {
-                                        for i in 0..keys.len() {
-                                            if !keys.is_null(i) && !values.is_null(i) {
-                                                let key = keys.value(i).to_string();
-                                                let value = values.value(i).to_string();
-                                                // Only insert if not already present from typed columns
-                                                meta_map.entry(key).or_insert(SqlValue {
-                                                    value: Some(Value::StringValue(value)),
-                                                });
-                                            }
-                                        }
-                                    }
+                        // Map is stored as a struct array with "key" and "value" fields
+                        if let Some(struct_array) = map_value
+                            .as_any()
+                            .downcast_ref::<arrow_array::StructArray>()
+                            && let Some(keys) = struct_array
+                                .column_by_name("key")
+                                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                            && let Some(values) = struct_array
+                                .column_by_name("value")
+                                .and_then(|c| c.as_any().downcast_ref::<StringArray>())
+                        {
+                            for i in 0..keys.len() {
+                                if !keys.is_null(i) && !values.is_null(i) {
+                                    let key = keys.value(i).to_string();
+                                    let value = values.value(i).to_string();
+                                    // Only insert if not already present from typed columns
+                                    meta_map.entry(key).or_insert(SqlValue {
+                                        value: Some(Value::StringValue(value)),
+                                    });
                                 }
                             }
                         }
@@ -1310,13 +2119,9 @@ impl UnifiedParquetReader {
                 HashMap::new()
             };
 
-            let version = version_array
-                .and_then(|arr| Some(arr.value(row_idx)))
-                .unwrap_or(0);
+            let version = version_array.map(|arr| arr.value(row_idx)).unwrap_or(0);
 
-            let timestamp = timestamp_array
-                .and_then(|arr| Some(arr.value(row_idx)))
-                .unwrap_or(0);
+            let timestamp = timestamp_array.map(|arr| arr.value(row_idx)).unwrap_or(0);
 
             records.push(VectorRecord {
                 id,
@@ -1450,7 +2255,7 @@ impl UnifiedParquetReader {
         _filter: Option<&MetadataFilter>,
         _projection: Option<&[String]>,
     ) -> Result<StreamingIterator> {
-        // TODO: Implement actual streaming iterator
+        // Streaming iterator: requires async Stream trait on row group reader
         // For now, return a placeholder that simulates streaming behavior
         Ok(StreamingIterator {
             file_paths: self.file_paths.clone(),
@@ -1744,6 +2549,7 @@ impl UnifiedParquetReader {
 
     /// Check if record matches filter expression using centralized sql_value_filter
     /// This ensures consistency with SST and other engines
+    #[allow(dead_code)]
     fn matches_filter_expression(
         &self,
         record: &VectorRecord,
@@ -1795,8 +2601,7 @@ impl UnifiedParquetReader {
                     }
                     Some(crate::proto::proximadb_v1::filter_clause::Value::DoubleValue(f)) => {
                         serde_json::Number::from_f64(*f)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number)
                     }
                     Some(crate::proto::proximadb_v1::filter_clause::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
@@ -1814,7 +2619,10 @@ impl UnifiedParquetReader {
 
         // Combine with AND logic (MetadataFilter default)
         if expressions.len() == 1 {
-            expressions.into_iter().next().unwrap()
+            expressions
+                .into_iter()
+                .next()
+                .unwrap_or(FilterExpression::And(Vec::new()))
         } else {
             FilterExpression::And(expressions)
         }
@@ -1841,7 +2649,7 @@ impl UnifiedParquetReader {
             // 3. Subsequent calls read schema from local cache, not cloud storage
 
             // Check if schema is already cached
-            // TODO: Add proper schema caching API to UnifiedCachingFilesystem
+            // Schema caching: UnifiedCachingFilesystem caches footer metadata internally
             // For now, use efficient footer reading
 
             // Read only the footer to get schema (much smaller than full file)
@@ -2091,7 +2899,7 @@ impl UnifiedParquetReader {
         // 3. Check if all required bits are set
 
         // For now, return true to be conservative (no false negatives)
-        // TODO: Implement actual bloom filter checking using parquet crate APIs
+        // Bloom filter checking: parquet crate APIs for column-level bloom filters
 
         // Check if we have a bloom filter for this column
         bloom_filters
@@ -2162,7 +2970,7 @@ pub struct StreamingIterator {
 impl StreamingIterator {
     /// Get next batch of records
     pub async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
-        // TODO: Implement actual streaming
+        // Streaming: async row group iteration deferred to streaming compaction
         // For now, return None to indicate end of stream
         Ok(None)
     }

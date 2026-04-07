@@ -111,6 +111,7 @@ impl SecureVectorOperations {
     /// This includes:
     /// - Adding ownership metadata for RLS
     /// - Encrypting configured fields
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     pub async fn apply_insert_security(
         &self,
         collection: &str,
@@ -143,12 +144,12 @@ impl SecureVectorOperations {
         }
 
         // Apply field encryption if enabled
-        if security_config.field_encryption_enabled {
-            if let Some(ref encryption) = self.encryption_service {
-                for record in records.iter_mut() {
-                    self.encrypt_record_fields(record, encryption, security_config)
-                        .await?;
-                }
+        if security_config.field_encryption_enabled
+            && let Some(ref encryption) = self.encryption_service
+        {
+            for record in records.iter_mut() {
+                self.encrypt_record_fields(record, encryption, security_config)
+                    .await?;
             }
         }
 
@@ -309,9 +310,8 @@ impl SecureVectorOperations {
         let is_encrypted = record
             .metadata
             .get("__encrypted")
-            .and_then(|v| sql_value_to_string(v))
-            .map(|s| s == "true")
-            .unwrap_or(false);
+            .and_then(sql_value_to_string)
+            .is_some_and(|s| s == "true");
 
         if !is_encrypted {
             return Ok(());

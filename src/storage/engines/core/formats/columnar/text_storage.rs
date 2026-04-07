@@ -156,20 +156,15 @@ pub struct TextStorageConfig {
 }
 
 /// Compression options for sidecar files
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidecarCompression {
     /// No compression
     None,
     /// LZ4 compression (fast)
+    #[default]
     Lz4,
     /// Zstd compression (better ratio)
     Zstd,
-}
-
-impl Default for SidecarCompression {
-    fn default() -> Self {
-        Self::Lz4
-    }
 }
 
 impl Default for TextStorageConfig {
@@ -513,7 +508,7 @@ impl TextChunker {
         }
 
         // Validate configuration
-        if let Err(_) = self.config.validate() {
+        if self.config.validate().is_err() {
             // Fall back to simple chunking on invalid config
             return self.simple_chunk(parent_id, text);
         }
@@ -660,15 +655,15 @@ impl TextChunker {
         }
 
         // Look for single newline
-        for i in target..search_end {
-            if chars[i] == '\n' {
+        for (i, &ch) in chars.iter().enumerate().take(search_end).skip(target) {
+            if ch == '\n' {
                 return i + 1;
             }
         }
 
         // Look for any whitespace
-        for i in target..search_end {
-            if chars[i].is_whitespace() {
+        for (i, &ch) in chars.iter().enumerate().take(search_end).skip(target) {
+            if ch.is_whitespace() {
                 return i + 1;
             }
         }
@@ -1378,16 +1373,16 @@ impl TextColumnWriter {
         }
 
         // Auto-index if full-text indexing is enabled
-        if self.auto_index {
-            if let Some(ref mut index) = self.fulltext_index {
-                // For inline/sidecar, index the full document
-                // For chunked, index each chunk separately
-                if strategy == TextStorageStrategy::Chunked {
-                    // Chunks are indexed during write_chunked, skip here
-                } else {
-                    // Index the full document
-                    let _ = index.add_document(record_id, content);
-                }
+        if self.auto_index
+            && let Some(ref mut index) = self.fulltext_index
+        {
+            // For inline/sidecar, index the full document
+            // For chunked, index each chunk separately
+            if strategy == TextStorageStrategy::Chunked {
+                // Chunks are indexed during write_chunked, skip here
+            } else {
+                // Index the full document
+                let _ = index.add_document(record_id, content);
             }
         }
 
@@ -1689,14 +1684,14 @@ impl TextColumnReader {
                 .collect();
 
             // Replace sidecar references with actual content
-            for value in result.iter_mut() {
-                if let Some(val) = value.as_ref() {
-                    if val.starts_with("__sidecar__:") {
-                        let record_id = &val[12..];
-                        if let Some(sidecar_ref) = sidecar_map.get(record_id) {
-                            let content = self.load_sidecar(sidecar_ref).await?;
-                            *value = Some(content);
-                        }
+            for value in &mut result {
+                if let Some(val) = value.as_ref()
+                    && val.starts_with("__sidecar__:")
+                {
+                    let record_id = &val[12..];
+                    if let Some(sidecar_ref) = sidecar_map.get(record_id) {
+                        let content = self.load_sidecar(sidecar_ref).await?;
+                        *value = Some(content);
                     }
                 }
             }
@@ -1843,7 +1838,8 @@ mod tests {
         .with_compression(SidecarCompression::Zstd);
 
         let bytes = sidecar_ref.to_bytes();
-        let restored = SidecarRef::from_bytes("record_1".to_string(), &bytes).unwrap();
+        let restored = SidecarRef::from_bytes("record_1".to_string(), &bytes)
+            .expect("SidecarRef deserialization should succeed for valid bytes");
 
         assert_eq!(restored.sidecar_path, "/path/to/sidecar");
         assert_eq!(restored.offset, 100);
@@ -1856,8 +1852,12 @@ mod tests {
         let config = TextStorageConfig::for_small_text();
         let mut writer = TextColumnWriter::new(config);
 
-        writer.write("rec_1", "Hello").unwrap();
-        writer.write("rec_2", "World").unwrap();
+        writer
+            .write("rec_1", "Hello")
+            .expect("Write should succeed for valid inline text");
+        writer
+            .write("rec_2", "World")
+            .expect("Write should succeed for valid inline text");
         writer.write_null("rec_3");
 
         assert_eq!(writer.len(), 3);
@@ -1875,7 +1875,7 @@ mod tests {
 
         writer
             .write("rec_1", "This is a longer text that will be chunked")
-            .unwrap();
+            .expect("Write should succeed for chunked text");
 
         assert!(!writer.get_chunks().is_empty());
         assert!(writer.get_chunks().len() > 1); // Should have multiple chunks
@@ -1902,7 +1902,9 @@ mod tests {
         let config = TextStorageConfig::for_small_text();
         let mut writer = TextColumnWriter::new(config);
 
-        writer.write("rec_1", "Hello").unwrap();
+        writer
+            .write("rec_1", "Hello")
+            .expect("Write should succeed for valid inline text");
 
         assert_eq!(writer.get_storage_type("rec_1"), Some(StorageType::Inline));
         assert_eq!(writer.get_storage_type("unknown"), None);
@@ -1913,8 +1915,12 @@ mod tests {
         let config = TextStorageConfig::default();
         let mut writer = TextColumnWriter::new(config);
 
-        writer.write("rec_1", "Hello").unwrap();
-        writer.write("rec_2", "World").unwrap();
+        writer
+            .write("rec_1", "Hello")
+            .expect("Write should succeed for valid inline text");
+        writer
+            .write("rec_2", "World")
+            .expect("Write should succeed for valid inline text");
         writer.write_null("rec_3");
 
         let array = writer.build_inline_array();
@@ -1929,7 +1935,9 @@ mod tests {
         let string_array: StringArray = vec![Some("Hello"), Some("World"), None].into();
         let array_ref: ArrayRef = Arc::new(string_array);
 
-        let values = reader.load_from_array(&array_ref).unwrap();
+        let values = reader
+            .load_from_array(&array_ref)
+            .expect("Load from array should succeed for valid StringArray");
         assert_eq!(values.len(), 3);
         assert_eq!(values[0], Some("Hello".to_string()));
         assert_eq!(values[1], Some("World".to_string()));
@@ -2169,7 +2177,8 @@ mod tests {
             let chunk_id = &chunks[0].chunk_id;
             let found = TextChunker::find_chunk_by_id(&chunks, chunk_id);
             assert!(found.is_some());
-            assert_eq!(found.unwrap().chunk_id, *chunk_id);
+            let found_chunk = found.expect("Chunk should be found after is_some() check");
+            assert_eq!(found_chunk.chunk_id, *chunk_id);
 
             let not_found = TextChunker::find_chunk_by_id(&chunks, "nonexistent");
             assert!(not_found.is_none());
@@ -2246,7 +2255,7 @@ mod tests {
                 "rec_1",
                 "This is a longer text for testing RAG chunking with overlap.",
             )
-            .unwrap();
+            .expect("Write should succeed for RAG chunking with valid text");
 
         let chunks = writer.get_chunks();
         assert!(chunks.len() > 1);
@@ -2271,7 +2280,7 @@ mod tests {
 
         writer
             .write("rec_1", "This is a test text for fallback chunking.")
-            .unwrap();
+            .expect("Write should succeed for fallback chunking with valid text");
 
         let chunks = writer.get_chunks();
         assert!(!chunks.is_empty());
@@ -2301,9 +2310,15 @@ mod tests {
         let mut writer = TextColumnWriter::new(TextStorageConfig::default())
             .with_fulltext_index(TokenizerConfig::default());
 
-        writer.write("doc1", "The quick brown fox").unwrap();
-        writer.write("doc2", "A lazy brown dog").unwrap();
-        writer.write("doc3", "The quick blue bird").unwrap();
+        writer
+            .write("doc1", "The quick brown fox")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc2", "A lazy brown dog")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc3", "The quick blue bird")
+            .expect("Write should succeed for full-text indexing");
 
         // Search for documents
         let results = writer.fulltext_search("quick brown", 10);
@@ -2318,9 +2333,15 @@ mod tests {
         let mut writer = TextColumnWriter::new(TextStorageConfig::default())
             .with_fulltext_index(TokenizerConfig::default());
 
-        writer.write("doc1", "quick brown fox jumps").unwrap();
-        writer.write("doc2", "quick rabbit").unwrap();
-        writer.write("doc3", "slow brown tortoise").unwrap();
+        writer
+            .write("doc1", "quick brown fox jumps")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc2", "quick rabbit")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc3", "slow brown tortoise")
+            .expect("Write should succeed for full-text indexing");
 
         // Require all terms
         let results = writer
@@ -2336,9 +2357,15 @@ mod tests {
         let mut writer = TextColumnWriter::new(TextStorageConfig::default())
             .with_fulltext_index(TokenizerConfig::default());
 
-        writer.write("doc1", "hello world").unwrap();
-        writer.write("doc2", "hello there").unwrap();
-        writer.write("doc3", "goodbye world").unwrap();
+        writer
+            .write("doc1", "hello world")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc2", "hello there")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc3", "goodbye world")
+            .expect("Write should succeed for full-text indexing");
 
         // Check document frequency
         let hello_df = writer.get_document_frequency("hello");
@@ -2358,9 +2385,15 @@ mod tests {
         let mut writer = TextColumnWriter::new(TextStorageConfig::default())
             .with_fulltext_index(TokenizerConfig::default());
 
-        writer.write("doc1", "test testing tested").unwrap();
-        writer.write("doc2", "test example").unwrap();
-        writer.write("doc3", "test sample").unwrap();
+        writer
+            .write("doc1", "test testing tested")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc2", "test example")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc3", "test sample")
+            .expect("Write should succeed for full-text indexing");
 
         let top_terms = writer.get_top_terms(5);
         assert!(!top_terms.is_empty());
@@ -2375,8 +2408,12 @@ mod tests {
         let mut writer = TextColumnWriter::new(TextStorageConfig::default())
             .with_fulltext_index(TokenizerConfig::default());
 
-        writer.write("doc1", "testing tested tester").unwrap();
-        writer.write("doc2", "temperature temporal").unwrap();
+        writer
+            .write("doc1", "testing tested tester")
+            .expect("Write should succeed for full-text indexing");
+        writer
+            .write("doc2", "temperature temporal")
+            .expect("Write should succeed for full-text indexing");
 
         let terms = writer.get_terms_with_prefix("test", 10);
         assert!(!terms.is_empty());
@@ -2393,8 +2430,12 @@ mod tests {
                 BM25Config::for_short_documents(),
             );
 
-        writer.write("doc1", "short text here").unwrap();
-        writer.write("doc2", "another short document").unwrap();
+        writer
+            .write("doc1", "short text here")
+            .expect("Write should succeed for BM25 indexing");
+        writer
+            .write("doc2", "another short document")
+            .expect("Write should succeed for BM25 indexing");
 
         let results = writer.fulltext_search("short", 10);
         assert!(!results.is_empty());
@@ -2408,14 +2449,18 @@ mod tests {
         // Disable auto-indexing
         writer.set_auto_index(false);
 
-        writer.write("doc1", "some text").unwrap();
+        writer
+            .write("doc1", "some text")
+            .expect("Write should succeed even without auto-indexing");
 
         // Should not find anything because auto-index is disabled
         let results = writer.fulltext_search("text", 10);
         assert!(results.is_empty());
 
         // Manually index
-        writer.index_document("doc1", "some text").unwrap();
+        writer
+            .index_document("doc1", "some text")
+            .expect("Manual indexing should succeed for valid document");
 
         // Now should find it
         let results = writer.fulltext_search("text", 10);
@@ -2427,7 +2472,9 @@ mod tests {
         let mut writer = TextColumnWriter::new(TextStorageConfig::default())
             .with_fulltext_index(TokenizerConfig::default());
 
-        writer.write("doc1", "hello world").unwrap();
+        writer
+            .write("doc1", "hello world")
+            .expect("Write should succeed for full-text indexing");
 
         // Verify index has content
         let results = writer.fulltext_search("hello", 10);
@@ -2461,10 +2508,12 @@ mod tests {
                 "doc1",
                 "This is a longer document that will be split into multiple chunks for testing.",
             )
-            .unwrap();
+            .expect("Write should succeed for chunked text");
 
         // Build index from chunks
-        writer.build_index_from_chunks().unwrap();
+        writer
+            .build_index_from_chunks()
+            .expect("Building index from chunks should succeed");
 
         // Should be able to search chunks
         let results = writer.fulltext_search("document", 10);

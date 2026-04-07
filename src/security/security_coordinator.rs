@@ -576,7 +576,7 @@ fn create_authorization_failure_event(
 mod tests {
     use super::*;
     use crate::security::AuthenticationMethod;
-    use crate::security::unified_auth::{JwtConfig, SSOConfig};
+    use crate::security::unified_auth::{JwtConfig, MtlsConfig, SSOConfig};
     use std::collections::HashMap;
     use tracing::{debug, info, warn};
 
@@ -606,6 +606,7 @@ mod tests {
                     aws_iam: None,
                     azure_ad: None,
                 },
+                mtls: MtlsConfig::default(),
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),

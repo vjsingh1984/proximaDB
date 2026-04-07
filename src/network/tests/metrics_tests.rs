@@ -83,3 +83,22 @@ async fn prometheus_metrics_endpoint_returns_valid_format() {
     assert!(body_str.contains("# HELP"), "expected HELP comments");
     assert!(body_str.contains("# TYPE"), "expected TYPE comments");
 }
+
+#[tokio::test]
+async fn prometheus_metrics_compat_endpoint_returns_payload() {
+    let collector = std::sync::Arc::new(MetricsCollector::new());
+    let service = MetricsService::new(MetricsServiceConfig::default(), collector);
+    let app = service.create_router();
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics/prometheus")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+}

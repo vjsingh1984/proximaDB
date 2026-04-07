@@ -12,7 +12,7 @@
 //! - Memory overhead
 //! - Cache locality
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use std::time::Duration;
 
 // Test fixtures

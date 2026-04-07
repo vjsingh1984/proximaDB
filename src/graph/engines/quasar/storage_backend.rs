@@ -110,10 +110,7 @@ impl ColdStorageBackend {
     pub async fn new(backend_type: BackendType, storage_path: &Path) -> Result<Self> {
         // Create storage directory if it doesn't exist
         fs::create_dir_all(storage_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
+            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
         })?;
 
         let backend = Self {
@@ -400,10 +397,7 @@ impl ColdStorageBackend {
         fs::create_dir_all(file_path.parent().unwrap())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )))
+                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
             })?;
 
         let json_data = serde_json::to_string_pretty(node)
@@ -412,16 +406,18 @@ impl ColdStorageBackend {
         fs::write(&file_path, json_data.as_bytes())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )))
+                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
             })?;
 
         Ok(StorageLocation {
             file_path: file_path
                 .strip_prefix(&self.storage_path)
-                .unwrap()
+                .map_err(|e| {
+                    VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Path strip failed: {}", e),
+                    )))
+                })?
                 .to_path_buf(),
             offset: 0,
             size: json_data.len() as u64,
@@ -437,10 +433,7 @@ impl ColdStorageBackend {
         fs::create_dir_all(file_path.parent().unwrap())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )))
+                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
             })?;
 
         let json_data = serde_json::to_string_pretty(edge)
@@ -449,16 +442,18 @@ impl ColdStorageBackend {
         fs::write(&file_path, json_data.as_bytes())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )))
+                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
             })?;
 
         Ok(StorageLocation {
             file_path: file_path
                 .strip_prefix(&self.storage_path)
-                .unwrap()
+                .map_err(|e| {
+                    VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Path strip failed: {}", e),
+                    )))
+                })?
                 .to_path_buf(),
             offset: 0,
             size: json_data.len() as u64,
@@ -469,10 +464,7 @@ impl ColdStorageBackend {
     async fn read_node_json(&self, location: &StorageLocation) -> Result<StorableNode> {
         let file_path = self.storage_path.join(&location.file_path);
         let json_data = fs::read_to_string(&file_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
+            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
         })?;
 
         serde_json::from_str(&json_data)
@@ -482,10 +474,7 @@ impl ColdStorageBackend {
     async fn read_edge_json(&self, location: &StorageLocation) -> Result<StorableEdge> {
         let file_path = self.storage_path.join(&location.file_path);
         let json_data = fs::read_to_string(&file_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))
+            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
         })?;
 
         serde_json::from_str(&json_data)
@@ -690,10 +679,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_backend_creation() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let backend = ColdStorageBackend::new(BackendType::Json, temp_dir.path())
             .await
-            .unwrap();
+            .expect("Failed to create backend");
 
         let stats = backend.get_stats().await;
         assert_eq!(stats.nodes_stored, 0);
@@ -702,10 +691,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_storage_and_retrieval() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let backend = ColdStorageBackend::new(BackendType::Json, temp_dir.path())
             .await
-            .unwrap();
+            .expect("Failed to create backend");
 
         let node = Node {
             id: "test_node".to_string(),
@@ -726,14 +715,17 @@ mod tests {
         };
 
         // Store node
-        backend.store_node(node.clone()).await.unwrap();
+        backend
+            .store_node(node.clone())
+            .await
+            .expect("Failed to store node");
 
         // Retrieve node
         let retrieved = backend
             .get_node(&"test_node".to_string())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to get node")
+            .expect("Node not found");
         assert_eq!(retrieved.id, "test_node");
         assert_eq!(retrieved.labels, vec!["TestLabel"]);
 
@@ -746,10 +738,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_edge_storage_and_retrieval() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let backend = ColdStorageBackend::new(BackendType::Json, temp_dir.path())
             .await
-            .unwrap();
+            .expect("Failed to create backend");
 
         let edge = Edge {
             id: "test_edge".to_string(),
@@ -763,14 +755,17 @@ mod tests {
         };
 
         // Store edge
-        backend.store_edge(edge.clone()).await.unwrap();
+        backend
+            .store_edge(edge.clone())
+            .await
+            .expect("Failed to store edge");
 
         // Retrieve edge
         let retrieved = backend
             .get_edge(&"test_edge".to_string())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to get edge")
+            .expect("Edge not found");
         assert_eq!(retrieved.id, "test_edge");
         assert_eq!(retrieved.from_node_id, "node1");
         assert_eq!(retrieved.to_node_id, "node2");
@@ -783,10 +778,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_node_deletion() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let backend = ColdStorageBackend::new(BackendType::Json, temp_dir.path())
             .await
-            .unwrap();
+            .expect("Failed to create backend");
 
         let node = Node {
             id: "delete_me".to_string(),
@@ -798,17 +793,23 @@ mod tests {
         };
 
         // Store then delete
-        backend.store_node(node).await.unwrap();
+        backend
+            .store_node(node)
+            .await
+            .expect("Failed to store node");
         let deleted = backend
             .delete_node(&"delete_me".to_string())
             .await
-            .unwrap()
-            .unwrap();
+            .expect("Failed to delete node")
+            .expect("Node not found after deletion");
 
         assert_eq!(deleted.id, "delete_me");
 
         // Should not be retrievable anymore
-        let not_found = backend.get_node(&"delete_me".to_string()).await.unwrap();
+        let not_found = backend
+            .get_node(&"delete_me".to_string())
+            .await
+            .expect("Failed to check if node exists");
         assert!(not_found.is_none());
     }
 }

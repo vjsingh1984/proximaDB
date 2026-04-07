@@ -34,6 +34,8 @@
 
 pub mod coordinator;
 pub mod isolation;
+pub mod participants;
+pub mod runtime;
 pub mod two_phase_commit;
 
 // Re-exports

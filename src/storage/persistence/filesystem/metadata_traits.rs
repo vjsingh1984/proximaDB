@@ -69,7 +69,7 @@ impl EngineMetadataSerializer for GenericMetadataSerializer {
             let cacheable = CacheableMetadata {
                 file_path: file_meta.path.clone(),
                 file_size: file_meta.size,
-                last_modified: file_meta.modified.map(|dt| dt.timestamp()).unwrap_or(0),
+                last_modified: file_meta.modified.map_or(0, |dt| dt.timestamp()),
                 engine_metadata: None,
                 cached_component: None,
             };
@@ -97,6 +97,7 @@ mod viper_example {
     use super::*;
     use serde::{Deserialize, Serialize};
 
+    #[allow(dead_code)]
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct ViperMetadata {
         pub row_groups: Vec<RowGroupInfo>,
@@ -104,6 +105,7 @@ mod viper_example {
         pub parquet_footer: Option<Vec<u8>>,
     }
 
+    #[allow(dead_code)]
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct RowGroupInfo {
         pub id: u32,
@@ -111,6 +113,7 @@ mod viper_example {
         pub file_offset: u64,
     }
 
+    #[allow(dead_code)]
     #[derive(Debug)]
     pub struct ViperMetadataSerializer;
 

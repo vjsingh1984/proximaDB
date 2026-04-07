@@ -294,7 +294,7 @@ pub fn extract_query_characteristics(query: &[f32], top_k: usize) -> QueryCharac
         .enumerate()
         .map(|(i, &v)| (i, v.abs()))
         .collect();
-    indexed_query.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    indexed_query.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let dominant_dimensions = indexed_query
         .iter()
         .take(5)
@@ -519,7 +519,7 @@ impl Default for PerformanceMetrics {
 
 /// Execution plan for progressive search
 /// Source: progressive_search.rs
-#[allow(dead_code)]
+#[allow(dead_code, missing_docs)]
 #[derive(Debug, Clone)]
 pub struct ExecutionPlan {
     pub quantization_level: String,

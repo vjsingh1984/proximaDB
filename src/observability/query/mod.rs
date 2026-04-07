@@ -6,10 +6,15 @@
 // - Metric aggregation with PromQL-like syntax
 // - Trace queries and analysis
 
+/// Log query builder, filtering, aggregation, and pattern detection.
 pub mod logs;
+/// Metric query builder with time-series aggregation functions.
 pub mod metrics;
+/// PromQL-compatible query language parser and executor.
 pub mod promql;
+/// Full-text log search powered by Tantivy with BM25 ranking.
 pub mod tantivy_log_index;
+/// Trace query engine for distributed tracing analysis.
 pub mod traces;
 
 use std::collections::HashMap;
@@ -233,7 +238,9 @@ impl ObservabilityQueryEngine {
 
         // If text query and fulltext enabled, try Tantivy first
         if use_fulltext && params.query.is_some() {
-            let query = params.query.as_ref().unwrap();
+            let Some(query) = params.query.as_ref() else {
+                return self.query_logs(namespace, params).await;
+            };
 
             // Check if we have indexed documents
             let index = self.get_or_create_log_index(namespace).await?;
@@ -347,7 +354,7 @@ impl ObservabilityQueryEngine {
             logs.retain(|log| {
                 log.service
                     .as_ref()
-                    .map_or(false, |s| params.services.contains(s))
+                    .is_some_and(|s| params.services.contains(s))
             });
         }
 
@@ -355,7 +362,7 @@ impl ObservabilityQueryEngine {
             logs.retain(|log| {
                 log.source
                     .as_ref()
-                    .map_or(false, |s| params.sources.contains(s))
+                    .is_some_and(|s| params.sources.contains(s))
             });
         }
 
@@ -738,6 +745,19 @@ impl ObservabilityQueryEngine {
                 Self::collect_metric_names(rhs, names);
             }
             promql::PromQLExpr::Scalar(_) => {}
+            promql::PromQLExpr::Function { name: _, args, .. } => {
+                // Functions like abs(), sqrt(), etc. don't directly reference metrics
+                // But we should still check their arguments
+                for arg in args {
+                    Self::collect_metric_names(arg, names);
+                }
+            }
+            promql::PromQLExpr::Paren(inner) => {
+                Self::collect_metric_names(inner, names);
+            }
+            promql::PromQLExpr::Unary { expr, .. } => {
+                Self::collect_metric_names(expr, names);
+            }
         }
     }
 }

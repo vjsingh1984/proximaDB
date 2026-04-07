@@ -181,7 +181,7 @@ impl CompactVector {
             vector_size
         };
         let id_bytes = &self.data[id_start..];
-        std::str::from_utf8(id_bytes).expect("Invalid UTF-8 in ID")
+        std::str::from_utf8(id_bytes).unwrap_or_default()
     }
 
     /// Get total size in bytes
@@ -214,6 +214,7 @@ pub struct CompactVectorCollection {
 }
 
 impl CompactVectorCollection {
+    /// Creates a new compact vector collection with the given vector dimensionality.
     pub fn new(dimension: usize) -> Self {
         Self {
             vectors: Vec::new(),
@@ -222,6 +223,7 @@ impl CompactVectorCollection {
         }
     }
 
+    /// Creates a new collection with pre-allocated capacity for the given number of vectors.
     pub fn with_capacity(dimension: usize, capacity: usize) -> Self {
         Self {
             vectors: Vec::with_capacity(capacity),
@@ -230,10 +232,12 @@ impl CompactVectorCollection {
         }
     }
 
+    /// Returns the dimensionality shared by all vectors in this collection.
     pub fn dimension(&self) -> usize {
         self.dimension
     }
 
+    /// Adds a full-precision f32 vector with the given ID to the collection.
     pub fn add_fp32(&mut self, id: String, vector: &[f32]) -> Result<()> {
         let compact = CompactVector::new_fp32(&id, vector)?;
         let index = self.vectors.len();
@@ -242,6 +246,7 @@ impl CompactVectorCollection {
         Ok(())
     }
 
+    /// Adds a quantized vector with the given ID and quantization method tag.
     pub fn add_quantized(&mut self, id: String, quantized_vector: &[u8], method: u8) -> Result<()> {
         let compact = CompactVector::new_quantized(&id, quantized_vector, method)?;
         let index = self.vectors.len();
@@ -250,10 +255,12 @@ impl CompactVectorCollection {
         Ok(())
     }
 
+    /// Looks up a compact vector by its string ID.
     pub fn by_id(&self, id: &str) -> Option<&CompactVector> {
         self.id_index.get(id).map(|index| &self.vectors[*index])
     }
 
+    /// Looks up a compact vector by its positional index in the collection.
     pub fn by_index(&self, index: usize) -> Option<&CompactVector> {
         self.vectors.get(index)
     }
@@ -273,14 +280,17 @@ impl CompactVectorCollection {
         self.vectors.get(index).map(|v| v.id(self.dimension))
     }
 
+    /// Returns the number of vectors in the collection.
     pub fn len(&self) -> usize {
         self.vectors.len()
     }
 
+    /// Returns true if the collection contains no vectors.
     pub fn is_empty(&self) -> bool {
         self.vectors.is_empty()
     }
 
+    /// Returns the total memory usage in bytes across all stored vectors.
     pub fn memory_usage(&self) -> usize {
         self.vectors.iter().map(|v| v.size_bytes()).sum()
     }

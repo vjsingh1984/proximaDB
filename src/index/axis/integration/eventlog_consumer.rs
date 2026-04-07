@@ -54,10 +54,14 @@ impl Default for ConsumerConfig {
 // Type alias for compatibility
 pub type EventLogConsumer = AxisEventLogConsumer;
 
+/// Statistics for the event log consumer.
 #[derive(Debug, Clone, Default)]
 pub struct ConsumerStats {
+    /// Total number of events successfully processed.
     pub events_processed: u64,
+    /// Total number of events that failed processing.
     pub events_failed: u64,
+    /// Timestamp of the most recently processed event.
     pub last_processed_timestamp: Option<std::time::SystemTime>,
 }
 
@@ -315,8 +319,7 @@ impl AxisEventLogConsumer {
         let has_indexes = collection
             .config
             .as_ref()
-            .map(|c| !c.index_configs.is_empty())
-            .unwrap_or(false);
+            .is_some_and(|c| !c.index_configs.is_empty());
 
         if !has_indexes {
             // No indexes configured - mark event as completed without processing
@@ -478,8 +481,7 @@ impl AxisEventLogConsumer {
         let has_indexes = collection
             .config
             .as_ref()
-            .map(|c| !c.index_configs.is_empty())
-            .unwrap_or(false);
+            .is_some_and(|c| !c.index_configs.is_empty());
 
         if !has_indexes {
             // No indexes configured - mark event as completed without processing
@@ -584,7 +586,7 @@ impl AxisEventLogConsumer {
         );
 
         // For now, just acknowledge the event
-        // TODO: Implement actual deletion logic when needed
+        // Deferred: Implement actual deletion logic when needed
         warn!(
             "[AXIS Consumer] Delete event processing not yet implemented for event {}",
             event_id
@@ -612,8 +614,10 @@ impl AxisEventLogConsumer {
             .config
             .as_ref()
             .and_then(|c| c.index_configs.first())
-            .map(|i| format!("Algorithm({})", i.algorithm))
-            .unwrap_or_else(|| "None".to_string());
+            .map_or_else(
+                || "None".to_string(),
+                |i| format!("Algorithm({})", i.algorithm),
+            );
 
         debug!(
             "[AXIS Consumer] Determining extraction mode for collection {}:\n  Quantization Enabled: {:?}\n  Index Algorithm: {}",
@@ -625,7 +629,7 @@ impl AxisEventLogConsumer {
         // IVF can work with quantized data
         // PQ indexes prefer quantized data
 
-        let mode = if has_quantization != Some(Some(true)) {
+        if has_quantization != Some(Some(true)) {
             // No quantization, must use FP32
             debug!("[AXIS Consumer] No quantization enabled, using FP32Only mode");
             ExtractionMode::Fp32Only
@@ -634,9 +638,7 @@ impl AxisEventLogConsumer {
             // In future, we can be smarter based on index type
             debug!("[AXIS Consumer] Quantization enabled, using Both mode for flexibility");
             ExtractionMode::Both
-        };
-
-        mode
+        }
     }
 
     /// Read vectors from data files using the unified VectorExtractor protocol.

@@ -368,15 +368,14 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
 
     // Validate vector columns have dimension
     for col in &schema.columns {
-        if col.data_type == CatalogDataType::Vector
-            || col.data_type == CatalogDataType::SparseVector
+        if (col.data_type == CatalogDataType::Vector
+            || col.data_type == CatalogDataType::SparseVector)
+            && !col.properties.contains_key("dimension")
         {
-            if !col.properties.contains_key("dimension") {
-                return Err(anyhow!(
-                    "Vector column '{}' must have 'dimension' property",
-                    col.name
-                ));
-            }
+            return Err(anyhow!(
+                "Vector column '{}' must have 'dimension' property",
+                col.name
+            ));
         }
     }
 
@@ -797,7 +796,7 @@ mod tests {
             .add_column("name", CatalogDataType::String, true, None, None, None)
             .build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema = apply_evolution(&schema, &evolution).expect("evolution should succeed");
         assert_eq!(new_schema.columns.len(), 2);
         assert_eq!(new_schema.schema_version, 2);
     }
@@ -812,7 +811,7 @@ mod tests {
 
         let evolution = EvolutionBuilder::new().drop_column("name").build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema = apply_evolution(&schema, &evolution).expect("drop column should succeed");
         assert_eq!(new_schema.columns.len(), 1);
     }
 
@@ -827,7 +826,8 @@ mod tests {
             .rename_column("old_name", "new_name")
             .build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("rename column should succeed");
         assert!(new_schema.columns.iter().any(|c| c.name == "new_name"));
         assert!(!new_schema.columns.iter().any(|c| c.name == "old_name"));
     }
@@ -866,7 +866,8 @@ mod tests {
 
         let evolution = EvolutionBuilder::new().make_not_nullable("name").build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("make not nullable should succeed");
         assert!(!new_schema.columns[1].nullable);
         assert_eq!(new_schema.schema_version, 2);
     }
@@ -882,7 +883,8 @@ mod tests {
 
         let evolution = EvolutionBuilder::new().make_nullable("name").build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("make nullable should succeed");
         assert!(new_schema.columns[1].nullable);
     }
 
@@ -898,7 +900,8 @@ mod tests {
 
         let evolution = EvolutionBuilder::new().move_column_first("email").build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("move column first should succeed");
         assert_eq!(new_schema.columns[0].name, "email");
         assert_eq!(new_schema.columns[1].name, "id");
         assert_eq!(new_schema.columns[2].name, "name");
@@ -917,7 +920,8 @@ mod tests {
             .move_column_after("email", "id")
             .build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("move column after should succeed");
         assert_eq!(new_schema.columns[0].name, "id");
         assert_eq!(new_schema.columns[1].name, "email");
         assert_eq!(new_schema.columns[2].name, "name");
@@ -934,7 +938,8 @@ mod tests {
             .add_unique_constraint(Some("uq_email".to_string()), vec!["email"])
             .build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("add unique constraint should succeed");
 
         // Check that the constraint was added as an index
         assert_eq!(new_schema.indexes.len(), 1);
@@ -961,7 +966,8 @@ mod tests {
             .add_check_constraint(Some("chk_age".to_string()), "age >= 0 AND age <= 120")
             .build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("add check constraint should succeed");
 
         // Check that the constraint was stored in properties
         assert!(
@@ -983,7 +989,8 @@ mod tests {
 
         let evolution = EvolutionBuilder::new().drop_constraint("uq_email").build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("drop constraint should succeed");
         assert_eq!(new_schema.indexes.len(), 0);
     }
 
@@ -1000,7 +1007,7 @@ mod tests {
             .set_default("active", "true")
             .build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema = apply_evolution(&schema, &evolution).expect("set default should succeed");
         assert_eq!(
             new_schema.columns[1].default_value,
             Some("true".to_string())
@@ -1018,7 +1025,7 @@ mod tests {
 
         let evolution = EvolutionBuilder::new().drop_default("active").build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema = apply_evolution(&schema, &evolution).expect("drop default should succeed");
         assert!(new_schema.columns[1].default_value.is_none());
     }
 
@@ -1032,7 +1039,7 @@ mod tests {
             .change_type("id", CatalogDataType::Int64)
             .build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema = apply_evolution(&schema, &evolution).expect("change type should succeed");
         assert_eq!(new_schema.columns[0].data_type, CatalogDataType::Int64);
     }
 
@@ -1065,21 +1072,22 @@ mod tests {
             .set_default("name", "'unknown'")
             .build();
 
-        let new_schema = apply_evolution(&schema, &evolution).unwrap();
+        let new_schema =
+            apply_evolution(&schema, &evolution).expect("multiple changes should succeed");
 
         // Check all changes were applied
         let email_col = new_schema
             .columns
             .iter()
             .find(|c| c.name == "email")
-            .unwrap();
+            .expect("email column should exist");
         assert!(!email_col.nullable);
 
         let name_col = new_schema
             .columns
             .iter()
             .find(|c| c.name == "name")
-            .unwrap();
+            .expect("name column should exist");
         assert_eq!(name_col.default_value, Some("'unknown'".to_string()));
 
         assert_eq!(new_schema.indexes.len(), 1);

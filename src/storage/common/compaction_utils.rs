@@ -27,6 +27,7 @@ pub enum StorageEngineType {
     SWIFT,
     HELIX,
     RAPTOR,
+    TST,
 }
 
 impl std::fmt::Display for StorageEngineType {
@@ -38,6 +39,7 @@ impl std::fmt::Display for StorageEngineType {
             StorageEngineType::SWIFT => write!(f, "SWIFT"),
             StorageEngineType::HELIX => write!(f, "HELIX"),
             StorageEngineType::RAPTOR => write!(f, "RAPTOR"),
+            StorageEngineType::TST => write!(f, "TST"),
         }
     }
 }
@@ -51,12 +53,13 @@ impl StorageEngineType {
             Ok(StorageEngine::Viper) => StorageEngineType::VIPER,
             Ok(StorageEngine::Nova) => StorageEngineType::NOVA,
             Ok(StorageEngine::Swift) => StorageEngineType::SWIFT,
+            Ok(StorageEngine::Tst) => StorageEngineType::TST,
             _ => StorageEngineType::VIPER, // Default to VIPER
         }
     }
 
     /// Convert from string representation
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_str_uppercase(s: &str) -> Self {
         match s.to_uppercase().as_str() {
             "SST" => StorageEngineType::SST,
             "VIPER" => StorageEngineType::VIPER,
@@ -64,6 +67,7 @@ impl StorageEngineType {
             "SWIFT" => StorageEngineType::SWIFT,
             "HELIX" => StorageEngineType::HELIX,
             "RAPTOR" => StorageEngineType::RAPTOR,
+            "TST" => StorageEngineType::TST,
             _ => StorageEngineType::VIPER, // Default to VIPER
         }
     }
@@ -77,6 +81,7 @@ impl StorageEngineType {
             StorageEngineType::SWIFT => ".swift",
             StorageEngineType::HELIX => ".helix",
             StorageEngineType::RAPTOR => ".raptor",
+            StorageEngineType::TST => ".tst",
         }
     }
 }
@@ -151,7 +156,7 @@ impl CompactionFileDiscovery {
                 // Check if file can be compacted using unified handler
                 let handler = FlushHandlerFactory::create(engine_type);
                 let can_compact = handler
-                    .can_compact_files(collection_id, &[file_path.clone()])
+                    .can_compact_files(collection_id, std::slice::from_ref(&file_path))
                     .await
                     .unwrap_or(false);
 
@@ -223,7 +228,7 @@ impl CompactionFileDiscovery {
                     level_files.len(),
                     threshold
                 );
-            } else if filtered_files.pending_files.get(&0).is_some() {
+            } else if filtered_files.pending_files.contains_key(&0) {
                 debug!(
                     "⏸️ COMPACTION: Level {} has only {} compactable files (< threshold {}), some files pending",
                     level,
@@ -287,35 +292,29 @@ impl CompactionTaskBuilder {
             ),
             "size" => {
                 // Calculate total size at L0
-                let l0_total_size_mb = filtered_files
-                    .compactable_files
-                    .get(&0)
-                    .map(|files| {
+                let l0_total_size_mb =
+                    filtered_files.compactable_files.get(&0).map_or(0, |files| {
                         files
                             .iter()
                             .map(|f| f.size_bytes / (1024 * 1024))
                             .sum::<u64>() as usize
-                    })
-                    .unwrap_or(0);
+                    });
                 l0_total_size_mb >= config.l0_size_threshold_mb
             }
-            "hybrid" | _ => {
+            _ => {
                 // Use both count and size thresholds
                 let count_triggered = file_discovery.should_trigger_compaction(
                     &filtered_files,
                     0,
                     config.l0_file_threshold,
                 );
-                let l0_total_size_mb = filtered_files
-                    .compactable_files
-                    .get(&0)
-                    .map(|files| {
+                let l0_total_size_mb =
+                    filtered_files.compactable_files.get(&0).map_or(0, |files| {
                         files
                             .iter()
                             .map(|f| f.size_bytes / (1024 * 1024))
                             .sum::<u64>() as usize
-                    })
-                    .unwrap_or(0);
+                    });
                 let size_triggered = l0_total_size_mb >= config.l0_size_threshold_mb;
                 count_triggered || size_triggered
             }
@@ -354,45 +353,44 @@ impl CompactionTaskBuilder {
                 * config.level_multiplier.powi(level as i32))
                 as usize;
 
-            let should_compact = match config.strategy.as_str() {
-                "count" => file_discovery.should_trigger_compaction(
-                    &filtered_files,
-                    level,
-                    level_file_threshold,
-                ),
-                "size" => {
-                    let level_total_size_mb = filtered_files
-                        .compactable_files
-                        .get(&level)
-                        .map(|files| {
-                            files
-                                .iter()
-                                .map(|f| f.size_bytes / (1024 * 1024))
-                                .sum::<u64>() as usize
-                        })
-                        .unwrap_or(0);
-                    level_total_size_mb >= level_size_threshold_mb
-                }
-                "hybrid" | _ => {
-                    let count_triggered = file_discovery.should_trigger_compaction(
+            let should_compact =
+                match config.strategy.as_str() {
+                    "count" => file_discovery.should_trigger_compaction(
                         &filtered_files,
                         level,
                         level_file_threshold,
-                    );
-                    let level_total_size_mb = filtered_files
-                        .compactable_files
-                        .get(&level)
-                        .map(|files| {
-                            files
-                                .iter()
-                                .map(|f| f.size_bytes / (1024 * 1024))
-                                .sum::<u64>() as usize
-                        })
-                        .unwrap_or(0);
-                    let size_triggered = level_total_size_mb >= level_size_threshold_mb;
-                    count_triggered || size_triggered
-                }
-            };
+                    ),
+                    "size" => {
+                        let level_total_size_mb = filtered_files
+                            .compactable_files
+                            .get(&level)
+                            .map_or(0, |files| {
+                                files
+                                    .iter()
+                                    .map(|f| f.size_bytes / (1024 * 1024))
+                                    .sum::<u64>() as usize
+                            });
+                        level_total_size_mb >= level_size_threshold_mb
+                    }
+                    _ => {
+                        let count_triggered = file_discovery.should_trigger_compaction(
+                            &filtered_files,
+                            level,
+                            level_file_threshold,
+                        );
+                        let level_total_size_mb = filtered_files
+                            .compactable_files
+                            .get(&level)
+                            .map_or(0, |files| {
+                                files
+                                    .iter()
+                                    .map(|f| f.size_bytes / (1024 * 1024))
+                                    .sum::<u64>() as usize
+                            });
+                        let size_triggered = level_total_size_mb >= level_size_threshold_mb;
+                        count_triggered || size_triggered
+                    }
+                };
 
             if should_compact {
                 let compactable_files = file_discovery.get_compaction_files(&filtered_files, level);
@@ -489,6 +487,7 @@ impl StorageEngineType {
             StorageEngineType::SWIFT => "SWIFT",
             StorageEngineType::HELIX => "HELIX",
             StorageEngineType::RAPTOR => "RAPTOR",
+            StorageEngineType::TST => "TST",
         }
     }
 }

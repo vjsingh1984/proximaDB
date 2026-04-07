@@ -81,6 +81,7 @@ pub mod storage; // Storage and serialization // Integration with other systems
 
 // Shared utilities and types
 pub mod avro_analysis;
+/// Cluster manager for IVF-based index partitioning.
 pub mod cluster_manager;
 pub mod clustering;
 pub mod compact_vector;

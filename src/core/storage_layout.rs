@@ -68,16 +68,28 @@ pub struct StorageBasePath {
 #[derive(Debug, Clone)]
 pub enum Disk {
     /// NVMe SSD (highest performance)
-    NvmeSsd { max_iops: u64 },
+    NvmeSsd {
+        /// Maximum I/O operations per second
+        max_iops: u64,
+    },
 
     /// SATA SSD (high performance)
-    SataSsd { max_iops: u64 },
+    SataSsd {
+        /// Maximum I/O operations per second
+        max_iops: u64,
+    },
 
     /// Spinning disk (traditional HDD)
-    Hdd { max_iops: u64 },
+    Hdd {
+        /// Maximum I/O operations per second
+        max_iops: u64,
+    },
 
     /// Network-attached storage
-    NetworkStorage { latency_ms: f64 },
+    NetworkStorage {
+        /// Average network latency in milliseconds
+        latency_ms: f64,
+    },
 
     /// Unknown/auto-detect
     Unknown,
@@ -113,7 +125,8 @@ pub enum CollectionAssignmentStrategy {
 
     /// Manual assignment via configuration
     Manual {
-        assignments: HashMap<String, u32>, // collection_uuid -> instance_id
+        /// Explicit mapping from collection UUID to instance ID
+        assignments: HashMap<String, u32>,
     },
 }
 
@@ -402,7 +415,7 @@ impl StoragePathResolver {
             .base_paths
             .iter()
             .find(|bp| bp.instance_id == instance_id)
-            .ok_or_else(|| StorageLayoutError::InvalidInstance(instance_id))
+            .ok_or(StorageLayoutError::InvalidInstance(instance_id))
     }
 
     /// Get all configured paths for debugging
@@ -418,41 +431,56 @@ impl StoragePathResolver {
 /// Storage type enumeration
 #[derive(Debug, Clone, Copy)]
 pub enum StorageType {
+    /// Write-ahead log storage
     Wal,
+    /// Data file storage
     Storage,
+    /// Metadata catalog storage
     Metadata,
 }
 
 /// Temp operation type
 #[derive(Debug, Clone, Copy)]
 pub enum TempOperationType {
+    /// General-purpose temporary operation
     General,
+    /// Compaction temporary files
     Compaction,
+    /// Flush temporary files
     Flush,
 }
 
 /// Collection paths result
 #[derive(Debug, Clone)]
 pub struct CollectionPaths {
+    /// UUID of the collection these paths belong to
     pub collection_uuid: String,
+    /// Path for WAL files
     pub wal_path: PathBuf,
+    /// Path for data storage files
     pub storage_path: PathBuf,
+    /// Path for metadata files
     pub metadata_path: PathBuf,
+    /// Temporary directories for compaction and flush operations
     pub temp_paths: Vec<PathBuf>,
 }
 
 /// Storage layout errors
 #[derive(Debug, thiserror::Error)]
 pub enum StorageLayoutError {
+    /// Instance ID is out of valid range
     #[error("Invalid instance ID: {0}")]
     InvalidInstance(u32),
 
+    /// Failed to create a required directory
     #[error("Directory creation failed: {0}")]
     DirectoryCreation(String),
 
+    /// Layout configuration is invalid
     #[error("Configuration error: {0}")]
     Configuration(String),
 
+    /// Collection assignment to a path failed
     #[error("Assignment error: {0}")]
     Assignment(String),
 }

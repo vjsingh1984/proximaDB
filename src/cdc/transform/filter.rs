@@ -311,7 +311,7 @@ impl FilterRule {
     }
 
     /// Negate this rule
-    pub fn not(mut self) -> Self {
+    pub fn negate(mut self) -> Self {
         self.negate = !self.negate;
         self
     }
@@ -343,15 +343,15 @@ impl FilterRule {
             }
 
             FilterRuleType::LsnRange { min, max } => {
-                if let Some(min_lsn) = min {
-                    if event.lsn < *min_lsn {
-                        return false;
-                    }
+                if let Some(min_lsn) = min
+                    && event.lsn < *min_lsn
+                {
+                    return false;
                 }
-                if let Some(max_lsn) = max {
-                    if event.lsn > *max_lsn {
-                        return false;
-                    }
+                if let Some(max_lsn) = max
+                    && event.lsn > *max_lsn
+                {
+                    return false;
                 }
                 true
             }
@@ -380,13 +380,11 @@ impl FilterRule {
             return value.contains(inner);
         }
 
-        if pattern.starts_with('*') {
-            let suffix = &pattern[1..];
+        if let Some(suffix) = pattern.strip_prefix('*') {
             return value.ends_with(suffix);
         }
 
-        if pattern.ends_with('*') {
-            let prefix = &pattern[..pattern.len() - 1];
+        if let Some(prefix) = pattern.strip_suffix('*') {
             return value.starts_with(prefix);
         }
 
@@ -418,54 +416,46 @@ impl FilterRule {
 
             MetadataCondition::NotEquals { value: expected } => value != Some(expected),
 
-            MetadataCondition::Contains { value: search } => value
-                .map(|v| match v {
-                    serde_json::Value::String(s) => s.contains(search),
-                    serde_json::Value::Array(arr) => arr
-                        .iter()
-                        .any(|item| item.as_str().map(|s| s == search).unwrap_or(false)),
-                    _ => false,
-                })
-                .unwrap_or(false),
+            MetadataCondition::Contains { value: search } => value.is_some_and(|v| match v {
+                serde_json::Value::String(s) => s.contains(search),
+                serde_json::Value::Array(arr) => arr
+                    .iter()
+                    .any(|item| item.as_str().is_some_and(|s| s == search)),
+                _ => false,
+            }),
 
             MetadataCondition::StartsWith { value: prefix } => value
                 .and_then(|v| v.as_str())
-                .map(|s| s.starts_with(prefix))
-                .unwrap_or(false),
+                .is_some_and(|s| s.starts_with(prefix)),
 
             MetadataCondition::EndsWith { value: suffix } => value
                 .and_then(|v| v.as_str())
-                .map(|s| s.ends_with(suffix))
-                .unwrap_or(false),
+                .is_some_and(|s| s.ends_with(suffix)),
 
             MetadataCondition::Matches { pattern } => {
                 // Simple substring match (would use regex crate in production)
                 value
                     .and_then(|v| v.as_str())
-                    .map(|s| s.contains(pattern))
-                    .unwrap_or(false)
+                    .is_some_and(|s| s.contains(pattern))
             }
 
             MetadataCondition::GreaterThan { value: threshold } => value
                 .and_then(|v| v.as_f64())
-                .map(|n| n > *threshold)
-                .unwrap_or(false),
+                .is_some_and(|n| n > *threshold),
 
             MetadataCondition::LessThan { value: threshold } => value
                 .and_then(|v| v.as_f64())
-                .map(|n| n < *threshold)
-                .unwrap_or(false),
+                .is_some_and(|n| n < *threshold),
 
             MetadataCondition::InRange { min, max } => value
                 .and_then(|v| v.as_f64())
-                .map(|n| n >= *min && n <= *max)
-                .unwrap_or(false),
+                .is_some_and(|n| n >= *min && n <= *max),
 
-            MetadataCondition::In { values } => value.map(|v| values.contains(v)).unwrap_or(false),
+            MetadataCondition::In { values } => value.is_some_and(|v| values.contains(v)),
 
-            MetadataCondition::IsNull => value.map(|v| v.is_null()).unwrap_or(true),
+            MetadataCondition::IsNull => value.is_none_or(|v| v.is_null()),
 
-            MetadataCondition::IsNotNull => value.map(|v| !v.is_null()).unwrap_or(false),
+            MetadataCondition::IsNotNull => value.is_some_and(|v| !v.is_null()),
         }
     }
 }
@@ -633,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_rule_negation() {
-        let rule = FilterRule::include_collections(vec!["public.users"]).not();
+        let rule = FilterRule::include_collections(vec!["public.users"]).negate();
         let event = create_test_event();
         assert!(!rule.matches(&event));
     }

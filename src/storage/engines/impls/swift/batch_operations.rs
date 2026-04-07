@@ -72,7 +72,7 @@ impl BlockCache {
         let mut size = self.current_size.write().await;
 
         // Evict if necessary
-        while *size + block_size > self.max_size && cache.len() > 0 {
+        while *size + block_size > self.max_size && !cache.is_empty() {
             if let Some((_, evicted)) = cache.pop_lru() {
                 *size -= estimate_block_size(&evicted);
             }
@@ -165,12 +165,12 @@ async fn load_and_extract_records(
 
     for ((sb_idx, b_idx), id_offsets) in grouped {
         let sem = semaphore.clone();
-        let cache = cache.as_ref().map(|c| c.clone());
+        let cache = cache.clone();
 
         let handle = tokio::spawn(async move {
-            // SAFETY: acquire().unwrap() is safe because the semaphore is never closed
+            // SAFETY: semaphore acquire is safe because the semaphore is never closed
             // during batch operations. It is only used for concurrency limiting.
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem.acquire().await.ok();
 
             // Check cache first
             let block = if let Some(ref cache) = cache {
@@ -306,7 +306,10 @@ pub async fn prefetch_blocks(
         return Ok(());
     }
 
-    let cache = cache.unwrap();
+    let cache = match cache {
+        Some(cache) => cache,
+        None => return Ok(()),
+    };
     let semaphore = Arc::new(Semaphore::new(4)); // Limited prefetch parallelism
     let mut handles = Vec::new();
 
@@ -320,9 +323,9 @@ pub async fn prefetch_blocks(
         let cache = cache.clone();
 
         let handle = tokio::spawn(async move {
-            // SAFETY: acquire().unwrap() is safe because the semaphore is never closed
+            // SAFETY: semaphore acquire is safe because the semaphore is never closed
             // during prefetch operations. It is only used for concurrency limiting.
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem.acquire().await.ok();
 
             match load_block_from_disk(sb_idx, b_idx).await {
                 Ok(block) => {
@@ -445,5 +448,401 @@ mod tests {
         // Test cache miss
         let miss = cache.get(&(1, 1)).await;
         assert!(miss.is_none());
+    }
+
+    // ========================================================================
+    // BatchConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_batch_config_default() {
+        let config = BatchConfig::default();
+        assert_eq!(config.max_concurrent_blocks, 10);
+        assert!(config.cache_blocks);
+        assert_eq!(config.max_cache_bytes, 1024 * 1024 * 1024);
+        assert!(config.prefetch_adjacent);
+    }
+
+    #[test]
+    fn test_batch_config_custom() {
+        let config = BatchConfig {
+            max_concurrent_blocks: 4,
+            cache_blocks: false,
+            max_cache_bytes: 512 * 1024,
+            prefetch_adjacent: false,
+        };
+        assert_eq!(config.max_concurrent_blocks, 4);
+        assert!(!config.cache_blocks);
+        assert_eq!(config.max_cache_bytes, 512 * 1024);
+        assert!(!config.prefetch_adjacent);
+    }
+
+    // ========================================================================
+    // group_by_block extended tests
+    // ========================================================================
+
+    #[test]
+    fn test_group_by_block_empty() {
+        let grouped = group_by_block(Vec::new());
+        assert!(grouped.is_empty());
+    }
+
+    #[test]
+    fn test_group_by_block_single() {
+        let locations = vec![(
+            "only_id".to_string(),
+            BlockLocation {
+                superblock_idx: 7,
+                block_idx: 3,
+                offset_in_block: 99,
+                size_bytes: 100,
+            },
+        )];
+
+        let grouped = group_by_block(locations);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[&(7, 3)].len(), 1);
+        assert_eq!(grouped[&(7, 3)][0].0, "only_id");
+        assert_eq!(grouped[&(7, 3)][0].1, 99);
+    }
+
+    #[test]
+    fn test_group_by_block_all_same_block() {
+        let locations = vec![
+            (
+                "a".to_string(),
+                BlockLocation {
+                    superblock_idx: 1,
+                    block_idx: 1,
+                    offset_in_block: 0,
+                    size_bytes: 0,
+                },
+            ),
+            (
+                "b".to_string(),
+                BlockLocation {
+                    superblock_idx: 1,
+                    block_idx: 1,
+                    offset_in_block: 1,
+                    size_bytes: 0,
+                },
+            ),
+            (
+                "c".to_string(),
+                BlockLocation {
+                    superblock_idx: 1,
+                    block_idx: 1,
+                    offset_in_block: 2,
+                    size_bytes: 0,
+                },
+            ),
+        ];
+
+        let grouped = group_by_block(locations);
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[&(1, 1)].len(), 3);
+    }
+
+    #[test]
+    fn test_group_by_block_all_different_blocks() {
+        let locations = vec![
+            (
+                "a".to_string(),
+                BlockLocation {
+                    superblock_idx: 0,
+                    block_idx: 0,
+                    offset_in_block: 0,
+                    size_bytes: 0,
+                },
+            ),
+            (
+                "b".to_string(),
+                BlockLocation {
+                    superblock_idx: 1,
+                    block_idx: 1,
+                    offset_in_block: 0,
+                    size_bytes: 0,
+                },
+            ),
+            (
+                "c".to_string(),
+                BlockLocation {
+                    superblock_idx: 2,
+                    block_idx: 2,
+                    offset_in_block: 0,
+                    size_bytes: 0,
+                },
+            ),
+        ];
+
+        let grouped = group_by_block(locations);
+        assert_eq!(grouped.len(), 3);
+    }
+
+    // ========================================================================
+    // BlockCache extended tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_block_cache_eviction() {
+        // Create a very small cache (enough for ~1 block)
+        let cache = BlockCache::new(4096);
+
+        let block1 = Arc::new(ProximaDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 1,
+            encoded_vectors: None,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            records: vec![VectorRecord {
+                id: "r1".to_string(),
+                vector: vec![1.0; 128],
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(0),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            }],
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: Default::default(),
+            compression_config: Default::default(),
+            compression_algorithm: Default::default(),
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: ("r1".to_string(), "r1".to_string()),
+            timestamp_range: (0, 0),
+            statistics: Default::default(),
+            metadata_stats: None,
+            has_deletes: false,
+        });
+
+        let block2 = Arc::new(ProximaDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 2,
+            encoded_vectors: None,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            records: vec![VectorRecord {
+                id: "r2".to_string(),
+                vector: vec![2.0; 128],
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(0),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            }],
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: Default::default(),
+            compression_config: Default::default(),
+            compression_algorithm: Default::default(),
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: ("r2".to_string(), "r2".to_string()),
+            timestamp_range: (0, 0),
+            statistics: Default::default(),
+            metadata_stats: None,
+            has_deletes: false,
+        });
+
+        // Insert two blocks; the cache is small so it should evict
+        cache.put((0, 0), block1).await;
+        cache.put((0, 1), block2).await;
+
+        // At least the second one should be present
+        let retrieved = cache.get(&(0, 1)).await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().records[0].id, "r2");
+    }
+
+    #[tokio::test]
+    async fn test_block_cache_overwrite() {
+        let cache = BlockCache::new(1024 * 1024);
+
+        let block_v1 = Arc::new(ProximaDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 0,
+            encoded_vectors: None,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            records: vec![VectorRecord {
+                id: "v1".to_string(),
+                vector: vec![1.0],
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(0),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            }],
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: Default::default(),
+            compression_config: Default::default(),
+            compression_algorithm: Default::default(),
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: ("v1".to_string(), "v1".to_string()),
+            timestamp_range: (0, 0),
+            statistics: Default::default(),
+            metadata_stats: None,
+            has_deletes: false,
+        });
+
+        let block_v2 = Arc::new(ProximaDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 0,
+            encoded_vectors: None,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            records: vec![VectorRecord {
+                id: "v2".to_string(),
+                vector: vec![2.0],
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(0),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            }],
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: Default::default(),
+            compression_config: Default::default(),
+            compression_algorithm: Default::default(),
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: ("v2".to_string(), "v2".to_string()),
+            timestamp_range: (0, 0),
+            statistics: Default::default(),
+            metadata_stats: None,
+            has_deletes: false,
+        });
+
+        cache.put((0, 0), block_v1).await;
+        cache.put((0, 0), block_v2).await;
+
+        let retrieved = cache.get(&(0, 0)).await;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().records[0].id, "v2");
+    }
+
+    // ========================================================================
+    // extract_record_from_block tests
+    // ========================================================================
+
+    #[test]
+    fn test_extract_record_from_block_valid() {
+        let block = ProximaDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 0,
+            encoded_vectors: None,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            records: vec![
+                VectorRecord {
+                    id: "first".to_string(),
+                    vector: vec![1.0],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                },
+                VectorRecord {
+                    id: "second".to_string(),
+                    vector: vec![2.0],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                },
+            ],
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: Default::default(),
+            compression_config: Default::default(),
+            compression_algorithm: Default::default(),
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: ("first".to_string(), "second".to_string()),
+            timestamp_range: (0, 0),
+            statistics: Default::default(),
+            metadata_stats: None,
+            has_deletes: false,
+        };
+
+        let record = extract_record_from_block(&block, 0);
+        assert!(record.is_some());
+        assert_eq!(record.unwrap().id, "first");
+
+        let record = extract_record_from_block(&block, 1);
+        assert!(record.is_some());
+        assert_eq!(record.unwrap().id, "second");
+
+        let record = extract_record_from_block(&block, 2);
+        assert!(record.is_none());
+    }
+
+    #[test]
+    fn test_estimate_block_size() {
+        let block = ProximaDataBlock {
+            encoding_marker: 0x00,
+            encoding_metadata: None,
+            block_id: 0,
+            encoded_vectors: None,
+            vector_layout:
+                crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
+            records: vec![VectorRecord {
+                id: "test".to_string(),
+                vector: vec![1.0; 768],
+                metadata: std::collections::HashMap::new(),
+                timestamp: Some(0),
+                updated_at: None,
+                expires_at: None,
+                version: None,
+                source: None,
+            }],
+            quantized_vectors: None,
+            quantization_level: None,
+            quantized_section: None,
+            metadata: Default::default(),
+            compression_config: Default::default(),
+            compression_algorithm: Default::default(),
+            uncompressed_size: 0,
+            bloom_filter: None,
+            block_bloom_filter: None,
+            id_range: ("test".to_string(), "test".to_string()),
+            timestamp_range: (0, 0),
+            statistics: Default::default(),
+            metadata_stats: None,
+            has_deletes: false,
+        };
+
+        let size = estimate_block_size(&block);
+        assert!(size > 0);
+        // Should include 1024 overhead + record size
+        assert!(size >= 1024);
     }
 }

@@ -44,6 +44,7 @@ impl TextValidator {
     /// Default max length: 64KB
     pub const DEFAULT_MAX_LENGTH: usize = 64 * 1024;
 
+    /// Create a new text validator with default settings
     pub fn new() -> Self {
         Self {
             max_length: Self::DEFAULT_MAX_LENGTH,
@@ -53,16 +54,19 @@ impl TextValidator {
         }
     }
 
+    /// Set the maximum allowed text length
     pub fn with_max_length(mut self, max: usize) -> Self {
         self.max_length = max;
         self
     }
 
+    /// Set the minimum required text length
     pub fn with_min_length(mut self, min: usize) -> Self {
         self.min_length = min;
         self
     }
 
+    /// Set a regex pattern that text must match
     pub fn with_pattern(mut self, pattern: &str) -> Result<Self> {
         self.pattern = Some(Regex::new(pattern)?);
         Ok(self)
@@ -71,10 +75,18 @@ impl TextValidator {
     /// Default patterns to detect SQL injection attempts
     fn default_forbidden_patterns() -> Vec<Regex> {
         // Note: These are basic patterns. Production should use parameterized queries.
+        let compile = |pattern: &str| -> Regex {
+            #[allow(clippy::panic)] // Intentional: compile-time invariant check
+            match Regex::new(pattern) {
+                Ok(regex) => regex,
+                Err(err) => panic!("Invalid built-in regex pattern '{pattern}': {err}"),
+            }
+        };
+
         vec![
-            Regex::new(r"(?i);\s*(drop|delete|truncate|alter)\s+").unwrap(),
-            Regex::new(r"(?i)union\s+select").unwrap(),
-            Regex::new(r"(?i)--\s*$").unwrap(),
+            compile(r"(?i);\s*(drop|delete|truncate|alter)\s+"),
+            compile(r"(?i)union\s+select"),
+            compile(r"(?i)--\s*$"),
         ]
     }
 
@@ -98,10 +110,10 @@ impl TextValidator {
         }
 
         // Pattern check
-        if let Some(ref pattern) = self.pattern {
-            if !pattern.is_match(text) {
-                return Err(anyhow!("Text does not match required pattern"));
-            }
+        if let Some(ref pattern) = self.pattern
+            && !pattern.is_match(text)
+        {
+            return Err(anyhow!("Text does not match required pattern"));
         }
 
         // Forbidden pattern check
@@ -189,6 +201,7 @@ impl DecimalValidator {
     /// Default scale (18 decimal places)
     pub const DEFAULT_SCALE: u8 = 18;
 
+    /// Create a new decimal validator with the given precision and scale
     pub fn new(precision: u8, scale: u8) -> Result<Self> {
         if precision == 0 || precision > 38 {
             return Err(anyhow!("Precision must be between 1 and 38"));
@@ -199,7 +212,8 @@ impl DecimalValidator {
         Ok(Self { precision, scale })
     }
 
-    pub fn default() -> Self {
+    /// Create a decimal validator with default precision (38) and scale (18)
+    pub fn with_defaults() -> Self {
         Self {
             precision: Self::DEFAULT_PRECISION,
             scale: Self::DEFAULT_SCALE,
@@ -299,12 +313,14 @@ impl BinaryValidator {
     /// Default max size: 1MB
     pub const DEFAULT_MAX_SIZE: usize = 1024 * 1024;
 
+    /// Create a new binary validator with default size limit
     pub fn new() -> Self {
         Self {
             max_size: Self::DEFAULT_MAX_SIZE,
         }
     }
 
+    /// Set the maximum allowed binary data size in bytes
     pub fn with_max_size(mut self, max: usize) -> Self {
         self.max_size = max;
         self
@@ -334,16 +350,19 @@ impl TypeValidator for BinaryValidator {
     }
 }
 
-/// JSON validator with depth limit
+/// JSON validator with depth and size limits
 pub struct JsonValidator {
     max_depth: usize,
     max_size: usize,
 }
 
 impl JsonValidator {
+    /// Default maximum JSON nesting depth
     pub const DEFAULT_MAX_DEPTH: usize = 32;
-    pub const DEFAULT_MAX_SIZE: usize = 16 * 1024 * 1024; // 16MB
+    /// Default maximum JSON document size: 16MB
+    pub const DEFAULT_MAX_SIZE: usize = 16 * 1024 * 1024;
 
+    /// Create a new JSON validator with default settings
     pub fn new() -> Self {
         Self {
             max_depth: Self::DEFAULT_MAX_DEPTH,
@@ -351,11 +370,13 @@ impl JsonValidator {
         }
     }
 
+    /// Set the maximum allowed JSON nesting depth
     pub fn with_max_depth(mut self, depth: usize) -> Self {
         self.max_depth = depth;
         self
     }
 
+    /// Set the maximum allowed JSON document size in bytes
     pub fn with_max_size(mut self, size: usize) -> Self {
         self.max_size = size;
         self
@@ -422,7 +443,7 @@ impl TypeValidator for JsonValidator {
     }
 }
 
-/// Timestamp validator
+/// Validates timestamp values within a configurable range
 pub struct TimestampValidator {
     min_value: i64,
     max_value: i64,
@@ -434,6 +455,7 @@ impl TimestampValidator {
     /// Maximum timestamp: ~292,277 AD in microseconds
     pub const MAX_TIMESTAMP: i64 = i64::MAX;
 
+    /// Create a new timestamp validator with default range
     pub fn new() -> Self {
         Self {
             min_value: Self::MIN_TIMESTAMP,
@@ -441,12 +463,14 @@ impl TimestampValidator {
         }
     }
 
+    /// Set a custom valid timestamp range
     pub fn with_range(mut self, min: i64, max: i64) -> Self {
         self.min_value = min;
         self.max_value = max;
         self
     }
 
+    /// Validate a timestamp value in microseconds since epoch
     pub fn validate_microseconds(&self, ts: i64) -> Result<()> {
         if ts < self.min_value {
             return Err(anyhow!("Timestamp {ts} is before minimum"));
@@ -545,12 +569,14 @@ pub struct VectorValidator {
 }
 
 impl VectorValidator {
+    /// Create a new validator for vectors of the given dimension
     pub fn new(dimension: u32) -> Self {
         Self {
             expected_dimension: dimension,
         }
     }
 
+    /// Check that a vector has the expected number of dimensions
     pub fn validate_dimension(&self, actual_dimension: usize) -> Result<()> {
         if actual_dimension != self.expected_dimension as usize {
             return Err(anyhow!(
@@ -562,6 +588,7 @@ impl VectorValidator {
         Ok(())
     }
 
+    /// Check that all vector values are finite (no NaN or infinity)
     pub fn validate_values(&self, values: &[f32]) -> Result<()> {
         for (i, &v) in values.iter().enumerate() {
             if v.is_nan() {
@@ -577,7 +604,7 @@ impl VectorValidator {
 
 impl TypeValidator for VectorValidator {
     fn validate(&self, value: &[u8]) -> Result<()> {
-        if value.len() % 4 != 0 {
+        if !value.len().is_multiple_of(4) {
             return Err(anyhow!("Vector byte length must be multiple of 4"));
         }
         let dimension = value.len() / 4;
@@ -612,17 +639,20 @@ pub struct ValidatorRegistry {
 }
 
 impl ValidatorRegistry {
+    /// Create an empty validator registry
     pub fn new() -> Self {
         Self {
             validators: std::collections::HashMap::new(),
         }
     }
 
+    /// Register a validator under the given name
     pub fn register<V: TypeValidator + 'static>(&mut self, name: &str, validator: V) {
         self.validators
             .insert(name.to_string(), Arc::new(validator));
     }
 
+    /// Look up a validator by name
     pub fn get(&self, name: &str) -> Option<&Arc<dyn TypeValidator>> {
         self.validators.get(name)
     }
@@ -636,7 +666,7 @@ impl ValidatorRegistry {
         registry.register("JSON", JsonValidator::new());
         registry.register("TIMESTAMP", TimestampValidator::new());
         registry.register("GEO_POINT", GeoPointValidator);
-        registry.register("DECIMAL", DecimalValidator::default());
+        registry.register("DECIMAL", DecimalValidator::with_defaults());
         registry
     }
 }

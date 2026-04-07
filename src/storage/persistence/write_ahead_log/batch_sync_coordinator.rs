@@ -280,7 +280,7 @@ impl BatchSyncCoordinator {
         match &self.durability_level {
             DurabilityLevel::SyncData => {
                 // For now, we use sync_file which does fsync
-                // TODO: Implement fdatasync for metadata-only sync
+                // Deferred: Implement fdatasync for metadata-only sync
                 filesystem.sync_file(file_path).await?;
             }
             DurabilityLevel::SyncFull => {

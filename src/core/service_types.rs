@@ -19,65 +19,80 @@ use std::collections::HashMap;
 /// Domain search hit (engine-agnostic)
 #[derive(Debug, Clone)]
 pub struct SearchHit {
+    /// Vector record identifier
     pub id: String,
+    /// Similarity score (lower is closer for L2, higher is closer for cosine)
     pub score: f32,
+    /// The matched vector data
     pub vector: Vec<f32>,
+    /// Metadata key-value pairs attached to the record
     pub metadata: HashMap<String, serde_json::Value>,
+    /// MVCC version number, if versioning is enabled
     pub version: Option<i64>,
 }
 
 /// Domain search result set
 #[derive(Debug, Clone)]
 pub struct DomainSearchResult {
+    /// Ordered list of search hits
     pub results: Vec<SearchHit>,
+    /// Total number of matching records (may exceed results length)
     pub total_found: i64,
+    /// Identifier of the collection that was searched
     pub collection_id: Option<String>,
 }
 
 /// Use proto-generated enums as single source of truth
 // Note: Using string representations instead of proto enums for JSON serialization
 // Proto enums don't derive Serialize/Deserialize by default
+/// Distance metric name (e.g., "cosine", "l2", "dot_product")
 pub type DistanceMetric = String;
+/// Indexing algorithm name (e.g., "hnsw", "ivf", "flat")
 pub type IndexingAlgorithm = String;
+/// Storage engine name (e.g., "sst", "viper", "helix")
 pub type StorageEngine = String;
 /// Compression algorithms for data storage and transmission
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CompressionAlgorithm {
+    /// No compression
     None,
+    /// Snappy compression (default - fast with moderate ratio)
+    #[default]
     Snappy,
+    /// LZ4 compression (very fast)
     Lz4,
+    /// Zstandard compression (best ratio)
     Zstd,
+    /// Gzip compression (widely compatible)
     Gzip,
 }
 
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        Self::Snappy
-    }
-}
-
 /// Compaction strategies for storage optimization
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum CompactionStrategy {
+    /// Size-tiered compaction (default - good for write-heavy workloads)
+    #[default]
     SizeTiered,
+    /// Leveled compaction (better read performance)
     Leveled,
+    /// Time-window compaction (optimal for time-series data)
     TimeWindow,
+    /// No automatic compaction
     None,
-}
-
-impl Default for CompactionStrategy {
-    fn default() -> Self {
-        Self::SizeTiered
-    }
 }
 
 /// Compaction configuration for storage engines
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {
+    /// Maximum SSTable file size in megabytes before splitting
     pub max_sstable_size_mb: u64,
+    /// Maximum total size per level in megabytes
     pub max_level_size_mb: u64,
+    /// Number of background compaction threads
     pub compaction_threads: u32,
+    /// Whether background compaction is enabled
     pub enable_background_compaction: bool,
+    /// Interval in seconds between compaction checks
     pub compaction_interval_seconds: u64,
 }
 
@@ -157,19 +172,28 @@ pub struct CollectionConfig {
 /// Service-level Collection type (JSON-serializable)
 #[derive(Debug, Clone)]
 pub struct Collection {
+    /// Unique collection identifier
     pub id: String,
+    /// Human-readable collection name
     pub name: String,
+    /// Fixed vector dimension for this collection
     pub dimension: i32,
+    /// Distance metric used for similarity search
     pub distance_metric: String,
+    /// Storage engine backing this collection
     pub storage_engine: String,
+    /// Indexing algorithm used for search
     pub indexing_algorithm: String,
+    /// ISO 8601 creation timestamp
     pub created_at: Option<String>,
+    /// ISO 8601 last update timestamp
     pub updated_at: Option<String>,
+    /// Arbitrary collection-level metadata
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Vector operation response metrics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct VectorOperationMetrics {
     /// Total number of vectors processed
     pub total_processed: i64,
@@ -185,20 +209,6 @@ pub struct VectorOperationMetrics {
     pub wal_write_time_us: i64,
     /// Index update time in microseconds
     pub index_update_time_us: i64,
-}
-
-impl Default for VectorOperationMetrics {
-    fn default() -> Self {
-        Self {
-            total_processed: 0,
-            successful_count: 0,
-            failed_count: 0,
-            updated_count: 0,
-            processing_time_us: 0,
-            wal_write_time_us: 0,
-            index_update_time_us: 0,
-        }
-    }
 }
 
 /// Vector insert request for zero-copy operations
@@ -284,84 +294,134 @@ impl VectorInsertResponse {
     }
 }
 
+/// Request for a vector similarity search
 #[derive(Debug, Clone)]
 pub struct VectorSearchRequest {
+    /// Target collection to search
     pub collection_id: String,
+    /// Query vector for similarity matching
     pub query_vector: Vec<f32>,
+    /// Number of nearest neighbors to return
     pub k: i32,
+    /// Metadata filter predicates
     pub metadata_filter: HashMap<String, serde_json::Value>,
+    /// Whether to include vectors in the response
     pub include_vector: bool,
+    /// Whether to include metadata in the response
     pub include_metadata: bool,
 }
 
+/// Request for batch vector similarity search
 #[derive(Debug, Clone)]
 pub struct BatchSearchRequest {
+    /// Target collection to search
     pub collection_id: String,
+    /// Query vector for similarity matching
     pub query_vector: Vector,
+    /// Number of nearest neighbors to return per query
     pub k: usize,
+    /// Optional metadata filter predicates
     pub filter: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Search metadata for performance tracking
 #[derive(Debug, Clone)]
 pub struct SearchMetadata {
+    /// Algorithm that was used (e.g., "hnsw", "flat")
     pub algorithm_used: String,
+    /// Unique query identifier for correlation
     pub query_id: Option<String>,
+    /// Estimated query complexity score
     pub query_complexity: f64,
+    /// Total number of results found
     pub total_results: i64,
+    /// Search execution time in milliseconds
     pub search_time_ms: f64,
+    /// Suggested optimization hint for the caller
     pub performance_hint: Option<String>,
+    /// Index-level performance statistics
     pub index_stats: Option<IndexStats>,
 }
 
 /// Index performance statistics
 #[derive(Debug, Clone)]
 pub struct IndexStats {
+    /// Total vectors in the index
     pub total_vectors: i64,
+    /// Vectors compared during distance calculation
     pub vectors_compared: i64,
+    /// Vectors scanned (pre-filter)
     pub vectors_scanned: i64,
+    /// Total distance calculations performed
     pub distance_calculations: i64,
+    /// Number of index nodes visited during traversal
     pub nodes_visited: i64,
+    /// Fraction of vectors eliminated by metadata filters (0.0 to 1.0)
     pub filter_efficiency: f32,
+    /// Index cache hits during search
     pub cache_hits: i64,
+    /// Index cache misses during search
     pub cache_misses: i64,
 }
 
 /// Search debug information
 #[derive(Debug, Clone)]
 pub struct SearchDebugInfo {
+    /// Ordered list of search execution steps
     pub search_steps: Vec<String>,
+    /// IVF clusters or HNSW layers that were searched
     pub clusters_searched: Vec<String>,
+    /// Whether metadata filter pushdown was enabled
     pub filter_pushdown_enabled: bool,
+    /// Parquet columns that were scanned
     pub parquet_columns_scanned: Vec<String>,
+    /// Per-phase timing breakdown in milliseconds
     pub timing_breakdown: std::collections::HashMap<String, f64>,
+    /// Peak memory usage during search in megabytes
     pub memory_usage_mb: Option<f64>,
+    /// Estimated total cost from the query planner
     pub estimated_total_cost: Option<f64>,
+    /// Actual measured cost after execution
     pub actual_cost: Option<f64>,
+    /// Per-component cost breakdown
     pub cost_breakdown: Option<std::collections::HashMap<String, f64>>,
 }
 
+/// Response from a vector similarity search
 #[derive(Debug, Clone)]
 pub struct VectorSearchResponse {
+    /// Whether the search completed successfully
     pub success: bool,
+    /// Ordered search result records
     pub results: Vec<OptimizedSearchRecord>,
+    /// Number of results returned
     pub total_count: i64,
+    /// Total matching records (may exceed returned count)
     pub total_found: i64,
+    /// Processing time in microseconds
     pub processing_time_us: i64,
+    /// Search algorithm that was used
     pub algorithm_used: String,
-
+    /// Detailed search performance metadata
     pub search_metadata: SearchMetadata,
+    /// Optional debug information for query analysis
     pub debug_info: Option<SearchDebugInfo>,
 }
 
 /// Collection operation types
 #[derive(Debug, Clone)]
 pub enum CollectionOperation {
+    /// Create a new collection
     Create,
+    /// Update an existing collection's configuration
     Update,
+    /// Retrieve a collection by ID
     Get,
+    /// List all collections
     List,
+    /// Delete a collection
     Delete,
+    /// Migrate a collection to a different engine
     Migrate,
 }
 
@@ -510,10 +570,13 @@ impl CollectionResponse {
     }
 }
 
-// Core type aliases from types.rs
+/// Unique vector record identifier
 pub type VectorId = String;
+/// Re-exported String type for compatibility
 pub type String = std::string::String;
+/// Cluster node identifier
 pub type NodeId = String;
+/// Dense floating-point vector
 pub type Vector = Vec<f32>;
 
 /// Metadata filter for server-side filtering operations
@@ -521,7 +584,9 @@ pub type Vector = Vec<f32>;
 pub enum MetadataFilter {
     /// Field-based filter with specific condition
     Field {
+        /// Metadata field name to filter on
         field: String,
+        /// Condition to evaluate against the field value
         condition: FieldCondition,
     },
     /// Logical AND of multiple filters
@@ -563,7 +628,9 @@ pub enum FieldCondition {
     IsNotNull,
     /// Range query
     Range {
+        /// Inclusive lower bound
         min: serde_json::Value,
+        /// Inclusive upper bound
         max: serde_json::Value,
     },
 }
@@ -573,30 +640,41 @@ pub enum FieldCondition {
 pub enum VectorOperation {
     /// Insert a new vector
     Insert {
+        /// Vector record to insert
         record: VectorRecord,
+        /// Whether to update indexes immediately or defer
         index_immediately: bool,
     },
     /// Update an existing vector
     Update {
+        /// ID of the vector to update
         vector_id: String,
+        /// New vector data (None to keep existing)
         new_vector: Option<Vec<f32>>,
+        /// New metadata (None to keep existing)
         new_metadata: Option<HashMap<String, serde_json::Value>>,
     },
     /// Delete a vector
     Delete {
+        /// ID of the vector to delete
         vector_id: String,
+        /// Whether to soft-delete (mark as deleted) or hard-delete
         soft_delete: bool,
     },
     /// Search for similar vectors
     Search(SearchRequest),
     /// Get a vector by ID
     Get {
+        /// ID of the vector to retrieve
         vector_id: String,
+        /// Whether to include the full vector data
         include_vector: bool,
     },
     /// Batch operation
     Batch {
+        /// List of operations to execute as a batch
         operations: Vec<VectorOperation>,
+        /// Whether all operations must succeed or fail together
         transactional: bool,
     },
 }
@@ -615,15 +693,23 @@ pub enum VectorOperation {
 /// Used by API handlers to receive search requests from clients.
 #[derive(Debug, Clone)]
 pub struct SearchRequest {
+    /// Target collection to search
     pub collection_id: String,
+    /// Query vector for similarity matching
     pub query_vector: Vec<f32>,
+    /// Number of nearest neighbors to return
     pub k: usize,
+    /// Optional metadata filters to apply
     pub filters: Option<Vec<MetadataFilter>>,
-
+    /// Algorithm-specific hints (e.g., "ef_search" for HNSW)
     pub algorithm_hints: HashMap<String, String>,
+    /// Minimum similarity threshold for returned results
     pub threshold: Option<f32>,
+    /// Maximum search time in milliseconds
     pub timeout_ms: Option<u64>,
+    /// Whether to include debug information in the response
     pub include_debug_info: bool,
+    /// Whether to include vectors in the response
     pub include_vectors: bool,
 }
 
@@ -633,11 +719,17 @@ pub enum SearchStrategy {
     /// Exact search (brute force)
     Exact,
     /// Approximate search with configurable accuracy
-    Approximate { accuracy: f32 },
+    Approximate {
+        /// Target recall accuracy (0.0 to 1.0)
+        accuracy: f32,
+    },
     /// Adaptive search based on query characteristics
     Adaptive {
+        /// Estimated query complexity (higher = more complex)
         query_complexity_score: f32,
+        /// Maximum allowed search time in milliseconds
         time_budget_ms: u64,
+        /// Recall vs latency preference (0.0 = speed, 1.0 = accuracy)
         accuracy_preference: f32,
     },
 }
@@ -646,25 +738,42 @@ pub enum SearchStrategy {
 #[derive(Debug, Clone)]
 pub enum OperationResult {
     /// Vector was inserted
-    Inserted { vector_id: String },
+    Inserted {
+        /// ID of the newly inserted vector
+        vector_id: String,
+    },
     /// Vector was updated
-    Updated { vector_id: String, changes: i64 },
+    Updated {
+        /// ID of the updated vector
+        vector_id: String,
+        /// Number of fields changed
+        changes: i64,
+    },
     /// Vector was deleted
-    Deleted { vector_id: String },
+    Deleted {
+        /// ID of the deleted vector
+        vector_id: String,
+    },
     /// Search results
     SearchResults(Vec<OptimizedSearchRecord>),
     /// Vector data retrieved
     VectorData {
+        /// ID of the retrieved vector
         vector_id: String,
+        /// Vector data (if requested)
         vector: Option<Vec<f32>>,
+        /// Associated metadata
         metadata: serde_json::Value,
     },
     /// Batch operation results
     BatchResults(Vec<OperationResult>),
     /// Operation error
     Error {
+        /// Name of the failed operation
         operation: String,
+        /// Error description
         error: String,
+        /// Whether the operation can be retried
         recoverable: bool,
     },
 }
@@ -838,8 +947,11 @@ impl OperationResponse {
     }
 }
 
-// Type aliases for backward compatibility during migration
+/// Backward-compatible alias for VectorRecord
 pub type UnifiedVectorRecord = VectorRecord;
+/// Backward-compatible alias for OptimizedSearchRecord
 pub type UnifiedSearchResult = OptimizedSearchRecord;
-pub type UnifiedCollection = Collection; // Now using service-level Collection type
-pub type VectorSearchResult = OptimizedSearchRecord; // Alias from schema_types.rs
+/// Backward-compatible alias for Collection
+pub type UnifiedCollection = Collection;
+/// Backward-compatible alias for OptimizedSearchRecord
+pub type VectorSearchResult = OptimizedSearchRecord;

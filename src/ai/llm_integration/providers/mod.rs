@@ -50,8 +50,11 @@ pub trait LLMClient {
 /// Rate limit status for a provider
 #[derive(Debug, Clone)]
 pub struct RateLimitStatus {
+    /// Number of remaining requests in the current window
     pub remaining_requests: Option<u32>,
+    /// Time when the rate limit resets
     pub reset_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Maximum requests allowed per minute
     pub limit_per_minute: u32,
 }
 
@@ -87,12 +90,11 @@ pub fn handle_http_error(
 /// Extract retry-after value from error response body
 fn extract_retry_after_from_body(body: &str) -> Option<u64> {
     // Try to parse JSON error response for retry-after information
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(retry_after) = json.get("retry_after") {
-            if let Some(seconds) = retry_after.as_u64() {
-                return Some(seconds);
-            }
-        }
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body)
+        && let Some(retry_after) = json.get("retry_after")
+        && let Some(seconds) = retry_after.as_u64()
+    {
+        return Some(seconds);
     }
 
     None
@@ -136,21 +138,21 @@ pub fn validate_request_safety(request: &LLMRequest) -> Result<(), LLMError> {
     }
 
     // Validate token limits
-    if let Some(max_tokens) = request.max_tokens {
-        if max_tokens > 4000 {
-            return Err(LLMError::InvalidRequest(
-                "Max tokens too high (limit: 4000)".to_string(),
-            ));
-        }
+    if let Some(max_tokens) = request.max_tokens
+        && max_tokens > 4000
+    {
+        return Err(LLMError::InvalidRequest(
+            "Max tokens too high (limit: 4000)".to_string(),
+        ));
     }
 
     // Validate temperature
-    if let Some(temperature) = request.temperature {
-        if temperature < 0.0 || temperature > 2.0 {
-            return Err(LLMError::InvalidRequest(
-                "Temperature must be between 0.0 and 2.0".to_string(),
-            ));
-        }
+    if let Some(temperature) = request.temperature
+        && !(0.0..=2.0).contains(&temperature)
+    {
+        return Err(LLMError::InvalidRequest(
+            "Temperature must be between 0.0 and 2.0".to_string(),
+        ));
     }
 
     Ok(())

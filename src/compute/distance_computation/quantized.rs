@@ -286,6 +286,7 @@ struct PQDistanceCache {
     /// Cache statistics
     #[allow(dead_code)]
     hits: usize,
+    /// Cache miss count
     #[allow(dead_code)]
     misses: usize,
 
@@ -547,9 +548,7 @@ impl QuantizedDistanceCalculator {
                     query,
                     &pq_data.codes,
                     &pq_data.codebook,
-                    &crate::compute::distance_computation::DistanceMetric::from(
-                        self.config.distance_metric,
-                    ),
+                    &self.config.distance_metric,
                 );
 
                 cache_hits += 1; // PQ computation typically uses cached distance tables
@@ -644,84 +643,84 @@ impl QuantizedDistanceCalculator {
         );
 
         // Stage 1: Binary filtering (if available and quality target allows)
-        if let Some(_binary_data) = &quantized_vector.binary {
-            if current_quality < target_quality {
-                let result = self
-                    .compute_distance(query, quantized_vector, SelectedFormat::Binary)
-                    .await?;
-                final_distance = result.similarity;
-                current_quality = result.quality_estimate;
-                stages.push("Binary".to_string());
+        if let Some(_binary_data) = &quantized_vector.binary
+            && current_quality < target_quality
+        {
+            let result = self
+                .compute_distance(query, quantized_vector, SelectedFormat::Binary)
+                .await?;
+            final_distance = result.similarity;
+            current_quality = result.quality_estimate;
+            stages.push("Binary".to_string());
 
-                trace!(
-                    "Binary stage: distance={:.4}, quality={:.2}",
-                    final_distance, current_quality
-                );
-            }
+            trace!(
+                "Binary stage: distance={:.4}, quality={:.2}",
+                final_distance, current_quality
+            );
         }
 
         // Stage 2: INT8 approximation (if available and needed)
-        if let Some(_int8_data) = &quantized_vector.int8 {
-            if current_quality < target_quality {
-                let result = self
-                    .compute_distance(query, quantized_vector, SelectedFormat::INT8)
-                    .await?;
-                final_distance = result.similarity;
-                current_quality = result.quality_estimate;
-                stages.push("INT8".to_string());
+        if let Some(_int8_data) = &quantized_vector.int8
+            && current_quality < target_quality
+        {
+            let result = self
+                .compute_distance(query, quantized_vector, SelectedFormat::INT8)
+                .await?;
+            final_distance = result.similarity;
+            current_quality = result.quality_estimate;
+            stages.push("INT8".to_string());
 
-                trace!(
-                    "INT8 stage: distance={:.4}, quality={:.2}",
-                    final_distance, current_quality
-                );
-            }
+            trace!(
+                "INT8 stage: distance={:.4}, quality={:.2}",
+                final_distance, current_quality
+            );
         }
 
         // Stage 3: PQ approximation (if available and needed)
-        if let Some(_pq_data) = &quantized_vector.pq {
-            if current_quality < target_quality {
-                let result = self
-                    .compute_distance(query, quantized_vector, SelectedFormat::PQ)
-                    .await?;
-                final_distance = result.similarity;
-                current_quality = result.quality_estimate;
-                stages.push("PQ".to_string());
+        if let Some(_pq_data) = &quantized_vector.pq
+            && current_quality < target_quality
+        {
+            let result = self
+                .compute_distance(query, quantized_vector, SelectedFormat::PQ)
+                .await?;
+            final_distance = result.similarity;
+            current_quality = result.quality_estimate;
+            stages.push("PQ".to_string());
 
-                trace!(
-                    "PQ stage: distance={:.4}, quality={:.2}",
-                    final_distance, current_quality
-                );
-            }
+            trace!(
+                "PQ stage: distance={:.4}, quality={:.2}",
+                final_distance, current_quality
+            );
         }
 
         // Stage 4: Full precision (if available and needed)
-        if let Some(_fp32_data) = &quantized_vector.fp32 {
-            if current_quality < target_quality {
-                // For FP32, we need to use the distance engine directly
-                let fp32_vector = quantized_vector
-                    .fp32
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("FP32 data not available"))?;
-                let similarity = self.distance_engine.calculate_distance(
-                    query,
-                    fp32_vector,
-                    &DistanceMetric::Cosine, // Use default metric
-                );
-                let result = QuantizedDistanceResult {
-                    similarity: similarity.normalized_score,
-                    quality_estimate: 1.0,
-                    method: ComputationMethod::ExactFP32,
-                    metrics: DistanceMetrics::default(),
-                };
-                final_distance = result.similarity;
-                current_quality = result.quality_estimate;
-                stages.push("FP32".to_string());
+        if let Some(_fp32_data) = &quantized_vector.fp32
+            && current_quality < target_quality
+        {
+            // For FP32, we need to use the distance engine directly
+            let fp32_vector = quantized_vector
+                .fp32
+                .as_ref()
+                .ok_or_else(|| anyhow!("FP32 data not available"))?;
+            let similarity = self.distance_engine.calculate_distance(
+                query,
+                fp32_vector,
+                &DistanceMetric::Cosine, // Use default metric
+            );
+            let result = QuantizedDistanceResult {
+                similarity: similarity.normalized_score,
+                quality_estimate: 1.0,
+                method: ComputationMethod::ExactFP32,
+                metrics: DistanceMetrics::default(),
+            };
+            final_distance = result.similarity;
+            current_quality = result.quality_estimate;
+            stages.push("FP32".to_string());
 
-                trace!(
-                    "FP32 stage: distance={:.4}, quality={:.2}",
-                    final_distance, current_quality
-                );
-            }
+            trace!(
+                "FP32 stage: distance={:.4}, quality={:.2}",
+                final_distance, current_quality
+            );
         }
 
         let computation_time = start_time.elapsed().as_secs_f64() * 1_000_000.0;
@@ -740,7 +739,7 @@ impl QuantizedDistanceCalculator {
             metrics: DistanceMetrics {
                 computation_time_us: computation_time,
                 simd_used: self.config.simd_optimization.enable_simd,
-                cache_hits: 0, // TODO: Aggregate from stages
+                cache_hits: 0, // Deferred: Aggregate from stages
                 cache_misses: 0,
                 memory_bandwidth_mb_s: self
                     .estimate_memory_bandwidth(query.len(), SelectedFormat::FP32),
@@ -788,7 +787,10 @@ impl QuantizedDistanceCalculator {
 
         // Check cache for precomputed tables
         let distance_table = {
-            let tables = self.int8_distance_tables.read().unwrap();
+            let tables = self
+                .int8_distance_tables
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             tables.tables.get(&cache_key).cloned()
         };
 
@@ -801,7 +803,10 @@ impl QuantizedDistanceCalculator {
                 query.len(),
             )?);
 
-            let mut tables = self.int8_distance_tables.write().unwrap();
+            let mut tables = self
+                .int8_distance_tables
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             tables.tables.insert(cache_key, new_table.clone());
             tables.memory_usage_bytes += new_table.estimated_size();
 
@@ -823,7 +828,10 @@ impl QuantizedDistanceCalculator {
 
         // Check cache for precomputed distance table
         let distance_table = {
-            let cache = self.pq_distance_cache.read().unwrap();
+            let cache = self
+                .pq_distance_cache
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.tables.get(&codebook_hash).cloned()
         };
 
@@ -843,7 +851,10 @@ impl QuantizedDistanceCalculator {
 
             // Cache the table
             {
-                let mut cache = self.pq_distance_cache.write().unwrap();
+                let mut cache = self
+                    .pq_distance_cache
+                    .write()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 cache.tables.insert(codebook_hash, new_table.clone());
                 cache.memory_usage_bytes += new_table.estimated_size();
                 cache.misses += 1;
@@ -860,7 +871,10 @@ impl QuantizedDistanceCalculator {
         };
 
         if cache_hit {
-            let mut cache = self.pq_distance_cache.write().unwrap();
+            let mut cache = self
+                .pq_distance_cache
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             cache.hits += 1;
         }
 
@@ -877,6 +891,7 @@ impl QuantizedDistanceCalculator {
             && self.hardware_caps.has_simd()
     }
 
+    /// Return true when the batch is large enough to benefit from SIMD batch processing.
     fn should_use_batch_processing(&self, batch_size: usize) -> bool {
         batch_size >= 32 && self.config.simd_optimization.enable_simd
     }
@@ -915,6 +930,7 @@ impl QuantizedDistanceCalculator {
         Ok(results)
     }
 
+    /// Select the highest-fidelity format available in the quantized vector data.
     fn select_best_format(&self, vector: &QuantizedVectorData) -> SelectedFormat {
         if vector.fp32.is_some() {
             SelectedFormat::FP32
@@ -932,12 +948,12 @@ impl QuantizedDistanceCalculator {
         }
     }
 
-    // Additional helper methods...
+    /// Quantize a query vector to binary using the median as the threshold.
     fn quantize_query_to_binary(&self, query: &[f32]) -> Result<Vec<u8>> {
         // Simplified binary quantization - use median threshold
         let median = {
             let mut sorted = query.to_vec();
-            // Use total_cmp for safe NaN handling instead of partial_cmp().unwrap()
+            // Use total_cmp for safe NaN handling instead of partial_cmp fallback logic
             sorted.sort_by(|a, b| a.total_cmp(b));
             sorted[sorted.len() / 2]
         };
@@ -954,6 +970,7 @@ impl QuantizedDistanceCalculator {
         Ok(binary)
     }
 
+    /// Compute Hamming distance between binary vectors using popcount.
     fn compute_hamming_distance_simd(&self, a: &[u8], b: &[u8]) -> Result<usize> {
         // SIMD Hamming distance computation
         if a.len() != b.len() {
@@ -969,6 +986,7 @@ impl QuantizedDistanceCalculator {
         Ok(distance)
     }
 
+    /// Compute Hamming distance between binary vectors using a 256-entry lookup table.
     fn compute_hamming_distance_lut(&self, a: &[u8], b: &[u8]) -> Result<usize> {
         // LUT-based Hamming distance computation
         if a.len() != b.len() {
@@ -984,6 +1002,7 @@ impl QuantizedDistanceCalculator {
         Ok(distance)
     }
 
+    /// Compute distance between a query and an INT8 vector using a precomputed lookup table.
     #[allow(dead_code)]
     fn compute_int8_distance_with_table(
         &self,
@@ -1016,6 +1035,7 @@ impl QuantizedDistanceCalculator {
         }
     }
 
+    /// Compute distance from PQ codes using a precomputed distance table for O(1) lookups.
     #[allow(dead_code)]
     fn compute_pq_distance_with_table(
         &self,
@@ -1038,6 +1058,7 @@ impl QuantizedDistanceCalculator {
         Ok(total_distance)
     }
 
+    /// Quantize a float query vector to INT8 using the given scale and zero point.
     fn quantize_query_to_int8(&self, query: &[f32], scale: f32, zero_point: i8) -> Result<Vec<i8>> {
         let mut quantized = Vec::with_capacity(query.len());
         for &value in query {
@@ -1049,6 +1070,7 @@ impl QuantizedDistanceCalculator {
         Ok(quantized)
     }
 
+    /// Estimate memory bandwidth in KB for a distance operation given dimension and format.
     fn estimate_memory_bandwidth(&self, dimension: usize, format: SelectedFormat) -> f32 {
         let bytes_per_element = match format {
             SelectedFormat::FP32 => 4.0,
@@ -1061,6 +1083,7 @@ impl QuantizedDistanceCalculator {
         (dimension as f32 * bytes_per_element * 2.0) / 1024.0 // MB/s estimate
     }
 
+    /// Estimate the number of arithmetic operations for a distance computation.
     fn estimate_operation_count(&self, dimension: usize, format: SelectedFormat) -> usize {
         match format {
             SelectedFormat::FP32 => dimension * 2, // Multiply + accumulate
@@ -1070,7 +1093,7 @@ impl QuantizedDistanceCalculator {
         }
     }
 
-    // SIMD batch processing implementation
+    /// Compute distances for a batch of quantized vectors with SIMD acceleration.
     async fn compute_batch_distances_simd(
         &self,
         query: &[f32],
@@ -1087,6 +1110,7 @@ impl QuantizedDistanceCalculator {
         Ok(results)
     }
 
+    /// Evict stale entries from the PQ distance table cache based on the configured policy.
     #[allow(dead_code)]
     fn evict_pq_cache_entries(&self, cache: &mut PQDistanceCache) {
         // Implement cache eviction based on configured policy
@@ -1112,10 +1136,11 @@ impl QuantizedDistanceCalculator {
 
 // Implementation of helper structs
 impl HammingLookupTable {
+    /// Build a 256-entry popcount lookup table, detecting hardware POPCNT support.
     fn new(hardware_caps: &HardwareCapabilities) -> Result<Self> {
         let mut hamming_weights = [0u8; 256];
-        for i in 0..256 {
-            hamming_weights[i] = (i as u8).count_ones() as u8;
+        for (i, weight) in hamming_weights.iter_mut().enumerate() {
+            *weight = (i as u8).count_ones() as u8;
         }
 
         Ok(Self {
@@ -1126,6 +1151,7 @@ impl HammingLookupTable {
 }
 
 impl Int8DistanceTable {
+    /// Create a new precomputed distance table for INT8 quantized vectors.
     #[allow(dead_code)]
     fn new(distance_metric: DistanceMetric, dimension: usize) -> Result<Self> {
         let mut squared_diff_table = Vec::with_capacity(dimension);
@@ -1146,6 +1172,7 @@ impl Int8DistanceTable {
         })
     }
 
+    /// Estimate the heap memory usage of this distance table in bytes.
     #[allow(dead_code)]
     fn estimated_size(&self) -> usize {
         self.dimension * 256 * std::mem::size_of::<f32>()
@@ -1153,16 +1180,17 @@ impl Int8DistanceTable {
 }
 
 impl PQDistanceTable {
+    /// Build a PQ distance table by computing distances from the query to all centroids.
     #[allow(dead_code)]
     fn new(query: &[f32], codebook: &[Vec<f32>], distance_metric: DistanceMetric) -> Result<Self> {
         let num_subvectors = codebook.len();
-        let num_centroids = codebook.first().map(|c| c.len()).unwrap_or(256);
+        let num_centroids = codebook.first().map_or(256, |c| c.len());
 
         let mut tables = Vec::with_capacity(num_subvectors);
 
         for (subvector_idx, centroids) in codebook.iter().enumerate() {
             let mut centroid_distances = Vec::with_capacity(num_centroids);
-            let subvector_size = query.len() / num_subvectors as usize;
+            let subvector_size = query.len() / num_subvectors;
             let query_subvector =
                 &query[subvector_idx * subvector_size..(subvector_idx + 1) * subvector_size];
 
@@ -1207,6 +1235,7 @@ impl PQDistanceTable {
         })
     }
 
+    /// Estimate the heap memory usage of this PQ distance table in bytes.
     #[allow(dead_code)]
     fn estimated_size(&self) -> usize {
         self.num_subvectors * self.num_centroids * std::mem::size_of::<f32>()

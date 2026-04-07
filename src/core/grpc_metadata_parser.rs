@@ -162,7 +162,8 @@ fn parse_json_field_query(
             if queries.is_empty() {
                 Ok(None)
             } else if queries.len() == 1 {
-                Ok(Some(queries.into_iter().next().unwrap()))
+                let only_query = queries.into_iter().next();
+                Ok(only_query)
             } else {
                 Ok(Some(MetadataQuery::And(queries)))
             }
@@ -262,7 +263,8 @@ fn construct_logical_query(
     if all_queries.is_empty() {
         Ok(None)
     } else if all_queries.len() == 1 {
-        Ok(Some(all_queries.into_iter().next().unwrap()))
+        let only_query = all_queries.into_iter().next();
+        Ok(only_query)
     } else {
         Ok(Some(MetadataQuery::And(all_queries)))
     }
@@ -287,7 +289,8 @@ fn parse_simple_filters(
     if queries.is_empty() {
         Ok(None)
     } else if queries.len() == 1 {
-        Ok(Some(queries.into_iter().next().unwrap()))
+        let only_query = queries.into_iter().next();
+        Ok(only_query)
     } else {
         Ok(Some(MetadataQuery::And(queries)))
     }
@@ -317,7 +320,8 @@ fn parse_simple_filters_excluding_operators(
     if queries.is_empty() {
         Ok(None)
     } else if queries.len() == 1 {
-        Ok(Some(queries.into_iter().next().unwrap()))
+        let only_query = queries.into_iter().next();
+        Ok(only_query)
     } else {
         Ok(Some(MetadataQuery::And(queries)))
     }
@@ -328,6 +332,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_simple_equality_parsing() {
         let mut filter = HashMap::new();
         filter.insert("category".to_string(), "electronics".to_string());
@@ -345,6 +350,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_json_logical_query_parsing() {
         let mut filter = HashMap::new();
         filter.insert(
@@ -371,6 +377,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_operator_field_parsing() {
         let mut filter = HashMap::new();
         filter.insert(
@@ -393,6 +400,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::panic)] // Test panic for assertion failure
     fn test_complex_query_parsing() {
         let mut filter = HashMap::new();
         filter.insert(

@@ -13,8 +13,9 @@ mod tests {
     use crate::index::axis::index_factory::IndexFactory;
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
     use crate::proto::proximadb_v1::VectorRecord;
-    use tracing::{debug, info};
+    use tracing::debug;
 
+    #[allow(dead_code)]
     fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         VectorRecord {
             id: id.to_string(),
@@ -28,6 +29,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn generate_random_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
         (0..count)
             .map(|i| {

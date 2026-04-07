@@ -58,7 +58,12 @@ pub enum ApiError {
 
     /// Vector dimension mismatch
     #[error("Dimension mismatch: expected {expected}, got {actual}")]
-    DimensionMismatch { expected: usize, actual: usize },
+    DimensionMismatch {
+        /// The dimension the collection expects.
+        expected: usize,
+        /// The dimension that was actually provided.
+        actual: usize,
+    },
 
     /// Invalid vector data
     #[error("Invalid vector: {0}")]
@@ -67,6 +72,10 @@ pub enum ApiError {
     /// Conflict error (e.g., schema evolution violation)
     #[error("Conflict: {0}")]
     Conflict(String),
+
+    /// Capability not supported by storage engine
+    #[error("Capability not supported: {0}")]
+    UnsupportedCapability(String),
 }
 
 impl ApiError {
@@ -101,6 +110,10 @@ impl From<ApiError> for tonic::Status {
                 tonic::Status::invalid_argument(format!("Invalid vector: {}", msg))
             }
             ApiError::Conflict(msg) => tonic::Status::aborted(msg),
+            ApiError::UnsupportedCapability(msg) => tonic::Status::invalid_argument(format!(
+                "Capability not supported: {}. Please check storage engine capabilities.",
+                msg
+            )),
         }
     }
 }
@@ -123,25 +136,50 @@ impl IntoResponse for ApiError {
             ApiError::DimensionMismatch { .. } => (StatusCode::BAD_REQUEST, "dimension_mismatch"),
             ApiError::InvalidVector(_) => (StatusCode::BAD_REQUEST, "invalid_vector"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+            ApiError::UnsupportedCapability(_) => {
+                (StatusCode::BAD_REQUEST, "unsupported_capability")
+            }
         };
 
-        let body = Json(json!({
-            "error": {
-                "type": error_type,
-                "message": self.to_string(),
-                "code": status.as_u16()
-            }
-        }));
+        // Check if this is a capability error and use enhanced formatting
+        let body = if matches!(&self, ApiError::UnsupportedCapability(_)) {
+            // This is a capability error - try to extract details
+            let error_msg = self.to_string();
+            let cap_error = CapabilityError {
+                capability: "capability".to_string(),
+                available_alternatives: vec![],
+                message: error_msg.clone(),
+                error_type: CapabilityErrorType::UnsupportedCapability,
+            };
+
+            Json(cap_error.to_rest_response()).into_response()
+        } else {
+            Json(json!({
+                "error": {
+                    "type": error_type,
+                    "message": self.to_string(),
+                    "code": status.as_u16()
+                }
+            }))
+            .into_response()
+        };
 
         (status, body).into_response()
     }
 }
+
+/// Capability error module for protocol-aware error mapping
+pub mod capability_error;
+
+// Re-export capability error types for convenience
+pub use capability_error::{CapabilityError, CapabilityErrorType};
 
 /// Result type alias for API operations
 pub type ApiResult<T> = Result<T, ApiError>;
 
 /// Helper trait for converting various error types to ApiError
 pub trait IntoApiError {
+    /// Convert this value into an [`ApiError`].
     fn into_api_error(self) -> ApiError;
 }
 
@@ -160,6 +198,53 @@ impl IntoApiError for std::io::Error {
 impl IntoApiError for serde_json::Error {
     fn into_api_error(self) -> ApiError {
         ApiError::InvalidArgument(format!("JSON error: {}", self))
+    }
+}
+
+/// Convert CapabilityCheckError to ApiError for unified error handling
+impl From<crate::query::capability::CapabilityCheckError> for ApiError {
+    fn from(err: crate::query::capability::CapabilityCheckError) -> Self {
+        use crate::query::capability::CapabilityCheckError;
+
+        match err {
+            CapabilityCheckError::UnsupportedCapability {
+                capability,
+                available_alternatives,
+            } => {
+                let msg = if available_alternatives.is_empty() {
+                    format!(
+                        "The requested capability '{}' is not supported by the selected storage engine.",
+                        capability
+                    )
+                } else {
+                    format!(
+                        "The requested capability '{}' is not supported. Available alternatives: {}",
+                        capability,
+                        available_alternatives.join(", ")
+                    )
+                };
+                ApiError::UnsupportedCapability(msg)
+            }
+
+            CapabilityCheckError::MultipleUnsupportedCapabilities {
+                missing_capabilities,
+                available_alternatives,
+            } => {
+                let msg = if available_alternatives.is_empty() {
+                    format!(
+                        "Multiple capabilities are not supported: {}. Please check the storage engine capabilities.",
+                        missing_capabilities.join(", ")
+                    )
+                } else {
+                    format!(
+                        "Multiple capabilities are not supported: {}. Available alternatives: {}",
+                        missing_capabilities.join(", "),
+                        available_alternatives.join(", ")
+                    )
+                };
+                ApiError::UnsupportedCapability(msg)
+            }
+        }
     }
 }
 
@@ -199,6 +284,41 @@ impl From<crate::core::error::ProtocolError> for ApiError {
             )),
             ProtocolError::ResourceExhausted { details } => ApiError::ResourceExhausted(details),
             ProtocolError::PreconditionFailed { details } => ApiError::InvalidArgument(details),
+        }
+    }
+}
+
+/// Convert canonical ProximaDBError to ApiError for unified error handling.
+/// This enables any service-layer code returning ProximaDBError to be used
+/// directly in API handlers via the ? operator.
+impl From<crate::core::errors::ProximaDBError> for ApiError {
+    fn from(err: crate::core::errors::ProximaDBError) -> Self {
+        use crate::core::errors::ProximaDBError as E;
+        match err {
+            E::NotFound { resource_type, id } => {
+                if resource_type.to_lowercase() == "collection" {
+                    ApiError::CollectionNotFound(id)
+                } else {
+                    ApiError::NotFound(format!("{} not found: {}", resource_type, id))
+                }
+            }
+            E::AlreadyExists { resource_type, id } => {
+                ApiError::AlreadyExists(format!("{}: {}", resource_type, id))
+            }
+            E::InvalidInput(msg) => ApiError::InvalidArgument(msg),
+            E::InvalidCacheKey(msg) => ApiError::InvalidArgument(msg),
+            E::Authentication(msg) => ApiError::Unauthorized(msg),
+            E::PermissionDenied(msg) => ApiError::Forbidden(msg),
+            E::Timeout(secs) => ApiError::DeadlineExceeded(format!("Timed out after {}s", secs)),
+            E::CapacityExceeded { message } => ApiError::ResourceExhausted(message),
+            E::TransactionConflict {
+                transaction,
+                conflicting_with,
+            } => ApiError::Conflict(format!(
+                "{} conflicts with {}",
+                transaction, conflicting_with
+            )),
+            other => ApiError::Internal(other.to_string()),
         }
     }
 }

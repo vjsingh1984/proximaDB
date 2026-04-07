@@ -767,16 +767,21 @@ async fn test_graph_traversal_for_multimodal() {
 // REST API INTEGRATION TESTS (requires server running)
 // ================================================================================
 
+fn build_test_http_client() -> Result<reqwest::Client, reqwest::Error> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        // Disable proxy auto-detection to avoid macOS system configuration panics in sandboxed CI.
+        .no_proxy()
+        .build()
+}
+
 /// Test multi-model federated query via REST endpoint
 #[tokio::test]
 async fn test_federated_query_via_rest() {
     setup_hardware_capabilities();
     ensure_test_directories();
 
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-    {
+    let client = match build_test_http_client() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to create HTTP client: {}", e);
@@ -844,10 +849,7 @@ async fn test_multimodel_query_via_rest() {
     setup_hardware_capabilities();
     ensure_test_directories();
 
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-    {
+    let client = match build_test_http_client() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to create HTTP client: {}", e);

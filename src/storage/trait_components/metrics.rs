@@ -62,11 +62,11 @@ pub trait StorageMetrics: StorageIdentity + Send + Sync {
             last_flush: engine_metrics
                 .get("last_flush_timestamp")
                 .and_then(|v| v.as_i64())
-                .and_then(|ts| DateTime::from_timestamp_millis(ts)),
+                .and_then(DateTime::from_timestamp_millis),
             last_compaction: engine_metrics
                 .get("last_compaction_timestamp")
                 .and_then(|v| v.as_i64())
-                .and_then(|ts| DateTime::from_timestamp_millis(ts)),
+                .and_then(DateTime::from_timestamp_millis),
             pending_flushes: engine_metrics
                 .get("pending_flushes")
                 .and_then(|v| v.as_u64())
@@ -108,13 +108,12 @@ pub trait StorageMetrics: StorageIdentity + Send + Sync {
             .engine_specific
             .get("warnings")
             .and_then(|v| v.as_array())
-            .map(|arr| {
+            .map_or_else(Vec::new, |arr| {
                 arr.iter()
                     .filter_map(|v| v.as_str())
                     .map(|s| s.to_string())
                     .collect()
-            })
-            .unwrap_or_else(Vec::new);
+            });
 
         Ok(EngineHealth {
             healthy,

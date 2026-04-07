@@ -184,7 +184,7 @@ impl RowBasedUtilities {
         };
 
         // Calculate padding needed for alignment
-        let padding_needed = if dimension % simd_width != 0 {
+        let padding_needed = if !dimension.is_multiple_of(simd_width) {
             simd_width - (dimension % simd_width)
         } else {
             0
@@ -296,7 +296,7 @@ impl RowBasedUtilities {
     /// Calculate access distance between record IDs (simplified)
     fn calculate_access_distance(id1: &str, id2: &str) -> u64 {
         // This is a simplified version - in practice would consider actual layout
-        (id1.len() as i64 - id2.len() as i64).abs() as u64
+        id1.len().abs_diff(id2.len()) as u64
     }
 
     /// Recommend optimizations based on access patterns
@@ -459,6 +459,12 @@ impl PerformanceProfiler {
     fn get_current_memory_usage() -> usize {
         // Simplified - would use actual memory profiling
         0
+    }
+}
+
+impl Default for PerformanceProfiler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -689,7 +695,7 @@ mod tests {
             },
         ];
 
-        // TODO: Update to use proper data structure
+        // Deferred: Update to use proper data structure
         // Temporarily using ProximaDataBlock
         let blocks = vec![ProximaDataBlock {
             encoding_marker: 0x00,

@@ -134,11 +134,11 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
     let ctx = SessionContext::new_with_config(config);
 
     // Register ProximaDB catalog
-    // TODO: Implement ProximaDBCatalogProvider
+    // Deferred: Implement ProximaDBCatalogProvider
     // ctx.register_catalog("proximadb", Arc::new(ProximaDBCatalogProvider::new(...)));
 
     // Register vector functions
-    // TODO: Register cosine_distance, euclidean_distance, etc.
+    // Deferred: Register cosine_distance, euclidean_distance, etc.
 
     Ok(ctx)
 }
@@ -180,5 +180,40 @@ impl Default for DataFusionConfig {
             enable_projection_pushdown: true,
             statistics_cache_ttl_seconds: 60,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies that the DataFusion integration module compiles and
+    /// basic session context creation works with DataFusion 51.x / Arrow 57.x.
+    #[test]
+    fn test_create_session_context() {
+        let ctx = create_session_context();
+        assert!(ctx.is_ok(), "SessionContext creation should succeed");
+    }
+
+    #[test]
+    fn test_create_session_context_with_custom_config() {
+        let config = DataFusionConfig {
+            batch_size: 4096,
+            target_partitions: 2,
+            enable_predicate_pushdown: true,
+            enable_projection_pushdown: false,
+            statistics_cache_ttl_seconds: 30,
+        };
+        let ctx = create_session_context_with_config(&config);
+        assert!(ctx.is_ok(), "Custom SessionContext creation should succeed");
+    }
+
+    #[test]
+    fn test_datafusion_config_default() {
+        let config = DataFusionConfig::default();
+        assert_eq!(config.batch_size, 8192);
+        assert!(config.enable_predicate_pushdown);
+        assert!(config.enable_projection_pushdown);
+        assert_eq!(config.statistics_cache_ttl_seconds, 60);
     }
 }

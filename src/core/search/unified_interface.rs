@@ -31,6 +31,7 @@ use crate::services::collection::manager::CollectionService;
 pub struct SearchPlan {
     /// Collection metadata for optimization
     pub collection_id: String,
+    /// Collection configuration for optimization hints
     pub collection_config: Option<CollectionConfig>,
     /// Filterable metadata columns from collection config
     pub filterable_columns: Vec<FilterableColumn>,
@@ -50,6 +51,7 @@ pub struct SearchPlan {
     /// Minimum score threshold for results (dynamically updated during search)
     /// - None: No minimum threshold (useful for full fidelity searches)
     /// - Some(score): Only return results with score >= this value
+    ///
     /// Engines can update this as they find better results
     pub min_score: Option<f32>,
 
@@ -90,11 +92,17 @@ pub struct FilterableColumn {
 /// Column data types for type-safe filtering
 #[derive(Debug, Clone)]
 pub enum ColumnData {
+    /// UTF-8 string column
     String,
+    /// 64-bit integer column
     Integer,
+    /// 64-bit float column
     Float,
+    /// Boolean column
     Boolean,
+    /// Date/time column
     DateTime,
+    /// JSON column
     Json,
 }
 
@@ -145,17 +153,31 @@ pub trait UnifiedSearchEngine: Send + Sync {
 pub enum OptimizationHint {
     /// Use quantized search for large datasets
     UseQuantization {
+        /// Quantization level to use
         method: UnifiedQuantizationLevel,
+        /// Expected speedup factor
         expected_speedup: f32,
     },
     /// Use metadata filtering for selective queries
-    UseMetadataFiltering { selectivity_estimate: f32 },
+    UseMetadataFiltering {
+        /// Estimated selectivity (0.0 to 1.0)
+        selectivity_estimate: f32,
+    },
     /// Use column projection for bandwidth optimization
-    UseColumnProjection { columns: Vec<String> },
+    UseColumnProjection {
+        /// Columns to project
+        columns: Vec<String>,
+    },
     /// Use range requests for cloud storage
-    UseRangeRequests { chunk_size_mb: f32 },
+    UseRangeRequests {
+        /// Chunk size for range requests in megabytes
+        chunk_size_mb: f32,
+    },
     /// Use caching for frequently accessed data
-    UseCaching { cache_key: String },
+    UseCaching {
+        /// Cache key for this search pattern
+        cache_key: String,
+    },
 }
 
 /// Unified search orchestrator - replaces VectorOperationsService search logic
@@ -252,10 +274,8 @@ impl IntegratedSearchOptimizer {
             .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
 
         // Build filterable columns from collection config
-        let filterable_columns: Vec<FilterableColumn> = collection
-            .config
-            .as_ref()
-            .map(|config| {
+        let filterable_columns: Vec<FilterableColumn> =
+            collection.config.as_ref().map_or_else(Vec::new, |config| {
                 config
                     .filterable_columns
                     .iter()
@@ -273,8 +293,7 @@ impl IntegratedSearchOptimizer {
                         estimated_cardinality: col.estimated_cardinality.map(|c| c as usize),
                     })
                     .collect()
-            })
-            .unwrap_or_else(Vec::new);
+            });
 
         // Analyze storage characteristics
         let storage_info = self.analyze_storage_info(collection_id).await?;
@@ -301,8 +320,8 @@ impl IntegratedSearchOptimizer {
                 crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
             ],
             storage_info,
-            filter_expression: None, // TODO: Extract from search request
-            query_vector: None,      // TODO: Extract from search request
+            filter_expression: None, // Deferred: Extract from search request
+            query_vector: None,      // Deferred: Extract from search request
             top_k: 100,              // Default top-k
             min_score: None,         // No minimum score by default
             enable_early_termination: true, // Enable optimizations by default

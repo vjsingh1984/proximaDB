@@ -136,6 +136,9 @@ pub struct LocalRocksDbBackend {
 
     /// Optional unified metrics collector (injected)
     metrics_collector: Option<UnifiedMetricsCollector>,
+
+    /// Backend statistics (for backward compatibility)
+    stats: Arc<RwLock<BackendStatistics>>,
 }
 
 // Metrics are now handled by UnifiedMetricsCollector injected from outside
@@ -148,6 +151,7 @@ impl LocalRocksDbBackend {
             db: Arc::new(RwLock::new(None)),
             regular_db: Arc::new(RwLock::new(None)),
             metrics_collector: None, // Metrics are optional and injected
+            stats: Arc::new(RwLock::new(BackendStatistics::default())),
         };
         backend.initialize().await?;
         Ok(backend)
@@ -163,6 +167,7 @@ impl LocalRocksDbBackend {
             db: Arc::new(RwLock::new(None)),
             regular_db: Arc::new(RwLock::new(None)),
             metrics_collector: Some(metrics),
+            stats: Arc::new(RwLock::new(BackendStatistics::default())),
         };
         backend.initialize().await?;
         Ok(backend)
@@ -1006,6 +1011,27 @@ impl LocalRocksDbBackend {
     }
 }
 
+/// Backend statistics
+#[derive(Debug, Clone, Default)]
+pub struct BackendStatistics {
+    /// Total read operations
+    pub total_reads: u64,
+    /// Total write operations
+    pub total_writes: u64,
+    /// Total delete operations
+    pub total_deletes: u64,
+    /// Cache hit count
+    pub cache_hits: u64,
+    /// Cache miss count
+    pub cache_misses: u64,
+    /// Total bytes written
+    pub bytes_written: u64,
+    /// Total bytes read
+    pub bytes_read: u64,
+    /// Number of compactions
+    pub compactions: u64,
+}
+
 impl Clone for BackendStatistics {
     fn clone(&self) -> Self {
         Self {
@@ -1036,13 +1062,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_rocksdb_backend_basic_operations() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .context("Failed to create temp directory")
+            .expect("Failed to create temp directory");
         let config = RocksDbMetadataConfig {
             db_path: temp_dir.path().join("rocksdb"),
             ..Default::default()
         };
 
-        let backend = LocalRocksDbBackend::new(config).await.unwrap();
+        let backend = LocalRocksDbBackend::new(config)
+            .await
+            .context("Failed to create backend")
+            .expect("Failed to create backend");
 
         // Test upsert
         let record = Collection {
@@ -1066,55 +1097,78 @@ mod tests {
         backend
             .upsert_collection_record(record.clone())
             .await
-            .unwrap();
+            .context("Failed to upsert collection")
+            .expect("Failed to upsert collection");
 
         // Test get by name
         let retrieved = backend
             .collection_metadata("test_collection")
             .await
-            .unwrap();
+            .context("Failed to get collection")
+            .expect("Failed to get collection");
         assert!(retrieved.is_some());
-        let retrieved = retrieved.unwrap();
+        let retrieved = retrieved
+            .context("Collection should exist")
+            .expect("Collection should exist");
         assert_eq!(retrieved.uuid, "test-uuid-123");
         assert_eq!(retrieved.name, "test_collection");
 
         // Test get by UUID
-        let uuid = backend.get_uuid("test_collection").await.unwrap();
+        let uuid = backend
+            .get_uuid("test_collection")
+            .await
+            .context("Failed to get UUID")
+            .expect("Failed to get UUID");
         assert_eq!(uuid, Some("test-uuid-123".to_string()));
 
         // Test list all
-        let all = backend.list_collections().await.unwrap();
+        let all = backend
+            .list_collections()
+            .await
+            .context("Failed to list collections")
+            .expect("Failed to list collections");
         assert_eq!(all.len(), 1);
 
         // Test get by tag
-        let tagged = backend.get_collections_by_tag("test").await.unwrap();
+        let tagged = backend
+            .get_collections_by_tag("test")
+            .await
+            .context("Failed to get collections by tag")
+            .expect("Failed to get collections by tag");
         assert_eq!(tagged.len(), 1);
 
         // Test delete
         let deleted = backend
             .delete_collection_by_uuid("test-uuid-123")
             .await
-            .unwrap();
+            .context("Failed to delete collection")
+            .expect("Failed to delete collection");
         assert!(deleted);
 
         // Verify deletion
         let after_delete = backend
             .collection_metadata("test_collection")
             .await
-            .unwrap();
+            .context("Failed to get collection after deletion")
+            .expect("Failed to get collection after deletion");
         assert!(after_delete.is_none());
     }
 
     #[tokio::test]
     async fn test_rocksdb_backend_transactions() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new()
+            .context("Failed to create temp directory")
+            .expect("Failed to create temp directory");
         let config = RocksDbMetadataConfig {
             db_path: temp_dir.path().join("rocksdb_txn"),
             enable_transactions: true,
             ..Default::default()
         };
 
-        let backend = LocalRocksDbBackend::new(config).await.unwrap();
+        let backend = LocalRocksDbBackend::new(config)
+            .await
+            .context("Failed to create backend")
+            .expect("Failed to create backend");
 
         // Create multiple collections
         for i in 0..5 {
@@ -1136,15 +1190,27 @@ mod tests {
                 owner: None,
             };
 
-            backend.upsert_collection_record(record).await.unwrap();
+            backend
+                .upsert_collection_record(record)
+                .await
+                .context("Failed to upsert collection")
+                .expect("Failed to upsert collection");
         }
 
         // Verify all were created
-        let all = backend.list_collections().await.unwrap();
+        let all = backend
+            .list_collections()
+            .await
+            .context("Failed to list collections")
+            .expect("Failed to list collections");
         assert_eq!(all.len(), 5);
 
         // Test batch operations
-        let tagged = backend.get_collections_by_tag("batch").await.unwrap();
+        let tagged = backend
+            .get_collections_by_tag("batch")
+            .await
+            .context("Failed to get collections by tag")
+            .expect("Failed to get collections by tag");
         assert_eq!(tagged.len(), 5);
     }
 }

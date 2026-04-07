@@ -4,7 +4,7 @@ use proximadb::storage::engines::core::formats::proximablocks::{
     BlockCompressionConfig, ProximaDataBlock, VectorEncodingLayout,
 };
 use std::collections::HashMap;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 fn main() -> anyhow::Result<()> {
     // Initialize tracing

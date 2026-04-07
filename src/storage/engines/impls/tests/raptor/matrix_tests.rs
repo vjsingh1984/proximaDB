@@ -124,9 +124,9 @@ async fn test_build_p2_matrix() -> Result<()> {
     );
     let mut distances = Vec::new();
 
-    for i in 0..vectors.len() {
+    for (i, vec_i) in vectors.iter().enumerate() {
         for j in (i + 1)..vectors.len() {
-            let dist = distance_compute.distance(&vectors[i], &vectors[j]);
+            let dist = distance_compute.distance(vec_i, &vectors[j]);
             distances.push(dist);
         }
     }
@@ -170,16 +170,16 @@ async fn test_p2_matrix_proximaencoder() -> Result<()> {
     );
     let mut distances = Vec::new();
 
-    for i in 0..vectors.len() {
+    for (i, vec_i) in vectors.iter().enumerate() {
         for j in (i + 1)..vectors.len() {
-            let dist = distance_compute.distance(&vectors[i], &vectors[j]);
+            let dist = distance_compute.distance(vec_i, &vectors[j]);
             distances.push(dist);
         }
     }
 
     // Quantize to u8
     let quantization_engine = StorageQuantizationEngine::new_default();
-    let (quantized, min_dist, max_dist) = quantization_engine.quantize_to_u8(&distances);
+    let (quantized, _min_dist, _max_dist) = quantization_engine.quantize_to_u8(&distances);
 
     // Apply ProximaCodec encoding
     let codec = ProximaCodec::global();
@@ -333,7 +333,7 @@ fn test_phase1_boundary_detection_basic() {
         })
         .collect();
 
-    centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    centroid_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // Primary centroids (top 3)
     let primary: Vec<usize> = centroid_distances.iter().take(3).map(|(i, _)| *i).collect();
@@ -403,13 +403,14 @@ fn test_phase2_spillover_detection() {
     match pxk_matrix.storage_strategy {
         VectorCentroidStorageStrategy::Full => {
             // Check all vector-to-centroid distances
-            for v in 0..rowgroup_vectors.len() {
+            for rg_vec in &rowgroup_vectors {
                 let mut distances = Vec::new();
-                for c in 0..centroids.len() {
-                    let dist = distance_compute.distance(&rowgroup_vectors[v], &centroids[c]);
+                for (c, centroid) in centroids.iter().enumerate() {
+                    let dist = distance_compute.distance(rg_vec, centroid);
                     distances.push((c, dist));
                 }
-                distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                distances
+                    .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
                 // Vector spills over if closest centroid is not centroid 0
                 if distances[0].0 != 0 {

@@ -165,7 +165,7 @@ impl FormatRegistry {
         let priority = detector.priority();
         detectors.push(detector);
         // Sort by priority (higher first)
-        detectors.sort_by(|a, b| b.priority().cmp(&a.priority()));
+        detectors.sort_by_key(|d| std::cmp::Reverse(d.priority()));
         debug!("Registered format detector with priority {}", priority);
     }
 
@@ -198,13 +198,13 @@ impl FormatRegistry {
 
     /// Get default internal format
     pub fn default_internal(&self) -> Option<Arc<dyn InternalFormat>> {
-        let default_type = self.default_internal.read().clone()?;
+        let default_type = (*self.default_internal.read())?;
         self.get_internal(default_type)
     }
 
     /// Get default open format
     pub fn default_open(&self) -> Option<Arc<dyn OpenTableFormat>> {
-        let default_type = self.default_open.read().clone()?;
+        let default_type = (*self.default_open.read())?;
         self.get_open(default_type)
     }
 
@@ -223,6 +223,7 @@ impl FormatRegistry {
     // ========================================================================
 
     /// Auto-detect format from path
+    #[expect(clippy::await_holding_lock)] // FIXME: Requires API redesign to iterate without holding lock
     pub async fn detect_format(&self, path: &str) -> Result<Option<FormatType>> {
         let detectors = self.detectors.read();
 

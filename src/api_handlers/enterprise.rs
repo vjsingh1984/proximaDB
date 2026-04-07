@@ -318,42 +318,59 @@ impl EnterpriseAPIHandler {
 /// Enterprise API response wrapper
 #[derive(Debug, Clone)]
 pub struct EnterpriseApiResponse<T> {
+    /// Whether the operation succeeded.
     pub success: bool,
+    /// Response payload.
     pub data: T,
+    /// Audit and tracking metadata.
     pub enterprise_metadata: EnterpriseApiMetadata,
 }
 
 /// Enterprise API metadata for audit and tracking
 #[derive(Debug, Clone)]
 pub struct EnterpriseApiMetadata {
+    /// Authenticated user context.
     pub user_context: EnterpriseUserContext,
+    /// When the operation was executed.
     pub operation_timestamp: DateTime<Utc>,
+    /// Unique audit trail identifier for compliance.
     pub audit_trail_id: Option<String>,
 }
 
 /// Tenant creation result
 #[derive(Debug, Clone)]
 pub struct TenantCreationResult {
+    /// The newly created tenant context.
     pub tenant_context: crate::storage::tenant::TenantContext,
+    /// Default domains provisioned for the tenant.
     pub default_domains: Vec<crate::storage::tenant::DomainContext>,
+    /// Standard RBAC roles created for the tenant.
     pub standard_roles: Vec<crate::storage::tenant::TenantRole>,
+    /// User who initiated tenant creation.
     pub created_by: String,
 }
 
 /// Domain creation result
 #[derive(Debug, Clone)]
 pub struct DomainCreationResult {
+    /// The newly created domain context.
     pub domain_context: crate::storage::tenant::DomainContext,
+    /// Business context associated with the domain.
     pub business_context: BusinessContext,
+    /// ID of the knowledge graph created for the domain.
     pub knowledge_graph_id: String,
 }
 
 /// Collection link result
 #[derive(Debug, Clone)]
 pub struct CollectionLinkResult {
+    /// Bridge mapping collection to domain.
     pub bridge: crate::storage::tenant::CollectionDomainBridge,
+    /// Parent tenant ID.
     pub tenant_id: String,
+    /// Domain the collection was linked to.
     pub domain_name: String,
+    /// ID of the linked collection.
     pub collection_id: String,
 }
 
@@ -952,5 +969,142 @@ mod tests {
         let entity_store = TenantAwareEntityStore::new(tenant_manager);
         // Just verify creation succeeds
         let _ = entity_store;
+    }
+
+    // ==================== EnterpriseApiResponse Generic Tests ====================
+
+    #[test]
+    fn test_enterprise_api_response_with_string_data() {
+        let user_context = crate::auth::sso::EnterpriseUserContext::system_admin();
+
+        let response = EnterpriseApiResponse {
+            success: true,
+            data: "Operation completed".to_string(),
+            enterprise_metadata: EnterpriseApiMetadata {
+                user_context: user_context.clone(),
+                operation_timestamp: chrono::Utc::now(),
+                audit_trail_id: Some("audit_001".to_string()),
+            },
+        };
+
+        assert!(response.success);
+        assert_eq!(response.data, "Operation completed");
+        assert_eq!(
+            response.enterprise_metadata.audit_trail_id,
+            Some("audit_001".to_string())
+        );
+        assert_eq!(response.enterprise_metadata.user_context.user_id, "system");
+    }
+
+    #[test]
+    fn test_enterprise_api_response_failure_with_no_audit_trail() {
+        let user_context = crate::auth::sso::EnterpriseUserContext::system_admin();
+
+        let response = EnterpriseApiResponse {
+            success: false,
+            data: 0u32,
+            enterprise_metadata: EnterpriseApiMetadata {
+                user_context,
+                operation_timestamp: chrono::Utc::now(),
+                audit_trail_id: None,
+            },
+        };
+
+        assert!(!response.success);
+        assert_eq!(response.data, 0);
+        assert!(response.enterprise_metadata.audit_trail_id.is_none());
+    }
+
+    // ==================== EnterpriseApiMetadata Tests ====================
+
+    #[test]
+    fn test_enterprise_api_metadata_timestamp_is_recent() {
+        let user_context = crate::auth::sso::EnterpriseUserContext::system_admin();
+
+        let now = chrono::Utc::now();
+        let metadata = EnterpriseApiMetadata {
+            user_context,
+            operation_timestamp: now,
+            audit_trail_id: Some("audit_ts".to_string()),
+        };
+
+        // Timestamp should be within 1 second of now
+        let diff = (chrono::Utc::now() - metadata.operation_timestamp).num_seconds();
+        assert!(diff.abs() < 2, "Timestamp should be recent");
+    }
+
+    // ==================== Knowledge Graph Key Format Tests ====================
+
+    #[test]
+    fn test_knowledge_graph_key_format() {
+        // The handler uses format!("{tenant_id}::{domain_name}") for KG keys
+        let tenant_id = "acme_corp";
+        let domain_name = "risk_management";
+        let key = format!("{tenant_id}::{domain_name}");
+        assert_eq!(key, "acme_corp::risk_management");
+        assert!(key.contains("::"));
+    }
+
+    #[test]
+    fn test_knowledge_graph_key_with_special_chars() {
+        let tenant_id = "tenant-123";
+        let domain_name = "domain_v2.0";
+        let key = format!("{tenant_id}::{domain_name}");
+        assert_eq!(key, "tenant-123::domain_v2.0");
+    }
+
+    // ==================== Clone Trait Deep Tests ====================
+
+    #[test]
+    fn test_enterprise_api_response_clone() {
+        let user_context = crate::auth::sso::EnterpriseUserContext::system_admin();
+
+        let original = EnterpriseApiResponse {
+            success: true,
+            data: "cloned_data".to_string(),
+            enterprise_metadata: EnterpriseApiMetadata {
+                user_context,
+                operation_timestamp: chrono::Utc::now(),
+                audit_trail_id: Some("clone_audit".to_string()),
+            },
+        };
+
+        let cloned = original.clone();
+        assert_eq!(original.success, cloned.success);
+        assert_eq!(original.data, cloned.data);
+        assert_eq!(
+            original.enterprise_metadata.audit_trail_id,
+            cloned.enterprise_metadata.audit_trail_id
+        );
+        assert_eq!(
+            original.enterprise_metadata.user_context.user_id,
+            cloned.enterprise_metadata.user_context.user_id
+        );
+    }
+
+    // ==================== Performance Requirements Edge Cases ====================
+
+    #[test]
+    fn test_performance_requirements_zero_latency() {
+        let requirements = crate::storage::tenant::context::PerformanceRequirements {
+            latency_requirement_ms: 0,
+            throughput_requirement_qps: 0,
+            availability_requirement: 0.0,
+        };
+
+        assert_eq!(requirements.latency_requirement_ms, 0);
+        assert_eq!(requirements.throughput_requirement_qps, 0);
+        assert!((requirements.availability_requirement - 0.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_performance_requirements_max_availability() {
+        let requirements = crate::storage::tenant::context::PerformanceRequirements {
+            latency_requirement_ms: 1,
+            throughput_requirement_qps: 1_000_000,
+            availability_requirement: 1.0,
+        };
+
+        assert!((requirements.availability_requirement - 1.0).abs() < f32::EPSILON);
     }
 }

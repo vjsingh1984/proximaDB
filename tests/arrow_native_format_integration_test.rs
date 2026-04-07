@@ -74,7 +74,16 @@ fn test_centroid_tree_pruning() {
         vec![10.0, 10.0, 10.0], // Rowgroup 3: far from origin
     ];
 
-    let tree = CentroidTree::build(&centroids, 8).expect("Should build tree");
+    let tree = CentroidTree::build_with_config(
+        &centroids,
+        CentroidTreeConfig {
+            max_depth: 8,
+            min_leaf_size: 1,
+            use_quantized: false,
+            quantization_bits: 8,
+        },
+    )
+    .expect("Should build tree");
 
     // Query near origin - should match rowgroups 0-2, prune rowgroup 3
     let query_near_origin = vec![0.5, 0.5, 0.0];
@@ -88,6 +97,10 @@ fn test_centroid_tree_pruning() {
         result.included_indices.len() < 4,
         "Should prune at least one distant rowgroup"
     );
+    assert!(
+        !result.included_indices.contains(&3),
+        "Distant rowgroup should be pruned"
+    );
 }
 
 #[test]
@@ -100,7 +113,7 @@ fn test_centroid_tree_quantized_pruning() {
 
     let config = CentroidTreeConfig {
         max_depth: 8,
-        min_leaf_size: 2,
+        min_leaf_size: 1,
         use_quantized: true,
         quantization_bits: 8,
     };

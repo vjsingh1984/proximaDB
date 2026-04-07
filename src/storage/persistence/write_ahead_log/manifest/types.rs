@@ -36,6 +36,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
@@ -183,36 +184,33 @@ pub struct GlobalManifest {
     lsn_allocator: Arc<GlobalLsnAllocator>,
 }
 
-/// Global LSN allocator - ensures monotonically increasing LSN across all collections
+/// Global LSN allocator - ensures monotonically increasing LSN across all collections.
+/// Uses AtomicU64 for lock-free allocation, eliminating contention on the write path.
 pub struct GlobalLsnAllocator {
-    next_lsn: Arc<RwLock<u64>>,
+    next_lsn: AtomicU64,
 }
 
 impl GlobalLsnAllocator {
     /// Create a new LSN allocator starting from a given LSN
     pub fn new(start_lsn: u64) -> Self {
         Self {
-            next_lsn: Arc::new(RwLock::new(start_lsn)),
+            next_lsn: AtomicU64::new(start_lsn),
         }
     }
 
-    /// Allocate the next global LSN
+    /// Allocate the next global LSN (lock-free via fetch_add)
     pub async fn allocate(&self) -> u64 {
-        let mut lsn = self.next_lsn.write().await;
-        let current = *lsn;
-        *lsn += 1;
-        current
+        self.next_lsn.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Get the current LSN without allocating
     pub async fn current(&self) -> u64 {
-        *self.next_lsn.read().await
+        self.next_lsn.load(Ordering::Relaxed)
     }
 
     /// Set the next LSN (used during recovery)
     pub async fn set_next(&self, next_lsn: u64) {
-        let mut lsn = self.next_lsn.write().await;
-        *lsn = next_lsn;
+        self.next_lsn.store(next_lsn, Ordering::Relaxed);
     }
 }
 
@@ -428,7 +426,9 @@ impl GlobalManifest {
         Ok(())
     }
 
-    /// Rewrite the entire manifest (used after status updates)
+    /// Rewrite the entire manifest (used after status updates).
+    /// Uses write_atomic (temp file + rename) to prevent corruption if the process
+    /// crashes mid-write. A direct truncate+write would leave an empty or partial file.
     async fn rewrite_manifest(&self) -> Result<()> {
         let entries = self.entries.read().await;
 
@@ -446,7 +446,7 @@ impl GlobalManifest {
         let strategy = crate::storage::persistence::filesystem::write_strategy::WriteStrategyFactory
             ::create_metadata_strategy(&*fs, None)?;
         let opts = strategy.create_file_options(&*fs, &url)?;
-        fs.write(&url, &buf, Some(opts))
+        fs.write_atomic(&url, &buf, Some(opts))
             .await
             .context("Failed to rewrite global manifest")?;
 
@@ -464,7 +464,7 @@ impl GlobalManifest {
         // Get the latest checkpoint ID
         let checkpoint_id = {
             let latest = self.latest_checkpoint.read().await;
-            latest.as_ref().map(|c| c.checkpoint_id + 1).unwrap_or(1)
+            latest.as_ref().map_or(1, |c| c.checkpoint_id + 1)
         };
 
         // Find the highest flushed LSN
@@ -498,8 +498,8 @@ impl GlobalManifest {
             checkpoint_lsn,
             timestamp_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0),
             collections: collection_map.into_values().collect(),
             safe_to_delete_before_lsn: checkpoint_lsn,
         };

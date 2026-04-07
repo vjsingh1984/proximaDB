@@ -113,10 +113,9 @@ mod schema_tests {
 // ============================================================================
 
 mod file_split_tests {
-    use super::*;
+
     use proximadb::storage::formats::{
-        CacheStatus, ColumnBounds, FileSplit, SpatialBounds, SplitLocality, SplitPlanner,
-        SplitStatistics, SplitType, StorageTier,
+        CacheStatus, FileSplit, SpatialBounds, SplitLocality, SplitPlanner, SplitType, StorageTier,
     };
 
     #[test]
@@ -406,8 +405,7 @@ mod spark_tests {
 mod trino_tests {
     use super::*;
     use proximadb::connectors::{
-        TrinoConnectorConfig, TrinoDomain, TrinoHostAddress, TrinoRange, TrinoSplit,
-        TrinoSplitManager, TrinoTupleDomain,
+        TrinoConnectorConfig, TrinoDomain, TrinoRange, TrinoSplit, TrinoTupleDomain,
     };
     use proximadb::storage::formats::{FileSplit, SplitLocality, SplitStatistics};
 

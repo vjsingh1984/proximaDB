@@ -590,7 +590,7 @@ mod tests {
             .collect();
 
         // Sort by distance (lower = more similar)
-        results.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        results.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         // Verify we got results
         assert!(!results.is_empty());
@@ -857,7 +857,7 @@ mod tests {
             let (min_dist, min_idx) = distances
                 .iter()
                 .enumerate()
-                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(idx, dist)| (*dist, idx))
                 .unwrap();
 

@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Comprehensive authentication configuration for enterprise deployment
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
@@ -45,21 +45,6 @@ pub struct AuthConfig {
 
     /// Audit logging for authentication events
     pub audit_logging: AuditConfig,
-}
-
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            jwt: JwtConfig::default(),
-            api_keys: HashMap::new(),
-            rbac: RbacConfig::default(),
-            oauth2: None,
-            client_certificates: None,
-            session: SessionConfig::default(),
-            audit_logging: AuditConfig::default(),
-        }
-    }
 }
 
 /// JWT token configuration
@@ -100,11 +85,17 @@ impl Default for JwtConfig {
 /// Supported JWT algorithms
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum JwtAlgorithm {
+    /// HMAC-SHA256 (symmetric, default)
     HS256,
+    /// HMAC-SHA384 (symmetric)
     HS384,
+    /// HMAC-SHA512 (symmetric)
     HS512,
+    /// RSA-SHA256 (asymmetric)
     RS256,
+    /// RSA-SHA384 (asymmetric)
     RS384,
+    /// RSA-SHA512 (asymmetric)
     RS512,
 }
 
@@ -229,18 +220,26 @@ impl Default for RbacConfig {
 /// OAuth2 configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2Config {
+    /// Registered OAuth2 providers keyed by provider name
     pub providers: HashMap<String, OAuth2Provider>,
 }
 
 /// OAuth2 provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2Provider {
+    /// OAuth2 client identifier
     pub client_id: String,
+    /// OAuth2 client secret
     pub client_secret: String,
+    /// Authorization endpoint URL
     pub auth_url: String,
+    /// Token exchange endpoint URL
     pub token_url: String,
+    /// User info endpoint URL
     pub user_info_url: String,
+    /// Requested OAuth2 scopes
     pub scopes: Vec<String>,
+    /// Redirect URI for OAuth2 callback
     pub redirect_uri: String,
 }
 
@@ -290,15 +289,20 @@ impl Default for SessionConfig {
 /// Session storage backends
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SessionStorage {
+    /// In-memory session storage (lost on restart)
     Memory,
+    /// Redis-backed session storage
     Redis(RedisConfig),
+    /// Database-backed session storage
     Database,
 }
 
 /// Redis configuration for session storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisConfig {
+    /// Redis connection URL
     pub url: String,
+    /// Key prefix for session keys in Redis
     pub key_prefix: String,
 }
 
@@ -340,14 +344,22 @@ impl Default for AuditConfig {
 /// Audit storage backends
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditStorage {
+    /// File-based audit log storage
     File {
+        /// File path for audit logs
         path: String,
+        /// Enable log rotation
         rotate: bool,
+        /// Maximum log file size in megabytes before rotation
         max_size_mb: u64,
     },
+    /// Database-backed audit storage
     Database,
+    /// Syslog-based audit storage
     Syslog {
+        /// Syslog facility name
         facility: String,
+        /// Syslog tag for ProximaDB audit events
         tag: String,
     },
 }

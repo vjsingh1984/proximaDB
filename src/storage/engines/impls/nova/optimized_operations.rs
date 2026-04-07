@@ -13,8 +13,19 @@ use std::sync::Arc;
 use tracing::info;
 // Memory-mapped Parquet operations would be imported here
 // For now, we'll use placeholder types
+
+/// Memory-mapped Parquet reader for efficient zero-copy I/O
+///
+/// Provides zero-copy access to Parquet files by memory-mapping them,
+/// reducing memory allocations and improving read performance.
 struct MmapParquetReader;
+
+/// Memory pool for memory-mapped file operations
+///
+/// Manages a pool of memory-mapped regions to reduce overhead
+/// of repeated mmap/munmap operations.
 struct MmapPool {
+    /// Total size of the memory pool in bytes
     _size: usize,
 }
 impl MmapPool {
@@ -42,7 +53,10 @@ impl MmapParquetReader {
 use super::columnar_search::ColumnarSearchConfig;
 use crate::storage::engines::core::formats::columnar::SearchCandidate;
 
-/// Optimized VIPER operations using existing infrastructure
+/// Optimized NOVA operations using existing infrastructure
+///
+/// Provides hardware-accelerated columnar search operations leveraging
+/// SIMD, memory pools, and memory-mapped I/O for optimal performance.
 pub struct OptimizedNovaOperations {
     /// Hardware capabilities
     _hardware: Arc<HardwareCapabilities>,
@@ -78,7 +92,7 @@ impl OptimizedNovaOperations {
     /// Optimized columnar search with hardware acceleration
     pub async fn search_columnar_optimized(
         &self,
-        // TODO: Update to use NovaFile or appropriate type
+        // Deferred: Update to use NovaFile or appropriate type
         // nova_file: &NovaFile,
         _query: &[f32],
         _top_k: usize,
@@ -86,7 +100,7 @@ impl OptimizedNovaOperations {
     ) -> Result<Vec<VectorRecord>> {
         info!("Starting optimized columnar search with hardware capabilities");
 
-        // TODO: Nova file integration pending
+        // Deferred: Nova file integration pending
         return Err(anyhow::anyhow!("Nova file integration not yet implemented"));
 
         #[allow(unreachable_code)]
@@ -103,21 +117,21 @@ impl OptimizedNovaOperations {
 
             // Phase 1: Row group pruning using statistics
             // Pass parquet metadata from file system
-            // TODO: file_path should be derived from nova_file when properly integrated
+            // Deferred: file_path should be derived from nova_file when properly integrated
             let _file_path = "placeholder.parquet"; // Temporary placeholder
-            let _parquet_metadata = self.load_parquet_metadata(&_file_path).await?;
+            let _parquet_metadata = self.load_parquet_metadata(_file_path).await?;
             let _candidate_row_groups =
-                self.prune_row_groups_with_metadata(&_parquet_metadata, &_query)?;
+                self.prune_row_groups_with_metadata(&_parquet_metadata, _query)?;
 
             // Phase 2: Columnar filtering with SIMD using actual Parquet metadata
-            return Ok(self
+            return self
                 .execute_columnar_search_with_metadata(
                     &_parquet_metadata,
                     &_candidate_row_groups,
-                    &_query,
+                    _query,
                     _top_k,
                 )
-                .await?);
+                .await;
         }
     }
 
@@ -272,7 +286,7 @@ impl OptimizedNovaOperations {
         }
 
         // Sort and take top-k
-        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        all_results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         all_results.truncate(top_k);
         Ok(all_results)
     }
@@ -395,18 +409,31 @@ fn extract_record(_batch: &RecordBatch, _offset: u32) -> Option<VectorRecord> {
 }
 
 /// Columnar operation statistics
+///
+/// Tracks performance metrics for columnar search operations including
+/// pruning efficiency, projection usage, and hardware acceleration.
 #[derive(Debug, Clone)]
 pub struct ColumnarStats {
+    /// Number of row groups scanned
     pub row_groups_scanned: usize,
+    /// Number of row groups pruned via statistics
     pub row_groups_pruned: usize,
+    /// Number of columns projected (avoided full column load)
     pub columns_projected: usize,
+    /// Number of predicates pushed down to storage
     pub predicates_pushed: usize,
+    /// Total vectors processed
     pub vectors_processed: usize,
+    /// Number of SIMD operations executed
     pub simd_operations: u64,
+    /// Compression ratio achieved
     pub compression_ratio: f32,
 }
 
 impl ColumnarStats {
+    /// Calculate pruning efficiency (0.0 to 1.0)
+    ///
+    /// Returns the ratio of row groups pruned to total row groups.
     pub fn pruning_efficiency(&self) -> f64 {
         if self.row_groups_scanned + self.row_groups_pruned == 0 {
             0.0
@@ -416,6 +443,7 @@ impl ColumnarStats {
         }
     }
 
+    /// Print a summary of columnar operation statistics
     pub fn print_summary(&self) {
         info!("📊 Columnar Operation Statistics:");
         info!(

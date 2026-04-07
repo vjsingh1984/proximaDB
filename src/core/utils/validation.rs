@@ -52,15 +52,18 @@ pub fn validate_vector_id(id: &str) -> Result<()> {
     }
 
     // Check first character
-    if id.chars().next().unwrap().is_ascii_digit() {
+    if id.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
         bail!("Vector ID cannot start with a number: {}", id);
     }
 
     // Check allowed characters
-    static VALID_ID_REGEX: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_.-]*$").unwrap());
+    static VALID_ID_REGEX: Lazy<Option<Regex>> =
+        Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_.-]*$").ok());
+    let valid_id_regex = VALID_ID_REGEX
+        .as_ref()
+        .ok_or_else(|| anyhow!("Internal error: vector ID regex failed to initialize"))?;
 
-    if !VALID_ID_REGEX.is_match(id) {
+    if !valid_id_regex.is_match(id) {
         bail!(
             "Vector ID contains invalid characters. Only alphanumeric, underscore, hyphen, and dot are allowed: {}",
             id
@@ -90,10 +93,13 @@ pub fn validate_collection_name(name: &str) -> Result<()> {
         );
     }
 
-    static COLLECTION_NAME_REGEX: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^[a-z][a-z0-9_]*$").unwrap());
+    static COLLECTION_NAME_REGEX: Lazy<Option<Regex>> =
+        Lazy::new(|| Regex::new(r"^[a-z][a-z0-9_]*$").ok());
+    let collection_name_regex = COLLECTION_NAME_REGEX
+        .as_ref()
+        .ok_or_else(|| anyhow!("Internal error: collection name regex failed to initialize"))?;
 
-    if !COLLECTION_NAME_REGEX.is_match(name) {
+    if !collection_name_regex.is_match(name) {
         bail!(
             "Collection name must start with a lowercase letter and contain only lowercase letters, numbers, and underscores: {}",
             name
@@ -149,10 +155,13 @@ pub fn validate_field_name(field: &str) -> Result<()> {
         );
     }
 
-    static FIELD_NAME_REGEX: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap());
+    static FIELD_NAME_REGEX: Lazy<Option<Regex>> =
+        Lazy::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").ok());
+    let field_name_regex = FIELD_NAME_REGEX
+        .as_ref()
+        .ok_or_else(|| anyhow!("Internal error: field name regex failed to initialize"))?;
 
-    if !FIELD_NAME_REGEX.is_match(field) {
+    if !field_name_regex.is_match(field) {
         bail!(
             "Field name contains invalid characters. Only alphanumeric and underscore are allowed: {}",
             field
@@ -263,7 +272,7 @@ pub fn validate_score(score: f32, metric_type: &str) -> Result<()> {
 
     match metric_type.to_lowercase().as_str() {
         "cosine" | "cosine_similarity" => {
-            if score < -1.0 || score > 1.0 {
+            if !(-1.0..=1.0).contains(&score) {
                 bail!(
                     "Cosine similarity score must be in range [-1, 1], got: {}",
                     score
@@ -302,12 +311,14 @@ pub fn validate_json_path(path: &str) -> Result<()> {
     }
 
     // Basic validation - can be extended based on actual JSON path library used
-    static JSON_PATH_REGEX: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"^(\$\.)?[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\[[0-9]+\])?$")
-            .unwrap()
+    static JSON_PATH_REGEX: Lazy<Option<Regex>> = Lazy::new(|| {
+        Regex::new(r"^(\$\.)?[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*(\[[0-9]+\])?$").ok()
     });
+    let json_path_regex = JSON_PATH_REGEX
+        .as_ref()
+        .ok_or_else(|| anyhow!("Internal error: JSON path regex failed to initialize"))?;
 
-    if !JSON_PATH_REGEX.is_match(path) {
+    if !json_path_regex.is_match(path) {
         bail!("Invalid JSON path format: {}", path);
     }
 
@@ -400,10 +411,12 @@ pub fn validate_distance_metric(metric: &str) -> Result<()> {
 /// * Ok(()) if valid, Err with description if invalid
 pub fn validate_storage_engine(engine: &str) -> Result<()> {
     static VALID_ENGINES: Lazy<HashSet<&'static str>> = Lazy::new(|| {
-        ["viper", "sst", "raptor", "nova", "swift", "prism", "helix"]
-            .iter()
-            .cloned()
-            .collect()
+        [
+            "viper", "sst", "raptor", "nova", "swift", "prism", "helix", "tst",
+        ]
+        .iter()
+        .cloned()
+        .collect()
     });
 
     let engine_lower = engine.to_lowercase();

@@ -504,33 +504,105 @@ mod tests {
             assert_eq!(request.vectors.len(), vectors.len());
         }
     }
-}
 
-/// Test hybrid search API integration
-#[tokio::test]
-async fn test_hybrid_search_api() {
-    use crate::core::search::hybrid::FusionStrategy;
+    /// Test hybrid search API integration
+    #[tokio::test]
+    async fn test_hybrid_search_api() {
+        use crate::core::search::hybrid::FusionStrategy;
 
-    // This test demonstrates the hybrid search API
-    // In production, this would be called from REST/gRPC endpoints
+        // This test demonstrates the hybrid search API
+        // In production, this would be called from REST/gRPC endpoints
 
-    let collection_id = "test_collection";
-    let text_query = "machine learning algorithms";
-    let query_vector = vec![0.1, 0.2, 0.3, 0.4, 0.5];
-    let top_k = 10;
-    let fusion_strategy = FusionStrategy::ReciprocalRank { k: 60 };
+        let collection_id = "test_collection";
+        let text_query = "machine learning algorithms";
+        let query_vector = vec![0.1, 0.2, 0.3, 0.4, 0.5];
+        let top_k = 10;
+        let _fusion_strategy = FusionStrategy::ReciprocalRank { k: 60 };
 
-    // Note: This would require a full UnifiedSearchHandler instance
-    // For now, we're testing that the API compiles and the types work together
+        // Note: This would require a full UnifiedSearchHandler instance
+        // For now, we're testing that the API compiles and the types work together
 
-    // Verify fusion strategy can be created
-    let _strategy = FusionStrategy::ReciprocalRank { k: 60 };
+        // Verify fusion strategy can be created
+        let _strategy = FusionStrategy::ReciprocalRank { k: 60 };
 
-    // Verify parameters are valid
-    assert_eq!(collection_id, "test_collection");
-    assert!(!text_query.is_empty());
-    assert_eq!(query_vector.len(), 5);
-    assert_eq!(top_k, 10);
+        // Verify parameters are valid
+        assert_eq!(collection_id, "test_collection");
+        assert!(!text_query.is_empty());
+        assert_eq!(query_vector.len(), 5);
+        assert_eq!(top_k, 10);
 
-    println!("✅ Hybrid search API compiles and integrates correctly");
-}
+        println!("✅ Hybrid search API compiles and integrates correctly");
+    }
+
+    // ============================================================
+    // CollectionIdCache unit tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_collection_id_cache_new() {
+        let cache = CollectionIdCache::new();
+        assert!(cache.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_collection_id_cache_insert_and_get() {
+        let cache = CollectionIdCache::new();
+        cache.insert("my_collection".to_string(), "uuid-123".to_string());
+        assert_eq!(cache.get("my_collection"), Some("uuid-123".to_string()));
+    }
+
+    #[test]
+    fn test_collection_id_cache_miss() {
+        let cache = CollectionIdCache::new();
+        cache.insert("exists".to_string(), "uuid-1".to_string());
+        assert!(cache.get("does_not_exist").is_none());
+    }
+
+    #[test]
+    fn test_collection_id_cache_invalidate() {
+        let cache = CollectionIdCache::new();
+        cache.insert("col_a".to_string(), "id-a".to_string());
+        cache.insert("col_b".to_string(), "id-b".to_string());
+
+        cache.invalidate("col_a");
+        assert!(cache.get("col_a").is_none());
+        assert_eq!(cache.get("col_b"), Some("id-b".to_string()));
+    }
+
+    #[test]
+    fn test_collection_id_cache_invalidate_by_value() {
+        let cache = CollectionIdCache::new();
+        cache.insert("my_name".to_string(), "target-id".to_string());
+        cache.invalidate("target-id");
+        assert!(cache.get("my_name").is_none());
+    }
+
+    #[test]
+    fn test_collection_id_cache_ttl_expiry() {
+        use std::time::Duration;
+        let cache = CollectionIdCache::with_ttl(Duration::from_millis(50));
+        cache.insert("ephemeral".to_string(), "uuid-x".to_string());
+        assert!(cache.get("ephemeral").is_some());
+
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(cache.get("ephemeral").is_none());
+    }
+
+    #[test]
+    fn test_collection_id_cache_overwrite() {
+        let cache = CollectionIdCache::new();
+        cache.insert("col".to_string(), "old-id".to_string());
+        cache.insert("col".to_string(), "new-id".to_string());
+        assert_eq!(cache.get("col"), Some("new-id".to_string()));
+    }
+
+    #[test]
+    fn test_collection_id_cache_multiple_entries() {
+        let cache = CollectionIdCache::new();
+        for i in 0..50 {
+            cache.insert(format!("col_{}", i), format!("id_{}", i));
+        }
+        assert_eq!(cache.get("col_0"), Some("id_0".to_string()));
+        assert_eq!(cache.get("col_49"), Some("id_49".to_string()));
+    }
+} // mod tests

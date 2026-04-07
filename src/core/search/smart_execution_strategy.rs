@@ -40,35 +40,49 @@ pub struct SmartExecutionStrategy {
 pub enum ExecutionStrategy {
     /// Use AXIS indexes first, then fallback to storage
     IndexFirst {
+        /// Type of index to use (e.g., "hnsw", "ivf")
         index_type: String,
+        /// Estimated search latency in milliseconds
         expected_latency_ms: u64,
+        /// Probability of needing fallback to storage scan
         fallback_probability: f32,
     },
 
     /// Use progressive quantization search
     Progressive {
+        /// Quantization stages to execute in order
         stages: Vec<String>,
+        /// Estimated total search latency in milliseconds
         expected_latency_ms: u64,
+        /// Estimated peak memory usage in megabytes
         memory_usage_mb: u64,
     },
 
     /// Direct FP32 search (for small datasets)
     DirectFP32 {
+        /// Explanation for why direct search was chosen
         reason: String,
+        /// Estimated search latency in milliseconds
         expected_latency_ms: u64,
     },
 
     /// Hybrid approach combining multiple strategies
     Hybrid {
+        /// Primary execution strategy
         primary: Box<ExecutionStrategy>,
+        /// Secondary fallback strategy
         secondary: Box<ExecutionStrategy>,
+        /// Selectivity threshold for switching strategies
         switch_threshold: f32,
     },
 
     /// Memory-optimized search (for high memory pressure)
     MemoryOptimized {
+        /// Memory optimization technique name
         technique: String,
+        /// Maximum memory budget in megabytes
         memory_limit_mb: u64,
+        /// Estimated search latency in milliseconds
         expected_latency_ms: u64,
     },
 }
@@ -353,8 +367,8 @@ impl SmartExecutionStrategy {
             last_compaction: Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                    .map(|duration| duration.as_secs())
+                    .unwrap_or(0),
             ),
         };
 
@@ -377,13 +391,10 @@ impl SmartExecutionStrategy {
             filter_selectivity: self.estimate_filter_selectivity(params),
             top_k: params.top_k.unwrap_or(10),
             is_batch: params.is_batch_search(),
-            batch_size: params.query_vectors.as_ref().map(|v| v.len()).unwrap_or(1),
+            batch_size: params.query_vectors.as_ref().map_or(1, |v| v.len()),
             requires_vectors: true,  // Would check if vectors are needed
             requires_metadata: true, // Would check if metadata is needed
-            distance_metric: params
-                .distance_metric
-                .clone()
-                .unwrap_or(DistanceMetric::Cosine),
+            distance_metric: params.distance_metric.unwrap_or(DistanceMetric::Cosine),
             has_runtime_hints: params.runtime_hints.is_some(),
         }
     }
@@ -444,11 +455,7 @@ impl SmartExecutionStrategy {
         } else if metadata.index_types.contains(&"HNSW".to_string()) {
             "HNSW" // HNSW for pure similarity search
         } else {
-            metadata
-                .index_types
-                .first()
-                .map(|s| s.as_str())
-                .unwrap_or("FLAT")
+            metadata.index_types.first().map_or("FLAT", |s| s.as_str())
         };
 
         let fallback_probability = if metadata.update_frequency > 100.0 {
@@ -627,10 +634,15 @@ struct QueryAnalysis {
 /// Execution hints for optimizing the selected strategy
 #[derive(Debug, Clone)]
 pub struct ExecutionHints {
+    /// Whether to prefetch index nodes before search
     pub prefetch_indexes: bool,
+    /// Whether to warm the cache before search
     pub warm_cache: bool,
+    /// Number of candidates to evaluate in parallel
     pub parallel_candidates: usize,
+    /// Whether to use SIMD-accelerated distance computation
     pub use_simd: bool,
+    /// Optimal batch size for processing
     pub batch_size: usize,
 }
 

@@ -187,8 +187,9 @@ mod tests {
         // Small values fit in 1 byte each
         let values = vec![0i32, 1, 10, 50, 100, 127];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode small i32 values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("failed to decode small i32 values");
 
         assert_eq!(values, decoded);
 
@@ -201,8 +202,9 @@ mod tests {
         // Values that fit in 2 bytes (128-16383)
         let values = vec![128i32, 200, 1000, 5000, 16383];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode medium i32 values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("failed to decode medium i32 values");
 
         assert_eq!(values, decoded);
 
@@ -215,8 +217,9 @@ mod tests {
         // Mix of small and large values
         let values = vec![1i32, 128, 16384, 2097152];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode large i32 values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("failed to decode large i32 values");
 
         assert_eq!(values, decoded);
     }
@@ -225,8 +228,8 @@ mod tests {
     fn test_vbyte_i64_roundtrip() {
         let values = vec![0i64, 127, 128, 16383, 16384, 1000000];
 
-        let encoded = encode_i64(&values).unwrap();
-        let decoded = decode_i64(&encoded, values.len()).unwrap();
+        let encoded = encode_i64(&values).expect("failed to encode i64 values");
+        let decoded = decode_i64(&encoded, values.len()).expect("failed to decode i64 values");
 
         assert_eq!(values, decoded);
     }
@@ -235,8 +238,8 @@ mod tests {
     fn test_vbyte_f32_roundtrip() {
         let values = vec![1.0f32, 2.0, 3.0, 100.0, 1000.0];
 
-        let encoded = encode_f32(&values).unwrap();
-        let decoded = decode_f32(&encoded, values.len()).unwrap();
+        let encoded = encode_f32(&values).expect("failed to encode f32 values");
+        let decoded = decode_f32(&encoded, values.len()).expect("failed to decode f32 values");
 
         assert_eq!(values.len(), decoded.len());
         for (orig, dec) in values.iter().zip(decoded.iter()) {
@@ -247,10 +250,10 @@ mod tests {
     #[test]
     fn test_vbyte_empty() {
         let values: Vec<i32> = vec![];
-        let encoded = encode_i32(&values).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode empty i32 array");
         assert!(encoded.is_empty());
 
-        let decoded = decode_i32(&encoded, 0).unwrap();
+        let decoded = decode_i32(&encoded, 0).expect("failed to decode empty i32 array");
         assert!(decoded.is_empty());
     }
 
@@ -262,8 +265,9 @@ mod tests {
             values.push(i as i32); // 0-99: all fit in 1-2 bytes
         }
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode compression test values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("failed to decode compression test values");
 
         assert_eq!(values, decoded);
 
@@ -281,8 +285,8 @@ mod tests {
         // Zeros encode to single byte
         let values = vec![0i32; 100];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode zero values");
+        let decoded = decode_i32(&encoded, values.len()).expect("failed to decode zero values");
 
         assert_eq!(values, decoded);
         assert_eq!(encoded.len(), 100); // 1 byte per zero
@@ -293,8 +297,8 @@ mod tests {
         // Test maximum values
         let values = vec![i32::MAX, i32::MAX - 1, i32::MAX - 1000];
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode max i32 values");
+        let decoded = decode_i32(&encoded, values.len()).expect("failed to decode max i32 values");
 
         assert_eq!(values, decoded);
 
@@ -307,8 +311,9 @@ mod tests {
         // Sequential IDs
         let values: Vec<i32> = (1..=50).collect();
 
-        let encoded = encode_i32(&values).unwrap();
-        let decoded = decode_i32(&encoded, values.len()).unwrap();
+        let encoded = encode_i32(&values).expect("failed to encode sequential i32 values");
+        let decoded =
+            decode_i32(&encoded, values.len()).expect("failed to decode sequential i32 values");
 
         assert_eq!(values, decoded);
     }

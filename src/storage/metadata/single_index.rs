@@ -41,8 +41,7 @@ impl CollectionIndexEntry {
         let name_key = record
             .config
             .as_ref()
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "unnamed".to_string());
+            .map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
         let uuid_key = record.id.clone();
 
         Self {
@@ -57,8 +56,7 @@ impl CollectionIndexEntry {
         self.name_key = new_record
             .config
             .as_ref()
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "unnamed".to_string());
+            .map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
         self.uuid_key = new_record.id.clone();
         self.record = Arc::new(new_record);
     }
@@ -67,13 +65,21 @@ impl CollectionIndexEntry {
 /// Performance metrics for the single index
 #[derive(Debug, Clone)]
 pub struct SingleIndexMetrics {
+    /// Total number of collections indexed
     pub total_collections: usize,
+    /// Memory usage in bytes
     pub memory_usage_bytes: usize,
+    /// Total lookups by UUID
     pub lookups_by_uuid: u64,
+    /// Total lookups by name
     pub lookups_by_name: u64,
+    /// Cache hit count
     pub cache_hits: u64,
+    /// Cache miss count
     pub cache_misses: u64,
+    /// Average lookup time in nanoseconds
     pub avg_lookup_time_ns: u64,
+    /// Last index rebuild timestamp
     pub last_rebuild_timestamp: Option<i64>,
 }
 
@@ -121,8 +127,7 @@ impl SingleCollectionIndex {
         let name = record
             .config
             .as_ref()
-            .map(|c| c.name.clone())
-            .unwrap_or_else(|| "unnamed".to_string());
+            .map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
 
         // Check if this is an update (collection exists)
         let old_name = self.entries.get(&uuid).map(|e| e.name_key.clone());
@@ -133,10 +138,10 @@ impl SingleCollectionIndex {
 
         // Update secondary index
         // If name changed, remove old mapping
-        if let Some(old_name) = old_name {
-            if old_name != name {
-                self.name_to_uuid.remove(&old_name);
-            }
+        if let Some(old_name) = old_name
+            && old_name != name
+        {
+            self.name_to_uuid.remove(&old_name);
         }
         self.name_to_uuid.insert(name, uuid);
 
@@ -274,8 +279,7 @@ impl SingleCollectionIndex {
             let name = record
                 .config
                 .as_ref()
-                .map(|c| c.name.clone())
-                .unwrap_or_else(|| "unnamed".to_string());
+                .map_or_else(|| "unnamed".to_string(), |c| c.name.clone());
 
             // Insert into primary index
             let entry = CollectionIndexEntry::new(record);
@@ -375,6 +379,7 @@ impl Default for SingleCollectionIndex {
 
 /// Thread-safe wrapper with additional safety guarantees
 pub struct ThreadSafeSingleIndex {
+    /// Underlying single collection index
     index: SingleCollectionIndex,
 }
 
@@ -441,5 +446,211 @@ impl ThreadSafeSingleIndex {
 impl Default for ThreadSafeSingleIndex {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::proximadb_v1::{
+        Collection, CollectionConfig, CollectionStats, DistanceMetric, StorageEngine,
+    };
+    use tracing::debug;
+
+    fn create_test_collection(id: &str, name: &str) -> Collection {
+        let temp_dir = tempfile::tempdir().unwrap();
+        Collection {
+            id: id.to_string(),
+            config: Some(CollectionConfig {
+                name: name.to_string(),
+                dimension: 128,
+                distance_metric: Some(DistanceMetric::Cosine as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
+                primary_index: Some("HNSW".to_string()),
+                auto_index_selection: Some(false),
+                description: Some("Test collection".to_string()),
+                tags: vec![],
+                owner: Some("test_user".to_string()),
+                embedding_models: vec![],
+                storage_config: None,
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
+            }),
+            stats: Some(CollectionStats {
+                vector_count: 100,
+                index_size_bytes: 1024,
+                data_size_bytes: 2048,
+            }),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            updated_at: chrono::Utc::now().timestamp_millis(),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: format!("{}", temp_dir.path().display()),
+                backup_paths: vec![],
+                engine: StorageEngine::Viper as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: format!("{}", temp_dir.path().display()),
+                assigned_at: chrono::Utc::now().timestamp_micros(),
+            }),
+        }
+    }
+
+    #[test]
+    fn test_single_index_operations() {
+        let index = SingleCollectionIndex::new();
+
+        let collection = create_test_collection("uuid-123", "test-collection");
+
+        // Test upsert
+        index.upsert_collection(collection.clone());
+        assert_eq!(index.count(), 1);
+
+        // Test UUID lookup - O(1)
+        let result = index.get_by_uuid("uuid-123");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "uuid-123");
+
+        // Test name lookup - O(n) but efficient
+        let result = index.get_by_name("test-collection");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "uuid-123");
+
+        // Test UUID by name
+        let uuid = index.get_uuid_by_name("test-collection");
+        assert_eq!(uuid.unwrap(), "uuid-123");
+
+        // Test existence checks
+        assert!(index.exists_by_uuid("uuid-123"));
+        assert!(index.exists_by_name("test-collection"));
+        assert!(!index.exists_by_uuid("nonexistent"));
+        assert!(!index.exists_by_name("nonexistent"));
+
+        // Test removal
+        let removed = index.remove_collection("uuid-123");
+        assert!(removed.is_some());
+        assert_eq!(index.count(), 0);
+        assert!(!index.exists_by_uuid("uuid-123"));
+        assert!(!index.exists_by_name("test-collection"));
+    }
+
+    #[test]
+    fn test_single_index_rebuild() {
+        let index = SingleCollectionIndex::new();
+
+        let records = vec![
+            create_test_collection("uuid-1", "collection-1"),
+            create_test_collection("uuid-2", "collection-2"),
+            create_test_collection("uuid-3", "collection-3"),
+        ];
+
+        index.rebuild_from_records(records);
+
+        assert_eq!(index.count(), 3);
+        assert!(index.exists_by_uuid("uuid-1"));
+        assert!(index.exists_by_name("collection-2"));
+
+        let metrics = index.get_metrics();
+        assert!(metrics.last_rebuild_timestamp.is_some());
+        assert_eq!(metrics.total_collections, 3);
+    }
+
+    #[test]
+    fn test_concurrent_access() {
+        use std::thread;
+
+        let index = Arc::new(SingleCollectionIndex::new());
+        let mut handles = vec![];
+
+        // Spawn multiple threads for concurrent operations
+        for i in 0..10 {
+            let index_clone = index.clone();
+            let handle = thread::spawn(move || {
+                let collection =
+                    create_test_collection(&format!("uuid-{}", i), &format!("collection-{}", i));
+                index_clone.upsert_collection(collection);
+
+                // Immediate lookup to test consistency
+                let uuid_result = index_clone.get_by_uuid(&format!("uuid-{}", i));
+                assert!(uuid_result.is_some());
+
+                let name_result = index_clone.get_by_name(&format!("collection-{}", i));
+                assert!(name_result.is_some());
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify final state
+        assert_eq!(index.count(), 10);
+
+        // Test concurrent reads
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let index_clone = index.clone();
+                thread::spawn(move || {
+                    let result = index_clone.get_by_uuid(&format!("uuid-{}", i));
+                    assert!(result.is_some());
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_performance_characteristics() {
+        let index = SingleCollectionIndex::new();
+
+        // Insert test data
+        for i in 0..1000 {
+            let collection =
+                create_test_collection(&format!("uuid-{:04}", i), &format!("collection-{:04}", i));
+            index.upsert_collection(collection);
+        }
+
+        // Test UUID lookup performance (should be O(1))
+        let start = std::time::Instant::now();
+        for i in 0..100 {
+            let _result = index.get_by_uuid(&format!("uuid-{:04}", i));
+        }
+        let uuid_duration = start.elapsed();
+
+        // Test name lookup performance (O(n) but should be fast)
+        let start = std::time::Instant::now();
+        for i in 0..100 {
+            let _result = index.get_by_name(&format!("collection-{:04}", i));
+        }
+        let name_duration = start.elapsed();
+
+        debug!("UUID lookup (100 ops): {:?}", uuid_duration);
+        debug!("Name lookup (100 ops): {:?}", name_duration);
+
+        // UUID lookups should typically be faster than name lookups
+        // But in test environments with small datasets, timing can be unreliable
+        // Just verify both complete in reasonable time
+        assert!(
+            uuid_duration.as_millis() < 1000,
+            "UUID lookups took too long: {:?}",
+            uuid_duration
+        );
+        assert!(
+            name_duration.as_millis() < 1000,
+            "Name lookups took too long: {:?}",
+            name_duration
+        );
+
+        let metrics = index.get_metrics();
+        assert!(metrics.avg_lookup_time_ns > 0);
+        assert_eq!(metrics.total_collections, 1000);
     }
 }

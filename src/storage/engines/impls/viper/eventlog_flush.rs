@@ -17,6 +17,9 @@ use crate::services::events::log::{EventLogService, event_log_service};
 use crate::storage::engines::FlushParameters;
 
 /// VIPER flush event notifier for EventLog integration
+///
+/// Coordinates between VIPER flush operations and the EventLog system
+/// to trigger async AXIS indexing and track flush/compaction state.
 pub struct ViperFlushNotifier {
     event_log: Option<Arc<EventLogService>>,
 }

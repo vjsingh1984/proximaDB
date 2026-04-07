@@ -123,6 +123,7 @@ pub enum MetadataOperation {
 }
 
 /// Metadata query filters
+#[derive(Default)]
 pub struct MetadataFilter {
     /// Filter by access pattern
     pub access_pattern: Option<String>,
@@ -166,19 +167,6 @@ impl Clone for MetadataFilter {
             min_vector_count: self.min_vector_count,
             max_age_days: self.max_age_days,
             custom_filter: None, // Function trait objects can't be cloned
-        }
-    }
-}
-
-impl Default for MetadataFilter {
-    fn default() -> Self {
-        Self {
-            access_pattern: None,
-            tags: Vec::new(),
-            owner: None,
-            min_vector_count: None,
-            max_age_days: None,
-            custom_filter: None,
         }
     }
 }
@@ -259,12 +247,20 @@ pub trait MetadataStoreInterface: Send + Sync {
 /// Storage statistics for monitoring
 #[derive(Debug, Clone)]
 pub struct MetadataStorageStats {
+    /// Total number of collections
     pub total_collections: u64,
+    /// Total metadata size in bytes
     pub total_metadata_size_bytes: u64,
+    /// Cache hit rate (0.0 to 1.0)
     pub cache_hit_rate: f64,
+    /// Average operation latency in milliseconds
     pub avg_operation_latency_ms: f64,
+    /// Storage backend name
     pub storage_backend: String,
+    /// Last backup timestamp
     pub last_backup_time: Option<DateTime<Utc>>,
+    /// Number of WAL entries
     pub wal_entries: u64,
+    /// WAL size in bytes
     pub wal_size_bytes: u64,
 }

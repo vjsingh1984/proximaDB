@@ -9,8 +9,11 @@ use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::vector_service_server::{VectorService, VectorServiceServer};
 use crate::query::facade::QueryFacadeAdapter;
 
+/// gRPC implementation of the VectorService for vector CRUD and search operations
 pub struct VectorServiceImpl {
+    /// Shared unified handlers for business logic delegation
     unified_handlers: Arc<UnifiedHandlers>,
+    /// Optional query facade adapter for unified routing through the query planner
     query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
@@ -20,6 +23,7 @@ pub type VectorSearchStreamStream = Pin<
 >;
 
 impl VectorServiceImpl {
+    /// Create a new vector service backed by unified handlers
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
         Self {
             unified_handlers,
@@ -38,8 +42,19 @@ impl VectorServiceImpl {
         }
     }
 
+    /// Convert this implementation into a tonic gRPC server
     pub fn into_server(self) -> VectorServiceServer<Self> {
         VectorServiceServer::new(self)
+    }
+
+    fn extract_tenant_id<T>(request: &Request<T>) -> Option<String> {
+        request
+            .metadata()
+            .get("x-tenant-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|tenant_id| !tenant_id.is_empty())
+            .map(ToOwned::to_owned)
     }
 }
 
@@ -49,9 +64,10 @@ impl VectorService for VectorServiceImpl {
         &self,
         request: Request<proximadb_v1::VectorBatchRequest>,
     ) -> Result<Response<proximadb_v1::VectorOperationResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req_v1 = request.into_inner();
         self.unified_handlers
-            .handle_vector_batch_v1(req_v1)
+            .handle_vector_batch_v1_for_tenant(req_v1, tenant_id.as_deref())
             .await
             .map(Response::new)
             .map_err(|e| Status::internal(format!("Vector batch failed: {}", e)))
@@ -61,7 +77,17 @@ impl VectorService for VectorServiceImpl {
         &self,
         request: Request<proximadb_v1::VectorSearchRequest>,
     ) -> Result<Response<proximadb_v1::VectorOperationResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req_v1 = request.into_inner();
+
+        if tenant_id.is_some() {
+            return self
+                .unified_handlers
+                .handle_vector_search_v1_for_tenant(req_v1, tenant_id.as_deref())
+                .await
+                .map(Response::new)
+                .map_err(|e| Status::internal(format!("Vector search failed: {}", e)));
+        }
 
         // Route through unified facade when adapter is available
         if let Some(ref adapter) = self.query_adapter {
@@ -85,15 +111,17 @@ impl VectorService for VectorServiceImpl {
         &self,
         request: Request<proximadb_v1::VectorGetRequest>,
     ) -> Result<Response<proximadb_v1::VectorOperationResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req = request.into_inner();
         let include_vector = req.include_vector.unwrap_or(false);
         let include_metadata = req.include_metadata.unwrap_or(true);
         self.unified_handlers
-            .handle_vector_v1(
+            .handle_vector_v1_for_tenant(
                 &req.collection_id,
                 &req.vector_id,
                 include_vector,
                 include_metadata,
+                tenant_id.as_deref(),
             )
             .await
             .map(Response::new)
@@ -113,10 +141,16 @@ impl VectorService for VectorServiceImpl {
         &self,
         request: Request<proximadb_v1::VectorSearchRequest>,
     ) -> Result<Response<Self::VectorSearchStreamStream>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let req_v1 = request.into_inner();
 
         // Perform the search - route through facade when adapter is available
-        let response = if let Some(ref adapter) = self.query_adapter {
+        let response = if tenant_id.is_some() {
+            self.unified_handlers
+                .handle_vector_search_v1_for_tenant(req_v1, tenant_id.as_deref())
+                .await
+                .map_err(|e| Status::internal(format!("Vector search stream failed: {}", e)))?
+        } else if let Some(ref adapter) = self.query_adapter {
             debug!("gRPC: Using unified facade routing for vector search stream");
             adapter.vector_search(req_v1).await.map_err(|e| {
                 Status::internal(format!("Vector search stream (facade) failed: {}", e))

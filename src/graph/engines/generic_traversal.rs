@@ -68,10 +68,10 @@ pub fn bfs_generic(
         if let Some(n) = engine.get_node(&u)? {
             nodes.push(n);
         }
-        if let Some(m) = max_depth {
-            if d >= m {
-                continue;
-            }
+        if let Some(m) = max_depth
+            && d >= m
+        {
+            continue;
         }
         // Fetch all outgoing and filter by allowed types if provided
         let mut outs = engine.get_outgoing_edges(&u, None)?;
@@ -86,22 +86,22 @@ pub fn bfs_generic(
                 q.push_back((v.clone(), d + 1));
             }
             edges.push(e);
-            if let Some(lim) = limit {
-                if nodes.len() >= lim {
-                    break;
-                }
-            }
-        }
-        if let Some(lim) = limit {
-            if nodes.len() >= lim {
+            if let Some(lim) = limit
+                && nodes.len() >= lim
+            {
                 break;
             }
+        }
+        if let Some(lim) = limit
+            && nodes.len() >= lim
+        {
+            break;
         }
     }
 
     // Build simple paths from start to each visited node using parent map
     let mut paths: Vec<Vec<NodeId>> = Vec::new();
-    for n in visited.iter() {
+    for n in &visited {
         let mut path = Vec::new();
         let mut cur = n.clone();
         path.push(cur.clone());
@@ -109,7 +109,7 @@ pub fn bfs_generic(
             cur = p.clone();
             path.push(cur.clone());
         }
-        if path.last().map(|x| x == start).unwrap_or(false) {
+        if path.last().is_some_and(|x| x == start) {
             path.reverse();
             paths.push(path);
         }
@@ -151,15 +151,10 @@ pub fn dijkstra_generic(
         dist: f64,
     }
     impl Eq for QN {}
-    impl PartialOrd for QN {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            other.dist.partial_cmp(&self.dist)
-        }
-    }
     impl Ord for QN {
         fn cmp(&self, other: &Self) -> Ordering {
             // Reverse ordering for min-heap behavior
-            self.partial_cmp(other).unwrap_or_else(|| {
+            other.dist.partial_cmp(&self.dist).unwrap_or_else(|| {
                 // Fallback when distances are NaN (compare node IDs)
                 match self.node_id.cmp(&other.node_id) {
                     Ordering::Less => Ordering::Greater,
@@ -167,6 +162,11 @@ pub fn dijkstra_generic(
                     Ordering::Equal => Ordering::Equal,
                 }
             })
+        }
+    }
+    impl PartialOrd for QN {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
@@ -198,10 +198,10 @@ pub fn dijkstra_generic(
             path.reverse();
             return Ok(Some((path, cur.dist)));
         }
-        if let Some(&best) = dist.get(&cur.node_id) {
-            if cur.dist > best {
-                continue;
-            }
+        if let Some(&best) = dist.get(&cur.node_id)
+            && cur.dist > best
+        {
+            continue;
         }
 
         let mut outs = engine.get_outgoing_edges(&cur.node_id, None)?;
@@ -311,10 +311,8 @@ pub fn has_cycle_generic(engine: &GraphEngineImpl) -> Result<bool> {
     }
 
     for (nid, c) in color.clone().into_iter() {
-        if c == Color::White {
-            if dfs(engine, &nid, &mut color)? {
-                return Ok(true);
-            }
+        if c == Color::White && dfs(engine, &nid, &mut color)? {
+            return Ok(true);
         }
     }
     Ok(false)

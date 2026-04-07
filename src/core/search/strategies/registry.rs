@@ -30,7 +30,7 @@ use super::{
 /// let registry = SearchStrategyRegistry::new();
 ///
 /// // Get a specific strategy
-/// let exact = registry.get("exact").unwrap();
+/// let exact = registry.get("exact");
 ///
 /// // Auto-select best strategy
 /// let best = registry.select_best(&ctx, num_candidates);

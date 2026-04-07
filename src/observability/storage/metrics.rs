@@ -37,6 +37,8 @@ pub struct MetricStorage {
     series: RwLock<HashMap<String, MetricSeries>>,
     /// Series count
     series_count: AtomicU64,
+    /// Total storage bytes (estimated)
+    total_bytes: AtomicU64,
     /// Tiering policy configuration
     tiering_policy: MetricTieringPolicy,
     /// Optional rollup persistence layer for durable storage
@@ -195,6 +197,7 @@ impl MetricStorage {
             base_path: base_path.to_string(),
             series: RwLock::new(HashMap::new()),
             series_count: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
             tiering_policy: policy,
             rollup_persistence: None,
         })
@@ -210,6 +213,7 @@ impl MetricStorage {
             base_path: base_path.to_string(),
             series: RwLock::new(HashMap::new()),
             series_count: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
             tiering_policy: policy,
             rollup_persistence: Some(persistence),
         })
@@ -243,6 +247,9 @@ impl MetricStorage {
     pub async fn write(&self, sample: &MetricSample) -> Result<()> {
         let key = Self::series_key(&sample.name, &sample.labels);
 
+        // Estimate sample size for storage tracking
+        let sample_size = self.estimate_sample_size(sample);
+
         // Get or create series
         {
             let series = self.series.read().await;
@@ -253,11 +260,15 @@ impl MetricStorage {
                 // Update downsampled data
                 self.update_downsampled(s, sample.timestamp_ns, sample.value)
                     .await;
+
+                // Track bytes
+                self.total_bytes.fetch_add(sample_size, Ordering::Relaxed);
                 return Ok(());
             }
         }
 
         // Create new series
+        let sample_size = self.estimate_sample_size(sample);
         let new_series = MetricSeries {
             name: sample.name.clone(),
             labels: sample.labels.clone(),
@@ -272,6 +283,7 @@ impl MetricStorage {
         let mut series = self.series.write().await;
         series.insert(key, new_series);
         self.series_count.fetch_add(1, Ordering::Relaxed);
+        self.total_bytes.fetch_add(sample_size, Ordering::Relaxed);
 
         Ok(())
     }
@@ -351,7 +363,7 @@ impl MetricStorage {
             // Check label filters
             let matches = label_filters
                 .iter()
-                .all(|(k, v)| s.labels.get(k).map(|sv| sv == v).unwrap_or(false));
+                .all(|(k, v)| s.labels.get(k).is_some_and(|sv| sv == v));
 
             if !matches {
                 continue;
@@ -421,6 +433,33 @@ impl MetricStorage {
     /// Get series count
     pub async fn series_count(&self) -> u64 {
         self.series_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the total storage size in bytes
+    pub async fn total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Estimate the size of a metric sample in bytes
+    fn estimate_sample_size(&self, sample: &MetricSample) -> u64 {
+        let mut size = 100; // Base overhead
+
+        // Add metric name
+        size += sample.name.len() as u64;
+
+        // Add timestamp
+        size += 8;
+
+        // Add value
+        size += 8;
+
+        // Add labels (HashMap<String, String>)
+        for (key, val) in &sample.labels {
+            size += key.len() as u64;
+            size += val.len() as u64;
+        }
+
+        size
     }
 
     /// Compact old data
@@ -551,7 +590,7 @@ impl MetricStorage {
             // Check label filters
             let matches = label_filters
                 .iter()
-                .all(|(k, v)| s.labels.get(k).map(|sv| sv == v).unwrap_or(false));
+                .all(|(k, v)| s.labels.get(k).is_some_and(|sv| sv == v));
 
             if !matches {
                 continue;
@@ -986,8 +1025,8 @@ impl QueryAutoResult {
     /// Get the number of data points returned
     #[must_use]
     pub fn point_count(&self) -> usize {
-        self.raw_samples.as_ref().map(|s| s.len()).unwrap_or(0)
-            + self.aggregated.as_ref().map(|a| a.len()).unwrap_or(0)
+        self.raw_samples.as_ref().map_or(0, |s| s.len())
+            + self.aggregated.as_ref().map_or(0, |a| a.len())
     }
 
     /// Check if result is empty
@@ -1138,36 +1177,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_and_query() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
 
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.5))
+            .await
+            .expect("Failed to write cpu metric sample 1");
         storage
             .write(&make_sample("cpu", now + 1000, 0.6))
             .await
-            .unwrap();
+            .expect("Failed to write cpu metric sample 2");
         storage
             .write(&make_sample("memory", now, 0.7))
             .await
-            .unwrap();
+            .expect("Failed to write memory metric sample");
 
-        let results = storage.query("cpu", now - 1000, now + 2000).await.unwrap();
+        let results = storage
+            .query("cpu", now - 1000, now + 2000)
+            .await
+            .expect("Failed to query cpu metrics");
         assert_eq!(results.len(), 2);
     }
 
     #[tokio::test]
     async fn test_series_count() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
 
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.5))
+            .await
+            .expect("Failed to write cpu metric");
         storage
             .write(&make_sample("memory", now, 0.7))
             .await
-            .unwrap();
-        storage.write(&make_sample("disk", now, 0.3)).await.unwrap();
+            .expect("Failed to write memory metric");
+        storage
+            .write(&make_sample("disk", now, 0.3))
+            .await
+            .expect("Failed to write disk metric");
 
         assert_eq!(storage.series_count().await, 3);
     }
@@ -1243,21 +1294,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_auto_resolution_raw() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Insert some data
-        storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.5))
+            .await
+            .expect("Failed to write cpu metric sample 1");
         storage
             .write(&make_sample("cpu", now + 1000, 0.6))
             .await
-            .unwrap();
+            .expect("Failed to write cpu metric sample 2");
 
         // Query for 30 minutes (should use raw)
         let result = storage
             .query_auto_resolution("cpu", now - 1000, now + 30 * NANOS_PER_MIN)
             .await
-            .unwrap();
+            .expect("Failed to query auto resolution");
 
         assert_eq!(result.resolution, DownsampleResolution::Raw);
         assert!(result.raw_samples.is_some());
@@ -1267,21 +1321,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_auto_resolution_minute() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Insert some data
-        storage.write(&make_sample("cpu", now, 0.5)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.5))
+            .await
+            .expect("Failed to write cpu metric sample 1");
         storage
             .write(&make_sample("cpu", now + NANOS_PER_MIN, 0.6))
             .await
-            .unwrap();
+            .expect("Failed to write cpu metric sample 2");
 
         // Query for 3 hours (should use minute aggregates)
         let result = storage
             .query_auto_resolution("cpu", now - 1000, now + 3 * NANOS_PER_HOUR)
             .await
-            .unwrap();
+            .expect("Failed to query auto resolution");
 
         assert_eq!(result.resolution, DownsampleResolution::Minute);
         assert!(result.raw_samples.is_none());
@@ -1290,7 +1347,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tiering_stats() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Insert data for multiple metrics
@@ -1298,7 +1355,7 @@ mod tests {
             storage
                 .write(&make_sample("cpu", now + i * 1000, 0.5 + i as f64 * 0.1))
                 .await
-                .unwrap();
+                .expect("Failed to write cpu metric sample");
         }
 
         let stats = storage.tiering_stats().await;
@@ -1318,7 +1375,8 @@ mod tests {
             hour_retention_ns: 7 * NANOS_PER_DAY,    // 1 week
             ..Default::default()
         };
-        let storage = MetricStorage::with_policy("/tmp/test", policy).unwrap();
+        let storage = MetricStorage::with_policy("/tmp/test", policy)
+            .expect("Failed to create MetricStorage with policy");
 
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let old_time = now - 2 * NANOS_PER_MIN; // 2 minutes ago (older than retention)
@@ -1327,16 +1385,22 @@ mod tests {
         storage
             .write(&make_sample("cpu", old_time, 0.5))
             .await
-            .unwrap();
+            .expect("Failed to write old cpu metric");
         // Insert recent data
-        storage.write(&make_sample("cpu", now, 0.6)).await.unwrap();
+        storage
+            .write(&make_sample("cpu", now, 0.6))
+            .await
+            .expect("Failed to write recent cpu metric");
 
         // Verify both points exist
         let before = storage.tiering_stats().await;
         assert_eq!(before.raw_points, 2);
 
         // Apply tiering policy
-        let result = storage.apply_tiering_policy(now).await.unwrap();
+        let result = storage
+            .apply_tiering_policy(now)
+            .await
+            .expect("Failed to apply tiering policy");
         assert_eq!(result.raw_removed, 1); // Old point removed
 
         // Verify only recent data remains
@@ -1346,14 +1410,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_result_helpers() {
-        let storage = MetricStorage::new("/tmp/test").unwrap();
+        let storage = MetricStorage::new("/tmp/test").expect("Failed to create MetricStorage");
         let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Query empty storage
         let result = storage
             .query_auto_resolution("nonexistent", now - 1000, now + 1000)
             .await
-            .unwrap();
+            .expect("Failed to query auto resolution");
 
         assert!(result.is_empty());
         assert_eq!(result.point_count(), 0);

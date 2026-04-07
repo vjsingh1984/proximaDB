@@ -802,6 +802,12 @@ impl MetricsCollector {
     }
 }
 
+impl Default for MetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Trend analysis results
 #[derive(Debug, Clone, Default)]
 pub struct TrendAnalysis {

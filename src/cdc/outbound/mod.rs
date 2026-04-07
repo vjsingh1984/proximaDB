@@ -93,6 +93,7 @@ mod tests {
     use super::*;
     use crate::cdc::event::{ChangeEvent, Operation, SourceInfo};
 
+    #[allow(dead_code)]
     fn create_test_event(lsn: u64) -> ChangeEvent {
         let mut event = ChangeEvent::new(
             SourceInfo::proximadb("testdb", "test_server"),

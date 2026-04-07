@@ -184,7 +184,7 @@ impl SstableWriter {
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Self {
         // Initialize compression provider directly
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
 
         // Initialize unified quantization engine from compute module
         let distance_compute = Arc::new(
@@ -214,7 +214,7 @@ impl SstableWriter {
                 distance_metric: if let Some(collection) = collection_config {
                     // Get distance metric from collection config
                     collection.config.as_ref()
-                    .map(|cfg| match cfg.distance_metric() {
+                    .map_or(crate::compute::distance_computation::engine::DistanceMetric::Cosine, |cfg| match cfg.distance_metric() {
                         crate::proto::proximadb_v1::DistanceMetric::Cosine =>
                             crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                         crate::proto::proximadb_v1::DistanceMetric::Euclidean =>
@@ -223,7 +223,6 @@ impl SstableWriter {
                             crate::compute::distance_computation::engine::DistanceMetric::DotProduct,
                         _ => crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                     })
-                    .unwrap_or(crate::compute::distance_computation::engine::DistanceMetric::Cosine)
                 } else {
                     crate::compute::distance_computation::engine::DistanceMetric::Cosine
                 },
@@ -320,7 +319,7 @@ impl SstableWriter {
         compression_config: Option<CompressionConfig>,
     ) -> Self {
         // Initialize universal compression adapter
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
 
         // Initialize unified quantization engine from compute module
         let distance_compute = Arc::new(
@@ -656,7 +655,7 @@ impl SstableWriter {
         debug!(
             "📊 Computed centroid for {} vectors: dim={}, min_dist={:.4}, max_dist={:.4}",
             all_vectors.len(),
-            centroid.as_ref().map(|c| c.len()).unwrap_or(0),
+            centroid.as_ref().map_or(0, |c| c.len()),
             min_distance_to_centroid.unwrap_or(0.0),
             max_distance_to_centroid.unwrap_or(0.0)
         );
@@ -673,28 +672,52 @@ impl SstableWriter {
             index_offset: 0, // Will be set after bloom filter
             index_size: layout_index_entries
                 .iter()
-                .map(|e| 4 + e.serialize().unwrap().len()) // Include 4-byte length prefix!
+                .map(|e| 4 + e.serialize().unwrap_or_default().len()) // Include 4-byte length prefix!
                 .sum::<usize>() as u32,
             total_records: processed_count as u64,
-            min_timestamp: 0,        // TODO: extract from data
-            max_timestamp: u64::MAX, // TODO: extract from data
-            compression_ratio: 70,   // Estimated compression ratio
+            min_timestamp: vector_records
+                .iter()
+                .filter_map(|r| r.timestamp)
+                .map(|t| t as u64)
+                .min()
+                .unwrap_or(0),
+            max_timestamp: vector_records
+                .iter()
+                .filter_map(|r| r.timestamp)
+                .map(|t| t as u64)
+                .max()
+                .unwrap_or(0),
+            compression_ratio: 70, // Estimated compression ratio
             reserved: [0; 7],
         };
 
         // Create block headers for each data block
         let mut block_headers = Vec::new();
-        for (_i, block) in data_blocks.iter().enumerate() {
+        for block in data_blocks.iter() {
+            // Compute min/max key hashes for block-level pruning
+            let key_hashes: Vec<u64> = block
+                .records
+                .iter()
+                .map(|r| {
+                    use std::hash::{Hash, Hasher};
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    r.id.hash(&mut hasher);
+                    hasher.finish()
+                })
+                .collect();
+            let min_key_hash = key_hashes.iter().copied().min().unwrap_or(0);
+            let max_key_hash = key_hashes.iter().copied().max().unwrap_or(u64::MAX);
+
             let header = SstBlockHeader {
-                offset: 0,            // Will be calculated during writing
-                compressed_size: 0,   // Will be calculated during compression
-                uncompressed_size: 0, // Will be calculated
+                offset: 0,
+                compressed_size: 0,
+                uncompressed_size: 0,
                 record_count: block.records.len() as u32,
-                bloom_offset: 0,        // Block-level bloom filter offset (if any)
-                bloom_size: 0,          // Block-level bloom filter size
-                min_key_hash: 0,        // TODO: calculate from block data
-                max_key_hash: u64::MAX, // TODO: calculate from block data
-                priority: 128,          // Medium priority
+                bloom_offset: 0,
+                bloom_size: 0,
+                min_key_hash,
+                max_key_hash,
+                priority: 128,
                 reserved: [0; 7],
             };
             block_headers.push(header);
@@ -783,9 +806,8 @@ impl SstableWriter {
                 let block_total_size = 4 + serialized_block.len(); // length prefix + data
 
                 // Account for cache line padding
-                let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1)
-                    / CACHE_LINE_SIZE)
-                    * CACHE_LINE_SIZE;
+                let aligned_size =
+                    serialized_block.len().div_ceil(CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
                 let padding = aligned_size - serialized_block.len();
                 let total_with_padding = if padding > 0 && padding < CACHE_LINE_SIZE {
                     block_total_size + padding
@@ -836,13 +858,12 @@ impl SstableWriter {
 
         for (i, serialized_block) in serialized_blocks.iter().enumerate() {
             // Align to cache line boundaries for better CPU performance
-            let aligned_size = ((serialized_block.len() + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE)
-                * CACHE_LINE_SIZE;
+            let aligned_size = serialized_block.len().div_ceil(CACHE_LINE_SIZE) * CACHE_LINE_SIZE;
             let padding = aligned_size - serialized_block.len();
 
             // Write block length prefix (actual data size, not padded)
             output_data.extend_from_slice(&(serialized_block.len() as u32).to_le_bytes());
-            output_data.extend_from_slice(&serialized_block);
+            output_data.extend_from_slice(serialized_block);
 
             // Add cache line padding for alignment
             if padding > 0 && padding < CACHE_LINE_SIZE {
@@ -955,7 +976,7 @@ impl SstableWriter {
                 .iter()
                 .map(|v| {
                     // Simple sign-based binary quantization
-                    let mut binary = vec![0u8; (dimension + 7) / 8];
+                    let mut binary = vec![0u8; dimension.div_ceil(8)];
                     for (i, &val) in v.iter().enumerate() {
                         if val > 0.0 {
                             binary[i / 8] |= 1 << (i % 8);
@@ -1010,7 +1031,7 @@ impl SstableWriter {
                 "⚡ SST: Added quantization to block {} ({} vectors): binary={} bytes, int8={} bytes",
                 block_id,
                 vectors.len(),
-                vectors.len() * ((dimension + 7) / 8),
+                vectors.len() * dimension.div_ceil(8),
                 vectors.len() * dimension
             );
         }
@@ -1326,7 +1347,7 @@ impl SstableWriter {
         }
 
         // Write to file using filesystem
-        let write_path = self.path.to_str().unwrap();
+        let write_path = self.path.to_str().unwrap_or_default();
         debug!(
             "SST Writer: Writing {} bytes to path: {}",
             file_content.len(),
@@ -1560,7 +1581,7 @@ impl SstableWriter {
 
         for block in data_blocks {
             for record in &block.records {
-                for (key, _sql_value) in &record.metadata {
+                for key in record.metadata.keys() {
                     metadata_columns.insert(key.clone());
                 }
             }
@@ -1729,5 +1750,213 @@ mod tests {
         }
 
         assert_eq!(records.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_sstable_write_read_format() {
+        use crate::proto::proximadb_v1::VectorRecord as VR;
+        use crate::storage::engines::impls::sst::SstEntry;
+        use crate::storage::persistence::filesystem::FilesystemConfig;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        use tempfile::TempDir;
+
+        // Initialize hardware capabilities
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let temp_dir = TempDir::new().unwrap();
+        let sstable_path = temp_dir.path().join("test.sstable");
+
+        // Create filesystem factory with default config
+        let fs_config = FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+
+        // Create a simple record
+        let mut records = BTreeMap::new();
+        let vector_record = VR {
+            id: "test_vec".to_string(),
+            vector: vec![1.0, 2.0, 3.0],
+            metadata: std::collections::HashMap::new(),
+            timestamp: Some(123456789),
+            updated_at: Some(123456789),
+            expires_at: None,
+            version: Some(1),
+            source: None,
+        };
+        let record = SstEntry::from_vector_record(vector_record, 1, 0);
+        records.insert(record.record.id.clone(), record);
+
+        // Write SSTable
+        let writer = SstableWriter::new(
+            &sstable_path,
+            4096, // block size
+            filesystem.clone(),
+        );
+
+        // Write records using streaming approach for production consistency
+        let record_count = records.len();
+        let sorted_records_iter = records.into_iter().map(|(_, entry)| entry.record);
+        writer
+            .write_sorted_records(sorted_records_iter, record_count)
+            .await
+            .expect("Failed to write SSTable");
+
+        // Verify file exists
+        let fs = filesystem.get_filesystem("file:///").unwrap();
+        assert!(fs.exists(sstable_path.to_str().unwrap()).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_sstable_format_inspection() {
+        use crate::proto::proximadb_v1::{SqlValue, VectorRecord as VR};
+        use crate::storage::engines::impls::sst::readers::sst_query_engine::SstDirectReader;
+        use crate::storage::engines::impls::sst::{SstEntry, SstMetadata};
+        use crate::storage::persistence::filesystem::FilesystemConfig;
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        use tempfile::TempDir;
+        use tracing::debug;
+
+        // Initialize hardware capabilities
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let temp_dir = TempDir::new().unwrap();
+        let sstable_path = temp_dir.path().join("inspect.sst");
+
+        // Create filesystem factory with default config
+        let fs_config = FilesystemConfig::default();
+        let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+
+        // Create records with metadata for bloom filter
+        let mut records = BTreeMap::new();
+        for i in 0..5 {
+            let _metadata = vec![crate::proto::proximadb_v1::MetadataItem {
+                key: "category".to_string(),
+                value: Some(
+                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
+                        "cat_{}",
+                        i % 2
+                    )),
+                ),
+            }];
+
+            let mut metadata_map = std::collections::HashMap::new();
+            metadata_map.insert(
+                "category".to_string(),
+                SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        format!("cat_{}", i % 2),
+                    )),
+                },
+            );
+
+            let vector_record = VR {
+                id: format!("vec_{}", i),
+                vector: vec![i as f32; 3],
+                metadata: metadata_map,
+                timestamp: Some(123456789),
+                updated_at: Some(123456789),
+                expires_at: None,
+                version: Some(1),
+                source: None,
+            };
+
+            let sst_entry = SstEntry {
+                record: vector_record,
+                sst_meta: SstMetadata {
+                    is_tombstone: false,
+                    sequence_number: i as u64,
+                    level: 0,
+                },
+            };
+            records.insert(sst_entry.record.id.clone(), sst_entry);
+        }
+
+        // Write SSTable
+        let writer = SstableWriter::new(&sstable_path, 4096, filesystem.clone());
+
+        // Write records using streaming approach for production consistency
+        let record_count = records.len();
+        let sorted_records_iter = records.into_iter().map(|(_, entry)| entry.record);
+        writer
+            .write_sorted_records(sorted_records_iter, record_count)
+            .await
+            .expect("Failed to write SSTable");
+
+        // Read file directly to inspect format
+        let fs = filesystem.get_filesystem("file:///").unwrap();
+        let file_data = fs.read(sstable_path.to_str().unwrap()).await.unwrap();
+
+        debug!("SSTable file size: {} bytes", file_data.len());
+
+        // Parse header length
+        let header_len =
+            u32::from_le_bytes([file_data[0], file_data[1], file_data[2], file_data[3]]);
+        debug!("Header length: {} bytes", header_len);
+
+        // Check bloom filter offset and length
+        let bloom_offset = 4 + header_len as usize;
+        if file_data.len() >= bloom_offset + 4 {
+            let bloom_len = u32::from_le_bytes([
+                file_data[bloom_offset],
+                file_data[bloom_offset + 1],
+                file_data[bloom_offset + 2],
+                file_data[bloom_offset + 3],
+            ]);
+            debug!(
+                "Bloom filter length: {} bytes at offset {}",
+                bloom_len, bloom_offset
+            );
+
+            let bloom_end = bloom_offset + 4 + bloom_len as usize;
+            assert!(
+                file_data.len() >= bloom_end,
+                "File size {} is too small for bloom filter ending at {}",
+                file_data.len(),
+                bloom_end
+            );
+
+            // Check index offset and length
+            if file_data.len() >= bloom_end + 4 {
+                let index_len = u32::from_le_bytes([
+                    file_data[bloom_end],
+                    file_data[bloom_end + 1],
+                    file_data[bloom_end + 2],
+                    file_data[bloom_end + 3],
+                ]);
+                debug!("Index length: {} bytes at offset {}", index_len, bloom_end);
+            }
+        }
+
+        // Now try to read with SstDirectReader which doesn't require ZeroCopyIOSystem
+        let file_url = format!("file://{}", sstable_path.display());
+        let mut reader = SstDirectReader::open(filesystem.clone(), &file_url)
+            .await
+            .expect("Failed to open SSTable reader");
+
+        // Read and verify vectors
+        let read_vectors = reader
+            .read_all_for_compaction()
+            .await
+            .expect("Failed to read vectors");
+
+        // Should have at least the vectors we wrote
+        assert!(
+            read_vectors.len() >= 1,
+            "Should have read at least 1 vector, got {}",
+            read_vectors.len()
+        );
+
+        // Verify first vector content
+        let first_vector = read_vectors.iter().find(|v| v.id == "vec_0");
+        assert!(
+            first_vector.is_some(),
+            "Should find vec_0 in {} vectors",
+            read_vectors.len()
+        );
+        if let Some(vec) = first_vector {
+            assert_eq!(vec.vector.len(), 3, "Vector should have 3 dimensions");
+            assert_eq!(
+                vec.vector,
+                vec![0.0, 0.0, 0.0],
+                "Vector values should match"
+            );
+        }
     }
 }

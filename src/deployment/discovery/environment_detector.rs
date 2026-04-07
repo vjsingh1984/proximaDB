@@ -19,190 +19,287 @@ pub struct EnvironmentDetector {
 /// Configuration for environment detection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionConfig {
+    /// Whether to probe AWS, Azure, and GCP metadata services during detection
     pub enable_cloud_detection: bool,
+    /// Whether to test for a reachable Kubernetes API server during detection
     pub enable_kubernetes_detection: bool,
+    /// Whether to probe for Docker daemon availability during detection
     pub enable_docker_detection: bool,
+    /// Maximum seconds to wait for any individual platform probe before timing out
     pub timeout_seconds: u32,
+    /// Whether to perform deep resource and performance analysis in addition to basic detection
     pub detailed_analysis: bool,
 }
 
 /// Detected enterprise environment details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectedEnvironment {
+    /// The infrastructure platform that was identified
     pub platform_type: PlatformType,
+    /// CPU, memory, storage and GPU resources available on the host
     pub resource_availability: ResourceAvailability,
+    /// Network topology and firewall requirements for the deployment
     pub network_configuration: NetworkConfig,
+    /// Compliance and security policies that must be enforced
     pub security_constraints: SecurityConstraints,
+    /// Performance characteristics and optimal ProximaDB tuning parameters
     pub performance_characteristics: PerformanceProfile,
+    /// Recommended deployment strategy and scaling configuration
     pub recommended_deployment: DeploymentRecommendation,
+    /// UTC timestamp when this environment snapshot was captured
     pub detected_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Supported deployment platforms
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum PlatformType {
+    /// Container orchestration via Kubernetes (preferred for enterprise)
     Kubernetes,
+    /// Single-host Docker Compose deployment
     DockerCompose,
+    /// Amazon Web Services (EC2, ECS, EKS, etc.)
     AWS,
+    /// Microsoft Azure (AKS, VMs, etc.)
     Azure,
+    /// Google Cloud Platform (GKE, Compute Engine, etc.)
     GCP,
+    /// VMware vSphere / vCenter virtualisation environment
     VMware,
+    /// Physical hardware or unmanaged virtual machines
     BareMetal,
+    /// Mixed deployment spanning multiple platform types
     Hybrid,
 }
 
 /// Resource availability analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceAvailability {
+    /// Number of logical CPU cores available to ProximaDB
     pub cpu_cores: u32,
+    /// Total system memory available in gigabytes
     pub memory_gb: u32,
+    /// Available disk storage in gigabytes
     pub storage_gb: u64,
+    /// Estimated network throughput in megabits per second
     pub network_bandwidth_mbps: u32,
+    /// Whether a CUDA/Metal-compatible GPU was detected
     pub gpu_available: bool,
+    /// Whether the storage subsystem supports high IOPS (NVMe/SSD)
     pub high_iops_storage: bool,
+    /// ProximaDB capacity estimates derived from the detected resources
     pub estimated_capacity: CapacityEstimate,
 }
 
 /// Capacity estimation for ProximaDB
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapacityEstimate {
+    /// Estimated maximum number of collections the instance can handle
     pub max_collections: u32,
+    /// Estimated maximum number of vectors storable across all collections
     pub max_vectors_total: u64,
+    /// Estimated sustained query throughput in queries per second
     pub estimated_qps: u32,
+    /// Storage engine recommended for the detected resource profile
     pub recommended_storage_engine: String,
 }
 
 /// Network configuration details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkConfig {
+    /// Whether the ProximaDB API must be reachable from outside the cluster
     pub public_access_required: bool,
+    /// Whether an external load balancer is available for traffic distribution
     pub load_balancer_available: bool,
+    /// Whether TLS termination can be handled at the network boundary
     pub ssl_termination_available: bool,
+    /// Whether an internal DNS service is available for service discovery
     pub internal_dns_available: bool,
+    /// Firewall rules that must be opened for ProximaDB to operate
     pub firewall_rules_needed: Vec<FirewallRule>,
 }
 
 /// Firewall rule requirements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FirewallRule {
+    /// Network port number that must be allowed
     pub port: u16,
+    /// Transport protocol (e.g., "TCP", "UDP")
     pub protocol: String,
+    /// Human-readable description of the service using this port
     pub description: String,
+    /// Whether the rule is mandatory for ProximaDB to function
     pub required: bool,
 }
 
 /// Security constraints for enterprise deployment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConstraints {
+    /// Whether the environment has no outbound internet connectivity
     pub air_gapped_environment: bool,
+    /// Structured compliance frameworks detected or required for this environment
     pub compliance_requirements: Vec<ComplianceFramework>,
+    /// Encryption requirements that must be satisfied by the deployment
     pub encryption_requirements: EncryptionRequirements,
+    /// Whether full audit logging of all data operations is mandatory
     pub audit_logging_required: bool,
+    /// Whether strict network isolation between tenants is required
     pub network_isolation_required: bool,
+    /// Whether encryption at rest and in transit is required
     pub encryption_required: bool,
+    /// String labels for compliance frameworks (may overlap with `compliance_requirements`)
     pub compliance_frameworks: Vec<String>,
+    /// Required access control tier (e.g., "basic", "enterprise", "government")
     pub access_control_level: String,
 }
 
 /// Compliance frameworks detected
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ComplianceFramework {
+    /// SOC 2 Type II — service organisation controls for security and availability
     SOC2,
+    /// General Data Protection Regulation — EU data privacy law
     GDPR,
+    /// Health Insurance Portability and Accountability Act — US healthcare data
     HIPAA,
+    /// Federal Risk and Authorization Management Program — US government cloud
     FedRAMP,
+    /// ISO/IEC 27001 — international information security management standard
     ISO27001,
+    /// Payment Card Industry Data Security Standard
     PciDss,
 }
 
 /// Encryption requirements
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptionRequirements {
+    /// Whether all stored data must be encrypted at rest
     pub data_at_rest: bool,
+    /// Whether all network communication must be encrypted in transit
     pub data_in_transit: bool,
+    /// Whether customer-managed key (CMK) or HSM-backed key management is required
     pub key_management_required: bool,
+    /// Specific encryption algorithm to use (e.g., "AES-256"); `None` means any strong algorithm
     pub encryption_algorithm: Option<String>,
 }
 
 /// Performance profile of target environment
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceProfile {
+    /// Estimated maximum query throughput in queries per second
     pub estimated_qps_capacity: u32,
+    /// Storage subsystem IOPS capability
     pub storage_iops: u32,
+    /// Measured or estimated network round-trip latency in milliseconds
     pub network_latency_ms: f64,
+    /// Storage engine recommended based on the performance characteristics
     pub recommended_storage_engine: String,
+    /// Computed optimal ProximaDB configuration for this environment
     pub optimal_configuration: OptimalConfig,
 }
 
 /// Optimal configuration recommendation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimalConfig {
+    /// Recommended memory allocation for the ProximaDB process in megabytes
     pub memory_allocation_mb: u32,
+    /// Recommended number of Rayon/Tokio worker threads
     pub worker_threads: u32,
+    /// Recommended in-memory cache size in megabytes
     pub cache_size_mb: u32,
+    /// Recommended WAL/LSM write buffer size in megabytes
     pub write_buffer_size_mb: u32,
+    /// Whether to enable GPU-accelerated distance computation
     pub enable_gpu_acceleration: bool,
+    /// Vector quantization strategy to apply (e.g., "PQ8", "SQ8", "none")
     pub quantization_strategy: String,
 }
 
 /// Deployment recommendation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeploymentRecommendation {
+    /// Recommended topology strategy (single-node, multi-node, HA, global)
     pub deployment_strategy: DeploymentStrategy,
+    /// Replica count and auto-scaling configuration
     pub scaling_configuration: ScalingConfig,
+    /// Monitoring and observability setup recommendation
     pub monitoring_setup: MonitoringConfig,
+    /// Backup frequency and retention strategy
     pub backup_strategy: BackupStrategy,
+    /// Estimated time to complete the full deployment in minutes
     pub estimated_deployment_time_minutes: u32,
 }
 
 /// Deployment strategy options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DeploymentStrategy {
+    /// One ProximaDB instance; suitable for development or small workloads
     SingleNode,
+    /// Multiple ProximaDB instances behind a load balancer
     MultiNode,
+    /// Redundant multi-node topology with automatic failover
     HighAvailability,
+    /// Cross-region distributed deployment for global latency targets
     GlobalDistributed,
 }
 
 /// Scaling configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScalingConfig {
+    /// Number of ProximaDB replicas to start with at deployment time
     pub initial_replicas: u32,
+    /// Maximum number of replicas the auto-scaler is permitted to create
     pub max_replicas: u32,
+    /// Whether the auto-scaler should adjust replica count automatically
     pub auto_scaling_enabled: bool,
+    /// Metric thresholds that cause the auto-scaler to act
     pub scaling_triggers: Vec<ScalingTrigger>,
 }
 
 /// Auto-scaling triggers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScalingTrigger {
+    /// Name of the monitored metric (e.g., "cpu_utilization", "memory_utilization")
     pub metric: String,
+    /// Value at which the trigger fires (e.g., 80.0 for 80% CPU utilisation)
     pub threshold: f64,
+    /// Action to take when the threshold is crossed
     pub action: ScalingAction,
 }
 
 /// Scaling actions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScalingAction {
+    /// Add one or more replicas to handle increased load
     ScaleUp,
+    /// Remove idle replicas to reduce resource consumption
     ScaleDown,
+    /// Emit an alert without changing replica count
     Alert,
 }
 
 /// Monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringConfig {
+    /// Master switch; when `false` no monitoring subsystems are started
     pub enabled: bool,
+    /// Number of days to retain collected metrics time-series data
     pub metrics_retention_days: u32,
+    /// Whether alerting rules and notification channels are active
     pub alerting_enabled: bool,
+    /// Whether the Grafana/web dashboard is active
     pub dashboard_enabled: bool,
+    /// Minimum log severity to capture (e.g., "info", "debug", "warn")
     pub log_level: String,
+    /// Whether Prometheus metrics scraping is enabled
     pub enable_metrics: bool,
+    /// Whether structured log collection is enabled
     pub enable_logging: bool,
+    /// Alias for `alerting_enabled`; kept for API compatibility
     pub enable_alerting: bool,
 }
 
 impl MonitoringConfig {
+    /// Construct a fully-enabled monitoring configuration suitable for enterprise deployments
     pub fn enterprise_default() -> Self {
         Self {
             enabled: true,
@@ -220,15 +317,22 @@ impl MonitoringConfig {
 /// Backup strategy configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupStrategy {
+    /// Whether automated backups are enabled
     pub enabled: bool,
+    /// Frequency of backup snapshots in hours (e.g., 24 for daily)
     pub backup_frequency_hours: u32,
+    /// Number of days to retain backup snapshots before automatic deletion
     pub retention_days: u32,
+    /// Backup type identifier (e.g., "full", "incremental")
     pub backup_type: String,
+    /// Storage backend for backup archives (e.g., "s3", "azure-blob", "local")
     pub storage_location: String,
+    /// Whether the automated backup scheduler is active (alias for `enabled`)
     pub enable_automated_backup: bool,
 }
 
 impl BackupStrategy {
+    /// Construct a daily incremental backup strategy suitable for enterprise deployments
     pub fn enterprise_default() -> Self {
         Self {
             enabled: true,
@@ -590,12 +694,11 @@ impl EnvironmentDetector {
     /// Detect number of CPU cores
     async fn detect_cpu_cores(&self) -> Result<u32> {
         // Try multiple methods to detect CPU cores
-        if let Ok(output) = tokio::process::Command::new("nproc").output().await {
-            if let Ok(cores_str) = String::from_utf8(output.stdout) {
-                if let Ok(cores) = cores_str.trim().parse::<u32>() {
-                    return Ok(cores);
-                }
-            }
+        if let Ok(output) = tokio::process::Command::new("nproc").output().await
+            && let Ok(cores_str) = String::from_utf8(output.stdout)
+            && let Ok(cores) = cores_str.trim().parse::<u32>()
+        {
+            return Ok(cores);
         }
 
         // Fallback: Use Rust's built-in detection
@@ -607,12 +710,11 @@ impl EnvironmentDetector {
         // Try reading /proc/meminfo on Linux
         if let Ok(meminfo) = tokio::fs::read_to_string("/proc/meminfo").await {
             for line in meminfo.lines() {
-                if line.starts_with("MemTotal:") {
-                    if let Some(kb_str) = line.split_whitespace().nth(1) {
-                        if let Ok(kb) = kb_str.parse::<u64>() {
-                            return Ok((kb / 1024 / 1024) as u32); // Convert KB to GB
-                        }
-                    }
+                if line.starts_with("MemTotal:")
+                    && let Some(kb_str) = line.split_whitespace().nth(1)
+                    && let Ok(kb) = kb_str.parse::<u64>()
+                {
+                    return Ok((kb / 1024 / 1024) as u32); // Convert KB to GB
                 }
             }
         }
@@ -635,11 +737,10 @@ impl EnvironmentDetector {
                     // Parse df output for available space
                     for line in df_output.lines().skip(1) {
                         let fields: Vec<&str> = line.split_whitespace().collect();
-                        if fields.len() >= 4 {
-                            if let Ok(available_gb) = fields[3].trim_end_matches('G').parse::<u64>()
-                            {
-                                return Ok(available_gb);
-                            }
+                        if fields.len() >= 4
+                            && let Ok(available_gb) = fields[3].trim_end_matches('G').parse::<u64>()
+                        {
+                            return Ok(available_gb);
                         }
                     }
                 }
@@ -711,7 +812,7 @@ impl EnvironmentDetector {
         let scaling_config = match platform_type {
             PlatformType::Kubernetes => ScalingConfig {
                 initial_replicas: if resources.cpu_cores >= 8 { 3 } else { 1 },
-                max_replicas: (resources.cpu_cores / 4).max(1).min(10),
+                max_replicas: (resources.cpu_cores / 4).clamp(1, 10),
                 auto_scaling_enabled: true,
                 scaling_triggers: vec![
                     ScalingTrigger {
@@ -837,15 +938,20 @@ impl EnvironmentDetector {
 /// Trait for platform-specific analysis
 #[async_trait]
 pub trait PlatformAnalyzer: Send + Sync {
+    /// Probe the platform and return a structured analysis of its capabilities and limitations.
     async fn analyze_platform(&self) -> Result<PlatformAnalysis>;
 }
 
 /// Platform analysis result
 #[derive(Debug, Clone)]
 pub struct PlatformAnalysis {
+    /// Features and services available on this platform (e.g., "Auto-scaling")
     pub capabilities: Vec<String>,
+    /// Known constraints or missing features on this platform
     pub limitations: Vec<String>,
+    /// Configuration recommendations specific to this platform
     pub recommendations: Vec<String>,
+    /// Arbitrary platform-specific key-value metadata discovered during analysis
     pub resource_details: HashMap<String, String>,
 }
 
@@ -854,8 +960,15 @@ pub struct PlatformAnalysis {
 pub struct KubernetesAnalyzer;
 
 impl KubernetesAnalyzer {
+    /// Create a new `KubernetesAnalyzer`
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for KubernetesAnalyzer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -903,12 +1016,20 @@ impl PlatformAnalyzer for KubernetesAnalyzer {
 }
 
 // Similar analyzer implementations for other platforms (AWS, Azure, GCP, Docker)
+/// AWS platform analyzer
 #[derive(Debug)]
 pub struct AWSAnalyzer;
 
 impl AWSAnalyzer {
+    /// Create a new `AWSAnalyzer`
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for AWSAnalyzer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -925,12 +1046,20 @@ impl PlatformAnalyzer for AWSAnalyzer {
 }
 
 // Additional analyzer implementations...
+/// Azure platform analyzer
 #[derive(Debug)]
 pub struct AzureAnalyzer;
 
 impl AzureAnalyzer {
+    /// Create a new `AzureAnalyzer`
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for AzureAnalyzer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -946,12 +1075,20 @@ impl PlatformAnalyzer for AzureAnalyzer {
     }
 }
 
+/// GCP platform analyzer
 #[derive(Debug)]
 pub struct GCPAnalyzer;
 
 impl GCPAnalyzer {
+    /// Create a new `GCPAnalyzer`
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for GCPAnalyzer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -967,12 +1104,20 @@ impl PlatformAnalyzer for GCPAnalyzer {
     }
 }
 
+/// Docker platform analyzer
 #[derive(Debug)]
 pub struct DockerAnalyzer;
 
 impl DockerAnalyzer {
+    /// Create a new `DockerAnalyzer`
     pub fn new() -> Self {
         Self
+    }
+}
+
+impl Default for DockerAnalyzer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -186,9 +186,13 @@ pub struct MetricsQuery {
 /// Health check response
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
+    /// Overall health status ("healthy", "degraded", "unhealthy").
     pub status: String,
+    /// Time of the health check.
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// ProximaDB version string.
     pub version: String,
+    /// Seconds since server start.
     pub uptime_seconds: f64,
 }
 
@@ -352,7 +356,7 @@ async fn metrics_endpoint(
             let metrics = state.metrics_collector.current_metrics().await;
             serde_json::to_string_pretty(&metrics).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
         }
-        "prometheus" | _ => {
+        _ => {
             let metrics = state.metrics_collector.current_metrics().await;
             use crate::metrics::exporters::PrometheusExporter;
             let exporter = PrometheusExporter::new();
@@ -368,7 +372,7 @@ async fn api_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
     State(state): State<DashboardState>,
 ) -> Json<crate::metrics::SystemMetrics> {
-    let _since = params.since; // TODO: Use this for historical data
+    let _since = params.since; // Deferred: Use this for historical data
     let metrics = state.metrics_collector.current_metrics().await;
     Json(metrics)
 }

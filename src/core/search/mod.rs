@@ -2,6 +2,8 @@
 
 pub mod bounded_queue;
 pub mod engine_benchmarks;
+pub mod filter_contract; // Filter contracts for hybrid search (Issue #38, SB-08)
+pub mod filter_pushdown_engine;
 pub mod hybrid;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
@@ -29,8 +31,11 @@ use std::collections::HashMap;
 /// Custom recall rates for progressive search stages
 #[derive(Debug, Clone)]
 pub struct ProgressiveRecalls {
+    /// Target recall for binary quantization stage
     pub binary_recall: Option<f32>,
+    /// Target recall for INT8 quantization stage
     pub int8_recall: Option<f32>,
+    /// Target recall for product quantization stage
     pub pq_recall: Option<f32>,
 }
 
@@ -38,48 +43,46 @@ pub struct ProgressiveRecalls {
 ///
 /// This enum allows users to choose between exact search (100% recall) and
 /// approximate search (faster but potentially lower recall).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum SearchMode {
     /// Exact search with 100% recall - searches all partitions (current default behavior)
     /// This is the safest option for accuracy-critical applications.
+    #[default]
     Exact,
 
     /// Approximate search using IVF-style partition pruning.
     /// Searches only `nprobe` closest partitions for faster queries.
     /// - `nprobe`: Number of partitions to search (None = auto-calculate as sqrt(num_partitions))
     /// - Typical recall: 95-98% with nprobe=sqrt(n)
-    Approximate { nprobe: Option<usize> },
+    Approximate {
+        /// Number of IVF partitions to probe (None = auto-calculate)
+        nprobe: Option<usize>,
+    },
 
     /// Adaptive mode: automatically selects Exact or Approximate based on dataset size.
     /// - Uses Exact for small datasets (< threshold vectors)
     /// - Uses Approximate for large datasets
-    Adaptive { threshold: usize },
-}
-
-impl Default for SearchMode {
-    fn default() -> Self {
-        // Default to Exact mode to preserve 100% recall for accuracy-critical applications
-        SearchMode::Exact
-    }
+    Adaptive {
+        /// Vector count threshold above which approximate search is used
+        threshold: usize,
+    },
 }
 
 /// Hybrid search mode controlling how BM25 text and vector results are combined
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum HybridSearchMode {
     /// Vector search only (default, ignores text_query)
+    #[default]
     VectorOnly,
     /// Keyword/BM25 search only (ignores query vectors)
     KeywordOnly,
     /// Hybrid: combine BM25 + vector results using Reciprocal Rank Fusion
     Hybrid,
     /// Hybrid with custom RRF k parameter (default k=60)
-    HybridCustom { rrf_k: u32 },
-}
-
-impl Default for HybridSearchMode {
-    fn default() -> Self {
-        Self::VectorOnly
-    }
+    HybridCustom {
+        /// Reciprocal Rank Fusion k parameter (higher = more uniform weighting)
+        rrf_k: u32,
+    },
 }
 
 impl SearchMode {
@@ -128,7 +131,7 @@ impl SearchMode {
 }
 
 /// Unified search parameters for all storage engines
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SearchParams {
     // Core search parameters
     /// Query vectors for similarity search (supports single or batch search)
@@ -141,6 +144,7 @@ pub struct SearchParams {
     pub top_k: Option<usize>,
 
     /// Distance metric to use for similarity calculation
+    #[serde(skip)]
     pub distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
 
     /// Unified metadata filter expression supporting AND, OR, NOT operators
@@ -161,14 +165,28 @@ pub struct SearchParams {
     /// Enable two-stage search with quantization
     pub enable_two_stage: Option<bool>,
 
+    /// Enable vectorized execution using Arrow compute kernels (TD-041)
+    /// When enabled, uses batch processing for 10x faster predicate evaluation
+    pub enable_vectorized_execution: Option<bool>,
+
+    /// Enable parallel morsel processing (TD-039)
+    /// When enabled, divides work into 4096-row morsels for parallel processing
+    pub enable_parallel_morsels: Option<bool>,
+
+    /// Enable pipeline-based execution with DataChunks (TD-031)
+    /// When enabled, uses pull-based pipeline with selection vectors for zero-copy operations
+    pub enable_pipeline_execution: Option<bool>,
+
     // Optional optimization hints
     /// Preferred quantization level for search
+    #[serde(skip)]
     pub quantization_hint: Option<crate::compute::UnifiedQuantizationLevel>,
 
     /// Hint to enable/disable cluster optimization
     pub enable_clustering_hint: Option<bool>,
 
     /// Runtime optimization hints for search strategy selection
+    #[serde(skip)]
     pub runtime_hints: Option<crate::query::unified_query_optimizer::FilterOptimizationHints>,
 
     /// Hint to enable/disable metadata filtering optimization
@@ -188,6 +206,7 @@ pub struct SearchParams {
     pub progressive_scenario: Option<String>,
 
     /// Custom recall rates for progressive stages
+    #[serde(skip)]
     pub progressive_recalls: Option<ProgressiveRecalls>,
 
     /// Optimization hint for search strategy
@@ -260,8 +279,11 @@ impl BlockPruneConfig {
 /// Block pruning mode.
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum BlockPruneMode {
+    /// Prune to sqrt(total_blocks)
     Sqrt,
+    /// Prune by a configured ratio
     Ratio,
+    /// Prune to a fixed number of blocks
     Fixed(usize),
 }
 
@@ -278,6 +300,9 @@ impl Default for SearchParams {
             include_expired: Some(false),
             timeout_ms: Some(5000),
             enable_two_stage: Some(true),
+            enable_vectorized_execution: Some(false), // Disabled by default (TD-041)
+            enable_parallel_morsels: Some(false),     // Disabled by default (TD-039)
+            enable_pipeline_execution: Some(false),   // Disabled by default (TD-031)
             quantization_hint: None,
             enable_clustering_hint: Some(true),
             enable_metadata_filtering_hint: Some(true),
@@ -321,7 +346,7 @@ impl SearchParams {
 
     /// Check if this is a batch search
     pub fn is_batch_search(&self) -> bool {
-        self.query_vectors.as_ref().map_or(false, |v| v.len() > 1)
+        self.query_vectors.as_ref().is_some_and(|v| v.len() > 1)
     }
 
     /// Create a filter expression from simple key-value pairs
@@ -340,7 +365,10 @@ impl SearchParams {
             .collect();
 
         let filter_expr = if conditions.len() == 1 {
-            conditions.into_iter().next().unwrap()
+            conditions
+                .into_iter()
+                .next()
+                .unwrap_or(FilterExpression::And(Vec::new()))
         } else {
             FilterExpression::And(conditions)
         };
@@ -360,8 +388,11 @@ impl SearchParams {
 pub enum FilterExpression {
     /// Single comparison operation
     Comparison {
+        /// Metadata field name to compare
         field: String,
+        /// Comparison operator to apply
         operator: ComparisonOperator,
+        /// Value to compare against
         value: serde_json::Value,
     },
     /// Logical AND of multiple expressions
@@ -375,19 +406,33 @@ pub enum FilterExpression {
 /// Comparison operators for metadata filtering
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ComparisonOperator {
+    /// Equal to
     Equals,
+    /// Not equal to
     NotEquals,
+    /// Greater than
     GreaterThan,
+    /// Greater than or equal to
     GreaterThanOrEqual,
+    /// Less than
     LessThan,
+    /// Less than or equal to
     LessThanOrEqual,
+    /// Value is in the provided list
     In,
+    /// Value is not in the provided list
     NotIn,
+    /// String contains substring
     Contains,
+    /// String starts with prefix
     StartsWith,
+    /// String ends with suffix
     EndsWith,
+    /// Value is between two bounds (inclusive)
     Between,
+    /// Value is null
     IsNull,
+    /// Value is not null
     IsNotNull,
     /// SQL-style LIKE pattern matching (supports % and _ wildcards)
     Like,
@@ -445,15 +490,13 @@ pub mod json_comparison {
     /// ```
     pub fn compare_json_numbers(n1: &Number, n2: &Number) -> bool {
         // Try integer comparison first (preserves precision)
-        match (n1.as_i64(), n2.as_i64()) {
-            (Some(i1), Some(i2)) => return i1 == i2,
-            _ => {}
+        if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+            return i1 == i2;
         }
 
         // Try unsigned integer comparison for large positive numbers
-        match (n1.as_u64(), n2.as_u64()) {
-            (Some(u1), Some(u2)) => return u1 == u2,
-            _ => {}
+        if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) {
+            return u1 == u2;
         }
 
         // Fall back to float comparison with epsilon for precision
@@ -481,15 +524,13 @@ pub mod json_comparison {
         match (a, b) {
             (Value::Number(n1), Value::Number(n2)) => {
                 // Try integer comparison first for precision
-                match (n1.as_i64(), n2.as_i64()) {
-                    (Some(i1), Some(i2)) => return i1.cmp(&i2),
-                    _ => {}
+                if let (Some(i1), Some(i2)) = (n1.as_i64(), n2.as_i64()) {
+                    return i1.cmp(&i2);
                 }
 
                 // Try unsigned comparison for large numbers
-                match (n1.as_u64(), n2.as_u64()) {
-                    (Some(u1), Some(u2)) => return u1.cmp(&u2),
-                    _ => {}
+                if let (Some(u1), Some(u2)) = (n1.as_u64(), n2.as_u64()) {
+                    return u1.cmp(&u2);
                 }
 
                 // Fall back to float comparison
@@ -811,7 +852,9 @@ pub mod protocol_conversions {
         match conditions {
             Ok(conds) => {
                 if conds.len() == 1 {
-                    Ok(conds.into_iter().next().unwrap())
+                    conds.into_iter().next().ok_or_else(|| {
+                        "Internal error: expected one converted filter condition".to_string()
+                    })
                 } else {
                     // Use AND logic by default for multiple conditions
                     Ok(FilterExpression::And(conds))
@@ -922,7 +965,10 @@ pub mod protocol_conversions {
             .collect();
 
         if conditions.len() == 1 {
-            conditions.into_iter().next().unwrap()
+            conditions
+                .into_iter()
+                .next()
+                .unwrap_or(FilterExpression::And(Vec::new()))
         } else {
             FilterExpression::And(conditions)
         }
@@ -977,7 +1023,9 @@ pub mod protocol_conversions {
 
         let conditions = conditions?;
         if conditions.len() == 1 {
-            Ok(conditions.into_iter().next().unwrap())
+            conditions.into_iter().next().ok_or_else(|| {
+                "Internal error: expected one v1 simple filter condition".to_string()
+            })
         } else {
             Ok(FilterExpression::And(conditions))
         }
@@ -1050,14 +1098,18 @@ pub mod protocol_conversions {
         match crate::proto::proximadb_v1::LogicalOp::try_from(metadata_filter.op) {
             Ok(crate::proto::proximadb_v1::LogicalOp::And) => {
                 if conditions.len() == 1 {
-                    Ok(conditions.into_iter().next().unwrap())
+                    conditions.into_iter().next().ok_or_else(|| {
+                        "Internal error: expected one metadata filter condition".to_string()
+                    })
                 } else {
                     Ok(FilterExpression::And(conditions))
                 }
             }
             Ok(crate::proto::proximadb_v1::LogicalOp::Or) => {
                 if conditions.len() == 1 {
-                    Ok(conditions.into_iter().next().unwrap())
+                    conditions.into_iter().next().ok_or_else(|| {
+                        "Internal error: expected one metadata filter condition".to_string()
+                    })
                 } else {
                     Ok(FilterExpression::Or(conditions))
                 }
@@ -1065,7 +1117,9 @@ pub mod protocol_conversions {
             _ => {
                 // Default to AND for unspecified
                 if conditions.len() == 1 {
-                    Ok(conditions.into_iter().next().unwrap())
+                    conditions.into_iter().next().ok_or_else(|| {
+                        "Internal error: expected one metadata filter condition".to_string()
+                    })
                 } else {
                     Ok(FilterExpression::And(conditions))
                 }
@@ -1180,5 +1234,268 @@ pub mod filter_extraction {
                 extract_columns_recursive(expr, columns);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_search_params_default() {
+        let params = SearchParams::default();
+
+        // Core defaults
+        assert!(params.query_vectors.is_none());
+        assert!(params.vector.is_none());
+        assert_eq!(params.top_k, Some(10));
+        assert_eq!(
+            params.distance_metric,
+            Some(crate::compute::distance_computation::DistanceMetric::Cosine)
+        );
+        assert!(params.filter_expression.is_none());
+        assert!(params.filters.is_none());
+        assert_eq!(params.accuracy_threshold, Some(0.95));
+        assert_eq!(params.include_expired, Some(false));
+        assert_eq!(params.timeout_ms, Some(5000));
+        assert_eq!(params.enable_two_stage, Some(true));
+
+        // Execution pipeline defaults (disabled by default)
+        assert_eq!(params.enable_vectorized_execution, Some(false));
+        assert_eq!(params.enable_parallel_morsels, Some(false));
+        assert_eq!(params.enable_pipeline_execution, Some(false));
+
+        // Optimization defaults
+        assert_eq!(params.enable_clustering_hint, Some(true));
+        assert_eq!(params.enable_metadata_filtering_hint, Some(true));
+
+        // Search mode defaults to Exact
+        assert_eq!(params.search_mode, SearchMode::Exact);
+        // Hybrid mode defaults to VectorOnly
+        assert_eq!(params.hybrid_mode, HybridSearchMode::VectorOnly);
+    }
+
+    #[test]
+    fn test_search_params_with_filters() {
+        let mut filters = HashMap::new();
+        filters.insert("category".to_string(), serde_json::json!("electronics"));
+        filters.insert("price".to_string(), serde_json::json!(99.99));
+
+        let params = SearchParams::default().with_simple_filters(filters);
+
+        // Filter expression should be set
+        assert!(params.filter_expression.is_some());
+
+        // With 2 filters, the expression should be an And with 2 Comparison children
+        match params.filter_expression.as_ref() {
+            Some(FilterExpression::And(conditions)) => {
+                assert_eq!(conditions.len(), 2);
+                // Each child should be a Comparison with Equals operator
+                for cond in conditions {
+                    match cond {
+                        FilterExpression::Comparison { operator, .. } => {
+                            assert_eq!(*operator, ComparisonOperator::Equals);
+                        }
+                        _ => panic!("Expected Comparison inside And"),
+                    }
+                }
+            }
+            _ => panic!("Expected And expression with 2 conditions"),
+        }
+
+        // Empty filters should not set filter_expression
+        let params_empty = SearchParams::default().with_simple_filters(HashMap::new());
+        assert!(params_empty.filter_expression.is_none());
+    }
+
+    #[test]
+    fn test_search_mode_variants() {
+        // Default is Exact
+        let default = SearchMode::default();
+        assert_eq!(default, SearchMode::Exact);
+        assert!(default.is_exact());
+
+        // Approximate with auto nprobe
+        let approx = SearchMode::approximate();
+        assert_eq!(approx, SearchMode::Approximate { nprobe: None });
+        assert!(!approx.is_exact());
+
+        // Approximate with explicit nprobe
+        let approx_np = SearchMode::approximate_with_nprobe(16);
+        assert_eq!(approx_np, SearchMode::Approximate { nprobe: Some(16) });
+        assert!(!approx_np.is_exact());
+
+        // Adaptive with default threshold
+        let adaptive = SearchMode::adaptive();
+        assert_eq!(adaptive, SearchMode::Adaptive { threshold: 10_000 });
+        assert!(!adaptive.is_exact());
+
+        // effective_nprobe: Exact searches all partitions
+        assert_eq!(SearchMode::Exact.effective_nprobe(100, 50_000), 100);
+
+        // effective_nprobe: Approximate with explicit nprobe
+        assert_eq!(
+            SearchMode::Approximate { nprobe: Some(8) }.effective_nprobe(100, 50_000),
+            8
+        );
+
+        // effective_nprobe: Approximate auto = sqrt(num_partitions), at least 3
+        let auto_nprobe = SearchMode::Approximate { nprobe: None }.effective_nprobe(100, 50_000);
+        assert_eq!(auto_nprobe, 10); // sqrt(100) = 10
+
+        // effective_nprobe: Adaptive below threshold uses exact
+        assert_eq!(
+            SearchMode::Adaptive { threshold: 10_000 }.effective_nprobe(100, 5_000),
+            100
+        );
+
+        // effective_nprobe: Adaptive above threshold uses approximate
+        let adaptive_above =
+            SearchMode::Adaptive { threshold: 10_000 }.effective_nprobe(100, 50_000);
+        assert_eq!(adaptive_above, 10); // sqrt(100) = 10
+    }
+
+    #[test]
+    fn test_hybrid_search_mode_variants() {
+        // Default is VectorOnly
+        let default = HybridSearchMode::default();
+        assert_eq!(default, HybridSearchMode::VectorOnly);
+
+        // All variants can be constructed
+        let vector_only = HybridSearchMode::VectorOnly;
+        let keyword_only = HybridSearchMode::KeywordOnly;
+        let hybrid = HybridSearchMode::Hybrid;
+        let hybrid_custom = HybridSearchMode::HybridCustom { rrf_k: 120 };
+
+        // Verify they are distinct
+        assert_ne!(vector_only, keyword_only);
+        assert_ne!(keyword_only, hybrid);
+        assert_ne!(hybrid, hybrid_custom);
+
+        // Verify custom parameter is stored
+        match hybrid_custom {
+            HybridSearchMode::HybridCustom { rrf_k } => assert_eq!(rrf_k, 120),
+            _ => panic!("Expected HybridCustom variant"),
+        }
+    }
+
+    #[test]
+    fn test_block_prune_config_default() {
+        let config = BlockPruneConfig::default();
+
+        assert!(!config.force_exact);
+        assert!(matches!(config.mode, BlockPruneMode::Sqrt));
+        assert!((config.ratio - 0.2).abs() < f32::EPSILON);
+        assert_eq!(config.min_keep, 1);
+        assert_eq!(config.max_keep, 0);
+        assert!(config.min_blocks_override.is_none());
+
+        // Verify other modes can be constructed
+        let ratio_mode = BlockPruneMode::Ratio;
+        let fixed_mode = BlockPruneMode::Fixed(50);
+        assert!(matches!(ratio_mode, BlockPruneMode::Ratio));
+        match fixed_mode {
+            BlockPruneMode::Fixed(n) => assert_eq!(n, 50),
+            _ => panic!("Expected Fixed variant"),
+        }
+    }
+
+    #[test]
+    fn test_filter_expression_construction() {
+        // Comparison expression
+        let comparison = FilterExpression::Comparison {
+            field: "status".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!("active"),
+        };
+        match &comparison {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                assert_eq!(field, "status");
+                assert_eq!(*operator, ComparisonOperator::Equals);
+                assert_eq!(*value, serde_json::json!("active"));
+            }
+            _ => panic!("Expected Comparison"),
+        }
+
+        // AND expression
+        let and_expr = FilterExpression::And(vec![
+            FilterExpression::Comparison {
+                field: "age".to_string(),
+                operator: ComparisonOperator::GreaterThan,
+                value: serde_json::json!(18),
+            },
+            FilterExpression::Comparison {
+                field: "age".to_string(),
+                operator: ComparisonOperator::LessThan,
+                value: serde_json::json!(65),
+            },
+        ]);
+        match &and_expr {
+            FilterExpression::And(exprs) => assert_eq!(exprs.len(), 2),
+            _ => panic!("Expected And"),
+        }
+
+        // OR expression
+        let or_expr = FilterExpression::Or(vec![
+            FilterExpression::Comparison {
+                field: "category".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("A"),
+            },
+            FilterExpression::Comparison {
+                field: "category".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("B"),
+            },
+        ]);
+        match &or_expr {
+            FilterExpression::Or(exprs) => assert_eq!(exprs.len(), 2),
+            _ => panic!("Expected Or"),
+        }
+
+        // NOT expression
+        let not_expr = FilterExpression::Not(Box::new(FilterExpression::Comparison {
+            field: "deleted".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(true),
+        }));
+        assert!(matches!(not_expr, FilterExpression::Not(_)));
+
+        // Verify all comparison operators
+        let operators = vec![
+            ComparisonOperator::Equals,
+            ComparisonOperator::NotEquals,
+            ComparisonOperator::GreaterThan,
+            ComparisonOperator::GreaterThanOrEqual,
+            ComparisonOperator::LessThan,
+            ComparisonOperator::LessThanOrEqual,
+            ComparisonOperator::In,
+            ComparisonOperator::NotIn,
+            ComparisonOperator::Contains,
+            ComparisonOperator::StartsWith,
+            ComparisonOperator::EndsWith,
+            ComparisonOperator::Between,
+            ComparisonOperator::IsNull,
+            ComparisonOperator::IsNotNull,
+            ComparisonOperator::Like,
+        ];
+        assert_eq!(operators.len(), 15, "Expected 15 comparison operators");
+
+        // Verify PartialEq works for filter expressions
+        let expr1 = FilterExpression::Comparison {
+            field: "x".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(1),
+        };
+        let expr2 = FilterExpression::Comparison {
+            field: "x".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(1),
+        };
+        assert_eq!(expr1, expr2);
     }
 }

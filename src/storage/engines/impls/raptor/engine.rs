@@ -1,4 +1,4 @@
-use crate::core::errors::ProximaDBError;
+use crate::core::error::ProximaDBError;
 use crate::utils::StoragePath;
 use crate::utils::uuid::Uuid;
 use anyhow::Result;
@@ -110,6 +110,10 @@ type VectorSearchResult = OptimizedSearchRecord;
 ///
 // Old optimization structures removed - now using UniversalPerformanceOptimizer
 // The universal optimizer provides all these capabilities through a unified interface
+#[deprecated(
+    since = "0.3.0",
+    note = "RAPTOR is experimental. Use SST or HELIX instead."
+)]
 #[allow(dead_code)]
 pub struct RaptorEngine {
     /// **Engine Configuration**
@@ -352,7 +356,7 @@ pub struct RaptorEngine {
     axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, deprecated)]
 impl RaptorEngine {
     /// Smart quantization selection using shared logic
     fn should_use_persistent_quantization(
@@ -392,7 +396,28 @@ impl RaptorEngine {
 
     /// Create a new RAPTOR engine instance (stateless)
     /// Collection info comes from FlushParameters and StorageQueryContext at runtime
+    ///
+    /// # DEPRECATION WARNING
+    ///
+    /// RAPTOR engine is DEPRECATED and EXPERIMENTAL. Do not use in production.
+    ///
+    /// **Status**: Will be removed in v1.0 unless completed by contributors
+    /// **Alternatives**: Use SST, VIPER, HELIX, or NOVA engines instead
+    /// **Documentation**: See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
+    ///
+    /// For adaptive workloads, use production engines with appropriate configuration.
+    #[deprecated(
+        since = "0.2.0",
+        note = "RAPTOR engine is deprecated. Use SST, VIPER, HELIX, or NOVA instead."
+    )]
     pub async fn new() -> Result<Self> {
+        tracing::warn!(
+            "⚠️  RAPTOR ENGINE DEPRECATION WARNING ⚠️ \
+             RAPTOR is deprecated and experimental. \
+             Use SST, VIPER, HELIX, or NOVA instead. \
+             See /docs/storage/EXPERIMENTAL_ENGINES_STATUS.md for details."
+        );
+
         let config = RaptorConfig::default();
         let cache =
             Arc::new(crate::storage::cache::orchestrator::CrossCacheOrchestrator::new(1000));
@@ -747,7 +772,7 @@ impl RaptorEngine {
     async fn compress_data_optimized(&self, data: &[u8]) -> Result<Vec<u8>> {
         // Use the tier determined from the storage location (base_path), not data size
         // The tier was already determined in constructor from the URL
-        let tier = self.tier_config.tier.clone();
+        let tier = self.tier_config.tier;
 
         self.universal_optimizer.compress_for_tier(data, tier).await
     }
@@ -810,7 +835,7 @@ impl RaptorEngine {
             // Compaction needs to be triggered from do_flush or do_compact
             // which have access to collection_id and base_path
             // This internal method can't trigger compaction without that context
-            // TODO: Refactor to pass context through or trigger from outer methods
+            // Deferred: Refactor to pass context through or trigger from outer methods
         }
 
         Ok(())
@@ -905,12 +930,26 @@ impl RaptorEngine {
         // Use Matrix Trinity for candidate selection
         let candidates: Vec<OptimizedSearchRecord> = if self.config.enable_clustering {
             // Use clustered search with Matrix Trinity
-            self.clustered_search(query, k * 2, selected_rowgroups.clone(), distance_metric)
-                .await?
+            self.clustered_search(
+                query,
+                k * 2,
+                selected_rowgroups.clone(),
+                distance_metric,
+                storage_path,
+                collection_id,
+            )
+            .await?
         } else {
             // Clustered search with pruning
-            self.clustered_search(query, k * 2, selected_rowgroups.clone(), distance_metric)
-                .await?
+            self.clustered_search(
+                query,
+                k * 2,
+                selected_rowgroups.clone(),
+                distance_metric,
+                storage_path,
+                collection_id,
+            )
+            .await?
         };
 
         debug!(
@@ -921,10 +960,10 @@ impl RaptorEngine {
         // Apply filters and rerank
         let mut results = Vec::new();
         for candidate in candidates {
-            if let Some(ref filter) = filter {
-                if !self.matches_filter(&candidate, filter).await {
-                    continue;
-                }
+            if let Some(ref filter) = filter
+                && !self.matches_filter(&candidate, filter).await
+            {
+                continue;
             }
             results.push(candidate);
             if results.len() >= k {
@@ -1086,7 +1125,7 @@ impl RaptorEngine {
                                         if let Some(ref f) = filter {
                                             let mut matches = true;
                                             for (key, value) in f {
-                                                let filter_matches = record.metadata.get(key).map_or(false, |sql_val| {
+                                                let filter_matches = record.metadata.get(key).is_some_and(|sql_val| {
                                                     if let Some(val) = &sql_val.value {
                                                         use crate::proto::proximadb_v1::sql_value::Value;
                                                         match val {
@@ -1240,14 +1279,15 @@ impl RaptorEngine {
         if selected.is_empty() {
             debug!("SELECT_ROWGROUPS: No clusters found, using centroid-based selection");
             for rg_id in rowgroup_manager.row_group_ids() {
-                if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id) {
-                    if let Some(_centroid) = &rowgroup.centroid {
-                        // Calculate distance using distance computation engine
-                        let distance = 0.0; // TODO: Use distance computation engine
-                        if distance < 0.5 {
-                            // Threshold for similarity
-                            selected.push(rowgroup.id as u32);
-                        }
+                if let Some(rowgroup) = rowgroup_manager.row_group(&rg_id)
+                    && let Some(centroid) = &rowgroup.centroid
+                {
+                    // Calculate distance using distance computation engine
+                    let compute = UnifiedDistanceCompute::default();
+                    let distance = compute.distance(query, centroid);
+                    if distance < 0.5 {
+                        // Threshold for similarity
+                        selected.push(rowgroup.id as u32);
                     }
                 }
             }
@@ -1266,6 +1306,8 @@ impl RaptorEngine {
         k: usize,
         selected_rowgroups: Vec<u32>,
         distance_metric: &crate::compute::distance_computation::DistanceMetric,
+        storage_path: &str,
+        collection_id: &str,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!(
             "CLUSTERED_SEARCH: Starting with {} selected rowgroups",
@@ -1277,9 +1319,16 @@ impl RaptorEngine {
             debug!(
                 "CLUSTERED_SEARCH: STATELESS MODE - No rowgroups, will scan disk for .raptor files"
             );
-            // TODO: Implement disk scanning and direct file search
-            // For now, return empty results to demonstrate the issue
-            return Ok(Vec::new());
+            return self
+                .scan_disk_files_for_search(
+                    query,
+                    k,
+                    None,
+                    distance_metric,
+                    storage_path,
+                    collection_id,
+                )
+                .await;
         }
 
         // Use bounded priority queue to maintain only top-k results
@@ -1307,7 +1356,7 @@ impl RaptorEngine {
                     .map(|d| {
                         crate::compute::distance_computation::engine::SimilarityResult::new(
                             d,
-                            distance_metric.clone(),
+                            *distance_metric,
                         )
                     })
                     .collect()
@@ -1411,7 +1460,7 @@ impl RaptorEngine {
                 // Quantized tensor encoding
                 self.deserialize_quantized_tensor_batch(&data[1..])
             }
-            0xA0 | _ => {
+            _ => {
                 // Raw tensors or standard Arrow IPC format
                 // For backward compatibility or non-encoded data
                 use arrow_ipc::reader::StreamReader;
@@ -1769,7 +1818,7 @@ impl RaptorEngine {
                 let num_vectors = u32::from_le_bytes(count_bytes) as usize;
 
                 // Read binary data (packed bits)
-                let bits_per_vector = (dimension + 7) / 8; // Round up to byte boundary
+                let bits_per_vector = dimension.div_ceil(8); // Round up to byte boundary
                 let mut binary_data = vec![0u8; num_vectors * bits_per_vector];
                 cursor.read_exact(&mut binary_data)?;
 
@@ -1871,7 +1920,7 @@ impl RaptorEngine {
                     .map(|d| {
                         crate::compute::distance_computation::engine::SimilarityResult::new(
                             d,
-                            distance_metric.clone(),
+                            *distance_metric,
                         )
                     })
                     .collect()
@@ -1925,8 +1974,8 @@ impl RaptorEngine {
             metadata_strs.push(Some(metadata_json));
 
             // Convert Option<i64> to Option<u32> for Arrow UInt32Array compatibility
-            versions.push(record.version.map(|v| v as u32));
-            timestamps.push(Some(record.timestamp.unwrap_or(0) as i64));
+            versions.push(record.version);
+            timestamps.push(Some(record.timestamp.unwrap_or(0)));
         }
 
         let id_array = Arc::new(StringArray::from(ids)) as ArrayRef;
@@ -2052,8 +2101,7 @@ impl RaptorEngine {
         let metadata_str = batch
             .column_by_name("metadata")
             .and_then(|col| col.as_any().downcast_ref::<arrow_array::StringArray>())
-            .map(|arr| arr.value(index))
-            .unwrap_or("");
+            .map_or("", |arr| arr.value(index));
 
         let metadata_json: serde_json::Value = if metadata_str.is_empty() {
             serde_json::json!({})
@@ -2113,6 +2161,7 @@ impl RaptorEngine {
     }
 }
 
+#[allow(deprecated)]
 #[async_trait]
 impl UnifiedStorageEngine for RaptorEngine {
     fn engine_name(&self) -> &'static str {
@@ -2144,9 +2193,7 @@ impl UnifiedStorageEngine for RaptorEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.dimension)
             .ok_or_else(|| {
-                ProximaDBError::Config(crate::core::errors::ConfigError::MissingField {
-                    field: "dimension".to_string(),
-                })
+                ProximaDBError::Config("Missing dimension field in collection config".to_string())
             })?;
 
         debug!(
@@ -2253,16 +2300,14 @@ impl UnifiedStorageEngine for RaptorEngine {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.dimension)
             .ok_or_else(|| {
-                ProximaDBError::Config(crate::core::errors::ConfigError::MissingField {
-                    field: "dimension".to_string(),
-                })
+                ProximaDBError::Config("Missing dimension field in collection config".to_string())
             })?;
 
         tracing::debug!(
             "RAPTOR compaction: Using collection config dimension: {}",
             collection_dimension
         );
-        // TODO: Update any dimension-dependent compaction operations
+        // Deferred: Update any dimension-dependent compaction operations
         // - HNSW graph rebuilding optimization for this dimension
         // - Row group reorganization based on actual dimension
         // - Memory allocation optimization during compaction
@@ -2372,15 +2417,15 @@ impl UnifiedStorageEngine for RaptorEngine {
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
         {
             // Try to get from vector cache first
-            if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
-                    // Track cache hit for access pattern learning
-                    orchestrator.pattern_tracker().track_access_async(
-                        cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::VectorData,
-                    );
-                    return Ok(Some(cached_vector));
-                }
+            if let Some(vector_cache) = orchestrator.get_vector_cache()
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await
+            {
+                // Track cache hit for access pattern learning
+                orchestrator.pattern_tracker().track_access_async(
+                    cache_key.clone(),
+                    crate::storage::cache::orchestrator::CacheType::VectorData,
+                );
+                return Ok(Some(cached_vector));
             }
 
             // Track cache miss
@@ -2393,7 +2438,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         // Find RAPTOR data files for this collection
         // Construct data directory from base_path and collection_id
         // Format is: {baseurl}/{collectionid}/data/
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
         tracing::info!(
             "RAPTOR vector_by_id: Constructed data directory path: {}",
             data_dir
@@ -2494,10 +2539,26 @@ impl UnifiedStorageEngine for RaptorEngine {
                         file_path_str,
                         metadata.row_groups.len()
                     );
-                    // For now, use a simple approach - read all row groups and search for the ID
-                    // TODO: Implement efficient bloom filter lookup
-                    let rowgroup_indices: Vec<u16> =
-                        (0..metadata.row_groups.len() as u16).collect();
+                    // Use bloom filters from rowgroup_manager to prune rowgroups
+                    let rowgroup_manager = self.rowgroup_manager.read().await;
+                    let rowgroup_indices: Vec<u16> = metadata
+                        .row_groups
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, rg)| {
+                            // Check in-memory bloom filter from rowgroup manager
+                            if let Some(managed_rg) = rowgroup_manager.row_group(&rg.id) {
+                                match &managed_rg.bloom_filter {
+                                    Some(bloom) => bloom.contains(vector_id),
+                                    None => true, // No bloom filter, must scan
+                                }
+                            } else {
+                                true // Rowgroup not in manager, must scan
+                            }
+                        })
+                        .map(|(i, _)| i as u16)
+                        .collect();
+                    drop(rowgroup_manager);
 
                     tracing::debug!(
                         "RAPTOR vector_by_id: Will read {} row groups",
@@ -2540,9 +2601,7 @@ impl UnifiedStorageEngine for RaptorEngine {
                                             vector_id,
                                             i
                                         );
-                                        return Ok(Some(
-                                            self.reconstruct_vector_record(&batch, i)?,
-                                        ));
+                                        return Ok(Some(self.reconstruct_vector_record(batch, i)?));
                                     }
                                 }
                             }
@@ -2732,6 +2791,7 @@ impl UnifiedStorageEngine for RaptorEngine {
 }
 
 // AXIS integration helper methods
+#[allow(deprecated)]
 impl RaptorEngine {
     /// Get the AXIS manager if configured
     ///
@@ -2890,6 +2950,7 @@ struct FileMetadata {
 }
 
 /// Implementation of UniversallyOptimized trait for RAPTOR engine
+#[allow(deprecated)]
 #[async_trait]
 impl UniversallyOptimized for RaptorEngine {
     /// Get the universal performance optimizer instance
@@ -2970,5 +3031,167 @@ impl UniversallyOptimized for RaptorEngine {
         );
 
         Ok(metrics)
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "experimental-engines")]
+mod tests {
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+
+    #[test]
+    fn test_raptor_distance_computation_non_zero() {
+        let compute = UnifiedDistanceCompute::default();
+
+        let query = vec![1.0, 0.0, 0.0, 0.0];
+        let centroid = vec![0.0, 1.0, 0.0, 0.0];
+
+        let distance = compute.distance(&query, &centroid);
+
+        // Distance between orthogonal vectors should be non-zero
+        assert!(
+            distance > 0.0,
+            "Distance between different vectors should be non-zero, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_raptor_distance_filters_rowgroups() {
+        let compute = UnifiedDistanceCompute::default();
+
+        let query = vec![1.0, 0.0, 0.0];
+
+        // Close centroid
+        let close = vec![0.9, 0.1, 0.0];
+        let close_dist = compute.distance(&query, &close);
+
+        // Far centroid
+        let far = vec![0.0, 0.0, 1.0];
+        let far_dist = compute.distance(&query, &far);
+
+        // Far centroid should have greater distance
+        assert!(
+            far_dist > close_dist,
+            "Far centroid distance ({}) should be > close centroid distance ({})",
+            far_dist,
+            close_dist
+        );
+
+        // With threshold 0.5, far centroid should be filtered out in many metrics
+        // This validates the fix: previously distance was always 0.0
+        assert!(
+            close_dist > 0.0,
+            "Close centroid distance should still be non-zero"
+        );
+    }
+
+    // ========== NEW TESTS ==========
+
+    #[test]
+    fn test_raptor_config_defaults() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::default();
+        assert_eq!(
+            config.rowgroup_size,
+            super::super::constants::clustering::DEFAULT_ROWGROUP_SIZE
+        );
+        assert!(config.enable_simd);
+        assert!(config.enable_clustering);
+        assert!(config.use_component_boosting);
+        assert!(config.enable_bloom_filters);
+        assert!(config.enable_statistics);
+        assert!(config.enable_complex_types);
+        assert!(config.enable_range_reads);
+        assert!(config.enable_prefetching);
+        assert!(config.num_clusters.is_none()); // Auto-calculate
+    }
+
+    #[test]
+    fn test_raptor_config_for_small_k() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_small_k();
+        assert_eq!(config.rowgroup_size, 500);
+        assert_eq!(config.cache_size_mb, 4096);
+    }
+
+    #[test]
+    fn test_raptor_config_for_medium_k() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_medium_k();
+        assert_eq!(config.rowgroup_size, 2000);
+    }
+
+    #[test]
+    fn test_raptor_config_for_large_k() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_large_k();
+        assert_eq!(config.rowgroup_size, 5000);
+        assert!(config.enable_prefetching);
+        assert_eq!(config.prefetch_size_mb, 128);
+    }
+
+    #[test]
+    fn test_raptor_config_for_cloud() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_cloud();
+        assert!(config.enable_range_reads);
+        assert_eq!(config.prefetch_size_mb, 64);
+        assert_eq!(config.cache_size_mb, 2048);
+    }
+
+    #[test]
+    fn test_raptor_config_for_local_ssd() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_local_ssd();
+        assert!(!config.enable_range_reads);
+        assert_eq!(config.max_parallel_reads, 16);
+    }
+
+    #[test]
+    fn test_raptor_config_for_high_performance() {
+        use super::RaptorConfig;
+        let config = RaptorConfig::for_high_performance();
+        assert_eq!(config.rowgroup_size, 5000);
+        assert!(config.enable_simd);
+        assert_eq!(config.simd_lanes, 32);
+        assert_eq!(config.cache_size_mb, 4096);
+        assert_eq!(config.max_parallel_reads, 32);
+    }
+
+    #[test]
+    fn test_raptor_format_version_constant() {
+        assert_eq!(super::super::constants::file_format::VERSION, 1);
+        assert_eq!(super::super::constants::file_format::MAGIC, *b"RPTR");
+    }
+
+    #[test]
+    fn test_raptor_distance_identical_vectors() {
+        let compute = UnifiedDistanceCompute::default();
+        let vec_a = vec![1.0, 2.0, 3.0];
+        let distance = compute.distance(&vec_a, &vec_a);
+        // Distance to self should be 0 or very close to 0
+        assert!(
+            distance < 0.001,
+            "Distance to self should be ~0, got {}",
+            distance
+        );
+    }
+
+    #[test]
+    fn test_raptor_distance_triangle_inequality_heuristic() {
+        let compute = UnifiedDistanceCompute::default();
+        let a = vec![1.0, 0.0, 0.0];
+        let b = vec![0.0, 1.0, 0.0];
+        let c = vec![0.0, 0.0, 1.0];
+
+        let d_ab = compute.distance(&a, &b);
+        let d_bc = compute.distance(&b, &c);
+        let d_ac = compute.distance(&a, &c);
+
+        // All distances should be positive between different vectors
+        assert!(d_ab > 0.0);
+        assert!(d_bc > 0.0);
+        assert!(d_ac > 0.0);
     }
 }

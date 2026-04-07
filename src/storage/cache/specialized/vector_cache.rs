@@ -45,7 +45,7 @@ impl CacheValue for CachedVector {
         size += self.vector.vector.len() * std::mem::size_of::<f32>();
 
         // Add metadata size
-        for (key, _value) in &self.vector.metadata {
+        for key in self.vector.metadata.keys() {
             size += key.len() + 64; // Estimate 64 bytes per SqlValue
         }
 
@@ -140,8 +140,8 @@ impl VectorCache {
         CacheStatistics {
             total_items: 0,        // Size not directly available through BaseCache
             memory_usage_bytes: 0, // Memory usage not directly available
-            hit_count: 0,          // TODO: Track hits
-            miss_count: 0,         // TODO: Track misses
+            hit_count: 0,          // Deferred: Track hits
+            miss_count: 0,         // Deferred: Track misses
         }
     }
 

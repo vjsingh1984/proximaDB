@@ -24,7 +24,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 /// Main CDC configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CdcConfig {
     /// Offset storage configuration
     pub offset_storage: OffsetStorageConfig,
@@ -36,18 +36,6 @@ pub struct CdcConfig {
     pub transforms: Vec<TransformConfig>,
     /// Global settings
     pub settings: CdcSettings,
-}
-
-impl Default for CdcConfig {
-    fn default() -> Self {
-        Self {
-            offset_storage: OffsetStorageConfig::default(),
-            sources: Vec::new(),
-            sinks: Vec::new(),
-            transforms: Vec::new(),
-            settings: CdcSettings::default(),
-        }
-    }
 }
 
 impl CdcConfig {

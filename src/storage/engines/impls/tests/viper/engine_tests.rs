@@ -30,7 +30,7 @@ use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStor
 async fn test_viper_engine_creation() {
     let temp_dir = TempDir::new().unwrap();
     let _config = create_default_test_config(temp_dir.path().to_str().unwrap());
-    let filesystem_factory = Arc::new(FilesystemFactory::new(Default::default()).await.unwrap());
+    let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
 
     let engine = ViperEngine::from_core_config(
         crate::core::config::ViperConfig::default(),
@@ -85,7 +85,7 @@ async fn test_single_vector_operations() {
     let collection_id = "test_collection";
 
     // Set up storage assignment for the collection
-    setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
+    let _ = setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
 
     // VIPER is columnar storage - it doesn't support single vector inserts
     // Create a vector to flush directly
@@ -178,7 +178,7 @@ async fn test_batch_insertion_and_flush() {
     let collection_id = "batch_test";
 
     // Set up storage assignment for the collection
-    setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
+    let _ = setup_test_assignment(collection_id, temp_dir.path().to_str().unwrap()).await;
 
     // Create batch of vectors (VIPER doesn't have insert_vector - it's columnar storage)
     let mut vectors = Vec::new();

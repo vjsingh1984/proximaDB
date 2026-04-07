@@ -237,7 +237,7 @@ impl CacheValue for crate::proto::proximadb_v1::VectorRecord {
         // quantized_vector removed - internalized in storage
 
         // Add size of metadata (approximate)
-        for (key, _value) in &self.metadata {
+        for key in self.metadata.keys() {
             size += key.len();
             // Approximate size of SqlValue
             size += 64; // Conservative estimate for SqlValue

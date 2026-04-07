@@ -4,12 +4,13 @@
 //! and ensuring consistency with the gRPC API.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     response::Json,
 };
 use tracing::error;
 
 use crate::errors::{ApiError, ApiResult};
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1 as v1;
 
@@ -22,6 +23,7 @@ use crate::proto::proximadb_v1 as v1;
 pub async fn progressive_search_handler(
     Path(collection_id): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> ApiResult<Json<v1::VectorOperationResponse>> {
     // Parse the JSON value into VectorSearchRequest
@@ -40,7 +42,7 @@ pub async fn progressive_search_handler(
     // Delegate directly to unified v1 handler
     let resp = state
         .unified_handlers
-        .handle_vector_search_v1(request)
+        .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
             error!(
@@ -117,28 +119,45 @@ pub async fn explain_progressive_search_handler(
 }
 
 // Keep these minimal DTOs only for the explain endpoint
+/// Request parameters for the progressive search explain endpoint
 #[derive(Debug, serde::Deserialize)]
 pub struct ExplainRequest {
+    /// Number of results (k) to plan for
     pub k: Option<usize>,
+    /// Search scenario hint (e.g., "high_recall", "low_latency")
     pub scenario: Option<String>,
 }
 
+/// Response from the progressive search explain endpoint
 #[derive(Debug, serde::Serialize)]
 pub struct ExplainResponse {
+    /// Target collection identifier
     pub collection_id: String,
+    /// Number of results planned for
     pub k: usize,
+    /// Search scenario used
     pub scenario: String,
+    /// Planned search stages with expansion factors
     pub stages: Vec<ExplainStage>,
+    /// Total number of distance computations across all stages
     pub total_computations: usize,
+    /// Effective expansion factor relative to k
     pub effective_expansion: f32,
+    /// Estimated speedup compared to brute-force search
     pub estimated_speedup: f32,
 }
 
+/// A single stage in the progressive search plan
 #[derive(Debug, serde::Serialize)]
 pub struct ExplainStage {
+    /// Stage name (e.g., "coarse_filter", "rerank")
     pub name: String,
+    /// Number of candidate vectors at this stage
     pub candidates: usize,
+    /// Expected recall rate after this stage
     pub recall_rate: f32,
+    /// Expansion factor relative to k
     pub expansion_factor: f32,
+    /// Human-readable description of this stage
     pub description: String,
 }

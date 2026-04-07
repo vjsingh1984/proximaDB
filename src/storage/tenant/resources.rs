@@ -12,24 +12,42 @@ pub struct TenantResourceTracker {
     last_updated: AtomicU64, // Unix timestamp
 }
 
-/// Resource limits (copied from context.rs to avoid circular deps)
+/// Resource limits for tenant
+///
+/// Defines maximum resource allocations for tenant operations.
+/// Duplicated from context.rs to avoid circular dependencies.
 #[derive(Debug, Clone)]
 pub struct ResourceLimits {
+    /// Maximum memory allocation in megabytes
     pub max_memory_mb: u64,
+    /// Maximum storage allocation in megabytes
     pub max_storage_mb: u64,
+    /// Maximum operations allowed per minute
     pub max_operations_per_minute: u64,
+    /// Maximum concurrent user sessions
     pub max_concurrent_users: u32,
+    /// Maximum number of collections
     pub max_collections: u32,
+    /// Maximum number of domains
     pub max_domains: u32,
 }
 
 /// Current resource usage tracking
+///
+/// Tracks real-time resource consumption using atomic operations
+/// for thread-safe access without locks.
 pub struct TenantResourceUsage {
+    /// Memory usage in megabytes
     memory_used_mb: AtomicU64,
+    /// Storage usage in megabytes
     storage_used_mb: AtomicU64,
+    /// Operations counted in current minute
     operations_current_minute: AtomicU64,
+    /// Current number of concurrent user sessions
     concurrent_users: AtomicU32,
+    /// Total number of collections created
     total_collections: AtomicU32,
+    /// Total number of domains created
     total_domains: AtomicU32,
 }
 
@@ -144,9 +162,13 @@ impl TenantResourceTracker {
 }
 
 /// Resource usage snapshot
+///
+/// Point-in-time snapshot of resource usage for monitoring and reporting.
 #[derive(Debug, Clone)]
 pub struct TenantResourceUsageSnapshot {
+    /// Memory usage in megabytes
     pub memory_used_mb: u64,
+    /// Storage usage in megabytes
     pub storage_used_mb: u64,
     pub operations_current_minute: u64,
     pub concurrent_users: u32,

@@ -48,14 +48,13 @@
 //!
 //! Total reduction: 10 files → 4 organized modules (60% reduction)
 
+#[allow(deprecated)]
 pub mod helpers;
 
-// TODO: Fix compilation errors - proto field changes
-// #[cfg(test)]
-// mod reader_tests;
-
 #[cfg(test)]
+#[allow(deprecated)]
 mod operations_tests;
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod core_tests;

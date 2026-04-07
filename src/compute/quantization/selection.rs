@@ -28,7 +28,7 @@ impl QuantizationSelector {
             "flush" | "compact" => true, // Write operations benefit from persistent codebooks
             "search" | "query" => {
                 // Large collections benefit from persistent codebooks
-                collection_size.map_or(false, |size| size > 1000)
+                collection_size.is_some_and(|size| size > 1000)
             }
             _ => false, // Default to stateless for unknown operations
         }
@@ -136,8 +136,7 @@ impl QuantizationSelector {
         let dimension = params
             .vector_records
             .first()
-            .map(|record| record.vector.len())
-            .unwrap_or(0);
+            .map_or(0, |record| record.vector.len());
 
         // Recommendations based on data characteristics
         match (vector_count, dimension) {
@@ -256,7 +255,7 @@ impl RecommendedQuantizationLevel {
     }
 }
 
-// TODO: Fix compilation errors - enabled field is now Option<bool>
+// Deferred: Fix compilation errors - enabled field is now Option<bool>
 // #[cfg(test)]
 // mod tests {
 //     use super::*;

@@ -229,10 +229,10 @@ impl RowBasedBatchOperations {
             throughput_ops_per_second: throughput,
             memory_usage_peak: {
                 let stats = self.memory_pool.comprehensive_stats();
-                (stats.serialization.peak_size
+                stats.serialization.peak_size
                     + stats.vector.peak_size
                     + stats.compression.peak_size
-                    + stats.metadata.peak_size) as usize
+                    + stats.metadata.peak_size
             },
             cache_hit_rate: 0.0,    // Would be calculated from actual cache usage
             cpu_usage_percent: 0.0, // Would be measured
@@ -524,12 +524,12 @@ impl RowBasedBatchOperations {
         let _parallel_batch_size = total_items / self.config.worker_threads;
 
         // Use the minimum of constraints
-        let optimal_size = memory_based_batch_size
+        // At least 1
+
+        memory_based_batch_size
             .min(_parallel_batch_size)
             .min(self.config.max_batch_size)
-            .max(1); // At least 1
-
-        optimal_size
+            .max(1)
     }
 
     /// Process batches in parallel (using concurrent futures, not spawned tasks)
@@ -676,7 +676,7 @@ impl RowBasedBatchOperations {
         _blocks: &mut [ProximaDataBlock],
         _index: &RowBasedIdIndex,
     ) -> Result<Option<VectorRecord>> {
-        // TODO: Implement actual update logic
+        // Deferred: Implement actual update logic
         Ok(None)
     }
 
@@ -791,7 +791,7 @@ mod tests {
         assert!(batch_size <= batch_ops.config.max_batch_size);
     }
 
-    // TODO: Re-enable test after row_based module is implemented
+    // Deferred: Re-enable test after row_based module is implemented
     // #[test]
     // fn test_batch_splitting() {
     //     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();

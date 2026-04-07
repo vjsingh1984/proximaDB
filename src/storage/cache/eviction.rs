@@ -217,6 +217,12 @@ impl AccessTracker {
     }
 }
 
+impl Default for AccessTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CacheEvictor {
     /// Create new cache evictor with unified metrics integration
     pub fn new(
@@ -415,7 +421,7 @@ impl CacheEvictor {
         _recent_size: usize,
         _frequent_size: usize,
     ) -> Result<u64> {
-        // TODO: Implement full ARC algorithm
+        // Deferred: Implement full ARC algorithm
         // For now, use LRU as fallback
         self.evict_lru(target_size, target_size / 10).await
     }
@@ -451,7 +457,7 @@ impl CacheEvictor {
         _window_hours: u64,
         _threshold: f64,
     ) -> Result<u64> {
-        // TODO: Implement pattern-based eviction using access pattern analysis
+        // Deferred: Implement pattern-based eviction using access pattern analysis
         // This would require:
         // 1. Analyze historical access patterns
         // 2. Predict future access probability

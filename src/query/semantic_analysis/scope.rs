@@ -8,7 +8,9 @@ use std::collections::HashMap;
 pub enum Symbol {
     /// A table or collection.
     Table {
+        /// Table or collection name
         name: String,
+        /// Columns in the table by name
         columns: HashMap<String, Column>,
     },
     /// A column in a table.
@@ -20,7 +22,9 @@ pub enum Symbol {
 /// Represents a column in a table.
 #[derive(Debug, Clone)]
 pub struct Column {
+    /// Column name
     pub name: String,
+    /// Data type of the column
     pub data_type: DataType,
 }
 
@@ -87,14 +91,14 @@ impl Scope {
 
         // Search all symbols in current scope
         for (table_key, symbol) in &self.symbols {
-            if let Symbol::Table { columns, .. } = symbol {
-                if let Some(column) = columns.get(column_name) {
-                    if found_column.is_none() {
-                        found_column = Some(column.clone());
-                    }
-                    found_count += 1;
-                    table_names.push(table_key.clone());
+            if let Symbol::Table { columns, .. } = symbol
+                && let Some(column) = columns.get(column_name)
+            {
+                if found_column.is_none() {
+                    found_column = Some(column.clone());
                 }
+                found_count += 1;
+                table_names.push(table_key.clone());
             }
         }
 

@@ -5,6 +5,7 @@ use super::super::specialized::index_node_cache::IndexNode;
 use super::super::specialized::*;
 
 // Test helper types
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct QueryResult {
     query_id: String,
@@ -154,7 +155,7 @@ async fn test_query_result_cache_subqueries() {
     // Initialize hardware capabilities for testing
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::proto::proximadb_v1::{SearchResult, SearchVectorRecord, VectorRecord};
+    use crate::proto::proximadb_v1::{SearchResult, SearchVectorRecord};
     use crate::storage::cache::specialized::query_cache::{CachedQueryResult, QueryKey};
     use std::time::SystemTime;
 

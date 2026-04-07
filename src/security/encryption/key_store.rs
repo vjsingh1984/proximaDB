@@ -211,7 +211,10 @@ impl KeyStore {
         let key_id = key_id.into();
         let purpose = purpose.into();
 
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if keys.contains_key(&key_id) {
             return Err(KeyStoreError::KeyAlreadyExists(key_id));
         }
@@ -230,7 +233,10 @@ impl KeyStore {
 
     /// Import an existing key
     pub fn import_key(&self, key: EncryptionKey) -> Result<(), KeyStoreError> {
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if keys.contains_key(&key.key_id) {
             return Err(KeyStoreError::KeyAlreadyExists(key.key_id.clone()));
         }
@@ -249,7 +255,10 @@ impl KeyStore {
 
     /// Get the current (active) version of a key
     pub fn get_key(&self, key_id: &str) -> Result<EncryptionKey, KeyStoreError> {
-        let keys = self.keys.read().unwrap();
+        let keys = self
+            .keys
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let stored = keys
             .get(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;
@@ -270,7 +279,10 @@ impl KeyStore {
         key_id: &str,
         version: u32,
     ) -> Result<EncryptionKey, KeyStoreError> {
-        let keys = self.keys.read().unwrap();
+        let keys = self
+            .keys
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let stored = keys
             .get(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;
@@ -287,7 +299,10 @@ impl KeyStore {
 
     /// Rotate a key, creating a new version
     pub fn rotate_key(&self, key_id: &str) -> Result<EncryptionKey, KeyStoreError> {
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let stored = keys
             .get_mut(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;
@@ -347,7 +362,10 @@ impl KeyStore {
 
     /// Delete a key and all its versions
     pub fn delete_key(&self, key_id: &str) -> Result<(), KeyStoreError> {
-        let mut keys = self.keys.write().unwrap();
+        let mut keys = self
+            .keys
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         keys.remove(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;
         Ok(())
@@ -355,19 +373,28 @@ impl KeyStore {
 
     /// List all key IDs
     pub fn list_keys(&self) -> Vec<String> {
-        let keys = self.keys.read().unwrap();
+        let keys = self
+            .keys
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         keys.keys().cloned().collect()
     }
 
     /// Check if a key exists
     pub fn key_exists(&self, key_id: &str) -> bool {
-        let keys = self.keys.read().unwrap();
+        let keys = self
+            .keys
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         keys.contains_key(key_id)
     }
 
     /// Get key metadata (without material)
     pub fn get_key_info(&self, key_id: &str) -> Result<KeyInfo, KeyStoreError> {
-        let keys = self.keys.read().unwrap();
+        let keys = self
+            .keys
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let stored = keys
             .get(key_id)
             .ok_or_else(|| KeyStoreError::KeyNotFound(key_id.to_string()))?;

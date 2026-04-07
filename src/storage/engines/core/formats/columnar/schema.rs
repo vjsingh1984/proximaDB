@@ -66,7 +66,7 @@ pub fn create_parquet_schema_from_specs(
         // Binary quantization
         fields.push(Field::new(
             "vector_binary",
-            DataType::FixedSizeBinary(((dimension + 7) / 8) as i32),
+            DataType::FixedSizeBinary(dimension.div_ceil(8) as i32),
             true,
         ));
 
@@ -398,11 +398,11 @@ impl ColumnarSchemaBuilder {
         let cache_key = self.generate_cache_key(collection_id, config);
 
         // Check cache first
-        if let Some(cached) = self.get_cached_schema(&cache_key).await {
-            if !cached.is_expired() {
-                debug!("Schema cache hit for collection: {}", collection_id);
-                return Ok((cached.schema, cached.compression_metadata));
-            }
+        if let Some(cached) = self.get_cached_schema(&cache_key).await
+            && !cached.is_expired()
+        {
+            debug!("Schema cache hit for collection: {}", collection_id);
+            return Ok((cached.schema, cached.compression_metadata));
         }
 
         info!(
@@ -577,7 +577,7 @@ impl ColumnarSchemaBuilder {
 
         // Binary quantization - ultra-fast filtering
         if quant_config.enable_binary.unwrap_or(false) {
-            let binary_size = (config.dimension + 7) / 8; // Bits to bytes
+            let binary_size = config.dimension.div_ceil(8); // Bits to bytes
             fields.push(Field::new(
                 "vector_binary",
                 DataType::FixedSizeBinary(binary_size as i32),
@@ -660,9 +660,7 @@ impl ColumnarSchemaBuilder {
             // Enable dictionary encoding for low-cardinality strings
             let field = if config.optimization.enable_dictionary_encoding
                 && filterable.data_type == FilterableData::String
-                && filterable
-                    .estimated_cardinality
-                    .map_or(false, |c| c < 10000)
+                && filterable.estimated_cardinality.is_some_and(|c| c < 10000)
             {
                 Field::new(&filterable.name, data_type, filterable.nullable).with_metadata(
                     HashMap::from([("encoding".to_string(), "dictionary".to_string())]),

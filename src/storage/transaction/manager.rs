@@ -359,13 +359,11 @@ impl MultiModelTransactionManager {
                 drop(lock_table);
 
                 // Check for deadlock
-                if self.config.deadlock_detection {
-                    if self.detect_deadlock(tx_id, resource) {
-                        self.stats.write().total_deadlocks += 1;
-                        return Err(ProximaDBError::DeadlockDetected {
-                            transaction: tx_id.clone(),
-                        });
-                    }
+                if self.config.deadlock_detection && self.detect_deadlock(tx_id, resource) {
+                    self.stats.write().total_deadlocks += 1;
+                    return Err(ProximaDBError::DeadlockDetected {
+                        transaction: tx_id.clone(),
+                    });
                 }
 
                 std::thread::sleep(Duration::from_millis(10));
@@ -387,7 +385,7 @@ impl MultiModelTransactionManager {
 
     /// Simple deadlock detection using wait-for graph
     fn detect_deadlock(&self, _tx_id: &TransactionId, _resource: &str) -> bool {
-        // TODO: Implement proper wait-for graph traversal
+        // Deferred: Implement proper wait-for graph traversal
         // For now, return false (no deadlock)
         false
     }
@@ -408,10 +406,10 @@ impl MultiModelTransactionManager {
         }
 
         // For serializable transactions, check for conflicts
-        if ctx.isolation_level == IsolationLevel::Serializable {
-            if let Err(e) = self.validate_transaction(tx_id) {
-                return self.abort_with_reason(tx_id, &e.to_string()).await;
-            }
+        if ctx.isolation_level == IsolationLevel::Serializable
+            && let Err(e) = self.validate_transaction(tx_id)
+        {
+            return self.abort_with_reason(tx_id, &e.to_string()).await;
         }
 
         // Acquire commit lock for serialization
@@ -464,13 +462,12 @@ impl MultiModelTransactionManager {
 
     /// Prepare phase of 2PC
     async fn prepare_phase(&self, tx_id: &TransactionId) -> Result<bool> {
-        let participants = {
-            self.participants
-                .read()
-                .get(tx_id)
-                .cloned()
-                .unwrap_or_default()
-        };
+        let participants = self
+            .participants
+            .read()
+            .get(tx_id)
+            .cloned()
+            .unwrap_or_default();
 
         if participants.is_empty() {
             // No participants, nothing to prepare
@@ -479,17 +476,17 @@ impl MultiModelTransactionManager {
 
         // Send prepare to all participants
         let mut all_prepared = true;
-        for (store_id, _participant) in &participants {
+        for store_id in participants.keys() {
             // In a real implementation, this would call the actual store
             // For now, simulate successful prepare
             let vote = self.prepare_participant(tx_id, store_id).await?;
 
             // Update participant state
-            if let Some(tx_participants) = self.participants.write().get_mut(tx_id) {
-                if let Some(p) = tx_participants.get_mut(store_id) {
-                    p.prepared = vote;
-                    p.vote = Some(vote);
-                }
+            if let Some(tx_participants) = self.participants.write().get_mut(tx_id)
+                && let Some(p) = tx_participants.get_mut(store_id)
+            {
+                p.prepared = vote;
+                p.vote = Some(vote);
             }
 
             if !vote {
@@ -514,15 +511,14 @@ impl MultiModelTransactionManager {
 
     /// Commit phase of 2PC
     async fn commit_phase(&self, tx_id: &TransactionId) -> Result<()> {
-        let participants = {
-            self.participants
-                .read()
-                .get(tx_id)
-                .cloned()
-                .unwrap_or_default()
-        };
+        let participants = self
+            .participants
+            .read()
+            .get(tx_id)
+            .cloned()
+            .unwrap_or_default();
 
-        for (store_id, _participant) in &participants {
+        for store_id in participants.keys() {
             self.commit_participant(tx_id, store_id).await?;
         }
 
@@ -552,15 +548,15 @@ impl MultiModelTransactionManager {
     ) -> Result<TransactionResult> {
         let start = Instant::now();
 
-        if let Ok(ctx) = self.get_transaction(tx_id) {
-            if ctx.state().can_rollback() {
-                ctx.set_state(TransactionState::RollingBack);
+        if let Ok(ctx) = self.get_transaction(tx_id)
+            && ctx.state().can_rollback()
+        {
+            ctx.set_state(TransactionState::RollingBack);
 
-                // Rollback all participants
-                self.rollback_all_participants(tx_id).await?;
+            // Rollback all participants
+            self.rollback_all_participants(tx_id).await?;
 
-                ctx.set_state(TransactionState::Aborted);
-            }
+            ctx.set_state(TransactionState::Aborted);
         }
 
         let result = self.build_result(tx_id, false, Some(reason.to_string()), start);
@@ -578,15 +574,14 @@ impl MultiModelTransactionManager {
 
     /// Rollback all participants
     async fn rollback_all_participants(&self, tx_id: &TransactionId) -> Result<()> {
-        let participants = {
-            self.participants
-                .read()
-                .get(tx_id)
-                .cloned()
-                .unwrap_or_default()
-        };
+        let participants = self
+            .participants
+            .read()
+            .get(tx_id)
+            .cloned()
+            .unwrap_or_default();
 
-        for (store_id, _participant) in &participants {
+        for store_id in participants.keys() {
             self.rollback_participant(tx_id, store_id).await?;
         }
 
@@ -679,9 +674,16 @@ impl MultiModelTransactionManager {
             (TransactionState::Aborted, 0)
         };
 
+        // Participant votes: None = not voted, Some(true) = yes, Some(false) = no
+        // Default to false (no/aborted) if vote not recorded
         let participant_results: HashMap<String, bool> = participants
             .iter()
-            .map(|(k, v)| (k.clone(), v.vote.unwrap_or(false)))
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.vote.unwrap_or(false), // Default to false if no vote recorded
+                )
+            })
             .collect();
 
         TransactionResult {
@@ -703,19 +705,19 @@ impl MultiModelTransactionManager {
             let mut lock_table = self.lock_table.write();
 
             for lock in locks {
-                if let Some(entry) = lock_table.get_mut(&lock.resource_id) {
-                    if entry.lock.transaction_id == *tx_id {
-                        // Grant lock to first waiter if any
-                        if let Some((waiter_id, mode, _)) = entry.waiters.pop() {
-                            entry.lock = Lock {
-                                transaction_id: waiter_id,
-                                resource_id: lock.resource_id.clone(),
-                                mode,
-                                acquired_at: Instant::now(),
-                            };
-                        } else {
-                            lock_table.remove(&lock.resource_id);
-                        }
+                if let Some(entry) = lock_table.get_mut(&lock.resource_id)
+                    && entry.lock.transaction_id == *tx_id
+                {
+                    // Grant lock to first waiter if any
+                    if let Some((waiter_id, mode, _)) = entry.waiters.pop() {
+                        entry.lock = Lock {
+                            transaction_id: waiter_id,
+                            resource_id: lock.resource_id.clone(),
+                            mode,
+                            acquired_at: Instant::now(),
+                        };
+                    } else {
+                        lock_table.remove(&lock.resource_id);
                     }
                 }
             }

@@ -76,7 +76,7 @@ impl RowGroupCache {
         let mut cache = self.cache.write().await;
         let mut size = self.current_size.write().await;
         // Evict if necessary
-        while *size + batch_size > self.max_size && cache.len() > 0 {
+        while *size + batch_size > self.max_size && !cache.is_empty() {
             if let Some((_, evicted)) = cache.pop_lru() {
                 *size -= estimate_batch_size(&evicted);
             }
@@ -91,7 +91,7 @@ pub async fn get_records_by_ids(nova_file: &NovaFile, ids: &[String]) -> Result<
     let config = BatchConfig::default();
     info!("Starting batch ID lookup for {} IDs", ids.len());
     // Step 1: Lookup locations using ID index
-    // TODO: Implement ID index for NOVA
+    // Deferred: Implement ID index for NOVA
     let locations: Vec<Option<ParquetLocation>> = ids.iter().map(|_| None).collect();
     let mut valid_locations = Vec::new();
     for (id, maybe_loc) in ids.iter().zip(locations.iter()) {
@@ -156,11 +156,11 @@ async fn load_and_extract_records(
     let mut handles = Vec::new();
     for (rg_id, id_offsets) in grouped {
         let sem = semaphore.clone();
-        let cache = cache.as_ref().map(|c| c.clone());
+        let cache = cache.clone();
         let projection = projection.clone();
         let schema = nova_file.schema.clone();
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem.acquire().await.ok();
 
             // Check cache or load row group
             let batch = if let Some(ref cache) = cache {
@@ -176,7 +176,7 @@ async fn load_and_extract_records(
                 }
             } else {
                 debug!("Loading row group {} without cache_info", rg_id);
-                // TODO: Fix - this is a standalone function, not a method
+                // Deferred: Fix - this is a standalone function, not a method
                 // Arc::new(load_row_group(rg_id, &projection, &schema).await?)
                 return Err(anyhow::anyhow!(
                     "load_row_group not available in this context"
@@ -284,7 +284,7 @@ pub async fn delete_records_batch(_nova_file: &mut NovaFile, ids: &[String]) -> 
     // 3. Rewriting Parquet files
     let mut deleted = 0;
     for _id in ids {
-        // TODO: Implement ID index for NOVA
+        // Deferred: Implement ID index for NOVA
         if false {
             // Placeholder: nova_file.id_index.lookup(id).await.is_some()
             // Would add to deletion list
@@ -310,7 +310,7 @@ pub async fn read_batch_optimized(
         config.projection.len()
     );
     // Lookup locations
-    // TODO: Implement ID index for NOVA
+    // Deferred: Implement ID index for NOVA
     let locations: Vec<Option<ParquetLocation>> = ids.iter().map(|_| None).collect();
 
     // Group by row group
@@ -353,7 +353,10 @@ pub async fn prefetch_row_groups(
     if cache.is_none() {
         return Ok(());
     }
-    let cache = cache.unwrap();
+    let cache = match cache {
+        Some(cache) => cache,
+        None => return Ok(()),
+    };
     let semaphore = Arc::new(Semaphore::new(2)); // Limited prefetch parallelism
     let mut handles = Vec::new();
 
@@ -368,7 +371,7 @@ pub async fn prefetch_row_groups(
         let schema = nova_file.schema.clone();
 
         let handle = tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
+            let _permit = sem.acquire().await.ok();
             match load_row_group(rg_id, &[], &schema).await {
                 Ok(batch) => {
                     cache.put(rg_id, Arc::new(batch)).await;

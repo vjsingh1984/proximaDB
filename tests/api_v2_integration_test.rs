@@ -65,6 +65,8 @@ impl V2ApiTestHarness {
     async fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let http_client = HttpClient::builder()
             .timeout(Duration::from_secs(30))
+            // Avoid platform system proxy discovery in test environments.
+            .no_proxy()
             .build()?;
 
         // Generate unique test name to avoid conflicts
@@ -286,7 +288,7 @@ fn generate_test_records(count: usize, dimension: usize) -> Vec<JsonValue> {
     (0..count)
         .map(|i| {
             let vector: Vec<f32> = (0..dimension)
-                .map(|j| ((i * dimension + j) as f32 / (count * dimension) as f32))
+                .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
                 .collect();
 
             json!({
@@ -312,7 +314,7 @@ fn generate_test_records_with_text(count: usize, dimension: usize) -> Vec<JsonVa
     (0..count)
         .map(|i| {
             let vector: Vec<f32> = (0..dimension)
-                .map(|j| ((i * dimension + j) as f32 / (count * dimension) as f32))
+                .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
                 .collect();
 
             json!({

@@ -274,11 +274,17 @@ impl ClusterManager {
 /// Cluster health summary
 #[derive(Debug, Clone)]
 pub struct ClusterHealth {
+    /// Unique identifier for this cluster
     pub cluster_id: String,
+    /// Whether this node is the current Raft leader
     pub is_leader: bool,
+    /// Total number of nodes registered in the cluster
     pub total_nodes: usize,
+    /// Number of nodes currently passing health checks
     pub healthy_nodes: usize,
+    /// Number of nodes failing health checks or unreachable
     pub unhealthy_nodes: usize,
+    /// Total number of shards distributed across the cluster
     pub shard_count: usize,
 }
 

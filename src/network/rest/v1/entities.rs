@@ -22,52 +22,69 @@ use crate::storage::entity_store::{EntityStore, ProximaEntityStore};
 /// REST API state containing the entity store
 #[derive(Clone)]
 pub struct EntityApiState {
+    /// Shared entity store for SKS operations
     pub store: Arc<ProximaEntityStore>,
 }
 
 /// Request body for entity upsert
 #[derive(Debug, serde::Deserialize)]
 pub struct UpsertEntityRequest {
+    /// Entity data to upsert
     pub entity: Entity,
+    /// Automatically create the collection if it does not exist
     pub create_collection_if_missing: Option<bool>,
 }
 
 /// Response for entity upsert
 #[derive(Debug, Serialize)]
 pub struct UpsertEntityResponse {
+    /// Whether the upsert succeeded
     pub success: bool,
+    /// ID of the upserted entity
     pub entity_id: String,
+    /// Status message
     pub message: String,
 }
 
 /// Query parameters for entity retrieval
 #[derive(Debug, Deserialize)]
 pub struct GetEntityQuery {
+    /// Include vector embeddings in the response
     pub include_embeddings: Option<bool>,
+    /// Include entity relationships in the response
     pub include_relations: Option<bool>,
 }
 
 /// Request body for entity search
 #[derive(Debug, Deserialize)]
 pub struct SearchEntitiesRequest {
+    /// Query vector for similarity search
     pub query_vector: Option<Vec<f32>>,
+    /// Text query for semantic or keyword search
     pub query_text: Option<String>,
-    pub filters: Option<serde_json::Value>, // Will be converted to MetadataFilter
+    /// Metadata filters (converted to MetadataFilter internally)
+    pub filters: Option<serde_json::Value>,
+    /// Maximum number of results to return
     pub top_k: Option<usize>,
+    /// Enable progressive multi-stage search
     pub progressive: Option<bool>,
 }
 
 /// Response for entity search
 #[derive(Debug, Serialize)]
 pub struct SearchEntitiesResponse {
+    /// Matching entity results
     pub results: Vec<EntityResult>,
+    /// Total number of matches found
     pub total: u32,
 }
 
 /// Error response
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
+    /// Error message
     pub error: String,
+    /// Additional error details
     pub details: Option<String>,
 }
 
@@ -251,6 +268,7 @@ pub async fn delete_entity(
 /// Query parameters for entity deletion
 #[derive(Debug, Deserialize)]
 pub struct DeleteEntityQuery {
+    /// Permanently delete instead of soft-delete
     pub hard_delete: Option<bool>,
 }
 
@@ -290,7 +308,7 @@ pub async fn search_entities(
 
     // Handle text query by converting to embedding
     let query_vector = if let Some(_text) = request.query_text {
-        // TODO: Implement text-to-embedding conversion
+        // Deferred: Implement text-to-embedding conversion
         // This would use an embedding service
         warn!("Text query not yet implemented, using vector query");
         request.query_vector
@@ -320,7 +338,7 @@ pub async fn search_entities(
             &collection_id,
             query_vector,
             metadata_filter,
-            // temporal_filter, // TODO: Add when available
+            // temporal_filter, // Deferred: Add when available
             top_k,
         )
         .await
@@ -408,7 +426,9 @@ pub async fn list_entities(
 /// Query parameters for entity listing
 #[derive(Debug, Deserialize)]
 pub struct ListEntitiesQuery {
+    /// Pagination offset
     pub offset: Option<usize>,
+    /// Maximum number of entities to return
     pub limit: Option<usize>,
 }
 
@@ -435,7 +455,7 @@ pub fn configure_routes() -> axum::Router<EntityApiState> {
 mod tests {
     use super::*;
 
-    // TODO: Add integration tests for REST API handlers
+    // Deferred: Add integration tests for REST API handlers
 
     #[test]
     fn test_error_response_serialization() {

@@ -38,7 +38,7 @@ impl ProximaCodec {
     /// Get the global codec instance (singleton)
     pub fn global() -> &'static Self {
         static CODEC: OnceLock<ProximaCodec> = OnceLock::new();
-        CODEC.get_or_init(|| Self::new())
+        CODEC.get_or_init(Self::new)
     }
 
     /// Create a new codec with automatic hardware detection

@@ -46,7 +46,7 @@ use std::sync::Arc;
 /// use proximadb::graph::engines::orion::algorithms::traits::GraphAlgorithm;
 ///
 /// let floyd = FloydWarshallAPSP::new(engine);
-/// let distances = floyd.execute(()).unwrap();
+/// let distances = floyd.execute(())?;
 /// ```
 pub struct FloydWarshallAPSP {
     engine: Arc<OrionGraphEngine>,
@@ -101,8 +101,8 @@ impl FloydWarshallAPSP {
         let mut dist = vec![vec![f64::INFINITY; node_count]; node_count];
 
         // Set diagonal to 0
-        for i in 0..node_count {
-            dist[i][i] = 0.0;
+        for (i, dist_row) in dist.iter_mut().enumerate().take(node_count) {
+            dist_row[i] = 0.0;
         }
 
         // Get CSR storage for edge access
@@ -111,15 +111,28 @@ impl FloydWarshallAPSP {
                 ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
             })?;
 
-        // Initialize edges from CSR (O(E) operation)
-        for from_idx in 0..node_count {
+        // Initialize edges from CSR with weight lookup
+        for (from_idx, dist_row) in dist.iter_mut().enumerate().take(node_count) {
             let neighbors = csr_out.get_neighbors(from_idx).unwrap_or(&[]);
+            let edge_ids = csr_out.get_edge_ids(from_idx).unwrap_or(&[]);
 
-            for &to_idx in neighbors {
+            for (i, &to_idx) in neighbors.iter().enumerate() {
                 if to_idx < node_count {
-                    // Unweighted graph: all edges have weight 1.0
-                    // TODO: Support weighted graphs by looking up edge weights
-                    dist[from_idx][to_idx] = 1.0;
+                    // Look up actual edge weight from edge metadata via edge ID
+                    let weight = if i < edge_ids.len() {
+                        self.engine
+                            .memory_pool
+                            .edges
+                            .get(&edge_ids[i])
+                            .and_then(|e| e.weight)
+                            .unwrap_or(1.0)
+                    } else {
+                        1.0
+                    };
+                    // Keep minimum weight for parallel edges
+                    if weight < dist_row[to_idx] {
+                        dist_row[to_idx] = weight;
+                    }
                 }
             }
         }
@@ -131,6 +144,7 @@ impl FloydWarshallAPSP {
     ///
     /// For each intermediate vertex k, update distances:
     /// dist[i][j] = min(dist[i][j], dist[i][k] + dist[k][j])
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for performance
     fn floyd_warshall_scalar(&self, dist: &mut Vec<Vec<f64>>) -> Result<(), ProximaDBError> {
         let n = dist.len();
 
@@ -172,7 +186,7 @@ impl FloydWarshallAPSP {
         {
             // NEON is always available on aarch64
             // SAFETY: NEON is guaranteed on aarch64
-            return unsafe { self.floyd_warshall_neon(dist) };
+            unsafe { self.floyd_warshall_neon(dist) }
         }
 
         #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")))]
@@ -242,6 +256,7 @@ impl FloydWarshallAPSP {
     /// Processes 2 f64 distances per instruction using 128-bit NEON vectors
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
+    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for performance
     unsafe fn floyd_warshall_neon(&self, dist: &mut Vec<Vec<f64>>) -> Result<(), ProximaDBError> {
         unsafe {
             use std::arch::aarch64::*;
@@ -323,8 +338,8 @@ impl GraphAlgorithm for FloydWarshallAPSP {
 
         // Initialize distance matrix: diagonal = 0, others = infinity
         let mut dist = vec![vec![f64::INFINITY; node_count]; node_count];
-        for i in 0..node_count {
-            dist[i][i] = 0.0;
+        for (i, dist_row) in dist.iter_mut().enumerate().take(node_count) {
+            dist_row[i] = 0.0;
         }
 
         // Initialize edges from memory pool edge data
@@ -345,9 +360,9 @@ impl GraphAlgorithm for FloydWarshallAPSP {
 
         // Convert matrix to HashMap<(NodeId, NodeId), f64>
         let mut result = HashMap::new();
-        for i in 0..node_count {
-            for j in 0..node_count {
-                result.insert((node_ids[i].clone(), node_ids[j].clone()), dist[i][j]);
+        for (i, node_id_i) in node_ids.iter().enumerate().take(node_count) {
+            for (j, node_id_j) in node_ids.iter().enumerate().take(node_count) {
+                result.insert((node_id_i.clone(), node_id_j.clone()), dist[i][j]);
             }
         }
 
@@ -414,10 +429,10 @@ impl ParallelAlgorithm for FloydWarshallAPSP {
             ProximaDBError::Internal("Failed to acquire index_to_node read lock".to_string())
         })?;
 
-        for i in 0..node_count {
-            for j in 0..node_count {
+        for (i, dist_row) in dist.iter().enumerate().take(node_count) {
+            for (j, &dist_val) in dist_row.iter().enumerate().take(node_count) {
                 if let (Some(from_id), Some(to_id)) = (index_to_node.get(i), index_to_node.get(j)) {
-                    result.insert((from_id.clone(), to_id.clone()), dist[i][j]);
+                    result.insert((from_id.clone(), to_id.clone()), dist_val);
                 }
             }
         }
@@ -436,7 +451,7 @@ impl ParallelAlgorithm for FloydWarshallAPSP {
 
         // Account for overhead: 10% penalty for small graphs
         let csr_out = self.engine.csr_outgoing.read().ok();
-        let node_count = csr_out.map(|csr| csr.node_count()).unwrap_or(0);
+        let node_count = csr_out.map_or(0, |csr| csr.node_count());
         let overhead_penalty = if node_count < 100 { 0.9 } else { 1.0 };
 
         max_speedup * overhead_penalty
@@ -461,7 +476,9 @@ mod tests {
         let engine = Arc::new(OrionGraphEngine::new());
         let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
 
-        let result = floyd.execute(NoInput).unwrap();
+        let result = floyd
+            .execute(NoInput)
+            .expect("Floyd-Warshall on empty graph should succeed");
         assert_eq!(result.len(), 0);
     }
 
@@ -478,14 +495,22 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        engine.as_ref().insert_node(node).await.unwrap();
+        engine
+            .as_ref()
+            .insert_node(node)
+            .await
+            .expect("Node insertion should succeed");
 
         let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
-        let result = floyd.execute(NoInput).unwrap();
+        let result = floyd
+            .execute(NoInput)
+            .expect("Floyd-Warshall on single node should succeed");
 
         assert_eq!(result.len(), 1);
         assert_eq!(
-            result.get(&("n1".to_string(), "n1".to_string())).unwrap(),
+            result
+                .get(&("n1".to_string(), "n1".to_string()))
+                .expect("Distance from n1 to n1 should exist"),
             &0.0
         );
     }
@@ -504,7 +529,11 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.as_ref().insert_node(node).await.unwrap();
+            engine
+                .as_ref()
+                .insert_node(node)
+                .await
+                .expect("Node insertion should succeed");
         }
 
         // Add edges
@@ -542,11 +571,17 @@ mod tests {
         ];
 
         for edge in edges {
-            engine.as_ref().insert_edge(edge).await.unwrap();
+            engine
+                .as_ref()
+                .insert_edge(edge)
+                .await
+                .expect("Edge insertion should succeed");
         }
 
         let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
-        let result = floyd.execute(NoInput).unwrap();
+        let result = floyd
+            .execute(NoInput)
+            .expect("Floyd-Warshall on triangle graph should succeed");
 
         // Result should have 9 entries (3x3 matrix)
         assert_eq!(result.len(), 9);
@@ -556,7 +591,9 @@ mod tests {
             for j in 1..=3 {
                 let from = format!("n{}", i);
                 let to = format!("n{}", j);
-                let dist = result.get(&(from.clone(), to.clone())).unwrap();
+                let dist = result
+                    .get(&(from.clone(), to.clone()))
+                    .expect("Distance should exist in result");
 
                 if i == j {
                     assert_eq!(*dist, 0.0);
@@ -582,7 +619,11 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.as_ref().insert_node(node).await.unwrap();
+            engine
+                .as_ref()
+                .insert_node(node)
+                .await
+                .expect("Node insertion should succeed");
         }
 
         // Add edges only within components
@@ -610,21 +651,31 @@ mod tests {
         ];
 
         for edge in edges {
-            engine.as_ref().insert_edge(edge).await.unwrap();
+            engine
+                .as_ref()
+                .insert_edge(edge)
+                .await
+                .expect("Edge insertion should succeed");
         }
 
         let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
-        let result = floyd.execute(NoInput).unwrap();
+        let result = floyd
+            .execute(NoInput)
+            .expect("Floyd-Warshall on disconnected graph should succeed");
 
         assert_eq!(result.len(), 16); // 4x4 matrix
 
         // Verify distances within components are finite
         assert_eq!(
-            *result.get(&("n1".to_string(), "n2".to_string())).unwrap(),
+            *result
+                .get(&("n1".to_string(), "n2".to_string()))
+                .expect("Distance n1->n2 should exist"),
             1.0
         ); // n1 -> n2
         assert_eq!(
-            *result.get(&("n3".to_string(), "n4".to_string())).unwrap(),
+            *result
+                .get(&("n3".to_string(), "n4".to_string()))
+                .expect("Distance n3->n4 should exist"),
             1.0
         ); // n3 -> n4
 
@@ -632,15 +683,84 @@ mod tests {
         assert!(
             result
                 .get(&("n1".to_string(), "n3".to_string()))
-                .unwrap()
+                .expect("Distance n1->n3 should exist")
                 .is_infinite()
         ); // n1 -> n3 (disconnected)
         assert!(
             result
                 .get(&("n2".to_string(), "n4".to_string()))
-                .unwrap()
+                .expect("Distance n2->n4 should exist")
                 .is_infinite()
         ); // n2 -> n4 (disconnected)
+    }
+
+    #[tokio::test]
+    async fn test_floyd_warshall_weighted_edges() {
+        let engine = Arc::new(OrionGraphEngine::new());
+
+        // Create a 3-node graph with varying weights
+        for i in 1..=3 {
+            let node = Node {
+                id: format!("n{}", i),
+                labels: vec![],
+                properties: std::collections::HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            engine.as_ref().insert_node(node).await.unwrap();
+        }
+
+        // n1 --5.0--> n2 --3.0--> n3
+        // n1 ----------10.0------> n3  (direct but heavier)
+        let edges = vec![
+            Edge {
+                id: "e1".to_string(),
+                from_node_id: "n1".to_string(),
+                to_node_id: "n2".to_string(),
+                edge_type: "ROAD".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(5.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+            Edge {
+                id: "e2".to_string(),
+                from_node_id: "n2".to_string(),
+                to_node_id: "n3".to_string(),
+                edge_type: "ROAD".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(3.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+            Edge {
+                id: "e3".to_string(),
+                from_node_id: "n1".to_string(),
+                to_node_id: "n3".to_string(),
+                edge_type: "ROAD".to_string(),
+                properties: std::collections::HashMap::new(),
+                weight: Some(10.0),
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        ];
+        for edge in edges {
+            engine.as_ref().insert_edge(edge).await.unwrap();
+        }
+
+        let floyd = FloydWarshallAPSP::new(Arc::clone(&engine));
+        let result = floyd.execute(NoInput).unwrap();
+
+        // Shortest n1→n3 should be via n2: 5 + 3 = 8 (not 10 direct)
+        let d_n1_n3 = result
+            .get(&("n1".to_string(), "n3".to_string()))
+            .expect("n1→n3 distance should exist");
+        assert!(
+            (*d_n1_n3 - 8.0).abs() < f64::EPSILON,
+            "Expected 8.0 via n2, got {}",
+            d_n1_n3
+        );
     }
 
     #[test]

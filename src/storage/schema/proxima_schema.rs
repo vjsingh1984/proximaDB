@@ -641,7 +641,7 @@ impl ProximaDataType {
                 )
             }
             ProximaDataType::BinaryVector { dimension } => {
-                ArrowDataType::FixedSizeBinary(((*dimension + 7) / 8) as i32)
+                ArrowDataType::FixedSizeBinary(dimension.div_ceil(8) as i32)
             }
             ProximaDataType::QuantizedInt8Vector { dimension, .. } => {
                 ArrowDataType::FixedSizeBinary(*dimension as i32)
@@ -650,7 +650,7 @@ impl ProximaDataType {
                 ArrowDataType::FixedSizeBinary(*segments as i32)
             }
             ProximaDataType::QuantizedBinaryVector { dimension } => {
-                ArrowDataType::FixedSizeBinary(((*dimension + 7) / 8) as i32)
+                ArrowDataType::FixedSizeBinary(dimension.div_ceil(8) as i32)
             }
         }
     }
@@ -704,13 +704,13 @@ impl ProximaDataType {
             },
             ArrowDataType::Map(field, _) => {
                 // Extract key/value types from Map struct
-                if let ArrowDataType::Struct(fields) = field.data_type() {
-                    if fields.len() >= 2 {
-                        return ProximaDataType::Map {
-                            key: Box::new(Self::from_arrow_type(fields[0].data_type())),
-                            value: Box::new(Self::from_arrow_type(fields[1].data_type())),
-                        };
-                    }
+                if let ArrowDataType::Struct(fields) = field.data_type()
+                    && fields.len() >= 2
+                {
+                    return ProximaDataType::Map {
+                        key: Box::new(Self::from_arrow_type(fields[0].data_type())),
+                        value: Box::new(Self::from_arrow_type(fields[1].data_type())),
+                    };
                 }
                 ProximaDataType::Json // Fallback
             }

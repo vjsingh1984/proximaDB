@@ -101,6 +101,8 @@
 //! ```
 
 pub mod algorithms;
+pub mod compaction;
+pub mod disk_storage;
 pub mod index;
 pub mod persistence;
 pub mod storage;
@@ -112,7 +114,7 @@ use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};
 use dashmap::DashMap;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tracing;
 
 /// ORION Graph Engine with CSR format for high-performance traversal
@@ -148,20 +150,38 @@ pub struct OrionGraphEngine {
     persistence: Option<Arc<persistence::OrionPersistence>>,
 }
 
-/// Engine performance statistics
+/// Engine performance statistics tracking cumulative operation counts.
 #[derive(Debug, Default)]
 pub struct EngineStats {
+    /// Total number of nodes inserted since engine creation.
     pub nodes_created: u64,
+    /// Total number of edges inserted since engine creation.
     pub edges_created: u64,
+    /// Total number of node update operations.
     pub nodes_updated: u64,
+    /// Total number of edge update operations.
     pub edges_updated: u64,
+    /// Total number of node deletions.
     pub nodes_deleted: u64,
+    /// Total number of edge deletions.
     pub edges_deleted: u64,
+    /// Total number of traversal operations executed.
     pub traversals_performed: u64,
+    /// Cumulative traversal time in microseconds across all operations.
     pub total_traversal_time_microseconds: u64,
 }
 
 impl OrionGraphEngine {
+    fn read_lock<'a, T>(lock: &'a RwLock<T>, lock_name: &str) -> Result<RwLockReadGuard<'a, T>> {
+        lock.read()
+            .map_err(|_| ProximaDBError::Internal(format!("{lock_name} read lock poisoned")))
+    }
+
+    fn write_lock<'a, T>(lock: &'a RwLock<T>, lock_name: &str) -> Result<RwLockWriteGuard<'a, T>> {
+        lock.write()
+            .map_err(|_| ProximaDBError::Internal(format!("{lock_name} write lock poisoned")))
+    }
+
     /// Create a new ORION graph engine
     pub fn new() -> Self {
         Self {
@@ -265,7 +285,13 @@ impl OrionGraphEngine {
 
     /// Get engine statistics
     pub async fn get_stats(&self) -> EngineStats {
-        let stats = self.stats.read().expect("stats read lock poisoned");
+        let stats = match self.stats.read() {
+            Ok(stats) => stats,
+            Err(poisoned) => {
+                tracing::warn!("stats read lock poisoned; using inner state");
+                poisoned.into_inner()
+            }
+        };
         EngineStats {
             nodes_created: stats.nodes_created,
             edges_created: stats.edges_created,
@@ -291,10 +317,7 @@ impl OrionGraphEngine {
         }
 
         // Create new index
-        let mut index_to_node = self
-            .index_to_node
-            .write()
-            .expect("index_to_node write lock poisoned");
+        let mut index_to_node = Self::write_lock(&self.index_to_node, "index_to_node")?;
         let new_index = index_to_node.len();
         index_to_node.push(node_id.clone());
 
@@ -310,10 +333,7 @@ impl OrionGraphEngine {
 
         // Add to outgoing CSR (from -> to)
         {
-            let mut csr_out = self
-                .csr_outgoing
-                .write()
-                .expect("CSR outgoing write lock poisoned");
+            let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
             csr_out.add_edge(from_index, to_index, edge.id.clone())?;
             // CRITICAL: Rebuild CSR to commit temp_edges to main structure!
             csr_out.rebuild()?;
@@ -321,10 +341,7 @@ impl OrionGraphEngine {
 
         // Add to incoming CSR (to <- from)
         {
-            let mut csr_in = self
-                .csr_incoming
-                .write()
-                .expect("CSR incoming write lock poisoned");
+            let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
             csr_in.add_edge(to_index, from_index, edge.id.clone())?;
             // CRITICAL: Rebuild CSR to commit temp_edges to main structure!
             csr_in.rebuild()?;
@@ -341,10 +358,7 @@ impl OrionGraphEngine {
         }
 
         {
-            let mut csr_out = self
-                .csr_outgoing
-                .write()
-                .expect("CSR outgoing write lock poisoned");
+            let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
             for (from_index, to_index, edge_id) in edges {
                 csr_out.add_edge(*from_index, *to_index, edge_id.clone())?;
             }
@@ -352,10 +366,7 @@ impl OrionGraphEngine {
         }
 
         {
-            let mut csr_in = self
-                .csr_incoming
-                .write()
-                .expect("CSR incoming write lock poisoned");
+            let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
             for (from_index, to_index, edge_id) in edges {
                 csr_in.add_edge(*to_index, *from_index, edge_id.clone())?;
             }
@@ -367,25 +378,19 @@ impl OrionGraphEngine {
 
     /// Remove edge from CSR structures
     async fn remove_edge_from_csr(&self, edge: &Edge) -> Result<()> {
-        if let Some(from_index) = self.node_to_index.get(&edge.from_node_id) {
-            if let Some(to_index) = self.node_to_index.get(&edge.to_node_id) {
-                // Remove from outgoing CSR
-                {
-                    let mut csr_out = self
-                        .csr_outgoing
-                        .write()
-                        .expect("CSR outgoing write lock poisoned");
-                    csr_out.remove_edge(*from_index, *to_index, &edge.id)?;
-                }
+        if let Some(from_index) = self.node_to_index.get(&edge.from_node_id)
+            && let Some(to_index) = self.node_to_index.get(&edge.to_node_id)
+        {
+            // Remove from outgoing CSR
+            {
+                let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
+                csr_out.remove_edge(*from_index, *to_index, &edge.id)?;
+            }
 
-                // Remove from incoming CSR
-                {
-                    let mut csr_in = self
-                        .csr_incoming
-                        .write()
-                        .expect("CSR incoming write lock poisoned");
-                    csr_in.remove_edge(*to_index, *from_index, &edge.id)?;
-                }
+            // Remove from incoming CSR
+            {
+                let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
+                csr_in.remove_edge(*to_index, *from_index, &edge.id)?;
             }
         }
 
@@ -395,16 +400,10 @@ impl OrionGraphEngine {
     /// Get outgoing edge targets for a node
     pub async fn get_outgoing_targets(&self, node_id: &NodeId) -> Result<Vec<NodeId>> {
         if let Some(node_index) = self.node_to_index.get(node_id) {
-            let csr = self
-                .csr_outgoing
-                .read()
-                .expect("CSR outgoing read lock poisoned");
+            let csr = Self::read_lock(&self.csr_outgoing, "CSR outgoing")?;
             let target_indices = csr.get_neighbors(*node_index)?;
 
-            let index_to_node = self
-                .index_to_node
-                .read()
-                .expect("index_to_node read lock poisoned");
+            let index_to_node = Self::read_lock(&self.index_to_node, "index_to_node")?;
             let mut targets = Vec::with_capacity(target_indices.len());
 
             for &target_index in target_indices {
@@ -422,16 +421,10 @@ impl OrionGraphEngine {
     /// Get incoming edge sources for a node
     pub async fn get_incoming_sources(&self, node_id: &NodeId) -> Result<Vec<NodeId>> {
         if let Some(node_index) = self.node_to_index.get(node_id) {
-            let csr = self
-                .csr_incoming
-                .read()
-                .expect("CSR incoming read lock poisoned");
+            let csr = Self::read_lock(&self.csr_incoming, "CSR incoming")?;
             let source_indices = csr.get_neighbors(*node_index)?;
 
-            let index_to_node = self
-                .index_to_node
-                .read()
-                .expect("index_to_node read lock poisoned");
+            let index_to_node = Self::read_lock(&self.index_to_node, "index_to_node")?;
             let mut sources = Vec::with_capacity(source_indices.len());
 
             for &source_index in source_indices {
@@ -457,7 +450,7 @@ impl OrionGraphEngine {
             tracing::info!("🔄 Starting ORION graph recovery...");
 
             // Step 1: Load latest snapshot (if available)
-            // TODO: Implement snapshot discovery and loading
+            // Deferred: Implement snapshot discovery and loading
             // For now, we'll just replay WAL from the beginning
 
             // Step 2: Replay WAL operations
@@ -485,18 +478,23 @@ impl OrionGraphEngine {
     }
 
     // Convenience alias methods for persistence module compatibility
+
+    /// Create a node in the graph (alias for `insert_node` used by persistence layer).
     pub async fn create_node(&self, node: Node) -> Result<Arc<Node>> {
         self.insert_node(node).await
     }
 
+    /// Create an edge in the graph (alias for `insert_edge` used by persistence layer).
     pub async fn create_edge(&self, edge: Edge) -> Result<Arc<Edge>> {
         self.insert_edge(edge).await
     }
 
+    /// Delete a node by ID, returning the removed node if it existed.
     pub async fn delete_node(&self, node_id: &NodeId) -> Result<Option<Arc<Node>>> {
         GraphEngine::delete_node(self, node_id).await
     }
 
+    /// Delete an edge by ID, returning the removed edge if it existed.
     pub async fn delete_edge(&self, edge_id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         GraphEngine::delete_edge(self, edge_id).await
     }
@@ -532,8 +530,11 @@ impl OrionGraphEngine {
         tokio::spawn({
             let stats = Arc::clone(&self.stats);
             async move {
-                let mut stats = stats.write().expect("stats write lock poisoned");
-                stats.edges_created += 1;
+                if let Ok(mut stats) = stats.write() {
+                    stats.edges_created += 1;
+                } else {
+                    tracing::warn!("stats write lock poisoned; skipping edges_created update");
+                }
             }
         });
 
@@ -567,8 +568,11 @@ impl GraphEngine for OrionGraphEngine {
         tokio::spawn({
             let stats = Arc::clone(&self.stats);
             async move {
-                let mut stats = stats.write().expect("stats write lock poisoned");
-                stats.nodes_created += 1;
+                if let Ok(mut stats) = stats.write() {
+                    stats.nodes_created += 1;
+                } else {
+                    tracing::warn!("stats write lock poisoned; skipping nodes_created update");
+                }
             }
         });
 
@@ -610,8 +614,11 @@ impl GraphEngine for OrionGraphEngine {
         tokio::spawn({
             let stats = Arc::clone(&self.stats);
             async move {
-                let mut stats = stats.write().expect("stats write lock poisoned");
-                stats.nodes_updated += 1;
+                if let Ok(mut stats) = stats.write() {
+                    stats.nodes_updated += 1;
+                } else {
+                    tracing::warn!("stats write lock poisoned; skipping nodes_updated update");
+                }
             }
         });
 
@@ -641,8 +648,11 @@ impl GraphEngine for OrionGraphEngine {
             tokio::spawn({
                 let stats = Arc::clone(&self.stats);
                 async move {
-                    let mut stats = stats.write().expect("stats write lock poisoned");
-                    stats.nodes_deleted += 1;
+                    if let Ok(mut stats) = stats.write() {
+                        stats.nodes_deleted += 1;
+                    } else {
+                        tracing::warn!("stats write lock poisoned; skipping nodes_deleted update");
+                    }
                 }
             });
         }
@@ -674,7 +684,7 @@ impl GraphEngine for OrionGraphEngine {
 
         // Insert into memory pool
         let mut inserted_nodes = Vec::with_capacity(nodes.len());
-        for node in nodes.iter() {
+        for node in &nodes {
             let node_arc = self.memory_pool.insert_node(node.clone());
             inserted_nodes.push(node_arc);
         }
@@ -683,8 +693,11 @@ impl GraphEngine for OrionGraphEngine {
         let stats = Arc::clone(&self.stats);
         let inserted_count = inserted_nodes.len() as u64;
         tokio::spawn(async move {
-            let mut stats = stats.write().expect("stats write lock poisoned");
-            stats.nodes_created += inserted_count;
+            if let Ok(mut stats) = stats.write() {
+                stats.nodes_created += inserted_count;
+            } else {
+                tracing::warn!("stats write lock poisoned; skipping bulk nodes_created update");
+            }
         });
 
         Ok(inserted_nodes)
@@ -736,8 +749,11 @@ impl GraphEngine for OrionGraphEngine {
         tokio::spawn({
             let stats = Arc::clone(&self.stats);
             async move {
-                let mut stats = stats.write().expect("stats write lock poisoned");
-                stats.edges_created += 1;
+                if let Ok(mut stats) = stats.write() {
+                    stats.edges_created += 1;
+                } else {
+                    tracing::warn!("stats write lock poisoned; skipping edges_created update");
+                }
             }
         });
 
@@ -753,7 +769,7 @@ impl GraphEngine for OrionGraphEngine {
 
         // Validate endpoints first to avoid partial batch inserts
         let validate_start = std::time::Instant::now();
-        for edge in edges.iter() {
+        for edge in &edges {
             if self.memory_pool.get_node(&edge.from_node_id).is_none() {
                 return Err(ProximaDBError::InvalidInput(format!(
                     "Source node {} does not exist",
@@ -792,7 +808,7 @@ impl GraphEngine for OrionGraphEngine {
         // Insert into memory pool + metadata
         let mempool_start = std::time::Instant::now();
         let mut inserted_edges = Vec::with_capacity(edges.len());
-        for edge in edges.iter() {
+        for edge in &edges {
             let edge_arc = self.memory_pool.insert_edge(edge.clone());
             self.edge_metadata
                 .insert(edge.id.clone(), Arc::clone(&edge_arc));
@@ -806,16 +822,13 @@ impl GraphEngine for OrionGraphEngine {
         {
             use std::collections::HashSet;
             let mut unique_nodes: HashSet<&NodeId> = HashSet::with_capacity(edges.len() * 2);
-            for edge in edges.iter() {
+            for edge in &edges {
                 unique_nodes.insert(&edge.from_node_id);
                 unique_nodes.insert(&edge.to_node_id);
             }
 
             // Acquire write lock ONCE and create all missing indexes
-            let mut index_to_node = self
-                .index_to_node
-                .write()
-                .expect("index_to_node write lock poisoned");
+            let mut index_to_node = Self::write_lock(&self.index_to_node, "index_to_node")?;
             for node_id in unique_nodes {
                 if !self.node_to_index.contains_key(node_id) {
                     let new_index = index_to_node.len();
@@ -830,16 +843,10 @@ impl GraphEngine for OrionGraphEngine {
         // Background compaction will rebuild CSR asynchronously
         let csr_start = std::time::Instant::now();
         {
-            let mut csr_out = self
-                .csr_outgoing
-                .write()
-                .expect("CSR outgoing write lock poisoned");
-            let mut csr_in = self
-                .csr_incoming
-                .write()
-                .expect("CSR incoming write lock poisoned");
+            let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
+            let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
 
-            for edge in edges.iter() {
+            for edge in &edges {
                 let from_index = *self.node_to_index.get(&edge.from_node_id).ok_or_else(|| {
                     ProximaDBError::InvalidInput(format!("Node {} not found", edge.from_node_id))
                 })?;
@@ -873,14 +880,30 @@ impl GraphEngine for OrionGraphEngine {
 
                     // Rebuild both CSRs
                     {
-                        let mut csr = csr_out_clone.write().expect("CSR outgoing write lock");
+                        let mut csr = match csr_out_clone.write() {
+                            Ok(csr) => csr,
+                            Err(_) => {
+                                tracing::error!(
+                                    "Background compaction failed: CSR outgoing write lock poisoned"
+                                );
+                                return;
+                            }
+                        };
                         if let Err(e) = csr.rebuild() {
                             tracing::error!("Background compaction failed for outgoing CSR: {}", e);
                             return;
                         }
                     }
                     {
-                        let mut csr = csr_in_clone.write().expect("CSR incoming write lock");
+                        let mut csr = match csr_in_clone.write() {
+                            Ok(csr) => csr,
+                            Err(_) => {
+                                tracing::error!(
+                                    "Background compaction failed: CSR incoming write lock poisoned"
+                                );
+                                return;
+                            }
+                        };
                         if let Err(e) = csr.rebuild() {
                             tracing::error!("Background compaction failed for incoming CSR: {}", e);
                             return;
@@ -913,8 +936,11 @@ impl GraphEngine for OrionGraphEngine {
         let stats = Arc::clone(&self.stats);
         let inserted_count = inserted_edges.len() as u64;
         tokio::spawn(async move {
-            let mut stats = stats.write().expect("stats write lock poisoned");
-            stats.edges_created += inserted_count;
+            if let Ok(mut stats) = stats.write() {
+                stats.edges_created += inserted_count;
+            } else {
+                tracing::warn!("stats write lock poisoned; skipping bulk edges_created update");
+            }
         });
 
         Ok(inserted_edges)
@@ -970,8 +996,11 @@ impl GraphEngine for OrionGraphEngine {
             tokio::spawn({
                 let stats = Arc::clone(&self.stats);
                 async move {
-                    let mut stats = stats.write().expect("stats write lock poisoned");
-                    stats.edges_deleted += 1;
+                    if let Ok(mut stats) = stats.write() {
+                        stats.edges_deleted += 1;
+                    } else {
+                        tracing::warn!("stats write lock poisoned; skipping edges_deleted update");
+                    }
                 }
             });
         }
@@ -995,18 +1024,12 @@ impl GraphEngine for OrionGraphEngine {
 
         // LAZY REBUILD: Trigger rebuild if temp edges exist (first read after writes)
         {
-            let mut csr = self
-                .csr_outgoing
-                .write()
-                .expect("CSR outgoing write lock poisoned");
+            let mut csr = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
             csr.rebuild_if_needed()?;
         }
 
         // Get edge IDs from CSR (O(degree) operation, pure CSR query after rebuild)
-        let csr = self
-            .csr_outgoing
-            .read()
-            .expect("CSR outgoing read lock poisoned");
+        let csr = Self::read_lock(&self.csr_outgoing, "CSR outgoing")?;
         let edge_ids = csr.get_edge_ids(node_index)?;
 
         // Look up edge metadata for each edge ID (O(degree) hash lookups)
@@ -1043,18 +1066,12 @@ impl GraphEngine for OrionGraphEngine {
 
         // LAZY REBUILD: Trigger rebuild if temp edges exist (first read after writes)
         {
-            let mut csr = self
-                .csr_incoming
-                .write()
-                .expect("CSR incoming write lock poisoned");
+            let mut csr = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
             csr.rebuild_if_needed()?;
         }
 
         // Get edge IDs from CSR (O(degree) operation, pure CSR query after rebuild)
-        let csr = self
-            .csr_incoming
-            .read()
-            .expect("CSR incoming read lock poisoned");
+        let csr = Self::read_lock(&self.csr_incoming, "CSR incoming")?;
         let edge_ids = csr.get_edge_ids(node_index)?;
 
         // Look up edge metadata for each edge ID (O(degree) hash lookups)
@@ -1133,8 +1150,8 @@ mod tests {
     #[tokio::test]
     async fn test_orion_engine_creation() {
         let engine = OrionGraphEngine::new();
-        assert_eq!(engine.node_count().unwrap(), 0);
-        assert_eq!(engine.edge_count().unwrap(), 0);
+        assert_eq!(engine.node_count().expect("node_count should not fail"), 0);
+        assert_eq!(engine.edge_count().expect("edge_count should not fail"), 0);
     }
 
     #[tokio::test]
@@ -1156,15 +1173,23 @@ mod tests {
         };
 
         // Insert node
-        let inserted = engine.insert_node(node).await.unwrap();
-        assert_eq!(engine.node_count().unwrap(), 1);
+        let inserted = engine
+            .insert_node(node)
+            .await
+            .expect("insert_node should succeed");
+        assert_eq!(engine.node_count().expect("node_count should not fail"), 1);
 
         // Get node
-        let retrieved = engine.get_node(&"node1".to_string()).unwrap().unwrap();
+        let retrieved = engine
+            .get_node(&"node1".to_string())
+            .expect("get_node should succeed")
+            .expect("node should exist");
         assert!(Arc::ptr_eq(&inserted, &retrieved));
 
         // Get by label
-        let by_label = engine.get_nodes_by_label("Person").unwrap();
+        let by_label = engine
+            .get_nodes_by_label("Person")
+            .expect("get_nodes_by_label should succeed");
         assert_eq!(by_label.len(), 1);
         assert_eq!(by_label[0].id, "node1");
     }
@@ -1192,8 +1217,14 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_node(node1).await.unwrap();
-        engine.insert_node(node2).await.unwrap();
+        engine
+            .insert_node(node1)
+            .await
+            .expect("insert_node node1 should succeed");
+        engine
+            .insert_node(node2)
+            .await
+            .expect("insert_node node2 should succeed");
 
         // Create edge
         let edge = Edge {
@@ -1208,8 +1239,11 @@ mod tests {
         };
 
         // Insert edge
-        let _inserted_edge = engine.insert_edge(edge).await.unwrap();
-        assert_eq!(engine.edge_count().unwrap(), 1);
+        let _inserted_edge = engine
+            .insert_edge(edge)
+            .await
+            .expect("insert_edge should succeed");
+        assert_eq!(engine.edge_count().expect("edge_count should not fail"), 1);
 
         // Give time for async CSR update
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -1217,12 +1251,14 @@ mod tests {
         // Get outgoing edges
         let outgoing = engine
             .get_outgoing_edges(&"node1".to_string(), None)
-            .unwrap();
+            .expect("get_outgoing_edges should succeed");
         assert_eq!(outgoing.len(), 1);
         assert_eq!(outgoing[0].edge_type, "KNOWS");
 
         // Get neighbors
-        let neighbors = engine.get_neighbors(&"node1".to_string(), None).unwrap();
+        let neighbors = engine
+            .get_neighbors(&"node1".to_string(), None)
+            .expect("get_neighbors should succeed");
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].id, "node2");
     }

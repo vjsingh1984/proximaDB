@@ -35,7 +35,12 @@ pub enum PreparedStatementError {
 
     /// Parameter count mismatch
     #[error("Expected {expected} parameters, got {actual}")]
-    ParameterCountMismatch { expected: usize, actual: usize },
+    ParameterCountMismatch {
+        /// Number of parameters expected
+        expected: usize,
+        /// Number of parameters provided
+        actual: usize,
+    },
 
     /// Cache is full
     #[error("Statement cache is full (max: {0})")]
@@ -309,6 +314,7 @@ impl PreparedStatement {
         }
 
         if !seen_indices.is_empty() {
+            // TD-007: unwrap_or with safe default - 0 for empty index set
             let max_index = *seen_indices.iter().max().unwrap_or(&0);
             for i in 1..=max_index {
                 if !seen_indices.contains(&i) {
@@ -467,7 +473,7 @@ impl PreparedStatementCache {
 
         info!(
             statement_id = %id,
-            parameter_count = self.cache.get(&id).map(|s| s.statement.parameter_count()).unwrap_or(0),
+            parameter_count = self.cache.get(&id).map_or(0, |s| s.statement.parameter_count()),
             "Prepared statement cached"
         );
 
@@ -579,7 +585,7 @@ impl PreparedStatementCache {
         let mut oldest_access = Instant::now();
         let mut total_access_count = 0u64;
 
-        for entry in self.cache.iter() {
+        for entry in &self.cache {
             total_executions += entry.statement.execution_count;
             total_access_count += entry.access_count;
             if entry.last_accessed < oldest_access {
@@ -661,7 +667,8 @@ mod tests {
     #[test]
     fn test_parameter_extraction() {
         let sql = "SELECT * FROM VECTOR_SEARCH($1, $2, 10) WHERE id = $3";
-        let (bindings, _normalized) = PreparedStatement::extract_parameters(sql).unwrap();
+        let (bindings, _normalized) = PreparedStatement::extract_parameters(sql)
+            .expect("parameter extraction should succeed for valid SQL");
 
         assert_eq!(bindings.len(), 3);
         assert_eq!(bindings[0].index, 1);
@@ -672,7 +679,8 @@ mod tests {
     #[test]
     fn test_parameter_extraction_duplicates() {
         let sql = "SELECT * FROM t WHERE a = $1 AND b = $1 AND c = $2";
-        let (bindings, _normalized) = PreparedStatement::extract_parameters(sql).unwrap();
+        let (bindings, _normalized) = PreparedStatement::extract_parameters(sql)
+            .expect("parameter extraction should succeed for valid SQL with duplicates");
 
         assert_eq!(bindings.len(), 2);
         assert_eq!(bindings[0].index, 1);
@@ -682,7 +690,8 @@ mod tests {
     #[test]
     fn test_parameter_extraction_in_string() {
         let sql = "SELECT * FROM t WHERE name = 'test$1' AND id = $1";
-        let (bindings, _normalized) = PreparedStatement::extract_parameters(sql).unwrap();
+        let (bindings, _normalized) = PreparedStatement::extract_parameters(sql)
+            .expect("parameter extraction should succeed for valid SQL with string literals");
 
         // Should only find the $1 outside the string
         assert_eq!(bindings.len(), 1);
@@ -723,10 +732,14 @@ mod tests {
     fn test_cache_prepare_and_get() {
         let cache = PreparedStatementCache::with_defaults();
 
-        let id = cache.prepare("SELECT * FROM test WHERE id = $1").unwrap();
+        let id = cache
+            .prepare("SELECT * FROM test WHERE id = $1")
+            .expect("prepare should succeed for valid SQL");
         assert!(cache.exists(&id));
 
-        let statement = cache.get(&id).unwrap();
+        let statement = cache
+            .get(&id)
+            .expect("get should succeed for existing statement");
         assert_eq!(statement.parameter_count(), 1);
     }
 
@@ -736,7 +749,7 @@ mod tests {
 
         let id = cache
             .prepare("SELECT * FROM test WHERE id = $1 AND name = $2")
-            .unwrap();
+            .expect("prepare should succeed for valid SQL");
 
         let sql = cache
             .execute_sql(
@@ -746,7 +759,7 @@ mod tests {
                     ParameterValue::String("test".into()),
                 ],
             )
-            .unwrap();
+            .expect("execute_sql should succeed with valid parameters");
 
         assert!(sql.contains("42"));
         assert!(sql.contains("'test'"));
@@ -758,7 +771,7 @@ mod tests {
 
         let id = cache
             .prepare("SELECT * FROM test WHERE id = $1 AND name = $2")
-            .unwrap();
+            .expect("prepare should succeed for valid SQL");
 
         let result = cache.execute_sql(&id, &[ParameterValue::Int(42)]);
 
@@ -776,10 +789,14 @@ mod tests {
     fn test_cache_drop_statement() {
         let cache = PreparedStatementCache::with_defaults();
 
-        let id = cache.prepare("SELECT * FROM test").unwrap();
+        let id = cache
+            .prepare("SELECT * FROM test")
+            .expect("prepare should succeed for valid SQL");
         assert!(cache.exists(&id));
 
-        cache.drop_statement(&id).unwrap();
+        cache
+            .drop_statement(&id)
+            .expect("drop_statement should succeed for existing statement");
         assert!(!cache.exists(&id));
     }
 
@@ -795,8 +812,12 @@ mod tests {
     fn test_cache_stats() {
         let cache = PreparedStatementCache::with_defaults();
 
-        cache.prepare("SELECT 1").unwrap();
-        cache.prepare("SELECT 2").unwrap();
+        cache
+            .prepare("SELECT 1")
+            .expect("prepare should succeed for valid SQL");
+        cache
+            .prepare("SELECT 2")
+            .expect("prepare should succeed for valid SQL");
 
         let stats = cache.stats();
         assert_eq!(stats.cached_statements, 2);
@@ -806,8 +827,12 @@ mod tests {
     fn test_cache_clear() {
         let cache = PreparedStatementCache::with_defaults();
 
-        cache.prepare("SELECT 1").unwrap();
-        cache.prepare("SELECT 2").unwrap();
+        cache
+            .prepare("SELECT 1")
+            .expect("prepare should succeed for valid SQL");
+        cache
+            .prepare("SELECT 2")
+            .expect("prepare should succeed for valid SQL");
         assert_eq!(cache.len(), 2);
 
         cache.clear();
@@ -822,7 +847,9 @@ mod tests {
         };
         let cache = PreparedStatementCache::new(config);
 
-        let id = cache.prepare("SELECT 1").unwrap();
+        let id = cache
+            .prepare("SELECT 1")
+            .expect("prepare should succeed for valid SQL");
 
         // Wait for expiration
         std::thread::sleep(Duration::from_millis(10));

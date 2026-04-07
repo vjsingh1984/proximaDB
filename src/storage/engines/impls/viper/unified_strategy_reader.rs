@@ -12,6 +12,9 @@ use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 /// Unified VIPER reader that implements strategy-aware reading
+///
+/// Provides flexible Parquet reading strategies (direct streaming, cached search, etc.)
+/// optimized for different access patterns like compaction vs. search queries.
 pub struct UnifiedVIPERReader {
     filesystem_factory: Arc<FilesystemFactory>,
     cached_filesystem: Option<Arc<UnifiedCachingFilesystem>>,
@@ -77,7 +80,7 @@ impl UnifiedVIPERReader {
                 // Direct Parquet read for compaction
                 let fs = self.filesystem_factory.get_filesystem("file://")?;
                 let _data = fs.read(file_path).await?;
-                // TODO: Use arrow-rs for direct streaming
+                // Deferred: Use arrow-rs for direct streaming
                 Ok(vec![])
             }
             _ => {
@@ -87,7 +90,7 @@ impl UnifiedVIPERReader {
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("Cached filesystem not initialized"))?;
                 let _data = cached_fs.read(file_path).await?;
-                // TODO: Use cached Parquet metadata
+                // Deferred: Use cached Parquet metadata
                 Ok(vec![])
             }
         }
@@ -102,14 +105,15 @@ impl StrategyAwareReader for UnifiedVIPERReader {
     fn set_strategy(&mut self, strategy: ReadAccessStrategy) {
         self.strategy = strategy;
         // Update cached filesystem if needed
-        if self.strategy.should_use_cache() && self.cached_filesystem.is_none() {
-            if let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://") {
-                self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
-                    base_fs,
-                    self.collection_id.clone(),
-                    "viper".to_string(),
-                )));
-            }
+        if self.strategy.should_use_cache()
+            && self.cached_filesystem.is_none()
+            && let Ok(base_fs) = self.filesystem_factory.get_filesystem("file://")
+        {
+            self.cached_filesystem = Some(Arc::new(UnifiedCachingFilesystem::new(
+                base_fs,
+                self.collection_id.clone(),
+                "viper".to_string(),
+            )));
         }
     }
 }
@@ -127,7 +131,7 @@ impl DirectVIPERReader {
     pub async fn stream_parquet_direct(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         let fs = self.filesystem_factory.get_filesystem("file://")?;
         let _data = fs.read(file_path).await?;
-        // TODO: Direct Parquet streaming
+        // Deferred: Direct Parquet streaming
         Ok(vec![])
     }
 }
@@ -151,7 +155,7 @@ impl CachedVIPERReader {
 
     pub async fn read_with_footer_cache(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
         let _data = self.cached_filesystem.read(file_path).await?;
-        // TODO: Use cached Parquet footer and row group metadata
+        // Deferred: Use cached Parquet footer and row group metadata
         Ok(vec![])
     }
 }

@@ -353,10 +353,9 @@ impl RowBasedCompressionConfig {
             .vector_compression
             .hardware_optimizations
             .use_hardware_acceleration
+            && let Some(simd_algorithm) = self.get_simd_optimal_algorithm(hardware)
         {
-            if let Some(simd_algorithm) = self.get_simd_optimal_algorithm(hardware) {
-                return simd_algorithm;
-            }
+            return simd_algorithm;
         }
 
         // Size-based selection
@@ -419,9 +418,11 @@ impl RowBasedCompressionConfig {
             }
             None => {
                 // Create config with None compression when no config provided
-                let mut config = Self::default();
-                config.enabled = false;
-                config.algorithm = CompressionAlgorithm::None;
+                let config = Self {
+                    enabled: false,
+                    algorithm: CompressionAlgorithm::None,
+                    ..Default::default()
+                };
                 config.to_block_compression_config()
             }
         }

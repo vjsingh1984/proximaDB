@@ -205,7 +205,7 @@ impl MultiplexError {
                 Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body(Body::empty())
-                    .expect("empty response should always succeed")
+                    .unwrap_or_else(|_| Response::new(Body::empty()))
             })
     }
 }

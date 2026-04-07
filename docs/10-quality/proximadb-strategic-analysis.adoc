@@ -40,7 +40,7 @@ This document provides a brutally honest analysis of ProximaDB's current state a
 
 | *Open Source Strategy*
 | Code is a Rust binary
-| No CNCF submission, no governance model, no contributor guide
+| No CNCF submission, governance model still early-stage; contributor guide exists
 | Establish open governance, submit to CNCF sandbox, create contributor onboarding
 
 | *Category Creation*
@@ -75,7 +75,7 @@ ____
 
 | Protocol Breadth
 | 9/10
-| REST + gRPC + Arrow Flight + PostgreSQL Wire Protocol on unified port. Exceptional.
+| REST + gRPC + Arrow Flight available; PostgreSQL wire remains separate port in current implementation.
 
 | ORION Graph Engine
 | 8/10
@@ -174,7 +174,7 @@ ____
 
 | *Backup / Point-in-Time Recovery*
 | P2
-| Enterprise requirement. No current backup/restore mechanism.
+| Enterprise requirement. Backup/PITR foundations exist but need hardening and operator-grade validation.
 | Every production database
 | 1-2 months
 
@@ -193,7 +193,7 @@ ____
 
 | *Security / mTLS*
 | 6.5/10
-| mTLS incomplete, encryption at rest not implemented, no FIPS
+| mTLS transport and encryption modules exist; identity-mapping/authz integration and compliance posture are incomplete
 | Complete mTLS, add AES-256 TDE, pursue SOC 2 Type II
 
 | *Python SDK*
@@ -208,7 +208,7 @@ ____
 
 | *Graph Query Language*
 | 5/10
-| No Cypher/Gremlin support. Only embedded in SQL extensions.
+| Cypher parsers exist, but openCypher completeness and execution integration are not production-ready.
 | Add openCypher parser. TigerGraph added openCypher -- follow suit.
 
 | *CDC Inbound*
@@ -492,7 +492,7 @@ flowchart LR
 | HNSW, p95 ~37ms
 
 | Hybrid Search (BM25+Vector)
-| *MISSING*
+| *PARTIAL*
 | Sparse vectors
 | Sparse + dense
 | BM25 + vector
@@ -513,7 +513,7 @@ flowchart LR
 | Payload filtering
 
 | Time-Series
-| *MISSING*
+| *PARTIAL (engine-level)*
 | None
 | None
 | None
@@ -541,7 +541,7 @@ flowchart LR
 | FastEmbed
 
 | LangChain/LlamaIndex
-| *MISSING*
+| *PARTIAL*
 | Yes
 | Yes
 | Yes
@@ -627,7 +627,7 @@ flowchart LR
 | Multi-model with cross-model SQL joins (unique). 6 vector engines. PostgreSQL wire protocol. Embedded mode. Rust performance. Proto-first zero-copy. Excellent deployment infra (K8s/Helm/Terraform).
 
 | *Weaknesses*
-| No time-series engine. No hybrid search (BM25). No distributed consensus. 11K unwrap calls. Experimental features advertised as production. No framework integrations (LangChain/LlamaIndex).
+| Time-series and event-sourcing are not fully surfaced in public APIs. Distributed consensus not productized in runtime path. High unwrap/expect footprint. Experimental and production surfaces are insufficiently separated in docs/API behavior.
 
 | *Opportunities*
 | Market consolidation favors integrated platforms. FaunaDB shutdown validates self-hosted. "Context Database" category creation. ibkrtrading as reference implementation. Financial services is premium market. Agentic AI needs multi-model + low-latency.

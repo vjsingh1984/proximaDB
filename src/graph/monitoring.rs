@@ -287,20 +287,29 @@ pub struct ProfileSummary {
     pub completed_at: SystemTime,
 }
 
-/// Metric event for async processing
+/// Metric event for async processing by the monitoring pipeline.
 #[derive(Debug, Clone)]
 pub enum MetricEvent {
     /// Operation completed
     OperationCompleted {
+        /// Name of the operation (e.g. "traversal", "insert_node").
         operation: String,
+        /// Wall-clock duration of the operation.
         duration: Duration,
+        /// Whether the operation succeeded.
         success: bool,
+        /// Additional key-value metadata about the operation.
         metadata: HashMap<String, String>,
     },
     /// Resource usage update
     ResourceUpdate(ResourceMetrics),
     /// Cache event
-    CacheEvent { cache_type: String, hit: bool },
+    CacheEvent {
+        /// Type of cache (e.g. "page_cache", "query_cache").
+        cache_type: String,
+        /// Whether the access was a cache hit.
+        hit: bool,
+    },
     /// Business metric update
     BusinessUpdate(BusinessMetrics),
 }
@@ -437,7 +446,7 @@ impl GraphMonitor {
                 metadata: metadata.clone(),
             };
 
-            if let Err(_) = sender.send(event) {
+            if sender.send(event).is_err() {
                 eprintln!("Failed to send operation metric event");
             }
         }
@@ -451,9 +460,9 @@ impl GraphMonitor {
                 parameters: metadata.clone(),
                 execution_time_ms: duration_ms,
                 timestamp: SystemTime::now(),
-                memory_used_mb: 0.0, // TODO: Get actual memory usage
-                nodes_visited: 0,    // TODO: Get from metadata
-                edges_traversed: 0,  // TODO: Get from metadata
+                memory_used_mb: 0.0, // Deferred: Get actual memory usage
+                nodes_visited: 0,    // Deferred: Get from metadata
+                edges_traversed: 0,  // Deferred: Get from metadata
                 error: if success {
                     None
                 } else {
@@ -616,7 +625,7 @@ impl GraphMonitor {
 
         if let Some(ref sender) = self.metrics_sender {
             let event = MetricEvent::BusinessUpdate(business_metrics);
-            if let Err(_) = sender.send(event) {
+            if sender.send(event).is_err() {
                 eprintln!("Failed to send business metrics update");
             }
         }
@@ -837,18 +846,25 @@ impl GraphMonitor {
     }
 }
 
-/// Snapshot of all metrics at a point in time
+/// Snapshot of all graph monitoring metrics at a point in time.
 #[derive(Debug, Clone)]
 pub struct MetricsSnapshot {
+    /// When this snapshot was captured.
     pub timestamp: SystemTime,
+    /// Cumulative operation counts keyed by operation name.
     pub operation_counts: HashMap<String, u64>,
+    /// Cumulative error counts keyed by error category.
     pub error_counts: HashMap<String, u64>,
+    /// Current resource utilization (CPU, memory, disk).
     pub resource_metrics: ResourceMetrics,
+    /// Business-level metrics (queries served, data volume, etc.).
     pub business_metrics: BusinessMetrics,
+    /// Cache hit/miss statistics.
     pub cache_metrics: CacheMetrics,
 }
 
 impl GraphMetricsCollector {
+    /// Create a new metrics collector with empty counters and default resource metrics.
     pub fn new() -> Self {
         Self {
             operation_counts: Arc::new(RwLock::new(HashMap::new())),
@@ -861,7 +877,14 @@ impl GraphMetricsCollector {
     }
 }
 
+impl Default for GraphMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LatencyHistogram {
+    /// Create a new latency histogram with default bucket boundaries (1ms to 5s+).
     pub fn new() -> Self {
         Self {
             buckets: vec![
@@ -883,6 +906,7 @@ impl LatencyHistogram {
         }
     }
 
+    /// Record a latency observation in milliseconds into the appropriate bucket.
     pub fn record(&mut self, value: f64) {
         self.count += 1;
         self.sum += value;
@@ -895,6 +919,7 @@ impl LatencyHistogram {
         }
     }
 
+    /// Compute the approximate p-th percentile latency (p in 0..100).
     pub fn percentile(&self, p: f64) -> f64 {
         if self.count == 0 {
             return 0.0;
@@ -915,6 +940,7 @@ impl LatencyHistogram {
 }
 
 impl SlowQueryLogger {
+    /// Create a new slow query logger with the given monitoring configuration.
     pub fn new(config: Arc<MonitoringConfig>) -> Self {
         Self {
             slow_queries: Arc::new(Mutex::new(VecDeque::new())),
@@ -922,6 +948,7 @@ impl SlowQueryLogger {
         }
     }
 
+    /// Record a slow query, maintaining a bounded circular buffer of recent entries.
     pub fn log_slow_query(&self, record: SlowQueryRecord) {
         if let Ok(mut queries) = self.slow_queries.lock() {
             // Maintain circular buffer
@@ -931,9 +958,10 @@ impl SlowQueryLogger {
             queries.push_back(record);
         }
 
-        // TODO: Also write to log file if configured
+        // Deferred: Also write to log file if configured
     }
 
+    /// Retrieve the most recent slow queries, up to the given limit (or all if `None`).
     pub fn get_recent_slow_queries(&self, limit: Option<usize>) -> Vec<SlowQueryRecord> {
         if let Ok(queries) = self.slow_queries.lock() {
             let limit = limit.unwrap_or(queries.len());
@@ -945,6 +973,7 @@ impl SlowQueryLogger {
 }
 
 impl GraphProfiler {
+    /// Create a new graph profiler with the given monitoring configuration.
     pub fn new(config: Arc<MonitoringConfig>) -> Self {
         Self {
             active_profiles: Arc::new(RwLock::new(HashMap::new())),
@@ -953,6 +982,7 @@ impl GraphProfiler {
         }
     }
 
+    /// Start a new profiling session for the given operation, returning the session ID.
     pub fn start_session(&self, operation: &str) -> String {
         let session_id = Uuid::new_v4().to_string();
 
@@ -972,6 +1002,7 @@ impl GraphProfiler {
         session_id
     }
 
+    /// End a profiling session and return the collected summary, if the session exists.
     pub fn end_session(&self, session_id: &str) -> Option<ProfileSummary> {
         let session = if let Ok(mut profiles) = self.active_profiles.write() {
             profiles.remove(session_id)
@@ -1039,14 +1070,16 @@ impl GraphProfiler {
         }
     }
 
+    /// Record a timing checkpoint within an active profiling session.
     pub fn record_timing(&self, session_id: &str, checkpoint: &str, duration: Duration) {
-        if let Ok(mut profiles) = self.active_profiles.write() {
-            if let Some(session) = profiles.get_mut(session_id) {
-                session.timings.insert(checkpoint.to_string(), duration);
-            }
+        if let Ok(mut profiles) = self.active_profiles.write()
+            && let Some(session) = profiles.get_mut(session_id)
+        {
+            session.timings.insert(checkpoint.to_string(), duration);
         }
     }
 
+    /// Retrieve the most recent completed profiling summaries, up to the given limit.
     pub fn get_recent_summaries(&self, limit: Option<usize>) -> Vec<ProfileSummary> {
         if let Ok(completed) = self.completed_profiles.read() {
             let limit = limit.unwrap_or(completed.len());

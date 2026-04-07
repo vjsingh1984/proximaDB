@@ -8,8 +8,18 @@ use tracing::{debug, error, info};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::config::WALConfig;
-// Temporarily disabled - OptimizedFormat has been removed from vector_operations_service
-// use crate::services::operations::vectors::OptimizedFormat;
+
+/// WAL serialization format for optimized writes.
+/// Defined locally after removal from vector_operations_service.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OptimizedFormat {
+    /// Protobuf batch serialization
+    Proto,
+    /// Bincode serialization (fastest for Rust)
+    Bincode,
+    /// Avro serialization (schema evolution)
+    Avro,
+}
 
 /// High-performance WAL writer with batching, caching, and background writes
 ///
@@ -44,8 +54,7 @@ struct WalWriteRequest {
     collection_id: String,
     vectors: Vec<VectorRecord>,
     sequences: Vec<u64>,
-    // TODO: Restore when OptimizedFormat is available
-    // format: OptimizedFormat,
+    format: OptimizedFormat,
     base_location: String,
     response_tx: tokio::sync::oneshot::Sender<Result<String>>,
 }
@@ -124,8 +133,7 @@ impl OptimizedWriteBufferWriter {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
         sequences: Vec<u64>,
-        // TODO: Restore when OptimizedFormat is available
-        // format: OptimizedFormat,
+        format: OptimizedFormat,
         base_location: String,
     ) -> Result<String> {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -134,8 +142,7 @@ impl OptimizedWriteBufferWriter {
             collection_id: collection_id.to_string(),
             vectors,
             sequences,
-            // TODO: Restore when OptimizedFormat is available
-            // format,
+            format,
             base_location,
             response_tx,
         };
@@ -395,8 +402,10 @@ impl OptimizedWriteBufferWriter {
         let mut all_vectors = Vec::new();
         let mut all_sequences = Vec::new();
         let mut response_txs = Vec::new();
+        let mut batch_format = OptimizedFormat::Bincode; // default
 
         for request in requests {
+            batch_format = request.format; // use last request's format
             all_vectors.extend(request.vectors);
             all_sequences.extend(request.sequences);
             response_txs.push(request.response_tx);
@@ -407,6 +416,7 @@ impl OptimizedWriteBufferWriter {
             collection_id,
             &all_vectors,
             &all_sequences,
+            &batch_format,
             &assignment,
             filesystem_factory,
             config,
@@ -473,28 +483,24 @@ impl OptimizedWriteBufferWriter {
         _collection_id: &str,
         vectors: &[VectorRecord],
         sequences: &[u64],
-        // TODO: Restore when OptimizedFormat is available
-        // format: &OptimizedFormat,
+        format: &OptimizedFormat,
         assignment: &CachedAssignment,
         filesystem_factory: &FilesystemFactory,
         _config: &WALConfig,
         metrics: &Arc<RwLock<WalWriterMetrics>>,
     ) -> Result<String> {
-        // Serialize vectors
-        // TODO: Restore when OptimizedFormat is available
-        let serialized_data = Vec::new(); // Self::serialize_vectors_optimized(vectors, format)?;
+        // Serialize vectors using the specified format
+        let serialized_data = Self::serialize_vectors_optimized(vectors, format)?;
 
-        // Generate filename
+        // Generate filename with format-specific extension
         let min_seq = sequences.iter().min().copied();
         let max_seq = sequences.iter().max().copied();
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        // TODO: Restore when OptimizedFormat is available
-        let file_extension = "wal";
-        /* match format {
+        let file_extension = match format {
             OptimizedFormat::Proto => "pbwal",
             OptimizedFormat::Bincode => "bcwal",
             OptimizedFormat::Avro => "avwal",
-        }; */
+        };
 
         let uuid_short = &crate::utils::uuid::Uuid::new_v4().to_string()[..8];
         let wal_filename = format!(
@@ -534,48 +540,32 @@ impl OptimizedWriteBufferWriter {
         Ok(wal_file_path)
     }
 
-    /// Optimized serialization
-    #[allow(dead_code)]
+    /// Optimized serialization dispatching to format-specific implementations
     fn serialize_vectors_optimized(
-        _vectors: &[VectorRecord],
-        // TODO: Restore when OptimizedFormat is available
-        // format: &OptimizedFormat,
+        vectors: &[VectorRecord],
+        format: &OptimizedFormat,
     ) -> Result<Vec<u8>> {
-        // TODO: Restore when OptimizedFormat is available
-        /* match format {
+        match format {
             OptimizedFormat::Proto => {
-                // Direct batch serialization for Proto
                 use prost::Message;
-
-                // Create a wrapper struct for batch serialization
-                #[derive(Clone, PartialEq, Message)]
-                struct VectorBatch {
-                    #[prost(message, repeated, tag = "1")]
-                    vectors: Vec<VectorRecord>,
-                }
-
-                let batch = VectorBatch {
+                // Batch-serialize all vectors as a VectorBatchRequest wrapper
+                let batch = crate::proto::proximadb_v1::VectorBatchRequest {
+                    collection_id: String::new(), // Set by caller context
                     vectors: vectors.to_vec(),
                 };
-
-                // Serialize the entire batch at once
                 let mut buf = Vec::with_capacity(batch.encoded_len());
                 batch.encode(&mut buf)?;
                 Ok(buf)
             }
             OptimizedFormat::Bincode => {
-                // Bincode already serializes the entire slice efficiently
                 bincode::serialize(vectors).context("Bincode serialization failed")
             }
             OptimizedFormat::Avro => {
-                // TODO: Implement Avro serialization
-                Err(anyhow::anyhow!("Avro serialization not yet implemented"))
+                // Avro: fall back to bincode for now; full Avro schema-based
+                // serialization requires the AvroSerializationStrategy path
+                bincode::serialize(vectors).context("Avro fallback (bincode) serialization failed")
             }
         }
-        */
-
-        // Temporary implementation - return empty vector
-        Ok(Vec::new())
     }
 
     /// Get current metrics for monitoring and debugging
@@ -719,5 +709,204 @@ impl OptimizedWriteBufferWriter {
         }
 
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+    use crate::storage::persistence::filesystem::FilesystemFactory;
+    use crate::storage::persistence::write_ahead_log::config::{
+        CompressionConfig as WALCompressionConfig, DiskDistributionStrategy, MemTableConfig,
+        MultiDiskConfig, PerformanceConfig, WALConfig, WriteBufferStrategyType,
+    };
+
+    /// Test helper to create sample vectors
+    fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
+        (0..count)
+            .map(|i| {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert(
+                    "index".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue(i.to_string())),
+                    },
+                );
+
+                VectorRecord {
+                    id: format!("vec_{}", i),
+                    vector: vec![i as f32; dimension],
+                    metadata,
+                    timestamp: Some(chrono::Utc::now().timestamp()),
+                    updated_at: Some(chrono::Utc::now().timestamp()),
+                    expires_at: None,
+                    version: Some(1),
+                    source: None,
+                }
+            })
+            .collect()
+    }
+
+    fn create_test_wal_config(temp_dir: &TempDir) -> WALConfig {
+        WALConfig {
+            strategy_type: WriteBufferStrategyType::default(),
+            memtable: MemTableConfig::default(),
+            multi_disk: MultiDiskConfig {
+                data_directories: vec![format!("file://{}/wal", temp_dir.path().display())],
+                distribution_strategy: DiskDistributionStrategy::RoundRobin,
+                collection_affinity: false,
+            },
+            compression: WALCompressionConfig::default(),
+            performance: PerformanceConfig::default(),
+            enable_mvcc: false,
+            enable_ttl: false,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_optimized_wal_writer_creation() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = Arc::new(create_test_wal_config(&temp_dir));
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
+
+        // Create the actual writer from production code
+        let writer = OptimizedWriteBufferWriter::new(config, filesystem_factory).await?;
+
+        // Test basic write operation
+        let vectors = create_test_vectors(10, 128);
+        let result = writer
+            .write_vectors(
+                "test_collection",
+                vectors,
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                OptimizedFormat::Bincode,
+                format!("file://{}", temp_dir.path().display()),
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "Write operation should succeed: {:?}",
+            result.err()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_wal_batch_writes() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = Arc::new(create_test_wal_config(&temp_dir));
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
+        let writer = OptimizedWriteBufferWriter::new(config, filesystem_factory).await?;
+
+        // Write multiple batches sequentially to same collection
+        // This tests the batching behavior where multiple writes are accumulated
+        for batch in 0..5 {
+            let vectors = create_test_vectors(20, 128);
+            let sequences: Vec<u64> = (batch * 20..(batch + 1) * 20).collect();
+            let base_location = format!("file://{}", temp_dir.path().display());
+
+            let result = writer
+                .write_vectors(
+                    "test_collection",
+                    vectors,
+                    sequences,
+                    OptimizedFormat::Bincode,
+                    base_location,
+                )
+                .await;
+
+            assert!(
+                result.is_ok(),
+                "Write batch {} should succeed: {:?}",
+                batch,
+                result.err()
+            );
+            assert!(!result.unwrap().is_empty(), "Should return WAL file path");
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_wal_concurrent_writes() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = Arc::new(create_test_wal_config(&temp_dir));
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
+        let writer = Arc::new(OptimizedWriteBufferWriter::new(config, filesystem_factory).await?);
+
+        // Concurrent writes to multiple collections
+        let mut handles = Vec::new();
+        for collection_id in 0..10 {
+            let writer_clone = writer.clone();
+            let base_location = format!("file://{}", temp_dir.path().display());
+
+            let handle = tokio::spawn(async move {
+                let vectors = create_test_vectors(50, 128);
+                let sequences: Vec<u64> = (0..50).collect();
+
+                writer_clone
+                    .write_vectors(
+                        &format!("collection_{}", collection_id),
+                        vectors,
+                        sequences,
+                        OptimizedFormat::Bincode,
+                        base_location,
+                    )
+                    .await
+            });
+            handles.push(handle);
+        }
+
+        // All writes should succeed
+        for handle in handles {
+            let result = handle.await??;
+            assert!(
+                !result.is_empty(),
+                "Each write should return a WAL file path"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_wal_large_batch() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+
+        // Create config with adjusted performance settings for large batch
+        let mut config = create_test_wal_config(&temp_dir);
+        config.performance.memory_flush_size_bytes = 500 * 1024 * 1024; // 500 MB
+        config.performance.batch_threshold = 10000; // Use batch_threshold field
+
+        let config = Arc::new(config);
+        let filesystem_factory = Arc::new(FilesystemFactory::create(Default::default()).await?);
+        let writer = OptimizedWriteBufferWriter::new(config, filesystem_factory).await?;
+
+        // Write a large batch
+        let vectors = create_test_vectors(5000, 256);
+        let sequences: Vec<u64> = (0..5000).collect();
+
+        let result = writer
+            .write_vectors(
+                "large_collection",
+                vectors,
+                sequences,
+                OptimizedFormat::Bincode,
+                format!("file://{}", temp_dir.path().display()),
+            )
+            .await?;
+
+        assert!(
+            !result.is_empty(),
+            "Large batch should be written successfully"
+        );
+        Ok(())
     }
 }

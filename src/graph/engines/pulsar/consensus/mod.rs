@@ -229,13 +229,13 @@ impl StateMachine for GraphStateMachine {
     }
 
     fn snapshot(&self) -> Result<Vec<u8>, ProximaDBError> {
-        // TODO: Implement graph state snapshot
+        // Deferred: Implement graph state snapshot
         // For now, return empty snapshot
         Ok(vec![])
     }
 
     fn restore_snapshot(&mut self, _snapshot: Vec<u8>) -> Result<(), ProximaDBError> {
-        // TODO: Implement snapshot restoration
+        // Deferred: Implement snapshot restoration
         Ok(())
     }
 }

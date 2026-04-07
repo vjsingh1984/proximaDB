@@ -326,20 +326,15 @@ pub enum BloomStrategy {
 }
 
 /// Hash algorithm selection
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 pub enum HashAlgorithm {
     /// MurmurHash3 - fast and good distribution
     Murmur3,
     /// xxHash - extremely fast (default) - our internal optimized implementation
+    #[default]
     XXHash,
     /// FNV-1a - simple and fast, good for small keys
     Fnv1a,
-}
-
-impl Default for HashAlgorithm {
-    fn default() -> Self {
-        Self::XXHash // Default to fastest algorithm
-    }
 }
 
 /// Enhanced bloom filter configuration
@@ -402,7 +397,7 @@ impl BloomFilterConfig {
     pub fn bits_from_fpr(false_positive_rate: f64) -> u32 {
         let ln2_squared = 0.4804530139182014;
         let bits = (-(false_positive_rate.ln() / ln2_squared)) as u32;
-        bits.max(1).min(32)
+        bits.clamp(1, 32)
     }
 }
 
@@ -631,10 +626,15 @@ mod tests {
 /// Stats for bloom filter usage
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct BloomFilterStats {
+    /// Number of primary keys inserted into bloom filters
     pub key_count: u64,
+    /// Number of metadata columns with bloom filters
     pub metadata_columns: u64,
+    /// Total keys across all bloom filters
     pub total_keys: u64,
+    /// Number of key lookups avoided by bloom filter negatives
     pub key_lookups_saved: u64,
+    /// Number of metadata queries avoided by bloom filter negatives
     pub metadata_queries_saved: u64,
 }
 
@@ -708,7 +708,7 @@ impl SstableBloomFilter {
             return Ok(true);
         }
         // Conservative approach: assume metadata might match
-        // TODO: Implement actual metadata bloom filter checking when metadata is indexed
+        // Deferred: Implement actual metadata bloom filter checking when metadata is indexed
         Ok(true)
     }
 
@@ -895,11 +895,17 @@ impl SstableBloomFilter {
 /// Hierarchical bloom filter configuration for SST files
 #[derive(Debug, Clone)]
 pub struct HierarchicalBloomConfig {
+    /// Configuration for the global-level key bloom filter
     pub global_key_filter: BloomFilterConfig,
+    /// Configuration for the global-level metadata bloom filter
     pub global_metadata_filter: BloomFilterConfig,
+    /// Configuration for per-block key bloom filters
     pub block_key_filter: BloomFilterConfig,
+    /// Configuration for per-block metadata bloom filters
     pub block_metadata_filter: BloomFilterConfig,
+    /// Minimum number of blocks before enabling hierarchical filters
     pub block_count_threshold: usize,
+    /// Minimum metadata columns before enabling metadata bloom filters
     pub metadata_column_threshold: usize,
 }
 
@@ -911,15 +917,18 @@ pub struct BloomFilterBuilder {
 }
 
 impl BloomFilterBuilder {
+    /// Create a new bloom filter builder with the given configuration
     pub fn new(config: BloomFilterConfig) -> Self {
         let filter = factory::BloomFilterFactory::create(&config);
         Self { config, filter }
     }
 
+    /// Insert a key into the bloom filter being built
     pub fn add(&mut self, key: &[u8]) {
         self.filter.insert(key);
     }
 
+    /// Finalize and return the constructed bloom filter
     pub fn build(self) -> Box<dyn BloomFilterStrategy> {
         self.filter
     }
@@ -1028,7 +1037,7 @@ impl From<SstableBloomFilter> for SerializedSstableBloomFilter {
     }
 }
 
-// Type aliases for compatibility
+/// Type alias for a heap-allocated bloom filter using any strategy
 pub type BloomFilter = Box<dyn BloomFilterStrategy>;
-// Note: MetadataBloomFilter is a trait, not a type alias
+/// Type alias for a composite bloom filter combining multiple strategies
 pub type CompositeBloomFilter = Box<dyn BloomFilterStrategy>;

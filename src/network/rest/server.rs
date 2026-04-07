@@ -48,16 +48,10 @@ pub struct RestServer {
 }
 
 /// Authentication configuration for the REST server
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RestAuthConfig {
     /// Whether unified authentication is enabled
     pub enabled: bool,
-}
-
-impl Default for RestAuthConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }
 
 /// Security configuration for the REST server.
@@ -319,6 +313,9 @@ impl RestServer {
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
     ) -> Self {
+        // Create catalog manager for external catalog integration
+        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+
         let state = AppState {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
@@ -327,6 +324,7 @@ impl RestServer {
             fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
                 std::collections::HashMap::new(),
             ))),
+            catalog_manager,
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -492,10 +490,14 @@ impl RestServer {
 
         // Build TLS config if specified
         let tls_config = security_config.tls.as_ref().map(|tls| {
-            NetworkTlsConfig::new(true)
+            let mut config = NetworkTlsConfig::new(true)
                 .with_cert_file(tls.cert_file.clone())
-                .with_key_file(tls.key_file.clone())
-                .with_ca_file(tls.ca_file.clone().unwrap_or_default())
+                .with_key_file(tls.key_file.clone());
+            // Only add CA file if mTLS is enabled and CA file is provided
+            if let Some(ca_file) = &tls.ca_file {
+                config = config.with_ca_file(ca_file.clone());
+            }
+            config
         });
 
         if tls_config.is_some() {
@@ -520,6 +522,9 @@ impl RestServer {
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
     ) -> Router {
+        // Create catalog manager for external catalog integration
+        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+
         let state = AppState {
             unified_handlers,
             security_coordinator: security_coordinator.clone(),
@@ -528,6 +533,7 @@ impl RestServer {
             fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
                 std::collections::HashMap::new(),
             ))),
+            catalog_manager,
         };
 
         // Create metrics router if metrics collector is available
@@ -611,9 +617,14 @@ impl RestServer {
         Self::log_endpoints(&self.bind_addr, true);
 
         // Build rustls config - either mTLS or standard TLS
-        if require_client_certs && ca_path.is_some() {
-            self.start_with_mtls(cert_path, key_path, ca_path.unwrap())
-                .await
+        if require_client_certs {
+            if let Some(ca) = ca_path {
+                self.start_with_mtls(cert_path, key_path, ca).await
+            } else {
+                Err(anyhow::anyhow!(
+                    "Client certificates required but CA path not provided"
+                ))
+            }
         } else {
             // Standard TLS (no client certificates)
             let rustls_config =
@@ -1722,7 +1733,7 @@ mod tests {
     use crate::network::auth::middleware::auth_middleware_unified;
     use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::unified_auth::{
-        ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, SSOConfig,
+        ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
     };
     use crate::security::unified_rbac::RBACConfig;
     use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
@@ -1767,6 +1778,7 @@ mod tests {
                     aws_iam: None,
                     azure_ad: None,
                 },
+                mtls: MtlsConfig::default(),
             },
             rbac: RBACConfig::default(),
             audit: AuditConfig::default(),

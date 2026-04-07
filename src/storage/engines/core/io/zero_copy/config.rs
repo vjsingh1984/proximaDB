@@ -29,7 +29,7 @@ pub enum WorkloadType {
 }
 
 /// Complete system configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ZeroCopyIOConfig {
     /// Metadata cache configuration
     pub metadata_cache: MetadataCacheConfig,
@@ -76,13 +76,13 @@ pub struct MetadataCacheConfig {
 #[derive(Debug, Clone)]
 pub enum EvictionPolicy {
     /// Least Recently Used
-    LRU,
+    Lru,
     /// Least Frequently Used
-    LFU,
+    Lfu,
     /// Adaptive Replacement Cache
-    ARC,
+    Arc,
     /// Time-based expiration
-    TTL,
+    Ttl,
     /// Size-based with priority
     SizeBased,
 }
@@ -467,7 +467,7 @@ impl ZeroCopyIOConfig {
             metadata_cache: MetadataCacheConfig {
                 max_memory_mb: 2048,       // 2GB cache
                 enable_compression: false, // Skip compression for speed
-                eviction_policy: EvictionPolicy::LRU,
+                eviction_policy: EvictionPolicy::Lru,
                 max_entries: 100000,
                 ..Default::default()
             },
@@ -553,16 +553,6 @@ impl ZeroCopyIOConfig {
 }
 
 // Default implementations
-impl Default for ZeroCopyIOConfig {
-    fn default() -> Self {
-        Self {
-            metadata_cache: MetadataCacheConfig::default(),
-            download_optimizer: DownloadOptimizerConfig::default(),
-            integration: IntegrationConfig::default(),
-            performance: PerformanceConfig::default(),
-        }
-    }
-}
 
 impl Default for MetadataCacheConfig {
     fn default() -> Self {
@@ -571,7 +561,7 @@ impl Default for MetadataCacheConfig {
             max_memory_mb: 512,
             enable_compression: true,
             sync_to_disk: true,
-            eviction_policy: EvictionPolicy::LRU,
+            eviction_policy: EvictionPolicy::Lru,
             max_entries: 50000,
             enable_pressure_eviction: true,
             validity_duration: Duration::from_secs(3600), // 1 hour

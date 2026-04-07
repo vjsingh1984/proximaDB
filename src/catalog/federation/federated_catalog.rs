@@ -302,10 +302,10 @@ impl FederatedCatalog {
     /// Resolve a table by fully qualified name
     pub async fn resolve_table(&self, fqn: &str) -> Result<FederatedTableInfo> {
         // Check cache first
-        if self.config.enable_metadata_cache {
-            if let Some(cached) = self.get_cached(fqn) {
-                return Ok(cached);
-            }
+        if self.config.enable_metadata_cache
+            && let Some(cached) = self.get_cached(fqn)
+        {
+            return Ok(cached);
         }
 
         let parts: Vec<&str> = fqn.split('.').collect();
@@ -341,12 +341,11 @@ impl FederatedCatalog {
         }
 
         // Try default catalog if configured
-        if let Some(ref default) = self.config.default_catalog {
-            if default != "internal" {
-                if let Ok(info) = self.resolve_in_catalog(default, &[], table).await {
-                    return Ok(info);
-                }
-            }
+        if let Some(ref default) = self.config.default_catalog
+            && default != "internal"
+            && let Ok(info) = self.resolve_in_catalog(default, &[], table).await
+        {
+            return Ok(info);
         }
 
         Err(anyhow!("Table '{}' not found", table))
@@ -365,10 +364,10 @@ impl FederatedCatalog {
         }
 
         // Finally try namespace.table in default catalog
-        if let Some(ref default) = self.config.default_catalog {
-            if let Ok(info) = self.resolve_in_catalog(default, &[first], second).await {
-                return Ok(info);
-            }
+        if let Some(ref default) = self.config.default_catalog
+            && let Ok(info) = self.resolve_in_catalog(default, &[first], second).await
+        {
+            return Ok(info);
         }
 
         Err(anyhow!("Table '{}.{}' not found", first, second))
@@ -378,7 +377,10 @@ impl FederatedCatalog {
     async fn resolve_fully_qualified(&self, parts: &[&str]) -> Result<FederatedTableInfo> {
         let catalog = parts[0];
         let namespace: Vec<&str> = parts[1..parts.len() - 1].to_vec();
-        let table = parts.last().unwrap();
+        let table = parts
+            .last()
+            .copied()
+            .ok_or_else(|| anyhow!("Invalid fully-qualified table reference"))?;
 
         self.resolve_in_catalog(catalog, &namespace, table).await
     }
@@ -530,7 +532,8 @@ impl FederatedCatalog {
         }
 
         // List external catalog tables
-        let externals = self.external.read();
+        // Clone the externals map to drop the lock before awaits
+        let externals = self.external.read().clone();
         for (name, catalog) in externals.iter() {
             if let Ok(namespaces) = catalog.list_namespaces().await {
                 for ns in namespaces {

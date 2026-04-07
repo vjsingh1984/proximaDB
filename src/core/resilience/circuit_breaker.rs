@@ -57,11 +57,17 @@ impl Default for CircuitBreakerConfig {
 pub enum CircuitBreakerError {
     /// Circuit is open, request rejected
     #[error("Circuit breaker '{name}' is open - requests are blocked")]
-    CircuitOpen { name: String },
+    CircuitOpen {
+        /// Name of the circuit breaker that is open
+        name: String,
+    },
 
     /// Maximum half-open requests exceeded
     #[error("Circuit breaker '{name}' half-open limit exceeded")]
-    HalfOpenLimitExceeded { name: String },
+    HalfOpenLimitExceeded {
+        /// Name of the circuit breaker at its limit
+        name: String,
+    },
 
     /// Underlying operation failed
     #[error("Operation failed: {0}")]
@@ -206,19 +212,19 @@ impl CircuitBreaker {
     /// Check if we should transition states
     fn check_state_transition(&self) {
         let state = *self.state.read();
-        if state == CircuitState::Open {
-            if let Some(last_failure) = *self.last_failure_time.read() {
-                let timeout = Duration::from_secs(self.config.timeout_secs);
-                if last_failure.elapsed() >= timeout {
-                    // Transition to half-open
-                    *self.state.write() = CircuitState::HalfOpen;
-                    self.success_count.store(0, Ordering::Relaxed);
-                    self.half_open_requests.store(0, Ordering::Relaxed);
-                    tracing::info!(
-                        circuit_breaker = %self.config.name,
-                        "Circuit breaker half-open - testing recovery"
-                    );
-                }
+        if state == CircuitState::Open
+            && let Some(last_failure) = *self.last_failure_time.read()
+        {
+            let timeout = Duration::from_secs(self.config.timeout_secs);
+            if last_failure.elapsed() >= timeout {
+                // Transition to half-open
+                *self.state.write() = CircuitState::HalfOpen;
+                self.success_count.store(0, Ordering::Relaxed);
+                self.half_open_requests.store(0, Ordering::Relaxed);
+                tracing::info!(
+                    circuit_breaker = %self.config.name,
+                    "Circuit breaker half-open - testing recovery"
+                );
             }
         }
     }

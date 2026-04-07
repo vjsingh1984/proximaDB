@@ -52,6 +52,7 @@ struct OllamaResponse {
 }
 
 impl OllamaClient {
+    /// Create a new Ollama client with the given configuration.
     pub async fn new(config: OllamaConfig) -> Result<Self, LLMError> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_seconds))
@@ -128,13 +129,13 @@ impl LLMClient for OllamaClient {
 
         // Estimate token usage (Ollama doesn't always provide exact counts)
         let estimated_tokens = TokenUsage {
-            prompt_tokens: ollama_response.prompt_eval_count.unwrap_or_else(|| {
+            prompt_tokens: ollama_response.prompt_eval_count.unwrap_or({
                 // Rough estimation: ~4 characters per token
                 (request.prompt.len() / 4) as u32
             }),
             completion_tokens: ollama_response
                 .eval_count
-                .unwrap_or_else(|| (ollama_response.response.len() / 4) as u32),
+                .unwrap_or((ollama_response.response.len() / 4) as u32),
             total_tokens: 0, // Will be calculated below
         };
 

@@ -1,10 +1,14 @@
 // Log query engine
 //
 // Provides:
-// - Full-text search in log messages
-// - Field-based filtering
+// - Full-text search in log messages (via Tantivy - see ObservabilityStorage::search_logs_tantivy)
+// - Field-based filtering (via LogFilter for in-memory filtering)
 // - Aggregations (count, histogram)
 // - Pattern detection
+//
+// Note: This module provides simple in-memory log filtering. For full-text search
+// with BM25 ranking and phrase matching, use the Tantivy integration available
+// through ObservabilityStorage::search_logs_tantivy in mod.rs.
 
 use std::collections::HashMap;
 
@@ -193,12 +197,14 @@ impl LogQuery {
             }
         }
 
-        // Text search
+        // Text search (simple substring matching)
+        // Note: For full-text search with BM25 ranking, use ObservabilityStorage::search_logs_tantivy
+        // which provides Tantivy-based full-text search with proper scoring and phrase matching
         if let Some(query) = &self.text_query {
             let message_lower = log.message.to_lowercase();
             let query_lower = query.to_lowercase();
 
-            // Simple substring match (TODO: implement proper full-text search)
+            // Simple substring match for in-memory filtering
             if !message_lower.contains(&query_lower) {
                 return false;
             }
@@ -215,15 +221,25 @@ pub enum LogAggregation {
     Count,
     /// Group by field
     GroupBy(String),
-    /// Time histogram
-    Histogram { interval_ns: i64 },
+    /// Time histogram with fixed-width buckets.
+    Histogram {
+        /// Bucket width in nanoseconds.
+        interval_ns: i64,
+    },
     /// Top values for a field
-    TopValues { field: String, limit: usize },
+    TopValues {
+        /// Field name to aggregate.
+        field: String,
+        /// Maximum number of top values to return.
+        limit: usize,
+    },
     /// Group by multiple fields
     GroupByMultiple(Vec<String>),
-    /// Time histogram with additional GROUP BY
+    /// Time histogram with additional GROUP BY.
     HistogramGroupBy {
+        /// Bucket width in nanoseconds.
         interval_ns: i64,
+        /// Fields to group by within each time bucket.
         group_by: Vec<String>,
     },
 }
@@ -458,11 +474,9 @@ impl LogAggregator {
                 .clone()
                 .unwrap_or_else(|| "<unknown>".to_string()),
             "severity" => Severity::try_from(log.severity)
-                .map(|s| format!("{:?}", s))
-                .unwrap_or_else(|_| "UNKNOWN".to_string()),
+                .map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s)),
             "level" => Severity::try_from(log.severity)
-                .map(|s| format!("{:?}", s))
-                .unwrap_or_else(|_| "UNKNOWN".to_string()),
+                .map_or_else(|_| "UNKNOWN".to_string(), |s| format!("{:?}", s)),
             _ => {
                 // Check in fields map
                 if let Some(sql_value) = log.fields.get(field) {

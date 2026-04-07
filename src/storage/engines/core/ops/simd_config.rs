@@ -55,7 +55,7 @@ pub struct MemoryPoolConfig {
 }
 
 /// Engine-specific SIMD settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct EngineSettings {
     /// HELIX engine settings
     pub helix: HelixSettings,
@@ -186,16 +186,6 @@ impl Default for MemoryPoolConfig {
             alignment_bytes: 64, // Cache line alignment
             pre_allocate: true,
             pre_allocate_count: 10,
-        }
-    }
-}
-
-impl Default for EngineSettings {
-    fn default() -> Self {
-        Self {
-            helix: HelixSettings::default(),
-            sst: SSTSettings::default(),
-            swift: SwiftSettings::default(),
         }
     }
 }

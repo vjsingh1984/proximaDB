@@ -93,8 +93,8 @@ impl SSTMetadataSource {
             sst_metadata: SSTFileMetadata {
                 total_rows,
                 column_info,
-                block_count: 1,     // TODO: Read actual block count from SST metadata
-                file_size_bytes: 0, // TODO: Get actual file size
+                block_count: 1, // Single block assumed until SST header parsing is wired
+                file_size_bytes: std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0),
             },
             column_metadata_cache,
         })
@@ -126,37 +126,33 @@ pub struct SSTIndexBasedReader {
 
 impl SSTIndexBasedReader {
     pub fn new() -> Self {
+        Self::try_new().expect("Failed to initialize SSTIndexBasedReader")
+    }
+
+    pub fn try_new() -> Result<Self> {
         // For synchronous new, we'll create a minimal filesystem factory
         // In practice, this should be passed in as a dependency
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
-        let filesystem = Arc::new(
-            // Use blocking runtime for synchronous constructor
-            tokio::runtime::Handle::current()
-                .block_on(
-                    crate::storage::persistence::filesystem::FilesystemFactory::create(
-                        filesystem_config,
-                    ),
-                )
-                .expect("Failed to create filesystem factory"),
-        );
+        let filesystem = create_filesystem_factory_sync(filesystem_config)?;
+
         // Create UnifiedCachingFilesystem for the reader
         let base_fs = filesystem
             .get_filesystem("file://")
-            .expect("Failed to get base filesystem");
+            .map_err(|e| anyhow::anyhow!("Failed to get base filesystem: {}", e))?;
         let unified_fs = Arc::new(UnifiedCachingFilesystem::new(
             base_fs,
             "default_collection".to_string(),
             "sst".to_string(),
         ));
 
-        Self {
+        Ok(Self {
             reader: crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader::new(
                 filesystem,
                 unified_fs,
                 String::from("default_collection"),
             ),
-        }
+        })
     }
 
     /// Filter entire block using indices (SST reads full blocks)
@@ -187,6 +183,38 @@ impl SSTIndexBasedReader {
         // For now, return empty - this indicates the optimization should not be used
         Ok(Vec::new())
     }
+}
+
+impl Default for SSTIndexBasedReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn create_filesystem_factory_sync(
+    filesystem_config: crate::storage::persistence::filesystem::FilesystemConfig,
+) -> Result<Arc<crate::storage::persistence::filesystem::FilesystemFactory>> {
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        let factory = handle
+            .block_on(
+                crate::storage::persistence::filesystem::FilesystemFactory::create(
+                    filesystem_config,
+                ),
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
+        return Ok(Arc::new(factory));
+    }
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| anyhow::anyhow!("Failed to create runtime for filesystem init: {}", e))?;
+    let factory = runtime
+        .block_on(
+            crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create filesystem factory: {}", e))?;
+    Ok(Arc::new(factory))
 }
 
 #[async_trait::async_trait]

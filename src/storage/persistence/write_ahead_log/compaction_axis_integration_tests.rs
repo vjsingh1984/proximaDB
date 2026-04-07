@@ -10,7 +10,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::index::axis::{IndexAlgorithm, IndexStats};
+
     use crate::storage::traits::CompactionResult;
     use chrono::Utc;
     use std::collections::HashMap;

@@ -11,5 +11,5 @@ pub use manager::{
 };
 pub use security::SecureCollectionService;
 
-// Rename for clarity
+/// Type alias for [`Collections`] (primary collection management service).
 pub type Manager = Collections;

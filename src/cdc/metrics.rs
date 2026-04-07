@@ -252,9 +252,13 @@ impl SourceMetrics {
 /// Source metrics snapshot
 #[derive(Debug, Clone)]
 pub struct SourceMetricsSnapshot {
+    /// Total events received from this source.
     pub events_received: u64,
+    /// Total bytes received from this source.
     pub bytes_received: u64,
+    /// Total errors encountered.
     pub errors: u64,
+    /// Current replication lag in milliseconds.
     pub lag_ms: u64,
 }
 
@@ -298,9 +302,13 @@ impl SinkMetrics {
 /// Sink metrics snapshot
 #[derive(Debug, Clone)]
 pub struct SinkMetricsSnapshot {
+    /// Total events sent to this sink.
     pub events_sent: u64,
+    /// Total bytes sent to this sink.
     pub bytes_sent: u64,
+    /// Total errors encountered.
     pub errors: u64,
+    /// Total retry attempts.
     pub retries: u64,
 }
 
@@ -343,9 +351,13 @@ impl TransformMetrics {
 /// Transform metrics snapshot
 #[derive(Debug, Clone)]
 pub struct TransformMetricsSnapshot {
+    /// Total events processed by this transform.
     pub events_processed: u64,
+    /// Cumulative processing time in microseconds.
     pub processing_time_us: u64,
+    /// Average latency per event in microseconds.
     pub avg_latency_us: u64,
+    /// Total errors encountered.
     pub errors: u64,
 }
 
@@ -380,11 +392,17 @@ impl CoordinatorMetrics {
 /// Complete metrics snapshot
 #[derive(Debug, Clone)]
 pub struct MetricsSnapshot {
+    /// Time since the CDC pipeline started.
     pub uptime: Duration,
+    /// Total events processed across all sources.
     pub total_events: u64,
+    /// Total events dropped due to errors or backpressure.
     pub dropped_events: u64,
+    /// Per-source metrics keyed by source name.
     pub sources: HashMap<String, SourceMetricsSnapshot>,
+    /// Per-sink metrics keyed by sink name.
     pub sinks: HashMap<String, SinkMetricsSnapshot>,
+    /// Per-transform metrics keyed by transform name.
     pub transforms: HashMap<String, TransformMetricsSnapshot>,
 }
 
@@ -416,7 +434,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_creation() {
         let metrics = CdcMetrics::new();
-        assert!(metrics.uptime().as_millis() >= 0);
+        let _uptime = metrics.uptime(); // Duration is always non-negative
     }
 
     #[tokio::test]

@@ -10,6 +10,7 @@ use std::sync::Once;
 
 /// Global flag for hardware CRC32C support
 static mut HAS_CRC32C: bool = false;
+/// Once-cell guard for one-time hardware detection initialization
 static INIT: Once = Once::new();
 
 /// Detect hardware CRC32C support
@@ -68,7 +69,7 @@ impl Crc32 {
     fn generate_table() -> [u32; 256] {
         let mut table = [0u32; 256];
 
-        for i in 0..256 {
+        for (i, entry) in table.iter_mut().enumerate() {
             let mut crc = i as u32;
             for _ in 0..8 {
                 if crc & 1 == 1 {
@@ -77,7 +78,7 @@ impl Crc32 {
                     crc >>= 1;
                 }
             }
-            table[i] = crc;
+            *entry = crc;
         }
 
         table
@@ -214,7 +215,9 @@ impl Default for Crc32 {
 
 /// Trait for generic checksum calculations
 pub trait Checksum {
+    /// Compute a checksum over the given byte slice.
     fn calculate(data: &[u8]) -> u32;
+    /// Return `true` if the checksum of `data` matches `expected`.
     fn verify(data: &[u8], expected: u32) -> bool {
         Self::calculate(data) == expected
     }
@@ -242,6 +245,7 @@ impl Crc32c {
     /// CRC32C (Castagnoli) polynomial
     const POLYNOMIAL: u32 = 0x82F63B78;
 
+    /// Create a new CRC32C calculator with a freshly generated lookup table
     pub fn new() -> Self {
         let table = Self::generate_table();
         Crc32c {
@@ -250,10 +254,11 @@ impl Crc32c {
         }
     }
 
+    /// Generate the 256-entry CRC32C lookup table from the Castagnoli polynomial
     fn generate_table() -> [u32; 256] {
         let mut table = [0u32; 256];
 
-        for i in 0..256 {
+        for (i, entry) in table.iter_mut().enumerate() {
             let mut crc = i as u32;
             for _ in 0..8 {
                 if crc & 1 == 1 {
@@ -262,12 +267,13 @@ impl Crc32c {
                     crc >>= 1;
                 }
             }
-            table[i] = crc;
+            *entry = crc;
         }
 
         table
     }
 
+    /// Feed data into the running CRC32C calculation
     pub fn update(&mut self, data: &[u8]) {
         for &byte in data {
             let index = ((self.value ^ byte as u32) & 0xFF) as usize;
@@ -275,10 +281,12 @@ impl Crc32c {
         }
     }
 
+    /// Return the final CRC32C checksum value
     pub fn finalize(&self) -> u32 {
         !self.value
     }
 
+    /// Compute the CRC32C checksum of a byte slice in one call
     pub fn checksum(data: &[u8]) -> u32 {
         let mut crc = Crc32c::new();
         crc.update(data);
@@ -301,9 +309,10 @@ impl Checksum for Crc32c {
 /// Lazy static tables for better performance
 use once_cell::sync::Lazy;
 
+/// Lazily-initialized precomputed CRC32 lookup table using the IEEE polynomial
 static CRC32_TABLE: Lazy<[u32; 256]> = Lazy::new(|| {
     let mut table = [0u32; 256];
-    for i in 0..256 {
+    for (i, entry) in table.iter_mut().enumerate() {
         let mut crc = i as u32;
         for _ in 0..8 {
             if crc & 1 == 1 {
@@ -312,7 +321,7 @@ static CRC32_TABLE: Lazy<[u32; 256]> = Lazy::new(|| {
                 crc >>= 1;
             }
         }
-        table[i] = crc;
+        *entry = crc;
     }
     table
 });

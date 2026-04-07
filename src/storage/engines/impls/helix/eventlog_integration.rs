@@ -9,7 +9,9 @@ use tracing::{debug, info};
 
 use crate::index::axis::eventlog::StorageEngineType;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::services::events::log::{EventLogService, event_log_service};
+use crate::services::events::log::{
+    EventLogService, event_log_service, register_collection_in_cache,
+};
 use crate::storage::engines::FlushParameters;
 
 /// HELIX flush handler that notifies EventLog with clustering information
@@ -49,6 +51,12 @@ impl HelixFlushHandler {
                 return Ok(());
             }
         };
+
+        // Tests and embedded flows may flush before collection service wiring.
+        // If collection config is available, register it so EventLog can resolve collection metadata.
+        if let Some(collection) = params.collection_config.clone() {
+            register_collection_in_cache(Arc::new(collection));
+        }
 
         // Detect what representations we have
         let has_quantized = params

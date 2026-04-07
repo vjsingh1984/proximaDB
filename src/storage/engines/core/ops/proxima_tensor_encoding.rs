@@ -127,14 +127,14 @@ pub fn decode_sparse_tensor(
     cursor.read_exact(&mut dim_bytes)?;
     let dimension = u32::from_le_bytes(dim_bytes) as usize;
 
-    if let Some(expected) = expected_dimension {
-        if dimension != expected {
-            return Err(anyhow::anyhow!(
-                "Dimension mismatch: expected {}, got {}",
-                expected,
-                dimension
-            ));
-        }
+    if let Some(expected) = expected_dimension
+        && dimension != expected
+    {
+        return Err(anyhow::anyhow!(
+            "Dimension mismatch: expected {}, got {}",
+            expected,
+            dimension
+        ));
     }
 
     let mut count_bytes = [0u8; 4];
@@ -148,17 +148,17 @@ pub fn decode_sparse_tensor(
     let dense_vectors = if is_coo {
         // COO format decoding
         let mut row_indices = vec![0u32; nnz];
-        for i in 0..nnz {
+        for entry in row_indices.iter_mut() {
             let mut idx_bytes = [0u8; 4];
             cursor.read_exact(&mut idx_bytes)?;
-            row_indices[i] = u32::from_le_bytes(idx_bytes);
+            *entry = u32::from_le_bytes(idx_bytes);
         }
 
         let mut col_indices = vec![0u32; nnz];
-        for i in 0..nnz {
+        for entry in col_indices.iter_mut() {
             let mut idx_bytes = [0u8; 4];
             cursor.read_exact(&mut idx_bytes)?;
-            col_indices[i] = u32::from_le_bytes(idx_bytes);
+            *entry = u32::from_le_bytes(idx_bytes);
         }
 
         // Decode values
@@ -186,17 +186,17 @@ pub fn decode_sparse_tensor(
     } else {
         // CSR format decoding
         let mut row_ptrs = vec![0u32; num_vectors + 1];
-        for i in 0..=num_vectors {
+        for entry in row_ptrs.iter_mut() {
             let mut ptr_bytes = [0u8; 4];
             cursor.read_exact(&mut ptr_bytes)?;
-            row_ptrs[i] = u32::from_le_bytes(ptr_bytes);
+            *entry = u32::from_le_bytes(ptr_bytes);
         }
 
         let mut col_indices = vec![0u32; nnz];
-        for i in 0..nnz {
+        for entry in col_indices.iter_mut() {
             let mut idx_bytes = [0u8; 4];
             cursor.read_exact(&mut idx_bytes)?;
-            col_indices[i] = u32::from_le_bytes(idx_bytes);
+            *entry = u32::from_le_bytes(idx_bytes);
         }
 
         // Decode values
@@ -339,7 +339,7 @@ pub fn encode_quantized_tensor(
             output.write_all(&(num_vectors as u32).to_le_bytes())?;
 
             // Pack bits
-            let bytes_per_vector = (dimension + 7) / 8;
+            let bytes_per_vector = dimension.div_ceil(8);
             for vec_idx in 0..num_vectors {
                 let mut packed = vec![0u8; bytes_per_vector];
                 for dim_idx in 0..dimension {
@@ -419,11 +419,11 @@ pub fn decode_quantized_tensor(data: &[u8]) -> Result<(Vec<f32>, usize, usize, Q
             let _subvector_dim = dimension / num_subvectors;
             let mut codebooks = vec![vec![0.0f32; codebook_size * _subvector_dim]; num_subvectors];
 
-            for subvec in 0..num_subvectors {
-                for entry in 0..codebook_size * _subvector_dim {
+            for codebook in codebooks.iter_mut() {
+                for entry in codebook.iter_mut() {
                     let mut val_bytes = [0u8; 4];
                     cursor.read_exact(&mut val_bytes)?;
-                    codebooks[subvec][entry] = f32::from_le_bytes(val_bytes);
+                    *entry = f32::from_le_bytes(val_bytes);
                 }
             }
 
@@ -463,7 +463,7 @@ pub fn decode_quantized_tensor(data: &[u8]) -> Result<(Vec<f32>, usize, usize, Q
             let num_vectors = u32::from_le_bytes(count_bytes) as usize;
 
             // Unpack bits
-            let bytes_per_vector = (dimension + 7) / 8;
+            let bytes_per_vector = dimension.div_ceil(8);
             let mut binary_data = vec![0u8; num_vectors * bytes_per_vector];
             cursor.read_exact(&mut binary_data)?;
 
@@ -651,7 +651,7 @@ mod tests {
         let encoded =
             encode_quantized_tensor(&vectors, num_vectors, dimension, QuantizationType::Binary)
                 .unwrap();
-        let (decoded, n, d, qt) = decode_quantized_tensor(&encoded).unwrap();
+        let (_decoded, n, d, qt) = decode_quantized_tensor(&encoded).unwrap();
 
         assert_eq!(n, num_vectors);
         assert_eq!(d, dimension);

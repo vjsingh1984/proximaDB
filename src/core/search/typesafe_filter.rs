@@ -242,11 +242,7 @@ impl TypeSafeFilterEvaluator {
             (Some(MetadataValue::StringValue(s)), Some(FilterableDataType::FilterableInteger)) => {
                 // Try to parse string as integer
                 if let (Ok(si), serde_json::Value::Number(jn)) = (s.parse::<i64>(), json_value) {
-                    if let Some(ji) = jn.as_i64() {
-                        Some(si.cmp(&ji))
-                    } else {
-                        None
-                    }
+                    jn.as_i64().map(|ji| si.cmp(&ji))
                 } else {
                     None
                 }
@@ -317,7 +313,9 @@ pub fn extract_typed_conditions(
 /// Typed condition for optimized filtering
 #[derive(Debug, Clone)]
 pub struct TypedCondition {
+    /// Comparison operator to apply
     pub operator: ComparisonOperator,
+    /// Typed value to compare against
     pub value: MetadataValue,
 }
 

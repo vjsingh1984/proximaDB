@@ -8,10 +8,12 @@ use crate::services::collection::manager::CollectionService;
 use std::sync::Arc;
 
 // Mock CollectionService for testing
+#[allow(dead_code)]
 struct MockCollectionService {
     collections: std::collections::HashMap<String, crate::proto::proximadb_v1::Collection>,
 }
 
+#[allow(dead_code)]
 impl MockCollectionService {
     fn new() -> Self {
         let mut collections = std::collections::HashMap::new();
@@ -164,6 +166,7 @@ impl MockCollectionService {
 
 // Note: CollectionServiceTrait doesn't exist in current codebase
 // This mock provides the same interface for testing
+#[allow(dead_code)]
 impl MockCollectionService {
     async fn create_collection(
         &self,

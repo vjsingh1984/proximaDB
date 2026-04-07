@@ -9,107 +9,193 @@ use anyhow::Result;
 /// Processing information enum values (1 byte each)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtractionMethod {
+    /// No extraction method specified
     Unspecified = 0,
+    /// Direct text extraction from source
     DirectText = 1,
+    /// Optical character recognition
     Ocr = 2,
+    /// Automatic speech recognition
     Asr = 3,
+    /// PDF document parsing
     PdfParsing = 4,
+    /// HTML content parsing
     HtmlParsing = 5,
+    /// Generic document parsing
     DocumentParsing = 6,
+    /// Image content analysis
     ImageAnalysis = 7,
+    /// Video content analysis
     VideoAnalysis = 8,
+    /// External API-based extraction
     ApiExtraction = 9,
+    /// Manual human entry
     ManualEntry = 10,
 }
 
+/// Current processing state of a record
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessingStatus {
+    /// No status specified
     Unspecified = 0,
+    /// Unprocessed raw data
     Raw = 1,
+    /// Currently being processed
     Processing = 2,
+    /// Successfully processed
     Processed = 3,
+    /// Processing failed with an error
     Failed = 4,
+    /// Awaiting manual review
     RequiresReview = 5,
+    /// Reviewed and approved
     Approved = 6,
+    /// Marked as deprecated
     Deprecated = 7,
 }
 
+/// Data quality assessment level
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QualityLevel {
+    /// No quality level specified
     Unspecified = 0,
+    /// High quality data
     High = 1,
+    /// Medium quality data
     Medium = 2,
+    /// Low quality data
     Low = 3,
+    /// Quality could not be determined
     Unknown = 4,
 }
 
+/// Origin of ingested data
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataSource {
+    /// No source specified
     Unspecified = 0,
+    /// Uploaded directly by a user
     UserUpload = 1,
+    /// Ingested through an API call
     ApiIngestion = 2,
+    /// Scraped from web pages
     WebScraping = 3,
+    /// Imported from local files
     FileImport = 4,
+    /// Synchronized from an external database
     DatabaseSync = 5,
+    /// Fetched from a third-party API
     ThirdPartyApi = 6,
+    /// Ingested via a batch processing pipeline
     BatchProcessing = 7,
+    /// Received from a real-time data stream
     RealTimeStream = 8,
+    /// Migrated from another system
     Migration = 9,
+    /// Restored from a backup
     BackupRestore = 10,
 }
 
+/// Broad category of the content being stored
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentCategory {
+    /// No category specified
     Unspecified = 0,
+    /// Text document
     Document = 1,
+    /// Image content
     Image = 2,
+    /// Audio content
     Audio = 3,
+    /// Video content
     Video = 4,
+    /// Source code
     Code = 5,
+    /// Tabular data
     Table = 6,
+    /// Chart or graph visualization
     Chart = 7,
+    /// Email message
     Email = 8,
+    /// Web page content
     Webpage = 9,
+    /// Social media post
     SocialMedia = 10,
+    /// Knowledge base article
     KnowledgeBase = 11,
+    /// Scientific paper or dataset
     Scientific = 12,
+    /// Legal document
     Legal = 13,
+    /// Financial document or report
     Financial = 14,
+    /// Medical record or literature
     Medical = 15,
 }
 
+/// Language of the source content, packed as a single byte
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LanguageCode {
+    /// No language specified
     Unspecified = 0,
+    /// English
     English = 1,
+    /// Spanish
     Spanish = 2,
+    /// French
     French = 3,
+    /// German
     German = 4,
+    /// Italian
     Italian = 5,
+    /// Portuguese
     Portuguese = 6,
+    /// Russian
     Russian = 7,
+    /// Chinese (Mandarin)
     Chinese = 8,
+    /// Japanese
     Japanese = 9,
+    /// Korean
     Korean = 10,
+    /// Arabic
     Arabic = 11,
+    /// Hindi
     Hindi = 12,
+    /// Dutch
     Dutch = 13,
+    /// Swedish
     Swedish = 14,
+    /// Norwegian
     Norwegian = 15,
+    /// Danish
     Danish = 16,
+    /// Finnish
     Finnish = 17,
+    /// Polish
     Polish = 18,
+    /// Czech
     Czech = 19,
+    /// Hungarian
     Hungarian = 20,
+    /// Turkish
     Turkish = 21,
+    /// Greek
     Greek = 22,
+    /// Hebrew
     Hebrew = 23,
+    /// Thai
     Thai = 24,
+    /// Vietnamese
     Vietnamese = 25,
+    /// Indonesian
     Indonesian = 26,
+    /// Malay
     Malay = 27,
+    /// Filipino
     Filipino = 28,
-    Custom = 255, // Use custom_language field
+    /// Custom language specified in the custom_language field
+    Custom = 255,
 }
 
 /// Pack 4 processing enums into single uint32 (75% storage savings)
@@ -383,10 +469,10 @@ mod tests {
         // Verify it fits in 4 bytes
         assert!(packed <= u32::MAX);
 
-        // Verify each enum value fits in 8 bits
-        assert!(ExtractionMethod::ManualEntry as u8 <= 255);
-        assert!(ProcessingStatus::Deprecated as u8 <= 255);
-        assert!(QualityLevel::Unknown as u8 <= 255);
-        assert!(DataSource::BackupRestore as u8 <= 255);
+        // Verify each enum has a u8 representation (the `as u8` cast itself validates this)
+        let _ = ExtractionMethod::ManualEntry as u8;
+        let _ = ProcessingStatus::Deprecated as u8;
+        let _ = QualityLevel::Unknown as u8;
+        let _ = DataSource::BackupRestore as u8;
     }
 }

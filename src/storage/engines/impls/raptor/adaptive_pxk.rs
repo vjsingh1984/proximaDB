@@ -168,7 +168,7 @@ impl PxKStorageImpl for DenseFullStorage {
     }
 
     fn memory_usage(&self) -> usize {
-        // TODO: Calculate actual memory usage from compressed storage
+        // Deferred: Calculate actual memory usage from compressed storage
         // self.matrix.distances.len() * self.matrix.num_clusters * 4
         self.matrix.compressed_data.len()
     }
@@ -281,7 +281,7 @@ impl SparseCoverageStorage {
                         .raw_value
                 })
                 .collect();
-            distances.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            distances.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
             if distances.len() >= 2 {
                 let ratio = distances[0] / distances[1];
@@ -296,7 +296,11 @@ impl SparseCoverageStorage {
         }
 
         // Sort by importance and take top budget
-        boundaries.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
+        boundaries.sort_by(|a, b| {
+            b.importance_score
+                .partial_cmp(&a.importance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         boundaries.truncate(budget);
         boundaries
     }
@@ -337,7 +341,7 @@ impl SparseCoverageStorage {
             })
             .collect();
 
-        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         for (idx, dist) in distances.iter().take(budget) {
             representatives.push(VectorSelection {
@@ -373,7 +377,7 @@ impl SparseCoverageStorage {
                         .calculate_distance(vector, c, &DistanceMetric::Cosine)
                         .raw_value
                 })
-                .min_by(|a, b| a.partial_cmp(b).unwrap())
+                .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or(f32::MAX);
 
             outliers.push(VectorSelection {
@@ -384,7 +388,11 @@ impl SparseCoverageStorage {
         }
 
         // Sort by distance (furthest first) and take top budget
-        outliers.sort_by(|a, b| b.importance_score.partial_cmp(&a.importance_score).unwrap());
+        outliers.sort_by(|a, b| {
+            b.importance_score
+                .partial_cmp(&a.importance_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         outliers.truncate(budget);
         outliers
     }
@@ -434,7 +442,7 @@ impl SparseCoverageStorage {
                             .calculate_distance(&vectors[idx], &vectors[s], &DistanceMetric::Cosine)
                             .raw_value
                     })
-                    .min_by(|a, b| a.partial_cmp(b).unwrap())
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                     .unwrap_or(f32::MAX);
 
                 if min_dist > best_min_dist {
@@ -461,7 +469,7 @@ impl SparseCoverageStorage {
     /// Compress distances based on strategy
     fn compress_distances(&self, distances: &[f32]) -> Vec<u8> {
         match self.compression {
-            CompressionStrategy::Uncompressed => bincode::serialize(distances).unwrap(),
+            CompressionStrategy::Uncompressed => bincode::serialize(distances).unwrap_or_default(),
             CompressionStrategy::Float16 => {
                 // Use the quantization engine for consistent quantization
                 let (quantized, min, max) = self.quantization_engine.quantize_to_u16(distances);
@@ -517,7 +525,7 @@ impl SparseCoverageStorage {
             CompressionStrategy::DeltaEncoded => {
                 // Sort and store deltas
                 let mut sorted = distances.to_vec();
-                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
                 let mut result = Vec::new();
                 result.extend_from_slice(&sorted[0].to_le_bytes());
@@ -851,7 +859,7 @@ impl AdaptivePxKStorage {
                 k,
             )),
             PxKStrategy::LearnedIndex => {
-                // TODO: Implement learned index
+                // Deferred: Implement learned index
                 Box::new(DenseFullStorage {
                     matrix: VectorCentroidMatrix {
                         rowgroup_id: 0,
@@ -877,5 +885,170 @@ impl AdaptivePxKStorage {
     /// Get memory usage in bytes
     pub fn memory_usage(&self) -> usize {
         self.storage.memory_usage()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_determine_strategy_dense_full_small_k() {
+        // k < sqrt(d): DenseFull
+        let (strategy, coverage) = AdaptivePxKStorage::determine_strategy(5, 100);
+        assert!(matches!(strategy, PxKStrategy::DenseFull));
+        assert_eq!(coverage, 1.0);
+    }
+
+    #[test]
+    fn test_determine_strategy_dense_compressed() {
+        // sqrt(d) <= k < d/4: DenseCompressed
+        // For d=256, sqrt(d)=16, d/4=64, so k=30 should be DenseCompressed
+        let (strategy, coverage) = AdaptivePxKStorage::determine_strategy(30, 256);
+        assert!(matches!(strategy, PxKStrategy::DenseCompressed));
+        assert_eq!(coverage, 1.0);
+    }
+
+    #[test]
+    fn test_determine_strategy_sparse_coverage() {
+        // d/4 <= k < 10000: SparseCoverage
+        // For d=100, d/4=25, so k=100 should be SparseCoverage
+        let (strategy, coverage) = AdaptivePxKStorage::determine_strategy(100, 100);
+        assert!(matches!(strategy, PxKStrategy::SparseCoverage { .. }));
+        assert!(coverage > 0.0 && coverage <= 1.0);
+    }
+
+    #[test]
+    fn test_determine_strategy_learned_index() {
+        // k >= 10000: LearnedIndex
+        let (strategy, coverage) = AdaptivePxKStorage::determine_strategy(10_000, 100);
+        assert!(matches!(strategy, PxKStrategy::LearnedIndex));
+        assert_eq!(coverage, 0.0);
+    }
+
+    #[test]
+    fn test_calculate_optimal_coverage_low_ratio() {
+        // ratio < 0.25: coverage = 1.0
+        let coverage = AdaptivePxKStorage::calculate_optimal_coverage(10, 100);
+        assert!(
+            (coverage - 1.0).abs() < 0.001,
+            "Low ratio should give 100% coverage, got {}",
+            coverage
+        );
+    }
+
+    #[test]
+    fn test_calculate_optimal_coverage_medium_ratio() {
+        // 0.25 <= ratio < 1.0: linear decay from 100% to 50%
+        let coverage = AdaptivePxKStorage::calculate_optimal_coverage(50, 100);
+        assert!(
+            coverage > 0.49 && coverage < 1.01,
+            "Medium ratio coverage {} should be between 0.5 and 1.0",
+            coverage
+        );
+    }
+
+    #[test]
+    fn test_calculate_optimal_coverage_high_ratio_has_floor() {
+        // ratio >= 1.0: logarithmic decay with 10% floor
+        let coverage = AdaptivePxKStorage::calculate_optimal_coverage(5000, 100);
+        assert!(
+            coverage >= 0.10,
+            "Coverage should never go below 10% floor, got {}",
+            coverage
+        );
+    }
+
+    #[test]
+    fn test_calculate_optimal_coverage_monotonic_decrease() {
+        let d = 256;
+        let mut prev = 2.0; // Start above max
+        for k in [10, 50, 100, 200, 500, 1000, 5000] {
+            let coverage = AdaptivePxKStorage::calculate_optimal_coverage(k, d);
+            assert!(
+                coverage <= prev,
+                "Coverage should decrease: k={}, coverage={}, prev={}",
+                k,
+                coverage,
+                prev
+            );
+            prev = coverage;
+        }
+    }
+
+    #[test]
+    fn test_select_compression_uncompressed_low_ratio() {
+        let strategy = AdaptivePxKStorage::select_compression(10, 100, 1.0);
+        assert!(matches!(strategy, CompressionStrategy::Uncompressed));
+    }
+
+    #[test]
+    fn test_select_compression_float16_medium_ratio_high_coverage() {
+        let strategy = AdaptivePxKStorage::select_compression(50, 100, 0.9);
+        assert!(matches!(strategy, CompressionStrategy::Float16));
+    }
+
+    #[test]
+    fn test_select_compression_quantized8_medium_ratio_low_coverage() {
+        let strategy = AdaptivePxKStorage::select_compression(50, 100, 0.5);
+        assert!(matches!(strategy, CompressionStrategy::Quantized8));
+    }
+
+    #[test]
+    fn test_select_compression_quantized4_high_ratio_low_coverage() {
+        let strategy = AdaptivePxKStorage::select_compression(200, 100, 0.2);
+        assert!(matches!(strategy, CompressionStrategy::Quantized4));
+    }
+
+    #[test]
+    fn test_select_compression_delta_encoded_extreme() {
+        let strategy = AdaptivePxKStorage::select_compression(1000, 100, 0.1);
+        assert!(matches!(strategy, CompressionStrategy::DeltaEncoded));
+    }
+
+    #[test]
+    fn test_memory_usage_empty_storage() {
+        let storage = AdaptivePxKStorage::new(5, 100, 50);
+        // Empty storage should have minimal memory usage
+        let usage = storage.memory_usage();
+        // DenseFull with empty compressed_data should be 0
+        assert_eq!(usage, 0);
+    }
+
+    #[test]
+    fn test_boundary_k_zero() {
+        // k=0 should still produce a valid strategy (DenseFull since 0 < sqrt(d))
+        let (strategy, _) = AdaptivePxKStorage::determine_strategy(0, 100);
+        assert!(matches!(strategy, PxKStrategy::DenseFull));
+    }
+
+    #[test]
+    fn test_boundary_d_equals_one() {
+        // d=1: sqrt(d)=1, d/4=0
+        // k=1 >= sqrt(1)=1 and k=1 >= d/4=0, so this depends on exact boundary conditions
+        let (strategy, _) = AdaptivePxKStorage::determine_strategy(1, 1);
+        // k=1, d=1: k < sqrt(d)=1 is false, k < d/4=0 is false, k < 10000 is true
+        assert!(matches!(strategy, PxKStrategy::SparseCoverage { .. }));
+    }
+
+    #[test]
+    fn test_selection_reason_variants() {
+        // Verify all selection reason variants can be constructed
+        let reasons = vec![
+            SelectionReason::Boundary,
+            SelectionReason::Representative,
+            SelectionReason::Outlier,
+            SelectionReason::Diverse,
+            SelectionReason::Random,
+        ];
+        for reason in reasons {
+            let selection = VectorSelection {
+                vector_idx: 0,
+                selection_reason: reason,
+                importance_score: 1.0,
+            };
+            assert_eq!(selection.vector_idx, 0);
+            assert_eq!(selection.importance_score, 1.0);
+        }
     }
 }

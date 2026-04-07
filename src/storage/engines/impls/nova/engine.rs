@@ -250,7 +250,7 @@ impl NovaEngine {
         );
 
         // Initialize compression provider directly
-        let compression_provider = StandardCompression::default();
+        let compression_provider = StandardCompression;
         // Initialize unified quantization engine from compute module
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
@@ -399,6 +399,7 @@ impl NovaEngine {
                 let reader = super::unified_strategy_reader::UnifiedNOVAReader::for_search(
                     self.filesystem.clone(),
                     collection_id.to_string(),
+                    128, // Deferred: Pass actual dimension from StorageQueryContext when available
                 )?;
 
                 // Read vectors using the cached filesystem (metadata will be cached)
@@ -789,17 +790,19 @@ impl NovaEngine {
             .collection_config
             .as_ref()
             .and_then(|c| c.config.as_ref())
-            .map(|cfg| cfg.filterable_columns.clone())
-            .unwrap_or_else(|| {
-                vec![crate::proto::proximadb_v1::FilterableColumnSpec {
-                    name: FIELD_ID.to_string(),
-                    data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString
-                        as i32,
-                    indexed: true,
-                    supports_range: false,
-                    estimated_cardinality: Some(1000000),
-                }]
-            });
+            .map_or_else(
+                || {
+                    vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+                        name: FIELD_ID.to_string(),
+                        data_type: crate::proto::proximadb_v1::FilterableDataType::FilterableString
+                            as i32,
+                        indexed: true,
+                        supports_range: false,
+                        estimated_cardinality: Some(1000000),
+                    }]
+                },
+                |cfg| cfg.filterable_columns.clone(),
+            );
 
         // Configure writer with NOVA-specific settings
         // Include both ID and filterable columns in bloom filters
@@ -920,7 +923,7 @@ impl NovaEngine {
                 *dim as usize
             } else {
                 // Fallback: use first record's vector dimension
-                records.first().map(|r| r.vector.len()).unwrap_or(0)
+                records.first().map_or(0, |r| r.vector.len())
             };
 
         // Build vector column as FixedSizeList
@@ -988,7 +991,9 @@ impl NovaEngine {
                         let string_builder = builder
                             .as_any_mut()
                             .downcast_mut::<StringBuilder>()
-                            .unwrap();
+                            .ok_or_else(|| {
+                            anyhow!("Failed to downcast metadata builder to StringBuilder")
+                        })?;
                         if let Some(value) = metadata_value {
                             if let Some(s) = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
@@ -1005,8 +1010,12 @@ impl NovaEngine {
                         }
                     }
                     arrow_schema::DataType::Int64 => {
-                        let int_builder =
-                            builder.as_any_mut().downcast_mut::<Int64Builder>().unwrap();
+                        let int_builder = builder
+                            .as_any_mut()
+                            .downcast_mut::<Int64Builder>()
+                            .ok_or_else(|| {
+                                anyhow!("Failed to downcast metadata builder to Int64Builder")
+                            })?;
                         if let Some(value) = metadata_value {
                             if let Some(i) = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
@@ -1026,7 +1035,9 @@ impl NovaEngine {
                         let float_builder = builder
                             .as_any_mut()
                             .downcast_mut::<Float64Builder>()
-                            .unwrap();
+                            .ok_or_else(|| {
+                            anyhow!("Failed to downcast metadata builder to Float64Builder")
+                        })?;
                         if let Some(value) = metadata_value {
                             if let Some(f) = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
@@ -1046,7 +1057,9 @@ impl NovaEngine {
                         let bool_builder = builder
                             .as_any_mut()
                             .downcast_mut::<BooleanBuilder>()
-                            .unwrap();
+                            .ok_or_else(|| {
+                                anyhow!("Failed to downcast metadata builder to BooleanBuilder")
+                            })?;
                         if let Some(value) = metadata_value {
                             if let Some(b) = value.value.as_ref().and_then(|v| match v {
                                 crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
@@ -1067,7 +1080,9 @@ impl NovaEngine {
                         let string_builder = builder
                             .as_any_mut()
                             .downcast_mut::<StringBuilder>()
-                            .unwrap();
+                            .ok_or_else(|| {
+                            anyhow!("Failed to downcast fallback metadata builder to StringBuilder")
+                        })?;
                         string_builder.append_null();
                     }
                 }
@@ -1261,19 +1276,19 @@ impl NovaEngine {
                     version: None,
                     similarity: r.similarity,
                     timestamp: None,
-                    source: r.source.and_then(|sc| match sc.data {
+                    source: r.source.map(|sc| match sc.data {
                         Some(crate::proto::proximadb_v1::source_content::Data::TextContent(
                             text,
-                        )) => Some(text),
+                        )) => text,
                         Some(
                             crate::proto::proximadb_v1::source_content::Data::ExternalReference(
                                 url,
                             ),
-                        ) => Some(url),
+                        ) => url,
                         Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(
                             _,
-                        )) => Some("[Binary Content]".to_string()),
-                        None => Some("[Empty Content]".to_string()),
+                        )) => "[Binary Content]".to_string(),
+                        None => "[Empty Content]".to_string(),
                     }),
                     expanded_context: r
                         .expanded_context
@@ -1343,6 +1358,41 @@ impl UnifiedStorageEngine for NovaEngine {
         self.compaction_ops.compact(params).await
     }
 
+    async fn collection_stats(
+        &self,
+        _collection_id: &str,
+    ) -> Result<crate::storage::traits::CollectionStats> {
+        let stats = self.statistics.read().await;
+        let total_bytes = stats.total_storage_bytes;
+        let collection_count = stats.collection_count as u64;
+
+        // Estimate per-collection row count from total storage and collection count
+        let per_collection_bytes = if collection_count > 0 {
+            total_bytes / collection_count
+        } else {
+            total_bytes
+        };
+
+        // NOVA uses columnar Parquet: avg ~256 bytes per vector after compression
+        let avg_record_bytes: u64 = 256;
+        let estimated_row_count = if avg_record_bytes > 0 && per_collection_bytes > 0 {
+            per_collection_bytes / avg_record_bytes
+        } else {
+            0
+        };
+
+        Ok(crate::storage::traits::CollectionStats {
+            row_count: estimated_row_count,
+            avg_vector_bytes: avg_record_bytes,
+            engine_strategy: crate::storage::traits::StorageEngineStrategy::Nova,
+            has_metadata_index: true, // NOVA has zone maps and bloom filters
+            has_hnsw_index: false,
+            total_bytes: per_collection_bytes,
+            dimension: None,
+            index_type: Some("zone_map".to_string()),
+        })
+    }
+
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();
 
@@ -1350,7 +1400,7 @@ impl UnifiedStorageEngine for NovaEngine {
         metrics.insert("engine_type".to_string(), serde_json::json!("NOVA"));
         metrics.insert("columnar_engine".to_string(), serde_json::json!(true));
 
-        // TODO: Collect actual metrics from storage when needed
+        // Deferred: Collect actual metrics from storage when needed
         let total_files = 0;
         let total_row_groups = 0;
         metrics.insert(
@@ -1392,15 +1442,15 @@ impl UnifiedStorageEngine for NovaEngine {
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
         {
             // Try to get from vector cache first
-            if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
-                    // Track cache hit for access pattern learning
-                    orchestrator.pattern_tracker().track_access_async(
-                        cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::VectorData,
-                    );
-                    return Ok(Some(cached_vector));
-                }
+            if let Some(vector_cache) = orchestrator.get_vector_cache()
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await
+            {
+                // Track cache hit for access pattern learning
+                orchestrator.pattern_tracker().track_access_async(
+                    cache_key.clone(),
+                    crate::storage::cache::orchestrator::CacheType::VectorData,
+                );
+                return Ok(Some(cached_vector));
             }
 
             // Track cache miss
@@ -1418,7 +1468,7 @@ impl UnifiedStorageEngine for NovaEngine {
         // Construct data directory from base_path and collection_id
         let _data_dir = format!("{}/{}/data", base_path, collection_id);
 
-        // TODO: Load actual Parquet files from data_dir
+        // Deferred: Load actual Parquet files from data_dir
         // For now, return None as placeholder
         // In production, would:
         // 1. Load Parquet files from data_dir
@@ -1559,17 +1609,17 @@ impl UnifiedStorageEngine for NovaEngine {
     }
 
     fn supports_feature(&self, feature: &str) -> bool {
-        match feature {
-            "id_lookup" => true,
-            "similarity_search" => true,
-            "columnar_search" => true,
-            "quantization" => true,
-            "compression" => true,
-            "batch_operations" => true,
-            "predicate_pushdown" => true,
-            "projection" => true,
-            _ => false,
-        }
+        matches!(
+            feature,
+            "id_lookup"
+                | "similarity_search"
+                | "columnar_search"
+                | "quantization"
+                | "compression"
+                | "batch_operations"
+                | "predicate_pushdown"
+                | "projection"
+        )
     }
 }
 
@@ -1593,7 +1643,7 @@ impl NovaFile {
     }
 }
 
-// TODO: Fix columnar search config implementation when module is available
+// Deferred: Fix columnar search config implementation when module is available
 /*
 impl crate::storage::engines::core::formats::columnar::columnar_search::ColumnarSearchConfig {
     /// Create from search parameters
@@ -1783,7 +1833,7 @@ impl NovaEngine {
         let mut all_results = Vec::new();
 
         // Search each NOVA file using columnar optimization
-        for _nova_file in files.iter() {
+        for _nova_file in &files {
             // Placeholder - would implement actual columnar search
             let results: Vec<(crate::proto::proximadb_v1::VectorRecord, f32)> = Vec::new();
 

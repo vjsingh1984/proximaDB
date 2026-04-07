@@ -292,10 +292,11 @@ impl ArrowBlockReader {
         for entry in blocks {
             let records = self.read_block(entry.block_num as usize)?;
             for record in records {
-                if let Some(ts) = record.timestamp {
-                    if ts >= start_ts && ts <= end_ts {
-                        results.push(record);
-                    }
+                if let Some(ts) = record.timestamp
+                    && ts >= start_ts
+                    && ts <= end_ts
+                {
+                    results.push(record);
                 }
             }
         }
@@ -349,15 +350,20 @@ mod tests {
 
     fn create_test_file(dir: &Path, records: &[VectorRecord], config: ArrowBlockConfig) -> String {
         let path = dir.join("test.arrow");
-        let mut writer = ArrowBlockWriter::new(&path, config).unwrap();
-        writer.write_block(records).unwrap();
-        writer.finalize().unwrap();
+        let mut writer = ArrowBlockWriter::new(&path, config)
+            .expect("Failed to create ArrowBlockWriter for test file");
+        writer
+            .write_block(records)
+            .expect("Failed to write block in test setup");
+        writer
+            .finalize()
+            .expect("Failed to finalize ArrowBlockWriter in test setup");
         path.to_string_lossy().to_string()
     }
 
     #[test]
     fn test_read_basic() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create tempdir for test_read_basic");
         let records: Vec<_> = (0..100)
             .map(|i| create_test_record(&format!("vec_{:05}", i), 64))
             .collect();
@@ -368,18 +374,21 @@ mod tests {
             ArrowBlockConfig::new(64).uncompressed(),
         );
 
-        let reader = ArrowBlockReader::open(&path).unwrap();
+        let reader = ArrowBlockReader::open(&path)
+            .expect("Failed to open ArrowBlockReader in test_read_basic");
         assert_eq!(reader.num_blocks(), 1);
         assert_eq!(reader.total_records(), 100);
 
-        let read_records = reader.read_block(0).unwrap();
+        let read_records = reader
+            .read_block(0)
+            .expect("Failed to read block 0 in test_read_basic");
         assert_eq!(read_records.len(), 100);
         assert_eq!(read_records[0].id, "vec_00000");
     }
 
     #[test]
     fn test_lookup_by_id() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create tempdir for test_lookup_by_id");
         let records: Vec<_> = (0..50)
             .map(|i| create_test_record(&format!("vec_{:05}", i), 32))
             .collect();
@@ -390,21 +399,31 @@ mod tests {
             ArrowBlockConfig::new(32).uncompressed(),
         );
 
-        let reader = ArrowBlockReader::open(&path).unwrap();
+        let reader = ArrowBlockReader::open(&path)
+            .expect("Failed to open ArrowBlockReader in test_lookup_by_id");
 
         // Find existing ID
-        let result = reader.lookup_by_id("vec_00025").unwrap();
+        let result = reader
+            .lookup_by_id("vec_00025")
+            .expect("Failed to lookup by ID 'vec_00025' in test_lookup_by_id");
         assert!(result.is_some());
-        assert_eq!(result.unwrap().id, "vec_00025");
+        assert_eq!(
+            result
+                .expect("Expected Some result in test_lookup_by_id")
+                .id,
+            "vec_00025"
+        );
 
         // ID not found
-        let result = reader.lookup_by_id("vec_99999").unwrap();
+        let result = reader
+            .lookup_by_id("vec_99999")
+            .expect("Failed to lookup by ID 'vec_99999' in test_lookup_by_id");
         assert!(result.is_none());
     }
 
     #[test]
     fn test_batch_lookup() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create tempdir for test_batch_lookup");
         let records: Vec<_> = (0..100)
             .map(|i| create_test_record(&format!("vec_{:05}", i), 32))
             .collect();
@@ -415,17 +434,20 @@ mod tests {
             ArrowBlockConfig::new(32).uncompressed(),
         );
 
-        let reader = ArrowBlockReader::open(&path).unwrap();
+        let reader = ArrowBlockReader::open(&path)
+            .expect("Failed to open ArrowBlockReader in test_batch_lookup");
 
         let ids = vec!["vec_00010", "vec_00050", "vec_00090"];
-        let results = reader.lookup_batch(&ids).unwrap();
+        let results = reader
+            .lookup_batch(&ids)
+            .expect("Failed to perform batch lookup in test_batch_lookup");
 
         assert_eq!(results.len(), 3);
     }
 
     #[test]
     fn test_range_query() {
-        let dir = tempdir().unwrap();
+        let dir = tempdir().expect("Failed to create tempdir for test_range_query");
         let records: Vec<_> = (0..100)
             .map(|i| create_test_record(&format!("vec_{:05}", i), 32))
             .collect();
@@ -436,9 +458,12 @@ mod tests {
             ArrowBlockConfig::new(32).uncompressed(),
         );
 
-        let reader = ArrowBlockReader::open(&path).unwrap();
+        let reader = ArrowBlockReader::open(&path)
+            .expect("Failed to open ArrowBlockReader in test_range_query");
 
-        let results = reader.range_query("vec_00020", "vec_00030").unwrap();
+        let results = reader
+            .range_query("vec_00020", "vec_00030")
+            .expect("Failed to perform range query in test_range_query");
         assert_eq!(results.len(), 11); // Inclusive range
         assert_eq!(results[0].id, "vec_00020");
         assert_eq!(results[10].id, "vec_00030");

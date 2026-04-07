@@ -197,8 +197,11 @@ pub enum SearchScenario {
 /// Observed recall rates for adaptive tuning
 #[derive(Debug, Clone, Default)]
 pub struct ObservedRecalls {
+    /// Measured recall at the binary quantization stage
     pub binary_recall: Option<f32>,
+    /// Measured recall at the INT8 quantization stage
     pub int8_recall: Option<f32>,
+    /// Measured recall at the product quantization stage
     pub pq_recall: Option<f32>,
 }
 
@@ -209,6 +212,7 @@ pub struct ProgressiveSearchExecutor {
 }
 
 impl ProgressiveSearchExecutor {
+    /// Create a new progressive search executor with the given configuration
     pub fn new(config: ProgressiveSearchConfig) -> Self {
         Self {
             config,
@@ -322,11 +326,17 @@ pub trait ProgressiveSearchFn<T>: Send + Sync {
 /// Metrics for progressive search performance
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SearchMetrics {
+    /// Time spent in binary quantization stage (ms)
     pub binary_time_ms: f64,
+    /// Time spent in INT8 quantization stage (ms)
     pub int8_time_ms: f64,
+    /// Time spent in product quantization stage (ms)
     pub pq_time_ms: f64,
+    /// Time spent in FP32 final ranking stage (ms)
     pub fp32_time_ms: f64,
+    /// Total search time across all stages (ms)
     pub total_time_ms: f64,
+    /// Total candidates evaluated across all stages
     pub total_candidates: usize,
 }
 

@@ -58,7 +58,7 @@ pub struct MigrationResult {
     pub total_time_ms: u64,
     pub average_throughput: f64,
     pub performance_metrics: HashMap<String, f64>,
-    // TODO: Restore validation module
+    // Deferred: Restore validation module
     // pub validation_results: Option<super::validation::ValidationReport>,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
@@ -160,7 +160,7 @@ impl EngineMigrator {
 
         for (order, collection_id) in collections.iter().enumerate() {
             let plan = self.create_collection_plan(collection_id, order).await?;
-            total_duration = total_duration + plan.estimated_time;
+            total_duration += plan.estimated_time;
             total_data_size += plan.data_size_bytes;
             collection_plans.push(plan);
         }
@@ -528,6 +528,12 @@ impl MigrationProgress {
             self.estimated_completion =
                 Some(chrono::Utc::now() + chrono::Duration::seconds(remaining_seconds as i64));
         }
+    }
+}
+
+impl Default for MigrationProgress {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

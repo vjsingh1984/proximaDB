@@ -134,13 +134,10 @@ impl MetadataBloomFilter for CompositeBloomFilter {
         column: &str,
         item: &crate::proto::proximadb_v1::MetadataItem,
     ) -> bool {
-        self.metadata_filters
-            .get(column)
-            .map(|filter| {
-                let serialized = crate::core::bloom::serialize_metadata_value(item);
-                filter.might_contain(serialized.as_bytes())
-            })
-            .unwrap_or(false)
+        self.metadata_filters.get(column).is_some_and(|filter| {
+            let serialized = crate::core::bloom::serialize_metadata_value(item);
+            filter.might_contain(serialized.as_bytes())
+        })
     }
 
     fn num_columns(&self) -> usize {

@@ -127,8 +127,9 @@ impl ClosenessCentrality {
             let neighbors = csr_out.get_neighbors(current_idx).unwrap_or(&[]);
 
             for &neighbor_idx in neighbors {
-                if !distances.contains_key(&neighbor_idx) {
-                    distances.insert(neighbor_idx, current_distance + 1);
+                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor_idx)
+                {
+                    e.insert(current_distance + 1);
                     queue.push_back(neighbor_idx);
                 }
             }
@@ -335,8 +336,9 @@ impl HarmonicCentrality {
             let neighbors = csr_out.get_neighbors(current_idx).unwrap_or(&[]);
 
             for &neighbor_idx in neighbors {
-                if !distances.contains_key(&neighbor_idx) {
-                    distances.insert(neighbor_idx, current_distance + 1);
+                if let std::collections::hash_map::Entry::Vacant(e) = distances.entry(neighbor_idx)
+                {
+                    e.insert(current_distance + 1);
                     queue.push_back(neighbor_idx);
                 }
             }
@@ -471,6 +473,217 @@ impl ParallelAlgorithm for HarmonicCentrality {
     }
 }
 
+/// Betweenness centrality algorithm (Brandes)
+///
+/// Measures how often a node lies on shortest paths between other node pairs.
+/// Uses Brandes' O(VE) algorithm with BFS-based dependency accumulation.
+///
+/// Formula:
+/// B(v) = Σ σ_st(v) / σ_st  for all s ≠ v ≠ t
+///
+/// Where:
+/// - σ_st = number of shortest paths from s to t
+/// - σ_st(v) = number of shortest paths from s to t that pass through v
+pub struct BetweennessCentrality {
+    engine: Arc<OrionGraphEngine>,
+    normalized: bool,
+}
+
+impl BetweennessCentrality {
+    /// Create a new betweenness centrality calculator for the given graph engine.
+    pub fn new(engine: Arc<OrionGraphEngine>, normalized: bool) -> Self {
+        Self { engine, normalized }
+    }
+}
+
+impl GraphAlgorithm for BetweennessCentrality {
+    type Input = NoInput;
+    type Output = CentralityScores;
+
+    fn execute(&self, _input: NoInput) -> Result<CentralityScores, ProximaDBError> {
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
+        let node_count = csr_out.node_count();
+        if node_count == 0 {
+            return Ok(HashMap::new());
+        }
+
+        let index_to_node = self.engine.index_to_node.read().map_err(|_| {
+            ProximaDBError::Internal("Failed to acquire index mapping lock".to_string())
+        })?;
+
+        // Brandes algorithm: accumulate dependency from each source
+        let mut betweenness = vec![0.0f64; node_count];
+
+        for s in 0..node_count {
+            // BFS from source s
+            let mut stack: Vec<usize> = Vec::new();
+            let mut predecessors: Vec<Vec<usize>> = vec![vec![]; node_count];
+            let mut sigma = vec![0.0f64; node_count]; // number of shortest paths
+            sigma[s] = 1.0;
+            let mut dist: Vec<i64> = vec![-1; node_count];
+            dist[s] = 0;
+            let mut queue = VecDeque::new();
+            queue.push_back(s);
+
+            while let Some(v) = queue.pop_front() {
+                stack.push(v);
+                let neighbors = csr_out.get_neighbors(v).unwrap_or(&[]);
+                for &w in neighbors {
+                    // w found for the first time?
+                    if dist[w] < 0 {
+                        dist[w] = dist[v] + 1;
+                        queue.push_back(w);
+                    }
+                    // Is this a shortest path to w via v?
+                    if dist[w] == dist[v] + 1 {
+                        sigma[w] += sigma[v];
+                        predecessors[w].push(v);
+                    }
+                }
+            }
+
+            // Back-propagation of dependencies
+            let mut delta = vec![0.0f64; node_count];
+            while let Some(w) = stack.pop() {
+                for &v in &predecessors[w] {
+                    delta[v] += (sigma[v] / sigma[w]) * (1.0 + delta[w]);
+                }
+                if w != s {
+                    betweenness[w] += delta[w];
+                }
+            }
+        }
+
+        // Normalize for undirected graphs: divide by 2
+        // For directed graphs the formula is already correct
+        // Optionally normalize to [0,1] by dividing by (n-1)(n-2)
+        if self.normalized && node_count > 2 {
+            let norm = ((node_count - 1) * (node_count - 2)) as f64;
+            for b in &mut betweenness {
+                *b /= norm;
+            }
+        }
+
+        let mut scores = HashMap::new();
+        for (idx, &b) in betweenness.iter().enumerate() {
+            let node_id = index_to_node
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| idx.to_string());
+            scores.insert(node_id, b);
+        }
+
+        Ok(scores)
+    }
+
+    fn estimated_complexity(&self) -> AlgorithmComplexity {
+        // Brandes: O(VE) for unweighted graphs
+        AlgorithmComplexity::QuadraticVertices
+    }
+
+    fn name(&self) -> &'static str {
+        "BetweennessCentrality"
+    }
+}
+
+impl ParallelAlgorithm for BetweennessCentrality {
+    fn execute_parallel(
+        &self,
+        _input: NoInput,
+        _thread_pool: &rayon::ThreadPool,
+    ) -> Result<CentralityScores, ProximaDBError> {
+        let csr_out =
+            self.engine.csr_outgoing.read().map_err(|_| {
+                ProximaDBError::Internal("Failed to acquire CSR read lock".to_string())
+            })?;
+        let node_count = csr_out.node_count();
+        if node_count == 0 {
+            return Ok(HashMap::new());
+        }
+        let index_to_node = self.engine.index_to_node.read().map_err(|_| {
+            ProximaDBError::Internal("Failed to acquire index mapping lock".to_string())
+        })?;
+        drop(csr_out);
+
+        // Parallel BFS from each source, then reduce
+        let partial: Vec<Vec<f64>> = (0..node_count)
+            .into_par_iter()
+            .map(|s| {
+                let csr = self
+                    .engine
+                    .csr_outgoing
+                    .read()
+                    .expect("RwLock read lock poisoned - CSR data unavailable");
+                let n = csr.node_count();
+                let mut local_b = vec![0.0f64; n];
+                let mut stack = Vec::new();
+                let mut preds: Vec<Vec<usize>> = vec![vec![]; n];
+                let mut sigma = vec![0.0f64; n];
+                sigma[s] = 1.0;
+                let mut dist = vec![-1i64; n];
+                dist[s] = 0;
+                let mut queue = VecDeque::new();
+                queue.push_back(s);
+                while let Some(v) = queue.pop_front() {
+                    stack.push(v);
+                    for &w in csr.get_neighbors(v).unwrap_or(&[]) {
+                        if dist[w] < 0 {
+                            dist[w] = dist[v] + 1;
+                            queue.push_back(w);
+                        }
+                        if dist[w] == dist[v] + 1 {
+                            sigma[w] += sigma[v];
+                            preds[w].push(v);
+                        }
+                    }
+                }
+                let mut delta = vec![0.0f64; n];
+                while let Some(w) = stack.pop() {
+                    for &v in &preds[w] {
+                        delta[v] += (sigma[v] / sigma[w]) * (1.0 + delta[w]);
+                    }
+                    if w != s {
+                        local_b[w] += delta[w];
+                    }
+                }
+                local_b
+            })
+            .collect();
+
+        // Reduce partial results
+        let mut betweenness = vec![0.0f64; node_count];
+        for p in &partial {
+            for (i, v) in p.iter().enumerate() {
+                betweenness[i] += v;
+            }
+        }
+
+        if self.normalized && node_count > 2 {
+            let norm = ((node_count - 1) * (node_count - 2)) as f64;
+            for b in &mut betweenness {
+                *b /= norm;
+            }
+        }
+
+        let mut scores = HashMap::new();
+        for (idx, &b) in betweenness.iter().enumerate() {
+            let node_id = index_to_node
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| idx.to_string());
+            scores.insert(node_id, b);
+        }
+        Ok(scores)
+    }
+
+    fn min_graph_size_for_parallel(&self) -> usize {
+        50
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,10 +738,30 @@ mod tests {
     fn test_parallel_execution_threshold() {
         let engine = Arc::new(OrionGraphEngine::new());
         let closeness = ClosenessCentrality::new(engine.clone(), true);
-        let harmonic = HarmonicCentrality::new(engine, true);
+        let harmonic = HarmonicCentrality::new(engine.clone(), true);
+        let betweenness = BetweennessCentrality::new(engine, true);
 
-        // Both algorithms should have same threshold for parallel execution
         assert_eq!(closeness.min_graph_size_for_parallel(), 100);
         assert_eq!(harmonic.min_graph_size_for_parallel(), 100);
+        assert_eq!(betweenness.min_graph_size_for_parallel(), 50);
+    }
+
+    #[test]
+    fn test_betweenness_centrality_empty() {
+        let engine = Arc::new(OrionGraphEngine::new());
+        let bc = BetweennessCentrality::new(engine, true);
+        let scores = bc.execute(NoInput).unwrap();
+        assert_eq!(scores.len(), 0);
+    }
+
+    #[test]
+    fn test_betweenness_centrality_name() {
+        let engine = Arc::new(OrionGraphEngine::new());
+        let bc = BetweennessCentrality::new(engine, true);
+        assert_eq!(bc.name(), "BetweennessCentrality");
+        assert_eq!(
+            bc.estimated_complexity(),
+            AlgorithmComplexity::QuadraticVertices
+        );
     }
 }

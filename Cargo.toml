@@ -32,7 +32,10 @@ path = "src/bin/proximadb-migrate.rs"
 # Python embedded library (cdylib for PyO3)
 [lib]
 name = "proximadb"
-crate-type = ["rlib", "cdylib"]
+# Default: rlib only (for testing and normal Rust usage)
+# cdylib is produced via the pylib feature flag (for PyO3/FFI builds only)
+# See ADR-006 for rationale: cdylib caused test modules to be silently excluded
+crate-type = ["rlib"]
 
 
 
@@ -45,6 +48,7 @@ tokio-stream = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 bincode = "1.3"
+rmp-serde = "1.1"  # MessagePack serialization
 bytemuck = { version = "1.14", features = ["derive"] }
 
 # SQL Parsing
@@ -76,10 +80,13 @@ tower = { version = "0.4", features = ["limit"] }
 tower-http = { version = "0.4", features = ["cors", "trace", "fs", "compression-full", "decompression-full", "timeout"] }
 url = "2.4"
 reqwest = { version = "0.11", features = ["json"] }
+lettre = "0.11"  # Email sending for alert notifications
 
 # Storage & Memory Management
 memmap2 = "0.9"
+lru = "0.12"  # LRU cache for disk-backed graph storage
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
+tokio-postgres = { version = "0.7", optional = true }  # PostgreSQL client for CDC (experimental-cdc-connectors)
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
@@ -138,6 +145,8 @@ rand_distr = "0.4"  # For generating realistic probability distributions
 
 # Cryptographic hashing
 sha2 = "0.10"
+hkdf = "0.12"  # Key derivation function
+aes-gcm = "0.10"  # AEAD encryption for field-level encryption
 
 # TLS/mTLS certificate management
 rcgen = "0.12"                   # Certificate generation
@@ -230,7 +239,6 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
-tokio-postgres = "0.7"  # PostgreSQL client for integration testing
 
 [features]
 default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
@@ -257,6 +265,20 @@ rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 aws = ["dep:aws-config", "dep:aws-sdk-s3"]
 azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
 gcp = ["dep:google-cloud-storage"]
+
+# ============================================================================
+# OPTIONAL INTEGRATION FEATURES
+# ============================================================================
+
+# Network REST endpoints (HTTP/HTTPS server components)
+network-rest = []
+
+# CDC Kafka integration (change data capture to Kafka)
+# Note: rdkafka dependency would be added when enabling this feature
+cdc-kafka = []
+
+# Protobuf compilation (for distributed gRPC service generation)
+compile_protobuf = []
 
 # ============================================================================
 # TEST CATEGORIZATION (Strategic CI/CD Gating)
@@ -319,8 +341,7 @@ unified-facade-routing = []
 graph-first-sks = []
 
 # DataFusion integration for compute engine compatibility
-# NOTE: Disabled by default due to Arrow version mismatch (DataFusion 45.x uses Arrow 54.x)
-# TODO: Upgrade when DataFusion releases version with Arrow 57.x support
+# DataFusion 51.x uses Arrow 57.x — versions are aligned as of 2026-04
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
 
 # ============================================================================
@@ -354,8 +375,8 @@ debug-filters = []  # Enable debug filtering for search operations
 # EXPERIMENTAL: Native database CDC connectors (PostgreSQL, MySQL, MongoDB)
 # WARNING: These connectors have partial implementations without network I/O.
 # For production MySQL/MongoDB CDC, use Debezium with Kafka sink.
-# PostgreSQL connector has pgoutput decoder but no connection layer.
-experimental-cdc-connectors = []
+# PostgreSQL connector now has tokio-postgres connection layer (Issue #54).
+experimental-cdc-connectors = ["dep:tokio-postgres"]
 
 # ============================================================================
 # EMBEDDED DATABASE MODE FEATURES

@@ -244,6 +244,12 @@ impl ConcurrentIdMapping {
     }
 }
 
+impl Default for ConcurrentIdMapping {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Atomic statistics tracker for index performance monitoring
 #[derive(Debug)]
 pub struct AtomicStats {
@@ -342,9 +348,7 @@ pub mod metadata {
                         JsonValue::String(s)
                     }
                     crate::proto::proximadb_v1::metadata_item::Value::NumberValue(f) => {
-                        serde_json::Number::from_f64(f)
-                            .map(JsonValue::Number)
-                            .unwrap_or(JsonValue::Null)
+                        serde_json::Number::from_f64(f).map_or(JsonValue::Null, JsonValue::Number)
                     }
                     crate::proto::proximadb_v1::metadata_item::Value::BoolValue(b) => {
                         JsonValue::Bool(b)

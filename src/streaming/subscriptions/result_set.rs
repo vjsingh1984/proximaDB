@@ -164,7 +164,7 @@ impl ResultSet {
         }
 
         // Check against minimum score
-        self.min_score().map_or(true, |min| score > min)
+        self.min_score().is_none_or(|min| score > min)
     }
 
     /// Get a result by vector ID
@@ -214,7 +214,7 @@ impl ResultSet {
                     // Remove old entry
                     let old_key = ResultKey::new(existing_score.0, result.vector_id.clone());
                     let old_result = self.results.remove(&old_key);
-                    let old_position = old_result.as_ref().map(|r| r.position).unwrap_or(0);
+                    let old_position = old_result.as_ref().map_or(0, |r| r.position);
 
                     // Insert with new score
                     let new_key = ResultKey::new(result.score, result.vector_id.clone());

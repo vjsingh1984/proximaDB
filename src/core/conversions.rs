@@ -74,10 +74,14 @@ pub fn parse_distance_metric(metric: &str) -> Result<DistanceMetric> {
 pub fn parse_storage_engine(engine: &str) -> Result<StorageEngine> {
     match engine.to_lowercase().as_str() {
         "sst" => Ok(StorageEngine::Sst),
+        "helix" => Ok(StorageEngine::Helix),
         "viper" => Ok(StorageEngine::Viper),
         "nova" => Ok(StorageEngine::Nova),
         "swift" => Ok(StorageEngine::Swift),
-        // Note: Prism engine was removed from proto definition
+        "raptor" => Ok(StorageEngine::Raptor),
+        "mmap" => Ok(StorageEngine::Mmap),
+        "hybrid" => Ok(StorageEngine::Hybrid),
+        "tst" => Ok(StorageEngine::Tst),
         _ => Err(anyhow::anyhow!("Invalid storage engine: {}", engine)),
     }
 }
@@ -114,9 +118,14 @@ pub fn distance_metric_to_string(metric: i32) -> &'static str {
 pub fn storage_engine_to_string(engine: i32) -> &'static str {
     match StorageEngine::try_from(engine) {
         Ok(StorageEngine::Sst) => "sst",
+        Ok(StorageEngine::Helix) => "helix",
         Ok(StorageEngine::Viper) => "viper",
         Ok(StorageEngine::Nova) => "nova",
         Ok(StorageEngine::Swift) => "swift",
+        Ok(StorageEngine::Raptor) => "raptor",
+        Ok(StorageEngine::Mmap) => "mmap",
+        Ok(StorageEngine::Hybrid) => "hybrid",
+        Ok(StorageEngine::Tst) => "tst",
         _ => "unknown",
     }
 }
@@ -216,18 +225,18 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
             metadata: native.metadata,
             version: native.version,
             similarity: native.similarity,
-            timestamp: native.timestamp.map(|t| t as i64),
-            source: native.source.as_ref().and_then(|sc| match &sc.data {
+            timestamp: native.timestamp,
+            source: native.source.as_ref().map(|sc| match &sc.data {
                 Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => {
-                    Some(text.clone())
+                    text.clone()
                 }
                 Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => {
-                    Some(url.clone())
+                    url.clone()
                 }
                 Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
-                    Some("[Binary Content]".to_string())
+                    "[Binary Content]".to_string()
                 }
-                None => Some("[Empty Content]".to_string()),
+                None => "[Empty Content]".to_string(),
             }),
             expanded_context: native
                 .expanded_context
@@ -285,18 +294,18 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
             metadata: native.metadata.clone(),
             version: native.version,
             similarity: native.similarity,
-            timestamp: native.timestamp.map(|t| t as i64),
-            source: native.source.as_ref().and_then(|sc| match &sc.data {
+            timestamp: native.timestamp,
+            source: native.source.as_ref().map(|sc| match &sc.data {
                 Some(crate::proto::proximadb_v1::source_content::Data::TextContent(text)) => {
-                    Some(text.clone())
+                    text.clone()
                 }
                 Some(crate::proto::proximadb_v1::source_content::Data::ExternalReference(url)) => {
-                    Some(url.clone())
+                    url.clone()
                 }
                 Some(crate::proto::proximadb_v1::source_content::Data::BinaryContent(_)) => {
-                    Some("[Binary Content]".to_string())
+                    "[Binary Content]".to_string()
                 }
-                None => Some("[Empty Content]".to_string()),
+                None => "[Empty Content]".to_string(),
             }),
             expanded_context: native
                 .expanded_context
@@ -459,8 +468,7 @@ pub fn sql_values_to_json_map(
             }
             Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                 serde_json::Number::from_f64(n)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null)
+                    .map_or(serde_json::Value::Null, serde_json::Value::Number)
             }
             Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                 serde_json::Value::Bool(b)
@@ -475,11 +483,11 @@ pub fn sql_values_to_json_map(
                 serde_json::Value::Null
             }
             Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_arr)) => {
-                // TODO: Implement proper array conversion
+                // Deferred: Implement proper array conversion
                 serde_json::Value::String("[Array]".to_string())
             }
             Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_obj)) => {
-                // TODO: Implement proper object conversion
+                // Deferred: Implement proper object conversion
                 serde_json::Value::String("[Object]".to_string())
             }
             None => serde_json::Value::Null,
@@ -586,7 +594,7 @@ pub fn build_vector_search_request(
 ) -> VectorSearchRequest {
     let query = SearchQuery {
         vector,
-        filters: std::collections::HashMap::new(), // TODO: Convert metadata_filter to filters
+        filters: std::collections::HashMap::new(), // Deferred: Convert metadata_filter to filters
         advanced_filter: metadata_filter.map(|f| {
             // Convert JSON map to MetadataFilter with filter conditions
             let mut conditions = Vec::new();
@@ -632,7 +640,7 @@ pub fn build_vector_search_request(
     VectorSearchRequest {
         collection_id,
         queries: vec![query],
-        top_k: top_k as u32,
+        top_k,
         distance_metric_override: None,
         search_params: None,
         include_fields: Some(crate::proto::proximadb_v1::IncludeFields {

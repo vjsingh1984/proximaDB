@@ -249,7 +249,7 @@ impl RowValue {
 
     /// Check if column is null
     pub fn is_null(&self, column: &str) -> bool {
-        self.values.get(column).map(|v| v.is_none()).unwrap_or(true)
+        self.values.get(column).is_none_or(|v| v.is_none())
     }
 
     /// Get values for columns as a tuple
@@ -421,19 +421,21 @@ impl ConstraintEnforcer {
         result: &mut EnforcementResult,
     ) {
         for column in &schema.columns {
-            if !column.nullable {
-                if row.is_null(&column.name) && row.values.contains_key(&column.name) {
-                    result.add_violation(ConstraintViolation::not_null(&column.name));
-                }
+            if !column.nullable
+                && row.is_null(&column.name)
+                && row.values.contains_key(&column.name)
+            {
+                result.add_violation(ConstraintViolation::not_null(&column.name));
             }
         }
 
         // Also check explicit NOT NULL constraints
         for constraint in &schema.constraints {
-            if let ConstraintType::NotNull { column } = &constraint.constraint_type {
-                if row.is_null(column) && row.values.contains_key(column) {
-                    result.add_violation(ConstraintViolation::not_null(column));
-                }
+            if let ConstraintType::NotNull { column } = &constraint.constraint_type
+                && row.is_null(column)
+                && row.values.contains_key(column)
+            {
+                result.add_violation(ConstraintViolation::not_null(column));
             }
         }
     }
@@ -506,16 +508,15 @@ impl ConstraintEnforcer {
 
         // Check against existing values
         let indexes = self.unique_indexes.read().await;
-        if let Some(obj_indexes) = indexes.get(&object.fqn()) {
-            if let Some(index) = obj_indexes.get(constraint_name) {
-                if index.contains(&key) {
-                    result.add_violation(ConstraintViolation::unique(
-                        constraint_name,
-                        columns.to_vec(),
-                        values.into_iter().map(|v| v.unwrap_or_default()).collect(),
-                    ));
-                }
-            }
+        if let Some(obj_indexes) = indexes.get(&object.fqn())
+            && let Some(index) = obj_indexes.get(constraint_name)
+            && index.contains(&key)
+        {
+            result.add_violation(ConstraintViolation::unique(
+                constraint_name,
+                columns.to_vec(),
+                values.into_iter().map(|v| v.unwrap_or_default()).collect(),
+            ));
         }
     }
 
@@ -572,15 +573,11 @@ impl ConstraintEnforcer {
                 let column = parts[0].trim();
                 let threshold: i64 = parts[1].trim().parse().unwrap_or(0);
 
-                if let Some(Some(value)) = row.get(column) {
-                    if let Ok(num) = value.parse::<i64>() {
-                        if num < threshold {
-                            result.add_violation(ConstraintViolation::check(
-                                constraint_name,
-                                expression,
-                            ));
-                        }
-                    }
+                if let Some(Some(value)) = row.get(column)
+                    && let Ok(num) = value.parse::<i64>()
+                    && num < threshold
+                {
+                    result.add_violation(ConstraintViolation::check(constraint_name, expression));
                 }
             }
         }
@@ -600,10 +597,10 @@ impl ConstraintEnforcer {
     /// Remove value from uniqueness tracking
     pub async fn unregister_value(&self, fqn: &str, constraint_name: &str, value_key: &str) {
         let mut indexes = self.unique_indexes.write().await;
-        if let Some(obj_indexes) = indexes.get_mut(fqn) {
-            if let Some(index) = obj_indexes.get_mut(constraint_name) {
-                index.remove(value_key);
-            }
+        if let Some(obj_indexes) = indexes.get_mut(fqn)
+            && let Some(index) = obj_indexes.get_mut(constraint_name)
+        {
+            index.remove(value_key);
         }
     }
 

@@ -395,19 +395,18 @@ impl ConnectionManager {
         // Check health cache
         {
             let cache = self.health_cache.read().await;
-            if let Some(health) = cache.get(&key) {
-                if !health.is_expired(self.config.health_cache_ttl)
-                    && health.status != ServingStatus::Serving
-                {
-                    return Err(RpcError::new(
-                        RpcErrorKind::Connection,
-                        format!(
-                            "Node {} is unhealthy: {}",
-                            endpoint,
-                            health.last_error.as_deref().unwrap_or("unknown")
-                        ),
-                    ));
-                }
+            if let Some(health) = cache.get(&key)
+                && !health.is_expired(self.config.health_cache_ttl)
+                && health.status != ServingStatus::Serving
+            {
+                return Err(RpcError::new(
+                    RpcErrorKind::Connection,
+                    format!(
+                        "Node {} is unhealthy: {}",
+                        endpoint,
+                        health.last_error.as_deref().unwrap_or("unknown")
+                    ),
+                ));
             }
         }
 

@@ -428,10 +428,7 @@ impl MaterializedView {
 
     /// Get the row count of cached data
     pub fn row_count(&self) -> usize {
-        self.cached_result
-            .as_ref()
-            .map(|r| r.row_count())
-            .unwrap_or(0)
+        self.cached_result.as_ref().map_or(0, |r| r.row_count())
     }
 
     /// Convert to catalog object for persistence
@@ -640,17 +637,17 @@ impl MaterializedViewParser {
         }
 
         // WITH REFRESH PERIODIC INTERVAL '<duration>'
-        if upper.contains("REFRESH PERIODIC") {
-            if let Some(interval) = Self::extract_interval(&upper, clause) {
-                return RefreshStrategy::Periodic { interval };
-            }
+        if upper.contains("REFRESH PERIODIC")
+            && let Some(interval) = Self::extract_interval(&upper, clause)
+        {
+            return RefreshStrategy::Periodic { interval };
         }
 
         // WITH REFRESH ON CHANGE DEBOUNCE '<duration>'
-        if upper.contains("REFRESH ON CHANGE") {
-            if let Some(debounce) = Self::extract_debounce(&upper, clause) {
-                return RefreshStrategy::OnChange { debounce };
-            }
+        if upper.contains("REFRESH ON CHANGE")
+            && let Some(debounce) = Self::extract_debounce(&upper, clause)
+        {
+            return RefreshStrategy::OnChange { debounce };
         }
 
         // Default to manual if we can't parse
@@ -733,12 +730,12 @@ impl MaterializedViewParser {
 
         // Try pattern with space: "1 hour"
         let parts: Vec<&str> = s.split_whitespace().collect();
-        if parts.len() == 2 {
-            if let Ok(num) = parts[0].parse::<u64>() {
-                for (unit, multiplier) in patterns {
-                    if parts[1] == unit {
-                        return Some(Duration::from_secs(num * multiplier));
-                    }
+        if parts.len() == 2
+            && let Ok(num) = parts[0].parse::<u64>()
+        {
+            for (unit, multiplier) in patterns {
+                if parts[1] == unit {
+                    return Some(Duration::from_secs(num * multiplier));
                 }
             }
         }

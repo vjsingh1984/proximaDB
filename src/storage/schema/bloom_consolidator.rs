@@ -396,6 +396,7 @@ impl BloomChecker for ConsolidatedBloom {
 
 /// Thread-safe wrapper for ConsolidatedBloom.
 pub struct SharedConsolidatedBloom {
+    /// Inner consolidated bloom filter
     inner: Arc<RwLock<ConsolidatedBloom>>,
 }
 
@@ -452,8 +453,11 @@ impl BloomChecker for SharedConsolidatedBloom {
 
 /// Incremental bloom filter builder for streaming construction.
 pub struct IncrementalBloomBuilder {
+    /// Underlying bloom filter
     filter: Box<dyn BloomFilterStrategy>,
+    /// Bloom filter configuration
     config: BloomFilterConfig,
+    /// Item count
     count: usize,
 }
 
@@ -524,7 +528,9 @@ mod tests {
     #[test]
     fn test_consolidator_empty() {
         let consolidator = BloomConsolidator::new(1000, 0.01);
-        let bloom = consolidator.build().unwrap();
+        let bloom = consolidator
+            .build()
+            .expect("consolidator build should succeed");
 
         assert!(bloom.is_empty());
         assert_eq!(bloom.num_items(), 0);
@@ -538,7 +544,9 @@ mod tests {
         builder.add("id2");
         builder.add("id3");
 
-        let bloom = builder.build().unwrap();
+        let bloom = builder
+            .build()
+            .expect("incremental builder build should succeed");
 
         assert_eq!(bloom.num_items(), 3);
         assert!(!bloom.is_empty());
@@ -558,7 +566,9 @@ mod tests {
 
         assert_eq!(builder.count(), 5);
 
-        let bloom = builder.build().unwrap();
+        let bloom = builder
+            .build()
+            .expect("incremental builder build should succeed");
         assert!(bloom.might_contain("id3"));
     }
 
@@ -570,7 +580,9 @@ mod tests {
             builder.add(&format!("user:{}", i));
         }
 
-        let bloom = builder.build().unwrap();
+        let bloom = builder
+            .build()
+            .expect("incremental builder build should succeed");
 
         // Check existing IDs
         let result = bloom.check_ids(&["user:0", "user:50", "user:99"]);
@@ -592,10 +604,15 @@ mod tests {
             builder.add(&format!("item:{}", i));
         }
 
-        let bloom = builder.build().unwrap();
-        let bytes = bloom.serialize().unwrap();
+        let bloom = builder
+            .build()
+            .expect("incremental builder build should succeed");
+        let bytes = bloom
+            .serialize()
+            .expect("bloom serialization should succeed");
 
-        let restored = ConsolidatedBloom::deserialize(&bytes).unwrap();
+        let restored =
+            ConsolidatedBloom::deserialize(&bytes).expect("bloom deserialization should succeed");
 
         assert_eq!(restored.num_items(), bloom.num_items());
         assert!(restored.might_contain("item:25"));
@@ -605,7 +622,9 @@ mod tests {
     fn test_shared_consolidated_bloom() {
         let mut builder = IncrementalBloomBuilder::new(1000, 0.01);
         builder.add("test:1");
-        let bloom = builder.build().unwrap();
+        let bloom = builder
+            .build()
+            .expect("incremental builder build should succeed");
 
         let shared = SharedConsolidatedBloom::new(bloom);
 
@@ -614,7 +633,9 @@ mod tests {
         // Update with new bloom
         let mut new_builder = IncrementalBloomBuilder::new(1000, 0.01);
         new_builder.add("test:2");
-        let new_bloom = new_builder.build().unwrap();
+        let new_bloom = new_builder
+            .build()
+            .expect("new incremental builder build should succeed");
 
         shared.update(new_bloom);
         assert!(shared.might_contain("test:2"));
@@ -626,7 +647,9 @@ mod tests {
         for i in 0..100 {
             builder.add(&format!("key:{}", i));
         }
-        let bloom = builder.build().unwrap();
+        let bloom = builder
+            .build()
+            .expect("incremental builder build should succeed");
 
         // Use as trait object
         let checker: &dyn BloomChecker = &bloom;
@@ -670,7 +693,9 @@ mod tests {
             builder.add(&format!("id:{}", i));
         }
 
-        let bloom = builder.build().unwrap();
+        let bloom = builder
+            .build()
+            .expect("incremental builder build should succeed");
 
         // Memory should be reasonable
         let usage = bloom.memory_usage();

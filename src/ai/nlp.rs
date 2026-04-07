@@ -370,101 +370,165 @@ impl EnterpriseIntentClassifier {
 
 // Type definitions for enterprise NLP
 
+/// Result of processing an enterprise natural language query
 #[derive(Debug, Clone)]
 pub struct ProcessedEnterpriseQuery {
+    /// The original query text
     pub original_query: String,
+    /// Business entities extracted from the query
     pub business_entities: Vec<BusinessEntity>,
+    /// Classified business intent
     pub business_intent: ClassifiedBusinessIntent,
+    /// Industry terminology analysis
     pub terminology_analysis: TerminologyAnalysis,
+    /// Query complexity assessment
     pub complexity_analysis: QueryComplexityAnalysis,
+    /// Business context integration results
     pub context_integration: BusinessContextIntegration,
+    /// Processing performance metadata
     pub processing_metadata: NLPProcessingMetadata,
 }
 
+/// Business entity extracted from a natural language query
 #[derive(Debug, Clone)]
 pub struct BusinessEntity {
+    /// Name of the entity
     pub entity_name: String,
+    /// Classification type of the entity
     pub entity_type: EntityType,
+    /// Confidence in entity extraction (0.0 to 1.0)
     pub confidence_score: f32,
+    /// Business context the entity belongs to
     pub business_context: String,
+    /// Regulatory classification, if applicable
     pub regulatory_classification: Option<String>,
+    /// Character position in the query where entity was found
     pub extracted_from_position: usize,
 }
 
+/// Classification type for business entities
 #[derive(Debug, Clone)]
 pub enum EntityType {
+    /// Financial instrument (stock, bond, derivative, etc.)
     FinancialInstrument,
+    /// Risk metric (VaR, exposure, etc.)
     RiskMetric,
+    /// Healthcare subject (patient, provider, etc.)
     HealthcareSubject,
+    /// Clinical intervention (treatment, procedure, etc.)
     ClinicalIntervention,
+    /// Business customer entity
     BusinessCustomer,
+    /// Product or service offering
     ProductOffering,
+    /// Operational performance metric
     OperationalMetric,
 }
 
+/// Pattern for recognizing business entities
 #[derive(Debug, Clone)]
 pub struct EntityPattern {
+    /// Type of entity this pattern matches
     pub pattern_type: EntityType,
+    /// Recognition patterns (keywords, regex)
     pub recognition_patterns: Vec<String>,
+    /// Business context for the pattern
     pub business_context: String,
+    /// Regulatory classification for matched entities
     pub regulatory_classification: Option<String>,
 }
 
+/// Classified business intent from a natural language query
 #[derive(Debug, Clone)]
 pub struct ClassifiedBusinessIntent {
+    /// Primary business intent category
     pub primary_intent: EnterpriseIntent,
+    /// Type of operation requested
     pub operation_type: OperationType,
+    /// Confidence in the classification (0.0 to 1.0)
     pub confidence: f32,
+    /// Business domain the intent belongs to
     pub business_domain: String,
+    /// User roles relevant to this intent
     pub user_role_context: Vec<String>,
+    /// Regulatory implications of this intent
     pub regulatory_implications: Vec<String>,
 }
 
+/// Enterprise business intent category
 #[derive(Debug, Clone)]
 pub enum EnterpriseIntent {
+    /// Risk exposure and portfolio analysis
     RiskAnalysis,
+    /// Customer behavior and relationship analysis
     CustomerAnalysis,
+    /// Regulatory compliance analysis
     ComplianceAnalysis,
+    /// Predictive forecasting and modeling
     PredictiveAnalysis,
+    /// Performance metrics and benchmarking
     PerformanceAnalysis,
+    /// Strategic planning and decision support
     StrategicAnalysis,
+    /// Operational efficiency analysis
     OperationalAnalysis,
+    /// General business inquiry
     GeneralInquiry,
 }
 
+/// Type of operation requested in a business query
 #[derive(Debug, Clone)]
 pub enum OperationType {
+    /// Retrieve data or information
     Retrieve,
+    /// Analyze patterns and trends
     Analyze,
+    /// Compare entities or time periods
     Compare,
+    /// Make predictions or forecasts
     Predict,
+    /// Optimize processes or allocations
     Optimize,
+    /// General information inquiry
     Inquire,
 }
 
+/// Metadata about NLP processing performance
 #[derive(Debug, Clone)]
 pub struct NLPProcessingMetadata {
+    /// Processing time in milliseconds
     pub processing_time_ms: u64,
+    /// Overall confidence score
     pub confidence_score: f32,
+    /// Business relevance score (0.0 to 1.0)
     pub business_relevance_score: f32,
+    /// Whether regulatory compliance was validated
     pub regulatory_compliance_validated: bool,
 }
 
 // Placeholder types for foundation implementation
+/// Assessment of query complexity
 #[derive(Debug, Clone)]
 pub struct QueryComplexityAnalysis {
+    /// Complexity level description
     pub complexity_level: String,
+    /// Number of entities in the query
     pub entity_count: usize,
+    /// Processing difficulty score (0.0 to 1.0)
     pub processing_difficulty: f32,
 }
+
+/// Processor for industry-specific terminology
 #[derive(Debug, Clone)]
 pub struct IndustryTerminologyProcessor;
 
 impl IndustryTerminologyProcessor {
+    /// Create a new industry terminology processor.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Process and identify industry-specific terminology in a query.
     pub async fn process_industry_terminology(
         &self,
         _query: &str,
@@ -477,14 +541,17 @@ impl IndustryTerminologyProcessor {
         })
     }
 }
+/// Analyzer for estimating query complexity
 #[derive(Debug, Clone)]
 pub struct QueryComplexityAnalyzer;
 
 impl QueryComplexityAnalyzer {
+    /// Create a new query complexity analyzer.
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self)
     }
 
+    /// Analyze the complexity of a business query.
     pub async fn analyze_query_complexity(
         &self,
         _query: &str,
@@ -498,14 +565,17 @@ impl QueryComplexityAnalyzer {
         })
     }
 }
+/// Integrator for enriching queries with business context
 #[derive(Debug, Clone)]
 pub struct BusinessContextIntegrator;
 
 impl BusinessContextIntegrator {
+    /// Create a new business context integrator.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Integrate business context into query understanding.
     pub async fn integrate_business_context(
         &self,
         _query: &str,
@@ -520,16 +590,22 @@ impl BusinessContextIntegrator {
         })
     }
 }
+/// Type alias for intent classification model
 pub type IntentModel = String;
+/// Type alias for operation classifier
 pub type OperationClassifier = String;
+
+/// Recognizer for regulatory implications in queries
 #[derive(Debug, Clone)]
 pub struct RegulatoryIntentRecognizer;
 
 impl RegulatoryIntentRecognizer {
+    /// Create a new regulatory intent recognizer.
     pub async fn new() -> Result<Self> {
         Ok(Self)
     }
 
+    /// Identify regulatory implications of a query.
     pub async fn identify_regulatory_implications(
         &self,
         _query: &str,
@@ -595,24 +671,36 @@ impl ClassifiedBusinessIntent {
     }
 }
 
+/// Results of industry terminology analysis
 #[derive(Debug, Clone)]
 pub struct TerminologyAnalysis {
+    /// Industry-specific terms found
     pub industry_terms: Vec<String>,
+    /// Technical terms found
     pub technical_terms: Vec<String>,
+    /// Confidence in terminology analysis
     pub confidence_score: f64,
 }
 
+/// Results of business context integration
 #[derive(Debug, Clone)]
 pub struct BusinessContextIntegration {
+    /// Business relevance score (0.0 to 1.0)
     pub relevance_score: f64,
+    /// Context enrichments applied
     pub context_enrichments: Vec<String>,
+    /// Domain mappings established
     pub domain_mappings: Vec<String>,
 }
 
+/// Regulatory implication identified in a query
 #[derive(Debug, Clone)]
 pub struct RegulatoryImplication {
+    /// Compliance framework (e.g., "SOC2", "HIPAA")
     pub framework: String,
+    /// Specific requirement within the framework
     pub requirement: String,
+    /// Required compliance level
     pub compliance_level: String,
 }
 

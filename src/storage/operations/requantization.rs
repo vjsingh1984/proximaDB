@@ -380,7 +380,7 @@ impl RequantizationManager {
             collection_id
         );
 
-        // TODO: Implement actual data sampling and analysis
+        // Deferred: Implement actual data sampling and analysis
         // 1. Sample vectors from storage
         // 2. Compute distribution statistics (mean, variance, entropy)
         // 3. Measure current quantization error

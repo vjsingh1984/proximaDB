@@ -44,33 +44,53 @@ pub struct TenantRole {
 }
 
 /// Permission enumeration for clean RBAC
+///
+/// Defines granular permissions for tenant, domain, collection, and entity operations.
+/// String parameters represent specific resource IDs.
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Permission {
     // Tenant-level permissions
+    /// Full administrative access to tenant
     TenantAdmin,
+    /// Read-only access to tenant data
     TenantRead,
+    /// Write access to tenant data
     TenantWrite,
 
     // Domain-level permissions
+    /// Create new domains within tenant
     DomainCreate,
+    /// Read access to specific domain (domain_id)
     DomainRead(String),
+    /// Write access to specific domain (domain_id)
     DomainWrite(String),
+    /// Administrative access to specific domain (domain_id)
     DomainAdmin(String),
 
     // Collection-level permissions
+    /// Create new collections
     CollectionCreate,
+    /// Read access to specific collection (collection_id)
     CollectionRead(String),
+    /// Write access to specific collection (collection_id)
     CollectionWrite(String),
+    /// Delete access to specific collection (collection_id)
     CollectionDelete(String),
+    /// Administrative access to specific collection (collection_id)
     CollectionAdmin(String),
 
     // Entity-level permissions
+    /// Read access to specific entity (entity_id)
     EntityRead(String),
+    /// Write access to specific entity (entity_id)
     EntityWrite(String),
+    /// Delete access to specific entity (entity_id)
     EntityDelete(String),
 
     // Special permissions
+    /// Access to audit logs
     AuditRead,
+    /// Full system administration
     SystemAdmin,
 }
 
@@ -110,18 +130,30 @@ pub struct UserRoleAssignment {
 }
 
 /// Field-level permissions for enhanced security
+///
+/// Defines fine-grained access control at the field level within entities,
+/// allowing different roles to access different subsets of data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldLevelPermissions {
+    /// Set of fields that are restricted and require explicit permission
     pub restricted_fields: HashSet<String>,
+    /// Mapping of role names to the set of fields they can access
     pub role_field_access: HashMap<String, HashSet<String>>,
 }
 
 /// Business context permissions
+///
+/// Defines access permissions for different categories of sensitive
+/// business data within domains.
 #[derive(Debug, Clone)]
 pub struct BusinessContextPermissions {
+    /// Access to risk assessment and scoring data
     pub risk_data_access: bool,
+    /// Access to customer personal information
     pub customer_data_access: bool,
+    /// Access to financial transaction and account data
     pub financial_data_access: bool,
+    /// Access to compliance and regulatory reporting data
     pub compliance_data_access: bool,
 }
 
@@ -198,18 +230,17 @@ impl EnhancedRBACManager {
 
         // Get or create user assignment
         let user_key = format!("{}::{}", tenant_id, user_id);
-        let mut assignment = self
-            .user_role_assignments
-            .get(&user_key)
-            .map(|entry| entry.clone())
-            .unwrap_or_else(|| UserRoleAssignment {
+        let mut assignment = self.user_role_assignments.get(&user_key).map_or_else(
+            || UserRoleAssignment {
                 user_id: user_id.to_string(),
                 tenant_id: tenant_id.to_string(),
                 roles: HashSet::new(),
                 effective_permissions: HashSet::new(),
                 assigned_at: Utc::now(),
                 assigned_by: assigner_context.user_id.clone(),
-            });
+            },
+            |entry| entry.clone(),
+        );
 
         // Add role
         assignment.roles.insert(role_name.to_string());
@@ -516,6 +547,12 @@ impl RBACEventLogger {
 
         self.audit_events.insert(event.event_id.clone(), event);
         Ok(())
+    }
+}
+
+impl Default for RBACEventLogger {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

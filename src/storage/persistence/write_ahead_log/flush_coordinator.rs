@@ -212,7 +212,7 @@ impl WALFlushCoordinator {
                     files.len()
                 );
                 // Implement comprehensive disk WAL file reading and recovery
-                self.extract_vectors_from_disk_files(&files)
+                self.extract_vectors_from_disk_files(files)
                     .await
                     .unwrap_or_else(|e| {
                         warn!(
@@ -320,6 +320,7 @@ impl WALFlushCoordinator {
                 match StorageEngine::try_from(config.storage_engine.unwrap_or(0)) {
                     Ok(StorageEngine::Viper) => "viper",
                     Ok(StorageEngine::Sst) => "sst",
+                    Ok(StorageEngine::Tst) => "tst",
                     _ => preferred_engine.unwrap_or("viper"), // Default to viper or provided preference
                 }
             } else {
@@ -634,8 +635,7 @@ impl WALFlushCoordinator {
         let flush_states = self.flush_states.read().await;
         flush_states
             .get(collection_id)
-            .map(|state| state.uses_disk_wal)
-            .unwrap_or(true) // Default to disk WAL
+            .is_none_or(|state| state.uses_disk_wal) // Default to disk WAL
     }
 
     /// Get pending flushes for a collection
@@ -643,8 +643,9 @@ impl WALFlushCoordinator {
         let flush_states = self.flush_states.read().await;
         flush_states
             .get(collection_id)
-            .map(|state| state.pending_flushes.values().cloned().collect())
-            .unwrap_or_else(Vec::new)
+            .map_or_else(Vec::new, |state| {
+                state.pending_flushes.values().cloned().collect()
+            })
     }
 
     /// Cancel a pending flush (in case of errors)
@@ -916,8 +917,8 @@ impl WALFlushCoordinator {
                         .await
                     {
                         Ok(result) => {
-                            let entries = result.base.entries_flushed.unwrap_or(0) as u64;
-                            let bytes = result.base.bytes_written.unwrap_or(0) as u64;
+                            let entries = result.base.entries_flushed.unwrap_or(0);
+                            let bytes = result.base.bytes_written.unwrap_or(0);
 
                             total_vectors_flushed += entries;
                             total_bytes_written += bytes;
@@ -973,6 +974,12 @@ impl WALFlushCoordinator {
             total_bytes_written,
             failed_collections,
         })
+    }
+}
+
+impl Default for WALFlushCoordinator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

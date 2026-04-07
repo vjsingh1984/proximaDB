@@ -156,8 +156,10 @@ impl QueryOptimizer {
 
     /// Create without plan caching (for testing or low-memory environments)
     pub fn without_cache() -> Self {
-        let mut config = OptimizerConfig::default();
-        config.enable_plan_cache = false;
+        let config = OptimizerConfig {
+            enable_plan_cache: false,
+            ..Default::default()
+        };
         Self::new(config)
     }
 
@@ -671,7 +673,7 @@ impl QueryOptimizer {
 /// Query statistics collector
 pub struct QueryStatistics {
     /// Collection statistics
-    collection_stats: RwLock<HashMap<String, CollectionStats>>,
+    collection_stats: RwLock<HashMap<String, OptimizerCollectionStats>>,
     /// Query execution history
     query_history: RwLock<Vec<QueryHistoryEntry>>,
     /// Total queries executed
@@ -680,9 +682,13 @@ pub struct QueryStatistics {
     total_execution_time_us: AtomicU64,
 }
 
-/// Statistics for a collection
+/// Optimizer-local collection statistics with column-level detail
+///
+/// Extends the canonical `storage::traits::CollectionStats` with optimizer-specific
+/// fields (distinct counts per column, name, timestamps). Use `From<storage::traits::CollectionStats>`
+/// to convert from the canonical form.
 #[derive(Debug, Clone)]
-pub struct CollectionStats {
+pub struct OptimizerCollectionStats {
     /// Collection name
     pub name: String,
     /// Estimated row count
@@ -693,6 +699,19 @@ pub struct CollectionStats {
     pub distinct_counts: HashMap<String, u64>,
     /// Last updated timestamp
     pub last_updated: u64,
+}
+
+impl OptimizerCollectionStats {
+    /// Create from canonical CollectionStats with a collection name
+    pub fn from_canonical(name: String, stats: &crate::storage::traits::CollectionStats) -> Self {
+        Self {
+            name,
+            row_count: stats.row_count,
+            avg_row_size: stats.avg_vector_bytes,
+            distinct_counts: HashMap::new(),
+            last_updated: 0,
+        }
+    }
 }
 
 /// Historical query execution entry
@@ -720,12 +739,12 @@ impl QueryStatistics {
     }
 
     /// Get collection statistics
-    pub fn get_collection_stats(&self, collection: &str) -> Option<CollectionStats> {
+    pub fn get_collection_stats(&self, collection: &str) -> Option<OptimizerCollectionStats> {
         self.collection_stats.read().get(collection).cloned()
     }
 
     /// Update collection statistics
-    pub fn update_collection_stats(&self, stats: CollectionStats) {
+    pub fn update_collection_stats(&self, stats: OptimizerCollectionStats) {
         let name = stats.name.clone();
         self.collection_stats.write().insert(name, stats);
     }
@@ -1039,6 +1058,50 @@ fn compute_query_hash(query: &MultiModelQuery) -> u64 {
     hasher.finish()
 }
 
+// ============================================================================
+// FUSION STRATEGY SELECTION (Cost-Based Optimizer)
+// ============================================================================
+
+/// Fusion strategy for combining results from multi-model sub-queries
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FusionStrategy {
+    /// Reciprocal Rank Fusion — normalizes heterogeneous score scales
+    Rrf,
+    /// Intersection — keeps only results present in all sub-queries
+    Intersection,
+    /// Union — returns results from any sub-query (maximum recall)
+    Union,
+    /// Weighted sum — linearly combines scores with caller-supplied weights
+    WeightedSum,
+}
+
+/// Select the optimal fusion strategy based on query characteristics
+///
+/// Decision logic:
+/// - **Rrf**: when both vector and graph components are present, scores come
+///   from fundamentally different distributions (cosine similarity vs path
+///   length); RRF normalizes via rank position.
+/// - **Intersection**: when combined filter selectivity is very low (<10%),
+///   taking the intersection maximizes precision.
+/// - **Union**: default strategy — maximizes recall by including results
+///   from any sub-query.
+pub fn select_fusion_strategy(
+    has_vector_component: bool,
+    has_graph_component: bool,
+    filter_selectivity: f64,
+) -> FusionStrategy {
+    if has_vector_component && has_graph_component {
+        // Heterogeneous score scales — use RRF for normalization
+        FusionStrategy::Rrf
+    } else if filter_selectivity < 0.1 {
+        // Highly selective filters — intersect for precision
+        FusionStrategy::Intersection
+    } else {
+        // Default — union for maximum recall
+        FusionStrategy::Union
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1226,7 +1289,9 @@ mod tests {
             order_by: None,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         // Most selective should be first (lowest selectivity value)
         // Vector search with top_k=1 is most selective (selectivity ~0.000001)
@@ -1271,7 +1336,9 @@ mod tests {
         assert_eq!(stats.total_queries(), 3);
 
         // Check average for specific query
-        let avg = stats.get_avg_execution_time(12345).unwrap();
+        let avg = stats
+            .get_avg_execution_time(12345)
+            .expect("should have average execution time");
         assert_eq!(avg, 4750); // (5000 + 4500) / 2
     }
 
@@ -1279,7 +1346,7 @@ mod tests {
     fn test_collection_stats() {
         let stats = QueryStatistics::new();
 
-        let collection_stats = CollectionStats {
+        let collection_stats = OptimizerCollectionStats {
             name: "products".to_string(),
             row_count: 1_000_000,
             avg_row_size: 512,
@@ -1289,7 +1356,9 @@ mod tests {
 
         stats.update_collection_stats(collection_stats);
 
-        let retrieved = stats.get_collection_stats("products").unwrap();
+        let retrieved = stats
+            .get_collection_stats("products")
+            .expect("should have collection stats");
         assert_eq!(retrieved.row_count, 1_000_000);
     }
 
@@ -1319,11 +1388,21 @@ mod tests {
             order_by: None,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         // Vector must come before document due to dependency
-        let vec_pos = plan.execution_order.iter().position(|&x| x == 0).unwrap();
-        let doc_pos = plan.execution_order.iter().position(|&x| x == 1).unwrap();
+        let vec_pos = plan
+            .execution_order
+            .iter()
+            .position(|&x| x == 0)
+            .expect("vector component should be in execution order");
+        let doc_pos = plan
+            .execution_order
+            .iter()
+            .position(|&x| x == 1)
+            .expect("document component should be in execution order");
         assert!(
             vec_pos < doc_pos,
             "Vector must execute before dependent document query"
@@ -1350,7 +1429,9 @@ mod tests {
             order_by: None,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         // Should have optimization notes
         assert!(!plan.notes.is_empty(), "Should have optimization notes");
@@ -1378,7 +1459,9 @@ mod tests {
             order_by: None,
         };
 
-        let plan = optimizer.optimize(&query).unwrap();
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         assert!(
             plan.estimated_cost > 0.0,
@@ -1419,14 +1502,20 @@ mod tests {
         };
 
         // First call should be a cache miss
-        let _plan1 = optimizer.optimize(&query).unwrap();
-        let cache = optimizer.plan_cache().unwrap();
+        let _plan1 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
+        let cache = optimizer
+            .plan_cache()
+            .expect("plan cache should be enabled");
         let stats1 = cache.stats();
         assert_eq!(stats1.misses, 1, "First call should be a miss");
         assert_eq!(stats1.hits, 0, "First call should have no hits");
 
         // Second call with same query should be a cache hit
-        let _plan2 = optimizer.optimize(&query).unwrap();
+        let _plan2 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
         let stats2 = cache.stats();
         assert_eq!(stats2.hits, 1, "Second call should be a hit");
         assert_eq!(stats2.misses, 1, "Misses should remain 1");
@@ -1455,10 +1544,16 @@ mod tests {
         };
 
         // Two different queries should both be misses
-        let _plan1 = optimizer.optimize(&query1).unwrap();
-        let _plan2 = optimizer.optimize(&query2).unwrap();
+        let _plan1 = optimizer
+            .optimize(&query1)
+            .expect("optimization should succeed");
+        let _plan2 = optimizer
+            .optimize(&query2)
+            .expect("optimization should succeed");
 
-        let cache = optimizer.plan_cache().unwrap();
+        let cache = optimizer
+            .plan_cache()
+            .expect("plan cache should be enabled");
         let stats = cache.stats();
         assert_eq!(stats.misses, 2, "Both queries should be misses");
         assert_eq!(stats.size, 2, "Cache should have 2 entries");
@@ -1478,8 +1573,12 @@ mod tests {
         };
 
         // Cache a plan
-        let _plan1 = optimizer.optimize(&query).unwrap();
-        let cache = optimizer.plan_cache().unwrap();
+        let _plan1 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
+        let cache = optimizer
+            .plan_cache()
+            .expect("plan cache should be enabled");
         assert_eq!(cache.stats().size, 1, "Cache should have 1 entry");
 
         // Invalidate all
@@ -1491,7 +1590,9 @@ mod tests {
         );
 
         // Next call should be a miss
-        let _plan2 = optimizer.optimize(&query).unwrap();
+        let _plan2 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
         let stats = cache.stats();
         assert_eq!(stats.misses, 2, "Should have 2 misses total");
     }
@@ -1654,8 +1755,12 @@ mod tests {
         };
 
         // Should work without cache
-        let plan1 = optimizer.optimize(&query).unwrap();
-        let plan2 = optimizer.optimize(&query).unwrap();
+        let plan1 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
+        let plan2 = optimizer
+            .optimize(&query)
+            .expect("optimization should succeed");
 
         // Both should succeed and produce same result
         assert_eq!(plan1.estimated_cost, plan2.estimated_cost);
@@ -1664,5 +1769,40 @@ mod tests {
         // invalidate_plan_cache should not panic when cache is None
         optimizer.invalidate_plan_cache();
         optimizer.invalidate_collection_plans("test_collection");
+    }
+
+    // ========================================================================
+    // FUSION STRATEGY SELECTION TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_fusion_strategy_rrf_for_vector_and_graph() {
+        let strategy = select_fusion_strategy(true, true, 0.5);
+        assert_eq!(strategy, FusionStrategy::Rrf);
+    }
+
+    #[test]
+    fn test_fusion_strategy_intersection_for_selective_filter() {
+        let strategy = select_fusion_strategy(true, false, 0.05);
+        assert_eq!(strategy, FusionStrategy::Intersection);
+    }
+
+    #[test]
+    fn test_fusion_strategy_union_default() {
+        let strategy = select_fusion_strategy(true, false, 0.5);
+        assert_eq!(strategy, FusionStrategy::Union);
+    }
+
+    #[test]
+    fn test_fusion_strategy_rrf_overrides_selectivity() {
+        // Even with low selectivity, vector+graph uses RRF
+        let strategy = select_fusion_strategy(true, true, 0.01);
+        assert_eq!(strategy, FusionStrategy::Rrf);
+    }
+
+    #[test]
+    fn test_fusion_strategy_no_components() {
+        let strategy = select_fusion_strategy(false, false, 0.5);
+        assert_eq!(strategy, FusionStrategy::Union);
     }
 }

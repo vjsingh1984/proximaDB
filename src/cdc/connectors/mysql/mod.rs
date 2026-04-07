@@ -79,10 +79,13 @@
 //! let connector = MySqlConnector::new(config, offset_store).await?;
 //! ```
 
-mod config;
-mod connector;
-mod decoder;
+pub mod config;
+pub mod connector;
+pub mod decoder;
 
 pub use config::{BinlogPosition, GtidMode, MySqlConfig, MySqlTableConfig};
 pub use connector::MySqlConnector;
-pub use decoder::{BinlogDecoder, BinlogEvent, ColumnDef, RowEvent, TableMapEvent};
+pub use decoder::{
+    BinlogDecoder, BinlogEvent, ColumnDef, ColumnType, ColumnValue, EventType, RowData, RowEvent,
+    RowEventType, TableMapEvent,
+};

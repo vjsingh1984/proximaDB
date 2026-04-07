@@ -244,6 +244,12 @@ impl SSTRowFilterEvaluator {
     }
 }
 
+impl Default for SSTRowFilterEvaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Optimized batch filtering for multiple filter expressions (AND/OR support)
 pub struct SSTBatchFilterEvaluator {
     base_evaluator: SSTRowFilterEvaluator,
@@ -345,7 +351,7 @@ impl SSTBatchFilterEvaluator {
         }
 
         if index_sets.len() == 1 {
-            return index_sets.into_iter().next().unwrap();
+            return index_sets.into_iter().next().unwrap_or_default();
         }
 
         // Sort by size (smallest first for efficiency)
@@ -430,6 +436,12 @@ impl SSTBatchFilterEvaluator {
                     .filter_vector_records_immutable(records, filter_expr)
             }
         }
+    }
+}
+
+impl Default for SSTBatchFilterEvaluator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

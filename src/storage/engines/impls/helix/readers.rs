@@ -73,15 +73,16 @@ pub async fn search_sstable(
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<OptimizedSearchRecord>> {
     // Check bloom filter if candidate IDs provided
-    if let Some(ids) = candidate_ids {
-        if !ids.is_empty() && sstable.bloom_filter.is_some() {
-            let bloom_results = check_bloom_filter(sstable, ids).await?;
+    if let Some(ids) = candidate_ids
+        && !ids.is_empty()
+        && sstable.bloom_filter.is_some()
+    {
+        let bloom_results = check_bloom_filter(sstable, ids).await?;
 
-            // Skip this SSTable if none of the candidate IDs might be present
-            if !bloom_results.iter().any(|&present| present) {
-                debug!("Skipping SSTable due to bloom filter pruning");
-                return Ok(Vec::new());
-            }
+        // Skip this SSTable if none of the candidate IDs might be present
+        if !bloom_results.iter().any(|&present| present) {
+            debug!("Skipping SSTable due to bloom filter pruning");
+            return Ok(Vec::new());
         }
     }
 
@@ -174,11 +175,11 @@ pub async fn find_vector_by_id(
         for record in block.records {
             if record.id == vector_id {
                 // Check if record is expired (tombstone support)
-                if let Some(expires_at) = record.expires_at {
-                    if expires_at as u64 <= current_time {
-                        // Record is expired, treat as deleted
-                        return Ok(None);
-                    }
+                if let Some(expires_at) = record.expires_at
+                    && expires_at as u64 <= current_time
+                {
+                    // Record is expired, treat as deleted
+                    return Ok(None);
                 }
                 return Ok(Some(record));
             }
@@ -219,7 +220,7 @@ pub async fn parallel_search(
         let fs = filesystem.clone();
         let query = query_vector.clone();
         let query_hilbert = query_hilbert_key; // Copy Option<u64> for thread
-        let metric = distance_metric.clone();
+        let metric = distance_metric;
         let dist_compute = distance_compute.clone();
         let filter_clone = filter_expression.clone();
         let collection_clone = collection.clone();
@@ -424,7 +425,7 @@ pub async fn search_sstable_quantized(
     // Compute query binary sketch for Hamming distance
     let query_binary: Vec<u8> = if use_binary {
         let dim = query_vector.len();
-        let mut binary = vec![0u8; (dim + 7) / 8];
+        let mut binary = vec![0u8; dim.div_ceil(8)];
         for (i, &val) in query_vector.iter().enumerate() {
             if val > 0.0 {
                 binary[i / 8] |= 1 << (i % 8);

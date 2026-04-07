@@ -70,7 +70,7 @@ impl MultiplexService {
         config: MultiplexConfig,
     ) -> Self {
         // Sort detectors by priority (highest first)
-        detectors.sort_by(|a, b| b.priority().cmp(&a.priority()));
+        detectors.sort_by_key(|d| std::cmp::Reverse(d.priority()));
 
         Self {
             detectors: Arc::new(detectors),
@@ -189,7 +189,7 @@ impl Service<Request<Body>> for MultiplexService {
             .uri(request.uri().clone())
             .version(request.version())
             .body(())
-            .expect("building detection request should not fail");
+            .unwrap_or_else(|_| Request::new(()));
 
         // Copy headers from original request to detection request
         // We need to rebuild since Request doesn't allow header modification after creation
@@ -199,12 +199,12 @@ impl Service<Request<Body>> for MultiplexService {
             .version(request.version());
 
         // Copy all headers
-        for (key, value) in request.headers().iter() {
+        for (key, value) in request.headers() {
             detection_builder = detection_builder.header(key, value);
         }
         let detection_request = detection_builder
             .body(())
-            .expect("building detection request should not fail");
+            .unwrap_or_else(|_| Request::new(()));
 
         // Detect protocol
         let detection = self.detect_protocol(&detection_request);

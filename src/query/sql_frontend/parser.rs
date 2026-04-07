@@ -21,11 +21,13 @@ use crate::query::ast::{
     SetOp, TableRef, UnaryOp,
 };
 
+/// SQL frontend parser that converts SQL text into internal AST nodes
 pub struct SqlFrontendParser {
     dialect: GenericDialect,
 }
 
 impl SqlFrontendParser {
+    /// Create a new SQL frontend parser.
     pub fn new() -> Self {
         Self {
             dialect: GenericDialect {},
@@ -215,10 +217,11 @@ impl SqlFrontendParser {
             .collect::<Result<Vec<_>>>()?;
 
         // Convert WHERE clause
-        let selection = match &select.selection {
-            Some(expr) => Some(self.convert_expr(expr)?),
-            None => None,
-        };
+        let selection = select
+            .selection
+            .as_ref()
+            .map(|expr| self.convert_expr(expr))
+            .transpose()?;
 
         // Convert GROUP BY
         let group_by = match &select.group_by {
@@ -230,10 +233,11 @@ impl SqlFrontendParser {
         };
 
         // Convert HAVING
-        let having = match &select.having {
-            Some(expr) => Some(self.convert_expr(expr)?),
-            None => None,
-        };
+        let having = select
+            .having
+            .as_ref()
+            .map(|expr| self.convert_expr(expr))
+            .transpose()?;
 
         // Convert ORDER BY
         let order_by = if let Some(order_by_clause) = &query.order_by {
@@ -257,18 +261,18 @@ impl SqlFrontendParser {
                     ..
                 } => {
                     let limit_val = lim.as_ref().and_then(|expr| {
-                        if let SqlExpr::Value(value_with_span) = expr {
-                            if let Value::Number(n, _) = &value_with_span.value {
-                                return n.parse::<u64>().ok();
-                            }
+                        if let SqlExpr::Value(value_with_span) = expr
+                            && let Value::Number(n, _) = &value_with_span.value
+                        {
+                            return n.parse::<u64>().ok();
                         }
                         None
                     });
                     let offset_val = off.as_ref().and_then(|off_expr| {
-                        if let SqlExpr::Value(value_with_span) = &off_expr.value {
-                            if let Value::Number(n, _) = &value_with_span.value {
-                                return n.parse::<u64>().ok();
-                            }
+                        if let SqlExpr::Value(value_with_span) = &off_expr.value
+                            && let Value::Number(n, _) = &value_with_span.value
+                        {
+                            return n.parse::<u64>().ok();
                         }
                         None
                     });

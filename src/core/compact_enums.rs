@@ -2,8 +2,8 @@
 // All ProximaDB enums have < 20 values, so u8 is more than sufficient
 
 use crate::proto::proximadb_v1::{
-    DistanceMetric, StorageEngine, IndexingAlgorithm, 
-    CollectionOperation, VectorOperation, CompressionAlgorithm
+    CollectionOperation, CompressionAlgorithm, DistanceMetric, IndexingAlgorithm, StorageEngine,
+    VectorOperation,
 };
 
 /// Compact distance metric storage (1 byte vs 4)
@@ -91,6 +91,7 @@ impl From<StorageEngine> for CompactStorageEngine {
             StorageEngine::Hybrid => Self::Hybrid,
             StorageEngine::Swift => Self::Swift,
             StorageEngine::Nova => Self::Nova,
+            _ => Self::Unspecified,
         }
     }
 }
@@ -115,7 +116,7 @@ impl From<CompactStorageEngine> for StorageEngine {
 pub struct PackedEnums {
     // Bit layout:
     // [0-7]:   DistanceMetric (8 bits)
-    // [8-15]:  StorageEngine (8 bits)  
+    // [8-15]:  StorageEngine (8 bits)
     // [16-23]: IndexingAlgorithm (8 bits)
     // [24-31]: CompressionAlgorithm (8 bits)
     packed: u32,
@@ -125,21 +126,27 @@ impl PackedEnums {
     pub fn new() -> Self {
         Self { packed: 0 }
     }
-    
+
     pub fn set_distance_metric(&mut self, metric: CompactDistanceMetric) {
         self.packed = (self.packed & 0xFFFFFF00) | (metric as u32);
     }
-    
+
     pub fn get_distance_metric(&self) -> CompactDistanceMetric {
         unsafe { std::mem::transmute((self.packed & 0xFF) as u8) }
     }
-    
+
     pub fn set_storage_engine(&mut self, engine: CompactStorageEngine) {
         self.packed = (self.packed & 0xFFFF00FF) | ((engine as u32) << 8);
     }
-    
+
     pub fn get_storage_engine(&self) -> CompactStorageEngine {
         unsafe { std::mem::transmute(((self.packed >> 8) & 0xFF) as u8) }
+    }
+}
+
+impl Default for PackedEnums {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -153,23 +160,25 @@ impl PackedEnums {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_size_optimization() {
         use std::mem::size_of;
-        
+
         // Proto enum size
         assert_eq!(size_of::<DistanceMetric>(), 4);
         assert_eq!(size_of::<StorageEngine>(), 4);
-        
-        // Compact enum size  
+
+        // Compact enum size
         assert_eq!(size_of::<CompactDistanceMetric>(), 1);
         assert_eq!(size_of::<CompactStorageEngine>(), 1);
-        
+
         // Packed enums size (4 enums in 4 bytes)
         assert_eq!(size_of::<PackedEnums>(), 4);
-        
-        println!("Space savings: {} bytes per enum", 
-                 size_of::<DistanceMetric>() - size_of::<CompactDistanceMetric>());
+
+        println!(
+            "Space savings: {} bytes per enum",
+            size_of::<DistanceMetric>() - size_of::<CompactDistanceMetric>()
+        );
     }
 }

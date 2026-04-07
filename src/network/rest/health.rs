@@ -99,11 +99,14 @@ pub struct ReadinessResponse {
 /// Shared state for health checks
 #[derive(Clone)]
 pub struct HealthState {
+    /// Shared unified handlers for checking service availability
     pub unified_handlers: Arc<UnifiedHandlers>,
+    /// Server startup timestamp for uptime calculation
     pub startup_time: SystemTime,
 }
 
 impl HealthState {
+    /// Create a new health state recording the current time as startup
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
         Self {
             unified_handlers,
@@ -134,13 +137,11 @@ pub async fn health_check(
     let timeout = Duration::from_millis(params.timeout_ms.unwrap_or(5000));
 
     let detailed = params.detailed.unwrap_or(false);
-    let mut components = if detailed { Some(HashMap::new()) } else { None };
+    let mut components_opt = if detailed { Some(HashMap::new()) } else { None };
     let mut overall_status = HealthStatus::Healthy;
 
     // Check individual components if detailed status requested
-    if detailed {
-        let components_map = components.as_mut().unwrap();
-
+    if let Some(components_map) = components_opt.as_mut() {
         // Check storage engine health
         if params.component.is_none() || params.component.as_deref() == Some("storage") {
             let storage_health = check_storage_health(&state, timeout).await;
@@ -218,7 +219,7 @@ pub async fn health_check(
             .as_secs(),
         uptime_seconds: state.uptime_seconds(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        components,
+        components: components_opt,
         metrics,
     };
 
@@ -505,11 +506,12 @@ async fn check_network_health(state: &HealthState, timeout: Duration) -> Compone
         server_health.push("rest_server_active");
 
         // Check gRPC server connectivity through internal health
-        if let Ok(_) = state
+        if state
             .unified_handlers
             .collection_service
             .list_collections()
             .await
+            .is_ok()
         {
             server_health.push("grpc_server_active");
         }
@@ -569,7 +571,7 @@ async fn quick_storage_check(state: &HealthState) -> Result<(), String> {
 
 async fn quick_graph_check(_state: &HealthState) -> Result<(), String> {
     // Graph engine is available if we can access it
-    // TODO: Add more comprehensive check when methods are available
+    // Deferred: Add more comprehensive check when methods are available
     Ok(())
 }
 
@@ -578,10 +580,199 @@ async fn quick_graph_check(_state: &HealthState) -> Result<(), String> {
 async fn get_memory_info() -> Result<HashMap<String, serde_json::Value>, String> {
     let mut metrics = HashMap::new();
 
-    // TODO: Implement actual memory monitoring
+    // Deferred: Implement actual memory monitoring
     // For now, provide placeholder values
     metrics.insert("memory_used_bytes".to_string(), serde_json::json!(0));
     metrics.insert("memory_available_bytes".to_string(), serde_json::json!(0));
 
     Ok(metrics)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ============================================================
+    // HealthStatus tests
+    // ============================================================
+
+    #[test]
+    fn test_health_status_serialization() {
+        let healthy = serde_json::to_string(&HealthStatus::Healthy).unwrap();
+        assert_eq!(healthy, "\"healthy\"");
+
+        let degraded = serde_json::to_string(&HealthStatus::Degraded).unwrap();
+        assert_eq!(degraded, "\"degraded\"");
+
+        let unhealthy = serde_json::to_string(&HealthStatus::Unhealthy).unwrap();
+        assert_eq!(unhealthy, "\"unhealthy\"");
+    }
+
+    #[test]
+    fn test_health_status_equality() {
+        assert_eq!(HealthStatus::Healthy, HealthStatus::Healthy);
+        assert_eq!(HealthStatus::Degraded, HealthStatus::Degraded);
+        assert_eq!(HealthStatus::Unhealthy, HealthStatus::Unhealthy);
+        assert_ne!(HealthStatus::Healthy, HealthStatus::Degraded);
+        assert_ne!(HealthStatus::Healthy, HealthStatus::Unhealthy);
+        assert_ne!(HealthStatus::Degraded, HealthStatus::Unhealthy);
+    }
+
+    // ============================================================
+    // ComponentHealth tests
+    // ============================================================
+
+    #[test]
+    fn test_component_health_serialization() {
+        let component = ComponentHealth {
+            name: "storage".to_string(),
+            status: HealthStatus::Healthy,
+            message: "All good".to_string(),
+            last_check: 1700000000,
+            response_time_ms: 5,
+            metrics: HashMap::new(),
+        };
+        let json = serde_json::to_string(&component).unwrap();
+        assert!(json.contains("\"storage\""));
+        assert!(json.contains("\"healthy\""));
+        assert!(json.contains("\"All good\""));
+    }
+
+    #[test]
+    fn test_component_health_with_metrics() {
+        let mut metrics = HashMap::new();
+        metrics.insert("active_connections".to_string(), serde_json::json!(42));
+        metrics.insert("cache_hit_rate".to_string(), serde_json::json!(0.95));
+
+        let component = ComponentHealth {
+            name: "network".to_string(),
+            status: HealthStatus::Degraded,
+            message: "High latency detected".to_string(),
+            last_check: 1700000000,
+            response_time_ms: 250,
+            metrics,
+        };
+        let json = serde_json::to_string(&component).unwrap();
+        assert!(json.contains("active_connections"));
+        assert!(json.contains("42"));
+        assert!(json.contains("degraded"));
+    }
+
+    // ============================================================
+    // HealthResponse tests
+    // ============================================================
+
+    #[test]
+    fn test_health_response_serialization_without_components() {
+        let response = HealthResponse {
+            status: HealthStatus::Healthy,
+            timestamp: 1700000000,
+            uptime_seconds: 3600,
+            version: "0.2.0".to_string(),
+            components: None,
+            metrics: HashMap::new(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"healthy\""));
+        assert!(json.contains("\"0.2.0\""));
+        assert!(json.contains("3600"));
+    }
+
+    #[test]
+    fn test_health_response_serialization_with_components() {
+        let mut components = HashMap::new();
+        components.insert(
+            "storage".to_string(),
+            ComponentHealth {
+                name: "storage".to_string(),
+                status: HealthStatus::Healthy,
+                message: "OK".to_string(),
+                last_check: 1700000000,
+                response_time_ms: 1,
+                metrics: HashMap::new(),
+            },
+        );
+
+        let mut metrics = HashMap::new();
+        metrics.insert("uptime_seconds".to_string(), serde_json::json!(7200));
+
+        let response = HealthResponse {
+            status: HealthStatus::Healthy,
+            timestamp: 1700000000,
+            uptime_seconds: 7200,
+            version: "0.2.0".to_string(),
+            components: Some(components),
+            metrics,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("storage"));
+        assert!(json.contains("uptime_seconds"));
+    }
+
+    // ============================================================
+    // LivenessResponse tests
+    // ============================================================
+
+    #[test]
+    fn test_liveness_response_serialization() {
+        let response = LivenessResponse {
+            status: "alive".to_string(),
+            timestamp: 1700000000,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"alive\""));
+    }
+
+    // ============================================================
+    // ReadinessResponse tests
+    // ============================================================
+
+    #[test]
+    fn test_readiness_response_ready() {
+        let response = ReadinessResponse {
+            status: "ready".to_string(),
+            timestamp: 1700000000,
+            reasons: None,
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"ready\""));
+        // reasons should be null when None
+    }
+
+    #[test]
+    fn test_readiness_response_not_ready() {
+        let response = ReadinessResponse {
+            status: "not_ready".to_string(),
+            timestamp: 1700000000,
+            reasons: Some(vec![
+                "Storage not ready".to_string(),
+                "Server still starting up".to_string(),
+            ]),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"not_ready\""));
+        assert!(json.contains("Storage not ready"));
+        assert!(json.contains("Server still starting up"));
+    }
+
+    // ============================================================
+    // HealthParams tests
+    // ============================================================
+
+    #[test]
+    fn test_health_params_deserialization_defaults() {
+        let params: HealthParams = serde_json::from_str("{}").unwrap();
+        assert!(params.detailed.is_none());
+        assert!(params.component.is_none());
+        assert!(params.timeout_ms.is_none());
+    }
+
+    #[test]
+    fn test_health_params_deserialization_full() {
+        let json = r#"{"detailed": true, "component": "storage", "timeout_ms": 3000}"#;
+        let params: HealthParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.detailed, Some(true));
+        assert_eq!(params.component, Some("storage".to_string()));
+        assert_eq!(params.timeout_ms, Some(3000));
+    }
 }

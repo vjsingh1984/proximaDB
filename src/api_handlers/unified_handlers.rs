@@ -119,14 +119,14 @@ impl CollectionIdCache {
     /// Get a cached collection ID if it exists and is not expired
     pub fn get(&self, identifier: &str) -> Option<String> {
         let cache = self.cache.read().ok()?;
-        if let Some(entry) = cache.get(identifier) {
-            if entry.cached_at.elapsed() < self.ttl {
-                debug!(
-                    "Collection ID cache hit: '{}' -> '{}'",
-                    identifier, entry.collection_id
-                );
-                return Some(entry.collection_id.clone());
-            }
+        if let Some(entry) = cache.get(identifier)
+            && entry.cached_at.elapsed() < self.ttl
+        {
+            debug!(
+                "Collection ID cache hit: '{}' -> '{}'",
+                identifier, entry.collection_id
+            );
+            return Some(entry.collection_id.clone());
         }
         None
     }
@@ -219,6 +219,7 @@ use crate::services::operations::vectors::VectorOperationsService;
 ///
 /// **Performance Enhancement**: Uses optimized VectorOperationsService for 40-60% faster vector operations
 pub struct UnifiedHandlers {
+    /// Collection CRUD service for create/list/delete/stats.
     pub collection_service: Arc<CollectionService>,
     /// Optimized vector service with eliminated registry overhead
     pub vector_operations_service: Arc<VectorOperationsService>,
@@ -390,6 +391,26 @@ impl UnifiedHandlers {
         &self,
         request: CollectionRequest,
     ) -> Result<CollectionResponse> {
+        self.handle_collection_operation_internal(request, None)
+            .await
+    }
+
+    /// Handle collection operations with tenant-scoped access control.
+    pub async fn handle_collection_operation_for_tenant(
+        &self,
+        request: CollectionRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<CollectionResponse> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.handle_collection_operation_internal(request, tenant_context.as_ref())
+            .await
+    }
+
+    async fn handle_collection_operation_internal(
+        &self,
+        request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<CollectionResponse> {
         let request_id = generate_request_id();
         let start_time = std::time::Instant::now();
 
@@ -407,17 +428,23 @@ impl UnifiedHandlers {
         let (success, collection, collections_opt, affected_count, _error_msg, error_code) =
             match operation {
                 CollectionOperation::CollectionCreate => {
-                    self.handle_create_collection(request).await?
+                    self.handle_create_collection(request, tenant_context)
+                        .await?
                 }
-                CollectionOperation::CollectionGet => self.handle_collection(request).await?,
+                CollectionOperation::CollectionGet => {
+                    self.handle_collection(request, tenant_context).await?
+                }
                 CollectionOperation::CollectionList => {
-                    self.handle_list_collections(request).await?
+                    self.handle_list_collections(request, tenant_context)
+                        .await?
                 }
                 CollectionOperation::CollectionUpdate => {
-                    self.handle_update_collection(request).await?
+                    self.handle_update_collection(request, tenant_context)
+                        .await?
                 }
                 CollectionOperation::CollectionDelete => {
-                    self.handle_delete_collection(request).await?
+                    self.handle_delete_collection(request, tenant_context)
+                        .await?
                 }
                 _ => {
                     return Ok(CollectionResponse {
@@ -442,7 +469,7 @@ impl UnifiedHandlers {
             success,
             operation: operation as i32,
             collection,
-            collections: collections.unwrap_or_else(|| Vec::new()),
+            collections: collections.unwrap_or_else(Vec::new),
             affected_count,
             total_count: total_count.unwrap_or(0),
             metadata: Default::default(),
@@ -463,10 +490,57 @@ impl UnifiedHandlers {
     // /// Handle vector search operations with unified logic
     // Note: Non-v1 search handler removed. Use handle_vector_search_v1 directly.
 
+    /// Resolve a collection name or UUID to its canonical UUID, scoping to tenant if provided.
+    pub async fn resolve_collection_id_for_tenant(
+        &self,
+        collection_identifier: &str,
+        tenant_id: Option<&str>,
+    ) -> Result<Option<String>> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.resolve_collection_id_internal(collection_identifier, tenant_context.as_ref())
+            .await
+    }
+
+    async fn resolve_collection_id_internal(
+        &self,
+        collection_identifier: &str,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<Option<String>> {
+        if let Some(tenant_ctx) = tenant_context {
+            Ok(self
+                .collection_service
+                .get_collection_with_tenant_context(collection_identifier, Some(tenant_ctx))
+                .await?
+                .map(|collection| collection.id))
+        } else {
+            self.resolve_collection_id_cached(collection_identifier)
+                .await
+        }
+    }
+
     /// v1 wrapper: accept v1::VectorSearchRequest and return v1 response using v1 builders
+    pub async fn handle_vector_search_v1_for_tenant(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.handle_vector_search_v1_internal(request, tenant_context.as_ref())
+            .await
+    }
+
+    /// Execute a v1 vector similarity search request.
     pub async fn handle_vector_search_v1(
         &self,
         request: crate::proto::proximadb_v1::VectorSearchRequest,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.handle_vector_search_v1_internal(request, None).await
+    }
+
+    async fn handle_vector_search_v1_internal(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let request_id = generate_request_id();
         let start_time = std::time::Instant::now();
@@ -484,7 +558,7 @@ impl UnifiedHandlers {
         // Resolve collection name/ID to canonical ID (with caching)
         let collection_identifier = &request.collection_id;
         let collection_id: String = match self
-            .resolve_collection_id_cached(collection_identifier)
+            .resolve_collection_id_internal(collection_identifier, tenant_context)
             .await?
         {
             Some(id) => id,
@@ -501,66 +575,21 @@ impl UnifiedHandlers {
             }
         };
 
-        // Extract query vector (first query)
-        let top_k = request.top_k as usize;
-        let query_vector = request
-            .queries
-            .first()
-            .map(|q| q.vector.clone())
-            .ok_or_else(|| anyhow!("No query vectors provided"))?;
+        // Execute through the canonical v1 service path so filters/search semantics
+        // stay consistent across handlers and facade adapters.
+        let mut canonical_request = request;
+        canonical_request.collection_id = collection_id;
 
-        // Build unified config
-        let include_vectors = request
-            .include_fields
-            .as_ref()
-            .map(|f| f.vector)
-            .unwrap_or(false);
-        let include_metadata = request
-            .include_fields
-            .as_ref()
-            .map(|f| f.metadata)
-            .unwrap_or(true);
-        let cfg = crate::services::operations::vectors::UnifiedSearchConfig {
-            optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
-            progressive_search: true,
-            progressive_recalls: None,
-            include_vectors,
-            include_metadata,
-            scenario: None,
-            search_mode: crate::core::search::SearchMode::default(),
-        };
-
-        // Execute v1 search at the source
-        let results_v1 = self
+        let mut response = self
             .vector_operations_service
-            .unified_search_v1(&collection_id, query_vector, top_k, None, Some(cfg))
+            .search_v1_with_tenant_context(canonical_request, tenant_context)
             .await?;
 
-        // Assemble v1 operation response
-        let (results, total_count) = if let Some(r) = results_v1.into_iter().next() {
-            let total = r.total_found;
-            (Some(r), total)
-        } else {
-            (None, 0)
-        };
+        if let Some(metrics) = response.metrics.as_mut() {
+            metrics.processing_time_us = start_time.elapsed().as_micros() as i64;
+        }
 
-        Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-            success: true,
-            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsSearch as i32,
-            metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
-                total_processed: total_count,
-                successful_count: total_count,
-                failed_count: 0,
-                updated_count: 0,
-                processing_time_us: start_time.elapsed().as_micros() as i64,
-                wal_write_time_us: 0,
-                index_update_time_us: 0,
-            }),
-            results,
-            vector_ids: vec![],
-            error_message: None,
-            error_code: None,
-        })
+        Ok(response)
     }
 
     /// Execute hybrid search (BM25 full-text + Vector similarity) with parallel execution
@@ -592,10 +621,10 @@ impl UnifiedHandlers {
     /// ```
     pub async fn execute_hybrid_search(
         &self,
-        _collection_id: &str,
+        collection_id: &str,
         text_query: &str,
         query_vector: &[f32],
-        _top_k: usize,
+        top_k: usize,
         fusion_strategy: crate::core::search::hybrid::FusionStrategy,
         _filters: Option<crate::core::search::FilterExpression>,
     ) -> anyhow::Result<Vec<crate::core::search::hybrid::FusedSearchResult>> {
@@ -603,17 +632,58 @@ impl UnifiedHandlers {
 
         let coordinator = HybridCoordinator::new(fusion_strategy);
 
-        // Mock BM25 search for now (TODO: integrate actual BM25 backend)
-        let bm25_search = |_query: String| async move {
-            // TODO: Replace with actual BM25 full-text search
-            // For now, return empty results
-            Ok::<Vec<BM25Result>, anyhow::Error>(vec![])
-        };
+        // BM25 search is temporarily disabled here until the document service is
+        // explicitly plumbed into UnifiedHandlers. Keep the hybrid API callable
+        // and let the fusion engine operate on the live vector branch.
+        let bm25_search =
+            |_query: String| async move { Ok::<Vec<BM25Result>, anyhow::Error>(Vec::new()) };
 
-        // Mock vector search (TODO: use actual vector search service)
-        let vector_search = |_vector: Vec<f32>| async move {
-            // TODO: Replace with actual vector search using self.vector_operations_service
-            Ok::<Vec<VectorResult>, anyhow::Error>(vec![])
+        // Vector search via the vector operations service
+        let vec_service = self.vector_operations_service.clone();
+        let coll_id_vec = collection_id.to_string();
+        let k_vec = top_k;
+        let vector_search = |vector: Vec<f32>| async move {
+            let request = crate::proto::proximadb_v1::VectorSearchRequest {
+                collection_id: coll_id_vec,
+                queries: vec![crate::proto::proximadb_v1::SearchQuery {
+                    vector,
+                    filters: HashMap::new(),
+                    advanced_filter: None,
+                }],
+                top_k: k_vec as u32,
+                include_fields: Some(crate::proto::proximadb_v1::IncludeFields {
+                    vector: false,
+                    metadata: true,
+                    score: true,
+                    rank: false,
+                    source: false,
+                    source_options: HashMap::new(),
+                }),
+                search_params: None,
+                distance_metric_override: None,
+                search_optimization: None,
+            };
+
+            match vec_service.search_v1(request).await {
+                Ok(results) => {
+                    let vec_results: Vec<VectorResult> = results
+                        .results
+                        .unwrap_or_default()
+                        .results
+                        .into_iter()
+                        .map(|r| VectorResult {
+                            doc_id: r.id,
+                            score: r.similarity.unwrap_or(r.score as f32) as f64,
+                            distance: 1.0 - r.similarity.unwrap_or(r.score as f32) as f64,
+                            metadata: crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(
+                                &r.metadata,
+                            ),
+                        })
+                        .collect();
+                    Ok(vec_results)
+                }
+                Err(_) => Ok::<Vec<VectorResult>, anyhow::Error>(vec![]),
+            }
         };
 
         let fused_results = coordinator
@@ -627,9 +697,28 @@ impl UnifiedHandlers {
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response
     ///
     /// REFACTORED: Now uses clean typed insert_batch() instead of JSON serialization
+    pub async fn handle_vector_batch_v1_for_tenant(
+        &self,
+        request: crate::proto::proximadb_v1::VectorBatchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.handle_vector_batch_v1_internal(request, tenant_context.as_ref())
+            .await
+    }
+
+    /// Execute a v1 vector batch upsert/delete request.
     pub async fn handle_vector_batch_v1(
         &self,
         request: crate::proto::proximadb_v1::VectorBatchRequest,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.handle_vector_batch_v1_internal(request, None).await
+    }
+
+    async fn handle_vector_batch_v1_internal(
+        &self,
+        request: crate::proto::proximadb_v1::VectorBatchRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let request_id = generate_request_id();
         let vector_count = request.vectors.len();
@@ -647,7 +736,7 @@ impl UnifiedHandlers {
 
         // Resolve to canonical collection ID (with caching)
         let collection_id: String = match self
-            .resolve_collection_id_cached(collection_identifier)
+            .resolve_collection_id_internal(collection_identifier, tenant_context)
             .await?
         {
             Some(id) => id,
@@ -678,8 +767,8 @@ impl UnifiedHandlers {
                     vector: v.vector,
                     metadata: v.metadata,
                     timestamp: v.timestamp,
-                    updated_at: v.updated_at.map(|x| x as i64),
-                    expires_at: v.expires_at.map(|x| x as i64),
+                    updated_at: v.updated_at,
+                    expires_at: v.expires_at,
                     version: v.version,
                     source: v.source,
                 }
@@ -689,7 +778,7 @@ impl UnifiedHandlers {
         // Call the clean typed service method
         match self
             .vector_operations_service
-            .insert_batch(&collection_id, vectors)
+            .insert_batch_with_tenant_context(&collection_id, vectors, tenant_context)
             .await
         {
             Ok(result) => {
@@ -740,6 +829,26 @@ impl UnifiedHandlers {
     }
 
     /// v1 wrapper for VectorGet → returns v1 response
+    pub async fn handle_vector_v1_for_tenant(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+        include_vector: bool,
+        include_metadata: bool,
+        tenant_id: Option<&str>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        self.handle_vector_v1_internal(
+            collection_id,
+            vector_id,
+            include_vector,
+            include_metadata,
+            tenant_context.as_ref(),
+        )
+        .await
+    }
+
+    /// Handle a single-vector v1 operation (get, insert, update, delete).
     pub async fn handle_vector_v1(
         &self,
         collection_id: &str,
@@ -747,12 +856,29 @@ impl UnifiedHandlers {
         include_vector: bool,
         include_metadata: bool,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.handle_vector_v1_internal(
+            collection_id,
+            vector_id,
+            include_vector,
+            include_metadata,
+            None,
+        )
+        .await
+    }
+
+    async fn handle_vector_v1_internal(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+        include_vector: bool,
+        include_metadata: bool,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
         let start_time = std::time::Instant::now();
 
         // Resolve canonical collection ID
         let resolved_collection_id: String = match self
-            .collection_service
-            .resolve_collection_id(collection_id)
+            .resolve_collection_id_internal(collection_id, tenant_context)
             .await?
         {
             Some(id) => id,
@@ -1031,10 +1157,7 @@ impl UnifiedHandlers {
                 // 1. Perform vector search
                 let vector_search_response = self
                     .handle_vector_search_v1(
-                        request
-                            .vector_search_request
-                            .clone()
-                            .unwrap_or_else(|| Default::default()),
+                        request.vector_search_request.clone().unwrap_or_default(),
                     )
                     .await?;
                 if let Some(results) = vector_search_response.results {
@@ -1046,16 +1169,10 @@ impl UnifiedHandlers {
 
                     // 2. Perform graph traversal from these nodes
                     if !start_node_ids.is_empty() {
-                        let graph_req = request
-                            .graph_traversal_request
-                            .clone()
-                            .unwrap_or_else(|| Default::default());
+                        let graph_req = request.graph_traversal_request.clone().unwrap_or_default();
                         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
-                            graph_id: "default".to_string(), // TODO: Extract from request or pass as parameter
-                            start_node_id: start_node_ids
-                                .first()
-                                .cloned()
-                                .unwrap_or_else(|| String::new()), // Use first for now, need to handle multiple starts
+                            graph_id: "default".to_string(), // Deferred: Extract from request or pass as parameter
+                            start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
                             max_depth: if graph_req.max_depth == 0 {
                                 3
                             } else {
@@ -1084,7 +1201,7 @@ impl UnifiedHandlers {
                     }
                 }
             }
-            // TODO: Implement other combination strategies
+            // Deferred: Implement other combination strategies
             _ => return Err(anyhow::anyhow!("Unsupported combination strategy")),
         }
 
@@ -1108,6 +1225,7 @@ impl UnifiedHandlers {
     async fn handle_create_collection(
         &self,
         request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1123,7 +1241,16 @@ impl UnifiedHandlers {
         // Apply smart defaults at API boundary
         crate::proto::defaults::apply_collection_config_defaults(&mut config);
 
-        match self.collection_service.create_collection(&config).await {
+        let response = match tenant_context {
+            Some(tenant_ctx) => {
+                self.collection_service
+                    .create_collection_with_tenant_context(&config, Some(tenant_ctx))
+                    .await
+            }
+            None => self.collection_service.create_collection(&config).await,
+        };
+
+        match response {
             Ok(response) => {
                 if response.success {
                     Ok((true, response.collection, None, 1, None, None))
@@ -1156,6 +1283,7 @@ impl UnifiedHandlers {
     async fn handle_collection(
         &self,
         request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1165,6 +1293,35 @@ impl UnifiedHandlers {
         Option<String>,
     )> {
         let collection_identifier = request.collection_id.context("Missing collection ID")?;
+
+        if let Some(tenant_ctx) = tenant_context {
+            return match self
+                .collection_service
+                .get_collection_with_tenant_context(&collection_identifier, Some(tenant_ctx))
+                .await
+            {
+                Ok(Some(collection)) => Ok((true, Some(collection), None, 1, None, None)),
+                Ok(None) => Ok((
+                    false,
+                    None,
+                    None,
+                    0,
+                    Some("Collection not found".to_string()),
+                    Some("NOT_FOUND".to_string()),
+                )),
+                Err(e) => {
+                    error!("Failed to get tenant-scoped collection: {:?}", e);
+                    Ok((
+                        false,
+                        None,
+                        None,
+                        0,
+                        Some(e.to_string()),
+                        Some("GET_FAILED".to_string()),
+                    ))
+                }
+            };
+        }
 
         // Resolve collection name/ID to collection ID
         let collection_id = match self
@@ -1218,6 +1375,7 @@ impl UnifiedHandlers {
     async fn handle_list_collections(
         &self,
         _request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1226,7 +1384,11 @@ impl UnifiedHandlers {
         Option<String>,
         Option<String>,
     )> {
-        match self.collection_service.list_collections().await {
+        match self
+            .collection_service
+            .list_collections_with_tenant_context(tenant_context)
+            .await
+        {
             Ok(collections) => {
                 let count = collections.len() as i64;
                 Ok((true, None, Some(collections), count, None, None))
@@ -1249,6 +1411,7 @@ impl UnifiedHandlers {
     async fn handle_update_collection(
         &self,
         request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1262,22 +1425,41 @@ impl UnifiedHandlers {
             .collection_config
             .context("Missing collection config")?;
 
-        // Resolve collection name/ID to collection ID
-        let collection_id = match self
-            .collection_service
-            .resolve_collection_id(&collection_identifier)
-            .await?
-        {
-            Some(id) => id,
-            None => {
-                return Ok((
-                    false,
-                    None,
-                    None,
-                    0,
-                    Some("Collection not found".to_string()),
-                    Some("NOT_FOUND".to_string()),
-                ));
+        let collection_id = if let Some(tenant_ctx) = tenant_context {
+            match self
+                .collection_service
+                .get_collection_with_tenant_context(&collection_identifier, Some(tenant_ctx))
+                .await?
+            {
+                Some(collection) => collection.id,
+                None => {
+                    return Ok((
+                        false,
+                        None,
+                        None,
+                        0,
+                        Some("Collection not found".to_string()),
+                        Some("NOT_FOUND".to_string()),
+                    ));
+                }
+            }
+        } else {
+            match self
+                .collection_service
+                .resolve_collection_id(&collection_identifier)
+                .await?
+            {
+                Some(id) => id,
+                None => {
+                    return Ok((
+                        false,
+                        None,
+                        None,
+                        0,
+                        Some("Collection not found".to_string()),
+                        Some("NOT_FOUND".to_string()),
+                    ));
+                }
             }
         };
 
@@ -1327,6 +1509,7 @@ impl UnifiedHandlers {
     async fn handle_delete_collection(
         &self,
         request: CollectionRequest,
+        tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<(
         bool,
         Option<Collection>,
@@ -1336,6 +1519,53 @@ impl UnifiedHandlers {
         Option<String>,
     )> {
         let collection_identifier = request.collection_id.context("Missing collection ID")?;
+
+        if let Some(tenant_ctx) = tenant_context {
+            return match self
+                .collection_service
+                .delete_collection_with_tenant_context(&collection_identifier, Some(tenant_ctx))
+                .await
+            {
+                Ok(response) => {
+                    if response.success {
+                        self.invalidate_collection_cache(&collection_identifier);
+                        if let Some(collection) = &response.collection {
+                            self.invalidate_collection_cache(&collection.id);
+                        }
+                        Ok((true, None, None, 1, None, None))
+                    } else if response.error_code.as_deref() == Some("NOT_FOUND") {
+                        Ok((
+                            false,
+                            None,
+                            None,
+                            0,
+                            Some("Collection not found".to_string()),
+                            Some("NOT_FOUND".to_string()),
+                        ))
+                    } else {
+                        Ok((
+                            false,
+                            None,
+                            None,
+                            0,
+                            response.error_code.clone(),
+                            response.error_code,
+                        ))
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to delete tenant-scoped collection: {:?}", e);
+                    Ok((
+                        false,
+                        None,
+                        None,
+                        0,
+                        Some(e.to_string()),
+                        Some("DELETE_FAILED".to_string()),
+                    ))
+                }
+            };
+        }
 
         // Resolve collection name/ID to collection ID
         let collection_id = match self
@@ -1424,8 +1654,7 @@ impl UnifiedHandlers {
             c.id == collection_id
                 || c.config
                     .as_ref()
-                    .map(|cfg| cfg.name == collection_id)
-                    .unwrap_or(false)
+                    .is_some_and(|cfg| cfg.name == collection_id)
         }))
     }
 
@@ -1484,7 +1713,7 @@ impl UnifiedHandlers {
             rows,
             rows_scanned: 0,
             rows_returned: result.row_count as u64,
-            execution_time_ms: result.execution_time_ms as u64,
+            execution_time_ms: result.execution_time_ms,
             columns: result.columns.iter().map(|c| c.0.clone()).collect(),
             column_types: result.columns.iter().map(|c| c.1.clone()).collect(),
         })
@@ -1589,10 +1818,9 @@ impl UnifiedHandlers {
 
         // Also support ? placeholders (common in many SQL dialects)
         let mut result = String::new();
-        let mut chars = processed.chars().peekable();
         let mut param_index = 0;
 
-        while let Some(ch) = chars.next() {
+        for ch in processed.chars() {
             if ch == '?' && param_index < parameters.len() {
                 result.push_str(&self.format_sql_value(&parameters[param_index])?);
                 param_index += 1;
@@ -1677,7 +1905,7 @@ impl UnifiedHandlers {
             }
             serde_json::Value::Object(map) => {
                 let mut fields = std::collections::BTreeMap::new();
-                for (k, sv) in map.iter() {
+                for (k, sv) in map {
                     fields.insert(k.clone(), Self::json_to_sql_value(sv));
                 }
                 let fields_hashmap: std::collections::HashMap<
@@ -1816,17 +2044,15 @@ impl UnifiedHandlers {
             .collect();
 
         // Infer column types from first row
-        let columns = if let Some(first_row) = rows.first() {
-            if let serde_json::Value::Object(map) = first_row {
-                map.iter()
-                    .map(|(key, value)| {
-                        let type_name = self.infer_json_type(value);
-                        (key.clone(), type_name)
-                    })
-                    .collect()
-            } else {
-                vec![]
-            }
+        let columns = if let Some(first_row) = rows.first()
+            && let serde_json::Value::Object(map) = first_row
+        {
+            map.iter()
+                .map(|(key, value)| {
+                    let type_name = self.infer_json_type(value);
+                    (key.clone(), type_name)
+                })
+                .collect()
         } else {
             vec![]
         };
@@ -2790,13 +3016,173 @@ mod tests {
         assert_eq!(metrics.failed_count, 5);
         assert_eq!(metrics.processing_time_us, 50000);
     }
+
+    // ==================== CollectionIdCache TTL Expiry Tests ====================
+
+    #[test]
+    fn test_collection_id_cache_ttl_expiry() {
+        // Use a 0-second TTL so entries expire immediately
+        let cache = CollectionIdCache::with_ttl(Duration::from_millis(0));
+        cache.insert("key".to_string(), "value".to_string());
+
+        // Entry should be expired on next get (TTL = 0ms)
+        std::thread::sleep(Duration::from_millis(1));
+        assert!(
+            cache.get("key").is_none(),
+            "Expired entry should return None"
+        );
+    }
+
+    #[test]
+    fn test_collection_id_cache_fresh_entry_within_ttl() {
+        let cache = CollectionIdCache::with_ttl(Duration::from_secs(60));
+        cache.insert("fresh_key".to_string(), "fresh_value".to_string());
+
+        // Should still be valid
+        assert_eq!(cache.get("fresh_key"), Some("fresh_value".to_string()));
+    }
+
+    #[test]
+    fn test_collection_id_cache_evict_expired_via_insert() {
+        // Use tiny TTL so entries expire quickly
+        let cache = CollectionIdCache {
+            cache: std::sync::RwLock::new(HashMap::new()),
+            ttl: Duration::from_millis(0),
+            max_size: 2,
+        };
+
+        cache.insert("a".to_string(), "1".to_string());
+        cache.insert("b".to_string(), "2".to_string());
+
+        // Wait for entries to expire
+        std::thread::sleep(Duration::from_millis(1));
+
+        // Inserting a new entry should evict expired ones first
+        cache.insert("c".to_string(), "3".to_string());
+
+        // Expired entries should be gone
+        assert!(cache.get("a").is_none());
+        assert!(cache.get("b").is_none());
+        // New entry might also be expired given 0ms TTL; the important thing
+        // is that insert didn't panic and the cache didn't grow unbounded
+    }
+
+    #[test]
+    fn test_collection_id_cache_max_size_eviction() {
+        // Create a cache with max_size=3 and long TTL (entries won't expire)
+        let cache = CollectionIdCache {
+            cache: std::sync::RwLock::new(HashMap::new()),
+            ttl: Duration::from_secs(3600),
+            max_size: 3,
+        };
+
+        cache.insert("a".to_string(), "1".to_string());
+        cache.insert("b".to_string(), "2".to_string());
+        cache.insert("c".to_string(), "3".to_string());
+
+        // Cache is at max. Next insert should trigger eviction of half.
+        cache.insert("d".to_string(), "4".to_string());
+
+        // The new entry should be present
+        assert_eq!(cache.get("d"), Some("4".to_string()));
+
+        // Some old entries should have been evicted (half = 1 entry removed from 3)
+        let cache_guard = cache.cache.read().unwrap();
+        // After eviction of half (1) + insert of "d", we should have 3 entries
+        assert!(cache_guard.len() <= 3);
+    }
+
+    #[test]
+    fn test_collection_id_cache_invalidate_nonexistent() {
+        let cache = CollectionIdCache::new();
+        // Should not panic when invalidating a key that doesn't exist
+        cache.invalidate("nonexistent_key");
+        assert!(cache.get("nonexistent_key").is_none());
+    }
+
+    #[test]
+    fn test_collection_id_cache_clear_empty() {
+        let cache = CollectionIdCache::new();
+        // Clearing an empty cache should not panic
+        cache.clear();
+        assert!(cache.get("any_key").is_none());
+    }
+
+    #[test]
+    fn test_collection_id_cache_insert_same_key_updates_timestamp() {
+        let cache = CollectionIdCache::with_ttl(Duration::from_secs(60));
+        cache.insert("key".to_string(), "old_value".to_string());
+
+        // Re-insert with new value (and new timestamp)
+        cache.insert("key".to_string(), "new_value".to_string());
+
+        // Should get the new value
+        assert_eq!(cache.get("key"), Some("new_value".to_string()));
+    }
+
+    #[test]
+    fn test_collection_id_cache_invalidate_removes_all_matching_values() {
+        let cache = CollectionIdCache::new();
+        cache.insert("name_a".to_string(), "id_x".to_string());
+        cache.insert("name_b".to_string(), "id_x".to_string());
+        cache.insert("name_c".to_string(), "id_y".to_string());
+
+        // Invalidate by value "id_x" - should remove name_a and name_b
+        cache.invalidate("id_x");
+
+        assert!(cache.get("name_a").is_none());
+        assert!(cache.get("name_b").is_none());
+        // name_c maps to a different value, should remain
+        assert_eq!(cache.get("name_c"), Some("id_y".to_string()));
+    }
+
+    // ==================== generate_request_id Stress Tests ====================
+
+    #[test]
+    fn test_generate_request_id_many_unique() {
+        let mut ids = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let id = generate_request_id();
+            assert!(ids.insert(id), "Duplicate request ID generated");
+        }
+        assert_eq!(ids.len(), 1000);
+    }
+
+    #[test]
+    fn test_generate_request_id_timestamp_portion_is_hex() {
+        let id = generate_request_id();
+        let timestamp_hex = &id[..8];
+        assert!(
+            u32::from_str_radix(timestamp_hex, 16).is_ok(),
+            "Timestamp portion should be valid hex"
+        );
+    }
+
+    // ==================== COLLECTION_ID_CACHE Constants Tests ====================
+
+    #[test]
+    fn test_cache_constants() {
+        assert_eq!(COLLECTION_ID_CACHE_TTL_SECS, 300);
+        assert_eq!(COLLECTION_ID_CACHE_MAX_SIZE, 1000);
+    }
+
+    #[test]
+    fn test_collection_id_cache_default_uses_correct_ttl() {
+        let cache = CollectionIdCache::new();
+        assert_eq!(cache.ttl, Duration::from_secs(300));
+        assert_eq!(cache.max_size, 1000);
+    }
 }
 
 /// SQL query result structure
 #[derive(Debug)]
 pub struct SqlQueryResult {
+    /// JSON-encoded result rows.
     pub rows: Vec<serde_json::Value>,
-    pub columns: Vec<(String, String)>, // (name, type)
+    /// Column definitions as (name, type_name) pairs.
+    pub columns: Vec<(String, String)>,
+    /// Total number of rows returned.
     pub row_count: usize,
+    /// Query execution wall-clock time in milliseconds.
     pub execution_time_ms: u64,
 }

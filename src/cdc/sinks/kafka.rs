@@ -23,6 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::cdc::event::ChangeEvent;
 
+#[cfg(feature = "cdc-kafka")]
+use super::traits::SinkError;
 use super::traits::{CdcSink, MessageFormat, SinkResult, SinkStats};
 
 /// Kafka sink configuration
@@ -277,6 +279,9 @@ pub struct KafkaSink {
     buffer: Mutex<Vec<ChangeEvent>>,
     /// Connected flag
     connected: Mutex<bool>,
+    /// Real rdkafka producer (only available with `cdc-kafka` feature)
+    #[cfg(feature = "cdc-kafka")]
+    producer: tokio::sync::Mutex<Option<rdkafka::producer::FutureProducer>>,
 }
 
 impl KafkaSink {
@@ -287,6 +292,8 @@ impl KafkaSink {
             stats: Mutex::new(SinkStats::default()),
             buffer: Mutex::new(Vec::new()),
             connected: Mutex::new(false),
+            #[cfg(feature = "cdc-kafka")]
+            producer: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -297,38 +304,160 @@ impl KafkaSink {
 
     /// Check if connected
     pub fn is_connected(&self) -> bool {
-        *self.connected.lock().unwrap()
+        *self
+            .connected
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// Connect to Kafka (simulated)
+    /// Connect to Kafka
+    ///
+    /// When the `cdc-kafka` feature is enabled, this creates a real rdkafka `FutureProducer`.
+    /// Without the feature, it sets the connected flag for simulated operation.
     pub async fn connect(&self) -> SinkResult<()> {
-        // In production, would create rdkafka producer here
-        *self.connected.lock().unwrap() = true;
+        #[cfg(feature = "cdc-kafka")]
+        {
+            use rdkafka::ClientConfig;
+            use rdkafka::producer::FutureProducer;
+
+            let mut client_config = ClientConfig::new();
+            client_config.set("bootstrap.servers", self.config.bootstrap_servers_string());
+            client_config.set("message.timeout.ms", "5000");
+            client_config.set("acks", self.config.acks.as_str());
+            client_config.set("compression.type", self.config.compression.as_str());
+            client_config.set("batch.size", self.config.batch_size.to_string());
+            client_config.set("linger.ms", self.config.linger_ms.to_string());
+
+            // SASL auth
+            if let Some(ref mechanism) = self.config.sasl_mechanism {
+                client_config.set("sasl.mechanism", mechanism);
+            }
+            if let Some(ref username) = self.config.sasl_username {
+                client_config.set("sasl.username", username);
+            }
+            if let Some(ref password) = self.config.sasl_password {
+                client_config.set("sasl.password", password);
+            }
+
+            // Security protocol
+            let protocol_str = match self.config.security_protocol {
+                SecurityProtocol::Plaintext => "plaintext",
+                SecurityProtocol::Ssl => "ssl",
+                SecurityProtocol::SaslPlaintext => "sasl_plaintext",
+                SecurityProtocol::SaslSsl => "sasl_ssl",
+            };
+            client_config.set("security.protocol", protocol_str);
+
+            // Custom properties
+            for (k, v) in &self.config.properties {
+                client_config.set(k, v);
+            }
+
+            let producer: FutureProducer = client_config.create().map_err(|e| {
+                SinkError::Connection(format!("Kafka producer creation failed: {}", e))
+            })?;
+
+            *self.producer.lock().await = Some(producer);
+        }
+
+        #[cfg(not(feature = "cdc-kafka"))]
+        {
+            tracing::debug!(
+                "Kafka connect simulated (enable 'cdc-kafka' feature for real transport)"
+            );
+        }
+
+        *self
+            .connected
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
         Ok(())
     }
 
-    /// Produce a message to Kafka (simulated)
+    /// Produce a message to Kafka
+    ///
+    /// When the `cdc-kafka` feature is enabled, sends the message via rdkafka `FutureProducer`.
+    /// Without the feature, simulates the send and updates stats only.
     async fn produce(&self, topic: &str, key: &str, payload: &[u8]) -> SinkResult<()> {
-        // Simulate Kafka produce
-        let _ = (topic, key, payload);
+        #[cfg(feature = "cdc-kafka")]
+        {
+            use rdkafka::producer::FutureRecord;
+            use std::time::Duration;
+
+            let guard = self.producer.lock().await;
+            let producer = guard
+                .as_ref()
+                .ok_or_else(|| SinkError::Connection("Kafka producer not connected".to_string()))?;
+
+            let record = FutureRecord::to(topic).key(key).payload(payload);
+
+            producer
+                .send(record, Duration::from_secs(5))
+                .await
+                .map_err(|(e, _)| SinkError::Send(format!("Kafka send failed: {}", e)))?;
+        }
+
+        #[cfg(not(feature = "cdc-kafka"))]
+        {
+            let _ = (topic, key, payload);
+            tracing::debug!(
+                "Kafka produce simulated (enable 'cdc-kafka' feature for real transport)"
+            );
+        }
 
         // Update stats
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_send(payload.len() as u64, 1.0);
 
         Ok(())
     }
 
     /// Produce a batch of messages
+    ///
+    /// When the `cdc-kafka` feature is enabled, sends each message via rdkafka `FutureProducer`.
+    /// Without the feature, simulates the batch send and updates stats only.
     async fn produce_batch(&self, messages: Vec<(String, String, Vec<u8>)>) -> SinkResult<()> {
         let total_bytes: u64 = messages.iter().map(|(_, _, p)| p.len() as u64).sum();
         let count = messages.len() as u64;
 
-        // Simulate batch produce
-        let _ = messages;
+        #[cfg(feature = "cdc-kafka")]
+        {
+            use rdkafka::producer::FutureRecord;
+            use std::time::Duration;
+
+            let guard = self.producer.lock().await;
+            let producer = guard
+                .as_ref()
+                .ok_or_else(|| SinkError::Connection("Kafka producer not connected".to_string()))?;
+
+            for (topic, key, payload) in &messages {
+                let record = FutureRecord::to(topic)
+                    .key(key.as_str())
+                    .payload(payload.as_slice());
+
+                producer
+                    .send(record, Duration::from_secs(5))
+                    .await
+                    .map_err(|(e, _)| SinkError::Send(format!("Kafka batch send failed: {}", e)))?;
+            }
+        }
+
+        #[cfg(not(feature = "cdc-kafka"))]
+        {
+            let _ = messages;
+            tracing::debug!(
+                "Kafka batch produce simulated (enable 'cdc-kafka' feature for real transport)"
+            );
+        }
 
         // Update stats
-        let mut stats = self.stats.lock().unwrap();
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         stats.record_batch(count, total_bytes, 5.0);
 
         Ok(())
@@ -366,7 +495,10 @@ impl CdcSink for KafkaSink {
     async fn flush(&self) -> SinkResult<()> {
         // Flush buffer
         let events = {
-            let mut buffer = self.buffer.lock().unwrap();
+            let mut buffer = self
+                .buffer
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             std::mem::take(&mut *buffer)
         };
 
@@ -379,12 +511,24 @@ impl CdcSink for KafkaSink {
 
     async fn close(&self) -> SinkResult<()> {
         self.flush().await?;
-        *self.connected.lock().unwrap() = false;
+
+        #[cfg(feature = "cdc-kafka")]
+        {
+            *self.producer.lock().await = None;
+        }
+
+        *self
+            .connected
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
         Ok(())
     }
 
     fn stats(&self) -> SinkStats {
-        self.stats.lock().unwrap().clone()
+        self.stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 

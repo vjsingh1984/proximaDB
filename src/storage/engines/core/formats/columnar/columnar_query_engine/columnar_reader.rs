@@ -88,7 +88,7 @@ impl ParquetReader {
             // Update statistics
             self.stats.files_read += 1;
             self.stats.records_read += records.len();
-            self.stats.row_groups_read += metadata.num_row_groups() as usize;
+            self.stats.row_groups_read += metadata.num_row_groups();
 
             Ok(records)
         })
@@ -107,7 +107,7 @@ impl ParquetReader {
 
         // For now, we'll read the entire file into memory and create a byte slice
         // This is not optimal for large files, but works with the current Parquet reader API
-        // TODO: In the future, implement streaming readers that work with async I/O
+        // Note: In the future, implement streaming readers that work with async I/O
         let file_data = filesystem
             .read(file_path)
             .await
@@ -138,7 +138,7 @@ impl ParquetReader {
         // Update statistics
         self.stats.files_read += 1;
         self.stats.records_read += all_records.len();
-        self.stats.row_groups_read += metadata.num_row_groups() as usize;
+        self.stats.row_groups_read += metadata.num_row_groups();
 
         Ok(all_records)
     }
@@ -471,31 +471,28 @@ impl ParquetReader {
                         }
                     } else if let Some(bool_array) =
                         column.as_any().downcast_ref::<arrow::array::BooleanArray>()
+                        && !bool_array.is_null(row)
                     {
-                        if !bool_array.is_null(row) {
-                            let value = bool_array.value(row);
-                            debug!(
-                                "🔍 DEBUG: Found bool metadata {}={} for row {}",
-                                column_name, value, row
-                            );
-                            metadata.insert(
-                                column_name.to_string(),
-                                crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(
-                                            value,
-                                        ),
-                                    ),
-                                },
-                            );
-                        }
+                        let value = bool_array.value(row);
+                        debug!(
+                            "🔍 DEBUG: Found bool metadata {}={} for row {}",
+                            column_name, value, row
+                        );
+                        metadata.insert(
+                            column_name.to_string(),
+                            crate::proto::proximadb_v1::SqlValue {
+                                value: Some(
+                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(value),
+                                ),
+                            },
+                        );
                     }
                 }
             }
 
             let record = VectorRecord {
                 id: id_array.value(row).to_string(),
-                timestamp: Some(timestamp_array.value(row) as i64),
+                timestamp: Some(timestamp_array.value(row)),
                 vector: vector_values[row].clone(),
                 metadata,
                 ..Default::default()
@@ -586,6 +583,12 @@ impl ReaderBuilder {
     /// Build the reader
     pub fn build(self) -> ParquetReader {
         ParquetReader::new(self.config)
+    }
+}
+
+impl Default for ReaderBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

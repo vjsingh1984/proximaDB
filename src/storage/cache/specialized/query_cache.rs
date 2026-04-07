@@ -162,7 +162,7 @@ impl QueryCache {
 
     /// Invalidate all queries dependent on a file
     pub async fn invalidate_by_file(&self, _file_path: &str) {
-        // TODO: Implement file-based invalidation
+        // Deferred: Implement file-based invalidation
         // This would track which queries depend on which files
     }
 
@@ -175,7 +175,7 @@ impl QueryCache {
 
     /// Resize the cache
     pub async fn resize(&self, _new_size_mb: usize) -> anyhow::Result<()> {
-        // TODO: Implement cache resizing
+        // Deferred: Implement cache resizing
         Ok(())
     }
 

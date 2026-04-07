@@ -48,7 +48,7 @@ pub struct LegacyProximaDataBlock {
 }
 
 /// DEPRECATED: Use `proximablocks::ProximaBlockMetadata` instead
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LegacyProximaBlockMetadata {
     pub min_id: String,
     pub max_id: String,
@@ -58,21 +58,6 @@ pub struct LegacyProximaBlockMetadata {
     pub compressed_size: Option<usize>,
     pub uncompressed_size: usize,
     pub bloom_filter: Option<Vec<u8>>,
-}
-
-impl Default for LegacyProximaBlockMetadata {
-    fn default() -> Self {
-        LegacyProximaBlockMetadata {
-            min_id: String::new(),
-            max_id: String::new(),
-            min_timestamp: 0,
-            max_timestamp: 0,
-            record_count: 0,
-            compressed_size: None,
-            uncompressed_size: 0,
-            bloom_filter: None,
-        }
-    }
 }
 
 /// DEPRECATED: Use `proximablocks::QuantizedSection` instead
@@ -136,18 +121,13 @@ pub struct LegacySstableHeader {
 }
 
 /// DEPRECATED: Compression types enum - was exported but never used
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum LegacyCompressionType {
     None,
+    #[default]
     Lz4,
     Zstd,
     Snappy,
-}
-
-impl Default for LegacyCompressionType {
-    fn default() -> Self {
-        LegacyCompressionType::Lz4
-    }
 }
 
 /// DEPRECATED: SST record type - production code uses VectorRecord directly

@@ -32,6 +32,7 @@ use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
 use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
 use crate::index::axis::indexes::lsh_index::{AxisLshConfig, AxisLshIndex};
 use crate::index::axis::types::IndexAlgorithm;
+use crate::index::edr::{EdrIndex, EdrIndexConfig};
 
 /// Trait for vector indexes that can be used by AXIS
 /// Clean design: No VectorRecord, just raw vector data
@@ -61,8 +62,11 @@ pub trait AxisVectorIndex: Send + Sync {
 /// Index statistics
 #[derive(Debug, Clone)]
 pub struct IndexStats {
+    /// Number of vectors currently stored in the index.
     pub vector_count: usize,
+    /// Approximate memory consumption of the index in bytes.
     pub memory_usage_bytes: usize,
+    /// Human-readable name of the index algorithm (e.g., "HNSW", "IVF").
     pub index_type: String,
 }
 
@@ -76,6 +80,8 @@ pub enum AxisIndexCreationResult {
     Annoy(Box<AxisAnnoyIndex>),
     /// HNSW index (ready to use, no training required)
     Hnsw(Box<AxisHnswIndex>),
+    /// EDR index (ready to use, no training required)
+    Edr(Box<EdrIndex>),
 }
 
 /// Factory for creating AXIS-native index implementations
@@ -161,6 +167,26 @@ impl IndexFactory {
                 Ok(AxisIndexCreationResult::Annoy(Box::new(index)))
             }
 
+            IndexAlgorithm::EDR {
+                num_query_expansions,
+                num_document_vectors,
+                top_k,
+                enable_query_expansion,
+                enable_document_expansion,
+            } => {
+                let config = EdrIndexConfig {
+                    distance_metric,
+                    num_query_expansions: *num_query_expansions,
+                    num_document_vectors: *num_document_vectors,
+                    top_k: *top_k,
+                    enable_query_expansion: *enable_query_expansion,
+                    enable_document_expansion: *enable_document_expansion,
+                };
+
+                let index = EdrIndex::new(config)?;
+                Ok(AxisIndexCreationResult::Edr(Box::new(index)))
+            }
+
             IndexAlgorithm::PQ { .. } => Err(anyhow!(
                 "Product Quantization will be integrated in next phase"
             )),
@@ -195,6 +221,10 @@ impl IndexFactory {
             }
             AxisIndexCreationResult::Hnsw(index) => {
                 // HNSW is ready to use immediately - no training required
+                Ok(index as Box<dyn AxisVectorIndex>)
+            }
+            AxisIndexCreationResult::Edr(index) => {
+                // EDR is ready to use immediately - no training required
                 Ok(index as Box<dyn AxisVectorIndex>)
             }
         }

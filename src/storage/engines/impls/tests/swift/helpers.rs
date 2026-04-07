@@ -21,6 +21,7 @@ use std::sync::Arc;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
+#[allow(deprecated)]
 use crate::storage::engines::impls::swift::{SwiftEngine, SwiftFile};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
@@ -32,6 +33,7 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 ///
 /// # Returns
 /// A fully initialized SWIFT engine ready for testing
+#[allow(deprecated)]
 pub async fn create_test_engine() -> SwiftEngine {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let distance_engine = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
@@ -47,6 +49,7 @@ pub async fn create_test_engine() -> SwiftEngine {
 ///
 /// # Returns
 /// A fully initialized SWIFT engine with the specified distance metric
+#[allow(deprecated)]
 pub async fn create_test_engine_with_metric(metric: DistanceMetric) -> SwiftEngine {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let distance_engine = Arc::new(UnifiedDistanceCompute::new(metric));

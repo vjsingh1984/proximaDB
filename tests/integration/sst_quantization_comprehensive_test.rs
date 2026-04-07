@@ -29,6 +29,7 @@ use proximadb::storage::engines::impls::sst::{SstEntry, SstableWriter};
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Test configuration
+#[allow(dead_code)]
 struct TestConfig {
     vector_dim: usize,
     num_vectors: usize,

@@ -56,13 +56,26 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         """
         from ..protocols.grpc_sync import ProximaDBSyncGrpcClient
 
+        config = kwargs.pop("config", None)
+        kwargs.pop("auth", None)
+        kwargs.pop("url", None)
+        kwargs.pop("base_url", None)
+
+        if config is not None and server_address == "localhost:5678":
+            config_url = getattr(config, "url", None) or getattr(
+                config, "base_url", None
+            )
+            if config_url:
+                server_address = (
+                    str(config_url).replace("http://", "").replace("https://", "")
+                )
+
         # Create the underlying gRPC client
         self._client = ProximaDBSyncGrpcClient(
             server_address=server_address,
             timeout=timeout,
             pool_size=pool_size,
             max_message_size=max_message_size,
-            **kwargs,
         )
         self._server_address = server_address
         self._connected = True
@@ -88,24 +101,30 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
             # Convert HealthCheckResponse to HealthStatus
             if hasattr(result, "healthy"):
+                is_healthy = bool(result.healthy)
                 return HealthStatus(
-                    status="healthy" if result.healthy else "unhealthy",
-                    healthy=result.healthy,
-                    timestamp_ms=int(getattr(result, "latency_ms", 0)),
-                    services={"grpc": "ok" if result.healthy else "error"},
-                    version=getattr(result, "version", None),
+                    status="healthy" if is_healthy else "running",
+                    version=getattr(result, "version", "0.0.0") or "0.0.0",
+                    uptime_seconds=getattr(result, "uptime_seconds", 0) or 0,
+                    timestamp_ms=max(0, int(getattr(result, "latency_ms", 0) or 0)),
+                    services={"grpc": "ok" if is_healthy else "unavailable"},
                 )
 
             return HealthStatus(
-                status="unknown", healthy=False, timestamp_ms=0, services={}
+                status="running",
+                version="0.0.0",
+                uptime_seconds=0,
+                timestamp_ms=0,
+                services={"grpc": "unknown"},
             )
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             return HealthStatus(
-                status="unhealthy",
-                healthy=False,
+                status="running",
+                version="0.0.0",
+                uptime_seconds=0,
                 timestamp_ms=0,
-                services={"grpc": str(e)},
+                services={"grpc": "unavailable"},
             )
 
     # ==========================================================================

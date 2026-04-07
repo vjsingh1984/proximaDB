@@ -243,7 +243,9 @@ pub enum CatalogTransaction {
     NoOp,
     /// Transaction ID for catalogs with transaction support
     Active {
+        /// Unique transaction identifier
         txn_id: String,
+        /// Wall-clock time at which the transaction began
         started_at: std::time::Instant,
     },
 }
@@ -262,6 +264,7 @@ pub struct CatalogHealth {
 }
 
 impl CatalogHealth {
+    /// Create a healthy status with the given round-trip latency in milliseconds
     pub fn healthy(latency_ms: u64) -> Self {
         Self {
             is_healthy: true,
@@ -271,6 +274,7 @@ impl CatalogHealth {
         }
     }
 
+    /// Create an unhealthy status with a descriptive error message
     pub fn unhealthy(error: impl Into<String>) -> Self {
         Self {
             is_healthy: false,
@@ -280,6 +284,7 @@ impl CatalogHealth {
         }
     }
 
+    /// Attach an additional key-value detail to the health status
     pub fn with_detail(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.details.insert(key.into(), value.into());
         self
@@ -381,10 +386,15 @@ pub trait LakehouseExtension: Catalog {
 /// Table format for lakehouse tables
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TableFormat {
+    /// Native ProximaDB table format
     ProximaDB,
+    /// Apache Iceberg open table format
     Iceberg,
+    /// Linux Foundation Delta Lake format
     Delta,
+    /// Apache Hudi transactional data lake format
     Hudi,
+    /// Raw Apache Parquet files (read-only, no transaction log)
     Parquet,
 }
 

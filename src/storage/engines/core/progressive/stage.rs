@@ -393,8 +393,8 @@ impl ProgressiveSearchStage for PqStage {
                 // Real implementation would use precomputed distance tables
                 let mut total_distance = 0.0f32;
 
-                for i in 0..self.num_subvectors.min(pq_codes.len()) {
-                    let codebook_idx = pq_codes[i] as usize;
+                for &code in pq_codes.iter().take(self.num_subvectors) {
+                    let codebook_idx = code as usize;
                     // Simplified: use codebook index as a distance proxy
                     // Real PQ would look up centroids and compute actual distance
                     total_distance += (codebook_idx as f32) / 255.0;

@@ -13,8 +13,9 @@ mod tests {
     use crate::proto::proximadb_v1::VectorRecord;
     use std::collections::HashMap;
     use std::time::Instant;
-    use tracing::{debug, info};
+    use tracing::debug;
 
+    #[allow(dead_code)]
     fn create_test_vector(id: &str, values: Vec<f32>) -> VectorRecord {
         VectorRecord {
             id: id.to_string(),

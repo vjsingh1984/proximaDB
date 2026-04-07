@@ -535,9 +535,8 @@ mod integration_tests {
         let mock_engine = Arc::new(MockStorageEngine {
             flush_called: Arc::new(tokio::sync::Mutex::new(false)),
         });
-        strategy.set_storage_engine(mock_engine.clone());
-
         let collection_id = "flush_test";
+        strategy.set_storage_engine(mock_engine.clone(), collection_id);
 
         // Write vectors
         let vectors = vec![

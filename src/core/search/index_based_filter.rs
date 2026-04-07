@@ -25,6 +25,7 @@ pub struct FilterIndices {
     pub metadata: IndexMetadata,
 }
 
+/// Metadata about the filter evaluation process for optimization decisions
 #[derive(Debug, Clone)]
 pub struct IndexMetadata {
     /// Source identifier (block ID, file path, etc.)
@@ -39,11 +40,15 @@ pub struct IndexMetadata {
     pub optimization_hints: HashMap<String, serde_json::Value>,
 }
 
+/// Classification of filter expression complexity
 #[derive(Debug, Clone, PartialEq)]
 pub enum FilterComplexity {
-    Simple,   // Single equality condition
-    Moderate, // AND/OR with multiple conditions
-    Complex,  // Nested expressions with mixed operators
+    /// Single equality condition
+    Simple,
+    /// AND/OR with multiple conditions
+    Moderate,
+    /// Nested expressions with mixed operators
+    Complex,
 }
 
 impl FilterIndices {
@@ -72,6 +77,7 @@ impl FilterIndices {
     }
 }
 
+/// Recommended I/O strategy based on filter selectivity
 #[derive(Debug, Clone)]
 pub enum ReadStrategy {
     /// Skip this block/row group entirely
@@ -80,8 +86,10 @@ pub enum ReadStrategy {
     ReadFullBlock,
     /// Selectively read only qualifying rows
     SelectiveRead {
+        /// Row indices to read
         indices: Vec<usize>,
-        estimated_benefit: f32, // How much I/O we save vs full read
+        /// Estimated I/O savings fraction vs full block read (0.0 to 1.0)
+        estimated_benefit: f32,
     },
 }
 
@@ -103,21 +111,33 @@ pub trait MetadataSource: Send + Sync {
     fn supports_selective_reading(&self) -> bool;
 }
 
+/// Statistical metadata about a column for filter optimization
 #[derive(Debug, Clone)]
 pub struct ColumnMetadata {
+    /// Whether an inverted index exists on this column
     pub has_index: bool,
+    /// Approximate number of distinct values
     pub cardinality: Option<u64>,
+    /// Minimum value in the column (for range pruning)
     pub min_value: Option<serde_json::Value>,
+    /// Maximum value in the column (for range pruning)
     pub max_value: Option<serde_json::Value>,
+    /// Number of null values in the column
     pub null_count: Option<u64>,
 }
 
+/// Column data type classification for filter evaluation
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColumnData {
+    /// UTF-8 string column
     String,
+    /// 64-bit integer column
     Integer,
+    /// 64-bit float column
     Float,
+    /// Boolean column
     Boolean,
+    /// Array/list column
     Array,
 }
 
@@ -180,6 +200,7 @@ where
     E: FilterIndexEvaluator,
     R: IndexBasedDataReader,
 {
+    /// Create a new orchestrator with the given evaluator and reader
     pub fn new(index_evaluator: E, data_reader: R) -> Self {
         Self {
             index_evaluator,
@@ -298,18 +319,26 @@ where
     }
 }
 
+/// Aggregate statistics from filter evaluation across multiple data sources
 #[derive(Debug, Default)]
 pub struct FilterStatistics {
+    /// Total number of data sources evaluated
     pub total_sources: usize,
+    /// Total rows across all sources
     pub total_rows: usize,
+    /// Rows that passed the filter
     pub qualifying_rows: usize,
+    /// Sources where all rows were filtered out
     pub skipped_sources: usize,
+    /// Sources where all rows qualified
     pub full_read_sources: usize,
+    /// Sources where partial rows qualified
     pub selective_read_sources: usize,
-
-    // Calculated ratios
+    /// Fraction of rows that qualified (0.0 to 1.0)
     pub overall_selectivity: f32,
+    /// Fraction of sources that were entirely skipped
     pub skip_ratio: f32,
+    /// Fraction of sources that used selective reading
     pub selective_read_ratio: f32,
 }
 
@@ -390,7 +419,7 @@ impl FilterIndexEvaluator for BaseFilterIndexEvaluator {
             metadata: IndexMetadata {
                 source_id,
                 selectivity,
-                filter_complexity: FilterComplexity::Simple, // TODO: Analyze complexity
+                filter_complexity: FilterComplexity::Simple, // Deferred: Analyze complexity
                 columns_evaluated,
                 optimization_hints: HashMap::new(),
             },

@@ -265,7 +265,7 @@ impl SearchAlgorithmFactory {
             // Medium dataset - use IVF
             let n_clusters = (num_vectors as f64).sqrt() as usize;
             SearchAlgorithm::IVF {
-                n_clusters: n_clusters.min(4096).max(256),
+                n_clusters: n_clusters.clamp(256, 4096),
                 n_probe: 32,
                 enable_pq: false,
             }
@@ -291,8 +291,8 @@ impl SearchAlgorithmFactory {
         };
 
         SearchAlgorithm::IVF {
-            n_clusters: n_clusters.min(4096).max(256),
-            n_probe: n_probe.min(256).max(1),
+            n_clusters: n_clusters.clamp(256, 4096),
+            n_probe: n_probe.clamp(1, 256),
             enable_pq: num_vectors > 10_000_000, // Enable PQ for very large datasets
         }
     }

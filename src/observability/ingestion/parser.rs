@@ -144,7 +144,7 @@ impl LogParser {
         let remaining = rest[15..].trim_start();
         let parts: Vec<&str> = remaining.splitn(2, ':').collect();
 
-        let (hostname, tag) = if parts.len() >= 1 {
+        let (hostname, tag) = if !parts.is_empty() {
             let host_tag: Vec<&str> = parts[0].splitn(2, ' ').collect();
             if host_tag.len() >= 2 {
                 (host_tag[0], host_tag[1])
@@ -189,8 +189,8 @@ impl LogParser {
         let mut parsed = log.clone();
 
         // CEF:Version|Device Vendor|Device Product|Device Version|Signature ID|Name|Severity|Extension
-        if message.starts_with("CEF:") {
-            let parts: Vec<&str> = message[4..].splitn(8, '|').collect();
+        if let Some(message) = message.strip_prefix("CEF:") {
+            let parts: Vec<&str> = message.splitn(8, '|').collect();
             if parts.len() >= 7 {
                 parsed.source = Some(format!("{} {}", parts[1], parts[2]));
                 parsed.message = parts[5].to_string();
@@ -227,8 +227,8 @@ impl LogParser {
         let mut parsed = log.clone();
 
         // LEEF:Version|Vendor|Product|Version|EventID|Extension
-        if message.starts_with("LEEF:") {
-            let parts: Vec<&str> = message[5..].splitn(6, '|').collect();
+        if let Some(leef_body) = message.strip_prefix("LEEF:") {
+            let parts: Vec<&str> = leef_body.splitn(6, '|').collect();
             if parts.len() >= 5 {
                 parsed.source = Some(format!("{} {}", parts[1], parts[2]));
                 parsed.message = parts[4].to_string();

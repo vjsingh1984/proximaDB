@@ -31,27 +31,27 @@ where
     type Value = V;
 
     async fn get(&self, _key: &Self::Key) -> Option<Self::Value> {
-        // TODO: Implement network storage
+        // Deferred: Implement network storage
         None
     }
 
     async fn put(&self, _key: Self::Key, _value: Self::Value) -> Result<(), StorageError> {
-        // TODO: Implement network storage
+        // Deferred: Implement network storage
         Ok(())
     }
 
     async fn remove(&self, _key: &Self::Key) -> bool {
-        // TODO: Implement network storage
+        // Deferred: Implement network storage
         false
     }
 
     async fn contains(&self, _key: &Self::Key) -> bool {
-        // TODO: Implement network storage
+        // Deferred: Implement network storage
         false
     }
 
     async fn clear(&self) -> Result<(), StorageError> {
-        // TODO: Implement network storage
+        // Deferred: Implement network storage
         Ok(())
     }
 

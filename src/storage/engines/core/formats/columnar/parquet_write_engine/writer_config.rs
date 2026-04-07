@@ -114,9 +114,11 @@ impl ParquetWriterConfig {
 
     /// Create optimized config for analytics workloads
     pub fn for_analytics() -> Self {
+        let zstd_level = parquet::basic::ZstdLevel::try_new(3)
+            .unwrap_or_else(|_| parquet::basic::ZstdLevel::default());
         Self {
             row_group_size: 50000,
-            compression: Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3).unwrap()),
+            compression: Compression::ZSTD(zstd_level),
             enable_dictionary: true,
             enable_statistics: true,
             enable_page_index: true,
@@ -137,9 +139,11 @@ impl ParquetWriterConfig {
 
     /// Create optimized config for archival storage
     pub fn for_archival() -> Self {
+        let zstd_level = parquet::basic::ZstdLevel::try_new(9)
+            .unwrap_or_else(|_| parquet::basic::ZstdLevel::default());
         Self {
             row_group_size: 100000,
-            compression: Compression::ZSTD(parquet::basic::ZstdLevel::try_new(9).unwrap()),
+            compression: Compression::ZSTD(zstd_level),
             enable_dictionary: true,
             enable_statistics: true,
             ..Default::default()

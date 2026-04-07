@@ -261,9 +261,10 @@ fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp
 }
 
 /// Partition strategy for a collection
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum PartitionStrategy {
     /// Hash-based partitioning on record ID (default)
+    #[default]
     HashId,
     /// Hash-based partitioning on specified metadata field(s)
     HashMetadata {
@@ -286,12 +287,6 @@ pub enum PartitionStrategy {
         /// Number of sub-shards per tenant
         shards_per_tenant: u32,
     },
-}
-
-impl Default for PartitionStrategy {
-    fn default() -> Self {
-        Self::HashId
-    }
 }
 
 /// Configuration for collection partitioning
@@ -454,8 +449,7 @@ impl Shard {
         if shard
             .partition_config
             .as_ref()
-            .map(|c| c.track_metadata_bounds)
-            .unwrap_or(false)
+            .is_some_and(|c| c.track_metadata_bounds)
         {
             shard.metadata_bounds = Some(MetadataBounds::new());
         }
@@ -484,16 +478,16 @@ impl Shard {
     pub fn may_contain_data(&self, tenant_id: Option<&str>, domain_id: Option<&str>) -> bool {
         if let Some(ref bounds) = self.metadata_bounds {
             // Check tenant filter
-            if let Some(tid) = tenant_id {
-                if !bounds.may_contain_tenant(tid) {
-                    return false;
-                }
+            if let Some(tid) = tenant_id
+                && !bounds.may_contain_tenant(tid)
+            {
+                return false;
             }
             // Check domain filter
-            if let Some(did) = domain_id {
-                if !bounds.may_contain_domain(did) {
-                    return false;
-                }
+            if let Some(did) = domain_id
+                && !bounds.may_contain_domain(did)
+            {
+                return false;
             }
         }
         // If no bounds or no filters, assume it might contain relevant data
@@ -855,11 +849,17 @@ impl ShardManager {
 /// Statistics about shard distribution
 #[derive(Debug, Clone)]
 pub struct ShardDistributionStats {
+    /// Total number of shards across the entire cluster
     pub total_shards: usize,
+    /// Number of nodes participating in shard distribution
     pub node_count: usize,
+    /// Average number of shards assigned per node
     pub avg_shards_per_node: f64,
+    /// Maximum number of shards assigned to any single node
     pub max_shards_per_node: usize,
+    /// Minimum number of shards assigned to any single node
     pub min_shards_per_node: usize,
+    /// Ratio indicating shard distribution imbalance (0.0 = perfectly balanced)
     pub imbalance_ratio: f64,
 }
 

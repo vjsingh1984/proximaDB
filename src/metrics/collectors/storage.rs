@@ -13,12 +13,18 @@ impl StorageMetricsCollector {
     }
 }
 
+impl Default for StorageMetricsCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait::async_trait]
 impl MetricsCollector for StorageMetricsCollector {
     async fn collect(&self) -> Result<MetricsSample> {
         let mut values = HashMap::new();
 
-        // TODO: Get real metrics from metadata store / vector operations service
+        // Deferred: Get real metrics from metadata store / vector operations service
         // For now, use placeholder values to enable testing
         // These should be populated by:
         // 1. VectorOperationsService tracking inserts/deletes

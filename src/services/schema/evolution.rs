@@ -179,41 +179,65 @@ impl SchemaVersion {
 pub enum SchemaChange {
     /// Column was added
     ColumnAdded {
+        /// Name of the newly added column.
         column_name: String,
+        /// Encoded data type of the new column (proto `DataType` int value).
         data_type: i32,
+        /// Whether the new column accepts NULL values.
         nullable: bool,
     },
 
     /// Column was removed
-    ColumnRemoved { column_name: String, data_type: i32 },
+    ColumnRemoved {
+        /// Name of the removed column.
+        column_name: String,
+        /// Encoded data type of the removed column (proto `DataType` int value).
+        data_type: i32,
+    },
 
     /// Column was renamed
-    ColumnRenamed { old_name: String, new_name: String },
+    ColumnRenamed {
+        /// Previous column name.
+        old_name: String,
+        /// New column name.
+        new_name: String,
+    },
 
     /// Column type was changed
     TypeChanged {
+        /// Name of the column whose type changed.
         column_name: String,
+        /// Previous encoded data type (proto `DataType` int value).
         old_type: i32,
+        /// New encoded data type (proto `DataType` int value).
         new_type: i32,
     },
 
     /// Nullable constraint changed
     NullabilityChanged {
+        /// Name of the column whose nullability changed.
         column_name: String,
+        /// Previous nullability setting.
         old_nullable: bool,
+        /// New nullability setting.
         new_nullable: bool,
     },
 
     /// Default value changed
     DefaultValueChanged {
+        /// Name of the column whose default changed.
         column_name: String,
+        /// Previous default value expression, if any.
         old_default: Option<String>,
+        /// New default value expression, if any.
         new_default: Option<String>,
     },
 
     /// Column constraints changed (min/max, pattern, etc.)
     ConstraintsChanged {
+        /// Name of the column whose constraints changed.
         column_name: String,
+        /// Human-readable description of what changed.
         change_description: String,
     },
 }
@@ -674,8 +698,7 @@ impl SchemaEvolutionService {
                         .columns
                         .iter()
                         .find(|c| &c.name == column_name)
-                        .map(|c| c.default_value.is_some())
-                        .unwrap_or(false);
+                        .is_some_and(|c| c.default_value.is_some());
 
                     if !has_default {
                         result.add_error(format!(
@@ -756,8 +779,7 @@ impl SchemaEvolutionService {
                             .columns
                             .iter()
                             .find(|c| &c.name == column_name)
-                            .map(|c| c.default_value.is_some())
-                            .unwrap_or(false);
+                            .is_some_and(|c| c.default_value.is_some());
 
                         if !has_default {
                             result.issues.push(CompatibilityIssue {
@@ -850,10 +872,9 @@ impl SchemaEvolutionService {
             .issues
             .iter()
             .any(|i| i.severity == IssueSeverity::Warning)
+            && result.compatibility_level == CompatibilityLevel::Full
         {
-            if result.compatibility_level == CompatibilityLevel::Full {
-                result.compatibility_level = CompatibilityLevel::Backward;
-            }
+            result.compatibility_level = CompatibilityLevel::Backward;
         }
 
         result
@@ -892,9 +913,7 @@ impl SchemaEvolutionService {
             .write()
             .map_err(|e| anyhow!("Lock error: {}", e))?;
 
-        let versions = history
-            .entry(collection_name.to_string())
-            .or_insert_with(Vec::new);
+        let versions = history.entry(collection_name.to_string()).or_default();
 
         // Deactivate previous versions
         for v in versions.iter_mut() {
@@ -1040,8 +1059,10 @@ impl SchemaEvolutionService {
 
         // Detect changes in existing columns
         for name in old_names.intersection(&new_names) {
-            let old_col = old_columns.get(name).expect("Column must exist");
-            let new_col = new_columns.get(name).expect("Column must exist");
+            let (Some(old_col), Some(new_col)) = (old_columns.get(name), new_columns.get(name))
+            else {
+                continue;
+            };
 
             // Type change
             if old_col.data_type != new_col.data_type {
@@ -1211,8 +1232,7 @@ impl SchemaEvolutionService {
                         .columns
                         .iter()
                         .find(|c| &c.name == column_name)
-                        .map(|c| c.default_value.is_some())
-                        .unwrap_or(false);
+                        .is_some_and(|c| c.default_value.is_some());
 
                     if !has_default {
                         result.add_error(format!(

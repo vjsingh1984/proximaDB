@@ -36,6 +36,47 @@ pub struct ExplainPlan {
     pub query_stats: Option<AnalyzeMetrics>,
     pub execution_strategy: Option<String>,
     pub estimated_total_cost: Option<f64>,
+    /// Per-operation cost breakdown from the cost-based optimizer
+    pub cost_breakdown: Option<Vec<CostEstimate>>,
+    /// Join strategy chosen by the optimizer and the reasoning behind it
+    pub join_strategy: Option<JoinStrategyExplanation>,
+    /// Fusion strategy chosen by the optimizer and the reasoning behind it
+    pub fusion_strategy: Option<FusionStrategyExplanation>,
+}
+
+/// Cost estimate for a single operation in the query plan
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostEstimate {
+    /// Human-readable operation name (e.g. "VectorSearch(products)")
+    pub operation: String,
+    /// Estimated cost units for this operation
+    pub estimated_cost: f64,
+    /// Estimated output row count
+    pub estimated_rows: u64,
+    /// Optional free-form notes (e.g. "HNSW index used")
+    pub notes: Option<String>,
+}
+
+/// Explanation of the join strategy selected by the cost-based optimizer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JoinStrategyExplanation {
+    /// Selected strategy name (HashJoin, NestedLoopJoin, IndexJoin)
+    pub strategy: String,
+    /// Estimated left-side cardinality that influenced the decision
+    pub left_rows: u64,
+    /// Estimated right-side cardinality that influenced the decision
+    pub right_rows: u64,
+    /// Human-readable explanation of why this strategy was chosen
+    pub reason: String,
+}
+
+/// Explanation of the fusion strategy selected by the cost-based optimizer
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FusionStrategyExplanation {
+    /// Selected strategy name (Rrf, Intersection, Union, WeightedSum)
+    pub strategy: String,
+    /// Human-readable explanation of why this strategy was chosen
+    pub reason: String,
 }
 
 impl ExplainPlan {
@@ -84,6 +125,24 @@ impl ExplainPlan {
     /// Set estimated total cost
     pub fn with_total_cost(mut self, cost: f64) -> Self {
         self.estimated_total_cost = Some(cost);
+        self
+    }
+
+    /// Set per-operation cost breakdown
+    pub fn with_cost_breakdown(mut self, breakdown: Vec<CostEstimate>) -> Self {
+        self.cost_breakdown = Some(breakdown);
+        self
+    }
+
+    /// Set join strategy explanation
+    pub fn with_join_strategy(mut self, explanation: JoinStrategyExplanation) -> Self {
+        self.join_strategy = Some(explanation);
+        self
+    }
+
+    /// Set fusion strategy explanation
+    pub fn with_fusion_strategy(mut self, explanation: FusionStrategyExplanation) -> Self {
+        self.fusion_strategy = Some(explanation);
         self
     }
 }
@@ -305,7 +364,7 @@ impl GraphHints {
                     .iter()
                     .map(|(k, v)| (k.clone(), *v as usize))
                     .collect(),
-                property_cardinality: HashMap::new(), // TODO: Add property stats
+                property_cardinality: HashMap::new(), // Deferred: Add property stats
             });
         }
 
@@ -371,6 +430,10 @@ pub enum ExplainModelType {
     Relational,
     /// Observability data: logs, metrics, traces
     Observability,
+    /// Time-series data
+    TimeSeries,
+    /// Event sourcing
+    Event,
 }
 
 impl From<ModelType> for ExplainModelType {
@@ -381,6 +444,8 @@ impl From<ModelType> for ExplainModelType {
             ModelType::Graph => ExplainModelType::Graph,
             ModelType::Relational => ExplainModelType::Relational,
             ModelType::Observability => ExplainModelType::Observability,
+            ModelType::TimeSeries => ExplainModelType::TimeSeries,
+            ModelType::Event => ExplainModelType::Event,
         }
     }
 }
@@ -393,6 +458,8 @@ impl From<ExplainModelType> for ModelType {
             ExplainModelType::Graph => ModelType::Graph,
             ExplainModelType::Relational => ModelType::Relational,
             ExplainModelType::Observability => ModelType::Observability,
+            ExplainModelType::TimeSeries => ModelType::TimeSeries,
+            ExplainModelType::Event => ModelType::Event,
         }
     }
 }
@@ -1338,5 +1405,80 @@ mod tests {
         let deserialized: EnhancedExplainPlan =
             serde_json::from_str(&json).expect("Failed to deserialize");
         assert_eq!(deserialized.optimization_rules_applied.len(), 1);
+    }
+
+    // ========================================================================
+    // COST-BASED OPTIMIZER EXPLAIN TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_cost_estimate_struct() {
+        let estimate = CostEstimate {
+            operation: "VectorSearch(products)".to_string(),
+            estimated_cost: 3.5,
+            estimated_rows: 100,
+            notes: Some("HNSW index used".to_string()),
+        };
+        assert_eq!(estimate.estimated_rows, 100);
+        assert!(estimate.notes.is_some());
+    }
+
+    #[test]
+    fn test_join_strategy_explanation() {
+        let explanation = JoinStrategyExplanation {
+            strategy: "HashJoin".to_string(),
+            left_rows: 50_000,
+            right_rows: 10_000,
+            reason: "Both sides exceed 1000 rows".to_string(),
+        };
+        let json = serde_json::to_string(&explanation).expect("Failed to serialize");
+        assert!(json.contains("HashJoin"));
+        assert!(json.contains("50000"));
+    }
+
+    #[test]
+    fn test_fusion_strategy_explanation() {
+        let explanation = FusionStrategyExplanation {
+            strategy: "Rrf".to_string(),
+            reason: "Heterogeneous score scales from vector and graph".to_string(),
+        };
+        let json = serde_json::to_string(&explanation).expect("Failed to serialize");
+        assert!(json.contains("Rrf"));
+    }
+
+    #[test]
+    fn test_explain_plan_with_cost_breakdown() {
+        let plan = ExplainPlan::new()
+            .with_cost_breakdown(vec![
+                CostEstimate {
+                    operation: "VectorSearch(products)".to_string(),
+                    estimated_cost: 3.5,
+                    estimated_rows: 100,
+                    notes: None,
+                },
+                CostEstimate {
+                    operation: "GraphTraversal(knowledge)".to_string(),
+                    estimated_cost: 6.0,
+                    estimated_rows: 500,
+                    notes: Some("depth=3".to_string()),
+                },
+            ])
+            .with_join_strategy(JoinStrategyExplanation {
+                strategy: "HashJoin".to_string(),
+                left_rows: 100,
+                right_rows: 500,
+                reason: "Both sides exceed threshold".to_string(),
+            })
+            .with_fusion_strategy(FusionStrategyExplanation {
+                strategy: "Rrf".to_string(),
+                reason: "Mixed vector and graph scores".to_string(),
+            })
+            .with_total_cost(9.5);
+
+        assert!(plan.cost_breakdown.is_some());
+        assert_eq!(plan.cost_breakdown.as_ref().map_or(0, |b| b.len()), 2);
+        assert!(plan.join_strategy.is_some());
+        assert!(plan.fusion_strategy.is_some());
+        assert_eq!(plan.estimated_total_cost, Some(9.5));
     }
 }

@@ -170,13 +170,15 @@ mod tests {
         let values = vec![1.0f32, 2.0, 3.0, 4.0];
         let scheme = ProximaScheme::Delta { base: 0 };
 
-        let encoded = encoder.encode_f32(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_f32(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode f32 values: {}", e));
 
         // Now decode
         let result = decoder.decode_f32(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding f32 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 
@@ -192,13 +194,15 @@ mod tests {
         let values = vec![100i64, 200, 300, 400];
         let scheme = ProximaScheme::Delta { base: 0 };
 
-        let encoded = encoder.encode_i64(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_i64(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode i64 values: {}", e));
 
         // Now decode
         let result = decoder.decode_i64(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding i64 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 
@@ -214,13 +218,15 @@ mod tests {
         let values = vec![10i32, 20, 30, 40];
         let scheme = ProximaScheme::Delta { base: 0 };
 
-        let encoded = encoder.encode_i32(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_i32(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode i32 values: {}", e));
 
         // Now decode
         let result = decoder.decode_i32(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding i32 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 
@@ -236,13 +242,15 @@ mod tests {
         let values = vec![1.0f32, 2.0, 3.0, 4.0];
         let scheme = ProximaScheme::BitPacked { bits: 32 };
 
-        let encoded = encoder.encode_f32(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_f32(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode f32 values: {}", e));
 
         // Now decode
         let result = decoder.decode_f32(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding f32 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 
@@ -257,13 +265,15 @@ mod tests {
         let values = vec![100i64, 200, 300, 400];
         let scheme = ProximaScheme::BitPacked { bits: 16 };
 
-        let encoded = encoder.encode_i64(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_i64(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode i64 values: {}", e));
 
         // Now decode
         let result = decoder.decode_i64(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding i64 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 
@@ -278,13 +288,15 @@ mod tests {
         let values = vec![10i32, 20, 30, 40, 50];
         let scheme = ProximaScheme::BitPacked { bits: 8 };
 
-        let encoded = encoder.encode_i32(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_i32(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode i32 values: {}", e));
 
         // Now decode
         let result = decoder.decode_i32(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding i32 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 
@@ -302,13 +314,15 @@ mod tests {
             bits: 32,
         };
 
-        let encoded = encoder.encode_f32(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_f32(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode f32 values: {}", e));
 
         // Now decode
         let result = decoder.decode_f32(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding f32 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 
@@ -326,13 +340,15 @@ mod tests {
             bits: 16,
         };
 
-        let encoded = encoder.encode_i64(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_i64(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode i64 values: {}", e));
 
         // Now decode
         let result = decoder.decode_i64(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding i64 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 
@@ -350,13 +366,15 @@ mod tests {
             bits: 16,
         };
 
-        let encoded = encoder.encode_i32(&values, &scheme).unwrap();
+        let encoded = encoder
+            .encode_i32(&values, &scheme)
+            .unwrap_or_else(|e| panic!("Failed to encode i32 values: {}", e));
 
         // Now decode
         let result = decoder.decode_i32(&encoded, &scheme, values.len());
         assert!(result.is_ok());
 
-        let decoded = result.unwrap();
+        let decoded = result.expect("Decoding i32 should succeed after is_ok() check");
         assert_eq!(decoded, values);
     }
 }

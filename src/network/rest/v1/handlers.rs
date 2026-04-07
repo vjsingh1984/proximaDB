@@ -31,7 +31,9 @@ use serde::{Deserialize, Serialize};
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
+    /// Shared unified handlers for business logic delegation
     pub unified_handlers: Arc<UnifiedHandlers>,
+    /// Optional security coordinator for authentication/authorization
     pub security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
     /// Data directory from config (e.g., server.data_dir from TOML)
     pub data_dir: std::path::PathBuf,
@@ -40,6 +42,8 @@ pub struct AppState {
     pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
     /// Per-collection full-text indices for hybrid BM25+vector search
     pub fulltext_indexes: Option<FullTextIndexMap>,
+    /// Catalog manager for external catalog integration
+    pub catalog_manager: Arc<crate::catalog::CatalogManager>,
 }
 
 /// Parse search request from JSON, supporting both proto and simple formats
@@ -164,25 +168,9 @@ pub async fn vector_search(
         request.collection_id, tenant.tenant_id, tenant.source
     );
 
-    // Route through unified facade when adapter is available
-    if let Some(ref adapter) = state.query_adapter {
-        debug!("Using unified facade routing for vector search");
-        return match adapter.vector_search(request.clone()).await {
-            Ok(response) => Ok(JsonResponse(response)),
-            Err(e) => {
-                error!(
-                    "Vector search (facade) failed for collection '{}': {:?}",
-                    request.collection_id, e
-                );
-                Err(ApiError::Internal(format!("Search failed: {}", e)))
-            }
-        };
-    }
-
-    // Legacy path: route through unified_handlers directly
     match state
         .unified_handlers
-        .handle_vector_search_v1(request.clone())
+        .handle_vector_search_v1_for_tenant(request.clone(), Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => Ok(JsonResponse(response)),
@@ -198,8 +186,7 @@ pub async fn vector_search(
                 request
                     .queries
                     .first()
-                    .map(|q| !q.filters.is_empty())
-                    .unwrap_or(false),
+                    .is_some_and(|q| !q.filters.is_empty()),
                 request
                     .queries
                     .first()
@@ -246,7 +233,11 @@ pub async fn vector_batch(
     }
 
     // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
-    match state.unified_handlers.handle_vector_batch_v1(request).await {
+    match state
+        .unified_handlers
+        .handle_vector_batch_v1_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+    {
         Ok(v1_resp) => Ok(JsonResponse(v1_resp)),
         Err(e) => {
             error!("Vector batch operation failed: {}", e);
@@ -258,6 +249,7 @@ pub async fn vector_batch(
 /// Get a single vector by ID
 pub async fn get_vector(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Path((collection_id, vector_id)): Path<(String, String)>,
     Query(params): Query<GetVectorParams>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
@@ -276,7 +268,13 @@ pub async fn get_vector(
     // Delegate to UnifiedHandlers
     match state
         .unified_handlers
-        .handle_vector_v1(&collection_id, &vector_id, include_vector, include_metadata)
+        .handle_vector_v1_for_tenant(
+            &collection_id,
+            &vector_id,
+            include_vector,
+            include_metadata,
+            Some(&tenant.tenant_id),
+        )
         .await
     {
         Ok(response) => Ok(JsonResponse(response)),
@@ -293,6 +291,7 @@ pub async fn get_vector(
 /// Delete a single vector by ID
 pub async fn delete_vector(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Path((collection_id, vector_id)): Path<(String, String)>,
 ) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
     info!(
@@ -325,7 +324,7 @@ pub async fn delete_vector(
     // Delegate to vector batch handler (which supports deletions)
     match state
         .unified_handlers
-        .handle_vector_batch_v1(delete_request)
+        .handle_vector_batch_v1_for_tenant(delete_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => {
@@ -345,7 +344,9 @@ pub async fn delete_vector(
 /// Query parameters for get_vector endpoint
 #[derive(Debug, Deserialize)]
 pub struct GetVectorParams {
+    /// Include the raw vector data in the response
     pub include_vector: Option<bool>,
+    /// Include metadata fields in the response
     pub include_metadata: Option<bool>,
 }
 
@@ -387,7 +388,7 @@ pub async fn collection_operation(
     // Direct delegation to UnifiedHandlers
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => Ok(JsonResponse(response)),
@@ -403,7 +404,7 @@ pub async fn health_check(
     State(_state): State<AppState>,
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     // Return basic health status
-    // TODO: Add actual health checks when UnifiedHandlers supports it
+    // Deferred: Add actual health checks when UnifiedHandlers supports it
 
     Ok(JsonResponse(serde_json::json!({
         "status": "healthy",
@@ -443,7 +444,7 @@ pub async fn get_collection(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => JsonResponse(response).into_response(),
@@ -464,11 +465,15 @@ pub async fn get_collection(
 /// List collections with pagination
 #[derive(serde::Deserialize)]
 pub struct ListCollectionsQuery {
+    /// Maximum number of collections to return
     pub limit: Option<u32>,
+    /// Pagination offset
     pub offset: Option<u32>,
+    /// Include collection statistics (vector count, storage size)
     pub include_stats: Option<bool>,
 }
 
+/// List collections with pagination and optional statistics
 pub async fn list_collections(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
@@ -501,7 +506,7 @@ pub async fn list_collections(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => JsonResponse(response).into_response(),
@@ -535,7 +540,7 @@ pub async fn delete_collection(
 
     match state
         .unified_handlers
-        .handle_collection_operation(request)
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => JsonResponse(response).into_response(),
@@ -574,7 +579,7 @@ pub async fn vector_search_with_metadata(
     // Execute search
     match state
         .unified_handlers
-        .handle_vector_search_v1(request)
+        .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
         Ok(response) => {
@@ -710,13 +715,13 @@ pub async fn execute_sql(
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
             // Convert SQL response to JSON value for now
-            // TODO: Create proper JsonExecuteSqlResponse wrapper if needed
+            // Deferred: Create proper JsonExecuteSqlResponse wrapper if needed
             let json_data = serde_json::json!({
                 "rows": v1_resp.rows.iter().map(|row| {
                     // Convert fields to a JSON object instead of list of key/value pairs
                     let mut obj = serde_json::Map::new();
                     for field in &row.fields {
-                        let value = field.value.as_ref().map(sql_value_to_json).unwrap_or(serde_json::Value::Null);
+                        let value = field.value.as_ref().map_or(serde_json::Value::Null, sql_value_to_json);
                         obj.insert(field.key.clone(), value);
                     }
                     serde_json::Value::Object(obj)
@@ -837,12 +842,15 @@ pub async fn explain_sql(
     // Convert ExplainResult to ExplainPlan
     let plan = ExplainPlan {
         orchestration_steps: explain_result.operations,
-        vector_hints: None, // TODO: Extract from explain_result if needed
-        graph_hints: None,  // TODO: Extract from explain_result if needed
+        vector_hints: None, // Deferred: Extract from explain_result if needed
+        graph_hints: None,  // Deferred: Extract from explain_result if needed
         join_costs: None,
         query_stats: None,
         execution_strategy: Some(format!("{:?}", explain_result.query_type)),
         estimated_total_cost: Some(explain_result.estimated_cost),
+        cost_breakdown: None,
+        join_strategy: None,
+        fusion_strategy: None,
     };
 
     let response = ExplainQueryResponse {
@@ -924,36 +932,51 @@ pub struct HybridDocument {
 /// Response for hybrid search
 #[derive(Debug, Serialize)]
 pub struct HybridSearchResponse {
+    /// Whether the search completed successfully
     pub success: bool,
+    /// Fused search result hits
     pub results: Vec<HybridSearchHit>,
+    /// Total number of results
     pub total: usize,
+    /// Server-side processing time in microseconds
     pub processing_time_us: u64,
-    /// Search mode used
+    /// Search mode used (e.g., "hybrid", "vector_only", "bm25_only")
     pub mode: String,
 }
 
 /// A single hybrid search result hit
 #[derive(Debug, Serialize)]
 pub struct HybridSearchHit {
+    /// Vector/document identifier
     pub id: String,
+    /// Fused score combining vector and BM25 signals
     pub combined_score: f64,
+    /// Vector similarity score (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_score: Option<f32>,
+    /// BM25 text relevance score (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bm25_score: Option<f64>,
+    /// Rank in vector-only results (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vector_rank: Option<usize>,
+    /// Rank in BM25-only results (if available)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bm25_rank: Option<usize>,
+    /// BM25 terms that matched the query
     pub matched_terms: Vec<String>,
 }
 
 /// Response for hybrid index operations
 #[derive(Debug, Serialize)]
 pub struct HybridIndexResponse {
+    /// Whether the indexing operation succeeded
     pub success: bool,
+    /// Collection that was indexed
     pub collection: String,
+    /// Number of documents indexed in this operation
     pub documents_indexed: usize,
+    /// Total number of documents in the full-text index
     pub total_documents: usize,
 }
 
@@ -1038,6 +1061,7 @@ pub async fn hybrid_index(
 /// Body: { "collection": "...", "vector": [...], "text_query": "...", "top_k": 10 }
 pub async fn hybrid_search(
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
     Json(request): Json<HybridSearchRequest>,
 ) -> ApiResult<JsonResponse<HybridSearchResponse>> {
     let start_time = std::time::Instant::now();
@@ -1088,18 +1112,11 @@ pub async fn hybrid_search(
         };
 
         // Use query adapter if available, else legacy handlers
-        let response = if let Some(ref adapter) = state.query_adapter {
-            adapter
-                .vector_search(search_request)
-                .await
-                .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?
-        } else {
-            state
-                .unified_handlers
-                .handle_vector_search_v1(search_request)
-                .await
-                .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?
-        };
+        let response = state
+            .unified_handlers
+            .handle_vector_search_v1_for_tenant(search_request, Some(&tenant.tenant_id))
+            .await
+            .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?;
 
         // Return the raw results - will be converted to VectorResult later
         // NOTE: Old VectorSearchInput code removed (type doesn't exist)
@@ -1162,8 +1179,8 @@ pub async fn hybrid_search(
         .into_iter()
         .map(|v| VectorResult {
             doc_id: v.id,
-            score: v.score as f64,
-            distance: 1.0 - v.score as f64, // Convert similarity to distance
+            score: v.score,
+            distance: 1.0 - v.score, // Convert similarity to distance
             metadata: std::collections::HashMap::new(),
         })
         .collect();
@@ -1289,8 +1306,8 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
-        // Note: /api/v1/hybrid/search registered via nested router below (~line 1434)
-        // The /index endpoint uses AppState so it stays here
+        // Hybrid search production endpoints (AppState-backed)
+        .route("/api/v1/hybrid/search", post(hybrid_search))
         .route("/api/v1/hybrid/index", post(hybrid_index))
         // With metadata endpoints
         .route(
@@ -1385,7 +1402,7 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     // Unified Multi-Model Query API endpoints
     // Routes all queries through QueryFacadeAdapter for consistent execution
-    let unified_query_router = {
+    let unified_query_router_opt = {
         use crate::network::rest::v1::unified_query::{self, UnifiedQueryApiState};
         use crate::storage::document::DocumentService;
 
@@ -1412,30 +1429,54 @@ pub fn create_router(state: AppState) -> axum::Router {
         });
 
         // Get the query adapter from state (required for unified query execution)
-        let query_adapter = state.query_adapter.clone().expect(
-            "QueryFacadeAdapter must be configured in AppState for unified query endpoints",
-        );
+        let query_adapter_opt = state.query_adapter.clone();
 
         // Use new_with_adapter to route all queries through QueryFacadeAdapter
-        let unified_state =
-            UnifiedQueryApiState::new_with_adapter(query_adapter, document_service, engine);
-        unified_query::create_router().with_state(unified_state)
+        query_adapter_opt.map(|adapter| {
+            let unified_state =
+                UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine);
+            unified_query::create_router().with_state(unified_state)
+        })
     };
-    router = router.nest("/api/v1/unified", unified_query_router);
-    info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
 
-    // Hybrid Search API endpoints
+    if let Some(unified_query_router) = unified_query_router_opt {
+        router = router.nest("/api/v1/unified", unified_query_router);
+        info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
+    } else {
+        tracing::warn!(
+            "QueryFacadeAdapter not configured in AppState. Skipping unified query endpoints."
+        );
+    }
+
+    // Optional enterprise catalog endpoints
+    #[cfg(feature = "enterprise-catalogs")]
+    {
+        let catalog_router = {
+            use crate::network::rest::v1::catalog::{self, CatalogApiState};
+
+            let catalog_state = CatalogApiState::new(state.catalog_manager.clone());
+            catalog::configure_routes().with_state(catalog_state)
+        };
+        router = router.nest("/api/v1/catalogs", catalog_router);
+        info!("✅ External Catalog API endpoints enabled at /api/v1/catalogs");
+    }
+
+    // Experimental hybrid API (mock-backed) stays separate from production path
     let hybrid_router = {
         use crate::network::rest::v1::hybrid::{self, HybridSearchApiState};
 
         let hybrid_state = HybridSearchApiState::new();
         hybrid::create_router().with_state(hybrid_state)
     };
-    router = router.nest("/api/v1/hybrid", hybrid_router);
-    info!("✅ Hybrid Search API endpoints enabled at /api/v1/hybrid");
+    router = router.nest("/api/v1/experimental/hybrid", hybrid_router);
+    info!("✅ Experimental Hybrid API endpoints enabled at /api/v1/experimental/hybrid");
 
-    // Convert to Router<()> by providing state
-    let router = router.with_state(state);
+    // Convert to Router<()> by providing state, with default tenant context for all routes
+    let default_tenant = TenantContext::new(
+        "default",
+        crate::network::middleware::tenant::TenantIdSource::Default,
+    );
+    let router = router.with_state(state).layer(Extension(default_tenant));
 
     // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
     #[cfg(feature = "ai_endpoints")]
@@ -1480,6 +1521,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!("   DELETE /api/v1/collections/:id (delete_collection)");
     info!("   POST   /api/v1/hybrid/search (hybrid_search)");
     info!("   POST   /api/v1/hybrid/index (hybrid_index)");
+    info!("   POST   /api/v1/experimental/hybrid/search (mock hybrid API)");
 
     router
 }
@@ -1492,9 +1534,7 @@ pub async fn comprehensive_health_check(
     query: Query<health::HealthParams>,
 ) -> ApiResult<Json<health::HealthResponse>> {
     let health_state = health::HealthState::new(state.unified_handlers.clone());
-    health::health_check(axum::extract::State(health_state), query)
-        .await
-        .map_err(ApiError::from)
+    health::health_check(axum::extract::State(health_state), query).await
 }
 
 /// Liveness check handler
@@ -1504,9 +1544,7 @@ pub async fn liveness_check(
     State(state): State<AppState>,
 ) -> ApiResult<Json<health::LivenessResponse>> {
     let health_state = health::HealthState::new(state.unified_handlers.clone());
-    health::liveness_check(axum::extract::State(health_state))
-        .await
-        .map_err(ApiError::from)
+    health::liveness_check(axum::extract::State(health_state)).await
 }
 
 /// Readiness check handler
@@ -1523,6 +1561,57 @@ pub async fn readiness_check(
 mod tests {
     use super::*;
     use crate::network::rest::proto_json::ProtoApiResponse;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::RwLock;
+    use tempfile::TempDir;
+    use tower::ServiceExt;
+
+    fn file_url(path: &Path) -> String {
+        format!("file://{}", path.to_string_lossy())
+    }
+
+    async fn build_test_app_state() -> (AppState, TempDir) {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let storage_path = temp_dir.path().join("storage");
+        let metadata_path = temp_dir.path().join("metadata");
+        let data_dir = temp_dir.path().join("server_data");
+        std::fs::create_dir_all(&storage_path).expect("failed to create storage path");
+        std::fs::create_dir_all(&metadata_path).expect("failed to create metadata path");
+        std::fs::create_dir_all(&data_dir).expect("failed to create data dir");
+
+        let mut config = crate::core::config::Config::default();
+        config.server.data_dir = data_dir.clone();
+        config.storage.metadata_url = file_url(&metadata_path);
+        config.storage.storage_locations = vec![crate::core::config::StorageLocation {
+            url: file_url(&storage_path),
+            weight: 1,
+            tags: vec!["test".to_string()],
+        }];
+
+        let (shared_services, _) = crate::network::multi_server::SharedServices::new(
+            None,
+            &config.storage,
+            None,
+            Some(&config),
+        )
+        .await
+        .expect("failed to initialize shared services for test app state");
+
+        let state = AppState {
+            unified_handlers: shared_services.unified_handlers,
+            security_coordinator: None,
+            data_dir,
+            query_adapter: None,
+            fulltext_indexes: Some(Arc::new(RwLock::new(HashMap::new()))),
+            catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
+        };
+        (state, temp_dir)
+    }
 
     #[test]
     fn test_error_conversion() {
@@ -1541,10 +1630,14 @@ mod tests {
             "top_k": 5,
             "vector_weight": 0.7
         });
-        let req: HybridSearchRequest = serde_json::from_value(json).unwrap();
+        let req: HybridSearchRequest =
+            serde_json::from_value(json).expect("failed to deserialize HybridSearchRequest");
         assert_eq!(req.collection, "test_col");
-        assert_eq!(req.vector.unwrap().len(), 3);
-        assert_eq!(req.text_query.unwrap(), "machine learning");
+        assert_eq!(req.vector.expect("vector should be present").len(), 3);
+        assert_eq!(
+            req.text_query.expect("text_query should be present"),
+            "machine learning"
+        );
         assert_eq!(req.top_k, 5);
         assert!((req.vector_weight - 0.7).abs() < 0.001);
         assert_eq!(req.rrf_k, 60); // default
@@ -1556,7 +1649,8 @@ mod tests {
             "collection": "test_col",
             "text_query": "hello"
         });
-        let req: HybridSearchRequest = serde_json::from_value(json).unwrap();
+        let req: HybridSearchRequest =
+            serde_json::from_value(json).expect("failed to deserialize HybridSearchRequest");
         assert_eq!(req.top_k, 10);
         assert!((req.vector_weight - 0.5).abs() < 0.001);
         assert_eq!(req.rrf_k, 60);
@@ -1572,7 +1666,8 @@ mod tests {
                 {"id": "doc2", "text": "jumps over the lazy dog"}
             ]
         });
-        let req: HybridIndexRequest = serde_json::from_value(json).unwrap();
+        let req: HybridIndexRequest =
+            serde_json::from_value(json).expect("failed to deserialize HybridIndexRequest");
         assert_eq!(req.collection, "test_col");
         assert_eq!(req.documents.len(), 2);
         assert_eq!(req.documents[0].id, "doc1");
@@ -1590,24 +1685,26 @@ mod tests {
 
         // Add an index
         {
-            let mut indexes = map.write().unwrap();
+            let mut indexes = map.write().expect("RwLock should not be poisoned");
             let mut index = FullTextIndex::new(TokenizerConfig::for_keyword_search());
             index
                 .add_document("doc1", "machine learning neural networks")
-                .unwrap();
+                .expect("failed to add document to index");
             index
                 .add_document("doc2", "deep learning transformers")
-                .unwrap();
+                .expect("failed to add document to index");
             index
                 .add_document("doc3", "database systems query optimization")
-                .unwrap();
+                .expect("failed to add document to index");
             indexes.insert("test_col".to_string(), index);
         }
 
         // Search
         {
-            let indexes = map.read().unwrap();
-            let index = indexes.get("test_col").unwrap();
+            let indexes = map.read().expect("RwLock should not be poisoned");
+            let index = indexes
+                .get("test_col")
+                .expect("test_col index should exist");
             let results = index.search("learning", 10);
             assert_eq!(results.len(), 2);
             // doc1 and doc2 both contain "learning"
@@ -1646,11 +1743,13 @@ mod tests {
             mode: "hybrid".to_string(),
         };
 
-        let json = serde_json::to_string(&response).unwrap();
+        let json =
+            serde_json::to_string(&response).expect("failed to serialize HybridSearchResponse");
         assert!(json.contains("\"success\":true"));
         assert!(json.contains("\"mode\":\"hybrid\""));
         // doc2 should NOT have vector_score/vector_rank (skip_serializing_if = None)
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("failed to deserialize JSON value");
         let doc2 = &parsed["results"][1];
         assert!(doc2.get("vector_score").is_none());
         assert!(doc2.get("vector_rank").is_none());
@@ -1668,7 +1767,7 @@ mod tests {
         let result = parse_search_request(json);
         assert!(result.is_ok());
 
-        let request = result.unwrap();
+        let request = result.expect("parse_search_request should succeed for simple format");
         assert_eq!(request.collection_id, "test_collection");
         assert_eq!(request.queries.len(), 1);
         assert_eq!(request.queries[0].vector, vec![0.1, 0.2, 0.3, 0.4]);
@@ -1690,7 +1789,7 @@ mod tests {
         let result = parse_search_request(json);
         assert!(result.is_ok());
 
-        let request = result.unwrap();
+        let request = result.expect("parse_search_request should succeed for proto format");
         assert_eq!(request.collection_id, "proto_collection");
         assert_eq!(request.queries.len(), 2);
         assert_eq!(request.top_k, 15);
@@ -1712,7 +1811,7 @@ mod tests {
         let result = parse_search_request(json);
         assert!(result.is_ok());
 
-        let request = result.unwrap();
+        let request = result.expect("parse_search_request should succeed with filters");
         assert_eq!(request.queries[0].filters.len(), 2);
         assert!(request.queries[0].filters.contains_key("category"));
     }
@@ -1758,7 +1857,7 @@ mod tests {
 
         let result = parse_search_request(json);
         assert!(result.is_ok()); // parse succeeds but validation happens in handler
-        assert_eq!(result.unwrap().collection_id, "");
+        assert_eq!(result.expect("parse should succeed").collection_id, "");
     }
 
     // Test default values for optional fields
@@ -1772,7 +1871,7 @@ mod tests {
         let result = parse_search_request(json);
         assert!(result.is_ok());
 
-        let request = result.unwrap();
+        let request = result.expect("parse_search_request with defaults should succeed");
         assert_eq!(request.top_k, 10); // default top_k
         assert!(request.include_fields.is_none()); // optional field
         assert!(request.search_params.is_none()); // optional field
@@ -1788,8 +1887,9 @@ mod tests {
             "filters": {"status": "active"}
         });
 
-        let parsed = parse_search_request(original_json.clone()).unwrap();
-        let serialized = serde_json::to_value(&parsed).unwrap();
+        let parsed = parse_search_request(original_json.clone())
+            .expect("parse_search_request roundtrip should succeed");
+        let serialized = serde_json::to_value(&parsed).expect("serialization should succeed");
 
         assert_eq!(
             serialized["collection_id"].as_str(),
@@ -1812,5 +1912,1189 @@ mod tests {
             assert!(!msg.is_empty());
             assert!(!msg.contains("ApiError(")); // Should be user-friendly
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_hybrid_search_canonical_production_route_returns_bad_request_not_not_found() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/hybrid/search")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"collection":"","text_query":"hybrid route test"}"#,
+            ))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling canonical hybrid route request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_vector_search_canonical_production_route_returns_bad_request_not_not_found() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/search")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"collection":"","vector":[0.1,0.2,0.3],"top_k":5}"#,
+            ))
+            .expect("failed to build request");
+        request
+            .extensions_mut()
+            .insert(crate::network::middleware::tenant::TenantContext::default_tenant());
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling canonical vector route request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_document_index_canonical_production_route_returns_bad_request_not_not_found() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/documents/collections/ws1_docs/indexes")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"path":"content","index_type":"fulltext","unique":false}"#,
+            ))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling canonical document route request");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_graph_shortest_path_canonical_production_route_returns_unprocessable_entity_not_not_found()
+     {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/graph/graphs/ws1_graph/shortest_path")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{}"#))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling canonical graph route request");
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_graph_legacy_nodes_endpoint_redirects_to_canonical_multi_graph_route() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/graph/nodes")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{}"#))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling legacy graph nodes route request");
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(location, Some("/api/v1/graph/graphs/default/nodes"));
+        let deprecation = response
+            .headers()
+            .get("deprecation")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(deprecation, Some("true"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_graph_legacy_edges_endpoint_redirects_to_canonical_multi_graph_route() {
+        let (state, _temp_dir) = build_test_app_state().await;
+        let router = create_router(state);
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/graph/edges")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{}"#))
+            .expect("failed to build request");
+
+        let response = router
+            .oneshot(request)
+            .await
+            .expect("router failed handling legacy graph edges route request");
+        assert_eq!(response.status(), StatusCode::PERMANENT_REDIRECT);
+        let location = response
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(location, Some("/api/v1/graph/graphs/default/edges"));
+        let deprecation = response
+            .headers()
+            .get("deprecation")
+            .and_then(|v| v.to_str().ok());
+        assert_eq!(deprecation, Some("true"));
+    }
+
+    // ============================================================
+    // parse_search_request extended tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_parse_search_request_no_vector() {
+        let json = serde_json::json!({
+            "collection": "test_col"
+        });
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "test_col");
+        assert!(req.queries[0].vector.is_empty());
+        assert_eq!(req.top_k, 10); // default
+    }
+
+    #[test]
+    fn test_parse_search_request_empty_vector() {
+        let json = serde_json::json!({
+            "collection": "test_col",
+            "vector": [],
+            "top_k": 5
+        });
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert!(req.queries[0].vector.is_empty());
+        assert_eq!(req.top_k, 5);
+    }
+
+    #[test]
+    fn test_parse_search_request_collection_id_fallback() {
+        // Simple format with "collection_id" instead of "collection"
+        // but since it doesn't have "collection" key, it needs "vector" key to trigger simple format
+        let json = serde_json::json!({
+            "vector": [1.0, 2.0],
+            "collection_id": "fallback_col"
+        });
+        let result = parse_search_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "fallback_col");
+    }
+
+    #[test]
+    fn test_parse_search_request_invalid_json() {
+        let json = serde_json::json!("just a string");
+        let result = parse_search_request(json);
+        // Should fail because a string is not an object
+        assert!(result.is_err());
+    }
+
+    // ============================================================
+    // parse_batch_request tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_parse_batch_request_simple_format() {
+        let json = serde_json::json!({
+            "collection": "batch_col",
+            "vectors": []
+        });
+        let result = parse_batch_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "batch_col");
+        assert!(req.vectors.is_empty());
+    }
+
+    #[test]
+    fn test_parse_batch_request_proto_format() {
+        let json = serde_json::json!({
+            "collection_id": "proto_batch_col",
+            "vectors": []
+        });
+        let result = parse_batch_request(json);
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "proto_batch_col");
+    }
+
+    #[test]
+    fn test_parse_batch_request_collection_id_fallback() {
+        let json = serde_json::json!({
+            "collection": "preferred_col",
+            "collection_id": "fallback_col",
+            "vectors": []
+        });
+        let result = parse_batch_request(json);
+        assert!(result.is_ok());
+        // "collection" key takes precedence in simple format
+        let req = result.unwrap();
+        assert_eq!(req.collection_id, "preferred_col");
+    }
+
+    #[test]
+    fn test_parse_batch_request_invalid() {
+        let json = serde_json::json!(42);
+        let result = parse_batch_request(json);
+        assert!(result.is_err());
+    }
+
+    // ============================================================
+    // sql_value_to_json tests (coverage improvement)
+    // ============================================================
+
+    #[test]
+    fn test_sql_value_to_json_string() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::StringValue(
+                "hello".to_string(),
+            )),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_number() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::NumberValue(42.5)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!(42.5));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_bool() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::BoolValue(true)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!(true));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_int64() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::Int64Value(9999)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!(9999));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_bytes() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::BytesValue(vec![0, 1, 255])),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!([0, 1, 255]));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_null() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::NullValue(0)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_sql_value_to_json_none() {
+        let val = proximadb_v1::SqlValue { value: None };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_sql_value_to_json_array() {
+        let arr = proximadb_v1::SqlArray {
+            values: vec![
+                proximadb_v1::SqlValue {
+                    value: Some(proximadb_v1::sql_value::Value::Int64Value(1)),
+                },
+                proximadb_v1::SqlValue {
+                    value: Some(proximadb_v1::sql_value::Value::Int64Value(2)),
+                },
+            ],
+        };
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::ArrayValue(arr)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json, serde_json::json!([1, 2]));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_object() {
+        let mut fields = std::collections::HashMap::new();
+        fields.insert(
+            "name".to_string(),
+            proximadb_v1::SqlValue {
+                value: Some(proximadb_v1::sql_value::Value::StringValue(
+                    "Alice".to_string(),
+                )),
+            },
+        );
+        fields.insert(
+            "age".to_string(),
+            proximadb_v1::SqlValue {
+                value: Some(proximadb_v1::sql_value::Value::Int64Value(30)),
+            },
+        );
+        let obj = proximadb_v1::SqlObject { fields };
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::ObjectValue(obj)),
+        };
+        let json = sql_value_to_json(&val);
+        assert_eq!(json["name"], serde_json::json!("Alice"));
+        assert_eq!(json["age"], serde_json::json!(30));
+    }
+
+    #[test]
+    fn test_sql_value_to_json_nan_number() {
+        let val = proximadb_v1::SqlValue {
+            value: Some(proximadb_v1::sql_value::Value::NumberValue(f64::NAN)),
+        };
+        let json = sql_value_to_json(&val);
+        // NaN cannot be represented in JSON, falls back to 0
+        assert_eq!(json, serde_json::json!(0));
+    }
+
+    // ============================================================
+    // SqlQueryRequest/SqlColumnInfo tests
+    // ============================================================
+
+    #[test]
+    fn test_sql_query_request_deserialization() {
+        let json = serde_json::json!({
+            "query": "SELECT * FROM my_collection LIMIT 10",
+            "collection": "my_collection",
+            "timeout_ms": 5000
+        });
+        let req: SqlQueryRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.query, "SELECT * FROM my_collection LIMIT 10");
+        assert_eq!(req.collection, Some("my_collection".to_string()));
+        assert_eq!(req.timeout_ms, Some(5000));
+        assert!(req.parameters.is_none());
+        assert!(req.seeding.is_none());
+    }
+
+    #[test]
+    fn test_sql_column_info_serialization() {
+        let col = SqlColumnInfo {
+            name: "embedding".to_string(),
+            data_type: "vector".to_string(),
+        };
+        let json = serde_json::to_string(&col).unwrap();
+        assert!(json.contains("embedding"));
+        assert!(json.contains("vector"));
+    }
+
+    // ============================================================
+    // Vector operations tests (5 tests)
+    // ============================================================
+
+    /// Verify VectorSearchRequest deserializes from JSON in both simple and proto formats
+    #[test]
+    fn test_vector_search_request_parsing() {
+        // Simple format
+        let simple_json = serde_json::json!({
+            "collection": "my_vectors",
+            "vector": [0.1, 0.2, 0.3, 0.4, 0.5],
+            "top_k": 25
+        });
+        let simple_req =
+            parse_search_request(simple_json).expect("simple format should parse successfully");
+        assert_eq!(simple_req.collection_id, "my_vectors");
+        assert_eq!(simple_req.queries.len(), 1);
+        assert_eq!(simple_req.queries[0].vector.len(), 5);
+        assert!((simple_req.queries[0].vector[0] - 0.1).abs() < 1e-6);
+        assert!((simple_req.queries[0].vector[4] - 0.5).abs() < 1e-6);
+        assert_eq!(simple_req.top_k, 25);
+        assert!(simple_req.include_fields.is_none());
+        assert!(simple_req.search_params.is_none());
+        assert!(simple_req.distance_metric_override.is_none());
+        assert!(simple_req.search_optimization.is_none());
+
+        // Proto format with multiple queries
+        let proto_json = serde_json::json!({
+            "collection_id": "proto_vectors",
+            "queries": [
+                {"vector": [1.0, 2.0, 3.0], "filters": {}},
+                {"vector": [4.0, 5.0, 6.0], "filters": {}}
+            ],
+            "top_k": 50
+        });
+        let proto_req =
+            parse_search_request(proto_json).expect("proto format should parse successfully");
+        assert_eq!(proto_req.collection_id, "proto_vectors");
+        assert_eq!(proto_req.queries.len(), 2);
+        assert_eq!(proto_req.queries[0].vector, vec![1.0, 2.0, 3.0]);
+        assert_eq!(proto_req.queries[1].vector, vec![4.0, 5.0, 6.0]);
+        assert_eq!(proto_req.top_k, 50);
+    }
+
+    /// Verify VectorBatchRequest deserializes from JSON in both simple and proto formats
+    #[test]
+    fn test_vector_batch_request_parsing() {
+        // Simple format with actual vector records
+        let simple_json = serde_json::json!({
+            "collection": "batch_collection",
+            "vectors": [
+                {
+                    "id": "vec1",
+                    "vector": [0.1, 0.2, 0.3],
+                    "metadata": {}
+                },
+                {
+                    "id": "vec2",
+                    "vector": [0.4, 0.5, 0.6],
+                    "metadata": {}
+                }
+            ]
+        });
+        let simple_req = parse_batch_request(simple_json)
+            .expect("simple batch format should parse successfully");
+        assert_eq!(simple_req.collection_id, "batch_collection");
+        assert_eq!(simple_req.vectors.len(), 2);
+        assert_eq!(simple_req.vectors[0].id, "vec1");
+        assert_eq!(simple_req.vectors[0].vector, vec![0.1, 0.2, 0.3]);
+        assert_eq!(simple_req.vectors[1].id, "vec2");
+        assert_eq!(simple_req.vectors[1].vector, vec![0.4, 0.5, 0.6]);
+
+        // Proto format
+        let proto_json = serde_json::json!({
+            "collection_id": "proto_batch",
+            "vectors": [
+                {
+                    "id": "vec_a",
+                    "vector": [1.0, 2.0],
+                    "metadata": {}
+                }
+            ]
+        });
+        let proto_req =
+            parse_batch_request(proto_json).expect("proto batch format should parse successfully");
+        assert_eq!(proto_req.collection_id, "proto_batch");
+        assert_eq!(proto_req.vectors.len(), 1);
+        assert_eq!(proto_req.vectors[0].id, "vec_a");
+    }
+
+    /// Verify search response (VectorOperationResponse) serializes correctly to JSON
+    #[test]
+    fn test_search_response_serialization() {
+        let response = proximadb_v1::VectorOperationResponse {
+            success: true,
+            operation: 1, // search
+            metrics: Some(proximadb_v1::OperationMetrics {
+                total_processed: 100,
+                successful_count: 95,
+                failed_count: 5,
+                updated_count: 0,
+                processing_time_us: 1500,
+                wal_write_time_us: 0,
+                index_update_time_us: 0,
+            }),
+            results: Some(proximadb_v1::SearchResult {
+                results: vec![
+                    {
+                        let mut r = proximadb_v1::SearchVectorRecord::default();
+                        r.id = "result_1".to_string();
+                        r.score = 0.95;
+                        r.vector = vec![0.1, 0.2, 0.3];
+                        r.version = Some(1);
+                        r.similarity = Some(0.95);
+                        r
+                    },
+                    {
+                        let mut r = proximadb_v1::SearchVectorRecord::default();
+                        r.id = "result_2".to_string();
+                        r.score = 0.87;
+                        r.vector = vec![0.4, 0.5, 0.6];
+                        r.version = Some(1);
+                        r.similarity = Some(0.87);
+                        r
+                    },
+                ],
+                total_found: 2,
+                collection_id: Some("test_collection".to_string()),
+            }),
+            vector_ids: vec!["result_1".to_string(), "result_2".to_string()],
+            error_message: None,
+            error_code: None,
+        };
+
+        let json_str = serde_json::to_string(&response)
+            .expect("VectorOperationResponse should serialize to JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized JSON should parse back");
+
+        assert_eq!(parsed["success"], true);
+        assert_eq!(parsed["operation"], 1);
+        assert_eq!(parsed["results"]["total_found"], 2);
+        assert_eq!(parsed["results"]["results"][0]["id"], "result_1");
+        assert_eq!(parsed["results"]["results"][1]["id"], "result_2");
+        assert!(parsed["results"]["results"][0]["score"].as_f64().unwrap() > 0.9);
+        assert_eq!(parsed["vector_ids"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["metrics"]["total_processed"], 100);
+        assert_eq!(parsed["metrics"]["processing_time_us"], 1500);
+    }
+
+    /// Missing required fields in search request produce appropriate errors
+    #[test]
+    fn test_invalid_search_request() {
+        // Completely invalid JSON type (number, not object)
+        let invalid_json = serde_json::json!(12345);
+        let result = parse_search_request(invalid_json);
+        assert!(
+            result.is_err(),
+            "numeric JSON should fail to parse as search request"
+        );
+
+        // Array instead of object
+        let array_json = serde_json::json!([1, 2, 3]);
+        let result = parse_search_request(array_json);
+        assert!(
+            result.is_err(),
+            "array JSON should fail to parse as search request"
+        );
+
+        // Boolean instead of object
+        let bool_json = serde_json::json!(true);
+        let result = parse_search_request(bool_json);
+        assert!(
+            result.is_err(),
+            "boolean JSON should fail to parse as search request"
+        );
+
+        // Null JSON
+        let null_json = serde_json::json!(null);
+        let result = parse_search_request(null_json);
+        assert!(
+            result.is_err(),
+            "null JSON should fail to parse as search request"
+        );
+
+        // Valid object but with wrong vector type (strings instead of numbers)
+        let wrong_vector = serde_json::json!({
+            "collection": "test",
+            "vector": ["a", "b", "c"]
+        });
+        let result = parse_search_request(wrong_vector);
+        // Should succeed but with empty vector since non-numeric values are filtered
+        assert!(result.is_ok());
+        let req = result.unwrap();
+        assert!(
+            req.queries[0].vector.is_empty(),
+            "non-numeric vector values should be filtered out"
+        );
+    }
+
+    /// Empty query vector is handled correctly (parsed but empty)
+    #[test]
+    fn test_empty_vector_search() {
+        let json = serde_json::json!({
+            "collection": "empty_vec_test",
+            "vector": [],
+            "top_k": 10
+        });
+        let result =
+            parse_search_request(json).expect("empty vector search should parse successfully");
+        assert_eq!(result.collection_id, "empty_vec_test");
+        assert!(result.queries[0].vector.is_empty());
+        assert_eq!(result.top_k, 10);
+
+        // Also test with no vector key at all (simple format triggered by "collection" key)
+        let no_vector_json = serde_json::json!({
+            "collection": "no_vec_test"
+        });
+        let result = parse_search_request(no_vector_json)
+            .expect("missing vector search should parse successfully");
+        assert_eq!(result.collection_id, "no_vec_test");
+        assert!(result.queries[0].vector.is_empty());
+        assert_eq!(result.top_k, 10); // default
+    }
+
+    // ============================================================
+    // SQL operations tests (3 tests)
+    // ============================================================
+
+    /// Verify SqlQueryRequest deserializes correctly with all fields
+    #[test]
+    fn test_sql_query_request_parsing() {
+        // Full request with all optional fields
+        let json = serde_json::json!({
+            "query": "SELECT id, metadata FROM vectors WHERE category = 'electronics' ORDER BY score LIMIT 20",
+            "collection": "products",
+            "timeout_ms": 10000,
+            "seeding": "per_seed",
+            "parameters": [
+                {"value": {"StringValue": "electronics"}},
+                {"value": {"Int64Value": 20}}
+            ]
+        });
+        let req: SqlQueryRequest =
+            serde_json::from_value(json).expect("full SqlQueryRequest should deserialize");
+        assert_eq!(
+            req.query,
+            "SELECT id, metadata FROM vectors WHERE category = 'electronics' ORDER BY score LIMIT 20"
+        );
+        assert_eq!(req.collection, Some("products".to_string()));
+        assert_eq!(req.timeout_ms, Some(10000));
+        assert_eq!(req.seeding, Some("per_seed".to_string()));
+        assert!(req.parameters.is_some());
+        assert_eq!(req.parameters.as_ref().unwrap().len(), 2);
+
+        // Minimal request with only required fields
+        let minimal_json = serde_json::json!({
+            "query": "SELECT * FROM test"
+        });
+        let minimal_req: SqlQueryRequest = serde_json::from_value(minimal_json)
+            .expect("minimal SqlQueryRequest should deserialize");
+        assert_eq!(minimal_req.query, "SELECT * FROM test");
+        assert!(minimal_req.collection.is_none());
+        assert!(minimal_req.timeout_ms.is_none());
+        assert!(minimal_req.seeding.is_none());
+        assert!(minimal_req.parameters.is_none());
+    }
+
+    /// Verify SQL response format serializes correctly
+    #[test]
+    fn test_sql_response_serialization() {
+        // Simulate the JSON response structure returned by execute_sql handler
+        let response_json = serde_json::json!({
+            "rows": [
+                {"id": "vec1", "score": 0.95, "category": "electronics"},
+                {"id": "vec2", "score": 0.87, "category": "books"}
+            ],
+            "columns": ["id", "score", "category"],
+            "column_types": ["string", "float", "string"],
+            "execution_time_ms": 42,
+            "rows_returned": 2,
+            "row_count": 2,
+            "rows_scanned": 100,
+            "request_id": "req-123"
+        });
+
+        // Verify all fields are present and have correct types
+        assert_eq!(response_json["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(response_json["rows"][0]["id"], "vec1");
+        assert_eq!(response_json["rows"][1]["category"], "books");
+        assert_eq!(response_json["columns"].as_array().unwrap().len(), 3);
+        assert_eq!(response_json["execution_time_ms"], 42);
+        assert_eq!(response_json["rows_returned"], 2);
+        assert_eq!(response_json["row_count"], 2);
+        assert_eq!(response_json["rows_scanned"], 100);
+        assert_eq!(response_json["request_id"], "req-123");
+
+        // Verify the response round-trips through serialization
+        let serialized = serde_json::to_string(&response_json)
+            .expect("SQL response JSON should serialize to string");
+        let deserialized: serde_json::Value = serde_json::from_str(&serialized)
+            .expect("serialized SQL response should deserialize back");
+        assert_eq!(response_json, deserialized);
+    }
+
+    /// Empty query string produces an error (validated in handler, not in parsing)
+    #[test]
+    fn test_invalid_sql_request() {
+        // Empty query string deserializes fine at the serde level
+        let empty_query = serde_json::json!({
+            "query": ""
+        });
+        let req: SqlQueryRequest =
+            serde_json::from_value(empty_query).expect("empty query should still deserialize");
+        assert_eq!(req.query, "");
+        // Handler-level validation: query.trim().is_empty() returns true
+        assert!(
+            req.query.trim().is_empty(),
+            "empty query should be detected by handler validation"
+        );
+
+        // Whitespace-only query
+        let whitespace_query = serde_json::json!({
+            "query": "   \t\n  "
+        });
+        let req: SqlQueryRequest = serde_json::from_value(whitespace_query)
+            .expect("whitespace query should still deserialize");
+        assert!(
+            req.query.trim().is_empty(),
+            "whitespace-only query should be detected by handler validation"
+        );
+
+        // Missing required 'query' field entirely should fail deserialization
+        let missing_query = serde_json::json!({
+            "collection": "test_col",
+            "timeout_ms": 5000
+        });
+        let result = serde_json::from_value::<SqlQueryRequest>(missing_query);
+        assert!(
+            result.is_err(),
+            "missing 'query' field should fail deserialization"
+        );
+    }
+
+    // ============================================================
+    // Collection operations tests (4 tests)
+    // ============================================================
+
+    /// Verify CollectionRequest (create) deserializes from JSON
+    #[test]
+    fn test_create_collection_request_parsing() {
+        let json = serde_json::json!({
+            "operation": 1, // CollectionCreate
+            "collection_id": "new_collection",
+            "collection_config": {
+                "name": "new_collection",
+                "dimension": 128,
+                "distance_metric": 0,
+                "tags": ["test", "development"],
+                "description": "A test collection for unit testing"
+            }
+        });
+        let req: CollectionRequest =
+            serde_json::from_value(json).expect("CollectionRequest (create) should deserialize");
+        assert_eq!(req.operation, CollectionOperation::CollectionCreate as i32);
+        assert_eq!(req.collection_id, Some("new_collection".to_string()));
+        assert!(req.collection_config.is_some());
+        let config = req.collection_config.unwrap();
+        assert_eq!(config.name, "new_collection");
+        assert_eq!(config.dimension, 128);
+        assert_eq!(config.tags.len(), 2);
+        assert_eq!(config.tags[0], "test");
+        assert_eq!(
+            config.description,
+            Some("A test collection for unit testing".to_string())
+        );
+
+        // Minimal create request (only operation and name)
+        let minimal_json = serde_json::json!({
+            "operation": 1,
+            "collection_config": {
+                "name": "minimal_col",
+                "dimension": 64
+            }
+        });
+        let minimal_req: CollectionRequest = serde_json::from_value(minimal_json)
+            .expect("minimal CollectionRequest should deserialize");
+        assert_eq!(minimal_req.operation, 1);
+        assert!(minimal_req.collection_config.is_some());
+        assert_eq!(minimal_req.collection_config.unwrap().dimension, 64);
+    }
+
+    /// Verify CollectionResponse serializes correctly to JSON
+    #[test]
+    fn test_collection_response_serialization() {
+        let response = proximadb_v1::CollectionResponse {
+            success: true,
+            collection: Some(proximadb_v1::Collection {
+                id: "col_123".to_string(),
+                config: Some(proximadb_v1::CollectionConfig {
+                    name: "test_collection".to_string(),
+                    dimension: 128,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            collections: vec![],
+            error_message: None,
+            error_code: None,
+            operation: CollectionOperation::CollectionCreate as i32,
+            affected_count: 1,
+            total_count: 1,
+            metadata: HashMap::new(),
+            processing_time_us: 250,
+        };
+
+        let json_str =
+            serde_json::to_string(&response).expect("CollectionResponse should serialize to JSON");
+        let parsed: serde_json::Value = serde_json::from_str(&json_str)
+            .expect("serialized CollectionResponse should parse back");
+
+        assert_eq!(parsed["success"], true);
+        assert_eq!(parsed["collection"]["id"], "col_123");
+        assert_eq!(parsed["collection"]["config"]["name"], "test_collection");
+        assert_eq!(parsed["collection"]["config"]["dimension"], 128);
+        assert_eq!(
+            parsed["operation"],
+            CollectionOperation::CollectionCreate as i32
+        );
+        assert_eq!(parsed["affected_count"], 1);
+        assert_eq!(parsed["processing_time_us"], 250);
+
+        // Error response
+        let error_response = proximadb_v1::CollectionResponse {
+            success: false,
+            collection: None,
+            collections: vec![],
+            error_message: Some("Collection already exists".to_string()),
+            error_code: Some("ALREADY_EXISTS".to_string()),
+            operation: CollectionOperation::CollectionCreate as i32,
+            affected_count: 0,
+            total_count: 0,
+            metadata: HashMap::new(),
+            processing_time_us: 10,
+        };
+
+        let err_json_str = serde_json::to_string(&error_response)
+            .expect("error CollectionResponse should serialize");
+        let err_parsed: serde_json::Value = serde_json::from_str(&err_json_str)
+            .expect("serialized error response should parse back");
+        assert_eq!(err_parsed["success"], false);
+        assert_eq!(err_parsed["error_message"], "Collection already exists");
+        assert_eq!(err_parsed["error_code"], "ALREADY_EXISTS");
+    }
+
+    /// Verify list collections response with multiple collections
+    #[test]
+    fn test_list_collections_response() {
+        let response = proximadb_v1::CollectionResponse {
+            success: true,
+            collection: None,
+            collections: vec![
+                proximadb_v1::Collection {
+                    id: "col_1".to_string(),
+                    config: Some(proximadb_v1::CollectionConfig {
+                        name: "vectors_prod".to_string(),
+                        dimension: 128,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                proximadb_v1::Collection {
+                    id: "col_2".to_string(),
+                    config: Some(proximadb_v1::CollectionConfig {
+                        name: "vectors_staging".to_string(),
+                        dimension: 256,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                proximadb_v1::Collection {
+                    id: "col_3".to_string(),
+                    config: Some(proximadb_v1::CollectionConfig {
+                        name: "embeddings_test".to_string(),
+                        dimension: 512,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            ],
+            error_message: None,
+            error_code: None,
+            operation: CollectionOperation::CollectionList as i32,
+            affected_count: 0,
+            total_count: 3,
+            metadata: HashMap::new(),
+            processing_time_us: 500,
+        };
+
+        let json_str =
+            serde_json::to_string(&response).expect("list collections response should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized list response should parse back");
+
+        assert_eq!(parsed["success"], true);
+        assert_eq!(
+            parsed["operation"],
+            CollectionOperation::CollectionList as i32
+        );
+        assert_eq!(parsed["total_count"], 3);
+        let collections = parsed["collections"]
+            .as_array()
+            .expect("collections should be an array");
+        assert_eq!(collections.len(), 3);
+        assert_eq!(collections[0]["id"], "col_1");
+        assert_eq!(collections[0]["config"]["name"], "vectors_prod");
+        assert_eq!(collections[1]["id"], "col_2");
+        assert_eq!(collections[1]["config"]["name"], "vectors_staging");
+        assert_eq!(collections[2]["id"], "col_3");
+        assert_eq!(collections[2]["config"]["name"], "embeddings_test");
+
+        // Empty list response
+        let empty_response = proximadb_v1::CollectionResponse {
+            success: true,
+            collection: None,
+            collections: vec![],
+            error_message: None,
+            error_code: None,
+            operation: CollectionOperation::CollectionList as i32,
+            affected_count: 0,
+            total_count: 0,
+            metadata: HashMap::new(),
+            processing_time_us: 50,
+        };
+
+        let empty_json =
+            serde_json::to_string(&empty_response).expect("empty list response should serialize");
+        let empty_parsed: serde_json::Value =
+            serde_json::from_str(&empty_json).expect("empty list should parse back");
+        assert_eq!(empty_parsed["collections"].as_array().unwrap().len(), 0);
+        assert_eq!(empty_parsed["total_count"], 0);
+    }
+
+    /// Verify delete collection request constructs correctly
+    #[test]
+    fn test_delete_collection_request() {
+        // Verify the CollectionRequest for delete operation can be constructed and serialized
+        let delete_request = CollectionRequest {
+            operation: CollectionOperation::CollectionDelete as i32,
+            collection_id: Some("col_to_delete".to_string()),
+            collection_config: None,
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+
+        assert_eq!(
+            delete_request.operation,
+            CollectionOperation::CollectionDelete as i32
+        );
+        assert_eq!(
+            delete_request.collection_id,
+            Some("col_to_delete".to_string())
+        );
+        assert!(delete_request.collection_config.is_none());
+
+        // Verify it serializes to JSON
+        let json_str = serde_json::to_string(&delete_request)
+            .expect("delete CollectionRequest should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized delete request should parse back");
+        assert_eq!(
+            parsed["operation"],
+            CollectionOperation::CollectionDelete as i32
+        );
+        assert_eq!(parsed["collection_id"], "col_to_delete");
+
+        // Verify deserialization round-trip
+        let deserialized: CollectionRequest =
+            serde_json::from_str(&json_str).expect("delete request should round-trip through JSON");
+        assert_eq!(deserialized.operation, delete_request.operation);
+        assert_eq!(deserialized.collection_id, delete_request.collection_id);
+
+        // Verify CollectionOperation enum conversion
+        let op = CollectionOperation::try_from(delete_request.operation);
+        assert!(op.is_ok());
+        assert_eq!(op.unwrap(), CollectionOperation::CollectionDelete);
+
+        // Verify invalid operation value is rejected
+        let invalid_op = CollectionOperation::try_from(999);
+        assert!(
+            invalid_op.is_err(),
+            "invalid operation value 999 should fail enum conversion"
+        );
+    }
+
+    // ============================================================
+    // Hybrid search tests (3 tests)
+    // ============================================================
+
+    /// Verify HybridSearchRequest deserializes with all field combinations
+    #[test]
+    fn test_hybrid_search_request_parsing() {
+        // Full hybrid request (vector + text)
+        let full_json = serde_json::json!({
+            "collection": "hybrid_col",
+            "vector": [0.1, 0.2, 0.3, 0.4],
+            "text_query": "machine learning algorithms",
+            "top_k": 20,
+            "vector_weight": 0.6,
+            "rrf_k": 100,
+            "min_bm25_score": 0.5
+        });
+        let full_req: HybridSearchRequest =
+            serde_json::from_value(full_json).expect("full HybridSearchRequest should deserialize");
+        assert_eq!(full_req.collection, "hybrid_col");
+        assert_eq!(full_req.vector.as_ref().unwrap().len(), 4);
+        assert!((full_req.vector.as_ref().unwrap()[0] - 0.1).abs() < 1e-6);
+        assert_eq!(
+            full_req.text_query,
+            Some("machine learning algorithms".to_string())
+        );
+        assert_eq!(full_req.top_k, 20);
+        assert!((full_req.vector_weight - 0.6).abs() < 0.001);
+        assert_eq!(full_req.rrf_k, 100);
+        assert!((full_req.min_bm25_score - 0.5).abs() < 0.001);
+
+        // Vector-only request (no text_query)
+        let vector_only_json = serde_json::json!({
+            "collection": "vec_only",
+            "vector": [1.0, 2.0, 3.0]
+        });
+        let vec_req: HybridSearchRequest = serde_json::from_value(vector_only_json)
+            .expect("vector-only HybridSearchRequest should deserialize");
+        assert_eq!(vec_req.collection, "vec_only");
+        assert!(vec_req.vector.is_some());
+        assert!(vec_req.text_query.is_none());
+        assert_eq!(vec_req.top_k, 10); // default
+        assert!((vec_req.vector_weight - 0.5).abs() < 0.001); // default
+        assert_eq!(vec_req.rrf_k, 60); // default
+
+        // Text-only request (no vector)
+        let text_only_json = serde_json::json!({
+            "collection": "text_only",
+            "text_query": "database systems"
+        });
+        let text_req: HybridSearchRequest = serde_json::from_value(text_only_json)
+            .expect("text-only HybridSearchRequest should deserialize");
+        assert_eq!(text_req.collection, "text_only");
+        assert!(text_req.vector.is_none());
+        assert_eq!(text_req.text_query, Some("database systems".to_string()));
+    }
+
+    /// Verify HybridSearchResponse serializes correctly including skip_serializing_if behavior
+    #[test]
+    fn test_hybrid_search_response_serialization_extended() {
+        // Response with mixed hit types: some have vector scores, some have bm25 only
+        let response = HybridSearchResponse {
+            success: true,
+            results: vec![
+                HybridSearchHit {
+                    id: "doc_a".to_string(),
+                    combined_score: 0.042,
+                    vector_score: Some(0.92),
+                    bm25_score: Some(4.5),
+                    vector_rank: Some(1),
+                    bm25_rank: Some(3),
+                    matched_terms: vec!["neural".to_string(), "network".to_string()],
+                },
+                HybridSearchHit {
+                    id: "doc_b".to_string(),
+                    combined_score: 0.035,
+                    vector_score: None, // BM25-only hit
+                    bm25_score: Some(6.2),
+                    vector_rank: None,
+                    bm25_rank: Some(1),
+                    matched_terms: vec!["deep".to_string(), "learning".to_string()],
+                },
+                HybridSearchHit {
+                    id: "doc_c".to_string(),
+                    combined_score: 0.028,
+                    vector_score: Some(0.85), // Vector-only hit
+                    bm25_score: None,
+                    vector_rank: Some(2),
+                    bm25_rank: None,
+                    matched_terms: vec![],
+                },
+            ],
+            total: 3,
+            processing_time_us: 2500,
+            mode: "hybrid".to_string(),
+        };
+
+        let json_str =
+            serde_json::to_string(&response).expect("HybridSearchResponse should serialize");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("serialized response should parse back");
+
+        // Verify top-level fields
+        assert_eq!(parsed["success"], true);
+        assert_eq!(parsed["total"], 3);
+        assert_eq!(parsed["processing_time_us"], 2500);
+        assert_eq!(parsed["mode"], "hybrid");
+
+        // doc_a: has all scores
+        let doc_a = &parsed["results"][0];
+        assert_eq!(doc_a["id"], "doc_a");
+        assert!(doc_a.get("vector_score").is_some());
+        assert!(doc_a.get("bm25_score").is_some());
+        assert!(doc_a.get("vector_rank").is_some());
+        assert!(doc_a.get("bm25_rank").is_some());
+        assert_eq!(doc_a["matched_terms"].as_array().unwrap().len(), 2);
+
+        // doc_b: BM25-only (vector_score and vector_rank should be absent due to skip_serializing_if)
+        let doc_b = &parsed["results"][1];
+        assert_eq!(doc_b["id"], "doc_b");
+        assert!(
+            doc_b.get("vector_score").is_none(),
+            "BM25-only hit should omit vector_score"
+        );
+        assert!(
+            doc_b.get("vector_rank").is_none(),
+            "BM25-only hit should omit vector_rank"
+        );
+        assert!(doc_b.get("bm25_score").is_some());
+        assert!(doc_b.get("bm25_rank").is_some());
+
+        // doc_c: Vector-only (bm25_score and bm25_rank should be absent)
+        let doc_c = &parsed["results"][2];
+        assert_eq!(doc_c["id"], "doc_c");
+        assert!(
+            doc_c.get("bm25_score").is_none(),
+            "vector-only hit should omit bm25_score"
+        );
+        assert!(
+            doc_c.get("bm25_rank").is_none(),
+            "vector-only hit should omit bm25_rank"
+        );
+        assert!(doc_c.get("vector_score").is_some());
+        assert!(doc_c.get("vector_rank").is_some());
+        assert_eq!(doc_c["matched_terms"].as_array().unwrap().len(), 0);
+    }
+
+    /// Verify HybridIndexRequest deserializes and validates correctly
+    #[test]
+    fn test_hybrid_index_request_parsing() {
+        // Standard index request with multiple documents
+        let json = serde_json::json!({
+            "collection": "index_col",
+            "documents": [
+                {"id": "doc1", "text": "Introduction to machine learning"},
+                {"id": "doc2", "text": "Advanced neural network architectures"},
+                {"id": "doc3", "text": "Database query optimization techniques"},
+                {"id": "doc4", "text": "Distributed systems and consensus algorithms"}
+            ]
+        });
+        let req: HybridIndexRequest =
+            serde_json::from_value(json).expect("HybridIndexRequest should deserialize");
+        assert_eq!(req.collection, "index_col");
+        assert_eq!(req.documents.len(), 4);
+        assert_eq!(req.documents[0].id, "doc1");
+        assert_eq!(req.documents[0].text, "Introduction to machine learning");
+        assert_eq!(req.documents[3].id, "doc4");
+        assert!(req.documents[3].text.contains("consensus"));
+
+        // HybridIndexResponse serialization
+        let response = HybridIndexResponse {
+            success: true,
+            collection: "index_col".to_string(),
+            documents_indexed: 4,
+            total_documents: 10,
+        };
+        let resp_json =
+            serde_json::to_string(&response).expect("HybridIndexResponse should serialize");
+        let resp_parsed: serde_json::Value =
+            serde_json::from_str(&resp_json).expect("serialized index response should parse back");
+        assert_eq!(resp_parsed["success"], true);
+        assert_eq!(resp_parsed["collection"], "index_col");
+        assert_eq!(resp_parsed["documents_indexed"], 4);
+        assert_eq!(resp_parsed["total_documents"], 10);
+
+        // Empty documents list should deserialize (validation happens in handler)
+        let empty_docs = serde_json::json!({
+            "collection": "empty_col",
+            "documents": []
+        });
+        let empty_req: HybridIndexRequest = serde_json::from_value(empty_docs)
+            .expect("empty documents HybridIndexRequest should deserialize");
+        assert_eq!(empty_req.documents.len(), 0);
     }
 }

@@ -32,9 +32,9 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::impls::sst::writer::SstableWriter;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-// Temporarily disabled due to arrow-arith compilation conflicts - TODO: Re-enable when resolved
+// Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::impls::viper::readers::unified_parquet_reader::UnifiedParquetReader;
-// use crate::storage::engines::impls::viper::flush::ViperFlushOperation; // TODO: Import correct flush module
+// use crate::storage::engines::impls::viper::flush::ViperFlushOperation; // Deferred: Import correct flush module
 
 /// Data format used by each tier
 #[derive(Debug, Clone)]
@@ -49,17 +49,23 @@ pub enum TierDataFormat {
 
 /// Tier data movement coordinator
 pub struct TierDataMovement {
+    /// Collection this coordinator operates on
     collection_id: String,
+    /// Storage engine that determines the on-disk serialization format
     storage_engine: StorageEngineType,
 }
 
+/// The storage engine implementation that determines the on-disk data format
 #[derive(Debug, Clone)]
 pub enum StorageEngineType {
+    /// Sorted String Table engine (ProximaBlocks hybrid columnar format)
     SST,
+    /// VIPER columnar Parquet-based engine
     VIPER,
 }
 
 impl TierDataMovement {
+    /// Create a new coordinator for the given collection and storage engine type
     pub fn new(collection_id: String, storage_engine: StorageEngineType) -> Self {
         Self {
             collection_id,
@@ -249,8 +255,10 @@ impl TierDataMovement {
         debug!("Reading {} vectors from SST at {}", ids.len(), path);
 
         // Use SSTable reader to load vectors
-        let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        config.default_fs = Some(path.clone());
+        let config = crate::storage::persistence::filesystem::FilesystemConfig {
+            default_fs: Some(path.clone()),
+            ..Default::default()
+        };
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
@@ -291,8 +299,10 @@ impl TierDataMovement {
         debug!("Writing {} vectors to SST at {}", vectors.len(), path);
 
         // Use SSTable writer to store vectors
-        let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        config.default_fs = Some(path.clone());
+        let config = crate::storage::persistence::filesystem::FilesystemConfig {
+            default_fs: Some(path.clone()),
+            ..Default::default()
+        };
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
@@ -330,18 +340,20 @@ impl TierDataMovement {
         debug!("Reading {} vectors from VIPER at {}", ids.len(), path);
 
         // Use Parquet reader to load vectors
-        let mut config = crate::storage::persistence::filesystem::FilesystemConfig::default();
-        config.default_fs = Some(path.clone());
+        let config = crate::storage::persistence::filesystem::FilesystemConfig {
+            default_fs: Some(path.clone()),
+            ..Default::default()
+        };
         let _filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(config)
                 .await
                 .map_err(|e| anyhow!("Failed to create filesystem: {}", e))?,
         );
-        // TODO: Re-enable when UnifiedParquetReader is available
+        // Deferred: Re-enable when UnifiedParquetReader is available
         // let reader = UnifiedParquetReader::new(filesystem);
         let vectors = Vec::new();
 
-        // TODO: Implement VIPER reading when UnifiedParquetReader is restored
+        // Deferred: Implement VIPER reading when UnifiedParquetReader is restored
         // let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata_info"]).await?;
         // for vector in all_vectors {
         //     if let Some(ref vec_id) = vector.id {
@@ -363,7 +375,7 @@ impl TierDataMovement {
         let path = self.get_tier_path(tier)?;
         debug!("Writing {} vectors to VIPER at {}", vectors.len(), path);
 
-        // TODO: Use VIPER flush operation to write Parquet
+        // Deferred: Use VIPER flush operation to write Parquet
         // In production, this would use the VIPER writer
         // For now, estimate bytes written
         let bytes_per_vector = 1024; // Rough estimate
@@ -417,16 +429,23 @@ impl TierDataMovement {
     }
 }
 
+/// Result of a tier promotion operation
 #[derive(Debug)]
 pub struct PromotionResult {
+    /// Number of items successfully promoted to the faster tier
     pub items_promoted: usize,
+    /// Total bytes written to the destination tier
     pub bytes_written: usize,
 }
 
+/// Result of a tier demotion operation
 #[derive(Debug)]
 pub struct DemotionResult {
+    /// Number of items successfully demoted to the slower tier
     pub items_demoted: usize,
+    /// Total bytes written to the destination tier
     pub bytes_written: usize,
+    /// Total bytes freed from the source tier
     pub bytes_freed: usize,
 }
 

@@ -80,9 +80,10 @@ pub enum FullTextIndexError {
 // =============================================================================
 
 /// Tokenizer type selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TokenizerType {
     /// Standard tokenizer: lowercase, remove punctuation, split on whitespace
+    #[default]
     Standard,
     /// Whitespace-only tokenizer: split on whitespace, preserve case
     Whitespace,
@@ -94,12 +95,6 @@ pub enum TokenizerType {
     EdgeNgram,
     /// Keyword tokenizer: entire input as single token
     Keyword,
-}
-
-impl Default for TokenizerType {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 /// Configuration for tokenization
@@ -353,7 +348,7 @@ impl Tokenizer {
         let mut tokens = Vec::new();
         let mut position = 0u32;
 
-        for (_i, word) in text.split_whitespace().enumerate() {
+        for word in text.split_whitespace() {
             let text_to_use = if self.config.lowercase {
                 word.to_lowercase()
             } else {
@@ -989,7 +984,7 @@ impl FullTextIndex {
         for (term, positions) in term_positions {
             self.inverted_index
                 .entry(term)
-                .or_insert_with(PostingList::new)
+                .or_default()
                 .add_posting(doc_id.to_string(), positions);
         }
 
@@ -1048,7 +1043,7 @@ impl FullTextIndex {
 
         // Remove from inverted index
         let mut empty_terms = Vec::new();
-        for (term, posting_list) in self.inverted_index.iter_mut() {
+        for (term, posting_list) in &mut self.inverted_index {
             if let Some(idx) = posting_list
                 .postings
                 .iter()
@@ -1190,8 +1185,7 @@ impl FullTextIndex {
     pub fn get_document_frequency(&self, term: &str) -> u32 {
         self.inverted_index
             .get(term)
-            .map(|pl| pl.doc_frequency)
-            .unwrap_or(0)
+            .map_or(0, |pl| pl.doc_frequency)
     }
 
     /// Get term frequency for a term in a specific document
@@ -1199,8 +1193,7 @@ impl FullTextIndex {
         self.inverted_index
             .get(term)
             .and_then(|pl| pl.get_posting(doc_id))
-            .map(|p| p.term_frequency)
-            .unwrap_or(0)
+            .map_or(0, |p| p.term_frequency)
     }
 
     /// Get IDF for a term
@@ -1259,17 +1252,12 @@ impl FullTextIndex {
 
         // Merge documents
         for (doc_id, meta) in other.documents {
-            if !self.documents.contains_key(&doc_id) {
-                self.documents.insert(doc_id, meta);
-            }
+            self.documents.entry(doc_id).or_insert(meta);
         }
 
         // Merge inverted index
         for (term, other_pl) in other.inverted_index {
-            let pl = self
-                .inverted_index
-                .entry(term)
-                .or_insert_with(PostingList::new);
+            let pl = self.inverted_index.entry(term).or_default();
 
             for posting in other_pl.postings {
                 if pl.get_posting(&posting.doc_id).is_none() {
@@ -1289,7 +1277,7 @@ impl FullTextIndex {
     /// Recompute statistics from scratch
     fn recompute_statistics(&mut self) {
         self.statistics = TextStatistics::default();
-        for (_, meta) in &self.documents {
+        for meta in self.documents.values() {
             self.statistics.update_after_add(meta.token_count);
         }
         self.statistics
@@ -1505,9 +1493,15 @@ mod tests {
     fn test_fulltext_index_basic() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "The quick brown fox").unwrap();
-        index.add_document("doc2", "A lazy brown dog").unwrap();
-        index.add_document("doc3", "The quick blue bird").unwrap();
+        index
+            .add_document("doc1", "The quick brown fox")
+            .expect("Failed to add doc1");
+        index
+            .add_document("doc2", "A lazy brown dog")
+            .expect("Failed to add doc2");
+        index
+            .add_document("doc3", "The quick blue bird")
+            .expect("Failed to add doc3");
 
         assert_eq!(index.document_count(), 3);
         assert!(index.term_count() > 0);
@@ -1519,13 +1513,13 @@ mod tests {
 
         index
             .add_document("doc1", "The quick brown fox jumps over")
-            .unwrap();
+            .expect("Failed to add doc1");
         index
             .add_document("doc2", "A lazy brown dog sleeps")
-            .unwrap();
+            .expect("Failed to add doc2");
         index
             .add_document("doc3", "The quick blue bird flies")
-            .unwrap();
+            .expect("Failed to add doc3");
 
         let results = index.search("quick brown", 10);
 
@@ -1549,12 +1543,18 @@ mod tests {
     fn test_remove_document() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "Hello world").unwrap();
-        index.add_document("doc2", "Hello there").unwrap();
+        index
+            .add_document("doc1", "Hello world")
+            .expect("Failed to add doc1");
+        index
+            .add_document("doc2", "Hello there")
+            .expect("Failed to add doc2");
 
         assert_eq!(index.document_count(), 2);
 
-        index.remove_document("doc1").unwrap();
+        index
+            .remove_document("doc1")
+            .expect("Failed to remove doc1");
         assert_eq!(index.document_count(), 1);
         assert!(!index.contains_document("doc1"));
         assert!(index.contains_document("doc2"));
@@ -1568,7 +1568,7 @@ mod tests {
         builder.add_document("doc1".to_string(), "First document text".to_string());
         builder.add_document("doc2".to_string(), "Second document text".to_string());
 
-        let index = builder.build().unwrap();
+        let index = builder.build().expect("Failed to build index");
         assert_eq!(index.document_count(), 2);
     }
 
@@ -1576,9 +1576,15 @@ mod tests {
     fn test_document_frequency() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "hello world").unwrap();
-        index.add_document("doc2", "hello there").unwrap();
-        index.add_document("doc3", "goodbye world").unwrap();
+        index
+            .add_document("doc1", "hello world")
+            .expect("Failed to add doc1");
+        index
+            .add_document("doc2", "hello there")
+            .expect("Failed to add doc2");
+        index
+            .add_document("doc3", "goodbye world")
+            .expect("Failed to add doc3");
 
         let hello_df = index.get_document_frequency("hello");
         assert_eq!(hello_df, 2);
@@ -1594,9 +1600,15 @@ mod tests {
     fn test_search_with_options() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "quick brown fox").unwrap();
-        index.add_document("doc2", "quick").unwrap();
-        index.add_document("doc3", "slow brown tortoise").unwrap();
+        index
+            .add_document("doc1", "quick brown fox")
+            .expect("Failed to add doc1");
+        index
+            .add_document("doc2", "quick")
+            .expect("Failed to add doc2");
+        index
+            .add_document("doc3", "slow brown tortoise")
+            .expect("Failed to add doc3");
 
         // Require all terms
         let results =
@@ -1611,7 +1623,9 @@ mod tests {
     fn test_prefix_terms() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "testing tested tester").unwrap();
+        index
+            .add_document("doc1", "testing tested tester")
+            .expect("Failed to add doc1");
 
         let terms = index.get_terms_with_prefix("test", 10);
         assert!(!terms.is_empty());
@@ -1624,10 +1638,12 @@ mod tests {
     fn test_statistics() {
         let mut index = FullTextIndex::new(TokenizerConfig::default());
 
-        index.add_document("doc1", "one two three").unwrap();
+        index
+            .add_document("doc1", "one two three")
+            .expect("Failed to add doc1");
         index
             .add_document("doc2", "four five six seven eight")
-            .unwrap();
+            .expect("Failed to add doc2");
 
         let stats = index.statistics();
         assert_eq!(stats.total_documents, 2);

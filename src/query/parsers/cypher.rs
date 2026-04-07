@@ -102,91 +102,158 @@ type ParseResult<'a, T> = IResult<&'a str, T, VerboseError<&'a str>>;
 /// Token types for the Cypher lexer
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    // Keywords
+    /// MATCH keyword
     Match,
+    /// OPTIONAL MATCH keyword
     OptionalMatch,
+    /// WHERE keyword
     Where,
+    /// RETURN keyword
     Return,
+    /// ORDER BY keyword
     OrderBy,
+    /// LIMIT keyword
     Limit,
+    /// SKIP keyword
     Skip,
+    /// CREATE keyword
     Create,
+    /// MERGE keyword
     Merge,
+    /// DELETE keyword
     Delete,
+    /// DETACH DELETE keyword
     DetachDelete,
+    /// SET keyword
     Set,
+    /// REMOVE keyword
     Remove,
+    /// WITH keyword
     With,
+    /// AS keyword
     As,
+    /// DISTINCT keyword
     Distinct,
+    /// AND logical operator
     And,
+    /// OR logical operator
     Or,
+    /// NOT logical operator
     Not,
+    /// XOR logical operator
     Xor,
+    /// IN set membership operator
     In,
+    /// IS operator
     Is,
+    /// NULL literal
     Null,
+    /// TRUE boolean literal
     True,
+    /// FALSE boolean literal
     False,
+    /// ASC sort direction
     Asc,
+    /// DESC sort direction
     Desc,
+    /// ON CREATE merge action
     OnCreate,
+    /// ON MATCH merge action
     OnMatch,
+    /// UNWIND list expansion
     Unwind,
+    /// FOREACH iteration
     ForEach,
+    /// CALL procedure invocation
     Call,
+    /// YIELD for procedure results
     Yield,
 
-    // Delimiters
+    /// Opening parenthesis `(`
     OpenParen,
+    /// Closing parenthesis `)`
     CloseParen,
+    /// Opening bracket `[`
     OpenBracket,
+    /// Closing bracket `]`
     CloseBracket,
+    /// Opening brace `{`
     OpenBrace,
+    /// Closing brace `}`
     CloseBrace,
+    /// Comma separator
     Comma,
+    /// Colon separator
     Colon,
+    /// Dot property accessor
     Dot,
+    /// Semicolon statement separator
     Semicolon,
 
-    // Operators
-    Arrow,          // ->
-    LeftArrow,      // <-
-    Dash,           // -
-    Equals,         // =
-    NotEquals,      // <>
-    LessThan,       // <
-    GreaterThan,    // >
-    LessOrEqual,    // <=
-    GreaterOrEqual, // >=
-    Plus,           // +
-    Minus,          // -
-    Asterisk,       // *
-    Slash,          // /
-    Percent,        // %
-    Caret,          // ^
-    PlusEquals,     // +=
-    DoubleDot,      // ..
+    /// Right arrow `->`
+    Arrow,
+    /// Left arrow `<-`
+    LeftArrow,
+    /// Dash `-`
+    Dash,
+    /// Equals `=`
+    Equals,
+    /// Not equals `<>`
+    NotEquals,
+    /// Less than `<`
+    LessThan,
+    /// Greater than `>`
+    GreaterThan,
+    /// Less than or equal `<=`
+    LessOrEqual,
+    /// Greater than or equal `>=`
+    GreaterOrEqual,
+    /// Plus `+`
+    Plus,
+    /// Minus `-`
+    Minus,
+    /// Asterisk `*`
+    Asterisk,
+    /// Slash `/`
+    Slash,
+    /// Percent `%`
+    Percent,
+    /// Caret `^`
+    Caret,
+    /// Plus-equals `+=`
+    PlusEquals,
+    /// Double dot `..` for range
+    DoubleDot,
 
-    // Literals
+    /// Integer literal
     Integer(i64),
+    /// Float literal
     Float(f64),
+    /// String literal
     String(String),
+    /// Identifier (variable or label name)
     Identifier(String),
+    /// Parameter reference
     Parameter(String),
 
-    // Special
+    /// Whitespace token
     Whitespace,
+    /// Comment text
     Comment(String),
+    /// End of file
     Eof,
 }
 
 /// Token with location information
 #[derive(Debug, Clone)]
 pub struct LocatedToken {
+    /// The token value
     pub token: Token,
+    /// Line number in the source (1-based)
     pub line: usize,
+    /// Column number in the source (1-based)
     pub column: usize,
+    /// Byte range in the source string
     pub span: std::ops::Range<usize>,
 }
 
@@ -374,18 +441,20 @@ impl CypherLexer {
         }
 
         // Decimal part
-        if self.position < chars.len() && chars[self.position] == '.' {
-            if self.position + 1 < chars.len() && chars[self.position + 1].is_ascii_digit() {
-                is_float = true;
-                num_str.push('.');
+        if self.position < chars.len()
+            && chars[self.position] == '.'
+            && self.position + 1 < chars.len()
+            && chars[self.position + 1].is_ascii_digit()
+        {
+            is_float = true;
+            num_str.push('.');
+            self.position += 1;
+            self.column += 1;
+
+            while self.position < chars.len() && chars[self.position].is_ascii_digit() {
+                num_str.push(chars[self.position]);
                 self.position += 1;
                 self.column += 1;
-
-                while self.position < chars.len() && chars[self.position].is_ascii_digit() {
-                    num_str.push(chars[self.position]);
-                    self.position += 1;
-                    self.column += 1;
-                }
             }
         }
 
@@ -774,7 +843,7 @@ impl super::QueryParser for CypherParser {
 // ============================================================================
 
 /// Parse identifier (variable names, labels, property keys)
-fn identifier(input: &str) -> ParseResult<String> {
+fn identifier(input: &str) -> ParseResult<'_, String> {
     map(
         recognize(tuple((
             alt((alpha1, tag("_"))),
@@ -785,7 +854,7 @@ fn identifier(input: &str) -> ParseResult<String> {
 }
 
 /// Parse backtick-quoted identifier
-fn quoted_identifier(input: &str) -> ParseResult<String> {
+fn quoted_identifier(input: &str) -> ParseResult<'_, String> {
     map(
         delimited(char('`'), take_while1(|c| c != '`'), char('`')),
         String::from,
@@ -793,12 +862,12 @@ fn quoted_identifier(input: &str) -> ParseResult<String> {
 }
 
 /// Parse any identifier (normal or quoted)
-fn any_identifier(input: &str) -> ParseResult<String> {
+fn any_identifier(input: &str) -> ParseResult<'_, String> {
     alt((quoted_identifier, identifier))(input)
 }
 
 /// Parse string literal (single or double quoted)
-fn string_literal(input: &str) -> ParseResult<String> {
+fn string_literal(input: &str) -> ParseResult<'_, String> {
     alt((
         map(
             delimited(char('"'), take_while(|c| c != '"'), char('"')),
@@ -812,14 +881,14 @@ fn string_literal(input: &str) -> ParseResult<String> {
 }
 
 /// Parse integer literal
-fn integer_literal(input: &str) -> ParseResult<i64> {
+fn integer_literal(input: &str) -> ParseResult<'_, i64> {
     map_res(recognize(tuple((opt(char('-')), digit1))), |s: &str| {
         s.parse::<i64>()
     })(input)
 }
 
 /// Parse float literal
-fn float_literal(input: &str) -> ParseResult<f64> {
+fn float_literal(input: &str) -> ParseResult<'_, f64> {
     map_res(
         recognize(tuple((
             opt(char('-')),
@@ -833,7 +902,7 @@ fn float_literal(input: &str) -> ParseResult<f64> {
 }
 
 /// Parse boolean literal
-fn boolean_literal(input: &str) -> ParseResult<bool> {
+fn boolean_literal(input: &str) -> ParseResult<'_, bool> {
     alt((
         value(true, tag_no_case("true")),
         value(false, tag_no_case("false")),
@@ -841,12 +910,12 @@ fn boolean_literal(input: &str) -> ParseResult<bool> {
 }
 
 /// Parse null literal
-fn null_literal(input: &str) -> ParseResult<serde_json::Value> {
+fn null_literal(input: &str) -> ParseResult<'_, serde_json::Value> {
     value(serde_json::Value::Null, tag_no_case("null"))(input)
 }
 
 /// Parse a property value (string, number, boolean, null)
-fn property_value(input: &str) -> ParseResult<serde_json::Value> {
+fn property_value(input: &str) -> ParseResult<'_, serde_json::Value> {
     alt((
         map(string_literal, serde_json::Value::String),
         map(float_literal, |f| {
@@ -875,7 +944,7 @@ fn property_value(input: &str) -> ParseResult<serde_json::Value> {
 }
 
 /// Parse property assignment: key: value
-fn property_assignment(input: &str) -> ParseResult<(String, PropertyConstraint)> {
+fn property_assignment(input: &str) -> ParseResult<'_, (String, PropertyConstraint)> {
     map(
         separated_pair(
             any_identifier,
@@ -887,7 +956,7 @@ fn property_assignment(input: &str) -> ParseResult<(String, PropertyConstraint)>
 }
 
 /// Parse property map: {key: value, ...}
-fn property_map(input: &str) -> ParseResult<HashMap<String, PropertyConstraint>> {
+fn property_map(input: &str) -> ParseResult<'_, HashMap<String, PropertyConstraint>> {
     map(
         delimited(
             pair(char('{'), multispace0),
@@ -902,7 +971,7 @@ fn property_map(input: &str) -> ParseResult<HashMap<String, PropertyConstraint>>
 }
 
 /// Parse property value map: {key: value, ...} for CREATE
-fn property_value_map(input: &str) -> ParseResult<HashMap<String, serde_json::Value>> {
+fn property_value_map(input: &str) -> ParseResult<'_, HashMap<String, serde_json::Value>> {
     map(
         delimited(
             pair(char('{'), multispace0),
@@ -921,17 +990,17 @@ fn property_value_map(input: &str) -> ParseResult<HashMap<String, serde_json::Va
 }
 
 /// Parse labels: :Label1:Label2
-fn parse_labels(input: &str) -> ParseResult<Vec<String>> {
+fn parse_labels(input: &str) -> ParseResult<'_, Vec<String>> {
     many1(preceded(char(':'), any_identifier))(input)
 }
 
 /// Parse optional labels
-fn parse_optional_labels(input: &str) -> ParseResult<Vec<String>> {
+fn parse_optional_labels(input: &str) -> ParseResult<'_, Vec<String>> {
     map(opt(parse_labels), |labels| labels.unwrap_or_default())(input)
 }
 
 /// Parse node pattern: (variable:Label {props})
-fn parse_node_pattern(input: &str) -> ParseResult<NodePattern> {
+fn parse_node_pattern(input: &str) -> ParseResult<'_, NodePattern> {
     map(
         delimited(
             char('('),
@@ -953,17 +1022,17 @@ fn parse_node_pattern(input: &str) -> ParseResult<NodePattern> {
 }
 
 /// Parse edge direction left: <- or -
-fn parse_edge_left(input: &str) -> ParseResult<bool> {
+fn parse_edge_left(input: &str) -> ParseResult<'_, bool> {
     alt((value(true, tag("<-")), value(false, tag("-"))))(input)
 }
 
 /// Parse edge direction right: -> or -
-fn parse_edge_right(input: &str) -> ParseResult<bool> {
+fn parse_edge_right(input: &str) -> ParseResult<'_, bool> {
     alt((value(true, tag("->")), value(false, tag("-"))))(input)
 }
 
 /// Parse variable-length path: *min..max or *max or *
-fn parse_var_length(input: &str) -> ParseResult<(u32, u32)> {
+fn parse_var_length(input: &str) -> ParseResult<'_, (u32, u32)> {
     preceded(
         char('*'),
         alt((
@@ -985,19 +1054,22 @@ fn parse_var_length(input: &str) -> ParseResult<(u32, u32)> {
 }
 
 /// Parse edge type: :TYPE1|TYPE2
-fn parse_edge_types(input: &str) -> ParseResult<Vec<String>> {
+fn parse_edge_types(input: &str) -> ParseResult<'_, Vec<String>> {
     preceded(char(':'), separated_list1(char('|'), any_identifier))(input)
 }
 
 /// Parse edge specification: [variable:TYPE {props}]
 fn parse_edge_spec(
     input: &str,
-) -> ParseResult<(
-    Option<String>,                      // variable
-    Vec<String>,                         // edge types
-    HashMap<String, PropertyConstraint>, // properties
-    Option<(u32, u32)>,                  // variable length
-)> {
+) -> ParseResult<
+    '_,
+    (
+        Option<String>,                      // variable
+        Vec<String>,                         // edge types
+        HashMap<String, PropertyConstraint>, // properties
+        Option<(u32, u32)>,                  // variable length
+    ),
+> {
     map(
         delimited(
             char('['),
@@ -1024,14 +1096,17 @@ fn parse_edge_spec(
 /// Parse full edge pattern: <-[spec]- or -[spec]-> or -[spec]-
 fn parse_edge_pattern_full(
     input: &str,
-) -> ParseResult<(
-    bool,                                // is incoming
-    Option<String>,                      // variable
-    Vec<String>,                         // edge types
-    HashMap<String, PropertyConstraint>, // properties
-    bool,                                // is outgoing
-    Option<(u32, u32)>,                  // variable length
-)> {
+) -> ParseResult<
+    '_,
+    (
+        bool,                                // is incoming
+        Option<String>,                      // variable
+        Vec<String>,                         // edge types
+        HashMap<String, PropertyConstraint>, // properties
+        bool,                                // is outgoing
+        Option<(u32, u32)>,                  // variable length
+    ),
+> {
     map(
         tuple((parse_edge_left, parse_edge_spec, parse_edge_right)),
         |(left, (var, types, props, var_len), right)| (left, var, types, props, right, var_len),
@@ -1039,7 +1114,7 @@ fn parse_edge_pattern_full(
 }
 
 /// Parse a path segment: (node)-[edge]->(node)
-fn parse_path_segment(input: &str) -> ParseResult<(NodePattern, EdgePattern, NodePattern)> {
+fn parse_path_segment(input: &str) -> ParseResult<'_, (NodePattern, EdgePattern, NodePattern)> {
     map(
         tuple((
             parse_node_pattern,
@@ -1073,7 +1148,7 @@ fn parse_path_segment(input: &str) -> ParseResult<(NodePattern, EdgePattern, Nod
 }
 
 /// Parse comparison operator
-fn parse_comparison_op(input: &str) -> ParseResult<&str> {
+fn parse_comparison_op(input: &str) -> ParseResult<'_, &str> {
     alt((
         tag(">="),
         tag("<="),
@@ -1087,7 +1162,7 @@ fn parse_comparison_op(input: &str) -> ParseResult<&str> {
 }
 
 /// Parse a WHERE property condition: variable.property op value
-fn parse_where_property(input: &str) -> ParseResult<WhereClause> {
+fn parse_where_property(input: &str) -> ParseResult<'_, WhereClause> {
     map(
         tuple((
             any_identifier,
@@ -1120,7 +1195,7 @@ fn parse_where_property(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse IS NULL / IS NOT NULL
-fn parse_is_null(input: &str) -> ParseResult<WhereClause> {
+fn parse_is_null(input: &str) -> ParseResult<'_, WhereClause> {
     alt((
         map(
             tuple((
@@ -1156,7 +1231,7 @@ fn parse_is_null(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse IN clause
-fn parse_in_clause(input: &str) -> ParseResult<WhereClause> {
+fn parse_in_clause(input: &str) -> ParseResult<'_, WhereClause> {
     map(
         tuple((
             any_identifier,
@@ -1181,7 +1256,7 @@ fn parse_in_clause(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse STARTS WITH / ENDS WITH / CONTAINS
-fn parse_string_predicates(input: &str) -> ParseResult<WhereClause> {
+fn parse_string_predicates(input: &str) -> ParseResult<'_, WhereClause> {
     alt((
         map(
             tuple((
@@ -1233,7 +1308,7 @@ fn parse_string_predicates(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse primary WHERE condition
-fn parse_where_primary(input: &str) -> ParseResult<WhereClause> {
+fn parse_where_primary(input: &str) -> ParseResult<'_, WhereClause> {
     alt((
         // NOT condition
         map(
@@ -1258,7 +1333,7 @@ fn parse_where_primary(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse WHERE condition with AND/OR
-fn parse_where_condition(input: &str) -> ParseResult<WhereClause> {
+fn parse_where_condition(input: &str) -> ParseResult<'_, WhereClause> {
     let (input, first) = parse_where_primary(input)?;
 
     // Try to parse chained AND/OR
@@ -1298,7 +1373,7 @@ fn parse_where_condition(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse WHERE clause
-fn parse_where_clause(input: &str) -> ParseResult<WhereClause> {
+fn parse_where_clause(input: &str) -> ParseResult<'_, WhereClause> {
     preceded(
         pair(tag_no_case("WHERE"), multispace1),
         parse_where_condition,
@@ -1306,7 +1381,7 @@ fn parse_where_clause(input: &str) -> ParseResult<WhereClause> {
 }
 
 /// Parse aggregation function
-fn parse_aggregation(input: &str) -> ParseResult<PropertyProjection> {
+fn parse_aggregation(input: &str) -> ParseResult<'_, PropertyProjection> {
     alt((
         // COUNT(*)
         map(
@@ -1413,7 +1488,7 @@ fn parse_aggregation(input: &str) -> ParseResult<PropertyProjection> {
 
 /// Parse function call (labels, type, id, etc.)
 #[allow(dead_code)]
-fn parse_function_call(input: &str) -> ParseResult<CypherFunction> {
+fn parse_function_call(input: &str) -> ParseResult<'_, CypherFunction> {
     alt((
         map(
             tuple((
@@ -1521,18 +1596,26 @@ fn parse_function_call(input: &str) -> ParseResult<CypherFunction> {
 /// Cypher function types
 #[derive(Debug, Clone, PartialEq)]
 pub enum CypherFunction {
+    /// Get labels of a node
     Labels(String),
+    /// Get type of a relationship
     Type(String),
+    /// Get internal ID of a node or relationship
     Id(String),
+    /// Get all properties as a map
     Properties(String),
+    /// Get property keys of a node or relationship
     Keys(String),
+    /// Check if a property exists on an element
     Exists(String, String),
+    /// Collect values into a list
     Collect(String),
+    /// Collect property values into a list
     CollectProperty(String, String),
 }
 
 /// Parse return item: variable, variable.property, aggregation, or function
-fn parse_return_item(input: &str) -> ParseResult<(String, PropertyProjection)> {
+fn parse_return_item(input: &str) -> ParseResult<'_, (String, PropertyProjection)> {
     alt((
         // Aggregation with alias
         map(
@@ -1595,7 +1678,7 @@ fn parse_return_item(input: &str) -> ParseResult<(String, PropertyProjection)> {
 }
 
 /// Parse ORDER BY clause
-fn parse_order_by(input: &str) -> ParseResult<Vec<(String, bool)>> {
+fn parse_order_by(input: &str) -> ParseResult<'_, Vec<(String, bool)>> {
     preceded(
         tuple((
             tag_no_case("ORDER"),
@@ -1623,7 +1706,7 @@ fn parse_order_by(input: &str) -> ParseResult<Vec<(String, bool)>> {
 }
 
 /// Parse LIMIT clause
-fn parse_limit(input: &str) -> ParseResult<usize> {
+fn parse_limit(input: &str) -> ParseResult<'_, usize> {
     preceded(
         pair(tag_no_case("LIMIT"), multispace1),
         map_res(digit1, |s: &str| s.parse::<usize>()),
@@ -1631,7 +1714,7 @@ fn parse_limit(input: &str) -> ParseResult<usize> {
 }
 
 /// Parse SKIP clause
-fn parse_skip(input: &str) -> ParseResult<usize> {
+fn parse_skip(input: &str) -> ParseResult<'_, usize> {
     preceded(
         pair(tag_no_case("SKIP"), multispace1),
         map_res(digit1, |s: &str| s.parse::<usize>()),
@@ -1639,7 +1722,7 @@ fn parse_skip(input: &str) -> ParseResult<usize> {
 }
 
 /// Parse RETURN clause
-fn parse_return_clause(input: &str) -> ParseResult<ReturnSpec> {
+fn parse_return_clause(input: &str) -> ParseResult<'_, ReturnSpec> {
     map(
         tuple((
             tag_no_case("RETURN"),
@@ -1668,7 +1751,7 @@ fn parse_return_clause(input: &str) -> ParseResult<ReturnSpec> {
 }
 
 /// Parse MATCH clause
-fn parse_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePattern>)> {
+fn parse_match_clause(input: &str) -> ParseResult<'_, (Vec<NodePattern>, Vec<EdgePattern>)> {
     preceded(
         pair(tag_no_case("MATCH"), multispace1),
         map(
@@ -1697,7 +1780,9 @@ fn parse_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePat
 }
 
 /// Parse OPTIONAL MATCH clause
-fn parse_optional_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Vec<EdgePattern>)> {
+fn parse_optional_match_clause(
+    input: &str,
+) -> ParseResult<'_, (Vec<NodePattern>, Vec<EdgePattern>)> {
     preceded(
         tuple((
             tag_no_case("OPTIONAL"),
@@ -1719,10 +1804,10 @@ fn parse_optional_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Ve
                 let mut nodes = Vec::new();
                 let mut edges = Vec::new();
                 for (mut ns, mut es) in patterns {
-                    for n in ns.iter_mut() {
+                    for n in &mut ns {
                         n.optional = true;
                     }
-                    for e in es.iter_mut() {
+                    for e in &mut es {
                         e.optional = true;
                     }
                     nodes.append(&mut ns);
@@ -1735,7 +1820,7 @@ fn parse_optional_match_clause(input: &str) -> ParseResult<(Vec<NodePattern>, Ve
 }
 
 /// Parse CREATE node spec
-fn parse_create_node_spec(input: &str) -> ParseResult<CreateNodeSpec> {
+fn parse_create_node_spec(input: &str) -> ParseResult<'_, CreateNodeSpec> {
     map(
         delimited(
             char('('),
@@ -1758,12 +1843,15 @@ fn parse_create_node_spec(input: &str) -> ParseResult<CreateNodeSpec> {
 /// Parse CREATE edge spec
 fn parse_create_edge_spec(
     input: &str,
-) -> ParseResult<(
-    Option<String>,                     // variable
-    Option<String>,                     // edge type
-    HashMap<String, serde_json::Value>, // properties
-    EdgeDirection,
-)> {
+) -> ParseResult<
+    '_,
+    (
+        Option<String>,                     // variable
+        Option<String>,                     // edge type
+        HashMap<String, serde_json::Value>, // properties
+        EdgeDirection,
+    ),
+> {
     map(
         tuple((
             parse_edge_left,
@@ -1793,7 +1881,7 @@ fn parse_create_edge_spec(
 /// Parse CREATE edge pattern: (a)-[r:TYPE]->(b)
 fn parse_create_edge_pattern(
     input: &str,
-) -> ParseResult<(CreateNodeSpec, CreateEdgeSpec, CreateNodeSpec)> {
+) -> ParseResult<'_, (CreateNodeSpec, CreateEdgeSpec, CreateNodeSpec)> {
     map(
         tuple((
             parse_create_node_spec,
@@ -1824,7 +1912,7 @@ fn parse_create_edge_pattern(
 }
 
 /// Parse CREATE clause
-fn parse_create_clause(input: &str) -> ParseResult<CreateClause> {
+fn parse_create_clause(input: &str) -> ParseResult<'_, CreateClause> {
     preceded(
         pair(tag_no_case("CREATE"), multispace1),
         map(
@@ -1851,7 +1939,7 @@ fn parse_create_clause(input: &str) -> ParseResult<CreateClause> {
 }
 
 /// Parse DELETE clause
-fn parse_delete_clause(input: &str) -> ParseResult<DeleteClause> {
+fn parse_delete_clause(input: &str) -> ParseResult<'_, DeleteClause> {
     alt((
         // DETACH DELETE
         map(
@@ -1890,7 +1978,7 @@ fn parse_delete_clause(input: &str) -> ParseResult<DeleteClause> {
 }
 
 /// Parse SET item
-fn parse_set_item(input: &str) -> ParseResult<SetItem> {
+fn parse_set_item(input: &str) -> ParseResult<'_, SetItem> {
     alt((
         // n.prop = value
         map(
@@ -1943,7 +2031,7 @@ fn parse_set_item(input: &str) -> ParseResult<SetItem> {
 }
 
 /// Parse SET clause
-fn parse_set_clause(input: &str) -> ParseResult<SetClause> {
+fn parse_set_clause(input: &str) -> ParseResult<'_, SetClause> {
     preceded(
         pair(tag_no_case("SET"), multispace1),
         map(
@@ -1957,7 +2045,7 @@ fn parse_set_clause(input: &str) -> ParseResult<SetClause> {
 }
 
 /// Parse REMOVE item
-fn parse_remove_item(input: &str) -> ParseResult<RemoveItem> {
+fn parse_remove_item(input: &str) -> ParseResult<'_, RemoveItem> {
     alt((
         // n.prop
         map(
@@ -1979,7 +2067,7 @@ fn parse_remove_item(input: &str) -> ParseResult<RemoveItem> {
 }
 
 /// Parse REMOVE clause
-fn parse_remove_clause(input: &str) -> ParseResult<RemoveClause> {
+fn parse_remove_clause(input: &str) -> ParseResult<'_, RemoveClause> {
     preceded(
         pair(tag_no_case("REMOVE"), multispace1),
         map(
@@ -1993,7 +2081,7 @@ fn parse_remove_clause(input: &str) -> ParseResult<RemoveClause> {
 }
 
 /// Parse MERGE clause
-fn parse_merge_clause(input: &str) -> ParseResult<MergeClause> {
+fn parse_merge_clause(input: &str) -> ParseResult<'_, MergeClause> {
     map(
         tuple((
             preceded(
@@ -2054,7 +2142,7 @@ fn parse_merge_clause(input: &str) -> ParseResult<MergeClause> {
 }
 
 /// Parse WITH clause
-fn parse_with_clause(input: &str) -> ParseResult<WithClause> {
+fn parse_with_clause(input: &str) -> ParseResult<'_, WithClause> {
     map(
         tuple((
             tag_no_case("WITH"),
@@ -2081,7 +2169,7 @@ fn parse_with_clause(input: &str) -> ParseResult<WithClause> {
 }
 
 /// Parse a complete Cypher query
-fn parse_cypher_query(input: &str) -> ParseResult<CypherQuery> {
+fn parse_cypher_query(input: &str) -> ParseResult<'_, CypherQuery> {
     map(
         tuple((
             // Reading clauses
@@ -2141,13 +2229,14 @@ fn parse_cypher_query(input: &str) -> ParseResult<CypherQuery> {
             reading_clauses,
             updating_clauses,
             with_clauses,
+            union_clauses: Vec::new(), // TD-019: UNION clause support
             return_spec,
         },
     )(input)
 }
 
 /// Parse simple MATCH query into CompiledPattern
-fn parse_simple_query(input: &str) -> ParseResult<CompiledPattern> {
+fn parse_simple_query(input: &str) -> ParseResult<'_, CompiledPattern> {
     map(
         tuple((
             parse_match_clause,
@@ -2162,6 +2251,7 @@ fn parse_simple_query(input: &str) -> ParseResult<CompiledPattern> {
             edges,
             paths: Vec::new(),
             where_clauses: where_opt.into_iter().collect(),
+            with_clauses: Vec::new(), // TD-019: WITH clause support
             return_spec,
             variables: HashMap::new(),
         },
@@ -2174,14 +2264,22 @@ fn parse_simple_query(input: &str) -> ParseResult<CompiledPattern> {
 
 /// Visitor trait for CypherQuery AST
 pub trait CypherVisitor {
+    /// Output type produced by visiting each node
     type Output;
 
+    /// Visit a complete Cypher query
     fn visit_query(&mut self, query: &CypherQuery) -> Self::Output;
+    /// Visit a reading clause (MATCH, OPTIONAL MATCH)
     fn visit_reading_clause(&mut self, clause: &ReadingClause) -> Self::Output;
+    /// Visit an updating clause (CREATE, MERGE, DELETE, SET)
     fn visit_updating_clause(&mut self, clause: &UpdatingClause) -> Self::Output;
+    /// Visit a node pattern
     fn visit_node_pattern(&mut self, pattern: &NodePattern) -> Self::Output;
+    /// Visit an edge pattern
     fn visit_edge_pattern(&mut self, pattern: &EdgePattern) -> Self::Output;
+    /// Visit a WHERE clause
     fn visit_where_clause(&mut self, clause: &WhereClause) -> Self::Output;
+    /// Visit a RETURN specification
     fn visit_return_spec(&mut self, spec: &ReturnSpec) -> Self::Output;
 }
 
@@ -2192,6 +2290,7 @@ pub struct QueryValidator {
 }
 
 impl QueryValidator {
+    /// Create a new query validator.
     pub fn new() -> Self {
         Self {
             errors: Vec::new(),
@@ -2199,6 +2298,7 @@ impl QueryValidator {
         }
     }
 
+    /// Validate a Cypher query AST for semantic correctness.
     pub fn validate(query: &CypherQuery) -> Result<(), Vec<String>> {
         let mut validator = Self::new();
         validator.visit_query(query);
@@ -2391,32 +2491,47 @@ pub struct GraphQuery {
 pub enum GraphQueryType {
     /// Read-only pattern match
     Match {
+        /// Patterns to match in the graph
         patterns: Vec<MatchPattern>,
+        /// Specification for what to return
         return_spec: ReturnSpec,
     },
     /// Create nodes and edges
     Create {
+        /// Node specifications to create
         nodes: Vec<CreateNodeSpec>,
+        /// Edge specifications to create
         edges: Vec<CreateEdgeSpec>,
+        /// Optional return specification
         return_spec: Option<ReturnSpec>,
     },
     /// Merge (create if not exists)
     Merge {
+        /// Pattern to merge
         pattern: MatchPattern,
+        /// SET clause to apply on CREATE
         on_create: Option<SetClause>,
+        /// SET clause to apply on MATCH
         on_match: Option<SetClause>,
+        /// Optional return specification
         return_spec: Option<ReturnSpec>,
     },
     /// Delete nodes and edges
     Delete {
+        /// Variables to delete
         variables: Vec<String>,
+        /// Whether to detach (delete relationships first)
         detach: bool,
+        /// Patterns to match for deletion
         patterns: Vec<MatchPattern>,
     },
     /// Update properties
     Update {
+        /// Patterns to match for updating
         patterns: Vec<MatchPattern>,
+        /// SET clause with property updates
         set_clause: SetClause,
+        /// Optional return specification
         return_spec: Option<ReturnSpec>,
     },
 }
@@ -2524,7 +2639,9 @@ mod tests {
     #[test]
     fn test_lexer_basic() {
         let mut lexer = CypherLexer::new();
-        let tokens = lexer.tokenize("MATCH (n) RETURN n").unwrap();
+        let tokens = lexer
+            .tokenize("MATCH (n) RETURN n")
+            .expect("lexer should tokenize basic query");
         assert!(tokens.len() >= 5);
         assert!(matches!(tokens[0].token, Token::Match));
     }
@@ -2532,7 +2649,9 @@ mod tests {
     #[test]
     fn test_lexer_string_literals() {
         let mut lexer = CypherLexer::new();
-        let tokens = lexer.tokenize("'hello' \"world\"").unwrap();
+        let tokens = lexer
+            .tokenize("'hello' \"world\"")
+            .expect("lexer should tokenize string literals");
         assert!(matches!(&tokens[0].token, Token::String(s) if s == "hello"));
         assert!(matches!(&tokens[1].token, Token::String(s) if s == "world"));
     }
@@ -2540,7 +2659,9 @@ mod tests {
     #[test]
     fn test_lexer_numbers() {
         let mut lexer = CypherLexer::new();
-        let tokens = lexer.tokenize("42 3.14 -5").unwrap();
+        let tokens = lexer
+            .tokenize("42 3.14 -5")
+            .expect("lexer should tokenize numbers");
         assert!(matches!(tokens[0].token, Token::Integer(42)));
         assert!(matches!(tokens[1].token, Token::Float(f) if (f - 3.14).abs() < 0.001));
         assert!(matches!(tokens[2].token, Token::Integer(-5)));
@@ -2549,7 +2670,9 @@ mod tests {
     #[test]
     fn test_parse_simple_match() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) RETURN n")
+            .expect("parser should parse simple match");
         assert_eq!(query.reading_clauses.len(), 1);
         assert!(query.is_read_only());
     }
@@ -2559,7 +2682,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person {name: 'Alice', age: 30}) RETURN n")
-            .unwrap();
+            .expect("parser should parse match with properties");
         assert_eq!(query.reading_clauses.len(), 1);
     }
 
@@ -2568,7 +2691,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN a, r, b")
-            .unwrap();
+            .expect("parser should parse match with edge");
         assert_eq!(query.reading_clauses.len(), 1);
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert_eq!(pattern.nodes.len(), 2);
@@ -2581,7 +2704,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) WHERE n.age > 25 RETURN n")
-            .unwrap();
+            .expect("parser should parse where clause");
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert!(pattern.where_clause.is_some());
         }
@@ -2592,7 +2715,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) WHERE n.age > 25 AND n.name = 'Alice' RETURN n")
-            .unwrap();
+            .expect("parser should parse where with AND");
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert!(pattern.where_clause.is_some());
             if let Some(WhereClause::And(_, _)) = &pattern.where_clause {
@@ -2608,7 +2731,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("CREATE (n:Person {name: 'Alice'}) RETURN n")
-            .unwrap();
+            .expect("parser should parse create");
         assert!(!query.is_read_only());
         assert!(query.has_create());
     }
@@ -2618,7 +2741,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) WHERE n.age > 100 DELETE n")
-            .unwrap();
+            .expect("parser should parse delete");
         assert!(query.has_delete());
     }
 
@@ -2627,7 +2750,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person {name: 'Alice'}) SET n.age = 31 RETURN n")
-            .unwrap();
+            .expect("parser should parse set");
         assert!(!query.is_read_only());
     }
 
@@ -2636,14 +2759,16 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MERGE (n:Person {name: 'Alice'}) RETURN n")
-            .unwrap();
+            .expect("parser should parse merge");
         assert!(query.has_merge());
     }
 
     #[test]
     fn test_parse_aggregation() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) RETURN COUNT(*)").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) RETURN COUNT(*)")
+            .expect("parser should parse aggregation");
         if let Some(ref return_spec) = query.return_spec {
             assert!(matches!(
                 return_spec.projections[0],
@@ -2657,7 +2782,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) RETURN n ORDER BY n ASC LIMIT 10")
-            .unwrap();
+            .expect("parser should parse order by and limit");
         if let Some(ref return_spec) = query.return_spec {
             assert_eq!(return_spec.order_by.len(), 1);
             assert_eq!(return_spec.limit, Some(10));
@@ -2667,15 +2792,20 @@ mod tests {
     #[test]
     fn test_validator() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person) RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person) RETURN n")
+            .expect("parser should parse for validator test");
         assert!(QueryValidator::validate(&query).is_ok());
     }
 
     #[test]
     fn test_conversion_to_graph_query() {
         let parser = CypherParser::new();
-        let cypher = parser.parse("MATCH (n:Person) RETURN n").unwrap();
-        let graph_query = cypher_to_graph_query(&cypher, "test_graph").unwrap();
+        let cypher = parser
+            .parse("MATCH (n:Person) RETURN n")
+            .expect("parser should parse for conversion test");
+        let graph_query = cypher_to_graph_query(&cypher, "test_graph")
+            .expect("conversion to graph query should succeed");
         assert_eq!(graph_query.graph_id, "test_graph");
         assert!(matches!(
             graph_query.query_type,
@@ -2688,7 +2818,7 @@ mod tests {
         let parser = CypherParser::new();
         let query = parser
             .parse("MATCH (n:Person) OPTIONAL MATCH (n)-[r:KNOWS]->(m) RETURN n, m")
-            .unwrap();
+            .expect("parser should parse optional match");
         assert_eq!(query.reading_clauses.len(), 2);
         if let ReadingClause::Match { optional, .. } = &query.reading_clauses[1] {
             assert!(*optional);
@@ -2698,7 +2828,9 @@ mod tests {
     #[test]
     fn test_parse_multiple_labels() {
         let parser = CypherParser::new();
-        let query = parser.parse("MATCH (n:Person:Employee) RETURN n").unwrap();
+        let query = parser
+            .parse("MATCH (n:Person:Employee) RETURN n")
+            .expect("parser should parse multiple labels");
         if let ReadingClause::Match { pattern, .. } = &query.reading_clauses[0] {
             assert_eq!(pattern.nodes[0].labels.len(), 2);
         }

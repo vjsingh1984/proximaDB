@@ -59,8 +59,10 @@ pub struct Claims {
 /// Token type for JWT claims
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TokenType {
+    /// Short-lived access token for API requests
     #[serde(rename = "access")]
     Access,
+    /// Long-lived refresh token for obtaining new access tokens
     #[serde(rename = "refresh")]
     Refresh,
 }
@@ -68,9 +70,13 @@ pub enum TokenType {
 /// JWT token pair (access + refresh)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenPair {
+    /// JWT access token
     pub access_token: String,
+    /// JWT refresh token
     pub refresh_token: String,
+    /// Access token expiration time in seconds
     pub expires_in: i64,
+    /// Token type (always "Bearer")
     pub token_type: String,
 }
 
@@ -107,8 +113,8 @@ impl JwtService {
         let header = Header::new(algorithm);
 
         let mut validation = Validation::new(algorithm);
-        validation.set_issuer(&[config.issuer.clone()]);
-        validation.set_audience(&[config.audience.clone()]);
+        validation.set_issuer(std::slice::from_ref(&config.issuer));
+        validation.set_audience(std::slice::from_ref(&config.audience));
         validation.validate_nbf = true;
 
         Ok(Self {
@@ -287,7 +293,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_generation_and_verification() {
         let config = test_jwt_config();
-        let jwt_service = JwtService::new(config).unwrap();
+        let jwt_service = JwtService::new(config).expect("Failed to create JWT service for test");
 
         let user_id = "test_user";
         let roles = vec!["admin".to_string(), "user".to_string()];
@@ -296,13 +302,13 @@ mod tests {
         let token_pair = jwt_service
             .generate_token_pair(user_id, None, roles.clone())
             .await
-            .unwrap();
+            .expect("Failed to generate token pair");
 
         // Verify access token
         let claims = jwt_service
             .verify_token(&token_pair.access_token)
             .await
-            .unwrap();
+            .expect("Failed to verify access token");
         assert_eq!(claims.sub, user_id);
         assert_eq!(claims.roles, roles);
         assert_eq!(claims.typ, TokenType::Access);
@@ -311,7 +317,7 @@ mod tests {
         let refresh_claims = jwt_service
             .verify_token(&token_pair.refresh_token)
             .await
-            .unwrap();
+            .expect("Failed to verify refresh token");
         assert_eq!(refresh_claims.sub, user_id);
         assert_eq!(refresh_claims.typ, TokenType::Refresh);
         assert!(refresh_claims.roles.is_empty()); // Refresh tokens don't have roles
@@ -320,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_refresh() {
         let config = test_jwt_config();
-        let jwt_service = JwtService::new(config).unwrap();
+        let jwt_service = JwtService::new(config).expect("Failed to create JWT service for test");
 
         let user_id = "test_user";
         let roles = vec!["user".to_string()];
@@ -329,20 +335,20 @@ mod tests {
         let token_pair = jwt_service
             .generate_token_pair(user_id, None, roles.clone())
             .await
-            .unwrap();
+            .expect("Failed to generate initial token pair");
 
         // Refresh the token with new roles
         let new_roles = vec!["admin".to_string()];
         let new_token_pair = jwt_service
             .refresh_token(&token_pair.refresh_token, Some(new_roles.clone()))
             .await
-            .unwrap();
+            .expect("Failed to refresh token");
 
         // Verify new access token has updated roles
         let claims = jwt_service
             .verify_token(&new_token_pair.access_token)
             .await
-            .unwrap();
+            .expect("Failed to verify new access token");
         assert_eq!(claims.sub, user_id);
         assert_eq!(claims.roles, new_roles);
 
@@ -358,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_revocation() {
         let config = test_jwt_config();
-        let jwt_service = JwtService::new(config).unwrap();
+        let jwt_service = JwtService::new(config).expect("Failed to create JWT service for test");
 
         let user_id = "test_user";
         let roles = vec!["user".to_string()];
@@ -367,7 +373,7 @@ mod tests {
         let token_pair = jwt_service
             .generate_token_pair(user_id, None, roles)
             .await
-            .unwrap();
+            .expect("Failed to generate token pair");
 
         // Token should be valid initially
         assert!(
@@ -381,7 +387,7 @@ mod tests {
         jwt_service
             .revoke_token(&token_pair.access_token)
             .await
-            .unwrap();
+            .expect("Failed to revoke token");
 
         // Token should now be invalid
         assert!(
@@ -395,17 +401,17 @@ mod tests {
     #[tokio::test]
     async fn test_token_ttl() {
         let config = test_jwt_config();
-        let jwt_service = JwtService::new(config).unwrap();
+        let jwt_service = JwtService::new(config).expect("Failed to create JWT service for test");
 
         let token_pair = jwt_service
             .generate_token_pair("test_user", None, vec![])
             .await
-            .unwrap();
+            .expect("Failed to generate token pair");
 
         let ttl = jwt_service
             .get_token_ttl(&token_pair.access_token)
             .await
-            .unwrap();
+            .expect("Failed to get token TTL");
         assert!(ttl > 0);
         assert!(ttl <= 3600); // Should be less than or equal to expiration time
     }
@@ -413,8 +419,13 @@ mod tests {
     #[tokio::test]
     async fn test_expired_token_is_rejected() {
         let config = test_jwt_config();
-        let secret = config.secret.clone().unwrap();
-        let jwt_service = JwtService::new(config.clone()).unwrap();
+        let secret = config
+            .secret
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Test config missing secret"))
+            .expect("Failed to get secret from test config");
+        let jwt_service =
+            JwtService::new(config.clone()).expect("Failed to create JWT service for test");
 
         let now = chrono::Utc::now().timestamp();
         let claims = Claims {
@@ -435,7 +446,7 @@ mod tests {
             &claims,
             &EncodingKey::from_secret(secret.as_bytes()),
         )
-        .unwrap();
+        .expect("Failed to encode expired token");
 
         let err = jwt_service
             .verify_token(&token)
@@ -447,8 +458,13 @@ mod tests {
     #[tokio::test]
     async fn test_issuer_mismatch_is_rejected() {
         let config = test_jwt_config();
-        let secret = config.secret.clone().unwrap();
-        let jwt_service = JwtService::new(config.clone()).unwrap();
+        let secret = config
+            .secret
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Test config missing secret"))
+            .expect("Failed to get secret from test config");
+        let jwt_service =
+            JwtService::new(config.clone()).expect("Failed to create JWT service for test");
 
         let now = chrono::Utc::now().timestamp();
         let claims = Claims {
@@ -469,7 +485,7 @@ mod tests {
             &claims,
             &EncodingKey::from_secret(secret.as_bytes()),
         )
-        .unwrap();
+        .expect("Failed to encode token with mismatched issuer");
 
         let err = jwt_service
             .verify_token(&token)

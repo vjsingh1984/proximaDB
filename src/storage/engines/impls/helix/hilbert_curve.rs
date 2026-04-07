@@ -9,6 +9,7 @@
 //! - Stack-based arrays to avoid allocations
 
 use std::sync::OnceLock;
+use tracing::warn;
 
 /// Pre-computed Hilbert 2D lookup table for 4-bit chunks
 /// Maps (x4bit, y4bit, orientation) -> (hilbert_index, new_orientation)
@@ -26,11 +27,11 @@ impl Hilbert2DLookup {
         let mut table = [[(0u8, 0u8); 256]; 4];
 
         // Build lookup table for all orientations and 4x4 sub-grids
-        for orient in 0..4 {
+        for (orient, orient_table) in table.iter_mut().enumerate() {
             for x in 0..16u8 {
                 for y in 0..16u8 {
                     let (idx, new_orient) = Self::compute_4bit_hilbert(x, y, orient as u8);
-                    table[orient][(x as usize) * 16 + (y as usize)] = (idx, new_orient);
+                    orient_table[(x as usize) * 16 + (y as usize)] = (idx, new_orient);
                 }
             }
         }
@@ -251,8 +252,8 @@ impl HilbertCurve {
             let mut bits = 0u32;
 
             // Extract bit pattern at this level
-            for i in 0..n.min(32) {
-                if coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(n.min(32)) {
+                if coord & mask != 0 {
                     bits |= 1 << i;
                 }
             }
@@ -299,7 +300,7 @@ impl HilbertCurve {
 
         // Cap at 8 bits to ensure we fit in u64 with reasonable depth
         // With 8 bits per level and 8 levels = 64 bits total
-        optimal_bits.min(8).max(1)
+        optimal_bits.clamp(1, 8)
     }
 
     /// Adaptive compression based on dimension and bits available
@@ -322,7 +323,15 @@ impl HilbertCurve {
     /// Optimized 16D Hilbert encoding (for PCA-reduced vectors)
     fn encode_16d_optimized(&self, point: &[u32]) -> u64 {
         let mut index = 0u64;
-        let mut coords: [u32; 16] = point[..16].try_into().expect("Need exactly 16 dimensions");
+        let mut coords = [0u32; 16];
+        let copy_len = point.len().min(16);
+        coords[..copy_len].copy_from_slice(&point[..copy_len]);
+        if copy_len < 16 {
+            warn!(
+                point_dims = point.len(),
+                "16D optimized Hilbert path received fewer than 16 dimensions; zero-padding remaining dimensions"
+            );
+        }
 
         // Process 4 bits at a time for efficiency
         for level in (0..self.bits_per_dim).rev() {
@@ -330,8 +339,8 @@ impl HilbertCurve {
 
             // Extract 16 bits in parallel
             let mut bits = 0u32;
-            for i in 0..16 {
-                if coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(16) {
+                if coord & mask != 0 {
                     bits |= 1 << i;
                 }
             }
@@ -375,15 +384,23 @@ impl HilbertCurve {
     /// Optimized 32D Hilbert encoding (for future PCA dimensions)
     fn encode_32d_optimized(&self, point: &[u32]) -> u64 {
         let mut index = 0u64;
-        let mut coords: [u32; 32] = point[..32].try_into().expect("Need exactly 32 dimensions");
+        let mut coords = [0u32; 32];
+        let copy_len = point.len().min(32);
+        coords[..copy_len].copy_from_slice(&point[..copy_len]);
+        if copy_len < 32 {
+            warn!(
+                point_dims = point.len(),
+                "32D optimized Hilbert path received fewer than 32 dimensions; zero-padding remaining dimensions"
+            );
+        }
 
         // Process 5 bits at a time for 32D
         for level in (0..self.bits_per_dim).rev() {
             let mask = 1u32 << level;
             let mut bits = 0u32;
 
-            for i in 0..32 {
-                if coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(32) {
+                if coord & mask != 0 {
                     bits |= 1 << i;
                 }
             }
@@ -409,13 +426,13 @@ impl HilbertCurve {
             let mut bits_low = 0u32;
             let mut bits_high = 0u32;
 
-            for i in 0..32 {
-                if i < coords.len() && coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(32) {
+                if coord & mask != 0 {
                     bits_low |= 1 << i;
                 }
             }
-            for i in 32..64.min(coords.len()) {
-                if coords[i] & mask != 0 {
+            for (i, &coord) in coords.iter().enumerate().take(64).skip(32) {
+                if coord & mask != 0 {
                     bits_high |= 1 << (i - 32);
                 }
             }
@@ -468,9 +485,9 @@ impl HilbertCurve {
             _ => {
                 // General rotation based on bit pattern
                 let mask = (1u32 << self.bits_per_dim) - 1;
-                for i in 0..16 {
+                for (i, coord) in coords.iter_mut().enumerate().take(16) {
                     if bits & (1 << i) != 0 {
-                        coords[i] = !coords[i] & mask;
+                        *coord = !*coord & mask;
                     }
                 }
             }
@@ -500,9 +517,9 @@ impl HilbertCurve {
             _ => {
                 // General bit-based transformation
                 let mask = (1u32 << self.bits_per_dim) - 1;
-                for i in 0..32 {
+                for (i, coord) in coords.iter_mut().enumerate() {
                     if bits & (1 << (i % 32)) != 0 {
-                        coords[i] = !coords[i] & mask;
+                        *coord = !*coord & mask;
                     }
                 }
             }
@@ -633,11 +650,7 @@ impl HilbertUtils {
 
     /// Calculate Hilbert distance between two keys
     pub fn hilbert_distance(key1: u64, key2: u64) -> u64 {
-        if key1 > key2 {
-            key1 - key2
-        } else {
-            key2 - key1
-        }
+        key1.abs_diff(key2)
     }
 
     /// Check if a key is within range (with tolerance)

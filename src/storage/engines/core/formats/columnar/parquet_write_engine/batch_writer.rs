@@ -180,6 +180,12 @@ impl BatchWriterBuilder {
     }
 }
 
+impl Default for BatchWriterBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

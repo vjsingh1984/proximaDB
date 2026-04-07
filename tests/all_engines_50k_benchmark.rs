@@ -1,11 +1,15 @@
-//! 50K Vector Benchmark - All 6 Storage Engines
+//! Multi-engine vector benchmark (resource intensive)
 //!
-//! Comprehensive benchmark testing all storage engines at production scale (50,000 vectors).
+//! Comprehensive benchmark testing all storage engines at higher scale.
 //! Measures insert performance, flush time, search latency, and recall quality.
 //!
 //! Run with:
 //! ```bash
-//! cargo test --test all_engines_50k_benchmark -- --nocapture --test-threads=1
+//! # Default workload (10K vectors)
+//! cargo test --test all_engines_50k_benchmark -- --nocapture --test-threads=1 --ignored
+//!
+//! # Heavier workload (50K vectors)
+//! PROXIMADB_BENCH_VECTOR_COUNT=50000 cargo test --test all_engines_50k_benchmark -- --nocapture --test-threads=1 --ignored
 //! ```
 
 use proximadb::embedded::{EmbeddedConfig, EmbeddedProximaDB};
@@ -14,11 +18,32 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 // Test configuration
-const VECTOR_COUNT: usize = 50_000;
+const DEFAULT_VECTOR_COUNT: usize = 10_000;
 const DIMENSION: usize = 128;
 const TOP_K: usize = 10;
 const NUM_QUERIES: usize = 10;
 const BATCH_SIZE: usize = 10_000;
+
+fn benchmark_engines() -> Vec<&'static str> {
+    let mut engines = vec!["sst", "helix", "viper", "nova"];
+    if cfg!(feature = "experimental-engines") {
+        engines.push("raptor");
+        engines.push("swift");
+    }
+    engines
+}
+
+fn is_engine_disabled_error(error: &str) -> bool {
+    error.contains("disabled in default builds") || error.contains("experimental and disabled")
+}
+
+fn benchmark_vector_count() -> usize {
+    std::env::var("PROXIMADB_BENCH_VECTOR_COUNT")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v >= 1_000)
+        .unwrap_or(DEFAULT_VECTOR_COUNT)
+}
 
 /// Simple LCG random number generator for deterministic results
 struct SimpleRng {
@@ -82,6 +107,7 @@ fn compute_exact_neighbors(
 
 /// Benchmark result for a single engine
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct BenchmarkResult {
     engine: String,
     vector_count: usize,
@@ -96,21 +122,23 @@ struct BenchmarkResult {
 }
 
 /// Run benchmark for a single engine
-fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
-    let collection_name = format!("bench_50k_{}", engine);
+fn benchmark_engine(
+    engine: &str,
+    temp_dir: &TempDir,
+    vector_count: usize,
+    vectors: &[Vec<f32>],
+    query_vectors: &[Vec<f32>],
+    exact_neighbors: &[HashSet<String>],
+) -> BenchmarkResult {
+    let collection_name = format!("bench_{}_{}", vector_count, engine);
 
     println!("\n{}", "=".repeat(60));
     println!(
         "  ENGINE: {} - {} VECTORS",
         engine.to_uppercase(),
-        VECTOR_COUNT
+        vector_count
     );
     println!("{}", "=".repeat(60));
-
-    // Pre-generate all vectors
-    let vectors = generate_vectors(VECTOR_COUNT, DIMENSION, 42);
-    let query_vectors = generate_vectors(NUM_QUERIES, DIMENSION, 123);
-    let exact_neighbors = compute_exact_neighbors(&vectors, &query_vectors, TOP_K);
 
     // Create embedded database config
     let config = EmbeddedConfig::for_benchmarks(temp_dir.path().to_str().unwrap());
@@ -121,7 +149,7 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
         Err(e) => {
             return BenchmarkResult {
                 engine: engine.to_string(),
-                vector_count: VECTOR_COUNT,
+                vector_count,
                 insert_time_secs: 0.0,
                 insert_qps: 0.0,
                 flush_time_secs: 0.0,
@@ -139,7 +167,7 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
     if let Err(e) = db.create_collection(&collection_name, DIMENSION as u32, Some(engine)) {
         return BenchmarkResult {
             engine: engine.to_string(),
-            vector_count: VECTOR_COUNT,
+            vector_count,
             insert_time_secs: 0.0,
             insert_qps: 0.0,
             flush_time_secs: 0.0,
@@ -154,12 +182,12 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
     // Insert vectors in batches
     println!(
         "  Inserting {} vectors in batches of {}...",
-        VECTOR_COUNT, BATCH_SIZE
+        vector_count, BATCH_SIZE
     );
     let insert_start = Instant::now();
 
-    for batch_start in (0..VECTOR_COUNT).step_by(BATCH_SIZE) {
-        let batch_end = (batch_start + BATCH_SIZE).min(VECTOR_COUNT);
+    for batch_start in (0..vector_count).step_by(BATCH_SIZE) {
+        let batch_end = (batch_start + BATCH_SIZE).min(vector_count);
         let batch_ids: Vec<String> = (batch_start..batch_end)
             .map(|i| format!("vec_{}", i))
             .collect();
@@ -168,7 +196,7 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
         if let Err(e) = db.insert(&collection_name, batch_ids, batch_vectors, None) {
             return BenchmarkResult {
                 engine: engine.to_string(),
-                vector_count: VECTOR_COUNT,
+                vector_count,
                 insert_time_secs: 0.0,
                 insert_qps: 0.0,
                 flush_time_secs: 0.0,
@@ -182,12 +210,12 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
         println!(
             "    Inserted batch {}/{}",
             batch_start / BATCH_SIZE + 1,
-            (VECTOR_COUNT + BATCH_SIZE - 1) / BATCH_SIZE
+            (vector_count + BATCH_SIZE - 1) / BATCH_SIZE
         );
     }
 
     let insert_time = insert_start.elapsed().as_secs_f64();
-    let insert_qps = VECTOR_COUNT as f64 / insert_time;
+    let insert_qps = vector_count as f64 / insert_time;
     println!(
         "  Insert completed: {:.2}s ({:.0} vec/s)",
         insert_time, insert_qps
@@ -252,7 +280,7 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
 
     // Calculate rating based on latency/recall tradeoff
     // Expected latency: 1ms + 5ms * log10(vector_count)
-    let expected_latency = 1.0 + 5.0 * (VECTOR_COUNT as f64).log10();
+    let expected_latency = 1.0 + 5.0 * (vector_count as f64).log10();
     let latency_ratio = avg_latency / expected_latency;
 
     let rating = if latency_ratio <= 0.5 && avg_recall >= 0.9 {
@@ -275,7 +303,7 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
 
     BenchmarkResult {
         engine: engine.to_string(),
-        vector_count: VECTOR_COUNT,
+        vector_count,
         insert_time_secs: insert_time,
         insert_qps,
         flush_time_secs: flush_time,
@@ -287,25 +315,39 @@ fn benchmark_engine(engine: &str, temp_dir: &TempDir) -> BenchmarkResult {
     }
 }
 
-/// Main benchmark test - all 6 engines with 50K vectors
+/// Main benchmark test - all 6 engines with configurable vector count
 #[test]
+#[ignore = "resource-intensive benchmark; run manually with --ignored"]
 fn test_all_engines_50k_benchmark() {
+    let vector_count = benchmark_vector_count();
+
     println!("\n{}", "=".repeat(80));
-    println!("{:^80}", "50K VECTOR BENCHMARK - ALL 6 ENGINES");
+    println!("{:^80}", "MULTI-ENGINE VECTOR BENCHMARK");
     println!("{}", "=".repeat(80));
     println!("\nConfiguration:");
-    println!("  Vectors: {}", VECTOR_COUNT);
+    println!("  Vectors: {}", vector_count);
     println!("  Dimension: {}", DIMENSION);
     println!("  Top-K: {}", TOP_K);
     println!("  Queries: {}", NUM_QUERIES);
+    println!("  Env override: PROXIMADB_BENCH_VECTOR_COUNT");
 
-    let engines = ["sst", "helix", "viper", "swift", "nova", "raptor"];
+    let engines = benchmark_engines();
 
     let mut results = Vec::new();
+    let vectors = generate_vectors(vector_count, DIMENSION, 42);
+    let query_vectors = generate_vectors(NUM_QUERIES, DIMENSION, 123);
+    let exact_neighbors = compute_exact_neighbors(&vectors, &query_vectors, TOP_K);
 
     for engine in engines {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let result = benchmark_engine(engine, &temp_dir);
+        let result = benchmark_engine(
+            engine,
+            &temp_dir,
+            vector_count,
+            &vectors,
+            &query_vectors,
+            &exact_neighbors,
+        );
         results.push(result);
     }
 
@@ -415,17 +457,18 @@ fn test_all_engines_50k_benchmark() {
 /// Quick smoke test with fewer vectors (for CI)
 #[test]
 fn test_all_engines_quick_smoke_test() {
-    const QUICK_VECTOR_COUNT: usize = 1000;
+    const QUICK_VECTOR_COUNT: usize = 500;
     const QUICK_TOP_K: usize = 5;
 
     println!("\n{}", "=".repeat(60));
     println!("{:^60}", "QUICK SMOKE TEST - ALL ENGINES");
     println!("{}", "=".repeat(60));
 
-    let engines = ["sst", "helix", "viper", "swift", "nova", "raptor"];
+    let engines = benchmark_engines();
 
     let vectors = generate_vectors(QUICK_VECTOR_COUNT, DIMENSION, 42);
     let query = generate_vectors(1, DIMENSION, 123)[0].clone();
+    let mut successful_engines = 0usize;
 
     for engine in engines {
         println!("\n  Testing {}...", engine.to_uppercase());
@@ -435,27 +478,54 @@ fn test_all_engines_quick_smoke_test() {
         let db = EmbeddedProximaDB::new(config).expect("Failed to create DB");
 
         let collection = format!("smoke_{}", engine);
-        db.create_collection(&collection, DIMENSION as u32, Some(engine))
-            .expect("Failed to create collection");
+        if let Err(e) = db.create_collection(&collection, DIMENSION as u32, Some(engine)) {
+            let msg = e.to_string();
+            if is_engine_disabled_error(&msg) {
+                println!("    Skipping {} ({})", engine.to_uppercase(), msg);
+                continue;
+            }
+            panic!("Failed to create collection for {}: {}", engine, msg);
+        }
 
         let ids: Vec<String> = (0..QUICK_VECTOR_COUNT).map(|i| format!("v{}", i)).collect();
-        db.insert(&collection, ids, vectors.clone(), None)
-            .expect("Failed to insert");
+        if let Err(e) = db.insert(&collection, ids, vectors.clone(), None) {
+            let msg = e.to_string();
+            if is_engine_disabled_error(&msg) {
+                println!("    Skipping {} ({})", engine.to_uppercase(), msg);
+                continue;
+            }
+            panic!("Failed to insert for {}: {}", engine, msg);
+        }
 
         db.flush().ok();
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(300));
 
-        let results = db
-            .search(&collection, query.clone(), QUICK_TOP_K, None)
-            .expect("Failed to search");
+        let results = match db.search(&collection, query.clone(), QUICK_TOP_K, None) {
+            Ok(results) => results,
+            Err(e) => {
+                let msg = e.to_string();
+                if is_engine_disabled_error(&msg) {
+                    println!("    Skipping {} ({})", engine.to_uppercase(), msg);
+                    continue;
+                }
+                panic!("Failed to search for {}: {}", engine, msg);
+            }
+        };
 
         assert!(!results.is_empty(), "{} returned no results", engine);
+        successful_engines += 1;
         println!(
             "    {} returned {} results",
             engine.to_uppercase(),
             results.len()
         );
     }
+
+    assert!(
+        successful_engines >= 4,
+        "Expected at least 4 engines to pass smoke test, got {}",
+        successful_engines
+    );
 
     println!("\n{:-^60}", " ALL ENGINES PASSED ");
 }

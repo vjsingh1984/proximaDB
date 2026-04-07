@@ -23,7 +23,7 @@ use super::stores::{
 use super::traits::{ModelType, MultiModelStorageEngine, StoreCapabilities};
 
 /// Configuration for the multi-model storage facade
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MultiModelFacadeConfig {
     /// Vector store configuration
     pub vector: VectorStoreConfig,
@@ -35,18 +35,6 @@ pub struct MultiModelFacadeConfig {
     pub rdbms: RDBMSStoreConfig,
     /// Observability store configuration
     pub observability: ObservabilityStoreConfig,
-}
-
-impl Default for MultiModelFacadeConfig {
-    fn default() -> Self {
-        Self {
-            vector: VectorStoreConfig::default(),
-            document: DocumentStoreConfig::default(),
-            graph: GraphStoreConfig::default(),
-            rdbms: RDBMSStoreConfig::default(),
-            observability: ObservabilityStoreConfig::default(),
-        }
-    }
 }
 
 /// MultiModelStorageFacade provides unified access to all specialized stores
@@ -313,6 +301,8 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
             ModelType::Graph => self.graph_store.as_ref().map(|s| s.capabilities()),
             ModelType::Relational => self.rdbms_store.as_ref().map(|s| s.capabilities()),
             ModelType::Observability => self.observability_store.as_ref().map(|s| s.capabilities()),
+            ModelType::TimeSeries => None, // Not yet implemented
+            ModelType::Event => None,      // Not yet implemented
         }
     }
 
@@ -320,21 +310,19 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
         let mut stats = MultiModelStats::default();
 
         // Collect vector stats from primary engine
-        if let Some(store) = &self.vector_store {
-            if let Some(engine) = store.primary_engine() {
-                if let Ok(engine_stats) = engine.get_engine_stats().await {
-                    stats.total_storage_bytes += engine_stats.total_storage_bytes;
-                }
-            }
+        if let Some(store) = &self.vector_store
+            && let Some(engine) = store.primary_engine()
+            && let Ok(engine_stats) = engine.get_engine_stats().await
+        {
+            stats.total_storage_bytes += engine_stats.total_storage_bytes;
         }
 
         // Collect RDBMS stats
-        if let Some(store) = &self.rdbms_store {
-            if let Some(engine) = store.primary_engine() {
-                if let Ok(engine_stats) = engine.get_engine_stats().await {
-                    stats.total_storage_bytes += engine_stats.total_storage_bytes;
-                }
-            }
+        if let Some(store) = &self.rdbms_store
+            && let Some(engine) = store.primary_engine()
+            && let Ok(engine_stats) = engine.get_engine_stats().await
+        {
+            stats.total_storage_bytes += engine_stats.total_storage_bytes;
         }
 
         // Collect graph stats
@@ -352,22 +340,20 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
     async fn get_storage_size(&self, model_type: ModelType) -> Result<u64> {
         match model_type {
             ModelType::Vector => {
-                if let Some(store) = &self.vector_store {
-                    if let Some(engine) = store.primary_engine() {
-                        if let Ok(stats) = engine.get_engine_stats().await {
-                            return Ok(stats.total_storage_bytes);
-                        }
-                    }
+                if let Some(store) = &self.vector_store
+                    && let Some(engine) = store.primary_engine()
+                    && let Ok(stats) = engine.get_engine_stats().await
+                {
+                    return Ok(stats.total_storage_bytes);
                 }
                 Ok(0)
             }
             ModelType::Relational => {
-                if let Some(store) = &self.rdbms_store {
-                    if let Some(engine) = store.primary_engine() {
-                        if let Ok(stats) = engine.get_engine_stats().await {
-                            return Ok(stats.total_storage_bytes);
-                        }
-                    }
+                if let Some(store) = &self.rdbms_store
+                    && let Some(engine) = store.primary_engine()
+                    && let Ok(stats) = engine.get_engine_stats().await
+                {
+                    return Ok(stats.total_storage_bytes);
                 }
                 Ok(0)
             }
@@ -383,15 +369,15 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
             ..Default::default()
         };
 
-        if let Some(store) = &self.vector_store {
-            if let Some(engine) = store.primary_engine() {
-                engine.flush(flush_params.clone()).await?;
-            }
+        if let Some(store) = &self.vector_store
+            && let Some(engine) = store.primary_engine()
+        {
+            engine.flush(flush_params.clone()).await?;
         }
-        if let Some(store) = &self.rdbms_store {
-            if let Some(engine) = store.primary_engine() {
-                engine.flush(flush_params).await?;
-            }
+        if let Some(store) = &self.rdbms_store
+            && let Some(engine) = store.primary_engine()
+        {
+            engine.flush(flush_params).await?;
         }
 
         // Document and observability would have their own flush methods
@@ -402,15 +388,15 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
     async fn compact_all(&self) -> Result<()> {
         let compact_params = CompactionParameters::default();
 
-        if let Some(store) = &self.vector_store {
-            if let Some(engine) = store.primary_engine() {
-                engine.compact(compact_params.clone()).await?;
-            }
+        if let Some(store) = &self.vector_store
+            && let Some(engine) = store.primary_engine()
+        {
+            engine.compact(compact_params.clone()).await?;
         }
-        if let Some(store) = &self.rdbms_store {
-            if let Some(engine) = store.primary_engine() {
-                engine.compact(compact_params).await?;
-            }
+        if let Some(store) = &self.rdbms_store
+            && let Some(engine) = store.primary_engine()
+        {
+            engine.compact(compact_params).await?;
         }
 
         Ok(())

@@ -114,7 +114,7 @@ impl Container {
                 if cardinality >= 4096 {
                     // Convert to bitmap container
                     let mut bitmap = BitmapContainer::new();
-                    for value in array.values.iter() {
+                    for value in &array.values {
                         bitmap.insert(*value);
                     }
                     Container::Bitmap(bitmap)
@@ -207,14 +207,17 @@ impl Container {
 /// Array container for sparse data
 #[derive(Debug, Clone)]
 struct ArrayContainer {
+    /// Sorted vector of 16-bit values stored in this container
     values: Vec<u16>,
 }
 
 impl ArrayContainer {
+    /// Create a new empty array container
     fn new() -> Self {
         ArrayContainer { values: Vec::new() }
     }
 
+    /// Insert a value in sorted order, returning true if newly inserted
     fn insert(&mut self, value: u16) -> bool {
         match self.values.binary_search(&value) {
             Ok(_) => false, // Already exists
@@ -225,6 +228,7 @@ impl ArrayContainer {
         }
     }
 
+    /// Remove a value, returning true if it was present
     fn remove(&mut self, value: u16) -> bool {
         match self.values.binary_search(&value) {
             Ok(pos) => {
@@ -235,18 +239,22 @@ impl ArrayContainer {
         }
     }
 
+    /// Check whether this container holds the given value
     fn contains(&self, value: u16) -> bool {
         self.values.binary_search(&value).is_ok()
     }
 
+    /// Return the number of values in this container
     fn cardinality(&self) -> u32 {
         self.values.len() as u32
     }
 
+    /// Return the number of values in this container as usize
     fn len(&self) -> usize {
         self.values.len()
     }
 
+    /// Compute the union of this container with another, returning a new container
     fn union(&self, other: &ArrayContainer) -> ArrayContainer {
         let mut result = Vec::with_capacity(self.values.len() + other.values.len());
         let mut i = 0;
@@ -273,6 +281,7 @@ impl ArrayContainer {
         ArrayContainer { values: result }
     }
 
+    /// Compute the intersection of this container with another, returning a new container
     fn intersect(&self, other: &ArrayContainer) -> ArrayContainer {
         let mut result = Vec::new();
         let mut i = 0;
@@ -297,14 +306,17 @@ impl ArrayContainer {
 /// Bitmap container for dense data
 #[derive(Debug, Clone)]
 struct BitmapContainer {
+    /// Fixed-size array of 64-bit words representing 65536 bits
     bits: [u64; 1024], // 64K bits = 1024 * 64 bits
 }
 
 impl BitmapContainer {
+    /// Create a new empty bitmap container with all bits cleared
     fn new() -> Self {
         BitmapContainer { bits: [0; 1024] }
     }
 
+    /// Set the bit for the given value, returning true if it was newly set
     fn insert(&mut self, value: u16) -> bool {
         let word_index = (value as usize) / 64;
         let bit_index = (value as usize) % 64;
@@ -315,6 +327,7 @@ impl BitmapContainer {
         old == 0
     }
 
+    /// Clear the bit for the given value, returning true if it was previously set
     fn remove(&mut self, value: u16) -> bool {
         let word_index = (value as usize) / 64;
         let bit_index = (value as usize) % 64;
@@ -325,6 +338,7 @@ impl BitmapContainer {
         old != 0
     }
 
+    /// Check whether the bit for the given value is set
     fn contains(&self, value: u16) -> bool {
         let word_index = (value as usize) / 64;
         let bit_index = (value as usize) % 64;
@@ -333,10 +347,12 @@ impl BitmapContainer {
         (self.bits[word_index] & mask) != 0
     }
 
+    /// Return the population count (number of set bits)
     fn cardinality(&self) -> u32 {
         self.bits.iter().map(|word| word.count_ones()).sum()
     }
 
+    /// Compute the bitwise OR of this container with another
     fn union(&self, other: &BitmapContainer) -> BitmapContainer {
         let mut result = BitmapContainer::new();
         for i in 0..1024 {
@@ -345,6 +361,7 @@ impl BitmapContainer {
         result
     }
 
+    /// Compute the bitwise AND of this container with another
     fn intersect(&self, other: &BitmapContainer) -> BitmapContainer {
         let mut result = BitmapContainer::new();
         for i in 0..1024 {
@@ -357,15 +374,18 @@ impl BitmapContainer {
 /// Run container for consecutive ranges (simplified implementation)
 #[derive(Debug, Clone)]
 struct RunContainer {
+    /// Sorted vector of (start, length) pairs representing contiguous runs
     runs: Vec<(u16, u16)>, // (start, length) pairs
 }
 
 impl RunContainer {
+    /// Create a new empty run container
     #[allow(dead_code)]
     fn new() -> Self {
         RunContainer { runs: Vec::new() }
     }
 
+    /// Insert a value into the run container, merging adjacent runs as needed
     fn insert(&mut self, value: u16) -> bool {
         // Simplified implementation - convert to individual elements
         for &(start, length) in &self.runs {
@@ -381,6 +401,7 @@ impl RunContainer {
         true
     }
 
+    /// Remove a value from the run container, splitting runs if necessary
     fn remove(&mut self, value: u16) -> bool {
         // Simplified implementation
         let mut found = false;
@@ -405,6 +426,7 @@ impl RunContainer {
         found
     }
 
+    /// Check whether any run in this container includes the given value
     fn contains(&self, value: u16) -> bool {
         for &(start, length) in &self.runs {
             if value >= start && value < start + length {
@@ -414,10 +436,12 @@ impl RunContainer {
         false
     }
 
+    /// Return the total number of values covered by all runs
     fn cardinality(&self) -> u32 {
         self.runs.iter().map(|(_, length)| *length as u32).sum()
     }
 
+    /// Return an iterator over all individual values in the runs
     fn iter(&self) -> RunIterator<'_> {
         RunIterator {
             runs: &self.runs,
@@ -426,6 +450,7 @@ impl RunContainer {
         }
     }
 
+    /// Merge overlapping or adjacent runs into a minimal set
     fn merge_adjacent_runs(&mut self) {
         if self.runs.len() <= 1 {
             return;
@@ -457,8 +482,11 @@ impl RunContainer {
 
 /// Iterator for run container
 struct RunIterator<'a> {
+    /// Reference to the runs being iterated
     runs: &'a Vec<(u16, u16)>,
+    /// Index of the current run
     run_index: usize,
+    /// Offset within the current run
     value_offset: u16,
 }
 
@@ -485,13 +513,18 @@ impl<'a> Iterator for RunIterator<'a> {
 
 /// Iterator for bitmap container
 struct BitmapIterator<'a> {
+    /// Reference to the underlying 64-bit word array
     bits: &'a [u64; 1024],
+    /// Index of the current 64-bit word being scanned
     word_index: usize,
+    /// Cached copy of the current word for bit scanning
     current_word: u64,
+    /// Bit position within the current word
     bit_offset: u32,
 }
 
 impl<'a> BitmapIterator<'a> {
+    /// Create a new iterator positioned at the first set bit
     fn new(bits: &'a [u64; 1024]) -> Self {
         let mut iter = BitmapIterator {
             bits,
@@ -505,6 +538,7 @@ impl<'a> BitmapIterator<'a> {
         iter
     }
 
+    /// Advance internal state to the next set bit in the bitmap
     fn advance_to_next_bit(&mut self) {
         while self.word_index < 1024 {
             if self.current_word != 0 {
@@ -611,7 +645,7 @@ impl RoaringBitmap {
 
         self.containers
             .get(&high)
-            .map_or(false, |container| container.contains(low))
+            .is_some_and(|container| container.contains(low))
     }
 
     /// Get the number of elements in the bitmap
@@ -901,7 +935,7 @@ impl RoaringBitmap {
         let mut size = 8;
 
         // For each container: 2 bytes for key, 2 bytes for cardinality minus 1, container data
-        for (_, container) in &self.containers {
+        for container in self.containers.values() {
             size += 4; // key + cardinality
 
             match container {
@@ -960,8 +994,11 @@ impl std::ops::SubAssign<&RoaringBitmap> for RoaringBitmap {
 
 /// Iterator over all values in a RoaringBitmap
 pub struct BitmapIteratorAll<'a> {
+    /// Iterator over the high-16-bit-keyed container map
     containers_iter: std::collections::btree_map::Iter<'a, u16, Container>,
+    /// Currently active container iterator with its high-16-bit key
     current_container: Option<(u16, Box<dyn Iterator<Item = u16> + 'a>)>,
+    /// High 16 bits of the current container being iterated
     #[allow(dead_code)]
     current_high: u16,
 }

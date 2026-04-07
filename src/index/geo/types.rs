@@ -201,10 +201,15 @@ pub struct GeoCircle {
 /// Distance unit for geo calculations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeoDistanceUnit {
+    /// Distance in meters.
     Meters,
+    /// Distance in kilometers.
     Kilometers,
+    /// Distance in miles.
     Miles,
+    /// Distance in feet.
     Feet,
+    /// Distance in nautical miles.
     NauticalMiles,
 }
 

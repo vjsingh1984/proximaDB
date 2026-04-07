@@ -4,12 +4,10 @@
 //! - Document storage (MongoDB-like JSON documents)
 //! - Observability pipeline (logs, metrics)
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use reqwest::Client;
 use serde_json::{Value, json};
-use tokio::time::sleep;
 
 const BASE_URL: &str = "http://127.0.0.1:5678";
 

@@ -61,37 +61,35 @@ use regex::Regex;
 
 /// Common SQL injection patterns to detect
 static SQL_INJECTION_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
-    vec![
+    [
         // Statement injection: SELECT/INSERT/UPDATE/DELETE followed by FROM/INTO/SET/TABLE
-        Regex::new(
-            r"(?i)(\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|ALTER)\b.*\b(FROM|INTO|SET|TABLE)\b)",
-        )
-        .expect("Invalid regex: statement injection"),
+        r"(?i)(\b(SELECT|INSERT|UPDATE|DELETE|DROP|UNION|ALTER)\b.*\b(FROM|INTO|SET|TABLE)\b)",
         // Boolean-based injection: OR/AND followed by comparison
-        Regex::new(r#"(?i)(\b(OR|AND)\s+['"0-9]+=\s*['"0-9]+)"#)
-            .expect("Invalid regex: boolean injection"),
+        r#"(?i)(\b(OR|AND)\s+['"0-9]+=\s*['"0-9]+)"#,
         // Comment injection: -- or /* */
-        Regex::new(r"(?i)(--\s*$|/\*.*\*/)").expect("Invalid regex: comment injection"),
+        r"(?i)(--\s*$|/\*.*\*/)",
         // Command execution: EXEC() or EXECUTE()
-        Regex::new(r"(?i)(\bEXEC\s*\(|\bEXECUTE\s*\()").expect("Invalid regex: exec injection"),
+        r"(?i)(\bEXEC\s*\(|\bEXECUTE\s*\()",
         // Chained commands: ; followed by dangerous statement
-        Regex::new(r"(?i)(;\s*(DROP|DELETE|UPDATE|INSERT))")
-            .expect("Invalid regex: chained commands"),
+        r"(?i)(;\s*(DROP|DELETE|UPDATE|INSERT))",
         // Quote-semicolon-comment: '; -- pattern
-        Regex::new(r#"['"];\s*--"#).expect("Invalid regex: quote-semicolon-comment"),
+        r#"['"];\s*--"#,
         // CHAR encoding bypass
-        Regex::new(r"(?i)CHAR\s*\(\s*\d+").expect("Invalid regex: char encoding"),
+        r"(?i)CHAR\s*\(\s*\d+",
         // Hex encoding bypass
-        Regex::new(r"0x[0-9a-fA-F]+").expect("Invalid regex: hex encoding"),
+        r"0x[0-9a-fA-F]+",
         // Batch separator
-        Regex::new(r"(?i);\s*GO\b").expect("Invalid regex: batch separator"),
+        r"(?i);\s*GO\b",
         // Information schema access
-        Regex::new(r"(?i)INFORMATION_SCHEMA").expect("Invalid regex: information schema"),
+        r"(?i)INFORMATION_SCHEMA",
         // System table access
-        Regex::new(r"(?i)(sysobjects|syscolumns|sysusers)").expect("Invalid regex: system tables"),
+        r"(?i)(sysobjects|syscolumns|sysusers)",
         // xp_ stored procedures
-        Regex::new(r"(?i)xp_\w+").expect("Invalid regex: xp_ procedures"),
+        r"(?i)xp_\w+",
     ]
+    .into_iter()
+    .filter_map(|pattern| Regex::new(pattern).ok())
+    .collect()
 });
 
 /// TEXT field validator with security checks
@@ -242,10 +240,10 @@ impl TextValidator {
         }
 
         // Allowed pattern check
-        if let Some(ref re) = self.compiled_allowed {
-            if !re.is_match(text) {
-                return Err(TextValidationError::PatternMismatch);
-            }
+        if let Some(ref re) = self.compiled_allowed
+            && !re.is_match(text)
+        {
+            return Err(TextValidationError::PatternMismatch);
         }
 
         Ok(())
@@ -270,8 +268,9 @@ impl TextValidator {
         let mut result = text.to_string();
 
         // Remove SQL comment patterns
-        let comment_pattern = Regex::new(r"--.*$|/\*.*?\*/").expect("Invalid comment regex");
-        result = comment_pattern.replace_all(&result, "").to_string();
+        if let Ok(comment_pattern) = Regex::new(r"--.*$|/\*.*?\*/") {
+            result = comment_pattern.replace_all(&result, "").to_string();
+        }
 
         // Escape single quotes
         result = result.replace('\'', "''");
@@ -280,8 +279,9 @@ impl TextValidator {
         result = result.replace('\0', "");
 
         // Remove backslash-escaped sequences that could be problematic
-        let escape_pattern = Regex::new(r"\\[nrtbfv0]").expect("Invalid escape regex");
-        result = escape_pattern.replace_all(&result, " ").to_string();
+        if let Ok(escape_pattern) = Regex::new(r"\\[nrtbfv0]") {
+            result = escape_pattern.replace_all(&result, " ").to_string();
+        }
 
         result
     }
@@ -359,6 +359,18 @@ impl TextValidatorBuilder {
 
     /// Create a strict mode builder with all security checks enabled
     pub fn strict() -> Self {
+        let forbidden_patterns = vec![
+            r"<script".to_string(),
+            r"javascript:".to_string(),
+            r"data:".to_string(),
+            r"vbscript:".to_string(),
+            r"on\w+=".to_string(),
+        ];
+        let compiled_forbidden = forbidden_patterns
+            .iter()
+            .filter_map(|pattern| Regex::new(pattern).ok())
+            .collect();
+
         Self {
             validator: TextValidator {
                 max_length: 4 * 1024, // 4KB for strict mode
@@ -366,21 +378,9 @@ impl TextValidatorBuilder {
                 allow_empty: false,
                 check_utf8: true,
                 check_sql_injection: true,
-                forbidden_patterns: vec![
-                    r"<script".to_string(),
-                    r"javascript:".to_string(),
-                    r"data:".to_string(),
-                    r"vbscript:".to_string(),
-                    r"on\w+=".to_string(),
-                ],
+                forbidden_patterns,
                 allowed_pattern: None,
-                compiled_forbidden: vec![
-                    Regex::new(r"<script").expect("Invalid regex"),
-                    Regex::new(r"javascript:").expect("Invalid regex"),
-                    Regex::new(r"data:").expect("Invalid regex"),
-                    Regex::new(r"vbscript:").expect("Invalid regex"),
-                    Regex::new(r"on\w+=").expect("Invalid regex"),
-                ],
+                compiled_forbidden,
                 compiled_allowed: None,
             },
         }
@@ -626,7 +626,7 @@ impl TextStorageValidationConfig {
 
         // Calculate chunk information for Chunked strategy
         let chunk_count = if effective_strategy == TextStorageStrategy::Chunked {
-            (text_len + self.max_chunk_size - 1) / self.max_chunk_size
+            text_len.div_ceil(self.max_chunk_size)
         } else {
             0
         };

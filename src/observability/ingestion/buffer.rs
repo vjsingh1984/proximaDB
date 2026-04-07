@@ -27,27 +27,44 @@ pub struct RingBuffer {
     back_pressure_threshold: f32,
 }
 
-/// Buffered event types
+/// Buffered event types for the ring buffer pipeline.
 #[derive(Debug, Clone)]
 pub enum BufferedEvent {
-    /// Log entry
-    Log { namespace: String, entry: LogEntry },
-    /// Metric sample
-    Metric {
+    /// Log entry event.
+    Log {
+        /// Target namespace for the log.
         namespace: String,
+        /// Parsed log entry.
+        entry: LogEntry,
+    },
+    /// Metric sample event.
+    Metric {
+        /// Target namespace for the metric.
+        namespace: String,
+        /// Metric name.
         name: String,
+        /// Timestamp in nanoseconds since epoch.
         timestamp_ns: i64,
+        /// Metric value.
         value: f64,
+        /// Key-value labels identifying the metric series.
         labels: std::collections::HashMap<String, String>,
     },
-    /// Trace span
+    /// Trace span event.
     Span {
+        /// Target namespace for the span.
         namespace: String,
+        /// Distributed trace identifier.
         trace_id: String,
+        /// Unique span identifier within the trace.
         span_id: String,
+        /// Parent span identifier, if this is a child span.
         parent_span_id: Option<String>,
+        /// Human-readable span name (e.g. operation or RPC method).
         name: String,
+        /// Span start time in nanoseconds since epoch.
         start_time_ns: i64,
+        /// Span end time in nanoseconds since epoch.
         end_time_ns: i64,
     },
 }

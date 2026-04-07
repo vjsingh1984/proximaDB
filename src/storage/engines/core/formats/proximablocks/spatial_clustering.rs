@@ -52,8 +52,8 @@ impl IncrementalPCA {
 
         // Update mean using Welford's algorithm
         let mut delta = vec![0.0; sample.len()];
-        for i in 0..sample.len() {
-            delta[i] = sample[i] as f64 - self.mean[i];
+        for (i, &s_val) in sample.iter().enumerate() {
+            delta[i] = s_val as f64 - self.mean[i];
             self.mean[i] += delta[i] / n;
         }
 
@@ -64,9 +64,9 @@ impl IncrementalPCA {
             .map(|(&s, &m)| s as f64 - m)
             .collect();
 
-        for i in 0..sample.len() {
-            for j in i..sample.len() {
-                self.covariance[i][j] += delta[i] * delta2[j];
+        for (i, &d_val) in delta.iter().enumerate().take(sample.len()) {
+            for (j, &d2_val) in delta2.iter().enumerate().take(sample.len()).skip(i) {
+                self.covariance[i][j] += d_val * d2_val;
             }
         }
     }
@@ -149,8 +149,8 @@ fn power_iteration(matrix: &[Vec<f64>], iterations: usize) -> Vec<f64> {
         // Multiply matrix * v
         let mut new_v = vec![0.0; dim];
         for i in 0..dim {
-            for j in 0..dim {
-                new_v[i] += matrix[i][j] * v[j];
+            for (j, &v_val) in v.iter().enumerate().take(dim) {
+                new_v[i] += matrix[i][j] * v_val;
             }
         }
 
@@ -487,10 +487,10 @@ impl ZOrderEncoder {
 
         // De-interleave bits
         for bit in 0..self.bits_per_dim {
-            for dim_idx in 0..self.dimensions {
+            for (dim_idx, q_val) in quantized.iter_mut().enumerate() {
                 let shift = bit * self.dimensions + dim_idx;
                 let bit_val = (code >> shift) & 1;
-                quantized[dim_idx] |= bit_val << bit;
+                *q_val |= bit_val << bit;
             }
         }
 
@@ -507,10 +507,10 @@ impl ZOrderEncoder {
 
         // De-interleave bits
         for bit in 0..self.bits_per_dim {
-            for dim_idx in 0..self.dimensions {
+            for (dim_idx, q_val) in quantized.iter_mut().enumerate() {
                 let shift = bit * self.dimensions + dim_idx;
                 let bit_val = (code >> shift) & 1;
-                quantized[dim_idx] |= bit_val << bit;
+                *q_val |= bit_val << bit;
             }
         }
 
@@ -527,7 +527,7 @@ impl ZOrderEncoder {
 
         // De-interleave bits from both parts
         for bit in 0..self.bits_per_dim {
-            for dim_idx in 0..self.dimensions {
+            for (dim_idx, q_val) in quantized.iter_mut().enumerate() {
                 let shift = bit * self.dimensions + dim_idx;
 
                 let bit_val = if shift < 128 {
@@ -536,7 +536,7 @@ impl ZOrderEncoder {
                     (high >> (shift - 128)) & 1
                 };
 
-                quantized[dim_idx] |= bit_val << bit;
+                *q_val |= bit_val << bit;
             }
         }
 
@@ -553,14 +553,14 @@ impl ZOrderEncoder {
 
         // De-interleave bits from all four parts
         for bit in 0..self.bits_per_dim {
-            for dim_idx in 0..self.dimensions {
+            for (dim_idx, q_val) in quantized.iter_mut().enumerate() {
                 let shift = bit * self.dimensions + dim_idx;
                 let part_idx = shift / 128;
                 let part_shift = shift % 128;
 
                 if part_idx < 4 {
                     let bit_val = (code.parts[part_idx] >> part_shift) & 1;
-                    quantized[dim_idx] |= bit_val << bit;
+                    *q_val |= bit_val << bit;
                 }
             }
         }
@@ -620,7 +620,7 @@ impl AdaptivePcaConfig {
             _ => (64, 8), // Max PCA dims
         };
 
-        let n_components = n_components.min(64).max(1);
+        let n_components = n_components.clamp(1, 64);
         let code_type = CodeType::select(n_components, bits_per_dim);
 
         Self {
@@ -708,10 +708,8 @@ where
     clustered.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Step 4: Extract sorted blocks, entries, and codes
-    let (codes, blocks, index_entries): (Vec<SpatialCode>, Vec<B>, Vec<I>) = clustered
-        .into_iter()
-        .map(|(code, block, entry)| (code, block, entry))
-        .fold(
+    let (codes, blocks, index_entries): (Vec<SpatialCode>, Vec<B>, Vec<I>) =
+        clustered.into_iter().fold(
             (Vec::new(), Vec::new(), Vec::new()),
             |(mut codes, mut blocks, mut entries), (code, block, entry)| {
                 codes.push(code);
@@ -905,8 +903,7 @@ fn kmeans_clustering(points: &[Vec<f32>], k: usize) -> Vec<Vec<f32>> {
                     (i, dist)
                 })
                 .min_by(|(_, d1), (_, d2)| d1.partial_cmp(d2).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(i, _)| i)
-                .unwrap_or(0);
+                .map_or(0, |(i, _)| i);
 
             clusters[nearest].push(point.clone());
         }
@@ -1021,7 +1018,7 @@ where
         .collect();
 
     // Step 3: Train AdaCurve from PCA-transformed data
-    let num_segments = (pca_coords.len() / 50).max(8).min(256); // Adaptive segment count
+    let num_segments = (pca_coords.len() / 50).clamp(8, 256); // Adaptive segment count
     let adacurve = AdaCurve::train(&pca_coords, num_segments);
 
     // Step 4: Encode each point using learned curve
@@ -1039,18 +1036,15 @@ where
     clustered.sort_by(|a, b| a.0.cmp(&b.0));
 
     // Step 6: Extract sorted blocks, entries, and codes
-    let (codes, blocks, index_entries): (Vec<u64>, Vec<B>, Vec<I>) = clustered
-        .into_iter()
-        .map(|(code, block, entry)| (code, block, entry))
-        .fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut codes, mut blocks, mut entries), (code, block, entry)| {
-                codes.push(code);
-                blocks.push(block);
-                entries.push(entry);
-                (codes, blocks, entries)
-            },
-        );
+    let (codes, blocks, index_entries): (Vec<u64>, Vec<B>, Vec<I>) = clustered.into_iter().fold(
+        (Vec::new(), Vec::new(), Vec::new()),
+        |(mut codes, mut blocks, mut entries), (code, block, entry)| {
+            codes.push(code);
+            blocks.push(block);
+            entries.push(entry);
+            (codes, blocks, entries)
+        },
+    );
 
     (blocks, index_entries, codes)
 }

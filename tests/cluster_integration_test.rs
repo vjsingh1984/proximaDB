@@ -1477,3 +1477,561 @@ async fn test_prevote_prevents_disruption() {
     // Should revert to follower
     assert_eq!(consensus.get_state().await, ConsensusState::Follower);
 }
+
+// ============================================================================
+// IN-PROCESS MULTI-NODE TEST HARNESS
+//
+// An in-memory transport that routes RPCs between real RaftConsensus instances
+// running in the same process.  Supports simulating network partitions by
+// blocking traffic between specified node pairs.
+// ============================================================================
+
+use std::collections::HashMap;
+use tokio::sync::RwLock;
+
+/// Shared state across all InMemoryTransport instances.
+struct TransportHub {
+    /// Map from node_id to the RaftConsensus instance for that node.
+    nodes: HashMap<String, Arc<RwLock<RaftConsensus>>>,
+    /// Bidirectional partition set. If (a, b) is present, messages between
+    /// a and b are dropped with a connection error.
+    partitions: Vec<(String, String)>,
+}
+
+impl TransportHub {
+    fn new() -> Self {
+        Self {
+            nodes: HashMap::new(),
+            partitions: Vec::new(),
+        }
+    }
+
+    fn register(&mut self, node_id: String, node: Arc<RwLock<RaftConsensus>>) {
+        self.nodes.insert(node_id, node);
+    }
+
+    /// Returns true if traffic between `from` and `to` is blocked.
+    fn is_partitioned(&self, from: &str, to: &str) -> bool {
+        self.partitions
+            .iter()
+            .any(|(a, b)| (a == from && b == to) || (a == to && b == from))
+    }
+
+    /// Partition two nodes from each other.
+    fn add_partition(&mut self, a: &str, b: &str) {
+        self.partitions.push((a.to_string(), b.to_string()));
+    }
+
+    /// Remove all partitions.
+    fn clear_partitions(&mut self) {
+        self.partitions.clear();
+    }
+}
+
+/// Per-node transport that delegates RPCs to the target node's RaftConsensus
+/// through the shared TransportHub.
+struct InMemoryTransport {
+    /// The node_id that owns this transport (the sender).
+    source_node_id: String,
+    hub: Arc<RwLock<TransportHub>>,
+}
+
+impl InMemoryTransport {
+    fn new(source_node_id: String, hub: Arc<RwLock<TransportHub>>) -> Self {
+        Self {
+            source_node_id,
+            hub,
+        }
+    }
+}
+
+#[async_trait]
+impl ConsensusTransport for InMemoryTransport {
+    async fn request_vote(
+        &self,
+        target: &NodeEndpoint,
+        req: RequestVoteRequest,
+    ) -> RpcResult<RequestVoteResponse> {
+        let hub = self.hub.read().await;
+        if hub.is_partitioned(&self.source_node_id, &target.node_id) {
+            return Err(RpcError::connection("network partition"));
+        }
+        let node = hub
+            .nodes
+            .get(&target.node_id)
+            .ok_or_else(|| RpcError::node_not_found(&target.node_id))?
+            .clone();
+        drop(hub);
+
+        let consensus = node.read().await;
+        let (term, granted) = consensus
+            .handle_request_vote(
+                req.term,
+                &req.candidate_id,
+                req.last_log_index,
+                req.last_log_term,
+            )
+            .await;
+        Ok(RequestVoteResponse {
+            term,
+            vote_granted: granted,
+        })
+    }
+
+    async fn append_entries(
+        &self,
+        target: &NodeEndpoint,
+        req: AppendEntriesRequest,
+    ) -> RpcResult<AppendEntriesResponse> {
+        let hub = self.hub.read().await;
+        if hub.is_partitioned(&self.source_node_id, &target.node_id) {
+            return Err(RpcError::connection("network partition"));
+        }
+        let node = hub
+            .nodes
+            .get(&target.node_id)
+            .ok_or_else(|| RpcError::node_not_found(&target.node_id))?
+            .clone();
+        drop(hub);
+
+        // Convert RPC LogEntry to consensus module's LogEntry type.
+        let entries: Vec<proximadb::cluster::consensus::LogEntry> = req
+            .entries
+            .iter()
+            .map(|e| proximadb::cluster::consensus::LogEntry {
+                term: e.term,
+                index: e.index,
+                command: Command::Noop,
+            })
+            .collect();
+
+        let consensus = node.read().await;
+        let (term, success) = consensus
+            .handle_append_entries(
+                req.term,
+                &req.leader_id,
+                req.prev_log_index,
+                req.prev_log_term,
+                entries,
+                req.leader_commit,
+            )
+            .await;
+        Ok(AppendEntriesResponse {
+            term,
+            success,
+            match_index: None,
+            conflict_term: None,
+            conflict_index: None,
+        })
+    }
+
+    async fn install_snapshot(
+        &self,
+        _target: &NodeEndpoint,
+        _req: InstallSnapshotRequest,
+    ) -> RpcResult<InstallSnapshotResponse> {
+        // Not exercised in these integration tests.
+        Ok(InstallSnapshotResponse {
+            term: 0,
+            bytes_stored: 0,
+        })
+    }
+
+    async fn pre_vote(
+        &self,
+        target: &NodeEndpoint,
+        req: RequestVoteRequest,
+    ) -> RpcResult<RequestVoteResponse> {
+        // Delegate to request_vote for simplicity.
+        self.request_vote(target, req).await
+    }
+}
+
+// ============================================================================
+// MULTI-NODE HARNESS HELPERS
+// ============================================================================
+
+/// Consensus config with short timeouts for fast tests.
+fn multinode_test_config() -> ConsensusConfig {
+    ConsensusConfig {
+        election_timeout_ms: (80, 160),
+        heartbeat_interval_ms: 30,
+        max_entries_per_request: 100,
+        snapshot_threshold: 10000,
+        enable_pre_vote: false, // simpler election behaviour for deterministic tests
+    }
+}
+
+/// Build a 3-node cluster wired through an in-memory transport hub.
+///
+/// Returns `(hub, [(node_id, Arc<RwLock<RaftConsensus>>)])`.
+async fn build_three_node_cluster() -> (
+    Arc<RwLock<TransportHub>>,
+    Vec<(String, Arc<RwLock<RaftConsensus>>)>,
+) {
+    let hub = Arc::new(RwLock::new(TransportHub::new()));
+    let node_ids: Vec<String> = vec!["n1".into(), "n2".into(), "n3".into()];
+    let mut nodes: Vec<(String, Arc<RwLock<RaftConsensus>>)> = Vec::new();
+
+    for id in &node_ids {
+        let peers: Vec<NodeEndpoint> = node_ids
+            .iter()
+            .filter(|other| *other != id)
+            .map(|other| NodeEndpoint::new(other.as_str(), "127.0.0.1:6000"))
+            .collect();
+
+        let transport = Arc::new(InMemoryTransport::new(id.clone(), Arc::clone(&hub)));
+        let config = multinode_test_config();
+        let consensus = RaftConsensus::with_transport(config, id.as_str(), transport, peers)
+            .expect("failed to create RaftConsensus");
+        let wrapped = Arc::new(RwLock::new(consensus));
+        nodes.push((id.clone(), Arc::clone(&wrapped)));
+    }
+
+    // Register every node in the hub so the transport can route to them.
+    {
+        let mut h = hub.write().await;
+        for (id, node) in &nodes {
+            h.register(id.clone(), Arc::clone(node));
+        }
+    }
+
+    (hub, nodes)
+}
+
+/// Count how many nodes are currently in the Leader state.
+async fn count_leaders(nodes: &[(String, Arc<RwLock<RaftConsensus>>)]) -> usize {
+    let mut leaders = 0;
+    for (_id, node) in nodes {
+        if node.read().await.get_state().await == ConsensusState::Leader {
+            leaders += 1;
+        }
+    }
+    leaders
+}
+
+/// Find the node_id of the current leader, if any.
+async fn find_leader_id(nodes: &[(String, Arc<RwLock<RaftConsensus>>)]) -> Option<String> {
+    for (id, node) in nodes {
+        if node.read().await.get_state().await == ConsensusState::Leader {
+            return Some(id.clone());
+        }
+    }
+    None
+}
+
+/// Trigger an election from a specific node. Returns true if it won.
+async fn trigger_election_on(node: &Arc<RwLock<RaftConsensus>>) -> bool {
+    let n = node.read().await;
+    n.start_election().await.unwrap_or(false)
+}
+
+// ============================================================================
+// MULTI-NODE INTEGRATION TESTS
+// ============================================================================
+
+/// WS-3.2 Test 1: Leader Election
+///
+/// Start 3 in-process nodes wired via in-memory transport.  Trigger an
+/// election from one node and verify:
+///  - Exactly one node becomes leader.
+///  - The other two remain followers.
+///  - The leader's node_id is correctly reported.
+#[tokio::test]
+async fn test_multinode_leader_election() {
+    let (_hub, nodes) = build_three_node_cluster().await;
+
+    // All nodes begin as followers.
+    for (id, node) in &nodes {
+        assert_eq!(
+            node.read().await.get_state().await,
+            ConsensusState::Follower,
+            "{} should start as follower",
+            id,
+        );
+    }
+
+    // Trigger election from n1 -- it should win (first to ask, peers have
+    // not voted in this term).
+    let won = trigger_election_on(&nodes[0].1).await;
+    assert!(won, "n1 should win the election");
+
+    // Exactly one leader in the cluster.
+    assert_eq!(
+        count_leaders(&nodes).await,
+        1,
+        "exactly one leader expected"
+    );
+
+    // The leader should be n1.
+    assert_eq!(find_leader_id(&nodes).await, Some("n1".to_string()));
+
+    // The other nodes should be followers.
+    assert_eq!(
+        nodes[1].1.read().await.get_state().await,
+        ConsensusState::Follower,
+    );
+    assert_eq!(
+        nodes[2].1.read().await.get_state().await,
+        ConsensusState::Follower,
+    );
+}
+
+/// WS-3.2 Test 2: Log Replication
+///
+/// Elect a leader, propose a command, then manually replicate it to the
+/// followers via handle_append_entries (simulating what the heartbeat loop
+/// does with real entries).  Verify all nodes have the entry in their log.
+#[tokio::test]
+async fn test_multinode_log_replication() {
+    let (_hub, nodes) = build_three_node_cluster().await;
+
+    // Elect n1 as leader.
+    assert!(
+        trigger_election_on(&nodes[0].1).await,
+        "n1 should become leader"
+    );
+
+    // Propose a command on the leader.
+    {
+        let leader = nodes[0].1.read().await;
+        let result = leader
+            .propose(Command::CreateCollection {
+                collection_id: "col-1".into(),
+                name: "test_collection".into(),
+                dimension: 128,
+                shard_count: 3,
+            })
+            .await;
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().success,
+            "propose should succeed on the leader"
+        );
+    }
+
+    // Read the leader's log and term.
+    let leader_term = nodes[0].1.read().await.current_term().await;
+    let leader_entries = nodes[0].1.read().await.get_log_entries(1).await;
+    assert!(
+        !leader_entries.is_empty(),
+        "leader must have at least one log entry after propose"
+    );
+
+    // Replicate the entries to each follower.
+    for (id, follower) in nodes.iter().skip(1) {
+        let f = follower.read().await;
+        let (term, success) = f
+            .handle_append_entries(
+                leader_term,
+                "n1",
+                0, // prev_log_index
+                0, // prev_log_term
+                leader_entries.clone(),
+                1, // leader_commit
+            )
+            .await;
+        assert_eq!(term, leader_term, "follower {} should echo leader term", id);
+        assert!(success, "follower {} should accept entries", id);
+    }
+
+    // Verify followers have the replicated entry.
+    for (id, follower) in nodes.iter().skip(1) {
+        let f = follower.read().await;
+        let entries = f.get_log_entries(1).await;
+        assert!(
+            !entries.is_empty(),
+            "follower {} should have replicated log entries",
+            id,
+        );
+    }
+}
+
+/// WS-3.2 Test 3: Leader Failover
+///
+/// Elect a leader, then simulate its failure by making it step down (via a
+/// higher-term AppendEntries that all nodes observe).  Trigger a new
+/// election from another node and verify that a new leader is elected.
+#[tokio::test]
+async fn test_multinode_leader_failover() {
+    let (_hub, nodes) = build_three_node_cluster().await;
+
+    // Elect n1 as leader.
+    assert!(
+        trigger_election_on(&nodes[0].1).await,
+        "n1 should become leader"
+    );
+    assert_eq!(count_leaders(&nodes).await, 1);
+
+    let old_term = nodes[0].1.read().await.current_term().await;
+    let failover_term = old_term + 1;
+
+    // Simulate leader failure: all nodes receive a higher-term AppendEntries
+    // (as if a phantom leader appeared briefly).  This brings every node to
+    // the same term and makes n1 step down.
+    for (_id, node) in &nodes {
+        let n = node.read().await;
+        n.handle_append_entries(failover_term, "phantom", 0, 0, vec![], 0)
+            .await;
+    }
+
+    // Verify n1 stepped down.
+    assert_eq!(
+        nodes[0].1.read().await.get_state().await,
+        ConsensusState::Follower,
+        "old leader must step down after seeing higher term"
+    );
+
+    // n2 triggers a new election and should win (all nodes are at the same
+    // term and none have voted yet).
+    let won = trigger_election_on(&nodes[1].1).await;
+    assert!(won, "n2 should win election after leader failover");
+
+    // Exactly one leader, and it is n2.
+    assert_eq!(
+        count_leaders(&nodes).await,
+        1,
+        "exactly one leader after failover"
+    );
+    assert_eq!(find_leader_id(&nodes).await, Some("n2".to_string()));
+}
+
+/// WS-3.2 Test 4: Split-Brain Protection
+///
+/// Partition the cluster into {n1} vs {n2, n3}.  Verify:
+///  - The majority partition (n2, n3) can elect a new leader.
+///  - The isolated node (n1) CANNOT win an election.
+///  - After the partition heals and n1 learns the new term, there is
+///    exactly one leader.
+#[tokio::test]
+async fn test_multinode_split_brain_protection() {
+    let (hub, nodes) = build_three_node_cluster().await;
+
+    // Step 1: Elect n1 as leader.
+    assert!(
+        trigger_election_on(&nodes[0].1).await,
+        "n1 should become leader"
+    );
+
+    // Step 2: Partition n1 from n2 and n3.
+    {
+        let mut h = hub.write().await;
+        h.add_partition("n1", "n2");
+        h.add_partition("n1", "n3");
+    }
+
+    // Step 3: n1 tries to send heartbeats -- they fail silently because
+    // of the partition, but n1 does not step down (needs higher term).
+    {
+        let leader = nodes[0].1.read().await;
+        let _ = leader.send_heartbeat().await;
+    }
+
+    // Step 4: n2 triggers an election in the majority partition {n2, n3}.
+    // n2 can reach n3, forming a majority (2 of 3).
+    let won = trigger_election_on(&nodes[1].1).await;
+    assert!(won, "n2 should win election in the majority partition");
+    assert_eq!(
+        nodes[1].1.read().await.get_state().await,
+        ConsensusState::Leader,
+    );
+
+    // Step 5: n1 tries to run an election while still partitioned.
+    // It cannot get votes from n2 or n3, so it must NOT become leader.
+    let won = trigger_election_on(&nodes[0].1).await;
+    assert!(
+        !won,
+        "n1 must NOT win election while partitioned from the majority"
+    );
+
+    // Step 6: Heal the partition.
+    {
+        let mut h = hub.write().await;
+        h.clear_partitions();
+    }
+
+    // Step 7: Simulate n1 receiving a heartbeat from the new leader (n2).
+    // This makes n1 recognise the higher term and step down.
+    let new_leader_term = nodes[1].1.read().await.current_term().await;
+    {
+        let old_leader = nodes[0].1.read().await;
+        old_leader
+            .handle_append_entries(new_leader_term, "n2", 0, 0, vec![], 0)
+            .await;
+    }
+
+    // Final check: exactly one leader in the healed cluster.
+    assert_eq!(
+        count_leaders(&nodes).await,
+        1,
+        "after partition heals there must be exactly one leader"
+    );
+    assert_eq!(
+        find_leader_id(&nodes).await,
+        Some("n2".to_string()),
+        "n2 should remain the leader"
+    );
+}
+
+/// WS-3.2 Test 5: Vote Rejection (already voted in same term)
+///
+/// Verify that a node which has already voted for one candidate in a given
+/// term rejects a vote request from a different candidate in that same term.
+#[tokio::test]
+async fn test_multinode_vote_rejection_already_voted() {
+    let (_hub, nodes) = build_three_node_cluster().await;
+
+    // n1 votes for itself in term 1.
+    {
+        let n1 = nodes[0].1.read().await;
+        let (_term, granted) = n1.handle_request_vote(1, "n1", 0, 0).await;
+        assert!(granted, "n1 should grant its own vote");
+    }
+
+    // n2 asks n1 for a vote in the same term -- must be rejected.
+    {
+        let n1 = nodes[0].1.read().await;
+        let (_term, granted) = n1.handle_request_vote(1, "n2", 0, 0).await;
+        assert!(
+            !granted,
+            "n1 must reject n2 because it already voted for n1 in term 1"
+        );
+    }
+}
+
+/// WS-3.2 Test 6: Log Completeness Check
+///
+/// A candidate with a stale log must NOT win an election against nodes
+/// whose logs are more up-to-date.
+#[tokio::test]
+async fn test_multinode_log_completeness_check() {
+    let (_hub, nodes) = build_three_node_cluster().await;
+
+    // Elect n1 and propose an entry so its log is ahead.
+    assert!(trigger_election_on(&nodes[0].1).await);
+    {
+        let leader = nodes[0].1.read().await;
+        leader.propose(Command::Noop).await.unwrap();
+    }
+
+    // Replicate the entry to n2 so n2 also has an up-to-date log.
+    let leader_term = nodes[0].1.read().await.current_term().await;
+    let leader_entries = nodes[0].1.read().await.get_log_entries(1).await;
+    {
+        let n2 = nodes[1].1.read().await;
+        n2.handle_append_entries(leader_term, "n1", 0, 0, leader_entries, 1)
+            .await;
+    }
+
+    // n3 has an empty log.  When n3 requests a vote from n1 with a higher
+    // term but stale log (last_log_index=0), n1 should refuse because
+    // n3's log is not up-to-date.
+    {
+        let n1 = nodes[0].1.read().await;
+        let (_term, granted) = n1.handle_request_vote(leader_term + 1, "n3", 0, 0).await;
+        assert!(
+            !granted,
+            "n1 should reject vote from n3 whose log is behind"
+        );
+    }
+}

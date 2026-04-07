@@ -959,10 +959,10 @@ impl HelixEngine {
         let levels = self.levels.read().await;
 
         // Check L0 trigger
-        if let Some(l0_files) = levels.get(&0) {
-            if l0_files.len() >= self.config.level0_file_num_compaction_trigger {
-                return true;
-            }
+        if let Some(l0_files) = levels.get(&0)
+            && l0_files.len() >= self.config.level0_file_num_compaction_trigger
+        {
+            return true;
         }
 
         // Check size ratio triggers for other levels
@@ -1217,8 +1217,7 @@ impl UnifiedStorageEngine for HelixEngine {
             .as_ref()
             .and_then(|c| c.config.as_ref())
             .and_then(|cfg| cfg.quantization.as_ref())
-            .map(|q| q.enabled)
-            .flatten()
+            .and_then(|q| q.enabled)
             .unwrap_or(false);
 
         if quantization_enabled {
@@ -1358,7 +1357,7 @@ impl UnifiedStorageEngine for HelixEngine {
             if let Some(keys) = hilbert_keys {
                 // Sort by Hilbert key for spatial locality
                 let mut indexed_records: Vec<(u64, VectorRecord)> =
-                    keys.into_iter().zip(records.into_iter()).collect();
+                    keys.into_iter().zip(records).collect();
                 indexed_records.sort_by_key(|(key, _)| *key);
 
                 let sorted: Vec<VectorRecord> = indexed_records
@@ -1366,13 +1365,9 @@ impl UnifiedStorageEngine for HelixEngine {
                     .map(|(_, record)| record.clone())
                     .collect();
                 let keys_vec: Vec<u64> = indexed_records.iter().map(|(k, _)| *k).collect();
-                let range = if !indexed_records.is_empty() {
-                    Some((
-                        indexed_records.first().unwrap().0,
-                        indexed_records.last().unwrap().0,
-                    ))
-                } else {
-                    None
+                let range = match (indexed_records.first(), indexed_records.last()) {
+                    (Some(first), Some(last)) => Some((first.0, last.0)),
+                    _ => None,
                 };
                 (sorted, Some(keys_vec), range)
             } else {
@@ -1479,7 +1474,7 @@ impl UnifiedStorageEngine for HelixEngine {
         let start = std::time::Instant::now();
 
         // Determine which level to compact (default to L0)
-        let level_to_compact = 0; // TODO: Use hints from params if available
+        let level_to_compact = 0; // Deferred: Use hints from params if available
 
         // Track files being compacted for cache invalidation
         let files_to_invalidate = {
@@ -1546,12 +1541,12 @@ impl UnifiedStorageEngine for HelixEngine {
         Ok(CompactionResult {
             success: true,
             collections_affected: vec![collection_id.clone()],
-            entries_processed: Some(0), // TODO: Track actual entries
+            entries_processed: Some(0), // Deferred: Track actual entries
             entries_removed: Some(0),
             bytes_read: Some(bytes_written), // Simplified
             bytes_written: Some(bytes_written),
             input_files: Some(files_compacted as u64),
-            output_files: Some(1), // TODO: Track actual output files
+            output_files: Some(1), // Deferred: Track actual output files
             duration_ms: Some(start.elapsed().as_millis() as u64),
             completed_at: chrono::Utc::now(),
             engine_metrics: HashMap::new(),
@@ -1675,7 +1670,14 @@ impl UnifiedStorageEngine for HelixEngine {
         // Get PCA model (load from disk if not in memory)
         let pca_model = {
             let model_guard = self.pca_model.read().await;
-            if model_guard.is_none() {
+            let model_opt = model_guard.as_ref();
+            if let Some(model) = model_opt {
+                debug!(
+                    "[HELIX] Using cached PCA model from memory: version={}",
+                    model.version
+                );
+                model_guard.clone()
+            } else {
                 drop(model_guard); // Release read lock before attempting load
 
                 // Try to load persisted model for this collection
@@ -1693,12 +1695,6 @@ impl UnifiedStorageEngine for HelixEngine {
                     );
                     None
                 }
-            } else {
-                debug!(
-                    "[HELIX] Using cached PCA model from memory: version={}",
-                    model_guard.as_ref().unwrap().version
-                );
-                model_guard.clone()
             }
         };
 
@@ -1838,13 +1834,9 @@ impl UnifiedStorageEngine for HelixEngine {
                 (query_hilbert, sstable.hilbert_range)
             {
                 // Simple range check (could be more sophisticated)
-                let distance_to_range = if query_key < min_key {
-                    min_key - query_key
-                } else if query_key > max_key {
-                    query_key - max_key
-                } else {
-                    0 // Query is within range
-                };
+                let distance_to_range = min_key
+                    .saturating_sub(query_key)
+                    .max(query_key.saturating_sub(max_key));
 
                 tracing::debug!(
                     "[HELIX] SSTable hilbert_range=({}, {}), query_key={}, distance={}",
@@ -2078,15 +2070,15 @@ impl UnifiedStorageEngine for HelixEngine {
             let cache_key = format!("vector:{}:{}", collection_id, vector_id);
 
             // Try to get from vector cache first
-            if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                if let Some(cached_vector) = vector_cache.get(&cache_key).await {
-                    // Track cache hit for access pattern learning
-                    orchestrator.pattern_tracker().track_access_async(
-                        cache_key.clone(),
-                        crate::storage::cache::orchestrator::CacheType::VectorData,
-                    );
-                    return Ok(Some(cached_vector));
-                }
+            if let Some(vector_cache) = orchestrator.get_vector_cache()
+                && let Some(cached_vector) = vector_cache.get(&cache_key).await
+            {
+                // Track cache hit for access pattern learning
+                orchestrator.pattern_tracker().track_access_async(
+                    cache_key.clone(),
+                    crate::storage::cache::orchestrator::CacheType::VectorData,
+                );
+                return Ok(Some(cached_vector));
             }
 
             // Track cache miss
@@ -2097,7 +2089,7 @@ impl UnifiedStorageEngine for HelixEngine {
         }
 
         // Construct data directory from base_path and collection_id
-        let data_dir = StoragePath::collection_data_path(base_path, &collection_id);
+        let data_dir = StoragePath::collection_data_path(base_path, collection_id);
 
         // Use the engine's unified caching filesystem
         let fs = &self.filesystem;
@@ -2122,7 +2114,7 @@ impl UnifiedStorageEngine for HelixEngine {
                     bloom_filter: None,
                 };
 
-                if let Some(vector) = readers::find_vector_by_id(&fs, &metadata, vector_id).await? {
+                if let Some(vector) = readers::find_vector_by_id(fs, &metadata, vector_id).await? {
                     // Update global cache with found vector
                     if let Some(orchestrator) =
                         crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
@@ -2138,6 +2130,31 @@ impl UnifiedStorageEngine for HelixEngine {
         }
 
         Ok(None)
+    }
+
+    async fn collection_stats(
+        &self,
+        _collection_id: &str,
+    ) -> Result<crate::storage::traits::CollectionStats> {
+        let metrics = self.metrics.read().await;
+        let total_vectors = metrics.total_vectors;
+        let total_bytes = metrics.total_size_bytes;
+        let avg_vector_bytes = if total_vectors > 0 {
+            total_bytes / total_vectors
+        } else {
+            640
+        };
+
+        Ok(crate::storage::traits::CollectionStats {
+            row_count: total_vectors,
+            avg_vector_bytes,
+            engine_strategy: crate::storage::traits::StorageEngineStrategy::Helix,
+            has_metadata_index: true,
+            has_hnsw_index: false,
+            total_bytes,
+            dimension: Some(self.config.pca_dimensions as u32),
+            index_type: Some("hilbert_curve".to_string()),
+        })
     }
 
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {

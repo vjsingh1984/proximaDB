@@ -55,13 +55,18 @@ pub struct TraversalResult {
     pub stats: TraversalStats,
 }
 
-/// Statistics collected during traversal
+/// Statistics collected during a graph traversal operation.
 #[derive(Debug, Clone, Default)]
 pub struct TraversalStats {
+    /// Number of unique nodes visited during traversal.
     pub nodes_visited: usize,
+    /// Number of edges traversed (expanded) during traversal.
     pub edges_traversed: usize,
+    /// Maximum depth reached from the start node.
     pub max_depth_reached: u32,
+    /// Wall-clock execution time in microseconds.
     pub execution_time_microseconds: u64,
+    /// Peak memory consumed by traversal data structures in bytes.
     pub memory_used_bytes: usize,
 }
 
@@ -83,7 +88,10 @@ pub enum AStarHeuristic {
     /// Heuristic: (1.0 - alpha) * graph_distance + alpha * semantic_distance
     ///
     /// This leverages UnifiedDistanceCompute for hardware acceleration (AVX2, NEON)
-    VectorGuided { alpha: f64 },
+    VectorGuided {
+        /// Blend factor between graph distance (0.0) and semantic similarity (1.0).
+        alpha: f64,
+    },
 }
 
 /// Traversal configuration and filters
@@ -168,11 +176,7 @@ pub async fn breadth_first_search(
     let mut result_nodes = Vec::new();
     let mut result_node_ids = Vec::new();
     let mut traversed_edges = Vec::new(); // NEW
-    let mut paths = if config.track_paths {
-        std::collections::HashMap::new()
-    } else {
-        std::collections::HashMap::new()
-    };
+    let mut paths = std::collections::HashMap::new();
 
     let mut stats = TraversalStats::default();
 
@@ -306,8 +310,10 @@ pub async fn breadth_first_search(
                     traversed_edges.push(edge.clone()); // NEW
 
                     // Track path if enabled
-                    if config.track_paths && paths.get(&current_node_id).is_some() {
-                        let mut new_path = paths.get(&current_node_id).unwrap().clone();
+                    if config.track_paths
+                        && let Some(existing_path) = paths.get(&current_node_id)
+                    {
+                        let mut new_path = existing_path.clone();
                         new_path.push(neighbor_id.clone());
                         paths.insert(neighbor_id.clone(), new_path);
                     }
@@ -315,9 +321,8 @@ pub async fn breadth_first_search(
                     // Hint orchestrator to prefetch adjacency for next frontier (bounded)
                     if prefetch_budget > 0
                         && config.enable_prefetch
-                        && CrossCacheOrchestrator::global().is_some()
+                        && let Some(orch) = CrossCacheOrchestrator::global()
                     {
-                        let orch = CrossCacheOrchestrator::global().unwrap();
                         let key = format!("adj::{}", neighbor_id);
                         orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
                         prefetch_budget -= 1;
@@ -375,11 +380,7 @@ pub async fn depth_first_search(
     let mut result_nodes = Vec::new();
     let mut result_node_ids = Vec::new();
     let mut traversed_edges = Vec::new(); // NEW
-    let mut paths = if config.track_paths {
-        std::collections::HashMap::new()
-    } else {
-        std::collections::HashMap::new()
-    };
+    let mut paths = std::collections::HashMap::new();
 
     let mut stats = TraversalStats::default();
 
@@ -443,7 +444,7 @@ pub async fn depth_first_search(
         if config
             .early_stop
             .as_ref()
-            .is_some_and(|early_stop| early_stop(&[current_node_id.clone()]))
+            .is_some_and(|early_stop| early_stop(std::slice::from_ref(&current_node_id)))
         {
             break;
         }
@@ -499,8 +500,10 @@ pub async fn depth_first_search(
                 traversed_edges.push(edge.clone()); // NEW
 
                 // Track path if enabled
-                if config.track_paths && paths.get(&current_node_id).is_some() {
-                    let mut new_path = paths.get(&current_node_id).unwrap().clone();
+                if config.track_paths
+                    && let Some(existing_path) = paths.get(&current_node_id)
+                {
+                    let mut new_path = existing_path.clone();
                     new_path.push(neighbor_id.clone());
                     paths.insert(neighbor_id.clone(), new_path);
                 }
@@ -508,9 +511,8 @@ pub async fn depth_first_search(
                 // Hint orchestrator to prefetch adjacency for next frontier (bounded)
                 if prefetch_budget > 0
                     && config.enable_prefetch
-                    && CrossCacheOrchestrator::global().is_some()
+                    && let Some(orch) = CrossCacheOrchestrator::global()
                 {
-                    let orch = CrossCacheOrchestrator::global().unwrap();
                     let key = format!("adj::{}", neighbor_id);
                     orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
                     prefetch_budget -= 1;
@@ -535,7 +537,7 @@ pub async fn depth_first_search(
     Ok(TraversalResult {
         nodes: result_nodes,
         node_ids: result_node_ids,
-        edges: Vec::new(), // TODO: Track traversed edges if needed
+        edges: Vec::new(), // Deferred: Track traversed edges if needed
         paths: result_paths,
         stats,
     })
@@ -570,13 +572,21 @@ pub async fn parallel_breadth_first_search(
 
     // Initialize with start node
     {
-        let mut v = visited.lock().unwrap();
+        let mut v = visited.lock().map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to acquire visited lock: {}", e))
+        })?;
         v.insert(start_node_id.clone());
     }
     {
-        let mut rn = result_nodes.lock().unwrap();
-        let mut rni = result_node_ids.lock().unwrap();
-        let mut rp = result_paths.lock().unwrap();
+        let mut rn = result_nodes.lock().map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to acquire result_nodes lock: {}", e))
+        })?;
+        let mut rni = result_node_ids.lock().map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to acquire result_node_ids lock: {}", e))
+        })?;
+        let mut rp = result_paths.lock().map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to acquire result_paths lock: {}", e))
+        })?;
         rn.push(Arc::clone(&start_node));
         rni.push(start_node_id.clone());
         if config.track_paths {
@@ -591,10 +601,10 @@ pub async fn parallel_breadth_first_search(
     // Traverse level by level
     while !current_level.is_empty() {
         // Check depth limit
-        if let Some(max_depth) = config.max_depth {
-            if current_depth >= max_depth {
-                break;
-            }
+        if let Some(max_depth) = config.max_depth
+            && current_depth >= max_depth
+        {
+            break;
         }
         current_depth += 1;
 
@@ -624,7 +634,7 @@ pub async fn parallel_breadth_first_search(
                         let neighbor_id = &edge.to_node_id;
 
                         // Check if already visited (thread-safe)
-                        let mut visited_guard = visited.lock().unwrap();
+                        let mut visited_guard = visited.lock().ok()?;
                         if visited_guard.contains(neighbor_id) {
                             return None;
                         }
@@ -633,14 +643,15 @@ pub async fn parallel_breadth_first_search(
 
                         // Build path if tracking
                         let path = if config.track_paths {
-                            let paths_guard = result_paths.lock().unwrap();
+                            let paths_guard = result_paths.lock().ok()?;
+                            let node_ids_guard = result_node_ids.lock().ok()?;
                             let parent_path = paths_guard
                                 .iter()
-                                .zip(result_node_ids.lock().unwrap().iter())
+                                .zip(node_ids_guard.iter())
                                 .find(|(_, id)| *id == node_id)
-                                .map(|(p, _)| p.clone())
-                                .unwrap_or_else(|| vec![node_id.clone()]);
+                                .map_or_else(|| vec![node_id.clone()], |(p, _)| p.clone());
                             drop(paths_guard);
+                            drop(node_ids_guard);
 
                             let mut new_path = parent_path;
                             new_path.push(neighbor_id.clone());
@@ -664,10 +675,34 @@ pub async fn parallel_breadth_first_search(
                 // Add final level nodes and break
                 for (node_id, path) in next_level {
                     if let Ok(Some(node)) = engine.get_node(&node_id) {
-                        result_nodes.lock().unwrap().push(node);
-                        result_node_ids.lock().unwrap().push(node_id.clone());
+                        result_nodes
+                            .lock()
+                            .map_err(|e| {
+                                ProximaDBError::Internal(format!(
+                                    "Failed to acquire result_nodes lock: {}",
+                                    e
+                                ))
+                            })?
+                            .push(node);
+                        result_node_ids
+                            .lock()
+                            .map_err(|e| {
+                                ProximaDBError::Internal(format!(
+                                    "Failed to acquire result_node_ids lock: {}",
+                                    e
+                                ))
+                            })?
+                            .push(node_id.clone());
                         if let Some(p) = path {
-                            result_paths.lock().unwrap().push(p);
+                            result_paths
+                                .lock()
+                                .map_err(|e| {
+                                    ProximaDBError::Internal(format!(
+                                        "Failed to acquire result_paths lock: {}",
+                                        e
+                                    ))
+                                })?
+                                .push(p);
                         }
                         stats.nodes_visited += 1;
                     }
@@ -680,10 +715,34 @@ pub async fn parallel_breadth_first_search(
         current_level.clear();
         for (node_id, path) in next_level {
             if let Ok(Some(node)) = engine.get_node(&node_id) {
-                result_nodes.lock().unwrap().push(node);
-                result_node_ids.lock().unwrap().push(node_id.clone());
+                result_nodes
+                    .lock()
+                    .map_err(|e| {
+                        ProximaDBError::Internal(format!(
+                            "Failed to acquire result_nodes lock: {}",
+                            e
+                        ))
+                    })?
+                    .push(node);
+                result_node_ids
+                    .lock()
+                    .map_err(|e| {
+                        ProximaDBError::Internal(format!(
+                            "Failed to acquire result_node_ids lock: {}",
+                            e
+                        ))
+                    })?
+                    .push(node_id.clone());
                 if let Some(p) = path {
-                    result_paths.lock().unwrap().push(p);
+                    result_paths
+                        .lock()
+                        .map_err(|e| {
+                            ProximaDBError::Internal(format!(
+                                "Failed to acquire result_paths lock: {}",
+                                e
+                            ))
+                        })?
+                        .push(p);
                 }
                 current_level.push(node_id);
                 stats.nodes_visited += 1;
@@ -691,17 +750,26 @@ pub async fn parallel_breadth_first_search(
 
             // Check limits
             if let Some(max_nodes) = config.max_nodes {
-                if result_nodes.lock().unwrap().len() >= max_nodes {
+                let nodes_len = result_nodes
+                    .lock()
+                    .map_err(|e| {
+                        ProximaDBError::Internal(format!(
+                            "Failed to acquire result_nodes lock: {}",
+                            e
+                        ))
+                    })?
+                    .len();
+                if nodes_len >= max_nodes {
                     break;
                 }
             }
         }
 
         // Check frontier cap
-        if let Some(cap) = config.max_frontier {
-            if current_level.len() > cap {
-                current_level.truncate(cap);
-            }
+        if let Some(cap) = config.max_frontier
+            && current_level.len() > cap
+        {
+            current_level.truncate(cap);
         }
     }
 
@@ -709,12 +777,36 @@ pub async fn parallel_breadth_first_search(
     stats.max_depth_reached = current_depth;
 
     // Unwrap Arc<Mutex<>> collections
-    let final_nodes = Arc::try_unwrap(result_nodes).unwrap().into_inner().unwrap();
-    let final_node_ids = Arc::try_unwrap(result_node_ids)
-        .unwrap()
+    let final_nodes = Arc::try_unwrap(result_nodes)
+        .map_err(|_| {
+            ProximaDBError::Internal(
+                "Failed to unwrap Arc for result_nodes - still has references".to_string(),
+            )
+        })?
         .into_inner()
-        .unwrap();
-    let final_paths = Arc::try_unwrap(result_paths).unwrap().into_inner().unwrap();
+        .map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to extract Mutex contents: {}", e))
+        })?;
+    let final_node_ids = Arc::try_unwrap(result_node_ids)
+        .map_err(|_| {
+            ProximaDBError::Internal(
+                "Failed to unwrap Arc for result_node_ids - still has references".to_string(),
+            )
+        })?
+        .into_inner()
+        .map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to extract Mutex contents: {}", e))
+        })?;
+    let final_paths = Arc::try_unwrap(result_paths)
+        .map_err(|_| {
+            ProximaDBError::Internal(
+                "Failed to unwrap Arc for result_paths - still has references".to_string(),
+            )
+        })?
+        .into_inner()
+        .map_err(|e| {
+            ProximaDBError::Internal(format!("Failed to extract Mutex contents: {}", e))
+        })?;
 
     Ok(TraversalResult {
         nodes: final_nodes,
@@ -727,7 +819,7 @@ pub async fn parallel_breadth_first_search(
 
 /// Estimate memory usage for traversal results
 fn estimate_memory_usage(nodes: &[Arc<Node>], paths: &[Vec<NodeId>]) -> usize {
-    let nodes_size = nodes.len() * std::mem::size_of::<Arc<Node>>();
+    let nodes_size = std::mem::size_of_val(nodes);
     let paths_size = paths
         .iter()
         .map(|path| {
@@ -784,16 +876,19 @@ pub async fn dijkstra_shortest_path(
 
     impl Eq for DijkstraNode {}
 
-    impl PartialOrd for DijkstraNode {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    impl Ord for DijkstraNode {
+        fn cmp(&self, other: &Self) -> Ordering {
             // Reverse ordering for min-heap
-            other.distance.partial_cmp(&self.distance)
+            other
+                .distance
+                .partial_cmp(&self.distance)
+                .unwrap_or(Ordering::Equal)
         }
     }
 
-    impl Ord for DijkstraNode {
-        fn cmp(&self, other: &Self) -> Ordering {
-            self.partial_cmp(other).unwrap_or(Ordering::Equal)
+    impl PartialOrd for DijkstraNode {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
@@ -837,10 +932,10 @@ pub async fn dijkstra_shortest_path(
         }
 
         // Skip if we've found a better path already
-        if let Some(&best_distance) = distances.get(&current.node_id) {
-            if current.distance > best_distance {
-                continue;
-            }
+        if let Some(&best_distance) = distances.get(&current.node_id)
+            && current.distance > best_distance
+        {
+            continue;
         }
 
         // Get outgoing edges
@@ -875,10 +970,10 @@ pub async fn dijkstra_shortest_path(
                     .track_access_async(edge_key, CacheType::GraphEdge);
             }
             // Filter by edge type if specified
-            if let Some(ref allowed_types) = config.edge_types {
-                if !allowed_types.contains(&edge.edge_type) {
-                    continue;
-                }
+            if let Some(ref allowed_types) = config.edge_types
+                && !allowed_types.contains(&edge.edge_type)
+            {
+                continue;
             }
 
             let neighbor_id = &edge.to_node_id;
@@ -887,7 +982,7 @@ pub async fn dijkstra_shortest_path(
 
             let should_update = distances
                 .get(neighbor_id)
-                .map_or(true, |&existing_dist| new_distance < existing_dist);
+                .is_none_or(|&existing_dist| new_distance < existing_dist);
 
             if should_update {
                 distances.insert(neighbor_id.clone(), new_distance);
@@ -897,12 +992,13 @@ pub async fn dijkstra_shortest_path(
                     distance: new_distance,
                 });
                 // Hint orchestrator to prefetch adjacency for likely next node (bounded)
-                if prefetch_budget > 0 && config.enable_prefetch {
-                    if let Some(orch) = CrossCacheOrchestrator::global() {
-                        let key = format!("adj::{}", neighbor_id);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                        prefetch_budget -= 1;
-                    }
+                if prefetch_budget > 0
+                    && config.enable_prefetch
+                    && let Some(orch) = CrossCacheOrchestrator::global()
+                {
+                    let key = format!("adj::{}", neighbor_id);
+                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    prefetch_budget -= 1;
                 }
             }
         }
@@ -936,15 +1032,18 @@ pub async fn astar_shortest_path(
     }
 
     impl Eq for AStarNode {}
-    impl PartialOrd for AStarNode {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            // Min-heap on f_cost
-            other.f_cost.partial_cmp(&self.f_cost)
-        }
-    }
     impl Ord for AStarNode {
         fn cmp(&self, other: &Self) -> Ordering {
-            self.partial_cmp(other).unwrap_or(Ordering::Equal)
+            // Min-heap on f_cost
+            other
+                .f_cost
+                .partial_cmp(&self.f_cost)
+                .unwrap_or(Ordering::Equal)
+        }
+    }
+    impl PartialOrd for AStarNode {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
@@ -1099,12 +1198,13 @@ pub async fn astar_shortest_path(
                     f_cost: f,
                 });
                 // Hint orchestrator to prefetch adjacency for likely next node (bounded)
-                if prefetch_budget > 0 && config.enable_prefetch {
-                    if let Some(orch) = CrossCacheOrchestrator::global() {
-                        let key = format!("adj::{}", neighbor);
-                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                        prefetch_budget -= 1;
-                    }
+                if prefetch_budget > 0
+                    && config.enable_prefetch
+                    && let Some(orch) = CrossCacheOrchestrator::global()
+                {
+                    let key = format!("adj::{}", neighbor);
+                    orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                    prefetch_budget -= 1;
                 }
             }
         }
@@ -1193,15 +1293,18 @@ pub async fn vector_guided_astar(
     }
 
     impl Eq for AStarNode {}
-    impl PartialOrd for AStarNode {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            // Min-heap on f_cost
-            other.f_cost.partial_cmp(&self.f_cost)
-        }
-    }
     impl Ord for AStarNode {
         fn cmp(&self, other: &Self) -> Ordering {
-            self.partial_cmp(other).unwrap_or(Ordering::Equal)
+            // Min-heap on f_cost
+            other
+                .f_cost
+                .partial_cmp(&self.f_cost)
+                .unwrap_or(Ordering::Equal)
+        }
+    }
+    impl PartialOrd for AStarNode {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
         }
     }
 
@@ -1372,14 +1475,14 @@ pub async fn k_shortest_paths(
             dist: f64,
         }
         impl Eq for QN {}
-        impl PartialOrd for QN {
-            fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-                o.dist.partial_cmp(&self.dist)
-            }
-        }
         impl Ord for QN {
             fn cmp(&self, o: &Self) -> Ordering {
-                self.partial_cmp(o).unwrap_or(Ordering::Equal)
+                o.dist.partial_cmp(&self.dist).unwrap_or(Ordering::Equal)
+            }
+        }
+        impl PartialOrd for QN {
+            fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+                Some(self.cmp(o))
             }
         }
 
@@ -1407,10 +1510,10 @@ pub async fn k_shortest_paths(
             if exclude_nodes.contains(&q.node_id) {
                 continue;
             }
-            if let Some(_md) = config.max_depth {
-                if let Some(d0) = prev.get(&q.node_id) {
-                    let _ = d0; /* depth check omit for simplicity */
-                }
+            if let Some(_md) = config.max_depth
+                && let Some(d0) = prev.get(&q.node_id)
+            {
+                let _ = d0; /* depth check omit for simplicity */
             }
             let outgoing = engine.get_outgoing_edges(
                 &q.node_id,
@@ -1450,7 +1553,7 @@ pub async fn k_shortest_paths(
                 let w = e.weight.unwrap_or(1.0);
                 let nd = q.dist + w;
                 let od = dist.get(&e.to_node_id).copied();
-                if od.map_or(true, |old| nd < old) {
+                if od.is_none_or(|old| nd < old) {
                     dist.insert(e.to_node_id.clone(), nd);
                     prev.insert(e.to_node_id.clone(), q.node_id.clone());
                     heap.push(QN {
@@ -1458,12 +1561,13 @@ pub async fn k_shortest_paths(
                         dist: nd,
                     });
                     // Hint orchestrator to prefetch adjacency for likely next node (bounded)
-                    if prefetch_budget > 0 && config.enable_prefetch {
-                        if let Some(orch) = CrossCacheOrchestrator::global() {
-                            let key = format!("adj::{}", e.to_node_id);
-                            orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
-                            prefetch_budget -= 1;
-                        }
+                    if prefetch_budget > 0
+                        && config.enable_prefetch
+                        && let Some(orch) = CrossCacheOrchestrator::global()
+                    {
+                        let key = format!("adj::{}", e.to_node_id);
+                        orch.request_prefetch(&key, CacheType::GraphAdjacency).await;
+                        prefetch_budget -= 1;
                     }
                 }
             }
@@ -1493,22 +1597,25 @@ pub async fn k_shortest_paths(
         }
     }
     impl Eq for Cand {}
-    impl PartialOrd for Cand {
-        fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
-            o.cost.partial_cmp(&self.cost)
-        }
-    }
     impl Ord for Cand {
         fn cmp(&self, o: &Self) -> Ordering {
-            self.partial_cmp(o).unwrap_or(Ordering::Equal)
+            o.cost.partial_cmp(&self.cost).unwrap_or(Ordering::Equal)
+        }
+    }
+    impl PartialOrd for Cand {
+        fn partial_cmp(&self, o: &Self) -> Option<Ordering> {
+            Some(self.cmp(o))
         }
     }
     let mut b: BinaryHeap<Cand> = BinaryHeap::new();
 
     for k_i in 1..k {
         let (last_path, _last_cost) = &result_paths[k_i - 1];
-        for i in 0..last_path.len().saturating_sub(1) {
-            let spur_node = &last_path[i];
+        for (i, spur_node) in last_path
+            .iter()
+            .enumerate()
+            .take(last_path.len().saturating_sub(1))
+        {
             let root_path = &last_path[..=i];
             // Exclusions: remove edges that would create same root with previous paths
             let mut exclude_edges: HashSet<(NodeId, NodeId)> = HashSet::new();
@@ -1629,11 +1736,9 @@ pub async fn has_cycle(engine: &OrionGraphEngine) -> Result<bool> {
         Ok(false)
     }
 
-    for (nid, c) in color.clone().iter() {
-        if *c == Color::White {
-            if dfs(engine, nid, &mut color)? {
-                return Ok(true);
-            }
+    for (nid, c) in &color.clone() {
+        if *c == Color::White && dfs(engine, nid, &mut color)? {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -1785,9 +1890,18 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_node(node0).await.unwrap();
-        engine.insert_node(node1).await.unwrap();
-        engine.insert_node(node2).await.unwrap();
+        engine
+            .insert_node(node0)
+            .await
+            .expect("Failed to insert node0 in test");
+        engine
+            .insert_node(node1)
+            .await
+            .expect("Failed to insert node1 in test");
+        engine
+            .insert_node(node2)
+            .await
+            .expect("Failed to insert node2 in test");
 
         let edge1 = Edge {
             id: "e1".to_string(),
@@ -1811,8 +1925,14 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_edge(edge1).await.unwrap();
-        engine.insert_edge(edge2).await.unwrap();
+        engine
+            .insert_edge(edge1)
+            .await
+            .expect("Failed to insert edge1 in test");
+        engine
+            .insert_edge(edge2)
+            .await
+            .expect("Failed to insert edge2 in test");
 
         // Wait for async operations
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -1821,7 +1941,7 @@ mod tests {
         let config = TraversalConfig::default();
         let result = breadth_first_search(&engine, &"0".to_string(), config)
             .await
-            .unwrap();
+            .expect("BFS should succeed in test");
 
         assert_eq!(result.nodes.len(), 3);
         assert_eq!(
@@ -1855,8 +1975,14 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_node(node0).await.unwrap();
-        engine.insert_node(node1).await.unwrap();
+        engine
+            .insert_node(node0)
+            .await
+            .expect("Failed to insert node0 in test");
+        engine
+            .insert_node(node1)
+            .await
+            .expect("Failed to insert node1 in test");
 
         let edge1 = Edge {
             id: "e1".to_string(),
@@ -1869,7 +1995,10 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_edge(edge1).await.unwrap();
+        engine
+            .insert_edge(edge1)
+            .await
+            .expect("Failed to insert edge1 in test");
 
         // Wait for async operations
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -1878,7 +2007,7 @@ mod tests {
         let config = TraversalConfig::default();
         let result = depth_first_search(&engine, &"0".to_string(), config)
             .await
-            .unwrap();
+            .expect("DFS should succeed in test");
 
         assert_eq!(result.nodes.len(), 2);
         assert_eq!(result.stats.nodes_visited, 2);
@@ -1899,7 +2028,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.insert_node(node).await.unwrap();
+            engine
+                .insert_node(node)
+                .await
+                .expect("Failed to insert node in test");
         }
 
         // Create edges: 0->1->3 and 0->2->3 (shorter path)
@@ -1921,7 +2053,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.insert_edge(edge).await.unwrap();
+            engine
+                .insert_edge(edge)
+                .await
+                .expect("Failed to insert edge in test");
         }
 
         // Wait for async operations
@@ -1929,10 +2064,14 @@ mod tests {
 
         // Simple manual shortest path test instead of relying on the complex BFS
         // For now, let's just verify the graph structure is correct
-        let edges_0 = engine.get_outgoing_edges(&"0".to_string(), None).unwrap();
+        let edges_0 = engine
+            .get_outgoing_edges(&"0".to_string(), None)
+            .expect("Should get outgoing edges for node 0 in test");
         assert_eq!(edges_0.len(), 2, "Node 0 should have 2 outgoing edges");
 
-        let edges_2 = engine.get_outgoing_edges(&"2".to_string(), None).unwrap();
+        let edges_2 = engine
+            .get_outgoing_edges(&"2".to_string(), None)
+            .expect("Should get outgoing edges for node 2 in test");
         assert_eq!(edges_2.len(), 1, "Node 2 should have 1 outgoing edge");
         assert_eq!(
             edges_2[0].to_node_id, "3",
@@ -1940,7 +2079,7 @@ mod tests {
         );
 
         // For now, skip the complex BFS test and just verify the graph structure
-        // TODO: Fix the BFS shortest path algorithm later
+        // Deferred: Fix the BFS shortest path algorithm later
     }
 
     #[tokio::test]
@@ -1958,7 +2097,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.insert_node(node).await.unwrap();
+            engine
+                .insert_node(node)
+                .await
+                .expect("Failed to insert node in test");
         }
 
         // Create edges: A->B, B->C, B->A
@@ -1975,14 +2117,19 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.insert_edge(edge).await.unwrap();
+            engine
+                .insert_edge(edge)
+                .await
+                .expect("Failed to insert edge in test");
         }
 
         // Wait for async operations
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
         // Run PageRank
-        let scores = page_rank(&engine, 0.85, 100, 0.0001).await.unwrap();
+        let scores = page_rank(&engine, 0.85, 100, 0.0001)
+            .await
+            .expect("PageRank should succeed in test");
 
         // Verify we got scores for all nodes
         assert_eq!(scores.len(), 3, "Should have scores for all 3 nodes");
@@ -1993,9 +2140,15 @@ mod tests {
         }
 
         // Node B should have highest score (has incoming edges from both A and C)
-        let score_a = scores.get("A").unwrap();
-        let score_b = scores.get("B").unwrap();
-        let score_c = scores.get("C").unwrap();
+        let score_a = scores
+            .get("A")
+            .expect("Score for node A should exist in test");
+        let score_b = scores
+            .get("B")
+            .expect("Score for node B should exist in test");
+        let score_c = scores
+            .get("C")
+            .expect("Score for node C should exist in test");
 
         // Normalize scores for comparison
         let total: f64 = scores.values().sum();
@@ -2031,7 +2184,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.insert_node(node).await.unwrap();
+            engine
+                .insert_node(node)
+                .await
+                .expect("Failed to insert node in test");
         }
 
         // Create edges: chain 0->1->2->...->9
@@ -2046,7 +2202,10 @@ mod tests {
                 created_at_ms: 0,
                 updated_at_ms: 0,
             };
-            engine.insert_edge(edge).await.unwrap();
+            engine
+                .insert_edge(edge)
+                .await
+                .expect("Failed to insert edge in test");
         }
 
         // Wait for async operations
@@ -2056,7 +2215,7 @@ mod tests {
         let config = TraversalConfig::default();
         let result = parallel_breadth_first_search(&engine, &"0".to_string(), config)
             .await
-            .unwrap();
+            .expect("Parallel BFS should succeed in test");
 
         // Verify we found all reachable nodes (may not include start node in some implementations)
         assert!(
@@ -2135,9 +2294,18 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_node(node_a).await.unwrap();
-        engine.insert_node(node_b).await.unwrap();
-        engine.insert_node(node_c).await.unwrap();
+        engine
+            .insert_node(node_a)
+            .await
+            .expect("Failed to insert node_a in test");
+        engine
+            .insert_node(node_b)
+            .await
+            .expect("Failed to insert node_b in test");
+        engine
+            .insert_node(node_c)
+            .await
+            .expect("Failed to insert node_c in test");
 
         // Create edges: A->B->C
         let edge1 = Edge {
@@ -2162,8 +2330,14 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        engine.insert_edge(edge1).await.unwrap();
-        engine.insert_edge(edge2).await.unwrap();
+        engine
+            .insert_edge(edge1)
+            .await
+            .expect("Failed to insert edge1 in test");
+        engine
+            .insert_edge(edge2)
+            .await
+            .expect("Failed to insert edge2 in test");
 
         // Wait for async operations
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -2174,11 +2348,11 @@ mod tests {
 
         let result = astar_shortest_path(&engine, &"A".to_string(), &"C".to_string(), config)
             .await
-            .unwrap();
+            .expect("A* should succeed in test");
 
         // Verify we found a path
         assert!(result.is_some(), "Should find a path from A to C");
-        let (path, cost) = result.unwrap();
+        let (path, cost) = result.expect("Dijkstra should find a path in test");
 
         assert_eq!(path.len(), 3, "Path should have 3 nodes: A->B->C");
         assert_eq!(path[0], "A");
@@ -2247,9 +2421,15 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        GraphEngine::insert_node(&engine, node_a).await.unwrap();
-        GraphEngine::insert_node(&engine, node_b).await.unwrap();
-        GraphEngine::insert_node(&engine, node_c).await.unwrap();
+        GraphEngine::insert_node(&engine, node_a)
+            .await
+            .expect("Failed to insert node_a via GraphEngine in test");
+        GraphEngine::insert_node(&engine, node_b)
+            .await
+            .expect("Failed to insert node_b via GraphEngine in test");
+        GraphEngine::insert_node(&engine, node_c)
+            .await
+            .expect("Failed to insert node_c via GraphEngine in test");
 
         // Create edges
         GraphEngine::insert_edge(
@@ -2266,7 +2446,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("Failed to insert edge e1 in test");
 
         GraphEngine::insert_edge(
             &engine,
@@ -2282,7 +2462,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("Failed to insert edge e2 in test");
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let guide_embedding = vec![0.5, 0.5, 0.5];
@@ -2299,10 +2479,10 @@ mod tests {
             TraversalConfig::default(),
         )
         .await
-        .unwrap();
+        .expect("Vector-guided A* should succeed in test");
 
         assert!(result.is_some(), "Should find a path");
-        let (path, _cost) = result.unwrap();
+        let (path, _cost) = result.expect("Vector-guided A* should return a path in test");
         assert_eq!(path.len(), 3);
         assert_eq!(path, vec!["A", "B", "C"]);
     }
@@ -2387,10 +2567,18 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        GraphEngine::insert_node(&engine, node_a).await.unwrap();
-        GraphEngine::insert_node(&engine, node_b).await.unwrap();
-        GraphEngine::insert_node(&engine, node_c).await.unwrap();
-        GraphEngine::insert_node(&engine, node_d).await.unwrap();
+        GraphEngine::insert_node(&engine, node_a)
+            .await
+            .expect("Failed to insert node_a via GraphEngine in test");
+        GraphEngine::insert_node(&engine, node_b)
+            .await
+            .expect("Failed to insert node_b via GraphEngine in test");
+        GraphEngine::insert_node(&engine, node_c)
+            .await
+            .expect("Failed to insert node_c via GraphEngine in test");
+        GraphEngine::insert_node(&engine, node_d)
+            .await
+            .expect("Failed to insert node_d via GraphEngine in test");
 
         // Create diamond topology
         GraphEngine::insert_edge(
@@ -2407,7 +2595,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("Failed to insert edge e1 in test");
 
         GraphEngine::insert_edge(
             &engine,
@@ -2423,7 +2611,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("Failed to insert edge e2 in test");
 
         GraphEngine::insert_edge(
             &engine,
@@ -2439,7 +2627,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("Failed to insert edge e3 in test");
 
         GraphEngine::insert_edge(
             &engine,
@@ -2455,7 +2643,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("Failed to insert edge e4 in test");
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
@@ -2471,10 +2659,10 @@ mod tests {
             TraversalConfig::default(),
         )
         .await
-        .unwrap();
+        .expect("Vector-guided A* should succeed in test");
 
         assert!(result.is_some(), "Should find a path");
-        let (path, _cost) = result.unwrap();
+        let (path, _cost) = result.expect("Vector-guided A* should return a path in test");
         // Should prefer path through B (semantically closer) when alpha > 0
         assert!(path.contains(&"B".to_string()) || path.contains(&"C".to_string()));
     }
@@ -2521,8 +2709,12 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        GraphEngine::insert_node(&engine, node_a).await.unwrap();
-        GraphEngine::insert_node(&engine, node_b).await.unwrap();
+        GraphEngine::insert_node(&engine, node_a)
+            .await
+            .expect("Failed to insert node_a via GraphEngine in test");
+        GraphEngine::insert_node(&engine, node_b)
+            .await
+            .expect("Failed to insert node_b via GraphEngine in test");
 
         GraphEngine::insert_edge(
             &engine,
@@ -2538,7 +2730,7 @@ mod tests {
             },
         )
         .await
-        .unwrap();
+        .expect("Failed to insert edge e1 in test");
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let guide_embedding = vec![1.5];
@@ -2555,7 +2747,7 @@ mod tests {
             TraversalConfig::default(),
         )
         .await
-        .unwrap();
+        .expect("Vector-guided A* should succeed with alpha > 1.0 in test");
 
         assert!(
             result.is_some(),
@@ -2574,7 +2766,7 @@ mod tests {
             TraversalConfig::default(),
         )
         .await
-        .unwrap();
+        .expect("Vector-guided A* should succeed with alpha < 0.0 in test");
 
         assert!(
             result.is_some(),
@@ -2625,8 +2817,12 @@ mod tests {
             updated_at_ms: 0,
         };
 
-        GraphEngine::insert_node(&engine, node_a).await.unwrap();
-        GraphEngine::insert_node(&engine, node_b).await.unwrap();
+        GraphEngine::insert_node(&engine, node_a)
+            .await
+            .expect("Failed to insert node_a via GraphEngine in test");
+        GraphEngine::insert_node(&engine, node_b)
+            .await
+            .expect("Failed to insert node_b via GraphEngine in test");
 
         // No edges - disconnected graph
 
@@ -2644,7 +2840,7 @@ mod tests {
             TraversalConfig::default(),
         )
         .await
-        .unwrap();
+        .expect("Vector-guided A* should complete successfully in test");
 
         assert!(
             result.is_none(),

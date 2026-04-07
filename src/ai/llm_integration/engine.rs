@@ -8,9 +8,7 @@ use super::providers::{
     AWSBedrockClient, AnthropicClient, AzureOpenAIClient, CohereClient, HuggingFaceClient,
     LLMClient, OllamaClient, OpenAIClient, VLLMClient,
 };
-use super::types::{
-    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, TokenUsage,
-};
+use super::types::{LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -83,31 +81,32 @@ impl LLMIntegrationEngine {
         }
 
         // Initialize Azure OpenAI provider if configured
-        if let Some(ref azure_config) = config.azure_openai_config {
-            if !azure_config.api_key.is_empty() && !azure_config.endpoint.is_empty() {
-                match AzureOpenAIClient::new(azure_config.clone()).await {
-                    Ok(client) => {
-                        providers.insert(LLMProvider::AzureOpenAI, Arc::new(client));
-                        info!("Azure OpenAI provider initialized successfully");
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize Azure OpenAI provider: {}", e);
-                    }
+        if let Some(ref azure_config) = config.azure_openai_config
+            && !azure_config.api_key.is_empty()
+            && !azure_config.endpoint.is_empty()
+        {
+            match AzureOpenAIClient::new(azure_config.clone()).await {
+                Ok(client) => {
+                    providers.insert(LLMProvider::AzureOpenAI, Arc::new(client));
+                    info!("Azure OpenAI provider initialized successfully");
+                }
+                Err(e) => {
+                    warn!("Failed to initialize Azure OpenAI provider: {}", e);
                 }
             }
         }
 
         // Initialize AWS Bedrock provider if configured
-        if let Some(ref bedrock_config) = config.aws_bedrock_config {
-            if !bedrock_config.model_id.is_empty() {
-                match AWSBedrockClient::new(bedrock_config.clone()).await {
-                    Ok(client) => {
-                        providers.insert(LLMProvider::AWSBedrock, Arc::new(client));
-                        info!("AWS Bedrock provider initialized successfully");
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize AWS Bedrock provider: {}", e);
-                    }
+        if let Some(ref bedrock_config) = config.aws_bedrock_config
+            && !bedrock_config.model_id.is_empty()
+        {
+            match AWSBedrockClient::new(bedrock_config.clone()).await {
+                Ok(client) => {
+                    providers.insert(LLMProvider::AWSBedrock, Arc::new(client));
+                    info!("AWS Bedrock provider initialized successfully");
+                }
+                Err(e) => {
+                    warn!("Failed to initialize AWS Bedrock provider: {}", e);
                 }
             }
         }
@@ -139,16 +138,16 @@ impl LLMIntegrationEngine {
         }
 
         // Initialize HuggingFace provider if configured
-        if let Some(ref hf_config) = config.huggingface_config {
-            if !hf_config.api_key.is_empty() {
-                match HuggingFaceClient::new(hf_config.clone()).await {
-                    Ok(client) => {
-                        providers.insert(LLMProvider::HuggingFace, Arc::new(client));
-                        info!("HuggingFace provider initialized successfully");
-                    }
-                    Err(e) => {
-                        warn!("Failed to initialize HuggingFace provider: {}", e);
-                    }
+        if let Some(ref hf_config) = config.huggingface_config
+            && !hf_config.api_key.is_empty()
+        {
+            match HuggingFaceClient::new(hf_config.clone()).await {
+                Ok(client) => {
+                    providers.insert(LLMProvider::HuggingFace, Arc::new(client));
+                    info!("HuggingFace provider initialized successfully");
+                }
+                Err(e) => {
+                    warn!("Failed to initialize HuggingFace provider: {}", e);
                 }
             }
         }
@@ -391,17 +390,6 @@ impl RateLimiter {
     }
 }
 
-// Default implementations
-impl Default for TokenUsage {
-    fn default() -> Self {
-        Self {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        }
-    }
-}
-
 impl std::fmt::Display for LLMProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -421,7 +409,7 @@ impl std::fmt::Display for LLMProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::llm_integration::types::FinishReason;
+    use crate::ai::llm_integration::types::{FinishReason, TokenUsage};
     use chrono::Utc;
 
     #[test]

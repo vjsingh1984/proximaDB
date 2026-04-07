@@ -50,6 +50,8 @@ pub struct TraceStorage {
     service_index: RwLock<HashMap<String, Vec<String>>>,
     /// Total span count
     span_count: AtomicU64,
+    /// Total storage bytes (estimated)
+    total_bytes: AtomicU64,
 }
 
 /// Data for a single trace
@@ -77,6 +79,7 @@ impl TraceStorage {
             spans_by_time: RwLock::new(BTreeMap::new()),
             service_index: RwLock::new(HashMap::new()),
             span_count: AtomicU64::new(0),
+            total_bytes: AtomicU64::new(0),
         })
     }
 
@@ -118,22 +121,24 @@ impl TraceStorage {
             let mut spans_by_time = self.spans_by_time.write().await;
             spans_by_time
                 .entry(span.start_time_ns)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(span.span_id.clone());
         }
 
         // Update service index
         {
             let mut service_index = self.service_index.write().await;
-            let traces = service_index
-                .entry(span.service_name.clone())
-                .or_insert_with(Vec::new);
+            let traces = service_index.entry(span.service_name.clone()).or_default();
             if !traces.contains(trace_id) {
                 traces.push(trace_id.clone());
             }
         }
 
         self.span_count.fetch_add(1, Ordering::Relaxed);
+
+        // Track storage bytes
+        let span_size = self.estimate_span_size(span);
+        self.total_bytes.fetch_add(span_size, Ordering::Relaxed);
 
         Ok(())
     }
@@ -206,36 +211,40 @@ impl TraceStorage {
         if trace_ids.is_none() {
             return Ok(Vec::new());
         }
+        let Some(trace_ids) = trace_ids else {
+            return Ok(Vec::new());
+        };
 
         let traces = self.traces.read().await;
         let mut results = Vec::new();
 
-        for trace_id in trace_ids.unwrap() {
-            if let Some(trace) = traces.get(trace_id) {
-                if trace.start_time_ns >= start_ns && trace.start_time_ns <= end_ns {
-                    results.push(TraceSummary {
-                        trace_id: trace.trace_id.clone(),
-                        start_time_ns: trace.start_time_ns,
-                        duration_ns: trace.end_time_ns - trace.start_time_ns,
-                        span_count: trace.spans.len(),
-                        services: trace.services.clone(),
-                        root_service: trace
-                            .spans
-                            .iter()
-                            .find(|s| s.parent_span_id.is_empty())
-                            .map(|s| s.service_name.clone())
-                            .unwrap_or_default(),
-                        root_operation: trace
-                            .spans
-                            .iter()
-                            .find(|s| s.parent_span_id.is_empty())
-                            .map(|s| s.name.clone())
-                            .unwrap_or_default(),
-                    });
+        for trace_id in trace_ids {
+            if let Some(trace) = traces.get(trace_id)
+                && trace.start_time_ns >= start_ns
+                && trace.start_time_ns <= end_ns
+            {
+                results.push(TraceSummary {
+                    trace_id: trace.trace_id.clone(),
+                    start_time_ns: trace.start_time_ns,
+                    duration_ns: trace.end_time_ns - trace.start_time_ns,
+                    span_count: trace.spans.len(),
+                    services: trace.services.clone(),
+                    root_service: trace
+                        .spans
+                        .iter()
+                        .find(|s| s.parent_span_id.is_empty())
+                        .map(|s| s.service_name.clone())
+                        .unwrap_or_default(),
+                    root_operation: trace
+                        .spans
+                        .iter()
+                        .find(|s| s.parent_span_id.is_empty())
+                        .map(|s| s.name.clone())
+                        .unwrap_or_default(),
+                });
 
-                    if results.len() >= limit {
-                        break;
-                    }
+                if results.len() >= limit {
+                    break;
                 }
             }
         }
@@ -254,13 +263,12 @@ impl TraceStorage {
                 trace.spans.iter().map(|s| (s.span_id.clone(), s)).collect();
 
             for span in &trace.spans {
-                if !span.parent_span_id.is_empty() {
-                    if let Some(parent) = span_map.get(&span.parent_span_id) {
-                        if parent.service_name != span.service_name {
-                            let key = (parent.service_name.clone(), span.service_name.clone());
-                            *deps.entry(key).or_insert(0) += 1;
-                        }
-                    }
+                if !span.parent_span_id.is_empty()
+                    && let Some(parent) = span_map.get(&span.parent_span_id)
+                    && parent.service_name != span.service_name
+                {
+                    let key = (parent.service_name.clone(), span.service_name.clone());
+                    *deps.entry(key).or_insert(0) += 1;
                 }
             }
         }
@@ -280,6 +288,38 @@ impl TraceStorage {
     /// Get total span count
     pub async fn count(&self) -> u64 {
         self.span_count.load(Ordering::Relaxed)
+    }
+
+    /// Get the total storage size in bytes
+    pub async fn total_bytes(&self) -> u64 {
+        self.total_bytes.load(Ordering::Relaxed)
+    }
+
+    /// Estimate the size of a trace span in bytes
+    fn estimate_span_size(&self, span: &TraceSpan) -> u64 {
+        let mut size = 100; // Base overhead
+
+        // Add strings
+        size += span.trace_id.len() as u64;
+        size += span.span_id.len() as u64;
+        size += span.parent_span_id.len() as u64;
+        size += span.name.len() as u64;
+        size += span.service_name.len() as u64;
+        size += span.status_message.len() as u64;
+
+        // Add timestamps
+        size += 16; // 2 x i64
+
+        // Add attributes
+        for (key, val) in &span.attributes {
+            size += key.len() as u64;
+            size += val.len() as u64;
+        }
+
+        // Add status
+        size += 4; // i32
+
+        size
     }
 
     /// Get trace count

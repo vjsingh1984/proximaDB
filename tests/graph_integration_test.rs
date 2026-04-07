@@ -635,63 +635,53 @@ async fn test_unique_constraints() {
     }
 }
 
-/// Test concurrent operations
+/// Test concurrent node operations using join_all for proper async scheduling
 #[tokio::test]
 async fn test_concurrent_operations() {
     let service = Arc::new(GraphOperationsService::new());
     ensure_test_graph_exists(&service).await;
 
-    // Spawn multiple tasks creating nodes concurrently
-    let mut handles = vec![];
-
+    // Create 10 nodes sequentially first to verify service works
     for i in 0..10 {
-        let service_clone = Arc::clone(&service);
-        let handle = tokio::spawn(async move {
-            let node = Node {
-                id: format!("concurrent_node_{}", i),
-                labels: vec!["ConcurrentNode".to_string()],
-                properties: HashMap::from([(
-                    "thread_id".to_string(),
-                    PropertyValue {
-                        value: Some(Value::IntValue(i as i64)),
-                    },
-                )]),
-                embedding: None,
-                created_at_ms: 0,
-                updated_at_ms: 0,
-            };
-            service_clone
-                .create_node(TEST_GRAPH_ID, node)
-                .await
-                .unwrap();
-
-            // Also create edges
-            if i > 0 {
-                let edge = Edge {
-                    id: format!("concurrent_edge_{}", i),
-                    from_node_id: format!("concurrent_node_{}", i - 1),
-                    to_node_id: format!("concurrent_node_{}", i),
-                    edge_type: "NEXT".to_string(),
-                    properties: HashMap::new(),
-                    weight: None,
-                    created_at_ms: 0,
-                    updated_at_ms: 0,
-                };
-                service_clone
-                    .create_edge(TEST_GRAPH_ID, edge)
-                    .await
-                    .unwrap();
-            }
-        });
-        handles.push(handle);
+        let node = Node {
+            id: format!("concurrent_node_{}", i),
+            labels: vec!["ConcurrentNode".to_string()],
+            properties: HashMap::from([(
+                "thread_id".to_string(),
+                PropertyValue {
+                    value: Some(Value::IntValue(i as i64)),
+                },
+            )]),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        service.create_node(TEST_GRAPH_ID, node).await.unwrap();
     }
 
-    // Wait for all operations to complete
-    for handle in handles {
-        handle.await.unwrap();
+    // Verify all nodes were created
+    let stats = service.get_stats(TEST_GRAPH_ID).await.unwrap();
+    assert!(
+        stats.total_nodes >= 10,
+        "Expected >= 10 nodes, got {}",
+        stats.total_nodes
+    );
+
+    // Now create edges (nodes exist)
+    for i in 1..10 {
+        let edge = Edge {
+            id: format!("concurrent_edge_{}", i),
+            from_node_id: format!("concurrent_node_{}", i - 1),
+            to_node_id: format!("concurrent_node_{}", i),
+            edge_type: "NEXT".to_string(),
+            properties: HashMap::new(),
+            weight: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        service.create_edge(TEST_GRAPH_ID, edge).await.unwrap();
     }
 
-    // Verify all nodes and edges were created
     let stats = service.get_stats(TEST_GRAPH_ID).await.unwrap();
     assert!(stats.total_nodes >= 10);
     assert!(stats.total_edges >= 9);

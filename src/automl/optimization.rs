@@ -37,9 +37,13 @@ pub enum OptimizationGoal {
 /// Weighted objectives for custom optimization
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObjectiveWeights {
+    /// Weight applied to the latency objective (higher penalises slow queries more)
     pub latency: f64,
+    /// Weight applied to the throughput objective (higher rewards more queries-per-second)
     pub throughput: f64,
+    /// Weight applied to the memory objective (higher penalises large memory footprints more)
     pub memory: f64,
+    /// Weight applied to the recall/accuracy objective (higher rewards better search quality)
     pub accuracy: f64,
 }
 
@@ -70,31 +74,42 @@ pub struct ConfigurationSpace {
 /// Index configuration options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexConfiguration {
+    /// Index algorithm name (e.g. `"HNSW"`, `"IVF"`, `"LSH"`)
     pub algorithm: String,
+    /// Algorithm-specific tuning parameters (e.g. `M`, `ef_construction`, `nlist`)
     pub parameters: HashMap<String, f64>,
 }
 
 /// Quantization configuration options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizationConfiguration {
+    /// Quantization level (e.g. `"None"`, `"INT8"`, `"PQ8"`)
     pub level: String,
+    /// Number of codewords per sub-space for product quantization
     pub codebook_size: usize,
+    /// Number of vectors used to train the quantization codebook
     pub training_samples: usize,
 }
 
 /// Engine configuration options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineConfiguration {
+    /// Storage engine type (e.g. `"SST"`, `"VIPER"`, `"NOVA"`)
     pub engine_type: String,
+    /// In-memory write buffer size (MB) before flushing to disk
     pub flush_threshold_mb: f64,
+    /// How often (seconds) the engine runs background compaction
     pub compaction_interval_secs: u64,
 }
 
 /// Cache configuration options
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheConfiguration {
+    /// Maximum amount of memory (MB) dedicated to the read cache
     pub cache_size_mb: f64,
+    /// Cache eviction policy name (e.g. `"LRU"`, `"LFU"`)
     pub eviction_policy: String,
+    /// Whether the cache should read-ahead adjacent blocks on a cache miss
     pub prefetch_enabled: bool,
 }
 
@@ -116,29 +131,43 @@ pub struct OptimizationPipeline {
 /// Complete configuration for a collection
 #[derive(Debug, Clone)]
 pub struct Configuration {
+    /// Index algorithm and parameter settings
     pub index: IndexConfiguration,
+    /// Vector quantization settings
     pub quantization: QuantizationConfiguration,
+    /// Storage engine settings
     pub engine: EngineConfiguration,
+    /// Read-cache settings
     pub cache: CacheConfiguration,
 }
 
 /// Optimization run record
 #[derive(Debug, Clone)]
 pub struct OptimizationRun {
+    /// Identifier of the collection that was optimized
     pub collection_id: String,
+    /// Wall-clock time when this optimization run was recorded
     pub timestamp: chrono::DateTime<chrono::Utc>,
+    /// Objective that guided the search
     pub goal: OptimizationGoal,
+    /// Number of candidate configurations evaluated during this run
     pub iterations: usize,
+    /// Best-scoring configuration discovered by the search
     pub best_config: Configuration,
+    /// Estimated performance improvement (%) over the baseline configuration
     pub improvement: f64,
+    /// Total wall-clock time (milliseconds) taken by this optimization run
     pub duration_ms: u64,
 }
 
 /// Pipeline state
 #[derive(Debug, Clone)]
 pub enum PipelineState {
+    /// No optimization is currently running
     Idle,
+    /// Optimization runs are being accepted and executed
     Running,
+    /// The pipeline has been explicitly stopped
     Stopped,
 }
 
@@ -148,12 +177,20 @@ pub enum OptimizationStrategy {
     /// Grid search through all combinations
     GridSearch,
     /// Random search with budget
-    RandomSearch { budget: usize },
+    RandomSearch {
+        /// Maximum number of randomly sampled configurations to evaluate
+        budget: usize,
+    },
     /// Bayesian optimization
-    BayesianOptimization { n_iterations: usize },
+    BayesianOptimization {
+        /// Number of sequential model-guided evaluations to perform
+        n_iterations: usize,
+    },
     /// Genetic algorithm
     GeneticAlgorithm {
+        /// Number of candidate configurations maintained per generation
         population_size: usize,
+        /// Number of evolutionary generations to run
         generations: usize,
     },
 }
@@ -415,18 +452,26 @@ impl OptimizationPipeline {
 
         for _ in 0..budget {
             let config = Configuration {
-                index: config_space.index_configs.choose(&mut rng).unwrap().clone(),
+                index: config_space
+                    .index_configs
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("No index configurations available"))?
+                    .clone(),
                 quantization: config_space
                     .quantization_configs
                     .choose(&mut rng)
-                    .unwrap()
+                    .ok_or_else(|| anyhow::anyhow!("No quantization configurations available"))?
                     .clone(),
                 engine: config_space
                     .engine_configs
                     .choose(&mut rng)
-                    .unwrap()
+                    .ok_or_else(|| anyhow::anyhow!("No engine configurations available"))?
                     .clone(),
-                cache: config_space.cache_configs.choose(&mut rng).unwrap().clone(),
+                cache: config_space
+                    .cache_configs
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("No cache configurations available"))?
+                    .clone(),
             };
 
             let score = self
@@ -474,7 +519,7 @@ impl OptimizationPipeline {
         // Return best observed configuration
         observations
             .into_iter()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(config, _)| config)
             .ok_or_else(|| anyhow::anyhow!("No valid configuration found"))
     }
@@ -508,8 +553,12 @@ impl OptimizationPipeline {
 
             while new_population.len() < population_size {
                 // Tournament selection
-                let parent1 = population.choose(&mut rng).unwrap();
-                let parent2 = population.choose(&mut rng).unwrap();
+                let parent1 = population
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("Population is empty during selection"))?;
+                let parent2 = population
+                    .choose(&mut rng)
+                    .ok_or_else(|| anyhow::anyhow!("Population is empty during selection"))?;
 
                 // Crossover
                 let child = self.crossover(&parent1.0, &parent2.0, config_space)?;
@@ -531,7 +580,7 @@ impl OptimizationPipeline {
         // Return best individual
         population
             .into_iter()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(config, _)| config)
             .ok_or_else(|| anyhow::anyhow!("No valid configuration found"))
     }
@@ -542,18 +591,26 @@ impl OptimizationPipeline {
         let mut rng = rand::thread_rng();
 
         Ok(Configuration {
-            index: config_space.index_configs.choose(&mut rng).unwrap().clone(),
+            index: config_space
+                .index_configs
+                .choose(&mut rng)
+                .ok_or_else(|| anyhow::anyhow!("No index configurations available"))?
+                .clone(),
             quantization: config_space
                 .quantization_configs
                 .choose(&mut rng)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("No quantization configurations available"))?
                 .clone(),
             engine: config_space
                 .engine_configs
                 .choose(&mut rng)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("No engine configurations available"))?
                 .clone(),
-            cache: config_space.cache_configs.choose(&mut rng).unwrap().clone(),
+            cache: config_space
+                .cache_configs
+                .choose(&mut rng)
+                .ok_or_else(|| anyhow::anyhow!("No cache configurations available"))?
+                .clone(),
         })
     }
 
@@ -614,24 +671,32 @@ impl OptimizationPipeline {
         let mut mutated = config.clone();
 
         if rng.gen_bool(0.1) {
-            mutated.index = config_space.index_configs.choose(&mut rng).unwrap().clone();
+            mutated.index = config_space
+                .index_configs
+                .choose(&mut rng)
+                .ok_or_else(|| anyhow::anyhow!("No index configurations available"))?
+                .clone();
         }
         if rng.gen_bool(0.1) {
             mutated.quantization = config_space
                 .quantization_configs
                 .choose(&mut rng)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("No quantization configurations available"))?
                 .clone();
         }
         if rng.gen_bool(0.1) {
             mutated.engine = config_space
                 .engine_configs
                 .choose(&mut rng)
-                .unwrap()
+                .ok_or_else(|| anyhow::anyhow!("No engine configurations available"))?
                 .clone();
         }
         if rng.gen_bool(0.1) {
-            mutated.cache = config_space.cache_configs.choose(&mut rng).unwrap().clone();
+            mutated.cache = config_space
+                .cache_configs
+                .choose(&mut rng)
+                .ok_or_else(|| anyhow::anyhow!("No cache configurations available"))?
+                .clone();
         }
 
         Ok(mutated)
@@ -741,8 +806,13 @@ mod tests {
     #[tokio::test]
     async fn test_grid_search() {
         let config = AutoMLConfig::default();
-        let pipeline = OptimizationPipeline::new(config).await.unwrap();
-        pipeline.start().await.unwrap();
+        let pipeline = OptimizationPipeline::new(config)
+            .await
+            .expect("Failed to create optimization pipeline");
+        pipeline
+            .start()
+            .await
+            .expect("Failed to start optimization pipeline");
 
         let config_space = ConfigurationSpace {
             index_configs: vec![IndexConfiguration {
@@ -773,7 +843,7 @@ mod tests {
                 &config_space,
             )
             .await
-            .unwrap();
+            .expect("Grid search failed");
 
         assert_eq!(best.index.algorithm, "HNSW");
     }

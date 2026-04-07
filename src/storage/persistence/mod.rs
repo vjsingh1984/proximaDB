@@ -1,7 +1,37 @@
 //! Data Persistence Layer
 //!
-//! This module contains all data persistence components including
-//! WAL, filesystem abstraction, disk management, and atomicity coordination.
+//! This module provides all data persistence components ensuring durability and
+//! crash recovery for vector data. It implements a write-ahead log (WAL) for
+//! ACID guarantees, unified filesystem abstraction for cloud storage, and
+//! intelligent disk management for optimal I/O performance.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────┐
+//! │                    API Layer                             │
+//! │              (Vector Operations)                         │
+//! └────────────────────┬────────────────────────────────────┘
+//!                      ↓
+//! ┌─────────────────────────────────────────────────────────┐
+//! │              Write-Ahead Log (WAL)                       │
+//! │         - MemTable buffering                             │
+//! │         - Sequential I/O for durability                   │
+//! │         - Crash recovery support                         │
+//! └────────────────────┬────────────────────────────────────┘
+//!                      ↓
+//! ┌─────────────────────────────────────────────────────────┐
+//! │            Filesystem Abstraction                        │
+//! │    - Local FS, S3, Azure, GCS                           │
+//! │    - Unified caching layer                              │
+//! │    - Atomic operations                                   │
+//! └────────────────────┬────────────────────────────────────┘
+//!                      ↓
+//! ┌─────────────────────────────────────────────────────────┐
+//! │              Storage Engines                             │
+//! │   SST, VIPER, NOVA, HELIX, SWIFT, RAPTOR               │
+//! └─────────────────────────────────────────────────────────┘
+//! ```
 
 pub mod disk_manager;
 pub mod filesystem;

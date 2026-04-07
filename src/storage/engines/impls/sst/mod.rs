@@ -670,20 +670,15 @@ pub struct SstableHeader {
 // This eliminates duplication and ensures consistency across all storage engines
 
 /// Vector format type for bytemuck optimization
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum VectorFormat {
     /// All vectors have the same fixed dimension (use bytemuck)
     Fixed { dimension: usize },
     /// Vectors have variable dimensions (use standard serialization)
+    #[default]
     Variable,
     /// Mixed dimensions - majority fixed, some variable
     Mixed { dominant_dimension: usize },
-}
-
-impl Default for VectorFormat {
-    fn default() -> Self {
-        VectorFormat::Variable
-    }
 }
 
 // ============================================================================
@@ -801,10 +796,10 @@ impl BPlusTreeIndex {
         for (i, chunk) in entries.chunks(fanout).enumerate() {
             let start_key = chunk.first().map(|e| e.key.clone()).unwrap_or_default();
             // Use last_key from the last entry in chunk if available, otherwise fall back to key
-            let end_key = chunk
-                .last()
-                .map(|e| e.last_key.clone().unwrap_or_else(|| e.key.clone()))
-                .unwrap_or_else(|| start_key.clone());
+            let end_key = chunk.last().map_or_else(
+                || start_key.clone(),
+                |e| e.last_key.clone().unwrap_or_else(|| e.key.clone()),
+            );
             leaves.push(BPlusLeaf {
                 start_key,
                 end_key,
@@ -1453,7 +1448,7 @@ mod compression_helpers {
         };
 
         BlockCompressionConfig {
-            algorithm: compression_algorithm.clone(),
+            algorithm: compression_algorithm,
             compression_level: config.compression_level as u8,
             enable_vector_compression: compression_algorithm != CompressionAlgorithm::None,
             enable_metadata_compression: true,
@@ -1559,7 +1554,7 @@ mod compression_helpers {
             };
 
             BlockCompressionConfig {
-                algorithm: compression_algorithm.clone(),
+                algorithm: compression_algorithm,
                 compression_level: config.level.unwrap_or(3) as u8,
                 enable_vector_compression: config.algorithm
                     != crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32,
@@ -1723,8 +1718,7 @@ mod block_utils {
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
                         serde_json::Number::from_f64(*n)
-                            .map(serde_json::Value::Number)
-                            .unwrap_or(serde_json::Value::Null)
+                            .map_or(serde_json::Value::Null, serde_json::Value::Number)
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
                         serde_json::Value::Bool(*b)
@@ -1754,18 +1748,18 @@ mod block_utils {
                 // Update min/max values for this column
                 if col_stats.min_value.is_none() {
                     col_stats.min_value = Some(value.clone());
-                } else if let Some(ref mut min_val) = col_stats.min_value {
-                    if compare_json_values(&value, min_val) == std::cmp::Ordering::Less {
-                        *min_val = value.clone();
-                    }
+                } else if let Some(ref mut min_val) = col_stats.min_value
+                    && compare_json_values(&value, min_val) == std::cmp::Ordering::Less
+                {
+                    *min_val = value.clone();
                 }
 
                 if col_stats.max_value.is_none() {
                     col_stats.max_value = Some(value.clone());
-                } else if let Some(ref mut max_val) = col_stats.max_value {
-                    if compare_json_values(&value, max_val) == std::cmp::Ordering::Greater {
-                        *max_val = value;
-                    }
+                } else if let Some(ref mut max_val) = col_stats.max_value
+                    && compare_json_values(&value, max_val) == std::cmp::Ordering::Greater
+                {
+                    *max_val = value;
                 }
             }
         }
@@ -1932,7 +1926,7 @@ mod block_operations {
         block
             .quantized_vectors
             .as_ref()
-            .map_or(false, |v| !v.is_empty())
+            .is_some_and(|v| !v.is_empty())
     }
 
     /// Get memory savings from quantization
@@ -1949,8 +1943,7 @@ mod block_operations {
         let quantized_size = block
             .quantized_vectors
             .as_ref()
-            .map(|vecs| vecs.iter().map(|v| v.len()).sum::<usize>())
-            .unwrap_or(0);
+            .map_or(0, |vecs| vecs.iter().map(|v| v.len()).sum::<usize>());
 
         if original_size > 0 && quantized_size > 0 {
             1.0 - (quantized_size as f32 / original_size as f32)
@@ -1988,3 +1981,229 @@ impl BatchExtractionStats {
 // SST is now pure SSTable storage - no memtable to query
 
 // EngineCompactionResult removed - now using unified storage::traits::CompactionResult
+
+#[cfg(test)]
+mod bplustree_tests {
+    use super::*;
+
+    /// Helper to create test index entries
+    fn create_test_entries(count: usize) -> Vec<IndexEntry> {
+        (0..count)
+            .map(|i| IndexEntry {
+                key: format!("key_{:05}", i),
+                last_key: None,
+                offset: i as u64 * 1000,
+                size: 1000,
+                block_id: i as u32,
+                block_offset: 0,
+                compressed: false,
+                block_centroid: vec![i as f32; 8],
+                block_centroid_fp16: None,
+                metadata_min_values: std::collections::HashMap::new(),
+                metadata_max_values: std::collections::HashMap::new(),
+                metadata_null_counts: std::collections::HashMap::new(),
+                block_key_bloom: None,
+                block_metadata_bloom: None,
+                vector_format: VectorFormat::Fixed { dimension: 8 },
+                zorder_code: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_bplustree_build() {
+        let entries = create_test_entries(100);
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        // Check structure
+        assert_eq!(tree.fanout, 16);
+        assert_eq!(tree.leaves.len(), (100 + 15) / 16); // Ceiling division
+        assert_eq!(tree.root.len(), tree.leaves.len());
+
+        // Check leaf ranges
+        for (i, leaf) in tree.leaves.iter().enumerate() {
+            assert_eq!(leaf.start_idx, i * 16);
+            assert!(leaf.len <= 16);
+            assert!(leaf.len > 0);
+        }
+    }
+
+    #[test]
+    fn test_bplustree_build_small() {
+        // Test with fewer entries than fanout
+        let entries = create_test_entries(5);
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        assert_eq!(tree.leaves.len(), 1);
+        assert_eq!(tree.leaves[0].len, 5);
+        assert_eq!(tree.leaves[0].start_idx, 0);
+    }
+
+    #[test]
+    fn test_bplustree_build_empty() {
+        let entries: Vec<IndexEntry> = vec![];
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        assert_eq!(tree.leaves.len(), 0);
+        assert_eq!(tree.root.len(), 0);
+    }
+
+    #[test]
+    fn test_leaf_for_key() {
+        let entries = create_test_entries(100);
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        // Test exact match
+        let leaf = tree.leaf_for_key("key_00032").unwrap();
+        assert!(leaf.start_key.as_str() <= "key_00032");
+        assert!(leaf.end_key.as_str() >= "key_00032");
+
+        // Test first key
+        let leaf = tree.leaf_for_key("key_00000").unwrap();
+        assert_eq!(leaf.start_key, "key_00000");
+
+        // Test last key
+        let leaf = tree.leaf_for_key("key_00099").unwrap();
+        assert_eq!(leaf.end_key, "key_00099");
+    }
+
+    #[test]
+    fn test_leaf_for_key_not_found() {
+        let entries = create_test_entries(100);
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        // Key before first
+        let leaf = tree.leaf_for_key("key_00000");
+        assert!(leaf.is_some()); // Will return first leaf
+
+        // Key after last
+        let leaf = tree.leaf_for_key("key_99999");
+        assert!(leaf.is_some()); // Will return last leaf
+    }
+
+    #[test]
+    fn test_range_leaves() {
+        let entries = create_test_entries(100);
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        // Range spanning multiple leaves
+        let leaves = tree.range_leaves("key_00010", "key_00040");
+        assert!(leaves.len() >= 2); // Should span at least 2 leaves with fanout 16
+
+        // Range within single leaf
+        let leaves = tree.range_leaves("key_00000", "key_00010");
+        assert!(leaves.len() >= 1);
+
+        // Full range
+        let leaves = tree.range_leaves("key_00000", "key_00099");
+        assert_eq!(leaves.len(), tree.leaves.len());
+    }
+
+    #[test]
+    fn test_range_leaves_no_overlap() {
+        let entries = create_test_entries(50);
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        // Range with no entries (before all keys)
+        let leaves = tree.range_leaves("aaa_00000", "aaa_99999");
+        assert_eq!(leaves.len(), 0);
+
+        // Range with no entries (after all keys)
+        let leaves = tree.range_leaves("zzz_00000", "zzz_99999");
+        assert_eq!(leaves.len(), 0);
+    }
+
+    #[test]
+    fn test_fanout_minimum() {
+        let entries = create_test_entries(100);
+
+        // Request fanout below minimum (should be clamped to 8)
+        let tree = BPlusTreeIndex::build(&entries, 2);
+        assert_eq!(tree.fanout, 8);
+
+        let tree = BPlusTreeIndex::build(&entries, 0);
+        assert_eq!(tree.fanout, 8);
+    }
+
+    #[test]
+    fn test_bplustree_serialization() {
+        let entries = create_test_entries(50);
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        // Serialize
+        let serialized = bincode::serialize(&tree).expect("Serialization failed");
+
+        // Deserialize
+        let deserialized: BPlusTreeIndex =
+            bincode::deserialize(&serialized).expect("Deserialization failed");
+
+        // Verify
+        assert_eq!(deserialized.fanout, tree.fanout);
+        assert_eq!(deserialized.leaves.len(), tree.leaves.len());
+        assert_eq!(deserialized.root.len(), tree.root.len());
+
+        for (orig, deser) in tree.leaves.iter().zip(deserialized.leaves.iter()) {
+            assert_eq!(orig.start_key, deser.start_key);
+            assert_eq!(orig.end_key, deser.end_key);
+            assert_eq!(orig.start_idx, deser.start_idx);
+            assert_eq!(orig.len, deser.len);
+        }
+    }
+
+    #[test]
+    fn test_large_fanout() {
+        let entries = create_test_entries(1000);
+        let tree = BPlusTreeIndex::build(&entries, 128);
+
+        assert_eq!(tree.fanout, 128);
+        assert_eq!(tree.leaves.len(), (1000 + 127) / 128);
+
+        // Verify all entries are covered
+        let total_covered: usize = tree.leaves.iter().map(|l| l.len).sum();
+        assert_eq!(total_covered, 1000);
+    }
+
+    #[test]
+    fn test_leaf_boundaries() {
+        let entries = create_test_entries(100);
+        let tree = BPlusTreeIndex::build(&entries, 20);
+
+        // Test that leaves are properly ordered and non-overlapping
+        for i in 0..tree.leaves.len() - 1 {
+            let current = &tree.leaves[i];
+            let next = &tree.leaves[i + 1];
+
+            // Current leaf's end should be before next leaf's start
+            assert!(current.end_key <= next.start_key);
+
+            // Indices should not overlap
+            assert_eq!(current.start_idx + current.len, next.start_idx);
+        }
+    }
+
+    #[test]
+    fn test_root_pivot_keys() {
+        let entries = create_test_entries(100);
+        let tree = BPlusTreeIndex::build(&entries, 16);
+
+        // Each root entry's pivot key should match its leaf's start key
+        for root_entry in &tree.root {
+            let leaf = &tree.leaves[root_entry.leaf_idx];
+            assert_eq!(root_entry.pivot_key, leaf.start_key);
+        }
+    }
+
+    #[test]
+    fn test_lookup_performance_characteristic() {
+        // Test that tree reduces search space (not an actual perf test, just structure verification)
+        let entries = create_test_entries(1000);
+        let tree = BPlusTreeIndex::build(&entries, 64);
+
+        // With 1000 entries and fanout 64, should have ~16 leaves
+        assert!(tree.leaves.len() <= 20);
+
+        // Searching should only need to scan one leaf (64 entries) instead of all 1000
+        let leaf = tree.leaf_for_key("key_00500").unwrap();
+        assert!(leaf.len <= 64);
+    }
+}

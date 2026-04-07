@@ -233,12 +233,18 @@ use crate::core::config::HardwareConfig;
 // GPU types with feature gating
 // NOTE: GpuBackend and GpuDevice stub definitions
 // These are used when gpu feature is disabled or for basic type definitions
+/// Available GPU compute backends
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GpuBackend {
+    /// No GPU available
     None,
+    /// NVIDIA CUDA
     CUDA,
+    /// AMD ROCm
     ROCm,
+    /// Apple Metal Performance Shaders
     MPS,
+    /// OpenCL (cross-platform)
     OpenCL,
 }
 
@@ -382,14 +388,20 @@ impl std::fmt::Display for GpuBackend {
     }
 }
 
-// NOTE: GpuDevice stub definition
+/// Represents a detected GPU device and its capabilities
 #[derive(Debug, Clone)]
 pub struct GpuDevice {
+    /// Device index (0-based)
     pub id: usize,
+    /// Human-readable device name
     pub name: String,
+    /// Total device memory in bytes
     pub total_memory: u64,
+    /// Currently available device memory in bytes
     pub available_memory: u64,
+    /// CUDA compute capability (major, minor), if applicable
     pub compute_capability: Option<(u32, u32)>,
+    /// GPU backend type
     pub backend: GpuBackend,
 }
 
@@ -414,21 +426,32 @@ pub struct HardwareCapabilities {
 /// Centralized CPU features (replaces duplicate from compute module)
 #[derive(Debug, Clone)]
 pub struct CpuFeatures {
+    /// Whether AVX-512 instruction set is available
     pub avx512_support: bool,
+    /// Whether AVX2 instruction set is available
     pub avx2_support: bool,
+    /// Whether SSE 4.2 instruction set is available
     pub sse42_support: bool,
+    /// Whether ARM NEON SIMD is available
     pub neon_support: bool,
+    /// Number of physical CPU cores
     pub core_count: usize,
+    /// Number of logical CPU threads (including hyperthreading)
     pub thread_count: usize,
+    /// CPU cache hierarchy sizes
     pub cache_sizes: CacheSizes,
 }
 
 /// Cache size information
 #[derive(Debug, Clone)]
 pub struct CacheSizes {
+    /// L1 data cache size in bytes
     pub l1_data: usize,
+    /// L1 instruction cache size in bytes
     pub l1_instruction: usize,
+    /// L2 cache size in bytes
     pub l2: usize,
+    /// L3 (last-level) cache size in bytes
     pub l3: usize,
 }
 
@@ -511,7 +534,7 @@ impl SimdCapabilities {
     }
 
     /// Get a string representation of the available SIMD capabilities
-    pub fn to_string(&self) -> String {
+    pub fn describe_features(&self) -> String {
         let mut features = Vec::new();
         if self.has_avx512 {
             features.push("AVX-512");
@@ -1059,35 +1082,36 @@ impl HardwareCapabilities {
             let line_lower = line.to_lowercase();
 
             // Check for ARM cache size indicators
-            if line_lower.contains("cache") && line_lower.contains("size") {
-                if let Some(size) = Self::parse_arm_cache_size(&line) {
-                    // ARM cpuinfo often doesn't specify cache level clearly
-                    // Use heuristics based on size ranges
-                    if size <= 128 * 1024
-                        && (line_lower.contains("instruction") || line_lower.contains("icache"))
-                    {
-                        // Likely L1 instruction cache
-                        cache_sizes.l1_instruction = size;
-                    } else if size <= 128 * 1024 {
-                        // Likely L1 data cache
-                        cache_sizes.l1_data = size;
-                    } else if size <= 4 * 1024 * 1024 {
-                        // Likely L2 cache
-                        cache_sizes.l2 = size;
-                    } else {
-                        // Likely L3 cache
-                        cache_sizes.l3 = size;
-                    }
+            if line_lower.contains("cache")
+                && line_lower.contains("size")
+                && let Some(size) = Self::parse_arm_cache_size(line)
+            {
+                // ARM cpuinfo often doesn't specify cache level clearly
+                // Use heuristics based on size ranges
+                if size <= 128 * 1024
+                    && (line_lower.contains("instruction") || line_lower.contains("icache"))
+                {
+                    // Likely L1 instruction cache
+                    cache_sizes.l1_instruction = size;
+                } else if size <= 128 * 1024 {
+                    // Likely L1 data cache
+                    cache_sizes.l1_data = size;
+                } else if size <= 4 * 1024 * 1024 {
+                    // Likely L2 cache
+                    cache_sizes.l2 = size;
+                } else {
+                    // Likely L3 cache
+                    cache_sizes.l3 = size;
                 }
             }
 
             // Check for specific ARM vendor cache info
             if line_lower.contains("apple") && line_lower.contains("cache") {
                 // Apple Silicon specific parsing
-                cache_sizes = Self::parse_apple_silicon_cache(&line, cache_sizes);
+                cache_sizes = Self::parse_apple_silicon_cache(line, cache_sizes);
             } else if line_lower.contains("qualcomm") || line_lower.contains("snapdragon") {
                 // Qualcomm Snapdragon specific parsing
-                cache_sizes = Self::parse_qualcomm_cache(&line, cache_sizes);
+                cache_sizes = Self::parse_qualcomm_cache(line, cache_sizes);
             }
         }
 
@@ -1104,22 +1128,18 @@ impl HardwareCapabilities {
         for word in line.split_whitespace() {
             let word_clean = word.trim_matches(|c: char| !c.is_alphanumeric());
 
-            if word_clean.ends_with("kb") {
-                if let Some(size) = word_clean[..word_clean.len() - 2]
-                    .parse::<usize>()
-                    .ok()
-                    .map(|s| s * 1024)
-                {
-                    return Some(size);
-                }
-            } else if word_clean.ends_with("mb") {
-                if let Some(size) = word_clean[..word_clean.len() - 2]
-                    .parse::<usize>()
-                    .ok()
-                    .map(|s| s * 1024 * 1024)
-                {
-                    return Some(size);
-                }
+            if let Some(size) = word_clean
+                .strip_suffix("kb")
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|s| s * 1024)
+            {
+                return Some(size);
+            } else if let Some(size) = word_clean
+                .strip_suffix("mb")
+                .and_then(|s| s.parse::<usize>().ok())
+                .map(|s| s * 1024 * 1024)
+            {
+                return Some(size);
             } else if let Some(size) = word_clean
                 .strip_suffix("k")
                 .and_then(|s| s.parse::<usize>().ok())
@@ -1186,7 +1206,7 @@ impl HardwareCapabilities {
             match crate::compute::gpu::distance::detect_gpu_capabilities() {
                 Ok((backend, devices)) => {
                     let total_memory = devices.iter().map(|d| d.total_memory).sum();
-                    let primary_device = if devices.is_empty() { None } else { Some(0) };
+                    let primary_device = devices.first().map(|_| 0);
 
                     if backend != GpuBackend::None {
                         info!(
@@ -1279,7 +1299,7 @@ impl HardwareCapabilities {
             self.cpu.vendor, self.cpu.model_name, self.cpu.physical_cores, self.cpu.logical_cores
         );
 
-        info!("🎯 SIMD: {}", self.cpu.simd.to_string());
+        info!("🎯 SIMD: {}", self.cpu.simd.describe_features());
 
         match self.gpu.backend {
             GpuBackend::None => {
@@ -1391,10 +1411,16 @@ pub fn initialize_hardware_capabilities_default() -> Result<()> {
 ///
 /// # Panics
 /// Panics if called before initialize_hardware_capabilities()
+#[allow(clippy::panic)] // Intentional panic for API misuse detection
 pub fn hardware_capabilities() -> Arc<HardwareCapabilities> {
-    HARDWARE_CAPABILITIES.get()
-        .expect("Hardware capabilities not initialized. Call initialize_hardware_capabilities() at startup.")
-        .clone()
+    match HARDWARE_CAPABILITIES.get() {
+        Some(caps) => caps.clone(),
+        None => {
+            panic!(
+                "Hardware capabilities not initialized. Call initialize_hardware_capabilities() at startup."
+            )
+        }
+    }
 }
 
 /// Try to get hardware capabilities without panicking
@@ -1450,6 +1476,7 @@ impl Default for HardwareCapabilities {
     }
 }
 
+/// Retrieve the global hardware capabilities, detecting them on first call
 pub fn get_hardware_capabilities() -> Arc<HardwareCapabilities> {
     try_get_hardware_capabilities().unwrap_or_else(|| Arc::new(HardwareCapabilities::default()))
 }
@@ -1596,23 +1623,17 @@ pub struct HardwareQuery;
 impl HardwareQuery {
     /// Check if AVX-512 is available
     pub fn has_avx512() -> bool {
-        try_get_hardware_capabilities()
-            .map(|caps| caps.has_avx512())
-            .unwrap_or(false)
+        try_get_hardware_capabilities().is_some_and(|caps| caps.has_avx512())
     }
 
     /// Check if GPU acceleration is available
     pub fn has_gpu() -> bool {
-        try_get_hardware_capabilities()
-            .map(|caps| caps.has_gpu())
-            .unwrap_or(false)
+        try_get_hardware_capabilities().is_some_and(|caps| caps.has_gpu())
     }
 
     /// Get the number of CPU cores
     pub fn cpu_cores() -> usize {
-        try_get_hardware_capabilities()
-            .map(|caps| caps.cpu.logical_cores)
-            .unwrap_or_else(|| num_cpus::get())
+        try_get_hardware_capabilities().map_or_else(num_cpus::get, |caps| caps.cpu.logical_cores)
     }
 
     /// Get recommended thread pool size
@@ -1624,9 +1645,9 @@ impl HardwareQuery {
 
     /// Get recommended cache size
     pub fn recommended_cache_size() -> u64 {
-        try_get_hardware_capabilities()
-            .map(|caps| caps.memory.recommended_cache_size)
-            .unwrap_or(1024 * 1024 * 1024) // 1GB default
+        try_get_hardware_capabilities().map_or(1024 * 1024 * 1024, |caps| {
+            caps.memory.recommended_cache_size
+        }) // 1GB default
     }
 
     /// Get L3 cache size for optimal row group sizing

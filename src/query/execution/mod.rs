@@ -5,8 +5,10 @@
 //! Key architectural improvement: Uses HashMap metadata filtering for O(1) lookups
 //! instead of Vec<MetadataItem> linear scans, achieving 10x performance gain.
 
+pub mod datafusion_bridge;
 pub mod executor;
 pub mod planner;
+pub mod window_executor;
 
 use crate::core::search::FilterExpression;
 use crate::graph::GraphOperationsService;
@@ -181,13 +183,21 @@ pub enum ExecutionStrategy {
 /// Query execution plan generated from internal AST
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExecutionPlan {
+    /// Strategy for executing this query
     pub execution_strategy: ExecutionStrategy,
+    /// Ordered list of execution operations
     pub operations: Vec<ExecutionOperation>,
+    /// Estimated total cost of the plan
     pub estimated_cost: f64,
+    /// Optimizations applied to the plan
     pub optimizations: Vec<String>,
+    /// Performance hints for the executor
     pub performance_hints: Vec<String>,
+    /// Seeding strategy for hybrid graph-vector queries
     pub seeding_strategy: SeedingStrategy,
+    /// Optional result limit
     pub limit: Option<usize>,
+    /// Optional result offset
     pub offset: Option<usize>,
 }
 
@@ -196,71 +206,105 @@ pub struct ExecutionPlan {
 pub enum ExecutionOperation {
     /// Vector search operation with HashMap metadata filtering
     VectorSearch {
+        /// Collection to search
         collection_id: String,
+        /// Query vector for similarity search
         query_vector: Option<Vec<f32>>,
-        filters: Option<FilterExpression>, // Uses HashMap.get() for O(1) filtering
+        /// Optional metadata filter expression
+        filters: Option<FilterExpression>,
+        /// Number of nearest neighbors to return
         top_k: usize,
+        /// Distance metric to use (e.g., "cosine", "l2")
         distance_metric: String,
     },
     /// Graph traversal operation
     GraphTraversal {
+        /// Graph identifier
         graph_id: String,
+        /// Starting node IDs for traversal
         start_nodes: Vec<String>,
+        /// Edge types to traverse
         edge_types: Vec<String>,
+        /// Maximum traversal depth
         max_depth: u32,
+        /// Optional filter expression for traversal
         filters: Option<FilterExpression>,
         /// Optional vector target collection for seeded SIMILAR after traversal
         vector_target_collection: Option<String>,
     },
     /// Fusion operation for hybrid results
     Fusion {
+        /// Fusion strategy to use
         strategy: FusionStrategy,
+        /// Weights for each input source
         weights: Vec<f64>,
     },
     /// Projection and result formatting
     Project {
+        /// Column names to project
         columns: Vec<String>,
+        /// Transformations to apply to projected columns
         transformations: Vec<ProjectionTransform>,
     },
     /// Aggregate + Having for GROUP BY
     Aggregate {
+        /// Columns to group by
         group_keys: Vec<String>,
+        /// Aggregate specifications
         aggs: Vec<AggregateSpec>,
+        /// Optional HAVING filter
         having: Option<FilterExpression>,
     },
     /// Join scaffolding (implemented)
     Join {
+        /// Type of join
         kind: JoinKind,
+        /// Left join key columns
         left_keys: Vec<String>,
+        /// Right join key columns
         right_keys: Vec<String>,
+        /// Left table alias
         left_alias: String,
+        /// Right table alias
         right_alias: String,
     },
     /// UNION operation for combining results
     Union {
-        all: bool, // UNION ALL vs UNION (distinct)
+        /// Whether to include all rows (UNION ALL)
+        all: bool,
     },
     /// Set UNION operation with explicit left/right references
     SetUnion {
+        /// Left result set reference
         left_results: String,
+        /// Right result set reference
         right_results: String,
+        /// Whether to deduplicate results
         distinct: bool,
     },
     /// Set INTERSECT operation
     SetIntersect {
+        /// Left result set reference
         left_results: String,
+        /// Right result set reference
         right_results: String,
+        /// Whether to deduplicate results
         distinct: bool,
     },
     /// Set EXCEPT operation
     SetExcept {
+        /// Left result set reference
         left_results: String,
+        /// Right result set reference
         right_results: String,
+        /// Whether to deduplicate results
         distinct: bool,
     },
     /// CTE Materialization operation
     CteMaterialization {
+        /// Name of the CTE to materialize
         cte_name: String,
+        /// Execution plan for the CTE
         query_plan: Box<ExecutionPlan>,
     },
 }
@@ -354,16 +398,25 @@ pub enum FusionStrategy {
     /// Multiplicative score combination
     Multiplicative,
     /// Reciprocal Rank Fusion (research-grade)
-    ReciprocalRankFusion { k: f64 },
+    ReciprocalRankFusion {
+        /// RRF constant k parameter
+        k: f64,
+    },
     /// Adaptive Semantic Fusion with learning
-    AdaptiveSemanticFusion { learning_rate: f64 },
+    AdaptiveSemanticFusion {
+        /// Learning rate for adaptive weight adjustment
+        learning_rate: f64,
+    },
 }
 
 /// Projection transformations for result formatting
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ProjectionTransform {
     /// Extract metadata field with HashMap optimization
-    ExtractMetadata { field: String },
+    ExtractMetadata {
+        /// Metadata field name to extract
+        field: String,
+    },
     /// Calculate similarity score
     SimilarityScore,
     /// Format timestamp
@@ -373,63 +426,95 @@ pub enum ProjectionTransform {
 /// Aggregate specification
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AggregateSpec {
+    /// Output alias for this aggregate
     pub alias: String,
+    /// Aggregate function to apply
     pub func: AggregateFunc,
+    /// Field to aggregate
     pub field: String,
 }
 
+/// Aggregate function type
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AggregateFunc {
+    /// Count of rows
     Count,
+    /// Sum of values
     Sum,
+    /// Average of values
     Avg,
+    /// Minimum value
     Min,
+    /// Maximum value
     Max,
 }
 
+/// Type of join operation
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum JoinKind {
+    /// Inner join
     Inner,
+    /// Left outer join
     Left,
 }
 
 /// Query execution result
 #[derive(Debug, Clone)]
 pub struct QueryResult {
+    /// Result rows
     pub rows: Vec<QueryRow>,
+    /// Total number of matching results
     pub total_found: usize,
+    /// Execution time in milliseconds
     pub execution_time_ms: f64,
+    /// Descriptions of operations performed
     pub operations_performed: Vec<String>,
+    /// Number of cache hits during execution
     pub cache_hits: usize,
+    /// Detailed performance metrics
     pub performance_metrics: QueryPerformanceMetrics,
 }
 
 /// Individual result row
 #[derive(Debug, Clone)]
 pub struct QueryRow {
+    /// Field values by column name
     pub fields: std::collections::HashMap<String, serde_json::Value>,
+    /// Similarity score for vector search results
     pub similarity_score: Option<f64>,
+    /// Graph traversal distance for graph results
     pub graph_distance: Option<u32>,
+    /// Provenance tracking for result lineage
     pub provenance: Option<Vec<String>>,
 }
 
 /// Performance metrics for query analysis
 #[derive(Debug, Clone, Default)]
 pub struct QueryPerformanceMetrics {
+    /// Number of vectors scanned during search
     pub vectors_scanned: usize,
+    /// Number of graph nodes visited during traversal
     pub graph_nodes_visited: usize,
+    /// Number of metadata lookups performed
     pub metadata_lookups: usize,
+    /// Cache hit ratio (0.0 to 1.0)
     pub cache_hit_ratio: f64,
+    /// Filter selectivity achieved (0.0 to 1.0)
     pub filter_selectivity: f64,
 }
 
 /// EXPLAIN result for query optimization
 #[derive(Debug, Clone)]
 pub struct ExplainResult {
+    /// Query execution strategy
     pub query_type: ExecutionStrategy,
+    /// Estimated total cost
     pub estimated_cost: f64,
+    /// Descriptions of planned operations
     pub operations: Vec<String>,
+    /// Optimizations applied
     pub optimizations: Vec<String>,
+    /// Performance improvement hints
     pub performance_hints: Vec<String>,
 }
 
@@ -440,14 +525,14 @@ mod execution_tests {
     #[tokio::test]
     async fn test_query_engine_creation() {
         // Test unified engine creation with all services
-        // TODO: Create proper test setup with mock dependencies
+        // Deferred: Create proper test setup with mock dependencies
         // let vector_service = Arc::new(VectorOperationsService::new(storage_engine, wal_manager, axis_index_manager, collection_service));
         // let graph_service = Arc::new(GraphService::new());
 
         // let engine = QueryEngine::new(vector_service, graph_service);
 
         // Verify engine is properly configured
-        assert!(true); // TODO: Add specific validation with proper test setup
+        assert!(true); // Deferred: Add specific validation with proper test setup
     }
 
     #[tokio::test]
@@ -464,7 +549,7 @@ mod execution_tests {
             ExecutionStrategy::Hybrid
         ));
 
-        // TODO: Test graph-only and hybrid strategies
+        // Deferred: Test graph-only and hybrid strategies
     }
 
     async fn create_test_engine() -> QueryEngine {

@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::RwLock;
 
 use anyhow::Result;
+use tracing::warn;
 
 use super::{IndexValue, PathQueryCondition};
 
@@ -118,9 +119,11 @@ impl Ord for IndexValueOrd {
             (_, Self::Bool(_)) => Ordering::Greater,
             (Self::Int(a), Self::Int(b)) => a.cmp(b),
             (Self::Int(a), Self::Float(b)) => {
+                // unwrap_or(Equal) handles NaN: partial_cmp returns None when comparing with NaN
                 (*a as f64).partial_cmp(&b.0).unwrap_or(Ordering::Equal)
             }
             (Self::Float(a), Self::Int(b)) => {
+                // unwrap_or(Equal) handles NaN: partial_cmp returns None when comparing with NaN
                 a.0.partial_cmp(&(*b as f64)).unwrap_or(Ordering::Equal)
             }
             (Self::Float(a), Self::Float(b)) => a.cmp(b),
@@ -170,28 +173,38 @@ impl PathIndex {
 
         // Check uniqueness constraint
         if self.unique {
-            let tree = self.tree.read().unwrap();
-            if let Some(existing) = tree.get(&key) {
-                if !existing.is_empty() && !existing.contains(doc_id) {
-                    return Err(anyhow::anyhow!(
-                        "Duplicate key violation on unique index for path {}",
-                        self.path
-                    ));
-                }
+            let tree = self
+                .tree
+                .read()
+                .map_err(|e| anyhow::anyhow!("RwLock for tree is poisoned: {}", e))?;
+            if let Some(existing) = tree.get(&key)
+                && !existing.is_empty()
+                && !existing.contains(doc_id)
+            {
+                return Err(anyhow::anyhow!(
+                    "Duplicate key violation on unique index for path {}",
+                    self.path
+                ));
             }
         }
 
         // Insert into tree
         {
-            let mut tree = self.tree.write().unwrap();
+            let mut tree = self
+                .tree
+                .write()
+                .map_err(|e| anyhow::anyhow!("RwLock for tree is poisoned: {}", e))?;
             tree.entry(key.clone())
-                .or_insert_with(HashSet::new)
+                .or_default()
                 .insert(doc_id.to_string());
         }
 
         // Update reverse lookup
         {
-            let mut reverse = self.reverse.write().unwrap();
+            let mut reverse = self
+                .reverse
+                .write()
+                .map_err(|e| anyhow::anyhow!("RwLock for reverse is poisoned: {}", e))?;
             reverse.insert(doc_id.to_string(), key);
         }
 
@@ -202,13 +215,19 @@ impl PathIndex {
     pub fn remove(&self, doc_id: &str) -> Result<()> {
         // Get the value from reverse lookup
         let key = {
-            let mut reverse = self.reverse.write().unwrap();
+            let mut reverse = self
+                .reverse
+                .write()
+                .map_err(|e| anyhow::anyhow!("RwLock for reverse is poisoned: {}", e))?;
             reverse.remove(doc_id)
         };
 
         // Remove from tree
         if let Some(key) = key {
-            let mut tree = self.tree.write().unwrap();
+            let mut tree = self
+                .tree
+                .write()
+                .map_err(|e| anyhow::anyhow!("RwLock for tree is poisoned: {}", e))?;
             if let Some(ids) = tree.get_mut(&key) {
                 ids.remove(doc_id);
                 if ids.is_empty() {
@@ -222,7 +241,10 @@ impl PathIndex {
 
     /// Query the index
     pub fn query(&self, condition: &PathQueryCondition) -> Result<Vec<String>> {
-        let tree = self.tree.read().unwrap();
+        let tree = self
+            .tree
+            .read()
+            .map_err(|e| anyhow::anyhow!("RwLock for tree is poisoned: {}", e))?;
         let mut results = HashSet::new();
 
         match condition {
@@ -301,7 +323,7 @@ impl PathIndex {
                 // For exists=false, we'd need to scan all documents
             }
             PathQueryCondition::Regex(_pattern) => {
-                // TODO: Implement regex matching for string values
+                // Deferred: Implement regex matching for string values
                 let _ = _pattern; // Suppress unused warning
             }
         }
@@ -311,12 +333,27 @@ impl PathIndex {
 
     /// Get the number of indexed values
     pub fn len(&self) -> usize {
-        self.tree.read().unwrap().len()
+        match self.tree.read() {
+            Ok(tree) => tree.len(),
+            Err(error) => {
+                warn!(error = %error, "PathIndex tree lock poisoned while checking len");
+                0
+            }
+        }
     }
 
     /// Check if the index is empty
     pub fn is_empty(&self) -> bool {
-        self.tree.read().unwrap().is_empty()
+        match self.tree.read() {
+            Ok(tree) => tree.is_empty(),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "PathIndex tree lock poisoned while checking emptiness; treating as empty"
+                );
+                true
+            }
+        }
     }
 }
 

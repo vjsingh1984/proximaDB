@@ -7,14 +7,18 @@ use crate::proto::proximadb_v1::{
     sql_service_server::{SqlService, SqlServiceServer},
 };
 
+/// gRPC implementation of the SqlService for executing SQL queries
 pub struct SqlServiceImpl {
+    /// Shared unified handlers for query execution delegation
     unified_handlers: Arc<UnifiedHandlers>,
 }
 
 impl SqlServiceImpl {
+    /// Create a new SQL service backed by unified handlers
     pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
         Self { unified_handlers }
     }
+    /// Convert this implementation into a tonic gRPC server
     pub fn into_server(self) -> SqlServiceServer<Self> {
         SqlServiceServer::new(self)
     }

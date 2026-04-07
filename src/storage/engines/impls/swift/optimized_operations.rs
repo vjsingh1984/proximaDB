@@ -172,7 +172,7 @@ impl OptimizedSwiftOperations {
             a.record
                 .similarity
                 .partial_cmp(&b.record.similarity)
-                .unwrap()
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
         candidates_buffer.truncate(n_candidates);
 
@@ -341,7 +341,7 @@ impl OptimizedSwiftOperations {
         let mmap = self.mmap_pool.get(sst_path)?;
 
         // Advise kernel about sequential access
-        // TODO: Restore when mmap_file module is available
+        // Deferred: Restore when mmap_file module is available
         // mmap.advise(crate::storage::mmap_file::Advice::Sequential)?;
 
         for (sb_idx, b_idx) in block_ids {

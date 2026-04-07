@@ -29,15 +29,25 @@ use crate::proto::proximadb_v1::Collection;
 /// Fast lookup result for metadata queries
 #[derive(Debug, Clone)]
 pub struct CollectionLookupResult {
+    /// Collection UUID
     pub uuid: String,
+    /// Collection name
     pub name: String,
+    /// Vector dimension
     pub dimension: i32,
+    /// Distance metric type
     pub distance_metric: String,
+    /// Indexing algorithm used
     pub indexing_algorithm: String,
+    /// Storage engine name
     pub storage_engine: String,
+    /// Number of vectors in collection
     pub vector_count: i64,
+    /// Total size in bytes
     pub total_size_bytes: i64,
+    /// Creation timestamp
     pub timestamp: i64,
+    /// Last update timestamp
     pub updated_at: i64,
 }
 
@@ -48,13 +58,8 @@ impl From<&Collection> for CollectionLookupResult {
             name: record
                 .config
                 .as_ref()
-                .map(|c| c.name.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
-            dimension: record
-                .config
-                .as_ref()
-                .map(|c| c.dimension as i32)
-                .unwrap_or(0),
+                .map_or_else(|| "unknown".to_string(), |c| c.name.clone()),
+            dimension: record.config.as_ref().map_or(0, |c| c.dimension as i32),
             distance_metric: format!("{:?}", record.config.as_ref().map(|c| c.distance_metric)),
             indexing_algorithm: record
                 .config
@@ -62,12 +67,8 @@ impl From<&Collection> for CollectionLookupResult {
                 .and_then(|c| c.primary_index.clone())
                 .unwrap_or_else(|| "None".to_string()),
             storage_engine: format!("{:?}", record.config.as_ref().map(|c| c.storage_engine)),
-            vector_count: record.stats.as_ref().map(|s| s.vector_count).unwrap_or(0),
-            total_size_bytes: record
-                .stats
-                .as_ref()
-                .map(|s| s.data_size_bytes)
-                .unwrap_or(0),
+            vector_count: record.stats.as_ref().map_or(0, |s| s.vector_count),
+            total_size_bytes: record.stats.as_ref().map_or(0, |s| s.data_size_bytes),
             timestamp: record.created_at,
             updated_at: record.updated_at,
         }
@@ -77,14 +78,23 @@ impl From<&Collection> for CollectionLookupResult {
 /// Statistics for memory index performance monitoring
 #[derive(Debug, Clone)]
 pub struct IndexStatistics {
+    /// Total number of collections indexed
     pub total_collections: usize,
+    /// Memory usage in bytes
     pub memory_usage_bytes: usize,
+    /// UUID index cache hits
     pub uuid_index_hits: u64,
+    /// Name index cache hits
     pub name_index_hits: u64,
+    /// Prefix search index hits
     pub prefix_index_hits: u64,
+    /// Tag filter index hits
     pub tag_index_hits: u64,
+    /// Total cache misses
     pub cache_misses: u64,
+    /// Last index rebuild timestamp
     pub last_rebuild_time: Option<i64>,
+    /// Average lookup time in nanoseconds
     pub avg_lookup_time_ns: u64,
 }
 
@@ -148,13 +158,12 @@ impl MetadataMemoryIndexes {
     pub async fn upsert_collection(&self, record: Collection) {
         let start_time = std::time::Instant::now();
         let uuid = record.id.clone();
-        let name = record.config.as_ref().map(|c| c.name.clone()).clone();
+        let name = record.config.as_ref().map(|c| c.name.clone());
         let record_arc = Arc::new(record.clone());
 
         // Remove old record if exists (for updates)
         if let Some(old_record) = self.uuid_to_record.get(&uuid) {
-            self.remove_from_secondary_indexes(&old_record.value())
-                .await;
+            self.remove_from_secondary_indexes(old_record.value()).await;
         }
 
         // Primary indexes - O(1) operations
@@ -398,7 +407,7 @@ impl MetadataMemoryIndexes {
             if let Some(config) = record.config.as_ref() {
                 prefix_index
                     .entry(config.name.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(record.id.clone());
             }
         }
@@ -410,7 +419,7 @@ impl MetadataMemoryIndexes {
                 for tag in &config.tags {
                     tag_index
                         .entry(tag.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push(record.id.clone());
                 }
             }
@@ -422,7 +431,7 @@ impl MetadataMemoryIndexes {
             if let Some(stats) = &record.stats {
                 size_index
                     .entry(stats.data_size_bytes)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(record.id.clone());
             }
         }
@@ -432,7 +441,7 @@ impl MetadataMemoryIndexes {
             let mut time_index = self.created_time_index.write().await;
             time_index
                 .entry(record.created_at)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(record.id.clone());
         }
     }
@@ -442,12 +451,12 @@ impl MetadataMemoryIndexes {
         // Name prefix index - Remove full name only
         {
             let mut prefix_index = self.name_prefix_index.write().await;
-            if let Some(config) = record.config.as_ref() {
-                if let Some(uuids) = prefix_index.get_mut(&config.name) {
-                    uuids.retain(|uuid| uuid != &record.id);
-                    if uuids.is_empty() {
-                        prefix_index.remove(&config.name);
-                    }
+            if let Some(config) = record.config.as_ref()
+                && let Some(uuids) = prefix_index.get_mut(&config.name)
+            {
+                uuids.retain(|uuid| uuid != &record.id);
+                if uuids.is_empty() {
+                    prefix_index.remove(&config.name);
                 }
             }
         }
@@ -470,12 +479,12 @@ impl MetadataMemoryIndexes {
         // Size index
         {
             let mut size_index = self.size_index.write().await;
-            if let Some(stats) = &record.stats {
-                if let Some(uuids) = size_index.get_mut(&stats.data_size_bytes) {
-                    uuids.retain(|uuid| uuid != &record.id);
-                    if uuids.is_empty() {
-                        size_index.remove(&stats.data_size_bytes);
-                    }
+            if let Some(stats) = &record.stats
+                && let Some(uuids) = size_index.get_mut(&stats.data_size_bytes)
+            {
+                uuids.retain(|uuid| uuid != &record.id);
+                if uuids.is_empty() {
+                    size_index.remove(&stats.data_size_bytes);
                 }
             }
         }
@@ -505,5 +514,171 @@ impl MetadataMemoryIndexes {
 impl Default for MetadataMemoryIndexes {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::proximadb_v1::{
+        Collection, CollectionConfig, CollectionStats, DistanceMetric, StorageEngine,
+    };
+
+    fn create_test_collection(id: &str, name: &str) -> Collection {
+        let temp_dir = tempfile::tempdir().unwrap();
+        Collection {
+            id: id.to_string(),
+            config: Some(CollectionConfig {
+                name: name.to_string(),
+                dimension: 128,
+                distance_metric: Some(DistanceMetric::Cosine as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
+                primary_index: Some("HNSW".to_string()),
+                auto_index_selection: Some(false),
+                description: Some("Test collection".to_string()),
+                tags: vec![],
+                owner: Some("test_user".to_string()),
+                embedding_models: vec![],
+                storage_config: None,
+                record_schema: None,
+                enable_proxima_record: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
+            }),
+            stats: Some(CollectionStats {
+                vector_count: 100,
+                index_size_bytes: 1024,
+                data_size_bytes: 2048,
+            }),
+            created_at: 1000,
+            updated_at: 1000,
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: format!("{}", temp_dir.path().display()),
+                backup_paths: vec![],
+                engine: StorageEngine::Viper as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: format!("{}", temp_dir.path().display()),
+                assigned_at: chrono::Utc::now().timestamp_micros(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_uuid_lookup_performance() {
+        let indexes = MetadataMemoryIndexes::new();
+        let collection = create_test_collection("test-uuid-123", "test-collection");
+        indexes.upsert_collection(collection.clone()).await;
+        let result = indexes.get_by_uuid("test-uuid-123").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "test-uuid-123");
+        let stats = indexes.get_statistics().await;
+        assert_eq!(stats.total_collections, 1);
+        assert_eq!(stats.uuid_index_hits, 1);
+    }
+
+    #[tokio::test]
+    async fn test_name_lookup_performance() {
+        let indexes = MetadataMemoryIndexes::new();
+        let collection = create_test_collection("test-uuid-456", "another-collection");
+        indexes.upsert_collection(collection.clone()).await;
+        let result = indexes.get_by_name("another-collection").await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, "test-uuid-456");
+        let uuid = indexes.get_uuid_by_name("another-collection").await;
+        assert_eq!(uuid.unwrap(), "test-uuid-456");
+    }
+
+    #[tokio::test]
+    async fn test_prefix_search() {
+        let indexes = MetadataMemoryIndexes::new();
+        let collections = vec![
+            create_test_collection("uuid-1", "user_data_v1"),
+            create_test_collection("uuid-2", "user_data_v2"),
+            create_test_collection("uuid-3", "user_logs_v1"),
+            create_test_collection("uuid-4", "system_config"),
+        ];
+        for collection in collections {
+            indexes.upsert_collection(collection).await;
+        }
+        let user_results = indexes.find_by_name_prefix("user_").await;
+        assert_eq!(user_results.len(), 3);
+        let data_results = indexes.find_by_name_prefix("user_data").await;
+        assert_eq!(data_results.len(), 2);
+        let system_results = indexes.find_by_name_prefix("system").await;
+        assert_eq!(system_results.len(), 1);
+        let nonexistent_results = indexes.find_by_name_prefix("nonexistent").await;
+        assert_eq!(nonexistent_results.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_operations() {
+        use std::sync::Arc;
+        use tokio::task::JoinSet;
+
+        let indexes = Arc::new(MetadataMemoryIndexes::new());
+        let mut tasks = JoinSet::new();
+
+        for i in 0..10 {
+            let indexes_clone = indexes.clone();
+            tasks.spawn(async move {
+                let collection =
+                    create_test_collection(&format!("uuid-{}", i), &format!("collection-{}", i));
+                indexes_clone.upsert_collection(collection).await;
+            });
+        }
+
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+
+        let stats = indexes.get_statistics().await;
+        assert_eq!(stats.total_collections, 10);
+
+        let mut read_tasks = JoinSet::new();
+        for i in 0..10 {
+            let indexes_clone = indexes.clone();
+            read_tasks.spawn(async move {
+                let result = indexes_clone.get_by_uuid(&format!("uuid-{}", i)).await;
+                assert!(result.is_some());
+                result.unwrap().id.clone()
+            });
+        }
+
+        while let Some(result) = read_tasks.join_next().await {
+            let uuid = result.unwrap();
+            assert!(uuid.starts_with("uuid-"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rebuild_performance() {
+        let indexes = MetadataMemoryIndexes::new();
+        for i in 0..100 {
+            let collection =
+                create_test_collection(&format!("uuid-{:03}", i), &format!("collection-{:03}", i));
+            indexes.upsert_collection(collection).await;
+        }
+        let initial_stats = indexes.get_statistics().await;
+        assert_eq!(initial_stats.total_collections, 100);
+
+        let collections: Vec<_> = (0..100)
+            .map(|i| {
+                create_test_collection(
+                    &format!("new-uuid-{:03}", i),
+                    &format!("new-collection-{:03}", i),
+                )
+            })
+            .collect();
+
+        indexes.rebuild_from_records(collections).await;
+        let rebuild_stats = indexes.get_statistics().await;
+        assert_eq!(rebuild_stats.total_collections, 100);
+        let old_result = indexes.get_by_uuid("uuid-001").await;
+        assert!(old_result.is_none());
+        let new_result = indexes.get_by_uuid("new-uuid-001").await;
+        assert!(new_result.is_some());
     }
 }

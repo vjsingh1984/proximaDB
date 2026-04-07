@@ -11,14 +11,7 @@ mod recall_utils;
 use recall_utils::{compute_ground_truth_l2, compute_recall_multi};
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use proximadb::core::search::SearchParams;
-use proximadb::proto::proximadb_v1::{
-    Collection, CollectionConfig, CompressionAlgorithm, StorageAssignment, StorageConfig,
-    VectorRecord,
-};
-use proximadb::storage::engines::factory::StorageEngineFactory;
-use proximadb::storage::traits::FlushParameters;
-use std::sync::Arc;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use std::time::Duration;
 
 const BASE_PATH: &str = "/tmp/proximadb-recall-bench";
@@ -81,7 +74,7 @@ fn bench_recall_report(c: &mut Criterion) {
         };
 
         // Take top-k from ground truth and randomly drop some to simulate approximate search
-        let mut rng = rand::thread_rng();
+        let _rng = rand::thread_rng();
         let mut approx_results: Vec<String> = ground_truth
             .iter()
             .take(k_max)

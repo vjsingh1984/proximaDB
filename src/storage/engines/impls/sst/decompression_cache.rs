@@ -112,7 +112,7 @@ impl DecompressionCache {
             stats: Arc::new(RwLock::new(CacheStats::default())),
             compression_caches: Arc::new(RwLock::new(HashMap::new())),
             file_timestamps: Arc::new(dashmap::DashMap::new()),
-            config: config.clone(),
+            config,
             invalidation_task: None,
         };
 
@@ -158,10 +158,10 @@ impl DecompressionCache {
                     .iter()
                     .filter_map(|(key, cached_block)| {
                         // Check if file has been modified
-                        if let Some(last_modified) = file_timestamps.get(&key.file_path) {
-                            if *last_modified > cached_block.cached_at {
-                                return Some(key.clone());
-                            }
+                        if let Some(last_modified) = file_timestamps.get(&key.file_path)
+                            && *last_modified > cached_block.cached_at
+                        {
+                            return Some(key.clone());
                         }
                         None
                     })
@@ -279,7 +279,7 @@ impl DecompressionCache {
             // Estimate decompression time saved based on compression algorithm
             let time_saved = Self::estimate_decompression_time(
                 cached_block.size_bytes,
-                cached_block.compression_algorithm.clone(),
+                cached_block.compression_algorithm,
             );
             stats.time_saved_us += time_saved;
             stats.bytes_saved += cached_block.size_bytes as u64;
@@ -327,7 +327,7 @@ impl DecompressionCache {
             size_bytes,
             cached_at: chrono::Utc::now().timestamp(),
             access_count: 0,
-            compression_algorithm: compression_algorithm.clone(),
+            compression_algorithm,
         };
 
         // Add to cache
@@ -341,7 +341,7 @@ impl DecompressionCache {
         if let Some(algo) = compression_algorithm {
             let mut comp_caches = self.compression_caches.write().await;
             comp_caches
-                .entry(algo.clone())
+                .entry(algo)
                 .or_insert_with(Vec::new)
                 .push(key.clone());
         }
@@ -374,7 +374,7 @@ impl DecompressionCache {
         let mut evicted_count = 0;
 
         // LRU eviction - the cache automatically evicts least recently used items
-        while freed_bytes < bytes_to_free && cache.len() > 0 {
+        while freed_bytes < bytes_to_free && !cache.is_empty() {
             // Pop the least recently used item
             if let Some((key, cached_block)) = cache.pop_lru() {
                 freed_bytes += cached_block.size_bytes;
@@ -416,7 +416,7 @@ impl DecompressionCache {
                 std::mem::size_of::<crate::proto::proximadb_v1::VectorRecord>()
                     + r.id.len()
                     + r.vector.len() * std::mem::size_of::<f32>()
-                    + r.metadata.iter().map(|(k, _)| k.len() + 8).sum::<usize>() // Rough metadata size
+                    + r.metadata.keys().map(|k| k.len() + 8).sum::<usize>() // Rough metadata size
             })
             .sum()
     }
