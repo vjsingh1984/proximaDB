@@ -75,17 +75,13 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
                 .collect();
 
             VectorRecord {
-                id: Some(format!(
-                    "vec_{,
-            timestamp: 0,
-            updated_at: None,
-            expires_at: None,
-            distance: None,
-            rank: None,
-            score: None,
-        }",
-                    i
-                )),
+                id: Some(format!("vec_{}", i)),
+                timestamp: 0,
+                updated_at: None,
+                expires_at: None,
+                distance: None,
+                rank: None,
+                score: None,
                 vector,
                 metadata: vec![
                     MetadataItem {

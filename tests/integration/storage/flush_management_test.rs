@@ -29,17 +29,13 @@ fn create_test_vector_records(
 
     (0..count)
         .map(|i| VectorRecord {
-            id: Some(format!(
-                "vector_{,
+            id: Some(format!("vector_{}", i)),
             timestamp: 0,
             updated_at: None,
             expires_at: None,
             distance: None,
             rank: None,
             score: None,
-        }",
-                i
-            )),
             vector: vector_data.clone(),
             metadata: vec![],
             timestamp: now as u32,

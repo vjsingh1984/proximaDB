@@ -14,7 +14,8 @@ use tokio::test;
 use proximadb::storage::engines::impls::viper::types::{
     CollectionMetadata, CompressionStats, PartitionStrategy,
 };
-use proximadb::storage::engines::impls::viper::{ViperConfig, ViperEngine};
+use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::core::ViperConfig;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Test helper to create a temporary directory
