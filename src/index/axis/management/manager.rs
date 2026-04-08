@@ -100,7 +100,7 @@ use crate::index::axis::{
 };
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
 // Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
-// use crate::storage::engines::impls::viper::QuantizationMethod;
+// use crate::storage::engines::viper::QuantizationMethod;
 
 /// Central manager for AXIS with adaptive capabilities
 ///

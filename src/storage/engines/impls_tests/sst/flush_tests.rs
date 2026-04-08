@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use tempfile::TempDir;
 
-use crate::storage::engines::impls::sst::{
+use crate::storage::engines::sst::{
     core::SstEngine,
     flush::{FlushCoordinator, FlushOptimizer, FlushOperations},
 };
@@ -588,7 +588,7 @@ async fn test_hierarchical_sst_with_proper_flush() {
     assert!(!sst_files.is_empty(), "Should create at least one SST file");
 
     // Read back and verify hierarchical structure using ModularBlockReader
-    use crate::storage::engines::impls::sst::readers::sst_query_engine::ModularBlockReader;
+    use crate::storage::engines::sst::readers::sst_query_engine::ModularBlockReader;
 
     for sst_file in &sst_files {
         let mut reader = ModularBlockReader::open(filesystem_factory.clone(), sst_file)

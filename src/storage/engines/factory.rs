@@ -111,9 +111,9 @@ use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::query::capability::CapabilityRegistry;
 use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 
-use super::impls::{nova::NovaEngine, sst::SstEngine, viper::ViperEngine};
+use super::{nova::NovaEngine, sst::SstEngine, viper::ViperEngine};
 #[cfg(feature = "experimental-engines")]
-use super::impls::{raptor::RaptorEngine, swift::SwiftEngine};
+use super::{raptor::RaptorEngine, swift::SwiftEngine};
 
 /// Global capability registry for storage engine capabilities
 ///
@@ -384,7 +384,7 @@ impl StorageEngineFactory {
     pub fn create_tst() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating TST (Time-Series) storage engine");
         Ok(Arc::new(
-            crate::storage::engines::impls::tst::TimeSeriesEngine::new()?,
+            crate::storage::engines::tst::TimeSeriesEngine::new()?,
         ))
     }
 
@@ -401,9 +401,7 @@ impl StorageEngineFactory {
     /// - BSON encoding with LZ4 compression
     pub fn create_cedar() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating CEDAR (Document) storage engine");
-        Ok(Arc::new(
-            crate::storage::engines::impls::cedar::CedarEngine::new()?,
-        ))
+        Ok(Arc::new(crate::storage::engines::cedar::CedarEngine::new()?))
     }
 
     /// Async version for CEDAR
@@ -421,7 +419,7 @@ impl StorageEngineFactory {
     pub fn create_chrono() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating CHRONO (Observability) storage engine");
         Ok(Arc::new(
-            crate::storage::engines::impls::chrono::ChronoEngine::new()?,
+            crate::storage::engines::chrono::ChronoEngine::new()?,
         ))
     }
 
@@ -538,7 +536,7 @@ impl StorageEngineFactory {
         info!("Creating HELIX storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            use crate::storage::engines::impls::helix::HelixEngine;
+            use crate::storage::engines::helix::HelixEngine;
             HelixEngine::new().await
         })?;
         Ok(Arc::new(engine))
@@ -547,7 +545,7 @@ impl StorageEngineFactory {
     /// Async version for use within async contexts (e.g., tests)
     pub async fn create_helix_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
         info!("Creating HELIX storage engine");
-        use crate::storage::engines::impls::helix::HelixEngine;
+        use crate::storage::engines::helix::HelixEngine;
         let engine = HelixEngine::new().await?;
         Ok(Arc::new(engine))
     }
@@ -1054,7 +1052,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_sequoia_engine() {
         // Sequoia is not yet in the proto enum, so we create it directly
-        use super::super::impls::sequoia::SequoiaEngine;
+        use super::super::sequoia::SequoiaEngine;
         let engine = SequoiaEngine::new();
         assert_eq!(
             crate::storage::traits::UnifiedStorageEngine::engine_name(&engine),

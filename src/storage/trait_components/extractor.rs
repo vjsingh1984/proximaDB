@@ -379,27 +379,25 @@ impl ExtractionFactory {
     ) -> Arc<dyn VectorExtractor> {
         match engine_type {
             StorageEngineType::SST => Arc::new(
-                crate::storage::engines::impls::sst::extraction::SstExtractor::new(filesystem),
+                crate::storage::engines::sst::extraction::SstExtractor::new(filesystem),
             ),
             StorageEngineType::SWIFT => Arc::new(
-                crate::storage::engines::impls::swift::extraction::SwiftExtractor::new(filesystem),
+                crate::storage::engines::swift::extraction::SwiftExtractor::new(filesystem),
             ),
             StorageEngineType::HELIX => Arc::new(
-                crate::storage::engines::impls::helix::extraction::HelixExtractor::new(filesystem),
+                crate::storage::engines::helix::extraction::HelixExtractor::new(filesystem),
             ),
             StorageEngineType::VIPER => Arc::new(
-                crate::storage::engines::impls::viper::extraction::ViperExtractor::new(filesystem),
+                crate::storage::engines::viper::extraction::ViperExtractor::new(filesystem),
             ),
-            StorageEngineType::NOVA => Arc::new(
-                crate::storage::engines::impls::nova::extraction::NovaExtractor::new(filesystem),
-            ),
+            StorageEngineType::NOVA => {
+                Arc::new(crate::storage::engines::nova::extraction::NovaExtractor::new(filesystem))
+            }
             StorageEngineType::RAPTOR => Arc::new(
-                crate::storage::engines::impls::raptor::extraction::RaptorExtractor::new(
-                    filesystem,
-                ),
+                crate::storage::engines::raptor::extraction::RaptorExtractor::new(filesystem),
             ),
             StorageEngineType::TST => Arc::new(
-                crate::storage::engines::impls::tst::extraction::TstExtractor::new(filesystem),
+                crate::storage::engines::tst::extraction::TstExtractor::new(filesystem),
             ),
         }
     }

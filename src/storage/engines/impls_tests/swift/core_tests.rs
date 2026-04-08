@@ -14,7 +14,7 @@
 //! - id_index.rs (1 test)
 
 #[allow(deprecated)]
-use crate::storage::engines::impls::swift::id_index::{BlockLocation, IdIndex};
+use crate::storage::engines::swift::id_index::{BlockLocation, IdIndex};
 use crate::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 
@@ -31,7 +31,7 @@ async fn test_swift_engine_creation() {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
         ),
     );
-    let engine = crate::storage::engines::impls::swift::SwiftEngine::new()
+    let engine = crate::storage::engines::swift::SwiftEngine::new()
         .await
         .unwrap();
     assert_eq!(engine.engine_name(), "SWIFT");
@@ -47,7 +47,7 @@ async fn test_swift_feature_support() {
             crate::compute::distance_computation::DistanceMetric::Euclidean,
         ),
     );
-    let engine = crate::storage::engines::impls::swift::SwiftEngine::new()
+    let engine = crate::storage::engines::swift::SwiftEngine::new()
         .await
         .unwrap();
 

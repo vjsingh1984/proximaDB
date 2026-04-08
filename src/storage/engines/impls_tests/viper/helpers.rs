@@ -11,7 +11,7 @@ use tempfile::TempDir;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, SqlValue, StorageAssignment, VectorRecord,
 };
-use crate::storage::engines::impls::viper::{ViperEngine, ViperEngineConfig};
+use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::UnifiedStorageEngine;
 use crate::utils::StoragePath;
@@ -613,8 +613,8 @@ pub async fn create_test_filesystem_with_path(base_path: &str) -> Result<Arc<Fil
 /// assert!(config.processing_config.enable_preprocessing);
 /// ```
 pub fn create_default_pipeline_config()
--> crate::storage::engines::impls::viper::pipeline::ViperPipelineConfig {
-    use crate::storage::engines::impls::viper::pipeline::*;
+-> crate::storage::engines::viper::pipeline::ViperPipelineConfig {
+    use crate::storage::engines::viper::pipeline::*;
 
     ViperPipelineConfig {
         processing_config: ProcessingConfig {

@@ -354,7 +354,7 @@ async fn test_compaction_operation() -> Result<()> {
 
 #[tokio::test]
 async fn test_storage_tier_detection() {
-    use crate::storage::engines::impls::raptor::RaptorEngine;
+    use crate::storage::engines::raptor::RaptorEngine;
 
     // Test S3 detection
     assert_eq!(
@@ -454,7 +454,7 @@ async fn test_clustering_integration() -> Result<()> {
 
 #[tokio::test]
 async fn test_cloud_io_optimization() -> Result<()> {
-    use crate::storage::engines::impls::raptor::config::RaptorConfig;
+    use crate::storage::engines::raptor::config::RaptorConfig;
 
     let _engine = create_test_engine().await?;
 
@@ -468,7 +468,7 @@ async fn test_cloud_io_optimization() -> Result<()> {
             1024 * 1024 * 10, // 10MB cache
         ),
     );
-    let _cloud_engine = crate::storage::engines::impls::raptor::RaptorEngine::new().await?;
+    let _cloud_engine = crate::storage::engines::raptor::RaptorEngine::new().await?;
 
     // Note: is_cloud_storage() is private - removed assertion
 
@@ -477,8 +477,8 @@ async fn test_cloud_io_optimization() -> Result<()> {
 
 #[tokio::test]
 async fn test_centralized_footer_with_columnar_centroids() -> Result<()> {
-    use crate::storage::engines::impls::raptor::common::ColumnarCentroids;
-    use crate::storage::engines::impls::raptor::writer::RaptorWriter;
+    use crate::storage::engines::raptor::common::ColumnarCentroids;
+    use crate::storage::engines::raptor::writer::RaptorWriter;
     use tempfile::TempDir;
 
     // Create temp directory for test

@@ -32,7 +32,7 @@ use crate::proto::proximadb_v1::{
     CollectionConfig, CollectionStats, DistanceMetric as ProtoDistanceMetric, StorageAssignment,
     StorageEngine,
 };
-use crate::storage::engines::impls::helix::*;
+use crate::storage::engines::helix::*;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
     CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
@@ -106,7 +106,7 @@ async fn test_helix_engine_initialization() {
 /// Test PCA model training and projection
 #[tokio::test]
 async fn test_pca_model_training() {
-    use crate::storage::engines::impls::helix::pca_impl::EnhancedPCAModel;
+    use crate::storage::engines::helix::pca_impl::EnhancedPCAModel;
 
     let vectors = create_test_vectors(1000, 128);
 
@@ -134,7 +134,7 @@ async fn test_pca_model_training() {
 /// Test Hilbert curve encoding
 #[tokio::test]
 async fn test_hilbert_curve_encoding() {
-    use crate::storage::engines::impls::helix::hilbert_curve::{HilbertCurve, HilbertUtils};
+    use crate::storage::engines::helix::hilbert_curve::{HilbertCurve, HilbertUtils};
 
     // Test 2D Hilbert curve
     let curve_2d = HilbertCurve::new(2, 8);
@@ -269,8 +269,8 @@ async fn test_flush_and_compaction() {
 /// Test liquid clustering with query patterns
 #[tokio::test]
 async fn test_liquid_clustering() {
-    use crate::storage::engines::impls::helix::clustering::QueryPatternTracker;
-    use crate::storage::engines::impls::helix::liquid_clustering::LiquidClusteringCoordinator;
+    use crate::storage::engines::helix::clustering::QueryPatternTracker;
+    use crate::storage::engines::helix::liquid_clustering::LiquidClusteringCoordinator;
 
     let _config = Default::default(); // Use Default for LiquidClusteringConfig
     let query_tracker = Arc::new(RwLock::new(QueryPatternTracker::default()));
@@ -326,7 +326,7 @@ async fn test_liquid_clustering() {
 async fn test_progressive_search() {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    use crate::storage::engines::impls::helix::progressive_search::ProgressiveSearchCoordinator;
+    use crate::storage::engines::helix::progressive_search::ProgressiveSearchCoordinator;
 
     let config = HelixConfig::default();
     let distance_compute = Arc::new(UnifiedDistanceCompute::default());
@@ -435,7 +435,7 @@ async fn test_progressive_search() {
 /// Test zone maps for dimension-level pruning
 #[tokio::test]
 async fn test_zone_maps() {
-    use crate::storage::engines::impls::helix::zone_maps::ZoneMapBuilder;
+    use crate::storage::engines::helix::zone_maps::ZoneMapBuilder;
 
     // Create test vectors with known patterns
     let vectors = create_test_vectors(500, 32);
@@ -622,7 +622,7 @@ fn test_configuration() {
 #[tokio::test]
 #[ignore] // Run with --ignored flag for benchmarks
 async fn bench_pca_performance() {
-    use crate::storage::engines::impls::helix::pca_impl::EnhancedPCAModel;
+    use crate::storage::engines::helix::pca_impl::EnhancedPCAModel;
     use std::time::Instant;
 
     println!("\n=== PCA Performance Benchmark ===");
@@ -652,7 +652,7 @@ async fn bench_pca_performance() {
 #[tokio::test]
 #[ignore] // Run with --ignored flag for benchmarks
 async fn bench_hilbert_encoding() {
-    use crate::storage::engines::impls::helix::hilbert_curve::HilbertUtils;
+    use crate::storage::engines::helix::hilbert_curve::HilbertUtils;
     use std::time::Instant;
 
     println!("\n=== Hilbert Encoding Benchmark ===");
@@ -675,8 +675,8 @@ async fn bench_hilbert_encoding() {
 #[tokio::test]
 #[ignore] // Run with --ignored flag for benchmarks
 async fn bench_liquid_clustering() {
-    use crate::storage::engines::impls::helix::clustering::QueryPatternTracker;
-    use crate::storage::engines::impls::helix::liquid_clustering::LiquidClusteringCoordinator;
+    use crate::storage::engines::helix::clustering::QueryPatternTracker;
+    use crate::storage::engines::helix::liquid_clustering::LiquidClusteringCoordinator;
     use std::time::Instant;
 
     println!("\n=== Liquid Clustering Benchmark ===");
@@ -1315,7 +1315,7 @@ mod clustering_tests {
 
     #[test]
     fn test_hilbert_2d_ordering() {
-        use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
+        use crate::storage::engines::helix::hilbert_curve::HilbertCurve;
         let curve = HilbertCurve::new(2, 16);
         let key00 = curve.encode(&[0, 0]);
         let _key01 = curve.encode(&[0, u32::MAX >> 16]);

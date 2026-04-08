@@ -238,11 +238,11 @@ impl SharedSstFormatReader {
     pub fn read_with_strategy<'a>(
         &'a self,
         file_path: &'a str,
-        strategy: &'a crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy,
+        strategy: &'a crate::storage::engines::sst::readers::sst_query_engine::SstableReadingStrategy,
         _filter_expression: Option<&'a crate::core::search::FilterExpression>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>> + Send + 'a>>{
         Box::pin(async move {
-            use crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy;
+            use crate::storage::engines::sst::readers::sst_query_engine::SstableReadingStrategy;
 
             match strategy {
                 SstableReadingStrategy::FullScan { use_block_cache } => {

@@ -3298,7 +3298,10 @@ impl ProximaDataBlock {
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
                 match codec.decode_i64(&data) {
-                    Ok(values) => { let result: Vec<Option<i64>> = values.into_iter().map(Some).collect(); result },
+                    Ok(values) => {
+                        let result: Vec<Option<i64>> = values.into_iter().map(Some).collect();
+                        result
+                    }
                     Err(_) => vec![None; record_count],
                 }
             }
@@ -3348,7 +3351,10 @@ impl ProximaDataBlock {
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
                 match codec.decode_i64(&data) {
-                    Ok(values) => { let result: Vec<Option<i64>> = values.into_iter().map(Some).collect(); result },
+                    Ok(values) => {
+                        let result: Vec<Option<i64>> = values.into_iter().map(Some).collect();
+                        result
+                    }
                     Err(_) => vec![None; record_count],
                 }
             }

@@ -62,7 +62,7 @@ pub mod types;
 pub mod wire_format;
 
 // Hardware-accelerated implementations (SIMD + GPU)
-pub mod simd;  // simd/ directory - consolidated SIMD implementation
+pub mod simd; // simd/ directory - consolidated SIMD implementation
 // Experimental SIMD prototype lives under archive; opt-in only.
 #[cfg(feature = "simd-experimental")]
 pub mod simd_experimental;

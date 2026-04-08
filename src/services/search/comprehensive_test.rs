@@ -35,13 +35,13 @@ mod tests {
     };
     use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
     use crate::services::operations::vectors::VectorOperationsService;
-    use crate::storage::engines::impls::viper::FilterValue;
-    // use crate::storage::engines::impls::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig}; // Removed
-    // use crate::storage::engines::impls::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig}; // Removed
+    use crate::storage::engines::viper::FilterValue;
+    // use crate::storage::engines::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig}; // Removed
+    // use crate::storage::engines::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig}; // Removed
     use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-    use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
+    use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
     // UnifiedParquetReader moved to different module
-    // use crate::storage::engines::impls::viper::readers::unified_parquet_reader::UnifiedParquetReader;
+    // use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
 
     /// Test data structure for comprehensive testing
     #[derive(Debug, Clone)]

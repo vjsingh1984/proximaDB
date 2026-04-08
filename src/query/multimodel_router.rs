@@ -197,7 +197,7 @@ pub enum MultiModelResult {
     Observability(ObservabilityResult),
     /// Relational query results
     Relational {
-        rows: Vec<crate::storage::engines::impls::sequoia::TypedRow>,
+        rows: Vec<crate::storage::engines::sequoia::TypedRow>,
         column_names: Vec<String>,
         total_count: Option<u64>,
     },

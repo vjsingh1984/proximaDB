@@ -56,7 +56,7 @@ use std::sync::Arc;
 use tracing::{debug, trace, warn};
 
 use super::block_structures::ProximaDataBlock;
-use crate::storage::engines::impls::sst::{SstableHeader, SstableIndex};
+use crate::storage::engines::sst::{SstableHeader, SstableIndex};
 
 /// Arrow reader for ProximaBlocks (.sst) files
 ///

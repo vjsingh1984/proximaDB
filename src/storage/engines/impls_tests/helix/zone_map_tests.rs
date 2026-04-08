@@ -9,7 +9,7 @@
 //! Source: src/storage/engines/impls/helix/zone_maps.rs
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::helix::zone_maps::{ZoneMap, ZoneMapBuilder};
+use crate::storage::engines::helix::zone_maps::{ZoneMap, ZoneMapBuilder};
 
 #[test]
 fn test_zone_map_creation() {

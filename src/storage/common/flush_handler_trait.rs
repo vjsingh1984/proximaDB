@@ -74,13 +74,13 @@ impl FlushHandlerFactory {
 
 // Adapter for SST engine
 struct SstFlushHandlerAdapter {
-    inner: crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler,
+    inner: crate::storage::engines::sst::flush_eventlog_integration::SstFlushHandler,
 }
 
 impl SstFlushHandlerAdapter {
     fn new() -> Self {
         Self {
-            inner: crate::storage::engines::impls::sst::flush_eventlog_integration::SstFlushHandler::new(),
+            inner: crate::storage::engines::sst::flush_eventlog_integration::SstFlushHandler::new(),
         }
     }
 }
@@ -123,13 +123,13 @@ impl FlushHandler for SstFlushHandlerAdapter {
 
 // Adapter for VIPER engine
 struct ViperFlushHandlerAdapter {
-    inner: crate::storage::engines::impls::viper::eventlog_flush::ViperFlushNotifier,
+    inner: crate::storage::engines::viper::eventlog_flush::ViperFlushNotifier,
 }
 
 impl ViperFlushHandlerAdapter {
     fn new() -> Self {
         Self {
-            inner: crate::storage::engines::impls::viper::eventlog_flush::ViperFlushNotifier::new(),
+            inner: crate::storage::engines::viper::eventlog_flush::ViperFlushNotifier::new(),
         }
     }
 }

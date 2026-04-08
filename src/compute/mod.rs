@@ -557,8 +557,8 @@ pub fn get_hardware_info() -> HardwareInfo {
 mod unified_quantization_tests {
     use super::*;
     use crate::compute::quantization::types::{
-        BinaryQuantization, NoQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
-        UnifiedQuantizationLevel, UniformQuantization,
+        BinaryQuantization, NoQuantization, ProductQuantization, QuantizationLevel,
+        ScalarQuantization, UnifiedQuantizationLevel, UniformQuantization,
     };
     use std::sync::Once;
 
@@ -640,8 +640,9 @@ mod unified_quantization_tests {
         let scalar = UnifiedQuantizationLevel {
             level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
                 bits: 8,
-                scale: None,
-                offset: None,
+                scale: 1.0,
+                offset: 0.0,
+                clamp_values: false,
             })),
         };
 
@@ -740,8 +741,9 @@ mod unified_quantization_tests {
             UnifiedQuantizationLevel {
                 level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
                     bits: 8,
-                    scale: None,
-                    offset: None,
+                    scale: 1.0,
+                    offset: 0.0,
+                    clamp_values: false,
                 })),
             },
         ];

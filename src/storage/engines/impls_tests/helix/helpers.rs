@@ -20,7 +20,7 @@ use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, DistanceMetric as ProtoDistanceMetric,
     StorageAssignment, StorageEngine, VectorRecord,
 };
-use crate::storage::engines::impls::helix::{HelixConfig, HelixEngine};
+use crate::storage::engines::helix::{HelixConfig, HelixEngine};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::FlushParameters;
 
@@ -368,7 +368,7 @@ pub fn create_diverse_vectors(count: usize, dims: usize) -> Vec<Vec<f32>> {
 
 /// Generate Hilbert keys for a set of vectors
 pub fn generate_hilbert_keys(vectors: &[VectorRecord]) -> Vec<u64> {
-    use crate::storage::engines::impls::helix::clustering::compute_hilbert_key;
+    use crate::storage::engines::helix::clustering::compute_hilbert_key;
     vectors
         .iter()
         .map(|v| compute_hilbert_key(&v.vector))
@@ -385,8 +385,8 @@ pub fn create_query_tracker_with_patterns(
     hot_access_count: usize,
     cold_ids: Vec<&str>,
     cold_access_count: usize,
-) -> crate::storage::engines::impls::helix::clustering::QueryPatternTracker {
-    use crate::storage::engines::impls::helix::clustering::QueryPatternTracker;
+) -> crate::storage::engines::helix::clustering::QueryPatternTracker {
+    use crate::storage::engines::helix::clustering::QueryPatternTracker;
 
     let mut tracker = QueryPatternTracker::default();
 
@@ -414,8 +414,8 @@ pub fn create_query_tracker_with_patterns(
 /// Create zone map builder with test vectors
 pub fn create_zone_map_builder(
     vectors_per_block: usize,
-) -> crate::storage::engines::impls::helix::zone_maps::ZoneMapBuilder {
-    use crate::storage::engines::impls::helix::zone_maps::ZoneMapBuilder;
+) -> crate::storage::engines::helix::zone_maps::ZoneMapBuilder {
+    use crate::storage::engines::helix::zone_maps::ZoneMapBuilder;
     ZoneMapBuilder::new(vectors_per_block)
 }
 
@@ -428,10 +428,10 @@ pub fn train_test_pca_model(
     vectors: &[VectorRecord],
     n_components: usize,
 ) -> Result<
-    crate::storage::engines::impls::helix::pca_impl::EnhancedPCAModel,
+    crate::storage::engines::helix::pca_impl::EnhancedPCAModel,
     Box<dyn std::error::Error>,
 > {
-    use crate::storage::engines::impls::helix::pca_impl::EnhancedPCAModel;
+    use crate::storage::engines::helix::pca_impl::EnhancedPCAModel;
     EnhancedPCAModel::train(vectors, n_components).map_err(|e| e.into())
 }
 
@@ -500,8 +500,8 @@ pub fn create_mock_sstable_metadata(
     level: usize,
     hilbert_range: Option<(u64, u64)>,
     num_vectors: usize,
-) -> crate::storage::engines::impls::helix::SStableMetadata {
-    use crate::storage::engines::impls::helix::SStableMetadata;
+) -> crate::storage::engines::helix::SStableMetadata {
+    use crate::storage::engines::helix::SStableMetadata;
 
     SStableMetadata {
         path,
@@ -518,7 +518,7 @@ pub fn create_mock_sstable_metadata(
 /// Create multiple mock SSTables for testing pruning
 pub fn create_mock_sstables(
     count: usize,
-) -> Vec<crate::storage::engines::impls::helix::SStableMetadata> {
+) -> Vec<crate::storage::engines::helix::SStableMetadata> {
     (0..count)
         .map(|i| {
             let start = i as u64 * 1000;

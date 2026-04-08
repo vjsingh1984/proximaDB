@@ -52,9 +52,6 @@ pub mod grpc_metadata_parser;
 /// Index-related core types and traits
 pub mod index;
 
-/// Indexing configuration and strategies
-pub mod indexing;
-
 /// Metadata query parsing and execution
 pub mod metadata_query;
 

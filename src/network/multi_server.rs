@@ -821,7 +821,7 @@ impl SharedServices {
         let viper_config = crate::core::config::ViperConfig::default();
         debug!("🔧 SharedServices::new - VIPER config created, now creating engine...");
         let _viper_engine = Arc::new(
-            crate::storage::engines::impls::viper::ViperEngine::from_core_config(
+            crate::storage::engines::viper::ViperEngine::from_core_config(
                 viper_config,
                 filesystem_factory.clone(),
             )
@@ -831,7 +831,7 @@ impl SharedServices {
 
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
-        let sst_engine = Arc::new(crate::storage::engines::impls::sst::SstEngine::new().await?);
+        let sst_engine = Arc::new(crate::storage::engines::sst::SstEngine::new().await?);
         debug!("✅ SharedServices::new - SST engine created successfully");
 
         // Clone SST engine reference for DocumentService (used later for DocumentStrategy)
@@ -869,7 +869,7 @@ impl SharedServices {
         crate::storage::entity_store::orion_backend::set_global_axis_manager(axis_manager.clone());
 
         // Make AXIS manager available to SST engine for HNSW/IVF search
-        crate::storage::engines::impls::sst::core::set_sst_axis_manager(axis_manager.clone());
+        crate::storage::engines::sst::core::set_sst_axis_manager(axis_manager.clone());
         debug!(
             "✅ SharedServices::new - AXIS manager registered with SST engine for HNSW/IVF search"
         );

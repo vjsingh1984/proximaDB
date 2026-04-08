@@ -16,7 +16,7 @@
 //!
 //! Total: 4 tests consolidated
 
-use crate::storage::engines::impls::raptor::smart_rowgroup_sizing::{
+use crate::storage::engines::raptor::smart_rowgroup_sizing::{
     CommonConfigurations, SmartRowGroupSizer,
 };
 

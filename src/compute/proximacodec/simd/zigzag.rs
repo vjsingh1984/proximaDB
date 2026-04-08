@@ -4,6 +4,5 @@
 //! SIMD Zigzag - Re-exports from simd.rs
 
 pub use crate::compute::proximacodec::simd::simd::{
-    simd_zigzag_encode_f32,
-    simd_zigzag_decode_f32,
+    simd_zigzag_decode_f32, simd_zigzag_encode_f32,
 };

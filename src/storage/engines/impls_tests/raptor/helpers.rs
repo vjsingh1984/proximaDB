@@ -104,8 +104,8 @@ use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, CompressionAlgorithm, StorageAssignment, StorageConfig,
     StorageEngine, VectorRecord,
 };
-use crate::storage::engines::impls::raptor::RaptorEngine;
-use crate::storage::engines::impls::raptor::config::RaptorConfig;
+use crate::storage::engines::raptor::RaptorEngine;
+use crate::storage::engines::raptor::config::RaptorConfig;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -317,7 +317,7 @@ pub fn create_test_collection_with_dimension(dimension: usize) -> Collection {
 pub fn create_test_raptor_config() -> RaptorConfig {
     RaptorConfig {
         rowgroup_size: 100,
-        compression: crate::storage::engines::impls::raptor::config::CompressionCodec::Snappy,
+        compression: crate::storage::engines::raptor::config::CompressionCodec::Snappy,
         enable_statistics: true,
         enable_bloom_filters: false,
         bloom_fpp: 0.01,
@@ -327,7 +327,7 @@ pub fn create_test_raptor_config() -> RaptorConfig {
         enable_range_reads: false,
         compaction_threshold_files: 5,
         buffer_pool_size_mb: 10,
-        cache_eviction_policy: crate::storage::engines::impls::raptor::config::EvictionPolicy::Lru,
+        cache_eviction_policy: crate::storage::engines::raptor::config::EvictionPolicy::Lru,
         clustering_config: None,
         compression_level: 3,
         use_proximaencoder: false,
@@ -352,7 +352,7 @@ pub fn create_test_raptor_config() -> RaptorConfig {
 pub fn create_test_raptor_config_with_dimension(dimension: usize) -> RaptorConfig {
     RaptorConfig {
         rowgroup_size: 100,
-        compression: crate::storage::engines::impls::raptor::config::CompressionCodec::Snappy,
+        compression: crate::storage::engines::raptor::config::CompressionCodec::Snappy,
         enable_statistics: true,
         enable_bloom_filters: false,
         bloom_fpp: 0.01,
@@ -362,7 +362,7 @@ pub fn create_test_raptor_config_with_dimension(dimension: usize) -> RaptorConfi
         enable_range_reads: false,
         compaction_threshold_files: 5,
         buffer_pool_size_mb: 10,
-        cache_eviction_policy: crate::storage::engines::impls::raptor::config::EvictionPolicy::Lru,
+        cache_eviction_policy: crate::storage::engines::raptor::config::EvictionPolicy::Lru,
         clustering_config: None,
         compression_level: 3,
         use_proximaencoder: false,
@@ -391,8 +391,8 @@ use crate::compute::quantization::types::UnifiedQuantizationLevel;
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
 pub fn create_test_quantization_config()
--> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
+-> crate::storage::engines::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
+    crate::storage::engines::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
         primary_level: UnifiedQuantizationLevel::int8(),
         store_fp32: true,
         compression_ratio: 4.0,
@@ -403,8 +403,8 @@ pub fn create_test_quantization_config()
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
 pub fn create_pq8_quantization_config()
--> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
+-> crate::storage::engines::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
+    crate::storage::engines::raptor::smart_rowgroup_sizing::InternalQuantizationConfig {
         primary_level: UnifiedQuantizationLevel::pq8(32),
         store_fp32: true,
         compression_ratio: 4.0,
@@ -441,11 +441,11 @@ pub fn create_distance_compute(metric: DistanceMetric) -> Arc<UnifiedDistanceCom
 #[allow(dead_code)]
 pub fn create_matrix_builder(
     metric: DistanceMetric,
-) -> crate::storage::engines::impls::raptor::matrix_builder::MatrixBuilder {
+) -> crate::storage::engines::raptor::matrix_builder::MatrixBuilder {
     let hardware = init_hardware_capabilities();
     let distance_compute = create_distance_compute(metric);
 
-    crate::storage::engines::impls::raptor::matrix_builder::MatrixBuilder::new(
+    crate::storage::engines::raptor::matrix_builder::MatrixBuilder::new(
         distance_compute,
         hardware,
         metric,
@@ -460,24 +460,24 @@ pub fn create_matrix_builder(
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
 pub fn create_s3_io_profile()
--> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile::s3_standard()
+-> crate::storage::engines::raptor::smart_rowgroup_sizing::CloudIOProfile {
+    crate::storage::engines::raptor::smart_rowgroup_sizing::CloudIOProfile::s3_standard()
 }
 
 /// Create GCS Standard I/O profile for testing
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
 pub fn create_gcs_io_profile()
--> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile::gcs_standard()
+-> crate::storage::engines::raptor::smart_rowgroup_sizing::CloudIOProfile {
+    crate::storage::engines::raptor::smart_rowgroup_sizing::CloudIOProfile::gcs_standard()
 }
 
 /// Create ADLS Gen2 I/O profile for testing
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
 pub fn create_adls_io_profile()
--> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CloudIOProfile::adls_gen2()
+-> crate::storage::engines::raptor::smart_rowgroup_sizing::CloudIOProfile {
+    crate::storage::engines::raptor::smart_rowgroup_sizing::CloudIOProfile::adls_gen2()
 }
 
 // ============================================================================
@@ -488,24 +488,24 @@ pub fn create_adls_io_profile()
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
 pub fn create_openai_s3_sizer()
--> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CommonConfigurations::openai_s3()
+-> crate::storage::engines::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
+    crate::storage::engines::raptor::smart_rowgroup_sizing::CommonConfigurations::openai_s3()
 }
 
 /// Create a SmartRowGroupSizer for GCS with BERT embeddings
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
 pub fn create_bert_gcs_sizer()
--> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CommonConfigurations::bert_gcs()
+-> crate::storage::engines::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
+    crate::storage::engines::raptor::smart_rowgroup_sizing::CommonConfigurations::bert_gcs()
 }
 
 /// Create a SmartRowGroupSizer for ADLS with research vectors
 /// Source: smart_rowgroup_sizing.rs
 #[allow(dead_code)]
 pub fn create_research_adls_sizer()
--> crate::storage::engines::impls::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
-    crate::storage::engines::impls::raptor::smart_rowgroup_sizing::CommonConfigurations::research_adls()
+-> crate::storage::engines::raptor::smart_rowgroup_sizing::SmartRowGroupSizer {
+    crate::storage::engines::raptor::smart_rowgroup_sizing::CommonConfigurations::research_adls()
 }
 
 // ============================================================================
@@ -516,8 +516,8 @@ pub fn create_research_adls_sizer()
 /// Source: unified_metadata_serializer.rs
 #[allow(dead_code)]
 pub fn create_test_raptor_metadata()
--> crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorCachedMetadata {
-    crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorCachedMetadata {
+-> crate::storage::engines::raptor::unified_metadata_serializer::RaptorCachedMetadata {
+    crate::storage::engines::raptor::unified_metadata_serializer::RaptorCachedMetadata {
         file_size: 1024000,
         vector_count: 10000,
         dimension: 768,
@@ -540,8 +540,8 @@ pub fn create_test_raptor_metadata()
 /// Source: artus_bloom.rs
 #[allow(dead_code)]
 pub fn create_artus_bloom_config()
--> crate::storage::engines::impls::raptor::artus_bloom::ArtusBloomConfig {
-    crate::storage::engines::impls::raptor::artus_bloom::ArtusBloomConfig::default()
+-> crate::storage::engines::raptor::artus_bloom::ArtusBloomConfig {
+    crate::storage::engines::raptor::artus_bloom::ArtusBloomConfig::default()
 }
 
 /// Create ArtusColumnStats for testing
@@ -550,14 +550,14 @@ pub fn create_artus_bloom_config()
 pub fn create_artus_column_stats(
     column_name: &str,
     cardinality: usize,
-) -> crate::storage::engines::impls::raptor::artus_bloom::ArtusColumnStats {
-    crate::storage::engines::impls::raptor::artus_bloom::ArtusColumnStats {
+) -> crate::storage::engines::raptor::artus_bloom::ArtusColumnStats {
+    crate::storage::engines::raptor::artus_bloom::ArtusColumnStats {
         column_name: column_name.to_string(),
         cardinality,
         null_ratio: 0.01,
         access_frequency: 20000,
         selectivity: 0.3,
-        data_type: crate::storage::engines::impls::raptor::artus_bloom::ColumnData::String,
+        data_type: crate::storage::engines::raptor::artus_bloom::ColumnData::String,
         bloom_benefit_score: 0.8,
     }
 }

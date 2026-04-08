@@ -276,7 +276,7 @@ pub use trait_components::{
 };
 
 // Engine exports
-pub use engines::impls::sst::SstEngine;
+pub use engines::sst::SstEngine;
 // Arrow integration re-enabled - compilation conflicts resolved
 // pub use engines::viper::ViperEngine;
 

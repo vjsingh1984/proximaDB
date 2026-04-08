@@ -195,9 +195,6 @@ pub mod unified;
 pub mod unified_cache;
 pub mod unified_config;
 
-#[cfg(test)]
-pub mod tests;
-
 // Filesystem implementations
 pub use local::LocalFileSystem;
 
@@ -1053,12 +1050,12 @@ impl FilesystemFactory {
         // Get the metadata serializer for this engine type
         let metadata_serializer: Arc<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
             match engine_type.as_str() {
-                "sst" => Arc::new(crate::storage::engines::impls::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
-                "viper" => Arc::new(crate::storage::engines::impls::viper::unified_metadata_serializer::ViperMetadataSerializer::new()),
-                "raptor" => Arc::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
-                "nova" => Arc::new(crate::storage::engines::impls::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
-                "swift" => Arc::new(crate::storage::engines::impls::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
-                "helix" => Arc::new(crate::storage::engines::impls::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
+                "sst" => Arc::new(crate::storage::engines::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
+                "viper" => Arc::new(crate::storage::engines::viper::unified_metadata_serializer::ViperMetadataSerializer::new()),
+                "raptor" => Arc::new(crate::storage::engines::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
+                "nova" => Arc::new(crate::storage::engines::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
+                "swift" => Arc::new(crate::storage::engines::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
+                "helix" => Arc::new(crate::storage::engines::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
                 _ => {
                     // Default serializer for other engines
                     #[derive(Debug)]

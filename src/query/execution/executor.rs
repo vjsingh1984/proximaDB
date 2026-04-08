@@ -2264,7 +2264,7 @@ mod executor_tests {
         use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
-        use crate::storage::engines::impls::sst::SstEngine;
+        use crate::storage::engines::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
         // Create temporary directory for storage
@@ -2370,7 +2370,7 @@ mod executor_tests {
         use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
-        use crate::storage::engines::impls::sst::SstEngine;
+        use crate::storage::engines::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
         // Create temporary directory for storage

@@ -16,33 +16,25 @@
 
 //! ProximaDB Unit Tests
 //!
-//! **IMPORTANT:** This directory structure has been reorganized.
-//! Unit tests are now inline within source files (src/**/*.rs) as #[cfg(test)] modules.
-//! Integration tests have been moved to tests/integration/.
+//! **IMPORTANT:** This directory structure has been DEPRECATED.
+//!
+//! ## Migration Complete (2026-04-07):
+//! All unit tests have been successfully inlined into their source modules following Rust best practices.
+//! Unit tests are now located as `#[cfg(test)] mod tests` blocks within their respective source files.
 //!
 //! ## Test Organization (Current):
 //! - **Unit Tests:** Inline in source files → `cargo test --lib`
 //! - **Integration Tests:** Standalone files → `cargo test --test integration`
 //!
-//! ## Migration Notes:
-//! Most tests that were here have been moved:
+//! ## Historical Migration:
+//! Tests that were previously here have been moved:
 //! - mvcc_logic_tests → tests/integration/mvcc_logic_test
 //! - sst_optimization_tests → tests/integration/sst_optimization_test
 //! - write_buffer_recovery_stress_tests → tests/integration/write_buffer_recovery_stress_test
 //! - services tests → tests/integration/services_*
 //! - storage tests → tests/integration/storage/*
+//! - All other unit tests → Inlined into respective src/**/*.rs files
 //!
-//! The remaining subdirectories (compute, config, core, etc.) may contain
-//! inline test helpers or may be deprecated. See individual module documentation.
-
-pub mod compute;
-pub mod config;
-pub mod core;
-pub mod graph;
-pub mod handlers;
-pub mod network;
-pub mod query;
-pub mod search;
-pub mod server;
-pub mod services;
-pub mod storage;
+//! ## Directory Status:
+//! This directory and its subdirectories are now deprecated and will be removed in future cleanup.
+//! Please use `cargo test --lib` for unit tests and `cargo test --test integration` for integration tests.

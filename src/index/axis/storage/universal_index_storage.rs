@@ -34,8 +34,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
-use crate::storage::engines::impls::sst::writer::SstableWriter;
+use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
+use crate::storage::engines::sst::writer::SstableWriter;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// Universal index data that can be stored across tiers

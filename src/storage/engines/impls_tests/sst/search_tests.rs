@@ -22,15 +22,15 @@ use tempfile::TempDir;
 
 use super::helpers::*;
 
-use crate::storage::engines::impls::sst::SstEngine;
-use crate::storage::engines::impls::sst::readers::sst_query_engine::{
+use crate::storage::engines::sst::SstEngine;
+use crate::storage::engines::sst::readers::sst_query_engine::{
     UnifiedSstableReader, ReaderConfig, CollectionContext,
 };
 // unified_search_engine module no longer exists - use search coordinator instead
-use crate::storage::engines::impls::sst::SstableWriter;
-use crate::storage::engines::impls::sst::search::{SearchCoordinator, SearchOperations, SearchOptimizer};
-use crate::storage::engines::impls::sst::search::coordinator::SearchStrategy;
-use crate::storage::engines::impls::sst::search::optimizer::{OptimizationStrategy, OptimizationConfig};
+use crate::storage::engines::sst::SstableWriter;
+use crate::storage::engines::sst::search::{SearchCoordinator, SearchOperations, SearchOptimizer};
+use crate::storage::engines::sst::search::coordinator::SearchStrategy;
+use crate::storage::engines::sst::search::optimizer::{OptimizationStrategy, OptimizationConfig};
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::distance_computation::DistanceMetric;

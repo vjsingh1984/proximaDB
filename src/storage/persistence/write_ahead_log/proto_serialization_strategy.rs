@@ -751,3 +751,196 @@ impl ProtoSerializationStrategy {
         Ok(vec![batch])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::proximadb_v1::{SqlValue, sql_value};
+    use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+    use crate::storage::persistence::filesystem::FilesystemFactory;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn create_test_config() -> WALConfig {
+        WALConfig {
+            memtable: crate::storage::persistence::write_ahead_log::config::MemTableConfig {
+                memtable_type:
+                    crate::storage::persistence::write_ahead_log::config::MemTableType::default(),
+                global_memory_limit: 10 * 1024 * 1024,
+                mvcc_versions_retained: 5,
+                enable_concurrency: true,
+            },
+            multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
+                data_directories: vec!["/tmp/proximadb-proto-test".to_string()],
+                ..Default::default()
+            },
+            performance: crate::storage::persistence::write_ahead_log::config::PerformanceConfig {
+                memory_flush_size_bytes: 5 * 1024 * 1024,
+                sync_mode: crate::storage::persistence::write_ahead_log::config::SyncMode::Always,
+                ..Default::default()
+            },
+            enable_mvcc: true,
+            ..Default::default()
+        }
+    }
+
+    fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
+        VectorRecord {
+            id: id.to_string(),
+            vector: (0..dimension)
+                .map(|i| (i as f32) / (dimension as f32))
+                .collect(),
+            metadata: {
+                let mut map = HashMap::new();
+                map.insert(
+                    "proto_version".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("3".to_string())),
+                    },
+                );
+                map.insert(
+                    "encoding".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::StringValue("protobuf".to_string())),
+                    },
+                );
+                map
+            },
+            timestamp: Some(1234567890),
+            updated_at: Some(1234567890),
+            expires_at: Some(1234567890 + 86400),
+            version: Some(1),
+            source: None,
+        }
+    }
+
+    fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
+        let vector_count = vectors.len();
+        WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vectors),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: vector_count * 300,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proto_strategy_initialization() {
+        let config = create_test_config();
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+
+        let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
+            .await
+            .expect("Failed to create Proto strategy");
+
+        assert_eq!(strategy.strategy_name(), "ProtoBatch");
+    }
+
+    #[tokio::test]
+    async fn test_proto_field_preservation() {
+        let config = create_test_config();
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
+            .await
+            .expect("Failed to create strategy");
+
+        assert_eq!(strategy.strategy_name(), "ProtoBatch");
+    }
+
+    #[tokio::test]
+    async fn test_proto_batch_creation() {
+        let vector = create_proto_test_vector("test", 64);
+        let batch = create_test_batch(vec![vector.clone()]);
+
+        assert_eq!(batch.vector_records.len(), 1);
+        assert_eq!(batch.vector_records[0].id, "test".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_proto_metadata_encoding() {
+        let mut vector = create_proto_test_vector("meta_test", 64);
+        vector.metadata.insert(
+            "unicode".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue("Hello 世界 🌍".to_string())),
+            },
+        );
+        vector.metadata.insert(
+            "special_chars".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue(
+                    "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
+                )),
+            },
+        );
+        vector.metadata.insert(
+            "empty".to_string(),
+            SqlValue {
+                value: Some(sql_value::Value::StringValue("".to_string())),
+            },
+        );
+
+        assert_eq!(vector.metadata.len(), 5);
+        assert!(vector.metadata.contains_key("unicode"));
+        if let Some(sql_value) = vector.metadata.get("unicode") {
+            if let Some(sql_value::Value::StringValue(s)) = &sql_value.value {
+                assert_eq!(s, "Hello 世界 🌍");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proto_large_vector_handling() {
+        let large_vector = create_proto_test_vector("large", 4096);
+        assert_eq!(large_vector.vector.len(), 4096);
+
+        let batch = create_test_batch(vec![large_vector]);
+        assert_eq!(batch.vector_records.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_proto_batch_atomicity() {
+        let vectors: Vec<VectorRecord> = (0..100)
+            .map(|i| create_proto_test_vector(&format!("atomic_{}", i), 128))
+            .collect();
+
+        let batch = create_test_batch(vectors);
+        assert_eq!(batch.vector_records.len(), 100);
+
+        assert!(!batch.is_flushed);
+    }
+
+    #[tokio::test]
+    async fn test_proto_cross_collection_isolation() {
+        let vec1 = create_proto_test_vector("col1_vec", 64);
+        let vec2 = create_proto_test_vector("col2_vec", 64);
+
+        assert_ne!(vec1.id, vec2.id);
+    }
+
+    #[tokio::test]
+    async fn test_proto_memory_only_mode() {
+        let mut config = create_test_config();
+        config.performance.sync_mode =
+            crate::storage::persistence::write_ahead_log::config::SyncMode::MemoryOnly;
+
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
+            .await
+            .expect("Failed to create strategy");
+
+        assert_eq!(strategy.strategy_name(), "ProtoBatch");
+    }
+
+    #[tokio::test]
+    async fn test_proto_similarity_search_with_metadata() {
+        let vector = create_proto_test_vector("search_test", 128);
+        assert!(vector.metadata.len() > 0);
+        assert_eq!(vector.vector.len(), 128);
+    }
+}

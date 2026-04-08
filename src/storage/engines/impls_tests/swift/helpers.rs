@@ -22,7 +22,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
 #[allow(deprecated)]
-use crate::storage::engines::impls::swift::{SwiftEngine, SwiftFile};
+use crate::storage::engines::swift::{SwiftEngine, SwiftFile};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 // ============================================================================

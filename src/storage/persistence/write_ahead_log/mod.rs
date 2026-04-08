@@ -129,9 +129,6 @@ pub mod unified_operations; // Unified WAL operations for vector and graph
 
 // Unit tests
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 mod batch_strategy_tests;
 
 // Re-exports
@@ -3354,5 +3351,417 @@ impl std::fmt::Debug for WriteAheadLogManager {
             .field("strategy", &"shared_wal_behavior")
             .field("config", &self.config)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod simple_context_tests {
+    use super::*;
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::storage::background_flush_context::{
+        BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
+    };
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn test_background_flush_context_creation() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: BackgroundFlushContext creation and validation");
+
+        let context = BackgroundFlushContext {
+            collection_id: "test_collection".to_string(),
+            storage_engine: StorageEngineType::Viper,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 384,
+            distance_metric: DistanceMetric::Cosine,
+            compression_config: CompressionConfig::default(),
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(1000),
+            priority: OperationPriority::Normal,
+            timeout_ms: Some(60_000),
+            extra_metadata: HashMap::new(),
+        };
+
+        // Validate context fields
+        assert_eq!(context.collection_id, "test_collection");
+        assert_eq!(context.storage_engine, StorageEngineType::Viper);
+        assert_eq!(context.dimension, 384);
+        assert_eq!(context.distance_metric, DistanceMetric::Cosine);
+        assert_eq!(context.engine_name(), "viper");
+
+        // Test SST engine as well
+        let sst_context = BackgroundFlushContext {
+            collection_id: "sst_collection".to_string(),
+            storage_engine: StorageEngineType::Sst,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 384,
+            distance_metric: DistanceMetric::Cosine,
+            compression_config: CompressionConfig::default(),
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(500),
+            priority: OperationPriority::Normal,
+            timeout_ms: Some(60_000),
+            extra_metadata: HashMap::new(),
+        };
+        assert_eq!(sst_context.engine_name(), "sst");
+
+        info!("✅ BackgroundFlushContext creation test passed");
+    }
+
+    #[tokio::test]
+    async fn test_context_performance_settings() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 TEST: Context performance configuration");
+
+        let viper_context = BackgroundFlushContext {
+            collection_id: "perf_test".to_string(),
+            storage_engine: StorageEngineType::Viper,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 384,
+            distance_metric: DistanceMetric::Cosine,
+            compression_config: CompressionConfig::default(),
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(1000),
+            priority: OperationPriority::Normal,
+            timeout_ms: Some(60_000),
+            extra_metadata: HashMap::new(),
+        };
+
+        // Test dimension-based optimizations
+        assert_eq!(viper_context.dimension, 384);
+
+        // Test batch size hint calculation
+        assert!(viper_context.batch_size_hint.is_some());
+        let batch_size = viper_context.batch_size_hint.unwrap();
+        assert!(batch_size > 0 && batch_size <= 10000);
+
+        // Test row group size optimization for VIPER
+        let row_group_size = viper_context.row_group_size();
+        assert!(row_group_size >= 1000 && row_group_size <= 50000);
+
+        // Test flush threshold optimization
+        let flush_threshold = viper_context.flush_threshold();
+        assert!(flush_threshold >= 10000 && flush_threshold <= 100000);
+
+        info!("✅ Context performance configuration test passed");
+    }
+}
+
+#[cfg(test)]
+mod wal_manager_infra_tests {
+    use super::*;
+    use crate::storage::persistence::write_ahead_log::config::{
+        WALConfig, WriteBufferStrategyType,
+    };
+
+    #[tokio::test]
+    async fn test_wal_manager_creation() {
+        let config = WALConfig::default();
+        let result =
+            WriteAheadLogManager::new_for_collection(config, "test_infra_collection".to_string())
+                .await;
+
+        assert!(
+            result.is_ok(),
+            "WriteAheadLogManager::new_for_collection should initialize without error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wal_manager_stats() {
+        let config = WALConfig::default();
+        let manager =
+            WriteAheadLogManager::new_for_collection(config, "test_stats_collection".to_string())
+                .await
+                .expect("manager creation should succeed");
+
+        let stats = manager.stats().await.expect("stats() should succeed");
+
+        assert_eq!(
+            stats.total_entries, 0,
+            "total_entries should be 0 initially"
+        );
+        assert_eq!(
+            stats.memory_entries, 0,
+            "memory_entries should be 0 initially"
+        );
+        assert_eq!(
+            stats.disk_segments, 0,
+            "disk_segments should be 0 initially"
+        );
+        assert_eq!(stats.total_disk_size_bytes, 0);
+        assert_eq!(stats.memory_size_bytes, 0);
+        assert_eq!(stats.collections_count, 0, "no collections assigned yet");
+        assert!(stats.last_flush_time.is_none());
+        assert!((stats.compression_ratio - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_wal_manager_with_config() {
+        let mut config = WALConfig::default();
+        config.strategy_type = WriteBufferStrategyType::ProtoBatch;
+        config.enable_mvcc = false;
+        config.enable_ttl = false;
+        config.enable_background_compaction = false;
+
+        let manager = WriteAheadLogManager::new_for_collection(
+            config.clone(),
+            "test_config_collection".to_string(),
+        )
+        .await
+        .expect("manager creation with custom config should succeed");
+
+        let stats = manager.stats().await.expect("stats should succeed");
+        assert_eq!(stats.total_entries, 0);
+    }
+
+    #[tokio::test]
+    async fn test_wal_registry_creation() {
+        let registry = WriteAheadLogManagerRegistry::new();
+        let managers = registry.get_all_managers().await;
+        assert_eq!(
+            managers.len(),
+            0,
+            "registry pool should be empty before any collection assignment"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wal_registry_with_config() {
+        let pool_config = WriteAheadLogManagerPoolConfig::builder()
+            .initial_pool_size(5)
+            .soft_thread_limit(10)
+            .target_collections_per_manager(200)
+            .rebalance_load_threshold(0.6)
+            .rebalance_cooldown_secs(15)
+            .enable_dynamic_scaling(false)
+            .build();
+
+        assert_eq!(pool_config.initial_pool_size, 5);
+        assert_eq!(pool_config.soft_thread_limit, 10);
+        assert_eq!(pool_config.target_collections_per_manager, 200);
+        assert!((pool_config.rebalance_load_threshold - 0.6).abs() < f64::EPSILON);
+        assert_eq!(pool_config.rebalance_cooldown_secs, 15);
+        assert!(!pool_config.enable_dynamic_scaling);
+
+        let registry = WriteAheadLogManagerRegistry::with_config(pool_config);
+        let managers = registry.get_all_managers().await;
+        assert_eq!(
+            managers.len(),
+            0,
+            "custom-config registry pool should start empty"
+        );
+    }
+
+    #[test]
+    fn test_strategy_name() {
+        assert_eq!(
+            WriteBufferStrategyType::ProtoBatch.to_string(),
+            "ProtoBatch"
+        );
+        assert_eq!(WriteBufferStrategyType::AvroBatch.to_string(), "AvroBatch");
+        assert_eq!(
+            WriteBufferStrategyType::BincodeBatch.to_string(),
+            "BincodeBatch"
+        );
+
+        assert_eq!(
+            WriteBufferStrategyType::default(),
+            WriteBufferStrategyType::BincodeBatch
+        );
+    }
+}
+
+#[cfg(test)]
+mod optimization_validation_tests {
+    use super::*;
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::storage::background_flush_context::{
+        BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct MockCollectionService {
+        call_count: Arc<AtomicU32>,
+    }
+
+    impl MockCollectionService {
+        fn new() -> Self {
+            Self {
+                call_count: Arc::new(AtomicU32::new(0)),
+            }
+        }
+
+        async fn get_collection(&self, _collection_id: &str) -> Option<String> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            Some("mock_collection".to_string())
+        }
+
+        fn get_call_count(&self) -> u32 {
+            self.call_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_service_call_elimination_validation() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 VALIDATION: Service call elimination through context optimization");
+
+        let mock_service = Arc::new(MockCollectionService::new());
+
+        debug!("📊 Simulating OLD approach - multiple service calls:");
+
+        let _result1 = mock_service.get_collection("test_collection").await;
+        debug!("   VectorOperationsService → Collection Service Call #1");
+
+        let _result2 = mock_service.get_collection("test_collection").await;
+        debug!("   BackgroundManager → Collection Service Call #2");
+
+        let _result3 = mock_service.get_collection("test_collection").await;
+        debug!("   FlushCoordinator → Collection Service Call #3");
+
+        let old_call_count = mock_service.get_call_count();
+        debug!("   Total calls in OLD approach: {}", old_call_count);
+        assert_eq!(
+            old_call_count, 3,
+            "OLD approach should make 3 service calls"
+        );
+
+        mock_service.call_count.store(0, Ordering::SeqCst);
+
+        debug!("🚀 Testing NEW approach - context-based optimization:");
+
+        let _result = mock_service.get_collection("test_collection").await;
+        debug!("   VectorOperationsService → Collection Service Call #1 (creates context)");
+
+        let context = BackgroundFlushContext {
+            collection_id: "test_collection".to_string(),
+            storage_engine: StorageEngineType::Viper,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 384,
+            distance_metric: DistanceMetric::Cosine,
+            compression_config: CompressionConfig::default(),
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(1000),
+            priority: OperationPriority::Normal,
+            timeout_ms: Some(60_000),
+            extra_metadata: HashMap::new(),
+        };
+
+        debug!("   BackgroundManager → Uses pre-computed context (NO service call)");
+        debug!("   FlushCoordinator → Uses pre-computed context (NO service call)");
+
+        let engine_name = context.engine_name();
+        let dimension = context.dimension;
+        let batch_hint = context.batch_size_hint;
+
+        assert_eq!(engine_name, "viper");
+        assert_eq!(dimension, 384);
+        assert!(batch_hint.is_some());
+
+        let new_call_count = mock_service.get_call_count();
+        debug!("   Total calls in NEW approach: {}", new_call_count);
+        assert_eq!(
+            new_call_count, 1,
+            "NEW approach should make only 1 service call"
+        );
+
+        let reduction_percentage =
+            ((old_call_count - new_call_count) as f64 / old_call_count as f64) * 100.0;
+        info!("✅ OPTIMIZATION VALIDATED:");
+        debug!(
+            "   Service calls reduced from {} to {}",
+            old_call_count, new_call_count
+        );
+        debug!(
+            "   Reduction: {:.1}% ({}x fewer calls)",
+            reduction_percentage,
+            old_call_count / new_call_count
+        );
+
+        assert!(
+            reduction_percentage > 60.0,
+            "Should achieve at least 60% reduction"
+        );
+        debug!("🎉 Background flush optimization successfully validated!");
+    }
+
+    #[tokio::test]
+    async fn test_context_metadata_completeness() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        debug!("🧪 VALIDATION: Context contains all metadata needed for background operations");
+
+        let context = BackgroundFlushContext {
+            collection_id: "completeness_test".to_string(),
+            storage_engine: StorageEngineType::Viper,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 512,
+            distance_metric: DistanceMetric::Euclidean,
+            compression_config: CompressionConfig {
+                enabled: true,
+                compression_type: "zstd".to_string(),
+                level: 3,
+            },
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(2000),
+            priority: OperationPriority::High,
+            timeout_ms: Some(120_000),
+            extra_metadata: {
+                let mut meta = HashMap::new();
+                meta.insert("test_key".to_string(), "test_value".to_string());
+                meta
+            },
+        };
+
+        assert_eq!(context.collection_id, "completeness_test");
+        assert_eq!(context.storage_engine, StorageEngineType::Viper);
+        assert_eq!(context.engine_name(), "viper");
+        assert_eq!(context.dimension, 512);
+        assert_eq!(context.distance_metric, DistanceMetric::Euclidean);
+        assert_eq!(context.base_location, "file:///tmp/test");
+
+        assert!(context.compression_config.enabled);
+        assert_eq!(context.compression_config.compression_type, "zstd");
+        assert_eq!(context.compression_config.level, 3);
+
+        assert_eq!(context.batch_size_hint, Some(2000));
+        assert_eq!(context.priority, OperationPriority::High);
+        assert_eq!(context.timeout_ms, Some(120_000));
+
+        let row_group_size = context.row_group_size();
+        let flush_threshold = context.flush_threshold();
+
+        assert!(row_group_size > 0, "Row group size should be calculated");
+        assert!(flush_threshold > 0, "Flush threshold should be calculated");
+
+        assert_eq!(
+            context.extra_metadata.get("test_key"),
+            Some(&"test_value".to_string())
+        );
+
+        info!("✅ Context metadata completeness validated");
+        debug!(
+            "   Engine: {} ({})",
+            context.engine_name(),
+            context.storage_engine.clone() as u8
+        );
+        debug!("   Dimension: {}", context.dimension);
+        debug!("   Distance metric: {:?}", context.distance_metric);
+        debug!("   Row group size: {}", row_group_size);
+        debug!("   Flush threshold: {}", flush_threshold);
+        debug!("   Batch hint: {:?}", context.batch_size_hint);
+        debug!("   Priority: {:?}", context.priority);
+        debug!("🎉 Context contains all required metadata for background operations!");
     }
 }

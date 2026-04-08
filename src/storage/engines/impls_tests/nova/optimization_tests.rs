@@ -27,7 +27,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio;
 
-use crate::storage::engines::impls::nova::{
+use crate::storage::engines::nova::{
     hierarchical_stats::*,
     streaming_processor::*,
     progressive_search::*,

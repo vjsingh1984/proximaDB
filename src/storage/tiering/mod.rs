@@ -26,7 +26,7 @@
 //! - Access pattern tracking
 //! - Migration task generation
 //! - Retention policy management
-//! - **SST Integration Module** (`storage::engines::impls::sst::tiering_integration`)
+//! - **SST Integration Module** (`storage::engines::sst::tiering_integration`)
 //!
 //! ## SST Tiering Integration
 //!

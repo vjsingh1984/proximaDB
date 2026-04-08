@@ -18,11 +18,7 @@ pub mod universal_backend;
 pub mod common_utils;
 pub mod metrics_decorator;
 
-#[cfg(test)]
-mod tests {
-    pub mod filestore_tests;
-    // pub mod integration_tests; // Deferred: Add integration tests module
-}
+// Note: Test modules have been consolidated into respective backend implementations
 
 use self::metrics_decorator::MetricsDecorator;
 use crate::storage::traits::UnifiedMetricsCollector;

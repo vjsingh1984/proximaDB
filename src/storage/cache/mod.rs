@@ -247,9 +247,9 @@ impl CacheValue for crate::proto::proximadb_v1::VectorRecord {
 #[cfg(test)]
 mod base_cache_tests {
     use super::*;
+    use crate::storage::cache::backend::CacheTier;
     use crate::storage::cache::base::BaseCacheImpl;
     use crate::storage::cache::traits::{BaseCache, CacheValue};
-    use crate::storage::cache::backend::CacheTier;
 
     #[derive(Debug, Clone)]
     struct TestValue {
@@ -264,7 +264,8 @@ mod base_cache_tests {
 
     #[tokio::test]
     async fn test_basic_get_put() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ =
+            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -284,7 +285,8 @@ mod base_cache_tests {
 
     #[tokio::test]
     async fn test_cache_miss() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ =
+            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -295,7 +297,8 @@ mod base_cache_tests {
 
     #[tokio::test]
     async fn test_invalidation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ =
+            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -320,7 +323,8 @@ mod base_cache_tests {
 
     #[tokio::test]
     async fn test_tier_selection() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ =
+            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -342,7 +346,8 @@ mod base_cache_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_metrics_recording() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ =
+            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 

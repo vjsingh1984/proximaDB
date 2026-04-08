@@ -20,9 +20,9 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 // Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
-// use crate::storage::engines::impls::viper::ViperEngine;
+// use crate::storage::engines::viper::ViperEngine;
 use crate::index::axis::AxisManager;
-use crate::storage::engines::impls::sst::SstEngine;
+use crate::storage::engines::sst::SstEngine;
 use crate::storage::traits::FlushResult;
 
 use super::compaction_axis_integration::CompactionAxisUpdater;
@@ -40,7 +40,7 @@ pub struct CompactionCoordinator {
     collection_states: Arc<RwLock<HashMap<String, CollectionCompactionState>>>,
 
     /// Storage engines for compaction
-    viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
+    viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
     sst_engine: Arc<SstEngine>,
 
     /// Compaction configuration
@@ -195,7 +195,7 @@ pub struct CompactionResult {
 impl CompactionCoordinator {
     /// Create new compaction coordinator
     pub fn new(
-        viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
+        viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
         sst_engine: Arc<SstEngine>,
         config: Option<CompactionConfig>,
         axis_manager: Option<Arc<AxisManager>>,

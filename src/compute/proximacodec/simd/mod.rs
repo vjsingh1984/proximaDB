@@ -51,38 +51,47 @@ pub mod backend;
 pub mod simd;
 
 // Organized re-exports for better API navigation
-pub mod delta;
 pub mod bitpack;
-pub mod frame_of_reference;
-pub mod zigzag;
-pub mod pfor_delta;
+pub mod delta;
 pub mod double_delta;
+pub mod frame_of_reference;
+pub mod pfor_delta;
+pub mod zigzag;
 
 // Encoder/decoder trait implementations
-pub mod encoder;
 pub mod decoder;
+pub mod encoder;
 
 // Re-export all SIMD functions from simd.rs for backward compatibility
 pub use simd::{
+    get_cached_backend,
     // Backend functions
-    get_simd_backend, get_cached_backend, has_simd_support, get_simd_info,
-    // Delta encoding
-    simd_delta_encode_f32, simd_delta_decode_f32,
+    get_simd_backend,
+    get_simd_info,
+    has_simd_support,
+    simd_bitpack_decode_f32,
     // Bitpacking
-    simd_bitpack_encode_f32, simd_bitpack_decode_f32,
-    // Frame-of-reference
-    simd_frame_of_reference_encode_f32, simd_frame_of_reference_decode_f32,
-    // Zigzag
-    simd_zigzag_encode_f32, simd_zigzag_decode_f32,
-    // PForDelta
-    simd_pfor_delta_encode_f32, simd_pfor_delta_decode_f32,
+    simd_bitpack_encode_f32,
+    simd_delta_decode_f32,
+    // Delta encoding
+    simd_delta_encode_f32,
+    simd_double_delta_decode_f32,
     // Double delta
-    simd_double_delta_encode_f32, simd_double_delta_decode_f32,
+    simd_double_delta_encode_f32,
+    simd_frame_of_reference_decode_f32,
+    // Frame-of-reference
+    simd_frame_of_reference_encode_f32,
+    simd_pfor_delta_decode_f32,
+    // PForDelta
+    simd_pfor_delta_encode_f32,
+    simd_zigzag_decode_f32,
+    // Zigzag
+    simd_zigzag_encode_f32,
 };
 
 // Re-export backend module for direct access
 pub use backend as hardware;
 
 // Re-export encoder/decoder types
-pub use encoder::SimdEncoder;
 pub use decoder::SimdDecoder;
+pub use encoder::SimdEncoder;

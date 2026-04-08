@@ -27,9 +27,9 @@ use std::sync::Arc;
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
-use crate::storage::engines::impls::raptor::common::VectorCentroidStorageStrategy;
-use crate::storage::engines::impls::raptor::consolidated_reader::IntraRowgroupMatrix;
-use crate::storage::engines::impls::raptor::matrix_builder::MatrixBuilder;
+use crate::storage::engines::raptor::common::VectorCentroidStorageStrategy;
+use crate::storage::engines::raptor::consolidated_reader::IntraRowgroupMatrix;
+use crate::storage::engines::raptor::matrix_builder::MatrixBuilder;
 
 // ============================================================================
 // P² Matrix Tests (from p2_matrix_tests.rs)
@@ -249,7 +249,7 @@ fn test_p2_matrix_memory_scaling() {
 async fn test_p2_matrix_search_integration() -> Result<()> {
     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
 
-    // use crate::storage::engines::impls::raptor::consolidated_reader::{  // Unclosed delimiter - commented out
+    // use crate::storage::engines::raptor::consolidated_reader::{  // Unclosed delimiter - commented out
 
     // Create test P² matrix
     let p2_matrix = P2Matrix {
@@ -270,7 +270,7 @@ async fn test_p2_matrix_search_integration() -> Result<()> {
     ];
 
     let matrix = IntraRowgroupMatrix::new(
-        crate::storage::engines::impls::raptor::common::P2Matrix {
+        crate::storage::engines::raptor::common::P2Matrix {
             num_vectors: p2_matrix.num_vectors as u32,
             distances: p2_matrix.distances.into_iter().map(|d| d as u8).collect(),
             min_distance: p2_matrix.min_distance,

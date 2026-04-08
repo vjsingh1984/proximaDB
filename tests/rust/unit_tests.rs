@@ -1,11 +1,21 @@
 //! Unit tests module inclusion
-
-// Include all unit tests
-// Note: Most unit tests are now inline in source files (src/**/*.rs)
-// This file mainly includes legacy unit test structure
-
-#[path = "../unit/storage/mod.rs"]
-pub mod storage;
-
-// Write buffer recovery stress tests moved to integration tests
-// See: tests/integration/write_buffer_recovery_stress_test.rs
+//!
+//! **DEPRECATED**: This module structure is no longer used.
+//!
+//! ## Migration Complete (2026-04-07):
+//! All unit tests have been successfully inlined into their source modules.
+//!
+//! ## Current Test Organization:
+//! - **Unit Tests:** Now located as `#[cfg(test)]` modules in source files
+//!   - Use `cargo test --lib` to run unit tests
+//! - **Integration Tests:** Located in `tests/integration/` directory
+//!   - Use `cargo test --test integration` to run integration tests
+//!
+//! ## Historical Context:
+//! This file previously included unit tests from `tests/unit/storage/mod.rs`,
+//! but those tests have been migrated to inline test modules following Rust best practices.
+//!
+//! ## See Also:
+//! - `src/storage/**/*.rs` - Contains inline unit tests for storage components
+//! - `tests/integration/` - Contains integration tests
+//! - `tests/unit/mod.rs` - Contains migration documentation

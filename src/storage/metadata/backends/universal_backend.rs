@@ -2099,4 +2099,377 @@ mod integration_tests {
         // Cleanup
         std::fs::remove_dir_all(test_dir).ok();
     }
+
+    #[tokio::test]
+    async fn test_universal_backend_create() {
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let config = UniversalMetadataConfig {
+            storage_url: "file:///tmp/test_metadata_info".to_string(),
+            compression: true,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
+            .await
+            .expect("Failed to create filestore backend");
+
+        let collection_uuids = backend.list_collection_uuids();
+        assert!(collection_uuids.is_empty());
+    }
+
+    use crate::proto::proximadb_v1::{
+        Collection, CollectionConfig, CollectionMetadata, CollectionStats, DistanceMetric,
+        FilterableColumnSpec, IndexingAlgorithm, StorageEngine,
+    };
+
+    fn create_test_config_for_proto(temp_dir: &TempDir) -> UniversalMetadataConfig {
+        UniversalMetadataConfig {
+            storage_url: format!("file://{}", temp_dir.path().display()),
+            compression: true,
+            enable_snapshots: true,
+            snapshot_threshold: 10,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: Some(temp_dir.path().join("temp").to_string_lossy().to_string()),
+        }
+    }
+
+    fn create_test_proto_collection(id: &str, name: &str) -> Collection {
+        Collection {
+            id: id.to_string(),
+            config: Some(CollectionConfig {
+                name: name.to_string(),
+                dimension: 384,
+                distance_metric: DistanceMetric::Cosine as i32,
+                storage_engine: StorageEngine::Viper as i32,
+                primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
+                filterable_columns: vec![
+                    FilterableColumnSpec {
+                        name: "category".to_string(),
+                        indexed: true,
+                        supports_range: false,
+                        estimated_cardinality: Some(100),
+                        encoding_hint: None,
+                        compression: None,
+                        optimization_hints: None,
+                    },
+                    FilterableColumnSpec {
+                        name: "price".to_string(),
+                        indexed: true,
+                        supports_range: true,
+                        estimated_cardinality: None,
+                        encoding_hint: None,
+                        compression: None,
+                        optimization_hints: None,
+                    },
+                ],
+                index_configs: vec![],
+                quantization: None,
+                primary_index: Some("default".to_string()),
+                auto_index_selection: Some(true),
+                description: None,
+                tags: vec![],
+                owner: None,
+                compression: None,
+                optimization_hints: None,
+            }),
+            stats: Some(CollectionStats {
+                vector_count: 1000,
+                data_size_bytes: 1024 * 1024,
+                index_size_bytes: 512 * 1024,
+                wal_size_bytes: 256 * 1024,
+                last_updated: chrono::Utc::now().timestamp(),
+            }),
+            metadata: Some(CollectionMetadata {
+                timestamp: Some(chrono::Utc::now().timestamp()),
+                updated_at: chrono::Utc::now().timestamp(),
+                version: Some(1),
+                description: Some("Test collection".to_string()),
+                tags: vec!["test".to_string(), "proto".to_string()],
+                owner: Some("test_user".to_string()),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_universal_backend_create_with_proto() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config_for_proto(&temp_dir);
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(Default::default())
+                .await
+                .expect("Failed to create filesystem factory"),
+        );
+
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
+            .await
+            .expect("Failed to create filestore backend");
+
+        assert!(backend.internal_health_check().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_upsert_collection_proto() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config_for_proto(&temp_dir);
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(Default::default())
+                .await
+                .expect("Failed to create filesystem factory"),
+        );
+
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
+            .await
+            .expect("Failed to create backend");
+
+        let proto_collection = create_test_proto_collection("test-id-123", "test-collection");
+
+        backend
+            .upsert_collection_proto(&proto_collection)
+            .await
+            .expect("Failed to upsert proto collection");
+
+        let retrieved = backend
+            .find_collection("test-collection")
+            .expect("Collection should exist");
+
+        assert_eq!(retrieved.id, "test-id-123");
+        assert_eq!(retrieved.name, "test-collection");
+        assert_eq!(retrieved.dimension, 384);
+    }
+
+    #[tokio::test]
+    async fn test_proto_file_extension() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config_for_proto(&temp_dir);
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(Default::default())
+                .await
+                .expect("Failed to create filesystem factory"),
+        );
+
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory.clone())
+            .await
+            .expect("Failed to create backend");
+
+        let proto_collection = create_test_proto_collection("proto-123", "proto-test");
+        backend
+            .upsert_collection_proto(&proto_collection)
+            .await
+            .expect("Failed to upsert");
+
+        let ops_dir = temp_dir.path().join("operations");
+        let fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let entries = fs.list(&ops_dir.to_string_lossy()).await.unwrap();
+
+        let oplog_files: Vec<_> = entries
+            .iter()
+            .filter(|e| e.name.ends_with(".oplog"))
+            .collect();
+
+        assert!(!oplog_files.is_empty(), "Should have created .oplog files");
+        assert!(
+            oplog_files[0].name.starts_with("op_"),
+            "Oplog file should have correct prefix"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_atomic_coordination_with_proto() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config_for_proto(&temp_dir);
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(Default::default())
+                .await
+                .expect("Failed to create filesystem factory"),
+        );
+
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
+            .await
+            .expect("Failed to create backend");
+
+        let collections = vec![
+            create_test_proto_collection("atomic-1", "atomic-test-1"),
+            create_test_proto_collection("atomic-2", "atomic-test-2"),
+            create_test_proto_collection("atomic-3", "atomic-test-3"),
+        ];
+
+        for collection in &collections {
+            backend
+                .upsert_collection_proto(collection)
+                .await
+                .expect("Failed to upsert collection");
+        }
+
+        assert!(backend.find_collection("atomic-test-1").is_some());
+        assert!(backend.find_collection("atomic-test-2").is_some());
+        assert!(backend.find_collection("atomic-test-3").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_checkpoint_with_proto() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config_for_proto(&temp_dir);
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(Default::default())
+                .await
+                .expect("Failed to create filesystem factory"),
+        );
+
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory.clone())
+            .await
+            .expect("Failed to create backend");
+
+        for i in 0..12 {
+            let collection = create_test_proto_collection(
+                &format!("checkpoint-{}", i),
+                &format!("checkpoint-test-{}", i),
+            );
+            backend
+                .upsert_collection_proto(&collection)
+                .await
+                .expect("Failed to upsert");
+        }
+
+        let snapshots_dir = temp_dir.path().join("snapshots");
+        let fs = filesystem_factory.get_filesystem("file://").unwrap();
+        let entries = fs.list(&snapshots_dir.to_string_lossy()).await.unwrap();
+
+        let checkpoint_files: Vec<_> = entries
+            .iter()
+            .filter(|e| e.name.starts_with("checkpoint_") && e.name.ends_with(".meta"))
+            .collect();
+
+        assert!(
+            !checkpoint_files.is_empty(),
+            "Should have created checkpoint files"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_recovery_from_oplog_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config_for_proto(&temp_dir);
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(Default::default())
+                .await
+                .expect("Failed to create filesystem factory"),
+        );
+
+        {
+            let backend = UniversalMetadataBackend::new(config.clone(), filesystem_factory.clone())
+                .await
+                .expect("Failed to create backend");
+
+            for i in 0..5 {
+                let collection = create_test_proto_collection(
+                    &format!("recovery-{}", i),
+                    &format!("recovery-test-{}", i),
+                );
+                backend
+                    .upsert_collection_proto(&collection)
+                    .await
+                    .expect("Failed to upsert");
+            }
+        }
+
+        {
+            let backend = UniversalMetadataBackend::new(config, filesystem_factory.clone())
+                .await
+                .expect("Failed to create backend");
+
+            for i in 0..5 {
+                let collection = backend
+                    .find_collection(&format!("recovery-test-{}", i))
+                    .expect(&format!("Collection recovery-test-{} should exist", i));
+                assert_eq!(collection.id, format!("recovery-{}", i));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_filterable_columns_in_proto() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = create_test_config_for_proto(&temp_dir);
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(Default::default())
+                .await
+                .expect("Failed to create filesystem factory"),
+        );
+
+        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
+            .await
+            .expect("Failed to create backend");
+
+        let mut proto_collection = create_test_proto_collection("filter-123", "filter-test");
+        if let Some(ref mut config) = proto_collection.config {
+            config.filterable_columns = vec![
+                FilterableColumnSpec {
+                    name: "timestamp".to_string(),
+                    indexed: true,
+                    supports_range: true,
+                    estimated_cardinality: None,
+                    encoding_hint: None,
+                    compression: None,
+                    optimization_hints: None,
+                },
+                FilterableColumnSpec {
+                    name: "status".to_string(),
+                    indexed: true,
+                    supports_range: false,
+                    estimated_cardinality: Some(5),
+                    encoding_hint: None,
+                    compression: None,
+                    optimization_hints: None,
+                },
+                FilterableColumnSpec {
+                    name: "score".to_string(),
+                    indexed: true,
+                    supports_range: true,
+                    estimated_cardinality: Some(100),
+                    encoding_hint: None,
+                    compression: None,
+                    optimization_hints: None,
+                },
+            ];
+        }
+
+        backend
+            .upsert_collection_proto(&proto_collection)
+            .await
+            .expect("Failed to upsert");
+
+        let retrieved = backend
+            .find_collection("filter-test")
+            .expect("Collection should exist");
+
+        assert_eq!(retrieved.filterable_metadata_fields.len(), 3);
+        assert!(
+            retrieved
+                .filterable_metadata_fields
+                .contains_hash(&"timestamp".to_string())
+        );
+        assert!(
+            retrieved
+                .filterable_metadata_fields
+                .contains_hash(&"status".to_string())
+        );
+        assert!(
+            retrieved
+                .filterable_metadata_fields
+                .contains_hash(&"score".to_string())
+        );
+    }
 }

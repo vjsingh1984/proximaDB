@@ -105,15 +105,15 @@ pub mod raptor_engine_test;
 pub mod sst_collection_test_fixed;
 
 // MVCC consistency tests
-pub mod mvcc_logic_integration_test;
-pub mod mvcc_logic_test;
+// pub mod mvcc_logic_integration_test; // Inlined into src/core/search/mvcc_resolution.rs
+// pub mod mvcc_logic_test; // Test file deleted during test inlining - functionality moved inline
 
 // Core routing integration tests
 pub mod core_routing_test;
 
 // Services integration tests
 pub mod services_collection_test;
-pub mod services_vector_test;
+// pub mod services_vector_test; // Inlined into src/services/operations/vectors.rs
 
 // SST optimization integration tests
 pub mod sst_optimization_test;
@@ -149,7 +149,7 @@ pub mod viper_compression_integration_test;
 // pub mod engine_sparsity_compression_benchmark; // Moved to benches/engine_sparsity_compression_bench.rs
 
 // Early termination optimization tests
-pub mod early_termination_test;
+// pub mod early_termination_test; // Inlined into src/core/search/multi_tier_deduplication.rs
 
 // Quantization tests
 pub mod quantization_stats_test;

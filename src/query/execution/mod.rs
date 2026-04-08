@@ -7,8 +7,22 @@
 
 pub mod datafusion_bridge;
 pub mod executor;
+pub mod low_latency_executor;
+pub mod plan_cache;
 pub mod planner;
+pub mod set_operations;
 pub mod window_executor;
+
+// Re-export low-latency execution types
+pub use low_latency_executor::{
+    LowLatencyConfig, LowLatencyExecutor, LowLatencyMetrics, StreamedQueryResult,
+};
+pub use plan_cache::{
+    CachedPlan, PlanCacheConfig as QueryPlanCacheConfig, PlanCacheStats, PlanKey, QueryPlanCache,
+};
+
+// Re-export set_operations
+pub use set_operations::*;
 
 use crate::core::search::FilterExpression;
 use crate::graph::GraphOperationsService;
@@ -168,7 +182,7 @@ impl QueryEngine {
 }
 
 /// Execution strategy determined by query analysis
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Hash)]
 pub enum ExecutionStrategy {
     /// Vector-only queries (similarity search, metadata filtering)
     VectorOnly,
@@ -459,7 +473,7 @@ pub enum JoinKind {
 }
 
 /// Query execution result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct QueryResult {
     /// Result rows
     pub rows: Vec<QueryRow>,
@@ -476,7 +490,7 @@ pub struct QueryResult {
 }
 
 /// Individual result row
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct QueryRow {
     /// Field values by column name
     pub fields: std::collections::HashMap<String, serde_json::Value>,
@@ -557,7 +571,7 @@ mod execution_tests {
         use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
-        use crate::storage::engines::impls::sst::SstEngine;
+        use crate::storage::engines::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
         use std::sync::Arc;
 

@@ -416,4 +416,109 @@ mod tests {
         assert_eq!(highlight.field, "content");
         assert_eq!(highlight.text, "machine learning");
     }
+
+    // Additional tests from standalone test files
+
+    #[test]
+    fn test_fusion_engine_creation() {
+        let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+
+        // Engine created successfully
+        assert_eq!(engine.default_top_k, 10);
+    }
+
+    #[test]
+    fn test_empty_fusion() {
+        let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+
+        let bm25_results: Vec<BM25Result> = vec![];
+        let vector_results: Vec<VectorResult> = vec![];
+
+        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+
+        // Should handle empty results
+        assert_eq!(fused.len(), 0);
+    }
+
+    #[test]
+    fn test_fusion_basic_disjoint() {
+        let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+
+        let bm25_results = vec![BM25Result {
+            doc_id: "doc1".to_string(),
+            score: 2.5,
+            highlights: None,
+            metadata: HashMap::new(),
+        }];
+
+        let vector_results = vec![VectorResult {
+            doc_id: "doc2".to_string(),
+            score: 0.95,
+            distance: 0.15,
+            metadata: HashMap::new(),
+        }];
+
+        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+
+        // Should have 2 documents
+        assert_eq!(fused.len(), 2);
+
+        // Results should be sorted by fused score
+        for i in 1..fused.len() {
+            assert!(
+                fused[i - 1].fused_score >= fused[i].fused_score,
+                "Results not sorted"
+            );
+        }
+    }
+
+    #[test]
+    fn test_rrf_score_calculation() {
+        // Test RRF score calculation
+        // doc1: rank 1 in BM25 → 1/(60+1) = 0.0164
+        let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+
+        let bm25_results = vec![BM25Result {
+            doc_id: "doc1".to_string(),
+            score: 2.5,
+            highlights: None,
+            metadata: HashMap::new(),
+        }];
+
+        let vector_results = vec![];
+
+        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+
+        // Verify RRF score calculation: 1/(60+1) = 0.016393...
+        let expected_score = 1.0 / 61.0;
+        assert!((fused[0].fused_score - expected_score).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_weighted_linear_fusion() {
+        let engine = HybridFusionEngine::new(FusionStrategy::WeightedLinear {
+            alpha: 0.5,
+            bm25_normalize: false,
+            vector_normalize: false,
+        });
+
+        let bm25_results = vec![BM25Result {
+            doc_id: "doc1".to_string(),
+            score: 0.8,
+            highlights: None,
+            metadata: HashMap::new(),
+        }];
+
+        let vector_results = vec![VectorResult {
+            doc_id: "doc1".to_string(),
+            score: 0.6,
+            distance: 0.3,
+            metadata: HashMap::new(),
+        }];
+
+        let fused = engine.fuse(bm25_results, vector_results).unwrap();
+
+        // Weighted average: 0.5 * 0.8 + 0.5 * 0.6 = 0.7
+        assert!((fused[0].fused_score - 0.7).abs() < 0.01);
+    }
 }

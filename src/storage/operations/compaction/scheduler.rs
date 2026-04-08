@@ -12,7 +12,7 @@ use tokio::sync::{Mutex, RwLock, Semaphore};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
-use super::strategies::{
+use super::{
     CompactionCostEstimate, CompactionExecutionResult, CompactionPlan, CompactionStrategyRegistry,
     FileMetadata,
 };

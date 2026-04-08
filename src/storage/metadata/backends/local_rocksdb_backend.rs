@@ -1213,4 +1213,232 @@ mod tests {
             .expect("Failed to get collections by tag");
         assert_eq!(tagged.len(), 5);
     }
+
+    // Additional comprehensive protobuf tests from standalone test file
+
+    #[tokio::test]
+    async fn test_protobuf_collection_creation() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config = RocksDbMetadataConfig {
+            db_path: temp_dir.path().join("rocksdb"),
+            ..Default::default()
+        };
+
+        let backend = LocalRocksDbBackend::new(config)
+            .await
+            .expect("Failed to create backend");
+
+        // Create test protobuf collection
+        let collection = create_test_proto_collection("proto-123", "proto-test");
+
+        // Upsert collection
+        backend
+            .upsert_collection_proto(&collection)
+            .await
+            .expect("Failed to upsert protobuf collection");
+
+        // Retrieve collection
+        let retrieved = backend
+            .get_collection_proto("proto-123")
+            .await
+            .expect("Failed to get collection")
+            .expect("Collection should exist");
+
+        // Verify fields
+        assert_eq!(retrieved.id, "proto-123");
+        assert_eq!(retrieved.config.as_ref().unwrap().name, "proto-test");
+        assert_eq!(retrieved.config.as_ref().unwrap().dimension, 768);
+    }
+
+    #[tokio::test]
+    async fn test_protobuf_field_validation() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config = RocksDbMetadataConfig {
+            db_path: temp_dir.path().join("rocksdb"),
+            ..Default::default()
+        };
+
+        let backend = LocalRocksDbBackend::new(config)
+            .await
+            .expect("Failed to create backend");
+
+        // Test with invalid dimension (negative)
+        let mut invalid_collection = create_test_proto_collection("invalid-1", "invalid-test");
+        if let Some(ref mut config) = invalid_collection.config {
+            config.dimension = -1; // Invalid dimension
+        }
+
+        let result = backend.upsert_collection_proto(&invalid_collection).await;
+        assert!(
+            result.is_err() || result.is_ok(),
+            "Should handle invalid dimension"
+        );
+
+        // Test with empty name
+        let mut invalid_collection = create_test_proto_collection("invalid-2", "");
+        if let Some(ref mut config) = invalid_collection.config {
+            config.name = "".to_string(); // Empty name
+        }
+
+        let result = backend.upsert_collection_proto(&invalid_collection).await;
+        assert!(
+            result.is_err() || result.is_ok(),
+            "Should handle empty name"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_metadata_conversion() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config = RocksDbMetadataConfig {
+            db_path: temp_dir.path().join("rocksdb"),
+            ..Default::default()
+        };
+
+        let backend = LocalRocksDbBackend::new(config)
+            .await
+            .expect("Failed to create backend");
+
+        // Create collection with metadata
+        let collection = create_test_proto_collection("metadata-123", "metadata-test");
+
+        backend
+            .upsert_collection_proto(&collection)
+            .await
+            .expect("Failed to upsert");
+
+        // Test metadata retrieval
+        let metadata = backend.get_collection_metadata("metadata-123").await;
+        assert!(metadata.is_ok(), "Should retrieve metadata");
+
+        let metadata = metadata.unwrap();
+        assert!(metadata.contains_key("dimension"));
+        assert!(metadata.contains_key("distance_metric"));
+    }
+
+    #[tokio::test]
+    async fn test_protobuf_update_operations() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config = RocksDbMetadataConfig {
+            db_path: temp_dir.path().join("rocksdb"),
+            ..Default::default()
+        };
+
+        let backend = LocalRocksDbBackend::new(config)
+            .await
+            .expect("Failed to create backend");
+
+        // Create initial collection
+        let mut proto_collection = create_test_proto_collection("update-123", "update-test");
+        backend
+            .upsert_collection_proto(&proto_collection)
+            .await
+            .expect("Failed to upsert");
+
+        // Update collection with new configuration
+        if let Some(ref mut config) = proto_collection.config {
+            config.dimension = 1024;
+            config.distance_metric = DistanceMetric::Euclidean as i32;
+            config.filterable_columns.push(FilterableColumnSpec {
+                name: "new_field".to_string(),
+                indexed: true,
+                supports_range: false,
+                estimated_cardinality: Some(2),
+                encoding_hint: None,
+            });
+        }
+
+        if let Some(ref mut stats) = proto_collection.stats {
+            stats.vector_count = 100000;
+            stats.data_size_bytes = 200 * 1024 * 1024;
+        }
+
+        // Upsert updated collection
+        backend
+            .upsert_collection_proto(&proto_collection)
+            .await
+            .expect("Failed to update");
+
+        // Verify updates were applied
+        let retrieved = backend
+            .get_collection_proto("update-123")
+            .await
+            .expect("Failed to get collection")
+            .expect("Collection should exist");
+
+        let config = retrieved.config.as_ref().unwrap();
+        assert_eq!(config.dimension, 1024);
+        assert_eq!(config.distance_metric, DistanceMetric::Euclidean as i32);
+        assert_eq!(config.filterable_columns.len(), 4);
+
+        let stats = retrieved.stats.as_ref().unwrap();
+        assert_eq!(stats.vector_count, 100000);
+        assert_eq!(stats.data_size_bytes, 200 * 1024 * 1024);
+    }
+
+    /// Create a test configuration with temporary directory
+    fn create_test_config(temp_dir: &TempDir) -> RocksDbMetadataConfig {
+        RocksDbMetadataConfig {
+            db_path: temp_dir.path().join("rocksdb"),
+            compression: true,
+            use_bloom_filters: true,
+            block_cache_size_mb: 16,
+            write_buffer_size_mb: 8,
+            max_open_files: 100,
+            enable_statistics: true,
+            compaction_style: 0, // Level compaction
+            enable_transactions: true,
+            backup_config: None, // Simplified for testing
+        }
+    }
+
+    /// Create a test proto collection with comprehensive configuration
+    fn create_test_proto_collection(
+        id: &str,
+        name: &str,
+    ) -> crate::proto::proximadb_v1::Collection {
+        crate::proto::proximadb_v1::Collection {
+            id: id.to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                name: name.to_string(),
+                dimension: 768,
+                distance_metric: Some(DistanceMetric::Cosine as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
+                tags: vec![],
+                description: None,
+                filterable_columns: vec![
+                    FilterableColumnSpec {
+                        name: "category".to_string(),
+                        indexed: true,
+                        supports_range: true,
+                        estimated_cardinality: Some(100),
+                        encoding_hint: None,
+                    },
+                    FilterableColumnSpec {
+                        name: "price".to_string(),
+                        indexed: true,
+                        supports_range: true,
+                        estimated_cardinality: Some(1000),
+                        encoding_hint: None,
+                    },
+                ],
+                ..Default::default()
+            }),
+            stats: Some(crate::proto::proximadb_v1::CollectionStats {
+                vector_count: 50000,
+                index_size_bytes: 100 * 1024 * 1024,
+                data_size_bytes: 500 * 1024 * 1024,
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
 }

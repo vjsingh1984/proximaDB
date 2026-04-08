@@ -117,10 +117,14 @@
 //! - **Interactive Analytics**: 40-60% hit rate expected
 //! - **Real-time OLTP**: <20% hit rate (invalidation-heavy)
 
+pub mod adaptive_cache;
 pub mod invalidation;
 pub mod query_result_cache;
 
 // Re-export main types
+pub use adaptive_cache::{
+    AccessPattern, AdaptiveCacheConfig, AdaptiveCacheEntry, AdaptiveQueryCache, CacheStats,
+};
 pub use query_result_cache::{
     CachedResult, QueryCacheError, QueryCacheKey, QueryCacheResult, QueryCacheStats, QueryKey,
     QueryResultCache, QueryResultCacheConfig,

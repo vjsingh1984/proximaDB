@@ -2,7 +2,7 @@ use crate::core::{StorageConfig, String, VectorId, VectorRecord};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
-    engines::impls::sst::{Compaction, SstEngine},
+    engines::sst::{Compaction, SstEngine},
     persistence::disk_manager::DiskManager,
     traits::InternalCollectionProvider,
 };
@@ -138,7 +138,7 @@ impl StorageEngine {
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
         // Make AXIS manager available to SST engine for HNSW/IVF search
-        crate::storage::engines::impls::sst::core::set_sst_axis_manager(axis_index_manager.clone());
+        crate::storage::engines::sst::core::set_sst_axis_manager(axis_index_manager.clone());
         info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
 
         // Initialize compaction manager with default config if not provided

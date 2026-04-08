@@ -30,20 +30,20 @@ use crate::storage::engines::core::formats::proximablocks::bloom_filter::{
     SerializedBloomFilter, factory::BloomFilterFactory as BlockBloomFactory,
 };
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
-use crate::storage::engines::impls::helix::*;
+use crate::storage::engines::helix::*;
 // Benchmarks module removed - use benches/ directory instead
-use crate::storage::engines::impls::helix::clustering::{PCAModel, compute_hilbert_key, QueryPatternTracker, LiquidClusteringConfig};
-use crate::storage::engines::impls::helix::compaction::LeveledCompactor;
-use crate::storage::engines::impls::helix::eventlog_integration::HelixFlushHandler;
-use crate::storage::engines::impls::helix::pca_impl::{EnhancedPCAModel, PCAModelManager, ModelQuality};
-use crate::storage::engines::impls::helix::progressive_search::{ProgressiveSearchCoordinator, ProgressiveSearchStats};
-use crate::storage::engines::impls::helix::query_optimization::{PredictivePrefetcher, SmartResultCache, QueryPattern};
-use crate::storage::engines::impls::helix::readers::QueryStats;
-use crate::storage::engines::impls::helix::unified_metadata_serializer::{
+use crate::storage::engines::helix::clustering::{PCAModel, compute_hilbert_key, QueryPatternTracker, LiquidClusteringConfig};
+use crate::storage::engines::helix::compaction::LeveledCompactor;
+use crate::storage::engines::helix::eventlog_integration::HelixFlushHandler;
+use crate::storage::engines::helix::pca_impl::{EnhancedPCAModel, PCAModelManager, ModelQuality};
+use crate::storage::engines::helix::progressive_search::{ProgressiveSearchCoordinator, ProgressiveSearchStats};
+use crate::storage::engines::helix::query_optimization::{PredictivePrefetcher, SmartResultCache, QueryPattern};
+use crate::storage::engines::helix::readers::QueryStats;
+use crate::storage::engines::helix::unified_metadata_serializer::{
     HelixUnifiedMetadataSerializer, HelixCachedMetadata, HilbertConfig,
     PcaModelMetadata, LiquidClusteringMetadata, ZoneMapEntry, SstableMetadata, QueryOptimizationStats,
 };
-use crate::storage::engines::impls::helix::unified_strategy_reader::{UnifiedHELIXReader, HelixSearchStrategy};
+use crate::storage::engines::helix::unified_strategy_reader::{UnifiedHELIXReader, HelixSearchStrategy};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 use crate::storage::traits::{FlushParameters, StorageQueryContext, StorageQueryMetadata, CompactionParameters};

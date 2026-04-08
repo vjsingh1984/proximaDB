@@ -13,8 +13,8 @@
 //! - src/storage/engines/impls/nova/streaming_processor.rs (3 tests)
 //! - src/storage/engines/impls/nova/batch_operations.rs (3 tests)
 
-use crate::storage::engines::impls::nova::batch_operations::BatchConfig;
-use crate::storage::engines::impls::nova::streaming_processor::{
+use crate::storage::engines::nova::batch_operations::BatchConfig;
+use crate::storage::engines::nova::streaming_processor::{
     StreamingConfig, StreamingRowGroupProcessor,
 };
 
@@ -24,7 +24,7 @@ use crate::storage::engines::impls::nova::streaming_processor::{
 
 #[test]
 fn test_streaming_search_config() {
-    use crate::storage::engines::impls::nova::streaming_search::StreamingSearchConfig;
+    use crate::storage::engines::nova::streaming_search::StreamingSearchConfig;
 
     let config = StreamingSearchConfig::default();
     assert!(config.enable_cost_based_ordering);
@@ -35,7 +35,7 @@ fn test_streaming_search_config() {
 
 #[test]
 fn test_performance_tracker() {
-    use crate::storage::engines::impls::nova::streaming_search::*;
+    use crate::storage::engines::nova::streaming_search::*;
 
     // PerformanceTracker is private, so we test through public APIs
     let config = StreamingSearchConfig::default();
@@ -45,7 +45,7 @@ fn test_performance_tracker() {
 
 #[test]
 fn test_execution_plan() {
-    use crate::storage::engines::impls::nova::streaming_search::StreamingSearchConfig;
+    use crate::storage::engines::nova::streaming_search::StreamingSearchConfig;
 
     // ExecutionPlan is private, so we test configuration that drives execution planning
     let config = StreamingSearchConfig::default();
@@ -59,7 +59,7 @@ fn test_execution_plan() {
 
 #[test]
 fn test_binary_sketch() {
-    use crate::storage::engines::impls::nova::progressive_search::*;
+    use crate::storage::engines::nova::progressive_search::*;
 
     // BinarySketch is private, test via ProgressiveSearchConfig
     let config = ProgressiveSearchConfig::default();
@@ -68,7 +68,7 @@ fn test_binary_sketch() {
 
 #[test]
 fn test_int8_vector() {
-    use crate::storage::engines::impls::nova::progressive_search::*;
+    use crate::storage::engines::nova::progressive_search::*;
 
     // Int8Vector is private, test via int8 config
     let config = ProgressiveSearchConfig::default();
@@ -77,7 +77,7 @@ fn test_int8_vector() {
 
 #[test]
 fn test_progressive_candidate_ordering() {
-    use crate::storage::engines::impls::nova::progressive_search::*;
+    use crate::storage::engines::nova::progressive_search::*;
     use std::collections::BinaryHeap;
 
     let mut heap = BinaryHeap::new();
@@ -109,7 +109,7 @@ fn test_progressive_candidate_ordering() {
 
 #[test]
 fn test_streaming_config_defaults() {
-    use crate::storage::engines::impls::nova::streaming_processor::StreamingConfig;
+    use crate::storage::engines::nova::streaming_processor::StreamingConfig;
 
     let config = StreamingConfig::default();
     assert_eq!(config.max_memory_bytes, 512 * 1024 * 1024);
@@ -120,7 +120,7 @@ fn test_streaming_config_defaults() {
 
 #[test]
 fn test_memory_tracker() {
-    use crate::storage::engines::impls::nova::streaming_processor::*;
+    use crate::storage::engines::nova::streaming_processor::*;
 
     // MemoryTracker is private, test configuration instead
     let _config = StreamingConfig::default();
@@ -153,7 +153,7 @@ fn test_group_by_row_group() {
 
 #[test]
 fn test_batch_stats() {
-    use crate::storage::engines::impls::nova::batch_operations::BatchStats;
+    use crate::storage::engines::nova::batch_operations::BatchStats;
 
     let stats = BatchStats {
         total_ids_requested: 100,
@@ -171,7 +171,7 @@ fn test_batch_stats() {
 
 #[test]
 fn test_vector_deserialization() {
-    use crate::storage::engines::impls::nova::batch_operations::*;
+    use crate::storage::engines::nova::batch_operations::*;
 
     let _bytes = vec![
         0x00, 0x00, 0x80, 0x3f, // 1.0 in little-endian

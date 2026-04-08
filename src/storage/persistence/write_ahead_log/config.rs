@@ -799,4 +799,625 @@ mod tests {
         assert_eq!(effective_disk, 256 * 1024 * 1024, "Should use default");
         assert_eq!(effective_ttl, Some(14), "Should use override");
     }
+
+    #[tokio::test]
+    async fn test_wal_strategy_type_variants() {
+        let avro_strategy = WriteBufferStrategyType::AvroBatch;
+        let bincode_strategy = WriteBufferStrategyType::BincodeBatch;
+
+        assert_eq!(format!("{:?}", avro_strategy), "AvroBatch");
+        assert_eq!(format!("{:?}", bincode_strategy), "BincodeBatch");
+
+        let cloned_avro = avro_strategy.clone();
+        assert!(matches!(avro_strategy, WriteBufferStrategyType::AvroBatch));
+        assert!(matches!(cloned_avro, WriteBufferStrategyType::AvroBatch));
+    }
+
+    #[tokio::test]
+    async fn test_memtable_type_variants() {
+        let btree_type = MemTableType::BTree;
+        let hashmap_type = MemTableType::HashMap;
+        let skiplist_type = MemTableType::SkipList;
+        let art_type = MemTableType::Art;
+
+        assert_eq!(format!("{:?}", btree_type), "BTree");
+        assert_eq!(format!("{:?}", hashmap_type), "HashMap");
+        assert_eq!(format!("{:?}", skiplist_type), "SkipList");
+        assert_eq!(format!("{:?}", art_type), "Art");
+    }
+
+    #[tokio::test]
+    async fn test_compression_config_default() {
+        let config = CompressionConfig::default();
+
+        // Default compression is Snappy as per core::service_types::CompressionAlgorithm::default()
+        assert!(matches!(config.algorithm, CompressionAlgorithm::Snappy));
+        assert!(!config.compress_memory);
+        assert!(config.compress_disk);
+        assert_eq!(config.min_compress_size, 1024);
+    }
+
+    #[tokio::test]
+    async fn test_performance_config_default() {
+        let config = PerformanceConfig::default();
+
+        assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // Updated to 2MB for faster recovery
+        assert_eq!(config.disk_segment_size, 512 * 1024 * 1024);
+        assert_eq!(config.write_buffer_size, 8 * 1024 * 1024);
+        assert!(matches!(
+            config.sync_mode,
+            crate::storage::persistence::write_ahead_log::config::SyncMode::PerBatch
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_wal_config_default() {
+        let config = WALConfig::default();
+
+        assert!(matches!(
+            config.strategy_type,
+            WriteBufferStrategyType::BincodeBatch
+        ));
+        assert!(matches!(config.memtable.memtable_type, MemTableType::Art));
+        assert!(matches!(
+            config.multi_disk.distribution_strategy,
+            DiskDistributionStrategy::LoadBalanced
+        ));
+        assert!(!&config.compression.compress_memory);
+        assert!(&config.compression.compress_disk);
+    }
+
+    #[tokio::test]
+    async fn test_wal_config_custom() {
+        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+
+        let config = WALConfig {
+            strategy_type: WriteBufferStrategyType::BincodeBatch,
+            multi_disk: MultiDiskConfig {
+                data_directories: vec![temp_dir.path().to_string_lossy().to_string()],
+                distribution_strategy: DiskDistributionStrategy::Hash,
+                collection_affinity: true,
+            },
+            global_manifest_url: None,
+            memtable: MemTableConfig {
+                memtable_type: MemTableType::SkipList,
+                global_memory_limit: 256 * 1024 * 1024,
+                mvcc_versions_retained: 5,
+                enable_concurrency: true,
+            },
+            compression: CompressionConfig {
+                algorithm: CompressionAlgorithm::Zstd,
+                compress_memory: true,
+                compress_disk: true,
+                min_compress_size: 2048,
+            },
+            encryption: EncryptionConfig::default(),
+            performance: PerformanceConfig {
+                memory_flush_size_bytes: 128 * 1024 * 1024,
+                disk_segment_size: 512 * 1024 * 1024,
+                global_flush_threshold: 1024 * 1024 * 1024,
+                write_buffer_size: 16384,
+                concurrent_flushes: 2,
+                batch_threshold: 100,
+                mvcc_cleanup_interval_secs: 1800,
+                cloud_backup: Default::default(),
+                global_shrink_factor: 0.8,
+                ttl_cleanup_interval_secs: 600,
+                sync_mode: crate::storage::persistence::write_ahead_log::config::SyncMode::Always,
+                sync_interval_seconds: 1,
+                enable_optimized_write_buffer_writer: None,
+                background_writer_threads: None,
+                write_buffer_batch_size: None,
+            },
+            enable_mvcc: true,
+            enable_ttl: true,
+            enable_background_compaction: true,
+            collection_overrides: std::collections::HashMap::new(),
+            enable_optimized_writer: false,
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
+        };
+
+        assert!(matches!(
+            config.strategy_type,
+            WriteBufferStrategyType::BincodeBatch
+        ));
+        assert!(matches!(
+            config.memtable.memtable_type,
+            MemTableType::SkipList
+        ));
+        assert!(matches!(
+            config.multi_disk.distribution_strategy,
+            DiskDistributionStrategy::Hash
+        ));
+        assert!(matches!(
+            config.compression.algorithm,
+            CompressionAlgorithm::Zstd
+        ));
+        assert!(&config.compression.compress_memory);
+        assert_eq!(
+            config.performance.memory_flush_size_bytes,
+            128 * 1024 * 1024
+        );
+        assert!(matches!(
+            config.performance.sync_mode,
+            crate::storage::persistence::write_ahead_log::config::SyncMode::Always
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_wal_config_debug_formatting() {
+        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp dir");
+
+        let config = WALConfig {
+            strategy_type: WriteBufferStrategyType::AvroBatch,
+            multi_disk: MultiDiskConfig {
+                data_directories: vec![temp_dir.path().to_string_lossy().to_string()],
+                distribution_strategy: DiskDistributionStrategy::LoadBalanced,
+                collection_affinity: true,
+            },
+            global_manifest_url: None,
+            memtable: MemTableConfig {
+                memtable_type: MemTableType::Art,
+                global_memory_limit: 512 * 1024 * 1024,
+                mvcc_versions_retained: 3,
+                enable_concurrency: true,
+            },
+            compression: CompressionConfig::default(),
+            encryption: EncryptionConfig::default(),
+            performance: PerformanceConfig::default(),
+            enable_mvcc: true,
+            enable_ttl: true,
+            enable_background_compaction: true,
+            collection_overrides: std::collections::HashMap::new(),
+            enable_optimized_writer: false,
+            optimized_writer_batch_size: None,
+            optimized_writer_batch_timeout_ms: None,
+            optimized_writer_threads: None,
+            optimized_writer_enable_combining: None,
+        };
+
+        // Test debug formatting instead of serialization since WALConfig doesn't implement Serialize
+        let debug_str = format!("{:?}", config);
+        assert!(debug_str.contains("AvroBatch"));
+        assert!(debug_str.contains("Art"));
+        assert!(debug_str.contains("LoadBalanced"));
+    }
+
+    // Unit tests for flush and compaction threshold triggers (from threshold_triggers_test.rs)
+    #[test]
+    fn test_memory_flush_threshold_configuration() {
+        // Test different memory flush threshold configurations
+        let mut config = PerformanceConfig::default();
+
+        // Default should be 2MB
+        assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024);
+
+        // Test setting custom threshold
+        config.memory_flush_size_bytes = 1024 * 1024; // 1MB threshold
+        assert_eq!(config.memory_flush_size_bytes, 1024 * 1024);
+
+        // Test that global threshold is larger than memory threshold
+        assert!(config.global_flush_threshold >= config.memory_flush_size_bytes);
+    }
+
+    #[test]
+    fn test_global_flush_threshold_configuration() {
+        let mut config = PerformanceConfig::default();
+
+        // Default should be 4GB
+        assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024);
+
+        // Test setting custom global threshold
+        config.global_flush_threshold = 2 * 1024 * 1024 * 1024; // 2GB threshold
+        assert_eq!(config.global_flush_threshold, 2 * 1024 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_compaction_threshold_configuration() {
+        // This tests SstConfig, not PerformanceConfig
+        let mut config = crate::core::config::SstConfig::default();
+
+        // Default should be 5 SSTables (as per SstConfig::default())
+        assert_eq!(config.compaction_threshold, 5);
+
+        // Test setting custom threshold
+        config.compaction_threshold = 2; // Trigger compaction when level has 2+ SSTables
+        assert_eq!(config.compaction_threshold, 2);
+    }
+
+    #[test]
+    fn test_memory_threshold_logic() {
+        let config = PerformanceConfig::default();
+        let threshold = config.memory_flush_size_bytes;
+
+        // Test different memory usage scenarios
+        struct TestCase {
+            name: &'static str,
+            memory_usage: usize,
+            should_trigger: bool,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                name: "Below threshold",
+                memory_usage: threshold / 2,
+                should_trigger: false,
+            },
+            TestCase {
+                name: "At threshold",
+                memory_usage: threshold,
+                should_trigger: true,
+            },
+            TestCase {
+                name: "Above threshold",
+                memory_usage: threshold + 1000,
+                should_trigger: true,
+            },
+            TestCase {
+                name: "Way above threshold",
+                memory_usage: threshold * 5,
+                should_trigger: true,
+            },
+        ];
+
+        for test_case in test_cases {
+            let should_trigger = test_case.memory_usage >= threshold;
+            assert_eq!(
+                should_trigger, test_case.should_trigger,
+                "Test case '{}': Expected trigger mismatch. Usage: {}, Threshold: {}",
+                test_case.name, test_case.memory_usage, threshold
+            );
+        }
+    }
+
+    #[test]
+    fn test_compaction_threshold_logic() {
+        let config = crate::core::config::SstConfig::default();
+        let threshold = config.compaction_threshold;
+
+        // Test different SSTable count scenarios
+        struct TestCase {
+            name: &'static str,
+            sstable_count: u32,
+            should_trigger: bool,
+        }
+
+        let test_cases = vec![
+            TestCase {
+                name: "Below threshold",
+                sstable_count: threshold - 1,
+                should_trigger: false,
+            },
+            TestCase {
+                name: "At threshold",
+                sstable_count: threshold,
+                should_trigger: true,
+            },
+            TestCase {
+                name: "Above threshold",
+                sstable_count: threshold + 1,
+                should_trigger: true,
+            },
+            TestCase {
+                name: "Way above threshold",
+                sstable_count: threshold * 2,
+                should_trigger: true,
+            },
+        ];
+
+        for test_case in test_cases {
+            let should_trigger = test_case.sstable_count >= threshold;
+            assert_eq!(
+                should_trigger, test_case.should_trigger,
+                "Test case '{}': Expected trigger mismatch. Count: {}, Threshold: {}",
+                test_case.name, test_case.sstable_count, threshold
+            );
+        }
+    }
+
+    #[test]
+    fn test_global_flush_threshold_logic() {
+        let config = PerformanceConfig::default();
+        let threshold = config.global_flush_threshold;
+
+        // Test scenarios that would trigger global flush
+        let test_cases = vec![
+            (threshold / 2, false),   // Below threshold
+            (threshold, true),        // At threshold
+            (threshold + 1000, true), // Above threshold
+        ];
+
+        for (memory_usage, should_trigger) in test_cases {
+            let triggers = memory_usage >= threshold;
+            assert_eq!(
+                triggers, should_trigger,
+                "Global flush logic failed for usage: {}, threshold: {}",
+                memory_usage, threshold
+            );
+        }
+    }
+
+    // Mock counter to track trigger invocations
+    #[derive(Debug)]
+    struct TriggerCounter {
+        count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl TriggerCounter {
+        fn new() -> Self {
+            Self {
+                count: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn increment(&self) {
+            self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn get_count(&self) -> usize {
+            self.count.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[test]
+    fn test_multiple_flush_triggers() {
+        use std::sync::Arc;
+
+        let counter = Arc::new(TriggerCounter::new());
+        let config = PerformanceConfig::default();
+
+        // Simulate multiple memory threshold breaches
+        let test_memory_usages = vec![
+            config.memory_flush_size_bytes + 1000, // First breach
+            config.memory_flush_size_bytes + 2000, // Second breach
+            config.memory_flush_size_bytes + 3000, // Third breach
+        ];
+
+        for memory_usage in test_memory_usages {
+            if memory_usage >= config.memory_flush_size_bytes {
+                counter.increment(); // Simulate flush trigger
+            }
+        }
+
+        // Should have triggered 3 times
+        assert_eq!(counter.get_count(), 3, "Expected 3 flush triggers");
+    }
+
+    #[test]
+    fn test_multiple_compaction_triggers() {
+        use std::sync::Arc;
+
+        let counter = Arc::new(TriggerCounter::new());
+        let config = crate::core::config::SstConfig::default();
+
+        // Simulate multiple SSTable count threshold breaches
+        let test_sstable_counts = vec![
+            config.compaction_threshold,     // First breach (at threshold)
+            config.compaction_threshold + 1, // Second breach (above threshold)
+            config.compaction_threshold + 2, // Third breach (further above)
+        ];
+
+        for sstable_count in test_sstable_counts {
+            if sstable_count >= config.compaction_threshold {
+                counter.increment(); // Simulate compaction trigger
+            }
+        }
+
+        // Should have triggered 3 times
+        assert_eq!(counter.get_count(), 3, "Expected 3 compaction triggers");
+    }
+
+    // Unit tests for WAL configuration types (from write_buffer_config_simple_test.rs)
+    #[test]
+    fn test_wal_strategy_type_defaults() {
+        // Test default WAL strategy
+        let default_strategy = WriteBufferStrategyType::default();
+        assert_eq!(default_strategy, WriteBufferStrategyType::AvroBatch);
+
+        // Test all strategy types
+        let strategies = vec![
+            WriteBufferStrategyType::AvroBatch,
+            WriteBufferStrategyType::BincodeBatch,
+        ];
+
+        for strategy in strategies {
+            // Verify serialization works
+            let json = serde_json::to_string(&strategy).unwrap();
+            let deserialized: WriteBufferStrategyType = serde_json::from_str(&json).unwrap();
+            assert_eq!(strategy, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_memtable_type_defaults() {
+        let default_type = MemTableType::default();
+        assert_eq!(default_type, MemTableType::Art);
+
+        // Test all memtable types
+        let types = vec![
+            MemTableType::SkipList,
+            MemTableType::BTree,
+            MemTableType::Art,
+            MemTableType::HashMap,
+        ];
+
+        for memtable_type in types {
+            let json = serde_json::to_string(&memtable_type).unwrap();
+            let deserialized: MemTableType = serde_json::from_str(&json).unwrap();
+            assert_eq!(memtable_type, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_memtable_config_defaults() {
+        let config = MemTableConfig::default();
+
+        assert_eq!(config.memtable_type, MemTableType::Art);
+        assert_eq!(config.global_memory_limit, 4 * 1024 * 1024 * 1024); // 4GB
+        assert_eq!(config.mvcc_versions_retained, 3);
+        assert!(config.enable_concurrency);
+
+        // Test serialization
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: MemTableConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.memtable_type, deserialized.memtable_type);
+        assert_eq!(config.global_memory_limit, deserialized.global_memory_limit);
+    }
+
+    #[test]
+    fn test_disk_distribution_strategy() {
+        let strategies = vec![
+            DiskDistributionStrategy::RoundRobin,
+            DiskDistributionStrategy::Hash,
+            DiskDistributionStrategy::LoadBalanced,
+        ];
+
+        for strategy in strategies {
+            let json = serde_json::to_string(&strategy).unwrap();
+            let deserialized: DiskDistributionStrategy = serde_json::from_str(&json).unwrap();
+            assert_eq!(strategy, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_multi_disk_config_defaults() {
+        let config = MultiDiskConfig::default();
+
+        assert_eq!(config.data_directories.len(), 1);
+        assert_eq!(config.data_directories[0], "file://./data/wal");
+        assert_eq!(
+            config.distribution_strategy,
+            DiskDistributionStrategy::LoadBalanced
+        );
+        assert!(config.collection_affinity);
+
+        // Test custom configuration
+        let custom_config = MultiDiskConfig {
+            data_directories: vec![
+                "file:///disk1/wal".to_string(),
+                "file:///disk2/wal".to_string(),
+                "s3://bucket/wal".to_string(),
+            ],
+            distribution_strategy: DiskDistributionStrategy::Hash,
+            collection_affinity: false,
+        };
+
+        let json = serde_json::to_string(&custom_config).unwrap();
+        let deserialized: MultiDiskConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            custom_config.data_directories,
+            deserialized.data_directories
+        );
+        assert_eq!(
+            custom_config.distribution_strategy,
+            deserialized.distribution_strategy
+        );
+        assert_eq!(
+            custom_config.collection_affinity,
+            deserialized.collection_affinity
+        );
+    }
+
+    #[test]
+    fn test_compression_config_defaults() {
+        let config = CompressionConfig::default();
+
+        assert_eq!(config.algorithm, CompressionAlgorithm::default());
+        assert!(!config.compress_memory); // Memory should be uncompressed for fast access
+        assert!(config.compress_disk); // Disk should be compressed for space
+        assert_eq!(config.min_compress_size, 1024);
+
+        // Test custom compression configuration
+        let custom_config = CompressionConfig {
+            algorithm: CompressionAlgorithm::Lz4,
+            compress_memory: true,
+            compress_disk: false,
+            min_compress_size: 2048,
+        };
+
+        let json = serde_json::to_string(&custom_config).unwrap();
+        let deserialized: CompressionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(custom_config.compress_memory, deserialized.compress_memory);
+        assert_eq!(
+            custom_config.min_compress_size,
+            deserialized.min_compress_size
+        );
+    }
+
+    #[test]
+    fn test_sync_mode_variants() {
+        let sync_modes = vec![
+            SyncMode::Never,
+            SyncMode::Always,
+            SyncMode::Periodic,
+            SyncMode::PerBatch,
+            SyncMode::MemoryOnly,
+        ];
+
+        for mode in sync_modes {
+            let json = serde_json::to_string(&mode).unwrap();
+            let deserialized: SyncMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_performance_config_defaults() {
+        let config = PerformanceConfig::default();
+
+        // Verify size-based flush defaults
+        assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // 2MB
+        assert_eq!(config.disk_segment_size, 512 * 1024 * 1024); // 512MB
+        assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024); // 4GB
+        assert_eq!(config.write_ahead_log_size, 8 * 1024 * 1024); // 8MB
+        assert_eq!(config.batch_threshold, 500);
+        assert_eq!(config.mvcc_cleanup_interval_secs, 3600); // 1 hour
+        assert_eq!(config.ttl_cleanup_interval_secs, 300); // 5 minutes
+        assert_eq!(config.sync_mode, SyncMode::PerBatch);
+        assert_eq!(config.global_shrink_factor, 0.4); // 40%
+        assert!(config.cloud_backup.is_none());
+
+        // Verify concurrent flushes is reasonable
+        assert!(config.concurrent_flushes >= 1);
+        assert!(config.concurrent_flushes <= 4);
+    }
+
+    #[test]
+    fn test_performance_config_custom() {
+        let custom_config = PerformanceConfig {
+            memory_flush_size_bytes: 1024 * 1024,       // 1MB
+            disk_segment_size: 64 * 1024 * 1024,        // 64MB
+            global_flush_threshold: 1024 * 1024 * 1024, // 1GB
+            write_ahead_log_size: 1024 * 1024,          // 1MB
+            concurrent_flushes: 8,
+            batch_threshold: 100,
+            mvcc_cleanup_interval_secs: 7200, // 2 hours
+            ttl_cleanup_interval_secs: 600,   // 10 minutes
+            sync_mode: SyncMode::Always,
+            global_shrink_factor: 0.6,
+            cloud_backup: None,
+            enable_optimized_write_ahead_log_writer: None,
+            background_writer_threads: None,
+            write_ahead_log_batch_size: None,
+        };
+
+        let json = serde_json::to_string(&custom_config).unwrap();
+        let deserialized: PerformanceConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            custom_config.memory_flush_size_bytes,
+            deserialized.memory_flush_size_bytes
+        );
+        assert_eq!(
+            custom_config.concurrent_flushes,
+            deserialized.concurrent_flushes
+        );
+        assert_eq!(
+            custom_config.global_shrink_factor,
+            deserialized.global_shrink_factor
+        );
+        assert!(deserialized.cloud_backup.is_none());
+    }
 }

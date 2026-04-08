@@ -564,29 +564,24 @@ fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<ser
 // ============================================================================
 
 /// Type alias for SST format adapter
-pub type SstFormatAdapter = InternalFormatAdapter<crate::storage::engines::impls::sst::SstEngine>;
+pub type SstFormatAdapter = InternalFormatAdapter<crate::storage::engines::sst::SstEngine>;
 
 /// Type alias for HELIX format adapter
-pub type HelixFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::helix::HelixEngine>;
+pub type HelixFormatAdapter = InternalFormatAdapter<crate::storage::engines::helix::HelixEngine>;
 
 /// Type alias for VIPER format adapter
-pub type ViperFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::viper::ViperEngine>;
+pub type ViperFormatAdapter = InternalFormatAdapter<crate::storage::engines::viper::ViperEngine>;
 
 /// Type alias for NOVA format adapter
-pub type NovaFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::nova::NovaEngine>;
+pub type NovaFormatAdapter = InternalFormatAdapter<crate::storage::engines::nova::NovaEngine>;
 
 /// Type alias for SWIFT format adapter
 #[allow(deprecated)]
-pub type SwiftFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::swift::SwiftEngine>;
+pub type SwiftFormatAdapter = InternalFormatAdapter<crate::storage::engines::swift::SwiftEngine>;
 
 /// Type alias for RAPTOR format adapter
 #[allow(deprecated)]
-pub type RaptorFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::raptor::RaptorEngine>;
+pub type RaptorFormatAdapter = InternalFormatAdapter<crate::storage::engines::raptor::RaptorEngine>;
 
 // ============================================================================
 // Factory Functions
@@ -594,28 +589,28 @@ pub type RaptorFormatAdapter =
 
 /// Create an SST format adapter from an existing engine
 pub fn create_sst_adapter(
-    engine: Arc<crate::storage::engines::impls::sst::SstEngine>,
+    engine: Arc<crate::storage::engines::sst::SstEngine>,
 ) -> SstFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a HELIX format adapter from an existing engine
 pub fn create_helix_adapter(
-    engine: Arc<crate::storage::engines::impls::helix::HelixEngine>,
+    engine: Arc<crate::storage::engines::helix::HelixEngine>,
 ) -> HelixFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a VIPER format adapter from an existing engine
 pub fn create_viper_adapter(
-    engine: Arc<crate::storage::engines::impls::viper::ViperEngine>,
+    engine: Arc<crate::storage::engines::viper::ViperEngine>,
 ) -> ViperFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a NOVA format adapter from an existing engine
 pub fn create_nova_adapter(
-    engine: Arc<crate::storage::engines::impls::nova::NovaEngine>,
+    engine: Arc<crate::storage::engines::nova::NovaEngine>,
 ) -> NovaFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
@@ -623,7 +618,7 @@ pub fn create_nova_adapter(
 /// Create a SWIFT format adapter from an existing engine
 #[allow(deprecated)]
 pub fn create_swift_adapter(
-    engine: Arc<crate::storage::engines::impls::swift::SwiftEngine>,
+    engine: Arc<crate::storage::engines::swift::SwiftEngine>,
 ) -> SwiftFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
@@ -631,7 +626,7 @@ pub fn create_swift_adapter(
 /// Create a RAPTOR format adapter from an existing engine
 #[allow(deprecated)]
 pub fn create_raptor_adapter(
-    engine: Arc<crate::storage::engines::impls::raptor::RaptorEngine>,
+    engine: Arc<crate::storage::engines::raptor::RaptorEngine>,
 ) -> RaptorFormatAdapter {
     InternalFormatAdapter::new(engine)
 }

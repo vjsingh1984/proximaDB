@@ -141,7 +141,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::sst::progressive_stages::*;
+        use crate::storage::engines::sst::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -169,7 +169,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::helix::progressive_stages::*;
+        use crate::storage::engines::helix::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -196,7 +196,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::viper::progressive_stages::*;
+        use crate::storage::engines::viper::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -223,7 +223,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::swift::progressive_stages::*;
+        use crate::storage::engines::swift::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -250,7 +250,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::nova::progressive_stages::*;
+        use crate::storage::engines::nova::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -277,7 +277,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::raptor::progressive_stages::*;
+        use crate::storage::engines::raptor::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 

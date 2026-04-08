@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::debug;
 
-use crate::storage::engines::impls::viper::ViperEngine;
+use crate::storage::engines::viper::ViperEngine;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
 

@@ -89,9 +89,9 @@ impl ReadAccessStrategy {
 
     /// Convert legacy SST ReadStrategy to unified strategy
     pub fn from_sst_strategy(
-        strategy: &super::super::impls::sst::readers::sst_query_engine::ReadStrategy,
+        strategy: &super::super::sst::readers::sst_query_engine::ReadStrategy,
     ) -> Self {
-        use super::super::impls::sst::readers::sst_query_engine::ReadStrategy;
+        use super::super::sst::readers::sst_query_engine::ReadStrategy;
 
         match strategy {
             ReadStrategy::CompactionDirect => Self::DirectStream,

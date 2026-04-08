@@ -18,7 +18,7 @@
 //! - Performance metrics
 
 use crate::storage::engines::core::formats::VectorSerializer;
-use crate::storage::engines::impls::nova::{hierarchical_stats::*, zone_maps::*};
+use crate::storage::engines::nova::{hierarchical_stats::*, zone_maps::*};
 use anyhow::Result;
 
 // ============================================================================

@@ -7,7 +7,7 @@
 #[tokio::test]
 async fn test_viper_predicate_pushdown() {
     use crate::core::search::{ComparisonOperator, FilterExpression};
-    use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
+    use crate::storage::engines::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
     let _evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
@@ -28,7 +28,7 @@ async fn test_viper_predicate_pushdown() {
 #[tokio::test]
 async fn test_parallel_column_evaluation() {
     use crate::core::search::{ComparisonOperator, FilterExpression};
-    use crate::storage::engines::impls::viper::column_filter::VIPERColumnFilterEvaluator;
+    use crate::storage::engines::viper::column_filter::VIPERColumnFilterEvaluator;
     use tracing::debug;
 
     let _evaluator = VIPERColumnFilterEvaluator::new().await.unwrap();
@@ -55,7 +55,7 @@ async fn test_parallel_column_evaluation() {
 #[test]
 #[ignore = "accesses private field `config`"]
 fn test_reconstructor_creation() {
-    use crate::storage::engines::impls::viper::readers::parquet_reconstructor::{
+    use crate::storage::engines::viper::readers::parquet_reconstructor::{
         ParquetReconstructor, ReconstructorConfig,
     };
 
@@ -72,7 +72,7 @@ fn test_reconstructor_creation() {
 #[test]
 #[ignore = "accesses private method `detect_compression`"]
 fn test_compression_detection() {
-    use crate::storage::engines::impls::viper::readers::parquet_reconstructor::{
+    use crate::storage::engines::viper::readers::parquet_reconstructor::{
         FileSeekRange, ParquetReconstructor, ReconstructorConfig,
     };
 
@@ -92,7 +92,7 @@ fn test_compression_detection() {
 #[test]
 #[ignore = "accesses private method `group_seek_data_by_row_group`"]
 fn test_group_seek_data() {
-    use crate::storage::engines::impls::viper::readers::parquet_reconstructor::{
+    use crate::storage::engines::viper::readers::parquet_reconstructor::{
         FileSeekRange, ParquetReconstructor, ReconstructorConfig, SeekData,
     };
 

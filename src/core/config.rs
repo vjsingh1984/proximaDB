@@ -1093,7 +1093,7 @@ pub struct SstConfig {
     pub prefetch_size_kb: u32,
     /// Decompression cache configuration
     pub decompression_cache_config:
-        Option<crate::storage::engines::impls::sst::decompression_cache::CacheConfig>,
+        Option<crate::storage::engines::sst::decompression_cache::CacheConfig>,
 
     /// Vector encoding strategy: Controls how vectors are encoded in blocks
     ///
@@ -1275,7 +1275,7 @@ impl Default for SstConfig {
             prefetch_enabled: true,
             prefetch_size_kb: 64,
             decompression_cache_config: Some(
-                crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default(),
+                crate::storage::engines::sst::decompression_cache::CacheConfig::default(),
             ),
             vector_encoding_strategy: default_vector_encoding_strategy(),
             block_format: default_block_format(),

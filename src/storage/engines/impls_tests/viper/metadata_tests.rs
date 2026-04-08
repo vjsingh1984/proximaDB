@@ -4,7 +4,7 @@
 
 #[test]
 fn test_viper_metadata_serialization() {
-    use crate::storage::engines::impls::viper::unified_metadata_serializer::{
+    use crate::storage::engines::viper::unified_metadata_serializer::{
         ClusterInfo, RowGroupMetadata, ViperCachedMetadata, ViperMetadataSerializer,
     };
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
@@ -52,7 +52,7 @@ fn test_viper_metadata_serialization() {
 
 #[test]
 fn test_parquet_footer_extraction() {
-    use crate::storage::engines::impls::viper::unified_metadata_serializer::ViperMetadataSerializer;
+    use crate::storage::engines::viper::unified_metadata_serializer::ViperMetadataSerializer;
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 
     let serializer = ViperMetadataSerializer::new();
@@ -76,7 +76,7 @@ fn test_parquet_footer_extraction() {
 
 #[test]
 fn test_should_cache_metadata() {
-    use crate::storage::engines::impls::viper::unified_metadata_serializer::ViperMetadataSerializer;
+    use crate::storage::engines::viper::unified_metadata_serializer::ViperMetadataSerializer;
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 
     let serializer = ViperMetadataSerializer::new();
@@ -92,7 +92,7 @@ fn test_should_cache_metadata() {
 #[tokio::test]
 async fn test_viper_sidecar_write_read() {
     use crate::storage::engines::core::formats::codebook_metadata::QuantizationCodebookMetadata;
-    use crate::storage::engines::impls::viper::codebook_sidecar::ViperCodebookSidecarManager;
+    use crate::storage::engines::viper::codebook_sidecar::ViperCodebookSidecarManager;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use tempfile::TempDir;
 
@@ -134,7 +134,7 @@ async fn test_viper_sidecar_write_read() {
 
 #[test]
 fn test_sidecar_path_generation() {
-    use crate::storage::engines::impls::viper::codebook_sidecar::ViperCodebookSidecarManager;
+    use crate::storage::engines::viper::codebook_sidecar::ViperCodebookSidecarManager;
     use std::path::Path;
 
     let parquet_path = Path::new("/data/collection/segment_001.parquet");

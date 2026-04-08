@@ -12,11 +12,11 @@
 pub mod baseline {
     pub use crate::compute::proximacodec::baseline::functions;
     // Re-export BaselineEncoder and BaselineDecoder at module level
-    pub use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
     pub use crate::compute::proximacodec::baseline::decoder::BaselineDecoder;
+    pub use crate::compute::proximacodec::baseline::encoder::BaselineEncoder;
     // Re-export encoder and decoder submodules
-    pub use crate::compute::proximacodec::baseline::encoder;
     pub use crate::compute::proximacodec::baseline::decoder;
+    pub use crate::compute::proximacodec::baseline::encoder;
 }
 
 // Re-export GPU module (sibling module)
@@ -32,6 +32,6 @@ pub mod simd {
     // Re-export decoder submodule
     pub use crate::compute::proximacodec::simd::decoder;
     // Re-export at module level for convenience
-    pub use crate::compute::proximacodec::simd::encoder::SimdEncoder;
     pub use crate::compute::proximacodec::simd::decoder::SimdDecoder;
+    pub use crate::compute::proximacodec::simd::encoder::SimdEncoder;
 }

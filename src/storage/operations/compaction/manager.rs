@@ -13,11 +13,9 @@ use tracing::{debug, info};
 use crate::storage::operations::CompactionResult;
 use crate::storage::types::StorageEngineType;
 
-// Import from our strategies module (unused but kept for future integration)
+// Import from our flattened strategy modules (unused but kept for future integration)
 #[allow(unused_imports)]
-use super::strategies::{
-    CompactionExecutionResult, CompactionPlan, CompactionStrategyRegistry, FileMetadata,
-};
+use super::{CompactionExecutionResult, CompactionPlan, CompactionStrategyRegistry, FileMetadata};
 
 /// Compaction manager coordinates optimization operations across storage engines
 pub struct CompactionManager {

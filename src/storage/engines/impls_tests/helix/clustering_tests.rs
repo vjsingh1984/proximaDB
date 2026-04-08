@@ -13,11 +13,11 @@
 //! - src/storage/engines/impls/helix/liquid_clustering.rs (2 tests)
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::engines::impls::helix::clustering::{
+use crate::storage::engines::helix::clustering::{
     LiquidClusteringConfig, PCAModel, QueryPatternTracker,
 };
-use crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve;
-use crate::storage::engines::impls::helix::liquid_clustering::LiquidClusteringCoordinator;
+use crate::storage::engines::helix::hilbert_curve::HilbertCurve;
+use crate::storage::engines::helix::liquid_clustering::LiquidClusteringCoordinator;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

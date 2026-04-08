@@ -545,4 +545,71 @@ mod tests {
         let config = RateLimitConfig::high_throughput();
         assert_eq!(config.global_requests_per_minute, Some(100000));
     }
+
+    // ============================================================
+    // Additional unique tests from integration test file
+    // ============================================================
+
+    #[test]
+    fn test_rate_limit_serde_roundtrip() {
+        use serde_json;
+
+        let original_config = RateLimitConfig {
+            enabled: true,
+            requests_per_minute: 2000,
+            burst_size: 200,
+            by_ip: false,
+            limit_health_endpoints: true,
+            global_requests_per_minute: Some(10000),
+        };
+
+        let serialized = serde_json::to_string(&original_config).expect("Failed to serialize");
+        let deserialized: RateLimitConfig =
+            serde_json::from_str(&serialized).expect("Failed to deserialize");
+
+        assert_eq!(original_config.enabled, deserialized.enabled);
+        assert_eq!(
+            original_config.requests_per_minute,
+            deserialized.requests_per_minute
+        );
+        assert_eq!(original_config.burst_size, deserialized.burst_size);
+        assert_eq!(original_config.by_ip, deserialized.by_ip);
+        assert_eq!(
+            original_config.limit_health_endpoints,
+            deserialized.limit_health_endpoints
+        );
+        assert_eq!(
+            original_config.global_requests_per_minute,
+            deserialized.global_requests_per_minute
+        );
+    }
+
+    #[test]
+    fn test_local_demo_config_toml_parsing() {
+        // Test parsing a simple TOML config that disables rate limiting
+        use toml;
+
+        let toml_content = r#"
+[network]
+enabled = false
+
+[rate_limit]
+enabled = false
+"#;
+
+        let parsed: toml::Value = toml::from_str(toml_content).expect("Failed to parse TOML");
+
+        // Verify the structure can be parsed
+        if let Some(network) = parsed.get("network") {
+            if let Some(enabled) = network.get("enabled") {
+                assert_eq!(enabled.as_bool(), Some(false));
+            }
+        }
+
+        if let Some(rate_limit) = parsed.get("rate_limit") {
+            if let Some(enabled) = rate_limit.get("enabled") {
+                assert_eq!(enabled.as_bool(), Some(false));
+            }
+        }
+    }
 }

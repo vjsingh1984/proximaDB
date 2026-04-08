@@ -28,8 +28,8 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::infrastructure::tier_policy_engine::InfrastructureTier;
-use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
-use crate::storage::engines::impls::sst::writer::SstableWriter;
+use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
+use crate::storage::engines::sst::writer::SstableWriter;
 use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
 
 /// Type alias for [`PostingListEntry`] for compatibility

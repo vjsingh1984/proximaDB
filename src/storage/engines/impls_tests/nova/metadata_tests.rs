@@ -18,7 +18,7 @@
 
 #[test]
 fn test_zone_map_creation() {
-    use crate::storage::engines::impls::nova::hierarchical_stats::ZoneMap;
+    use crate::storage::engines::nova::hierarchical_stats::ZoneMap;
 
     let vectors = vec![
         vec![1.0, 2.0, 3.0],
@@ -37,7 +37,7 @@ fn test_zone_map_creation() {
 // Test disabled: intersects_euclidean is a private method
 // #[test]
 // fn test_zone_map_euclidean_intersection() {
-//     use crate::storage::engines::impls::nova::hierarchical_stats::ZoneMap;
+//     use crate::storage::engines::nova::hierarchical_stats::ZoneMap;
 //
 //     let vectors = vec![vec![0.0, 0.0], vec![2.0, 2.0]];
 //
@@ -55,7 +55,7 @@ fn test_zone_map_creation() {
 
 #[test]
 fn test_superblock_creation() {
-    use crate::storage::engines::impls::nova::hierarchical_stats::*;
+    use crate::storage::engines::nova::hierarchical_stats::*;
 
     let enhanced_stats = vec![EnhancedRowGroupStats {
         row_group_id: 0,
@@ -98,7 +98,7 @@ fn test_superblock_creation() {
 // Tests disabled: serialize, deserialize, extract_cacheable_component, and should_cache_metadata are private/trait methods
 // #[test]
 // fn test_nova_metadata_serialization() {
-//     use crate::storage::engines::impls::nova::unified_metadata_serializer::*;
+//     use crate::storage::engines::nova::unified_metadata_serializer::*;
 //     use std::collections::HashMap;
 //
 //     let metadata = NovaCachedMetadata {
@@ -164,7 +164,7 @@ fn test_superblock_creation() {
 //
 // #[test]
 // fn test_parquet_footer_extraction() {
-//     use crate::storage::engines::impls::nova::unified_metadata_serializer::*;
+//     use crate::storage::engines::nova::unified_metadata_serializer::*;
 //
 //     let serializer = NovaUnifiedMetadataSerializer::new();
 //
@@ -199,7 +199,7 @@ fn test_superblock_creation() {
 //
 // #[test]
 // fn test_should_cache_metadata() {
-//     use crate::storage::engines::impls::nova::unified_metadata_serializer::*;
+//     use crate::storage::engines::nova::unified_metadata_serializer::*;
 //
 //     let serializer = NovaUnifiedMetadataSerializer::new();
 //
@@ -216,7 +216,7 @@ fn test_superblock_creation() {
 
 #[test]
 fn test_zone_map_config() {
-    use crate::storage::engines::impls::nova::zone_maps::ZoneMapConfig;
+    use crate::storage::engines::nova::zone_maps::ZoneMapConfig;
 
     let config = ZoneMapConfig::default();
     assert!(config.enable_hierarchical);
@@ -227,7 +227,7 @@ fn test_zone_map_config() {
 // Tests disabled: from_query and predict are private methods
 // #[test]
 // fn test_query_characteristics() {
-//     use crate::storage::engines::impls::nova::zone_maps::QueryCharacteristics;
+//     use crate::storage::engines::nova::zone_maps::QueryCharacteristics;
 //
 //     let query = vec![1.0, 0.0, 2.0, 0.0, 3.0];
 //     let characteristics =
@@ -241,7 +241,7 @@ fn test_zone_map_config() {
 //
 // #[test]
 // fn test_selectivity_model_prediction() {
-//     use crate::storage::engines::impls::nova::zone_maps::*;
+//     use crate::storage::engines::nova::zone_maps::*;
 //
 //     let model = SelectivityModel {
 //         parameters: vec![0.1, -0.2, 0.5], // norm_factor, sparsity_factor, intercept

@@ -11,7 +11,7 @@
 //!
 //! Source: src/storage/engines/impls/helix/hilbert_curve.rs
 
-use crate::storage::engines::impls::helix::hilbert_curve::{HilbertCurve, HilbertUtils};
+use crate::storage::engines::helix::hilbert_curve::{HilbertCurve, HilbertUtils};
 
 #[test]
 fn test_hilbert_2d() {

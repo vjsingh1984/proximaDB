@@ -20,7 +20,7 @@ use super::helpers::*;
 
 #[test]
 fn test_quantized_columns() {
-    use crate::storage::engines::impls::nova::quantized_columns::QuantizedColumns;
+    use crate::storage::engines::nova::quantized_columns::QuantizedColumns;
 
     let columns = QuantizedColumns {
         binary_column: Some("binary_column".to_string()),
@@ -35,7 +35,7 @@ fn test_quantized_columns() {
 
 #[test]
 fn test_quantized_column_storage() {
-    use crate::storage::engines::impls::nova::quantized_columns::*;
+    use crate::storage::engines::nova::quantized_columns::*;
 
     // QuantizedColumnStorage is private, test through QuantizedColumns
     let columns = QuantizedColumns::default();
@@ -46,7 +46,7 @@ fn test_quantized_column_storage() {
 
 #[test]
 fn test_quantization_metadata() {
-    use crate::storage::engines::impls::nova::quantized_columns::*;
+    use crate::storage::engines::nova::quantized_columns::*;
 
     // QuantizationMetadata is private, test through column config
     let columns = QuantizedColumns {
@@ -75,7 +75,7 @@ fn test_unified_columnar_config() {
 
 #[test]
 fn test_columnar_integration_pipeline() {
-    use crate::storage::engines::impls::nova::unified_columnar_integration::*;
+    use crate::storage::engines::nova::unified_columnar_integration::*;
 
     // Pipeline is private, test through config
     let config = UnifiedColumnarConfig {
@@ -93,7 +93,7 @@ fn test_columnar_integration_pipeline() {
 
 #[tokio::test]
 async fn test_unified_columnar_writer() {
-    use crate::storage::engines::impls::nova::unified_columnar_integration::*;
+    use crate::storage::engines::nova::unified_columnar_integration::*;
     use crate::proto::proximadb_v1::VectorRecord;
 
     // Writer is private, test configuration
@@ -121,7 +121,7 @@ async fn test_unified_columnar_writer() {
 
 #[test]
 fn test_candidate_ordering() {
-    use crate::storage::engines::impls::nova::columnar_search::*;
+    use crate::storage::engines::nova::columnar_search::*;
     use std::collections::BinaryHeap;
 
     let mut heap = BinaryHeap::new();
@@ -155,7 +155,7 @@ fn test_candidate_ordering() {
 
 #[test]
 fn test_projection_mask() {
-    use crate::storage::engines::impls::nova::columnar_search::*;
+    use crate::storage::engines::nova::columnar_search::*;
     use crate::storage::engines::core::formats::columnar::{MetadataFilter, FilterCondition, FilterLogic};
 
     let config = ColumnarSearchConfig::default();

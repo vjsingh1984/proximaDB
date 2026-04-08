@@ -48,9 +48,6 @@ pub mod tenant;
 pub mod timeout;
 pub mod tls;
 
-#[cfg(test)]
-mod tests;
-
 pub use auth::{AuthConfig, AuthLayer, UserInfo};
 pub use backpressure::{BackpressureConfig, create_concurrency_limit_layer};
 pub use cors::{CorsConfig, CorsConfigError, create_cors_layer};
