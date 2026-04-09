@@ -3067,7 +3067,7 @@ mod minimal_compaction_tests {
             updated_at: Some(chrono::Utc::now().timestamp() as u32),
             expires_at: None,
             version: Some(1),
-            similarity: None,
+            source: None,
         }
     }
 

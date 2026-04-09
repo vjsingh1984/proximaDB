@@ -3866,7 +3866,7 @@ mod index_first_search_tests {
             updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
-            similarity: None,
+            source: None,
         };
 
         assert_eq!(vector.id, "vec1");
@@ -3994,7 +3994,7 @@ mod index_first_search_tests {
                 updated_at: Some(chrono::Utc::now().timestamp()),
                 expires_at: None,
                 version: Some(1),
-                similarity: None,
+                source: None,
             };
             vectors.push(vector);
         }
