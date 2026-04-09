@@ -1437,6 +1437,7 @@ mod compression_helpers {
                 normalization_method: None, // Optional field: No normalization by default
                 block_size_kb: config.block_size_kb,
                 dynamic_block_sizing: false,
+                adaptive: false, // No adaptive compression for SST files
             })
         } else {
             None
@@ -1634,7 +1635,7 @@ mod block_utils {
             quantized_section: None,
             metadata: ProximaBlockMetadata::default(),
             compression_config: BlockCompressionConfig::default(),
-            algorithm: CompressionAlgorithm::None,
+            compression_algorithm: CompressionAlgorithm::None,
             uncompressed_size: 0,
             bloom_filter,
             block_bloom_filter: None,

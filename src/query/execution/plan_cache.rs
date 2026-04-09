@@ -325,7 +325,17 @@ mod tests {
 
     #[test]
     fn test_cached_plan_reuse() {
-        let plan = ExecutionPlan::default();
+        use crate::query::execution::ExecutionStrategy;
+        let plan = ExecutionPlan {
+            execution_strategy: ExecutionStrategy::VectorOnly,
+            operations: vec![],
+            estimated_cost: 0.0,
+            optimizations: vec![],
+            performance_hints: vec![],
+            seeding_strategy: Default::default(),
+            limit: None,
+            offset: None,
+        };
         let mut cached_plan = CachedPlan::new(plan);
 
         assert_eq!(cached_plan.reuse_count, 0);
@@ -337,7 +347,17 @@ mod tests {
 
     #[test]
     fn test_execution_time_update() {
-        let plan = ExecutionPlan::default();
+        use crate::query::execution::ExecutionStrategy;
+        let plan = ExecutionPlan {
+            execution_strategy: ExecutionStrategy::VectorOnly,
+            operations: vec![],
+            estimated_cost: 0.0,
+            optimizations: vec![],
+            performance_hints: vec![],
+            seeding_strategy: Default::default(),
+            limit: None,
+            offset: None,
+        };
         let mut cached_plan = CachedPlan::new(plan);
 
         assert_eq!(cached_plan.avg_execution_time_ms, 0.0);
@@ -363,8 +383,19 @@ mod tests {
         assert_eq!(stats.hit_rate, 0.0);
 
         // Add a plan
+        use crate::query::execution::ExecutionStrategy;
         let key = PlanKey::from_query("SELECT 1", "test", "sql");
-        cache.insert(key.clone(), ExecutionPlan::default());
+        let plan = ExecutionPlan {
+            execution_strategy: ExecutionStrategy::VectorOnly,
+            operations: vec![],
+            estimated_cost: 0.0,
+            optimizations: vec![],
+            performance_hints: vec![],
+            seeding_strategy: Default::default(),
+            limit: None,
+            offset: None,
+        };
+        cache.insert(key.clone(), plan);
 
         // Should now have one plan
         let stats = cache.stats();
