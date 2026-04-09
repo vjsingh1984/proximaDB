@@ -499,10 +499,10 @@ mod tests {
             assert_eq!(zone_map.centroid, vec![4.0, 5.0, 6.0]);
 
             // Test intersections
-            assert!(zone_map.intersects_query(&[5.0, 5.0, 5.0], DistanceMetric::Euclidean, 10.0));
+            assert!(zone_map.intersects_query(&[5.0, 5.0, 5.0], "euclidean".to_string(), 10.0));
             assert!(!zone_map.intersects_query(
                 &[20.0, 20.0, 20.0],
-                DistanceMetric::Euclidean,
+                "euclidean".to_string(),
                 1.0
             ));
         }
@@ -530,11 +530,11 @@ mod tests {
 
             // Query within the zone should return true
             let query = vec![2.0, 3.0, 4.0];
-            assert!(superblock.can_contain_candidates(&query, DistanceMetric::Euclidean, 10.0));
+            assert!(superblock.can_contain_candidates(&query, "euclidean".to_string(), 10.0));
 
             // Query far outside should return false
             let far_query = vec![100.0, 100.0, 100.0];
-            assert!(!superblock.can_contain_candidates(&far_query, DistanceMetric::Euclidean, 1.0));
+            assert!(!superblock.can_contain_candidates(&far_query, "euclidean".to_string(), 1.0));
         }
 
         fn create_test_enhanced_stats(id: u32) -> EnhancedRowGroupStats {
@@ -732,7 +732,7 @@ mod tests {
         fn test_query_characteristics() {
             let query = vec![1.0, 0.0, 2.0, 0.0, 3.0];
             let characteristics =
-                QueryCharacteristics::from_query(&query, DistanceMetric::Euclidean, 10);
+                QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
 
             assert_eq!(characteristics.top_k, 10);
             assert_eq!(characteristics.sparsity, 0.4); // 2/5 zeros
@@ -753,7 +753,7 @@ mod tests {
                 norm: 2.0,
                 sparsity: 0.3,
                 dominant_dimensions: vec![0, 1, 2],
-                distance_metric: DistanceMetric::Euclidean,
+                distance_metric: "euclidean".to_string(),
                 top_k: 10,
             };
 
@@ -797,7 +797,7 @@ mod tests {
             let characteristics = QueryCharacteristics {
                 dimension: 768,
                 top_k: 10,
-                distance_metric: DistanceMetric::Euclidean,
+                distance_metric: "euclidean".to_string(),
                 query_norm: 1.0,
                 query_sparsity: 0.1,
                 estimated_selectivity: 0.5,
@@ -826,7 +826,7 @@ mod tests {
             let sparse_characteristics = QueryCharacteristics {
                 dimension: 768,
                 top_k: 10,
-                distance_metric: DistanceMetric::Euclidean,
+                distance_metric: "euclidean".to_string(),
                 query_norm: 1.0,
                 query_sparsity: 0.9,        // Very sparse
                 estimated_selectivity: 0.5, // Will be updated
@@ -839,7 +839,7 @@ mod tests {
             let dense_characteristics = QueryCharacteristics {
                 dimension: 768,
                 top_k: 10,
-                distance_metric: DistanceMetric::Euclidean,
+                distance_metric: "euclidean".to_string(),
                 query_norm: 1.0,
                 query_sparsity: 0.1,        // Dense
                 estimated_selectivity: 0.5, // Will be updated
@@ -856,7 +856,7 @@ mod tests {
         #[tokio::test]
         async fn test_streaming_search_engine_creation() {
             let config = StreamingSearchConfig::default();
-            let _engine = StreamingSearchEngine::new(config, DistanceMetric::Euclidean);
+            let _engine = StreamingSearchEngine::new(config, "euclidean".to_string());
 
             // Verify engine was created successfully
             // (Most fields are private, so we can't inspect them directly)
@@ -885,7 +885,7 @@ mod tests {
             // 5. Test query characteristics analysis
             let query = create_test_query(768);
             let characteristics =
-                QueryCharacteristics::from_query(&query, DistanceMetric::Euclidean, 10);
+                QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
 
             assert_eq!(characteristics.dimension, 768);
             assert_eq!(characteristics.top_k, 10);
@@ -982,7 +982,7 @@ mod tests {
 
             for _ in 0..1000 {
                 let _intersects =
-                    zone_map.intersects_query(&query, DistanceMetric::Euclidean, 10.0);
+                    zone_map.intersects_query(&query, "euclidean".to_string(), 10.0);
             }
 
             let intersection_time = start.elapsed();
