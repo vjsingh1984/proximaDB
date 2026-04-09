@@ -505,7 +505,9 @@ mod text_column_integration_tests {
 
         #[test]
         fn test_sst_text_support_default_all() {
-            let support = proximadb::storage::engines::sst::text_column_support::SstTextSupport::default_all();
+            let support =
+                proximadb::storage::engines::sst::text_column_support::SstTextSupport::default_all(
+                );
 
             assert!(support.has_processor());
             assert!(support.has_filter_evaluator());

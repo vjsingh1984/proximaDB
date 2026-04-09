@@ -108,11 +108,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
         .iter()
         .enumerate()
         .map(|(i, v)| {
-            proximadb::storage::engines::sst::SstEntry::from_vector_record(
-                v.clone(),
-                i as u64,
-                0,
-            )
+            proximadb::storage::engines::sst::SstEntry::from_vector_record(v.clone(), i as u64, 0)
         })
         .collect();
 
