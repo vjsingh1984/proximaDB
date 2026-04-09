@@ -88,7 +88,7 @@ pub struct RowGroupCandidate {
 
 /// Streaming row group processor with memory management
 pub struct StreamingRowGroupProcessor {
-    config: StreamingConfig,
+    pub(crate) config: StreamingConfig,
     memory_tracker: Arc<RwLock<MemoryTracker>>,
     semaphore: Arc<Semaphore>,
     processing_pipeline: Vec<ProcessingStage>,
@@ -96,7 +96,7 @@ pub struct StreamingRowGroupProcessor {
 
 /// Memory usage tracking and management
 pub(crate) struct MemoryTracker {
-    current_usage: usize,
+    pub(crate) current_usage: usize,
     max_usage: usize,
     peak_usage: usize,
     allocations: std::collections::HashMap<String, usize>,
@@ -544,7 +544,7 @@ impl MemoryTracker {
         }
     }
 
-    fn reserve_memory(&mut self, identifier: &str, amount: usize) -> Result<()> {
+    pub(crate) fn reserve_memory(&mut self, identifier: &str, amount: usize) -> Result<()> {
         if self.current_usage + amount > self.max_usage {
             return Err(anyhow!(
                 "Memory limit exceeded: requested {}, available {}",
@@ -563,7 +563,7 @@ impl MemoryTracker {
         Ok(())
     }
 
-    fn release_memory(&mut self, identifier: &str) {
+    pub(crate) fn release_memory(&mut self, identifier: &str) {
         if let Some(amount) = self.allocations.remove(identifier) {
             self.current_usage = self.current_usage.saturating_sub(amount);
             debug!(
@@ -573,7 +573,7 @@ impl MemoryTracker {
         }
     }
 
-    fn is_under_pressure(&self, threshold: f32) -> bool {
+    pub(crate) fn is_under_pressure(&self, threshold: f32) -> bool {
         let usage_ratio = self.current_usage as f32 / self.max_usage as f32;
         usage_ratio > threshold
     }
