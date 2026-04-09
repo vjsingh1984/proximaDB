@@ -500,11 +500,7 @@ mod tests {
 
             // Test intersections
             assert!(zone_map.intersects_query(&[5.0, 5.0, 5.0], "euclidean".to_string(), 10.0));
-            assert!(!zone_map.intersects_query(
-                &[20.0, 20.0, 20.0],
-                "euclidean".to_string(),
-                1.0
-            ));
+            assert!(!zone_map.intersects_query(&[20.0, 20.0, 20.0], "euclidean".to_string(), 1.0));
         }
 
         #[test]
@@ -623,8 +619,8 @@ mod tests {
 
     mod progressive_search_tests {
         use super::*;
-        use crate::storage::engines::swift::progressive_search::BinarySketch;
         use crate::storage::engines::nova::progressive_search::Int8Vector;
+        use crate::storage::engines::swift::progressive_search::BinarySketch;
 
         #[test]
         fn test_progressive_search_config() {
@@ -796,7 +792,9 @@ mod tests {
 
         #[test]
         fn test_performance_tracker() {
-            use crate::storage::engines::nova::streaming_search::{PerformanceTracker, ActualPerformance};
+            use crate::storage::engines::nova::streaming_search::{
+                ActualPerformance, PerformanceTracker,
+            };
             let mut tracker = PerformanceTracker::new();
 
             let characteristics = QueryCharacteristics {
@@ -830,7 +828,7 @@ mod tests {
             // Test sparse query
             let sparse_characteristics = QueryCharacteristics {
                 norm: 1.0,
-                sparsity: 0.9,        // Very sparse
+                sparsity: 0.9, // Very sparse
                 dominant_dimensions: vec![0, 1, 2],
                 distance_metric: "euclidean".to_string(),
                 top_k: 10,
@@ -842,7 +840,7 @@ mod tests {
             // Test dense query
             let dense_characteristics = QueryCharacteristics {
                 norm: 1.0,
-                sparsity: 0.1,        // Dense
+                sparsity: 0.1, // Dense
                 dominant_dimensions: vec![0, 1, 2],
                 distance_metric: "euclidean".to_string(),
                 top_k: 10,
@@ -966,8 +964,8 @@ mod tests {
 
     mod benchmark_tests {
         use super::*;
-        use std::time::Instant;
         use crate::storage::engines::swift::progressive_search::BinarySketch;
+        use std::time::Instant;
 
         #[test]
         fn test_zone_map_performance() {
@@ -985,8 +983,7 @@ mod tests {
             let start = Instant::now();
 
             for _ in 0..1000 {
-                let _intersects =
-                    zone_map.intersects_query(&query, "euclidean".to_string(), 10.0);
+                let _intersects = zone_map.intersects_query(&query, "euclidean".to_string(), 10.0);
             }
 
             let intersection_time = start.elapsed();

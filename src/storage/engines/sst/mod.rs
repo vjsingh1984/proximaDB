@@ -2781,11 +2781,7 @@ mod decompression_cache_tests {
         // Test put and hit
         let block = ProximaDataBlock::new(vec![], config);
         cache
-            .put(
-                key.clone(),
-                block.clone(),
-                Some(CompressionAlgorithm::Zstd),
-            )
+            .put(key.clone(), block.clone(), Some(CompressionAlgorithm::Zstd))
             .await
             .unwrap();
 
@@ -3252,8 +3248,8 @@ mod compression_tests {
             compression_threshold_bytes: 100,
             compression_level: 6,
             dynamic_block_sizing: false,
-                block_size_mb: Some(8),
-                dictionary_compression: false,
+            block_size_mb: Some(8),
+            dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
             ..Default::default()
@@ -3281,8 +3277,8 @@ mod compression_tests {
             compression_threshold_bytes: 100,
             compression_level: 4,
             dynamic_block_sizing: false,
-                block_size_mb: Some(8),
-                dictionary_compression: false,
+            block_size_mb: Some(8),
+            dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
             ..Default::default()
@@ -3435,7 +3431,9 @@ mod compression_tests {
                 enable_vector_compression: *algo != CompressionAlgorithm::CompressionNone,
                 compression_threshold_bytes: 100,
                 compression_level: 3,
-                collection_enable_vector_compression: if *algo != CompressionAlgorithm::CompressionNone {
+                collection_enable_vector_compression: if *algo
+                    != CompressionAlgorithm::CompressionNone
+                {
                     Some(CompressionConfig {
                         adaptive: false,
                         algorithm: *algo as i32,
@@ -3444,7 +3442,7 @@ mod compression_tests {
                         block_size_mb: Some(8),
                         dictionary_compression: false,
                         vector_layout: VectorEncodingLayout::default(),
-                        metadata_algorithm: None
+                        metadata_algorithm: None,
                     })
                 } else {
                     None

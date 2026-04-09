@@ -2122,8 +2122,8 @@ mod integration_tests {
     }
 
     use crate::proto::proximadb_v1::{
-        Collection, CollectionConfig, CollectionStats, DistanceMetric,
-        FilterableColumnSpec, IndexingAlgorithm, StorageEngine,
+        Collection, CollectionConfig, CollectionStats, DistanceMetric, FilterableColumnSpec,
+        IndexingAlgorithm, StorageEngine,
     };
 
     fn create_test_config_for_proto(temp_dir: &TempDir) -> UniversalMetadataConfig {
