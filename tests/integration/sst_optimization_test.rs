@@ -6,7 +6,7 @@ use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord};
 use proximadb::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, ProximaDataBlock,
 };
-use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata};
+use proximadb::storage::engines::sst::{SstEntry, SstMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;

@@ -16,13 +16,13 @@ use proximadb::compute::quantization::unified::{UnifiedQuantizationEngine, InMem
 use proximadb::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::quantization::{SstQuantizationAdapter, sst_adapter::SstQuantizationConfig};
-use proximadb::storage::engines::impls::sst::{
+use proximadb::storage::engines::sst::{
     SstEntry, SstableWriter, 
     sst_compactor::{SstCompactor, CompactionSortStrategy},
     readers::unified_sstable_reader::UnifiedSstableReader
 };
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::engines::impls::sst::compaction::CompactionManager;
+use proximadb::storage::engines::sst::compaction::CompactionManager;
 
 /// Test data generator
 struct TestDataGenerator {

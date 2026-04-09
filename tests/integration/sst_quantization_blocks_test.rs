@@ -6,7 +6,7 @@ use anyhow::Result;
 use proximadb::compute::quantization::{ProductQuantization as PqConfig, UnifiedQuantizationLevel};
 use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::VectorRecord;
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 use rand::rngs::StdRng;

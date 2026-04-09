@@ -17,7 +17,7 @@ use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
     StorageAssignment, VectorRecord, sql_value,
 };
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{
     FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,

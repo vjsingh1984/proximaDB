@@ -5,7 +5,7 @@ use tempfile::TempDir;
 
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
-use proximadb::storage::engines::impls::raptor::RaptorEngine;
+use proximadb::storage::engines::raptor::RaptorEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};

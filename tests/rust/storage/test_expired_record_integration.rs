@@ -6,9 +6,9 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use proximadb::core::{SstConfig, VectorRecord};
-use proximadb::storage::engines::impls::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
-use proximadb::storage::engines::impls::sst::SstEntry;
-use proximadb::storage::engines::impls::viper::engine::ViperEngine;
+use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
+use proximadb::storage::engines::sst::SstEntry;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::memtable::core::MemtableConfig;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 

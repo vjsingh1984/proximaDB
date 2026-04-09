@@ -3,11 +3,11 @@ use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::bloom::BloomFilterConfig;
 use proximadb::core::search::SearchParams;
 use proximadb::core::{MetadataItem, VectorRecord};
-use proximadb::storage::engines::impls::sst::SstEntry;
-use proximadb::storage::engines::impls::sst::readers::unified_sstable_reader::{
+use proximadb::storage::engines::sst::SstEntry;
+use proximadb::storage::engines::sst::readers::unified_sstable_reader::{
     CollectionContext, ReaderConfig, UnifiedSstableReader,
 };
-use proximadb::storage::engines::impls::sst::sstable_writer::SstableWriter;
+use proximadb::storage::engines::sst::sstable_writer::SstableWriter;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use std::collections::HashMap;
 /// Integration test for SST SSTable writer and reader

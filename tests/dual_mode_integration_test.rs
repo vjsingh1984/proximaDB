@@ -10,8 +10,8 @@ use proximadb::{
         StorageEngine, VectorRecord, sql_value,
     },
     storage::{
-        engines::impls::sst::SstEngine,
-        engines::impls::viper::engine::ViperEngine,
+        engines::sst::SstEngine,
+        engines::viper::ViperEngine,
         traits::{
             FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
         },

@@ -30,8 +30,8 @@ use proximadb::proto::proximadb_v1::{
 // SearchResult moved to different location - using Vec<VectorRecord> for results
 // Note: Some imports like MetadataItem may have changed or been removed
 use proximadb::services::vector_operations_service::VectorOperationsService;
-use proximadb::storage::engines::impls::sst::SstEngine;
-use proximadb::storage::engines::impls::viper::engine::ViperEngine;
+use proximadb::storage::engines::sst::SstEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataCacheConfig;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType;
@@ -826,7 +826,7 @@ pub mod operations {
 
     /// Search vectors in VIPER engine - REAL search, not simulated
     pub async fn search_vectors_viper(
-        engine: &proximadb::storage::engines::impls::viper::engine::ViperEngine,
+        engine: &proximadb::storage::engines::viper::ViperEngine,
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
@@ -1058,7 +1058,7 @@ pub async fn flush_sst_with_block_stats(
     block_size_kb: usize,
 ) -> Result<FlushBlockStatsResult> {
     use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, CompressionConfig};
-    use proximadb::storage::engines::impls::sst::SstEngine;
+    use proximadb::storage::engines::sst::SstEngine;
     use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
     // Create SST config with specified block size

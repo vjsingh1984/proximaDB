@@ -10,7 +10,7 @@ use proximadb::compute::{
     ProductQuantization, BinaryQuantization, UnifiedDistanceCompute, InMemoryCodebookStore
 };
 use std::sync::Arc;
-use proximadb::storage::engines::impls::viper::quantization::{
+use proximadb::storage::engines::viper::quantization::{
     VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, QuantizationLevel
 };
 use proximadb::core::VectorRecord;
@@ -330,7 +330,7 @@ async fn test_model_serialization() -> Result<()> {
     assert!(!serialized.is_empty());
     
     // Deserialize model
-    let deserialized_model: proximadb::storage::engines::impls::viper::quantization::QuantizationModel = 
+    let deserialized_model: proximadb::storage::engines::viper::quantization::QuantizationModel = 
         serde_json::from_str(&serialized)?;
     
     // Verify model integrity

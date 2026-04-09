@@ -13,9 +13,9 @@ mod performance_comparison_tests {
     use proximadb::proto::proximadb_v1::VectorRecord;
 
     use proximadb::core::search::BlockPruneConfig;
-    use proximadb::storage::engines::impls::helix::{HelixConfig, HelixEngine};
-    use proximadb::storage::engines::impls::sst::SstEngine;
-    use proximadb::storage::engines::impls::viper::engine::ViperEngine;
+    use proximadb::storage::engines::helix::{HelixConfig, HelixEngine};
+    use proximadb::storage::engines::sst::SstEngine;
+    use proximadb::storage::engines::viper::ViperEngine;
     use proximadb::storage::traits::StorageQueryMetadata;
     use proximadb::storage::traits::{
         CompactionParameters, FlushParameters, StorageQueryContext, UnifiedStorageEngine,

@@ -17,7 +17,7 @@ mod collection_builder;
 mod raptor_recall_tests {
     use proximadb::core::search::SearchParams;
     use proximadb::proto::proximadb_v1::StorageEngine;
-    use proximadb::storage::engines::impls::raptor::RaptorEngine;
+    use proximadb::storage::engines::raptor::RaptorEngine;
     use proximadb::storage::persistence::write_ahead_log::BatchId;
     use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
     use std::sync::Arc;
@@ -75,7 +75,7 @@ mod raptor_recall_tests {
     async fn test_raptor_recall_after_reopen_5000_vectors() {
         // Keep this test quiet by default; opt into deeper logs via env.
         let log_filter = std::env::var("PROXIMADB_RAPTOR_RECALL_LOG_FILTER").unwrap_or_else(|_| {
-            "info,proximadb::storage::engines::impls::raptor=warn,proximadb::storage::traits=warn,proximadb::compute::quantization::hardware_accelerated=warn".to_string()
+            "info,proximadb::storage::engines::raptor=warn,proximadb::storage::traits=warn,proximadb::compute::quantization::hardware_accelerated=warn".to_string()
         });
         let _ = tracing_subscriber::fmt()
             .with_env_filter(log_filter)

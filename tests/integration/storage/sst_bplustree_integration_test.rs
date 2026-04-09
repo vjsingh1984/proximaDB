@@ -4,8 +4,8 @@
 //! and used during reads for efficient key/range lookups.
 
 use proximadb::proto::proximadb_v1::VectorRecord;
-use proximadb::storage::engines::impls::sst::readers::sst_query_engine::SstQueryEngine;
-use proximadb::storage::engines::impls::sst::writer::SstableWriter;
+use proximadb::storage::engines::sst::readers::sst_query_engine::SstQueryEngine;
+use proximadb::storage::engines::sst::writer::SstableWriter;
 use std::path::PathBuf;
 use tempfile::TempDir;
 

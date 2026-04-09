@@ -9,7 +9,7 @@
 //! - Storage savings verification
 //! - Backward compatibility (FP32 fallback)
 
-use proximadb::storage::engines::impls::sst::{fp16_to_fp32, fp32_to_fp16};
+use proximadb::storage::engines::sst::{fp16_to_fp32, fp32_to_fp16};
 
 #[test]
 fn test_fp16_conversion_accuracy() {

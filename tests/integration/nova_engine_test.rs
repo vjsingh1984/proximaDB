@@ -7,7 +7,7 @@ use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 use proximadb::services::collection::manager::CollectionService;
 use proximadb::services::operations::vectors::VectorOperationsService;
-use proximadb::storage::engines::impls::nova::NovaEngine;
+use proximadb::storage::engines::nova::NovaEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};

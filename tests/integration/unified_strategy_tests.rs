@@ -11,11 +11,11 @@ use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::core::search::FilterExpression;
 
 // Import all unified readers
-use proximadb::storage::engines::impls::sst::readers::UnifiedSstableReader;
-use proximadb::storage::engines::impls::swift::{UnifiedSWIFTReader, SwiftReaderConfig};
-use proximadb::storage::engines::impls::nova::UnifiedNOVAReader;
-use proximadb::storage::engines::impls::viper::UnifiedVIPERReader;
-use proximadb::storage::engines::impls::helix::UnifiedHELIXReader;
+use proximadb::storage::engines::sst::readers::UnifiedSstableReader;
+use proximadb::storage::engines::swift::{UnifiedSWIFTReader, SwiftReaderConfig};
+use proximadb::storage::engines::nova::UnifiedNOVAReader;
+use proximadb::storage::engines::viper::UnifiedVIPERReader;
+use proximadb::storage::engines::helix::UnifiedHELIXReader;
 
 /// Test helper to create a test filesystem factory
 async fn create_test_filesystem_factory() -> Arc<FilesystemFactory> {

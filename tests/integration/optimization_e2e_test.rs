@@ -16,8 +16,8 @@ use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationCo
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, DistanceMetric, SqlValue, StorageEngine, VectorRecord, sql_value,
 };
-use proximadb::storage::engines::impls::sst::SstEngine;
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::sst::SstEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::UnifiedStorageEngine;

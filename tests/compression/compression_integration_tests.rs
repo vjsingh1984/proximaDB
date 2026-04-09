@@ -11,8 +11,8 @@ use proximadb::proto::proximadb_v1::{
     CompressionAlgorithm as ProtoCompressionAlgorithm,
 };
 use proximadb::services::direct_vector_service::DirectVectorService;
-use proximadb::storage::engines::impls::sst::{CompressionAlgorithmSst};
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::sst::{CompressionAlgorithmSst};
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::core::models::{Collection, CollectionConfig, DistanceMetric};
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -29,7 +29,7 @@ async fn test_sst_compression_end_to_end() {
     // Create DirectVectorService with required parameters
     let write_buffer_config = proximadb::storage::persistence::write_buffer::WriteBufferConfig::default();
     let viper_engine = Arc::new(ViperEngine::new().await.unwrap());
-    let sst_storage = Arc::new(proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap());
+    let sst_storage = Arc::new(proximadb::storage::engines::sst::SstEngine::new().await.unwrap());
     let service = DirectVectorService::new(write_buffer_config, viper_engine, sst_storage).await.unwrap();
     
     // Create collection with SST compression via SDK (unified structure)
@@ -139,7 +139,7 @@ async fn test_viper_dual_column_compression() {
     
     let write_buffer_config = proximadb::storage::persistence::write_buffer::WriteBufferConfig::default();
     let viper_engine = Arc::new(ViperEngine::new().await.unwrap());
-    let sst_storage = Arc::new(proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap());
+    let sst_storage = Arc::new(proximadb::storage::engines::sst::SstEngine::new().await.unwrap());
     let service = DirectVectorService::new(write_buffer_config, viper_engine, sst_storage).await.unwrap();
     
     // Create collection with VIPER dual columns
@@ -233,7 +233,7 @@ async fn test_mixed_compression_query_planning() {
     
     let write_buffer_config = proximadb::storage::persistence::write_buffer::WriteBufferConfig::default();
     let viper_engine = Arc::new(ViperEngine::new().await.unwrap());
-    let sst_storage = Arc::new(proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap());
+    let sst_storage = Arc::new(proximadb::storage::engines::sst::SstEngine::new().await.unwrap());
     let service = DirectVectorService::new(write_buffer_config, viper_engine, sst_storage).await.unwrap();
     
     // Create multiple collections with different compression settings
@@ -361,7 +361,7 @@ async fn test_cache_invalidation_on_updates() {
     
     let write_buffer_config = proximadb::storage::persistence::write_buffer::WriteBufferConfig::default();
     let viper_engine = Arc::new(ViperEngine::new().await.unwrap());
-    let sst_storage = Arc::new(proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap());
+    let sst_storage = Arc::new(proximadb::storage::engines::sst::SstEngine::new().await.unwrap());
     let service = DirectVectorService::new(write_buffer_config, viper_engine, sst_storage).await.unwrap();
     
     // Create compressed collection
@@ -471,7 +471,7 @@ async fn test_adaptive_compression_threshold() {
     
     let write_buffer_config = proximadb::storage::persistence::write_buffer::WriteBufferConfig::default();
     let viper_engine = Arc::new(ViperEngine::new().await.unwrap());
-    let sst_storage = Arc::new(proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap());
+    let sst_storage = Arc::new(proximadb::storage::engines::sst::SstEngine::new().await.unwrap());
     let service = DirectVectorService::new(write_buffer_config, viper_engine, sst_storage).await.unwrap();
     
     // Create collection with adaptive compression
@@ -550,7 +550,7 @@ async fn test_parallel_decompression() {
     
     let write_buffer_config = proximadb::storage::persistence::write_buffer::WriteBufferConfig::default();
     let viper_engine = Arc::new(ViperEngine::new().await.unwrap());
-    let sst_storage = Arc::new(proximadb::storage::engines::impls::sst::SstEngine::new().await.unwrap());
+    let sst_storage = Arc::new(proximadb::storage::engines::sst::SstEngine::new().await.unwrap());
     let service = DirectVectorService::new(write_buffer_config, viper_engine, sst_storage).await.unwrap();
     
     // Create highly compressed collection

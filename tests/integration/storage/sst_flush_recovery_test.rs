@@ -26,7 +26,7 @@ mod tests {
         Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
         StorageAssignment, StorageConfig, VectorRecord,
     };
-    use crate::storage::engines::impls::sst::{Sst1Header, SstConfig, core::SstEngine};
+    use crate::storage::engines::sst::{Sst1Header, SstConfig, SstEngine};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,

@@ -9,7 +9,7 @@ use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue, VectorRecord,
     sql_value::Value,
 };
-use proximadb::storage::engines::impls::swift::SwiftEngine;
+use proximadb::storage::engines::swift::SwiftEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
 use serde_json::json;

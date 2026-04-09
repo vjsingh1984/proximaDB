@@ -11,7 +11,7 @@ use proximadb::compute::quantization::{
 };
 use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::VectorRecord;
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::local::LocalConfig;
 use proximadb::storage::persistence::filesystem::{FileOptions, FilesystemPerformanceConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};

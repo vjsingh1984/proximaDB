@@ -13,7 +13,7 @@ use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::StorageEngine;
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::collections::HashMap;
 use std::sync::Arc;

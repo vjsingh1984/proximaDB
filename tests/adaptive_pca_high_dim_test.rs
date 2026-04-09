@@ -13,7 +13,7 @@ use proximadb::proto::proximadb_v1::{
     sql_value,
 };
 use proximadb::storage::engines::core::formats::proximablocks::spatial_clustering::AdaptivePcaConfig;
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::{
     FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
 };

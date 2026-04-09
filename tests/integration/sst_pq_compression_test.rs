@@ -10,7 +10,7 @@ mod common;
 
 use anyhow::Result;
 use proximadb::proto::proximadb_v1::{VectorRecord, Collection, CollectionConfig, CompressionConfig};
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::{UnifiedStorageEngine, FlushParameters};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::core::SstConfig;

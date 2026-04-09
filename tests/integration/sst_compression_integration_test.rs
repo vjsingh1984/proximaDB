@@ -18,7 +18,7 @@ use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::SstConfig;
 use proximadb::proto::proximadb_v1::{SqlValue, StorageEngine, VectorRecord, sql_value};
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -108,7 +108,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
         .iter()
         .enumerate()
         .map(|(i, v)| {
-            proximadb::storage::engines::impls::sst::SstEntry::from_vector_record(
+            proximadb::storage::engines::sst::SstEntry::from_vector_record(
                 v.clone(),
                 i as u64,
                 0,
@@ -121,7 +121,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     let distance_compute = std::sync::Arc::new(
         proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
     );
-    let sst_storage = proximadb::storage::engines::impls::sst::SstEngine::new().await?;
+    let sst_storage = proximadb::storage::engines::sst::SstEngine::new().await?;
 
     // Test SST compression through flush operation
     let test_env = common::integration_test_helpers::UnifiedTestEnvironment::new().await?;

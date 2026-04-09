@@ -15,7 +15,7 @@ mod small_batch_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::core::search::{BlockPruneConfig, SearchMode, SearchParams};
     use proximadb::proto::proximadb_v1::{Collection, StorageEngine};
-    use proximadb::storage::engines::impls::helix::HelixEngine;
+    use proximadb::storage::engines::helix::HelixEngine;
     use proximadb::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
     };
@@ -681,7 +681,7 @@ mod small_batch_tests {
 
     /// Run SST approximate search test
     async fn run_sst_approx_search_test(
-        engine: &proximadb::storage::engines::impls::sst::SstEngine,
+        engine: &proximadb::storage::engines::sst::SstEngine,
         vectors: &[proximadb::proto::proximadb_v1::VectorRecord],
         collection: Arc<Collection>,
         test_name: &str,
@@ -718,7 +718,7 @@ mod small_batch_tests {
 
     /// Run SST exact search test
     async fn run_sst_exact_search_test(
-        engine: &proximadb::storage::engines::impls::sst::SstEngine,
+        engine: &proximadb::storage::engines::sst::SstEngine,
         vectors: &[proximadb::proto::proximadb_v1::VectorRecord],
         collection: Arc<Collection>,
         test_name: &str,
@@ -772,7 +772,7 @@ mod small_batch_tests {
 
         // Flush with SST engine
         {
-            let engine = proximadb::storage::engines::impls::sst::SstEngine::new()
+            let engine = proximadb::storage::engines::sst::SstEngine::new()
                 .await
                 .unwrap();
             let flush_params = FlushParameters {
@@ -796,7 +796,7 @@ mod small_batch_tests {
         }
 
         // Cold search with new engine
-        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new()
+        let engine2 = proximadb::storage::engines::sst::SstEngine::new()
             .await
             .unwrap();
         let recall_count = run_sst_approx_search_test(
@@ -847,7 +847,7 @@ mod small_batch_tests {
         let collection_arc = Arc::new(collection.clone());
 
         {
-            let engine = proximadb::storage::engines::impls::sst::SstEngine::new()
+            let engine = proximadb::storage::engines::sst::SstEngine::new()
                 .await
                 .unwrap();
             let flush_params = FlushParameters {
@@ -865,7 +865,7 @@ mod small_batch_tests {
             engine.do_flush(&flush_params).await.unwrap();
         }
 
-        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new()
+        let engine2 = proximadb::storage::engines::sst::SstEngine::new()
             .await
             .unwrap();
         let recall_count = run_sst_approx_search_test(
@@ -898,7 +898,7 @@ mod small_batch_tests {
         let collection_arc = Arc::new(collection.clone());
 
         {
-            let engine = proximadb::storage::engines::impls::sst::SstEngine::new()
+            let engine = proximadb::storage::engines::sst::SstEngine::new()
                 .await
                 .unwrap();
             let flush_params = FlushParameters {
@@ -916,7 +916,7 @@ mod small_batch_tests {
             engine.do_flush(&flush_params).await.unwrap();
         }
 
-        let engine2 = proximadb::storage::engines::impls::sst::SstEngine::new()
+        let engine2 = proximadb::storage::engines::sst::SstEngine::new()
             .await
             .unwrap();
         let recall_count =
@@ -984,7 +984,7 @@ mod small_batch_tests {
         let temp_dir_sst = TempDir::new().unwrap();
         let collection_sst = create_collection("sst_locality", &temp_dir_sst, StorageEngine::Sst);
         {
-            let engine = proximadb::storage::engines::impls::sst::SstEngine::new()
+            let engine = proximadb::storage::engines::sst::SstEngine::new()
                 .await
                 .unwrap();
             engine
@@ -1003,7 +1003,7 @@ mod small_batch_tests {
                 .await
                 .unwrap();
         }
-        let engine_sst = proximadb::storage::engines::impls::sst::SstEngine::new()
+        let engine_sst = proximadb::storage::engines::sst::SstEngine::new()
             .await
             .unwrap();
         let sst_recall =

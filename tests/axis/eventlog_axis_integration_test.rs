@@ -21,8 +21,8 @@ use proximadb::index::axis::eventlog::{EventLogService, EventType, StorageEngine
 use proximadb::index::axis::eventlog_consumer::{start_axis_consumer, ConsumerConfig};
 use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, DistanceMetric};
 use proximadb::services::event_log_service::EventLogServiceImpl;
-use proximadb::storage::engines::impls::sst::SstEngine;
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::sst::SstEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use dashmap::DashMap;
 

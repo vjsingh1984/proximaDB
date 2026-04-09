@@ -51,7 +51,7 @@ use proximadb::core::search::{FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, DistanceMetric, SqlValue, StorageEngine, VectorRecord, sql_value,
 };
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataStore;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::UnifiedStorageEngine;
@@ -1172,7 +1172,7 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
 async fn test_nova_search_with_none_compression() -> anyhow::Result<()> {
     use proximadb::core::search::SearchParams;
     use proximadb::proto::proximadb_v1::StorageEngine;
-    use proximadb::storage::engines::impls::nova::NovaEngine;
+    use proximadb::storage::engines::nova::NovaEngine;
     use std::sync::Arc;
 
     // Initialize

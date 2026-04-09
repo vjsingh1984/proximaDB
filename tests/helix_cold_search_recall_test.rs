@@ -16,7 +16,7 @@ mod helix_cold_search_recall {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::core::search::{BlockPruneConfig, SearchMode, SearchParams};
     use proximadb::proto::proximadb_v1::Collection;
-    use proximadb::storage::engines::impls::helix::HelixEngine;
+    use proximadb::storage::engines::helix::HelixEngine;
     use proximadb::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
     };

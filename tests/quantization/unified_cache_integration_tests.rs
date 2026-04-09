@@ -234,10 +234,10 @@ async fn test_cross_engine_quantization_compatibility() -> Result<()> {
     cache.store_codebook_internal(shared_collection_key.clone(), codebook.clone()).await?;
 
     // Verify all engines can access the same cache
-    let sst_engine = proximadb::storage::engines::impls::sst::SSTEngine::new().await?;
-    let viper_engine = proximadb::storage::engines::impls::viper::ViperEngine::default();
-    let raptor_engine = proximadb::storage::engines::impls::raptor::RaptorEngine::new().await?;
-    let helix_engine = proximadb::storage::engines::impls::helix::HelixEngine::new().await?;
+    let sst_engine = proximadb::storage::engines::sst::SSTEngine::new().await?;
+    let viper_engine = proximadb::storage::engines::viper::ViperEngine::default();
+    let raptor_engine = proximadb::storage::engines::raptor::RaptorEngine::new().await?;
+    let helix_engine = proximadb::storage::engines::helix::HelixEngine::new().await?;
 
     // All engines should be able to create quantization engines that use the global cache
     let sst_quant = sst_engine.get_quantization_engine("test", Some(1000)).await;

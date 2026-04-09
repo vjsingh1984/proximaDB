@@ -6,7 +6,7 @@ use tempfile::TempDir;
 use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 use proximadb::services::collection::manager::CollectionService;
-use proximadb::storage::engines::impls::swift::SwiftEngine;
+use proximadb::storage::engines::swift::SwiftEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};

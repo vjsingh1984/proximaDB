@@ -9,8 +9,8 @@ use tempfile::TempDir;
 use tracing::{debug, error, info, warn};
 
 use proximadb::core::SstConfig;
-use proximadb::storage::engines::impls::sst::SstEntry;
-use proximadb::storage::engines::impls::sst::compaction::{
+use proximadb::storage::engines::sst::SstEntry;
+use proximadb::storage::engines::sst::compaction::{
     CompactionManager, CompactionPriority, CompactionTask,
 };
 use proximadb::storage::persistence::write_ahead_log::background_manager::BackgroundMaintenanceManager;

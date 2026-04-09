@@ -11,10 +11,10 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::test;
 
-use proximadb::storage::engines::impls::viper::types::{
+use proximadb::storage::engines::viper::types::{
     CollectionMetadata, CompressionStats, PartitionStrategy,
 };
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::core::ViperConfig;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 

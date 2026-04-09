@@ -25,7 +25,7 @@ use proximadb::compute::quantization::unified::{
 use proximadb::core::memory::pool::VectorMemoryPool;
 use proximadb::proto::proximadb_v1::CompressionConfig;
 use proximadb::storage::engines::core::formats::proximablocks::ProximaDataBlock;
-use proximadb::storage::engines::impls::sst::{SstEntry, SstableWriter};
+use proximadb::storage::engines::sst::{SstEntry, SstableWriter};
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Test configuration
