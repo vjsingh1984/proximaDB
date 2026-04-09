@@ -36,9 +36,9 @@ pub(crate) struct BinarySketch {
 #[allow(dead_code)]
 pub(crate) struct Int8Vector {
     /// Quantized values
-    values: Vec<i8>,
+    pub(crate) values: Vec<i8>,
     /// Scale factor for dequantization
-    scale: f32,
+    pub(crate) scale: f32,
     /// Zero point for quantization
     zero_point: i8,
 }
@@ -1025,7 +1025,7 @@ impl BinarySketch {
 
 #[allow(dead_code)]
 impl Int8Vector {
-    fn from_vector(vector: &[f32]) -> Self {
+    pub(crate) fn from_vector(vector: &[f32]) -> Self {
         // Find min and max for scaling
         let min_val = vector.iter().fold(f32::INFINITY, |a, &b| a.min(b));
         let max_val = vector.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));

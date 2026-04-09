@@ -84,6 +84,17 @@ pub(crate) struct BinarySketch {
 }
 
 impl BinarySketch {
+    /// Create a binary sketch from a floating-point vector
+    /// Each dimension is binarized to 0 or 1 based on sign
+    pub(crate) fn from_vector(vector: &[f32]) -> Self {
+        let bits = vector
+            .iter()
+            .map(|&v| if v >= 0.0 { 1u8 } else { 0u8 })
+            .collect();
+        let dimension = vector.len();
+        Self { bits, dimension }
+    }
+
     fn hamming_distance(&self, other: &BinarySketch) -> u32 {
         self.bits
             .iter()
