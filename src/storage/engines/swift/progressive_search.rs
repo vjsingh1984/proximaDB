@@ -80,7 +80,7 @@ fn compare_json_values(
 pub(crate) struct BinarySketch {
     bits: Vec<u8>,
     #[allow(dead_code)]
-    dimension: usize,
+    pub(crate) dimension: usize,
 }
 
 impl BinarySketch {
@@ -95,7 +95,7 @@ impl BinarySketch {
         Self { bits, dimension }
     }
 
-    fn hamming_distance(&self, other: &BinarySketch) -> u32 {
+    pub(crate) fn hamming_distance(&self, other: &BinarySketch) -> u32 {
         self.bits
             .iter()
             .zip(other.bits.iter())
