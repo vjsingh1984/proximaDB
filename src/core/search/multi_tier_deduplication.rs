@@ -1309,6 +1309,7 @@ mod tests {
                         updated_at: Some(now.timestamp_millis()),
                         expires_at: None,
                         version: Some(1),
+                        source: Some("test".to_string()),
                     },
                     similarity: (5 - i) as f32, // Best scores come last
                     tier: DataFreshnessTier::Unflushed,
@@ -1347,6 +1348,7 @@ mod tests {
                         updated_at: Some(now.timestamp_millis()),
                         expires_at: None,
                         version: Some(1),
+                        source: Some("test".to_string()),
                     },
                     similarity: i as f32,
                     tier: DataFreshnessTier::Unflushed,

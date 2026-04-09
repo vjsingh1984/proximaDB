@@ -332,7 +332,7 @@ mod tests {
             estimated_cost: 0.0,
             optimizations: vec![],
             performance_hints: vec![],
-            seeding_strategy: Default::default(),
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
             limit: None,
             offset: None,
         };
@@ -354,7 +354,7 @@ mod tests {
             estimated_cost: 0.0,
             optimizations: vec![],
             performance_hints: vec![],
-            seeding_strategy: Default::default(),
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
             limit: None,
             offset: None,
         };
@@ -391,7 +391,7 @@ mod tests {
             estimated_cost: 0.0,
             optimizations: vec![],
             performance_hints: vec![],
-            seeding_strategy: Default::default(),
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
             limit: None,
             offset: None,
         };
