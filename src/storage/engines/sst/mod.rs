@@ -3093,6 +3093,7 @@ mod compression_tests {
     use crate::core::compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
     use crate::core::compression::markers::*;
     use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig, MetadataItem};
+    use bincode::config;
 
     fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
         SstRecord {

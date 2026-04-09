@@ -1284,6 +1284,7 @@ impl GlobalPartitionedMemtable {
 mod tests {
     use super::*;
     use crate::storage::persistence::write_ahead_log::BatchId;
+    use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 
     #[tokio::test]
     async fn test_global_partitioned_batch_operations() {

@@ -2176,14 +2176,6 @@ mod integration_tests {
                 wal_size_bytes: 256 * 1024,
                 last_updated: chrono::Utc::now().timestamp(),
             }),
-            metadata: Some(CollectionMetadata {
-                timestamp: Some(chrono::Utc::now().timestamp()),
-                updated_at: chrono::Utc::now().timestamp(),
-                version: Some(1),
-                description: Some("Test collection".to_string()),
-                tags: vec!["test".to_string(), "proto".to_string()],
-                owner: Some("test_user".to_string()),
-            }),
         }
     }
 
