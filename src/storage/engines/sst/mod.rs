@@ -2327,16 +2327,12 @@ mod compression_tests_unified {
                 algorithm: algorithm.clone(),
                 compression_level: 6,
                 enable_vector_compression: true,
-            enable_metadata_compression: true,
                 enable_metadata_compression: true,
-            enable_metadata_compression: true,
                 compression_threshold_bytes: 100,
                 dictionary_compression: false,
-            enable_metadata_compression: true,
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
-            ,
-            dictionary_compression: false};
+            };
 
             let compressed = block.serialize_with_config(&config).unwrap();
 
@@ -2365,15 +2361,11 @@ mod compression_tests_unified {
             compression_level: 3,
             enable_vector_compression: true,
             enable_metadata_compression: true,
-            enable_metadata_compression: true,
-            enable_metadata_compression: true,
             compression_threshold_bytes: 10000, // High threshold
             dictionary_compression: false,
-            enable_metadata_compression: true,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
-        ,
-            dictionary_compression: false};
+        };
         let block = ProximaDataBlock::new(records, config);
 
         let serialized = block.serialize_with_config(&config).unwrap();
@@ -3376,15 +3368,11 @@ mod compression_tests {
             compression_level: 3,
             enable_vector_compression: true,
             enable_metadata_compression: true,
-            enable_metadata_compression: true,
-            enable_metadata_compression: true,
             compression_threshold_bytes: 10000, // High threshold
             dictionary_compression: false,
-            enable_metadata_compression: true,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
-        ,
-            dictionary_compression: false};
+        };
         let block = ProximaDataBlock::new(records.clone(), config);
 
         let serialized = block.serialize_with_config(&config).unwrap();
