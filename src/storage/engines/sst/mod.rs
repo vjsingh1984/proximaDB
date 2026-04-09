@@ -2779,7 +2779,8 @@ mod decompression_cache_tests {
         assert!(cache.get(&key).await.is_none());
 
         // Test put and hit
-        let block = ProximaDataBlock::new(vec![], config);
+        let compression_cfg = BlockCompressionConfig::default();
+        let block = ProximaDataBlock::new(vec![], compression_cfg);
         cache
             .put(key.clone(), block.clone(), Some(CompressionAlgorithm::Zstd))
             .await
@@ -2890,6 +2891,7 @@ mod decompression_cache_tests {
     #[tokio::test]
     async fn test_cache_invalidation_by_collection() {
         let cache = DecompressionCache::from_config(create_test_cache_config(10));
+        let compression_cfg = BlockCompressionConfig::default();
 
         // Add blocks for collection1
         for i in 0..3 {
@@ -2899,7 +2901,7 @@ mod decompression_cache_tests {
                 block_offset: 0,
             };
 
-            let block = ProximaDataBlock::new(vec![], config);
+            let block = ProximaDataBlock::new(vec![], compression_cfg);
             cache.put(key, block, None).await.unwrap();
         }
 
@@ -2911,7 +2913,7 @@ mod decompression_cache_tests {
                 block_offset: 0,
             };
 
-            let block = ProximaDataBlock::new(vec![], config);
+            let block = ProximaDataBlock::new(vec![], compression_cfg);
             cache.put(key, block, None).await.unwrap();
         }
 
