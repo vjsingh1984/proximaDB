@@ -608,7 +608,7 @@ mod tests {
                 ProcessingStage::ZoneMapPruning,
                 ProcessingStage::BinaryFilter,
                 ProcessingStage::Int8Filter,
-                ProcessingStage::PQFilter,
+                ProcessingStage::PQ4Filter,
                 ProcessingStage::FullPrecision,
             ];
 
