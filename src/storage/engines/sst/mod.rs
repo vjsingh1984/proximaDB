@@ -2768,6 +2768,7 @@ mod decompression_cache_tests {
     #[tokio::test]
     async fn test_cache_basic_operations() {
         let cache = DecompressionCache::from_config(create_test_cache_config(10)); // 10MB cache
+        let compression_cfg = BlockCompressionConfig::default();
 
         let key = BlockCacheKey {
             file_path: "test.sstable".to_string(),
@@ -2944,6 +2945,7 @@ mod decompression_cache_tests {
     #[tokio::test]
     async fn test_cache_hit_rate() {
         let cache = DecompressionCache::from_config(create_test_cache_config(10));
+        let compression_cfg = BlockCompressionConfig::default();
 
         let key1 = BlockCacheKey {
             file_path: "test.sstable".to_string(),
@@ -2958,7 +2960,7 @@ mod decompression_cache_tests {
         };
 
         // Add one block
-        let block = ProximaDataBlock::new(vec![], config);
+        let block = ProximaDataBlock::new(vec![], compression_cfg);
         cache.put(key1.clone(), block, None).await.unwrap();
 
         // Perform multiple accesses
