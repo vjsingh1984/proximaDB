@@ -310,7 +310,7 @@ use self::error::{Result, SstError};
 // Import Proxima common structures (shared with SWIFT)
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, BlockStatistics, ColumnStatistics, ProximaBlockMetadata,
-    ProximaDataBlock,
+    ProximaDataBlock, VectorEncodingLayout,
 };
 
 // SST filename operations are handled by unified FilenameCodec from compaction_orchestrator
@@ -1554,17 +1554,14 @@ mod compression_helpers {
             BlockCompressionConfig {
                 algorithm: compression_algorithm,
                 compression_level: config.level.unwrap_or(3) as u8,
-                enable_vector_enable_vector_compression: config.algorithm
+                enable_vector_compression: config.algorithm
                     != crate::proto::proximadb_v1::CompressionAlgorithm::CompressionNone as i32,
-                enable_metadata_enable_vector_compression: true,
-            enable_metadata_compression: true,
+                enable_metadata_compression: true,
                 compression_threshold_bytes: block_size / 1000, // Use 0.1% of block size as threshold
-                dictionary_enable_vector_compression: false,
-            enable_metadata_compression: true,
+                dictionary_compression: false,
                 vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
                 metadata_algorithm: None, // Use main algorithm for metadata
-            ,
-            dictionary_compression: false}
+            }
         } else {
             BlockCompressionConfig::default()
         }
@@ -2267,10 +2264,10 @@ mod compression_tests_unified {
             let config = BlockCompressionConfig {
                 algorithm: algorithm.clone(),
                 compression_level: 3,
-                enable_vector_enable_vector_compression: algorithm != UnifiedCompressionAlgorithm::None,
-                enable_metadata_enable_vector_compression: algorithm != UnifiedCompressionAlgorithm::None,
+                enable_vector_compression: algorithm != UnifiedCompressionAlgorithm::None,
+                enable_metadata_compression: algorithm != UnifiedCompressionAlgorithm::None,
                 compression_threshold_bytes: 100,
-                dictionary_enable_vector_compression: false,
+                dictionary_compression: false,
             enable_metadata_compression: false,
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
@@ -2309,18 +2306,18 @@ mod compression_tests_unified {
         let uncompressed_config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::None,
             compression_level: 3,
-            enable_vector_enable_vector_compression: false,
+            enable_vector_compression: false,
             enable_metadata_compression: false,
-            enable_metadata_enable_vector_compression: false,
+            enable_metadata_compression: false,
             enable_metadata_compression: false,
             compression_threshold_bytes: 0,
-            dictionary_enable_vector_compression: false,
+            dictionary_compression: false,
             enable_metadata_compression: false,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         ,
             dictionary_compression: false};
-        let block = ProximaProximaDataBlock::new(vec![record], uncompressed_config);
+        let block = ProximaDataBlock::new(vec![record], uncompressed_config);
         let uncompressed = block.serialize_with_config(&uncompressed_config).unwrap();
 
         // Test with various compression algorithms
@@ -2334,12 +2331,12 @@ mod compression_tests_unified {
             let config = BlockCompressionConfig {
                 algorithm: algorithm.clone(),
                 compression_level: 6,
-                enable_vector_enable_vector_compression: true,
+                enable_vector_compression: true,
             enable_metadata_compression: true,
-                enable_metadata_enable_vector_compression: true,
+                enable_metadata_compression: true,
             enable_metadata_compression: true,
                 compression_threshold_bytes: 100,
-                dictionary_enable_vector_compression: false,
+                dictionary_compression: false,
             enable_metadata_compression: true,
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
@@ -2371,18 +2368,18 @@ mod compression_tests_unified {
         let config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::Zstd,
             compression_level: 3,
-            enable_vector_enable_vector_compression: true,
+            enable_vector_compression: true,
             enable_metadata_compression: true,
-            enable_metadata_enable_vector_compression: true,
+            enable_metadata_compression: true,
             enable_metadata_compression: true,
             compression_threshold_bytes: 10000, // High threshold
-            dictionary_enable_vector_compression: false,
+            dictionary_compression: false,
             enable_metadata_compression: true,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         ,
             dictionary_compression: false};
-        let block = ProximaProximaDataBlock::new(records, config);
+        let block = ProximaDataBlock::new(records, config);
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -2434,16 +2431,16 @@ mod compression_tests_unified {
             let config = BlockCompressionConfig {
                 algorithm: algorithm.clone(),
                 compression_level: 3,
-                enable_vector_enable_vector_compression: *algorithm != UnifiedCompressionAlgorithm::None,
-                enable_metadata_enable_vector_compression: *algorithm != UnifiedCompressionAlgorithm::None,
+                enable_vector_compression: *algorithm != UnifiedCompressionAlgorithm::None,
+                enable_metadata_compression: *algorithm != UnifiedCompressionAlgorithm::None,
                 compression_threshold_bytes: 100,
-                dictionary_enable_vector_compression: false,
+                dictionary_compression: false,
             enable_metadata_compression: false,
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
             ,
             dictionary_compression: false};
-            let block = ProximaProximaDataBlock::new(records, config);
+            let block = ProximaDataBlock::new(records, config);
 
             let serialized = block.serialize_with_config(&config).unwrap();
             serialized_blocks.push((serialized, algorithm.clone()));
@@ -2799,7 +2796,7 @@ mod decompression_cache_tests {
         assert!(cache.get(&key).await.is_none());
 
         // Test put and hit
-        let block = ProximaProximaDataBlock::new(vec![], config);
+        let block = ProximaDataBlock::new(vec![], config);
         cache
             .put(
                 key.clone(),
@@ -2923,7 +2920,7 @@ mod decompression_cache_tests {
                 block_offset: 0,
             };
 
-            let block = ProximaProximaDataBlock::new(vec![], config);
+            let block = ProximaDataBlock::new(vec![], config);
             cache.put(key, block, None).await.unwrap();
         }
 
@@ -2935,7 +2932,7 @@ mod decompression_cache_tests {
                 block_offset: 0,
             };
 
-            let block = ProximaProximaDataBlock::new(vec![], config);
+            let block = ProximaDataBlock::new(vec![], config);
             cache.put(key, block, None).await.unwrap();
         }
 
@@ -2980,7 +2977,7 @@ mod decompression_cache_tests {
         };
 
         // Add one block
-        let block = ProximaProximaDataBlock::new(vec![], config);
+        let block = ProximaDataBlock::new(vec![], config);
         cache.put(key1.clone(), block, None).await.unwrap();
 
         // Perform multiple accesses
@@ -3093,7 +3090,7 @@ mod decompression_cache_tests {
             block_offset: 0,
         };
 
-        let block = ProximaProximaDataBlock::new(vec![], config);
+        let block = ProximaDataBlock::new(vec![], config);
         cache.put(key.clone(), block, None).await.unwrap();
 
         // Verify it's cached
@@ -3144,7 +3141,7 @@ mod compression_tests {
             create_test_record("test2", 128),
         ];
 
-        let block = ProximaProximaDataBlock::new(records.clone(, config));
+        let block = ProximaDataBlock::new(records.clone(, config));
         let config = BlockCompressionConfig {
             enable_vector_compression: false,
             enable_metadata_compression: false,
@@ -3176,7 +3173,7 @@ mod compression_tests {
             create_test_record("test3", 256),
         ];
 
-        let block = ProximaProximaDataBlock::new(records.clone(, config));
+        let block = ProximaDataBlock::new(records.clone(, config));
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3207,7 +3204,7 @@ mod compression_tests {
             create_test_record("test2", 512),
         ];
 
-        let block = ProximaProximaDataBlock::new(records.clone(, config));
+        let block = ProximaDataBlock::new(records.clone(, config));
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3234,7 +3231,7 @@ mod compression_tests {
     fn test_snappy_compression() {
         let records = vec![create_test_record("test1", 384)];
 
-        let block = ProximaProximaDataBlock::new(records.clone(, config));
+        let block = ProximaDataBlock::new(records.clone(, config));
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3264,7 +3261,7 @@ mod compression_tests {
             create_test_record("gzip_test2", 128),
         ];
 
-        let block = ProximaProximaDataBlock::new(records.clone(, config));
+        let block = ProximaDataBlock::new(records.clone(, config));
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3293,7 +3290,7 @@ mod compression_tests {
     fn test_brotli_compression() {
         let records = vec![create_test_record("brotli_test", 256)];
 
-        let block = ProximaProximaDataBlock::new(records.clone(, config));
+        let block = ProximaDataBlock::new(records.clone(, config));
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3342,7 +3339,7 @@ mod compression_tests {
         ];
 
         for (algo, expected_marker, level) in algorithms {
-            let block = ProximaProximaDataBlock::new(records.clone(, config));
+            let block = ProximaDataBlock::new(records.clone(, config));
             let config = BlockCompressionConfig {
                 enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3382,18 +3379,18 @@ mod compression_tests {
         let config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::Zstd,
             compression_level: 3,
-            enable_vector_enable_vector_compression: true,
+            enable_vector_compression: true,
             enable_metadata_compression: true,
-            enable_metadata_enable_vector_compression: true,
+            enable_metadata_compression: true,
             enable_metadata_compression: true,
             compression_threshold_bytes: 10000, // High threshold
-            dictionary_enable_vector_compression: false,
+            dictionary_compression: false,
             enable_metadata_compression: true,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         ,
             dictionary_compression: false};
-        let block = ProximaProximaDataBlock::new(records.clone(), config);
+        let block = ProximaDataBlock::new(records.clone(), config);
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3410,18 +3407,18 @@ mod compression_tests {
         let config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::Zstd,
             compression_level: 3,
-            enable_vector_enable_vector_compression: true,
+            enable_vector_compression: true,
             enable_metadata_compression: true,
-            enable_metadata_enable_vector_compression: true,
+            enable_metadata_compression: true,
             enable_metadata_compression: true,
             compression_threshold_bytes: 100,
-            dictionary_enable_vector_compression: false,
+            dictionary_compression: false,
             enable_metadata_compression: true,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         ,
             dictionary_compression: false};
-        let block = ProximaProximaDataBlock::new(vec![record], config);
+        let block = ProximaDataBlock::new(vec![record], config);
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3498,7 +3495,7 @@ mod compression_tests {
     fn test_backward_compatibility() {
         // Test that old bincode format can still be deserialized
         let records = vec![create_test_record("legacy", 64)];
-        let block = ProximaProximaDataBlock::new(records, config);
+        let block = ProximaDataBlock::new(records, config);
 
         // Use bincode directly (old format)
         let legacy_data = bincode::serialize(&block).unwrap();
