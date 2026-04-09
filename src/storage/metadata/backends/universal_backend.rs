@@ -2122,7 +2122,7 @@ mod integration_tests {
     }
 
     use crate::proto::proximadb_v1::{
-        Collection, CollectionConfig, CollectionMetadata, CollectionStats, DistanceMetric,
+        Collection, CollectionConfig, CollectionStats, DistanceMetric,
         FilterableColumnSpec, IndexingAlgorithm, StorageEngine,
     };
 
@@ -2153,18 +2153,12 @@ mod integration_tests {
                         indexed: true,
                         supports_range: false,
                         estimated_cardinality: Some(100),
-                        encoding_hint: None,
-                        compression: None,
-                        optimization_hints: None,
                     },
                     FilterableColumnSpec {
                         name: "price".to_string(),
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: None,
-                        encoding_hint: None,
-                        compression: None,
-                        optimization_hints: None,
                     },
                 ],
                 index_configs: vec![],
@@ -2174,8 +2168,6 @@ mod integration_tests {
                 description: None,
                 tags: vec![],
                 owner: None,
-                compression: None,
-                optimization_hints: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 1000,
@@ -2420,27 +2412,18 @@ mod integration_tests {
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: None,
-                    encoding_hint: None,
-                    compression: None,
-                    optimization_hints: None,
                 },
                 FilterableColumnSpec {
                     name: "status".to_string(),
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(5),
-                    encoding_hint: None,
-                    compression: None,
-                    optimization_hints: None,
                 },
                 FilterableColumnSpec {
                     name: "score".to_string(),
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: Some(100),
-                    encoding_hint: None,
-                    compression: None,
-                    optimization_hints: None,
                 },
             ];
         }

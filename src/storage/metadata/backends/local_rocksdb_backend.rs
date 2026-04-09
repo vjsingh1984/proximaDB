@@ -1352,7 +1352,6 @@ mod tests {
                 indexed: true,
                 supports_range: false,
                 estimated_cardinality: Some(2),
-                encoding_hint: None,
             });
         }
 
@@ -1420,14 +1419,12 @@ mod tests {
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: Some(100),
-                        encoding_hint: None,
                     },
                     FilterableColumnSpec {
                         name: "price".to_string(),
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: Some(1000),
-                        encoding_hint: None,
                     },
                 ],
                 ..Default::default()

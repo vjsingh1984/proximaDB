@@ -3095,7 +3095,7 @@ mod decompression_cache_tests {
 #[cfg(test)]
 mod compression_tests {
     use super::*;
-    use crate::core::enable_vector_compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
+    use crate::core::compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
     use crate::core::compression::markers::*;
     use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig, MetadataItem};
 
