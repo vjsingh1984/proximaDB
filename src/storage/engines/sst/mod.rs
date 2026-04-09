@@ -3435,6 +3435,7 @@ mod compression_tests {
                 compression_level: 3,
                 collection_enable_vector_compression: if *algo != CompressionAlgorithm::CompressionNone {
                     Some(CompressionConfig {
+                        adaptive: false,
                         algorithm: *algo as i32,
                         level: Some(3),
                         dynamic_block_sizing: false,

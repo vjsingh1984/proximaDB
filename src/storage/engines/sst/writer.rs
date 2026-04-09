@@ -737,7 +737,7 @@ impl SstableWriter {
             min_key: min_key.clone(),
             max_key: max_key.clone(),
             timestamp: chrono::Utc::now().timestamp(),
-            compression_algorithm: super::CompressionAlgorithm::None,
+            algorithm: super::CompressionAlgorithm::None,
             compression_level: 0,
             has_bloom_filter: true,
             has_global_bloom: false,
@@ -1261,7 +1261,7 @@ impl SstableWriter {
                 .map(|(k, _)| k.clone())
                 .unwrap_or_default(),
             timestamp: chrono::Utc::now().timestamp(),
-            compression_algorithm: super::CompressionAlgorithm::None,
+            algorithm: super::CompressionAlgorithm::None,
             compression_level: 0,
             has_bloom_filter: true,
             has_global_bloom: false,
