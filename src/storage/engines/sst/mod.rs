@@ -2268,7 +2268,6 @@ mod compression_tests_unified {
                 enable_metadata_compression: algorithm != UnifiedCompressionAlgorithm::None,
                 compression_threshold_bytes: 100,
                 dictionary_compression: false,
-            enable_metadata_compression: false,
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
             };
@@ -2308,15 +2307,11 @@ mod compression_tests_unified {
             compression_level: 3,
             enable_vector_compression: false,
             enable_metadata_compression: false,
-            enable_metadata_compression: false,
-            enable_metadata_compression: false,
             compression_threshold_bytes: 0,
             dictionary_compression: false,
-            enable_metadata_compression: false,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
-        ,
-            dictionary_compression: false};
+        };
         let block = ProximaDataBlock::new(vec![record], uncompressed_config);
         let uncompressed = block.serialize_with_config(&uncompressed_config).unwrap();
 
