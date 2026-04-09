@@ -95,7 +95,7 @@ pub struct StreamingRowGroupProcessor {
 }
 
 /// Memory usage tracking and management
-struct MemoryTracker {
+pub(crate) struct MemoryTracker {
     current_usage: usize,
     max_usage: usize,
     peak_usage: usize,

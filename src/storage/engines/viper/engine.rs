@@ -3049,6 +3049,7 @@ mod minimal_compaction_tests {
     use super::*;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use crate::storage::{FlushParameters, operations::compaction::CompactionParameters};
     use crate::utils::StoragePath;
     use anyhow::Result;
     use tempfile::TempDir;

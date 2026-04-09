@@ -571,6 +571,7 @@ mod tests {
 
     mod streaming_processor_tests {
         use super::*;
+        use crate::storage::engines::nova::streaming_processor::MemoryTracker;
 
         #[tokio::test]
         async fn test_streaming_config_creation() {
@@ -622,6 +623,8 @@ mod tests {
 
     mod progressive_search_tests {
         use super::*;
+        use crate::storage::engines::swift::progressive_search::BinarySketch;
+        use crate::storage::engines::nova::progressive_search::Int8Vector;
 
         #[test]
         fn test_progressive_search_config() {
@@ -782,6 +785,7 @@ mod tests {
 
         #[test]
         fn test_execution_plan() {
+            use crate::storage::engines::core::io::zero_copy::orchestrator::ExecutionPlan;
             let plan = ExecutionPlan::new();
 
             assert_eq!(plan.parallelism_level, 4);
@@ -792,15 +796,15 @@ mod tests {
 
         #[test]
         fn test_performance_tracker() {
+            use crate::storage::engines::nova::streaming_search::{PerformanceTracker, ActualPerformance};
             let mut tracker = PerformanceTracker::new();
 
             let characteristics = QueryCharacteristics {
-                dimension: 768,
-                top_k: 10,
+                norm: 1.0,
+                sparsity: 0.1,
+                dominant_dimensions: vec![0, 1, 2], // First 3 dimensions are dominant
                 distance_metric: "euclidean".to_string(),
-                query_norm: 1.0,
-                query_sparsity: 0.1,
-                estimated_selectivity: 0.5,
+                top_k: 10,
             };
 
             let performance = ActualPerformance {
@@ -820,16 +824,16 @@ mod tests {
 
         #[test]
         fn test_selectivity_estimation() {
+            use crate::storage::engines::nova::streaming_search::PerformanceTracker;
             let tracker = PerformanceTracker::new();
 
             // Test sparse query
             let sparse_characteristics = QueryCharacteristics {
-                dimension: 768,
-                top_k: 10,
+                norm: 1.0,
+                sparsity: 0.9,        // Very sparse
+                dominant_dimensions: vec![0, 1, 2],
                 distance_metric: "euclidean".to_string(),
-                query_norm: 1.0,
-                query_sparsity: 0.9,        // Very sparse
-                estimated_selectivity: 0.5, // Will be updated
+                top_k: 10,
             };
 
             let selectivity = tracker.estimate_selectivity(&sparse_characteristics);
@@ -837,12 +841,11 @@ mod tests {
 
             // Test dense query
             let dense_characteristics = QueryCharacteristics {
-                dimension: 768,
-                top_k: 10,
+                norm: 1.0,
+                sparsity: 0.1,        // Dense
+                dominant_dimensions: vec![0, 1, 2],
                 distance_metric: "euclidean".to_string(),
-                query_norm: 1.0,
-                query_sparsity: 0.1,        // Dense
-                estimated_selectivity: 0.5, // Will be updated
+                top_k: 10,
             };
 
             let selectivity = tracker.estimate_selectivity(&dense_characteristics);
@@ -856,7 +859,7 @@ mod tests {
         #[tokio::test]
         async fn test_streaming_search_engine_creation() {
             let config = StreamingSearchConfig::default();
-            let _engine = StreamingSearchEngine::new(config, "euclidean".to_string());
+            let _engine = StreamingSearchEngine::new(config);
 
             // Verify engine was created successfully
             // (Most fields are private, so we can't inspect them directly)
@@ -964,6 +967,7 @@ mod tests {
     mod benchmark_tests {
         use super::*;
         use std::time::Instant;
+        use crate::storage::engines::swift::progressive_search::BinarySketch;
 
         #[test]
         fn test_zone_map_performance() {

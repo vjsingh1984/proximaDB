@@ -1283,6 +1283,7 @@ impl GlobalPartitionedMemtable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::persistence::write_ahead_log::BatchId;
 
     #[tokio::test]
     async fn test_global_partitioned_batch_operations() {

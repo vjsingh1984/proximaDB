@@ -23,7 +23,7 @@ use tracing::{debug, info, instrument};
 /// calculations in the first stage of progressive search.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-struct BinarySketch {
+pub(crate) struct BinarySketch {
     /// Bit-packed binary representation
     bits: Vec<u8>,
 }
@@ -34,7 +34,7 @@ struct BinarySketch {
 /// for efficient distance computation with reduced memory footprint.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-struct Int8Vector {
+pub(crate) struct Int8Vector {
     /// Quantized values
     values: Vec<i8>,
     /// Scale factor for dequantization

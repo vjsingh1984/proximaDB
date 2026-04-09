@@ -77,7 +77,7 @@ fn compare_json_values(
 
 // Temporary local definition until unified quantization types are available
 #[derive(Debug, Clone)]
-struct BinarySketch {
+pub(crate) struct BinarySketch {
     bits: Vec<u8>,
     #[allow(dead_code)]
     dimension: usize,

@@ -1031,7 +1031,7 @@ impl FilesystemFile for LocalFile {
 mod tests {
     use super::*;
     use once_cell::sync::Lazy;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
     use tracing::{debug, error, info};
 

@@ -120,7 +120,7 @@ pub struct ZoneMapMetrics {
 
 /// Performance tracking for optimization
 #[derive(Debug)]
-struct PerformanceTracker {
+pub(crate) struct PerformanceTracker {
     query_history: Vec<QueryExecution>,
     workload_stats: WorkloadStats,
     #[allow(dead_code)]
@@ -160,7 +160,7 @@ struct QueryCharacteristics {
 
 /// Actual performance measurements
 #[derive(Debug, Clone)]
-struct ActualPerformance {
+pub(crate) struct ActualPerformance {
     latency_ms: u64,
     #[allow(dead_code)]
     memory_peak: usize,

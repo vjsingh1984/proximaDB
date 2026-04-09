@@ -1743,6 +1743,7 @@ impl Drop for Compaction {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::engines::sst::blocks::SstRecord;
 
     #[tokio::test]
     async fn test_compaction_basic() {
@@ -1793,7 +1794,7 @@ mod tests {
 
         let test_records = vec![
             // Active record (no expiry)
-            SstEntry {
+            SstRecord {
                 id: "active_1".to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
@@ -1807,7 +1808,7 @@ mod tests {
                 level: 0,
             },
             // Expired record (should be deleted)
-            SstEntry {
+            SstRecord {
                 id: "expired_1".to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
@@ -1821,7 +1822,7 @@ mod tests {
                 level: 0,
             },
             // Active record with future expiry
-            SstEntry {
+            SstRecord {
                 id: "future_1".to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![7.0, 8.0, 9.0],
@@ -1835,7 +1836,7 @@ mod tests {
                 level: 0,
             },
             // Old tombstone (should be removed)
-            SstEntry {
+            SstRecord {
                 id: "old_tombstone".to_string(),
                 collection_id: "test_collection".to_string(),
                 vector: vec![],

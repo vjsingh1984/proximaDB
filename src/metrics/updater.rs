@@ -764,6 +764,7 @@ impl InternalMetricsUpdater for MetricsUpdateService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics::MetricsConfig;
     use crate::metrics::store::MetricsPersistenceLayer;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use anyhow::Result;

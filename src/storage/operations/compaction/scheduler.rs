@@ -427,7 +427,7 @@ impl Default for CompactionScheduler {
 
 #[cfg(test)]
 mod tests {
-    use super::super::strategies::{CompactionParameters, FileMetadata};
+    use super::super::{CompactionParameters, FileMetadata};
     use super::*;
 
     fn create_test_plan(id: &str, priority: f64) -> CompactionPlan {
