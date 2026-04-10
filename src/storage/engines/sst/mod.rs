@@ -2220,6 +2220,8 @@ mod compression_tests_unified {
             metadata: Some(serde_json::json!({"test_key": "test_value"})),
             sequence_number: 1,
             level: 0,
+            is_tombstone: false,
+            timestamp: 0,
         }
     }
 
@@ -2804,6 +2806,8 @@ mod decompression_cache_tests {
                     metadata: None,
                     sequence_number: 0,
                     level: 0,
+            is_tombstone: false,
+            timestamp: 0,
                 });
             }
 
@@ -2976,6 +2980,8 @@ mod decompression_cache_tests {
                     metadata: None,
                     sequence_number: 0,
                     level: 0,
+            is_tombstone: false,
+            timestamp: 0,
                 });
             }
             blocks.push((
@@ -3081,6 +3087,8 @@ mod compression_tests {
             metadata: Some(serde_json::json!({"test_key": "test_value"})),
             sequence_number: 1,
             level: 0,
+            is_tombstone: false,
+            timestamp: 0,
         }
     }
 
@@ -3097,6 +3105,8 @@ mod compression_tests {
             enable_metadata_compression: false,
             compression_threshold_bytes: 0,
             compression_level: 0,
+            is_tombstone: false,
+            timestamp: 0,
             algorithm: UnifiedCompressionAlgorithm::None,
             dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),
@@ -3490,6 +3500,8 @@ mod simple_sstable_tests {
             metadata: None,
             sequence_number: 1,
             level: 0,
+            is_tombstone: false,
+            timestamp: 0,
         };
         records.insert(test_record.id.clone(), test_record);
 
