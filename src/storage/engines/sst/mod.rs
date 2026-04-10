@@ -2288,7 +2288,7 @@ mod compression_tests_unified {
     fn test_unified_compression_efficiency() {
         // Create highly compressible data
         let mut record = create_test_record("compress_test", 1000);
-        record.vector = Some(vec![42.0; 1000]); // Highly compressible repeated values
+        record.vector = vec![42.0; 1000]; // Highly compressible repeated values
 
         // Test uncompressed
         let uncompressed_config = BlockCompressionConfig {
@@ -3358,7 +3358,7 @@ mod compression_tests {
     fn test_compression_ratio_check() {
         // Create highly compressible data (repeated values)
         let mut record = create_test_record("compress_test", 1000);
-        record.vector = Some(vec![1.0; 1000]); // Highly compressible
+        record.vector = vec![1.0; 1000]; // Highly compressible
 
         let config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::Zstd,
