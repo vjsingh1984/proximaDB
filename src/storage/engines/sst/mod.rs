@@ -2216,20 +2216,8 @@ mod compression_tests_unified {
     fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
         SstRecord {
             id: id.to_string(),
-            vector: vec![1.0; vector_dim],
-            metadata: vec![MetadataItem {
-                key: "test_key".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "test_value".to_string(),
-                    ),
-                ),
-            }],
-            timestamp: 1000,
-            updated_at: Some(1000),
-            expires_at: None,
-            version: Some(1),
-            is_tombstone: false,
+            vector: Some(vec![1.0; vector_dim]),
+            metadata: Some(serde_json::json!({"test_key": "test_value"})),
             sequence_number: 1,
             level: 0,
         }
@@ -2812,13 +2800,8 @@ mod decompression_cache_tests {
             for j in 0..100 {
                 records.push(SstRecord {
                     id: format!("id_{}", j),
-                    vector: vec![0.0; 128], // 128-dim vector
-                    metadata: vec![],
-                    timestamp: Some(0),
-                    updated_at: None,
-                    expires_at: None,
-                    version: None,
-                    is_tombstone: false,
+                    vector: Some(vec![0.0; 128]),
+                    metadata: None,
                     sequence_number: 0,
                     level: 0,
                 });
@@ -2989,13 +2972,8 @@ mod decompression_cache_tests {
             for j in 0..10 {
                 records.push(SstRecord {
                     id: format!("id_{}_{}", i, j),
-                    vector: vec![i as f32; 64],
-                    metadata: vec![],
-                    timestamp: Some(0),
-                    updated_at: None,
-                    expires_at: None,
-                    version: None,
-                    is_tombstone: false,
+                    vector: Some(vec![i as f32; 64]),
+                    metadata: None,
                     sequence_number: 0,
                     level: 0,
                 });
@@ -3099,20 +3077,8 @@ mod compression_tests {
     fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
         SstRecord {
             id: id.to_string(),
-            vector: vec![1.0; vector_dim],
-            metadata: vec![MetadataItem {
-                key: "test_key".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "test_value".to_string(),
-                    ),
-                ),
-            }],
-            timestamp: 1000,
-            updated_at: Some(1000),
-            expires_at: None,
-            version: Some(1),
-            is_tombstone: false,
+            vector: Some(vec![1.0; vector_dim]),
+            metadata: Some(serde_json::json!({"test_key": "test_value"})),
             sequence_number: 1,
             level: 0,
         }
@@ -3520,13 +3486,8 @@ mod simple_sstable_tests {
         let mut records = BTreeMap::new();
         let test_record = SstRecord {
             id: "test_id".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: vec![],
-            timestamp: 123456789,
-            updated_at: Some(123456789),
-            expires_at: None,
-            version: Some(1),
-            is_tombstone: false,
+            vector: Some(vec![1.0, 2.0, 3.0]),
+            metadata: None,
             sequence_number: 1,
             level: 0,
         };
