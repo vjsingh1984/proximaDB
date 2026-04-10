@@ -2150,12 +2150,14 @@ mod integration_tests {
                 filterable_columns: vec![
                     FilterableColumnSpec {
                         name: "category".to_string(),
+                        data_type: FilterableDataType::FilterableString as i32,
                         indexed: true,
                         supports_range: false,
                         estimated_cardinality: Some(100),
                     },
                     FilterableColumnSpec {
                         name: "price".to_string(),
+                        data_type: FilterableDataType::FilterableFloat as i32,
                         indexed: true,
                         supports_range: true,
                         estimated_cardinality: None,
@@ -2402,17 +2404,20 @@ mod integration_tests {
                 FilterableColumnSpec {
                     name: "timestamp".to_string(),
                     indexed: true,
+	                    data_type: FilterableDataType::FilterableDatetime as i32,
                     supports_range: true,
                     estimated_cardinality: None,
                 },
                 FilterableColumnSpec {
                     name: "status".to_string(),
+	                    data_type: FilterableDataType::FilterableString as i32,
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(5),
                 },
                 FilterableColumnSpec {
                     name: "score".to_string(),
+	                    data_type: FilterableDataType::FilterableFloat as i32,
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: Some(100),
