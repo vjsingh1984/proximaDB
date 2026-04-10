@@ -1868,15 +1868,14 @@ mod tests {
         // Note: This test requires CompactionManager::perform_compaction to be implemented
         // For now, we'll test the basic structure
         let stats = CompactionStats {
-            input_files_processed: 1,
-            output_files_created: 1,
-            records_read: test_records.len(),
-            records_written: 2, // Should exclude expired and tombstone
+            total_compactions: 1,
+            files_merged: 1,
+            avg_compaction_time_ms: 0,
+            last_compaction_time: None,
             expired_records_deleted: 1,
             tombstones_removed: 1,
-            bytes_read: input_data.len(),
+            bytes_read: input_data.len() as u64,
             bytes_written: 0,
-            duration_ms: 0,
         };
 
         // Verify statistics
