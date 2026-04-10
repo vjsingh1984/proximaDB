@@ -1437,6 +1437,7 @@ mod compression_helpers {
                 normalization_method: None, // Optional field: No normalization by default
                 block_size_kb: config.block_size_kb,
                 adaptive: false, // No adaptive compression for SST files
+                dynamic_block_sizing: false, // No dynamic block sizing for SST files
             })
         } else {
             None
@@ -2286,7 +2287,7 @@ mod compression_tests_unified {
     fn test_unified_compression_efficiency() {
         // Create highly compressible data
         let mut record = create_test_record("compress_test", 1000);
-        record.vector = vec![42.0; 1000]; // Highly compressible repeated values
+        record.vector = Some(vec![42.0; 1000]); // Highly compressible repeated values
 
         // Test uncompressed
         let uncompressed_config = BlockCompressionConfig {
@@ -3355,7 +3356,7 @@ mod compression_tests {
     fn test_compression_ratio_check() {
         // Create highly compressible data (repeated values)
         let mut record = create_test_record("compress_test", 1000);
-        record.vector = vec![1.0; 1000]; // Highly compressible
+        record.vector = Some(vec![1.0; 1000]); // Highly compressible
 
         let config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::Zstd,

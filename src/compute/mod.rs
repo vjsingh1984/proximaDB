@@ -693,12 +693,12 @@ mod unified_quantization_tests {
         let uniform = UniformQuantization {
             bits: 4,
             scale: Some(0.01),
-            offset: Some(-128),
+            offset: Some(-128.0),
         };
 
         assert_eq!(uniform.bits, 4);
         assert_eq!(uniform.scale, Some(0.01));
-        assert_eq!(uniform.offset, Some(-128));
+        assert_eq!(uniform.offset, Some(-128.0));
     }
 
     #[test]
