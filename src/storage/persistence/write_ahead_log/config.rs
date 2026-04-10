@@ -1401,9 +1401,9 @@ mod tests {
             sync_interval_seconds: 60,
             global_shrink_factor: 0.6,
             cloud_backup: None,
-            enable_optimized_write_buffer_writer: None,  // corrected field name
+            enable_optimized_write_buffer_writer: None, // corrected field name
             background_writer_threads: None,
-            write_buffer_batch_size: None,  // corrected field name
+            write_buffer_batch_size: None, // corrected field name
         };
 
         let json = serde_json::to_string(&custom_config).unwrap();

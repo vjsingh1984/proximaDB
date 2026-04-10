@@ -1436,7 +1436,7 @@ mod compression_helpers {
                 quantization_type: None,
                 normalization_method: None, // Optional field: No normalization by default
                 block_size_kb: config.block_size_kb,
-                adaptive: false, // No adaptive compression for SST files
+                adaptive: false,             // No adaptive compression for SST files
                 dynamic_block_sizing: false, // No dynamic block sizing for SST files
             })
         } else {
