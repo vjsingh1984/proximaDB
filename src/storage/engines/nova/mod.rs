@@ -684,13 +684,13 @@ mod tests {
         #[test]
         fn test_binary_sketch_operations() {
             let vector = vec![0.5, -0.3, 0.8, -0.1, 0.0];
-            let sketch = BinarySketch::from_vector(&vector, 0.0);
+            let sketch = BinarySketch::from_vector(&vector);
 
             assert_eq!(sketch.dimension, 5);
 
             // Test hamming distance
             let other_vector = vec![0.7, -0.1, 0.9, -0.2, 0.1];
-            let other_sketch = BinarySketch::from_vector(&other_vector, 0.0);
+            let other_sketch = BinarySketch::from_vector(&other_vector);
 
             let distance = sketch.hamming_distance(&other_sketch);
             assert!(distance >= 0);
@@ -782,13 +782,13 @@ mod tests {
 
         #[test]
         fn test_execution_plan() {
-            use crate::storage::engines::core::io::zero_copy::orchestrator::ExecutionPlan;
+            use crate::storage::engines::nova::streaming_search::ExecutionPlan;
             let plan = ExecutionPlan::new();
 
             assert_eq!(plan.parallelism_level, 4);
             assert_eq!(plan.memory_budget_per_stage, 64 * 1024 * 1024);
-            assert!(plan.selected_superblocks.is_none());
-            assert!(plan.row_group_order.is_none());
+            assert!(plan.selected_superblocks.is_empty());
+            assert!(plan.row_group_order.is_empty());
         }
 
         #[test]
@@ -1000,7 +1000,7 @@ mod tests {
             let start = Instant::now();
             let sketches: Vec<BinarySketch> = vectors
                 .iter()
-                .map(|v| BinarySketch::from_vector(v, 0.0))
+                .map(|v| BinarySketch::from_vector(v))
                 .collect();
             let creation_time = start.elapsed();
 

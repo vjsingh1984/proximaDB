@@ -1047,7 +1047,7 @@ impl Int8Vector {
         }
     }
 
-    fn l2_distance_squared(&self, other: &Self) -> f32 {
+    pub(crate) fn l2_distance_squared(&self, other: &Self) -> f32 {
         self.values
             .iter()
             .zip(other.values.iter())
@@ -1065,7 +1065,7 @@ mod tests {
     #[test]
     fn test_binary_sketch() {
         let vector = vec![0.5, -0.3, 0.8, -0.1, 0.0];
-        let sketch = BinarySketch::from_vector(&vector, 0.0);
+        let sketch = BinarySketch::from_vector(&vector);
         assert_eq!(vector.len(), 5); // Test the input vector dimension instead
         // Bits should be set for positive values: 1, 0, 1, 0, 0
         // In first word: bit 0 and bit 2 should be set

@@ -121,8 +121,8 @@ pub struct ZoneMapMetrics {
 /// Performance tracking for optimization
 #[derive(Debug)]
 pub(crate) struct PerformanceTracker {
-    query_history: Vec<QueryExecution>,
-    workload_stats: WorkloadStats,
+    pub(crate) query_history: Vec<QueryExecution>,
+    pub(crate) workload_stats: WorkloadStats,
     #[allow(dead_code)]
     performance_history: PerformanceHistory,
     adaptive_thresholds: HashMap<String, f32>,
@@ -668,16 +668,16 @@ impl StreamingSearchEngine {
 
 /// Execution plan for streaming search
 #[derive(Debug)]
-struct ExecutionPlan {
-    optimization_strategy: OptimizationStrategy,
-    memory_budget_per_stage: usize,
-    parallelism_level: usize,
-    selected_superblocks: Vec<SuperBlock>,
-    row_group_order: Vec<u32>,
+pub struct ExecutionPlan {
+    pub optimization_strategy: OptimizationStrategy,
+    pub memory_budget_per_stage: usize,
+    pub parallelism_level: usize,
+    pub selected_superblocks: Vec<SuperBlock>,
+    pub row_group_order: Vec<u32>,
 }
 
 impl ExecutionPlan {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             optimization_strategy: OptimizationStrategy::Hierarchical,
             memory_budget_per_stage: 64 * 1024 * 1024, // 64MB default
@@ -698,7 +698,7 @@ impl PerformanceTracker {
         }
     }
 
-    fn estimate_selectivity(&self, characteristics: &QueryCharacteristics) -> f32 {
+    pub(crate) fn estimate_selectivity(&self, characteristics: &QueryCharacteristics) -> f32 {
         // Use historical data to estimate selectivity
         // For now, use simple heuristics
         match characteristics.query_sparsity {
@@ -708,7 +708,7 @@ impl PerformanceTracker {
         }
     }
 
-    fn record_query_execution(
+    pub(crate) fn record_query_execution(
         &mut self,
         query_id: &str,
         characteristics: &QueryCharacteristics,

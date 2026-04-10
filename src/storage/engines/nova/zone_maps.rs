@@ -797,7 +797,7 @@ impl BloomFilter {
 }
 
 impl QueryCharacteristics {
-    fn from_query(query: &[f32], distance_metric: DistanceMetric, top_k: u32) -> Self {
+    pub(crate) fn from_query(query: &[f32], distance_metric: DistanceMetric, top_k: u32) -> Self {
         let norm = query.iter().map(|x| x * x).sum::<f32>().sqrt();
         let sparsity = query.iter().filter(|&&x| x == 0.0).count() as f32 / query.len() as f32;
 
@@ -827,7 +827,7 @@ impl QueryCharacteristics {
 }
 
 impl SelectivityModel {
-    fn predict(&self, characteristics: &QueryCharacteristics) -> f32 {
+    pub(crate) fn predict(&self, characteristics: &QueryCharacteristics) -> f32 {
         match self.model_type {
             ModelType::Linear => {
                 // Simple linear model: selectivity = a * norm + b * sparsity + c

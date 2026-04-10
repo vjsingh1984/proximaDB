@@ -207,13 +207,13 @@ fn test_progressive_candidate_ordering() {
 #[test]
 fn test_binary_sketch_operations() {
     let vector = vec![0.5, -0.3, 0.8, -0.1, 0.0];
-    let sketch = BinarySketch::from_vector(&vector, 0.0);
+    let sketch = BinarySketch::from_vector(&vector);
 
     assert_eq!(sketch.dimension, 5);
 
     // Test hamming distance
     let other_vector = vec![0.7, -0.1, 0.9, -0.2, 0.1];
-    let other_sketch = BinarySketch::from_vector(&other_vector, 0.0);
+    let other_sketch = BinarySketch::from_vector(&other_vector);
 
     let distance = sketch.hamming_distance(&other_sketch);
     assert!(distance >= 0);
@@ -510,7 +510,7 @@ fn test_binary_sketch_performance() {
 
     let start = Instant::now();
     let sketches: Vec<BinarySketch> = vectors.iter()
-        .map(|v| BinarySketch::from_vector(v, 0.0))
+        .map(|v| BinarySketch::from_vector(v))
         .collect();
     let creation_time = start.elapsed();
 
