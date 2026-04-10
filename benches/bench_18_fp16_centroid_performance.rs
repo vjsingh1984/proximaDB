@@ -16,7 +16,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
-use proximadb::storage::engines::impls::sst::{fp16_to_fp32, fp32_to_fp16};
+use proximadb::storage::engines::sst::{fp16_to_fp32, fp32_to_fp16};
 use rand::Rng;
 
 /// Benchmark FP32 ↔ FP16 conversion overhead

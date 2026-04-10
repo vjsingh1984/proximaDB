@@ -1392,17 +1392,18 @@ mod tests {
             memory_flush_size_bytes: 1024 * 1024,       // 1MB
             disk_segment_size: 64 * 1024 * 1024,        // 64MB
             global_flush_threshold: 1024 * 1024 * 1024, // 1GB
-            write_ahead_log_size: 1024 * 1024,          // 1MB
+            write_buffer_size: 1024 * 1024,             // 1MB (replaces write_ahead_log_size)
             concurrent_flushes: 8,
             batch_threshold: 100,
             mvcc_cleanup_interval_secs: 7200, // 2 hours
             ttl_cleanup_interval_secs: 600,   // 10 minutes
             sync_mode: SyncMode::Always,
+            sync_interval_seconds: 60,
             global_shrink_factor: 0.6,
             cloud_backup: None,
-            enable_optimized_write_ahead_log_writer: None,
+            enable_optimized_write_buffer_writer: None,  // corrected field name
             background_writer_threads: None,
-            write_ahead_log_batch_size: None,
+            write_buffer_batch_size: None,  // corrected field name
         };
 
         let json = serde_json::to_string(&custom_config).unwrap();

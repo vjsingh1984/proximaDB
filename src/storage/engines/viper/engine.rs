@@ -3119,6 +3119,7 @@ mod minimal_compaction_tests {
             timeout_ms: None,
             trigger_compaction: false,
             collection_config: None,
+            estimated_size: 1024, // 1KB estimated size
         };
 
         let flush_result = engine.do_flush(&flush_params).await?;
