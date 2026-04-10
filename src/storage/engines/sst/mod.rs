@@ -2213,15 +2213,16 @@ mod compression_tests_unified {
     };
     use crate::proto::proximadb_v1::MetadataItem;
 
-    fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
-        SstRecord {
+    fn create_test_record(id: &str, vector_dim: usize) -> VectorRecord {
+        VectorRecord {
             id: id.to_string(),
-            vector: Some(vec![1.0; vector_dim]),
-            metadata: Some(serde_json::json!({"test_key": "test_value"})),
-            sequence_number: 1,
-            level: 0,
-            is_tombstone: false,
-            timestamp: 0,
+            vector: vec![1.0; vector_dim],
+            metadata: std::collections::HashMap::new(),
+            timestamp: None,
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            source: None,
         }
     }
 
@@ -3087,15 +3088,16 @@ mod compression_tests {
     use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig, MetadataItem};
     use bincode::config;
 
-    fn create_test_record(id: &str, vector_dim: usize) -> SstRecord {
-        SstRecord {
+    fn create_test_record(id: &str, vector_dim: usize) -> VectorRecord {
+        VectorRecord {
             id: id.to_string(),
-            vector: Some(vec![1.0; vector_dim]),
-            metadata: Some(serde_json::json!({"test_key": "test_value"})),
-            sequence_number: 1,
-            level: 0,
-            is_tombstone: false,
-            timestamp: 0,
+            vector: vec![1.0; vector_dim],
+            metadata: std::collections::HashMap::new(),
+            timestamp: None,
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            source: None,
         }
     }
 
