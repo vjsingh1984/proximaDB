@@ -95,7 +95,7 @@ async fn demonstrate_plan_cache() -> Result<(), Box<dyn std::error::Error>> {
     let plan = create_test_plan();
 
     // Insert plan into cache
-    let plan_key = cache.get_or_create(
+    let _cached_plan = cache.get_or_create(
         plan_key(), // Simulated plan key
         || Ok(plan.clone()),
     )?;
@@ -160,7 +160,7 @@ async fn demonstrate_low_latency_executor() -> Result<(), Box<dyn std::error::Er
 
     println!("\n   📊 Streamed Result Statistics:");
     println!("      Total results: {}", streamed_result.len());
-    println!("      Is complete: {}", streamed_result.is_complete());
+    println!("      Is complete: {}", streamed_result.is_complete);
     println!("      Has results: {}", streamed_result.has_results());
 
     println!();

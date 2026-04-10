@@ -12,7 +12,7 @@ use proximadb::{
     },
     storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory},
     storage::{
-        engines::impls::viper::engine::ViperEngine,
+        engines::viper::engine::ViperEngine,
         traits::{FlushParameters, UnifiedStorageEngine},
     },
 };
