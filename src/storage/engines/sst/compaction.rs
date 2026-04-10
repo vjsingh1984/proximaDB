@@ -1768,8 +1768,6 @@ mod tests {
 
         let task = CompactionTask {
             level: 0,
-                is_tombstone: false,
-                timestamp: 0,
             input_files: vec![],
             output_file: PathBuf::from("/tmp/output.db"),
             priority: CompactionPriority::Medium,
@@ -1856,10 +1854,7 @@ mod tests {
 
         // Create compaction task
         let task = CompactionTask {
-            collection_id: "test_collection".to_string(),
             level: 0,
-                is_tombstone: false,
-                timestamp: 0,
             input_files: vec![input_file],
             output_file: output_file.clone(),
             priority: CompactionPriority::Medium,
