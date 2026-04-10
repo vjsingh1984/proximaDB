@@ -2404,20 +2404,20 @@ mod integration_tests {
                 FilterableColumnSpec {
                     name: "timestamp".to_string(),
                     indexed: true,
-	                    data_type: FilterableDataType::FilterableDatetime as i32,
+                    data_type: FilterableDataType::FilterableDatetime as i32,
                     supports_range: true,
                     estimated_cardinality: None,
                 },
                 FilterableColumnSpec {
                     name: "status".to_string(),
-	                    data_type: FilterableDataType::FilterableString as i32,
+                    data_type: FilterableDataType::FilterableString as i32,
                     indexed: true,
                     supports_range: false,
                     estimated_cardinality: Some(5),
                 },
                 FilterableColumnSpec {
                     name: "score".to_string(),
-	                    data_type: FilterableDataType::FilterableFloat as i32,
+                    data_type: FilterableDataType::FilterableFloat as i32,
                     indexed: true,
                     supports_range: true,
                     estimated_cardinality: Some(100),
@@ -2434,7 +2434,10 @@ mod integration_tests {
             .find_collection("filter-test")
             .expect("Collection should exist");
 
-        assert_eq!(retrieved.config.as_ref().unwrap().filterable_columns.len(), 3);
+        assert_eq!(
+            retrieved.config.as_ref().unwrap().filterable_columns.len(),
+            3
+        );
         assert!(
             retrieved
                 .config
