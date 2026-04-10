@@ -535,7 +535,7 @@ struct RowGroupTask {
 }
 
 impl MemoryTracker {
-    fn new(max_memory: usize) -> Self {
+    pub(crate) fn new(max_memory: usize) -> Self {
         Self {
             current_usage: 0,
             max_usage: max_memory,

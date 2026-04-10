@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::proto::proximadb_v1::Collection;
+use crate::proto::proximadb_v1::{Collection, FilterableDataType};
 use crate::storage::metadata::single_index::SingleCollectionIndex;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{MetadataProvider, UnifiedMetricsCollector};
@@ -2226,8 +2226,8 @@ mod integration_tests {
             .expect("Collection should exist");
 
         assert_eq!(retrieved.id, "test-id-123");
-        assert_eq!(retrieved.name, "test-collection");
-        assert_eq!(retrieved.dimension, 384);
+        assert_eq!(retrieved.config.name, "test-collection");
+        assert_eq!(retrieved.config.dimension, 384);
     }
 
     #[tokio::test]

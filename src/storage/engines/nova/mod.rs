@@ -889,7 +889,7 @@ mod tests {
             let characteristics =
                 QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
 
-            assert_eq!(characteristics.dimension, 768);
+            // Dimension is derived from query vector length, not stored in QueryCharacteristics
             assert_eq!(characteristics.top_k, 10);
             assert!(characteristics.norm > 0.0);
         }
@@ -1008,7 +1008,7 @@ mod tests {
             assert!(creation_time.as_millis() < 500);
 
             // Test distance computation performance
-            let query_sketch = BinarySketch::from_vector(&vectors[0], 0.0);
+            let query_sketch = BinarySketch::from_vector(&vectors[0]);
             let start = Instant::now();
 
             let distances: Vec<u32> = sketches

@@ -2741,7 +2741,7 @@ mod decompression_cache_tests {
     use tokio::time::{Duration, sleep};
 
     /// Create a test cache config with minimal values
-    fn create_create_test_cache_config(max_size_mb: usize) -> CacheConfig {
+    fn create_test_cache_config(max_size_mb: usize) -> CacheConfig {
         CacheConfig {
             max_size_mb,
             min_size_mb: 0,   // No minimum for tests

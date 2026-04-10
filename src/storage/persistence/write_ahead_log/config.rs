@@ -1372,7 +1372,8 @@ mod tests {
         assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // 2MB
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024); // 512MB
         assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024); // 4GB
-        assert_eq!(config.write_ahead_log_size, 8 * 1024 * 1024); // 8MB
+        // Note: write_ahead_log_size field doesn't exist in PerformanceConfig
+        // TODO: Determine correct field to assert or remove this test
         assert_eq!(config.batch_threshold, 500);
         assert_eq!(config.mvcc_cleanup_interval_secs, 3600); // 1 hour
         assert_eq!(config.ttl_cleanup_interval_secs, 300); // 5 minutes

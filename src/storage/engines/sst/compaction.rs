@@ -1881,7 +1881,7 @@ mod tests {
 
         debug!("✅ LSM compaction expired deletion unit test passed!");
         debug!("   - Input records: {}", test_records.len());
-        debug!("   - Remaining records: {}", stats.records_written);
+        debug!("   - Bytes written: {}", stats.bytes_written);
         debug!("   - Expired deleted: {}", stats.expired_records_deleted);
         debug!("   - Tombstones removed: {}", stats.tombstones_removed);
 

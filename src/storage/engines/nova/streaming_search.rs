@@ -689,7 +689,7 @@ impl ExecutionPlan {
 }
 
 impl PerformanceTracker {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             query_history: Vec::new(),
             workload_stats: WorkloadStats::default(),
