@@ -2434,21 +2434,33 @@ mod integration_tests {
             .find_collection("filter-test")
             .expect("Collection should exist");
 
-        assert_eq!(retrieved.filterable_metadata_fields.len(), 3);
+        assert_eq!(retrieved.config.as_ref().unwrap().filterable_columns.len(), 3);
         assert!(
             retrieved
-                .filterable_metadata_fields
-                .contains_hash(&"timestamp".to_string())
+                .config
+                .as_ref()
+                .unwrap()
+                .filterable_columns
+                .iter()
+                .any(|col| col.name == "timestamp")
         );
         assert!(
             retrieved
-                .filterable_metadata_fields
-                .contains_hash(&"status".to_string())
+                .config
+                .as_ref()
+                .unwrap()
+                .filterable_columns
+                .iter()
+                .any(|col| col.name == "status")
         );
         assert!(
             retrieved
-                .filterable_metadata_fields
-                .contains_hash(&"score".to_string())
+                .config
+                .as_ref()
+                .unwrap()
+                .filterable_columns
+                .iter()
+                .any(|col| col.name == "score")
         );
     }
 }
