@@ -1436,7 +1436,6 @@ mod compression_helpers {
                 quantization_type: None,
                 normalization_method: None, // Optional field: No normalization by default
                 block_size_kb: config.block_size_kb,
-                dynamic_block_sizing: false,
                 adaptive: false, // No adaptive compression for SST files
             })
         } else {
@@ -3232,8 +3231,6 @@ mod compression_tests {
             enable_metadata_compression: true,
             compression_threshold_bytes: 100,
             compression_level: 6,
-            dynamic_block_sizing: false,
-            block_size_mb: Some(8),
             dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
@@ -3261,8 +3258,6 @@ mod compression_tests {
             enable_metadata_compression: true,
             compression_threshold_bytes: 100,
             compression_level: 4,
-            dynamic_block_sizing: false,
-            block_size_mb: Some(8),
             dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
@@ -3310,8 +3305,6 @@ mod compression_tests {
                 enable_metadata_compression: true,
                 compression_threshold_bytes: 100,
                 compression_level: level,
-                dynamic_block_sizing: false,
-                block_size_mb: Some(8),
                 dictionary_compression: false,
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
@@ -3416,22 +3409,6 @@ mod compression_tests {
                 enable_vector_compression: *algo != CompressionAlgorithm::CompressionNone,
                 compression_threshold_bytes: 100,
                 compression_level: 3,
-                collection_enable_vector_compression: if *algo
-                    != CompressionAlgorithm::CompressionNone
-                {
-                    Some(CompressionConfig {
-                        adaptive: false,
-                        algorithm: *algo as i32,
-                        level: Some(3),
-                        dynamic_block_sizing: false,
-                        block_size_mb: Some(8),
-                        dictionary_compression: false,
-                        vector_layout: VectorEncodingLayout::default(),
-                        metadata_algorithm: None,
-                    })
-                } else {
-                    None
-                },
                 ..Default::default()
             };
 
