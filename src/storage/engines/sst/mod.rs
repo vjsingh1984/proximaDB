@@ -2806,8 +2806,8 @@ mod decompression_cache_tests {
                     metadata: None,
                     sequence_number: 0,
                     level: 0,
-            is_tombstone: false,
-            timestamp: 0,
+                    is_tombstone: false,
+                    timestamp: 0,
                 });
             }
 
@@ -2980,8 +2980,8 @@ mod decompression_cache_tests {
                     metadata: None,
                     sequence_number: 0,
                     level: 0,
-            is_tombstone: false,
-            timestamp: 0,
+                    is_tombstone: false,
+                    timestamp: 0,
                 });
             }
             blocks.push((
