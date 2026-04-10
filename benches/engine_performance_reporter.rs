@@ -15,7 +15,7 @@ use proximadb::{
     core::{VectorRecord, hardware_capabilities},
     proto::proximadb_v1::{SqlValue, sql_value},
     storage::{
-        engines::impls::{sst::SstEngine, viper::ViperEngine},
+        engines::{sst::SstEngine, viper::ViperEngine},
         persistence::filesystem::FilesystemFactory,
         traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine},
     },

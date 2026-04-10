@@ -839,7 +839,6 @@ mod tests {
             // Note: Can't call tracker.estimate_selectivity because it expects private streaming_search::QueryCharacteristics
             // let selectivity = tracker.estimate_selectivity(&sparse_characteristics);
             // assert_eq!(selectivity, 0.1); // Should be highly selective
-            assert_eq!(selectivity, 0.1); // Should be highly selective
 
             // Test dense query
             let dense_characteristics = zone_maps::QueryCharacteristics {

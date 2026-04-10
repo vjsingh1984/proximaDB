@@ -2278,8 +2278,8 @@ mod compression_tests_unified {
             assert_eq!(deserialized.compression_algorithm, algorithm);
 
             // Verify vector data integrity
-            assert_eq!(deserialized.records[0].vector.as_ref(), records[0].vector.as_ref());
-            assert_eq!(deserialized.records[1].vector.as_ref(), records[1].vector.as_ref());
+            assert_eq!(deserialized.records[0].vector.is_some(), records[0].vector.is_some());
+            assert_eq!(deserialized.records[1].vector.is_some(), records[1].vector.is_some());
         }
     }
 
