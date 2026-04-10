@@ -1768,6 +1768,8 @@ mod tests {
 
         let task = CompactionTask {
             level: 0,
+                is_tombstone: false,
+                timestamp: 0,
             input_files: vec![],
             output_file: PathBuf::from("/tmp/output.db"),
             priority: CompactionPriority::Medium,
@@ -1800,6 +1802,8 @@ mod tests {
                 metadata: None,
                 sequence_number: 1,
                 level: 0,
+                is_tombstone: false,
+                timestamp: 0,
             },
             // Expired record (should be deleted)
             SstRecord {
@@ -1808,6 +1812,8 @@ mod tests {
                 metadata: None,
                 sequence_number: 2,
                 level: 0,
+                is_tombstone: false,
+                timestamp: 0,
             },
             // Active record with future expiry
             SstRecord {
@@ -1816,6 +1822,8 @@ mod tests {
                 metadata: None,
                 sequence_number: 3,
                 level: 0,
+                is_tombstone: false,
+                timestamp: 0,
             },
             // Old tombstone (should be removed)
             SstRecord {
@@ -1824,6 +1832,8 @@ mod tests {
                 metadata: None,
                 sequence_number: 4,
                 level: 0,
+                is_tombstone: false,
+                timestamp: 0,
             },
         ];
 
@@ -1848,6 +1858,8 @@ mod tests {
         let task = CompactionTask {
             collection_id: "test_collection".to_string(),
             level: 0,
+                is_tombstone: false,
+                timestamp: 0,
             input_files: vec![input_file],
             output_file: output_file.clone(),
             priority: CompactionPriority::Medium,

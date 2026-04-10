@@ -3031,7 +3031,7 @@ mod decompression_cache_tests {
     }
 
     #[tokio::test]
-    async fn create_test_cache_config() {
+    async fn test_decompression_cache_basic() {
         let config = CacheConfig {
             max_size_mb: 256,
             min_size_mb: 0,   // No minimum for tests
