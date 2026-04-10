@@ -3105,8 +3105,6 @@ mod compression_tests {
             enable_metadata_compression: false,
             compression_threshold_bytes: 0,
             compression_level: 0,
-            is_tombstone: false,
-            timestamp: 0,
             algorithm: UnifiedCompressionAlgorithm::None,
             dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),

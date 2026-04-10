@@ -945,6 +945,7 @@ mod tests {
                             cpu_cost: 20.0,
                             memory_cost: 15.0,
                             estimated_latency_ms: 50.0,
+                            confidence: 0.8,
                         },
                         access_stats: AccessStats {
                             access_count: i as u64,
