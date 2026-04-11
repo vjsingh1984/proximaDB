@@ -2260,7 +2260,7 @@ mod compression_tests_unified {
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
             };
-            let block = ProximaDataBlock::new(records.clone(), config);
+            let block = ProximaDataBlock::new(records.clone(), config.clone());
 
             let serialized = block.serialize_with_config(&config).unwrap();
 
