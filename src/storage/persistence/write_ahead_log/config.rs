@@ -39,7 +39,7 @@ impl Default for EncryptionConfig {
 }
 
 /// Compression configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionConfig {
     /// Algorithm to use
     pub algorithm: crate::core::CompressionAlgorithm,
@@ -66,7 +66,7 @@ impl Default for CompressionConfig {
 }
 
 /// Performance configuration with smart defaults - size-based flush only
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PerformanceConfig {
     /// Memory table flush threshold (bytes) - ONLY size-based trigger
     pub memory_flush_size_bytes: usize,
@@ -139,7 +139,7 @@ impl Default for PerformanceConfig {
 }
 
 /// Disk sync mode for durability vs performance trade-off
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SyncMode {
     /// Never sync (fastest, least durable)
     Never,
@@ -200,7 +200,7 @@ impl std::fmt::Display for WriteBufferStrategyType {
 }
 
 /// Multi-disk configuration for WAL distribution
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MultiDiskConfig {
     /// WAL directory URLs supporting multiple filesystem types
     /// Examples:
@@ -239,7 +239,7 @@ impl Default for MultiDiskConfig {
 }
 
 /// Memtable configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemTableConfig {
     /// Memtable strategy type
     pub memtable_type: MemTableType,
