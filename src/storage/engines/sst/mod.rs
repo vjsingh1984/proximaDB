@@ -3174,7 +3174,6 @@ mod compression_tests {
             compression_level: 3,
             algorithm: UnifiedCompressionAlgorithm::Zstd,
             dictionary_compression: false,
-            compression_threshold_bytes: 100,
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         };
@@ -3538,7 +3537,7 @@ mod simple_sstable_tests {
                                     .filter_map(|(k, v)| {
                                         v.as_str().map(|s| {
                                             (k.clone(), SqlValue {
-                                                value: Some(proto::proximadb_v1::sql_value::Value::StringValue(s.to_string())),
+                                                value: Some(sql_value::Value::StringValue(s.to_string())),
                                             })
                                         })
                                     })
