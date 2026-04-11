@@ -2897,7 +2897,7 @@ mod decompression_cache_tests {
                 block_offset: 0,
             };
 
-            let block = ProximaDataBlock::new(vec![], compression_cfg);
+            let block = ProximaDataBlock::new(vec![], compression_cfg.clone());
             cache.put(key, block, None).await.unwrap();
         }
 
@@ -2909,7 +2909,7 @@ mod decompression_cache_tests {
                 block_offset: 0,
             };
 
-            let block = ProximaDataBlock::new(vec![], compression_cfg);
+            let block = ProximaDataBlock::new(vec![], compression_cfg.clone());
             cache.put(key, block, None).await.unwrap();
         }
 
@@ -3346,7 +3346,7 @@ mod compression_tests {
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         };
-        let block = ProximaDataBlock::new(records.clone(), config);
+        let block = ProximaDataBlock::new(records.clone(), config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3370,7 +3370,7 @@ mod compression_tests {
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         };
-        let block = ProximaDataBlock::new(vec![record], config);
+        let block = ProximaDataBlock::new(vec![record], config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3380,7 +3380,7 @@ mod compression_tests {
         // Compressed size should be much smaller than uncompressed
         let uncompressed_config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::None,
-            ..config
+            ..config.clone()
         };
         let uncompressed = block.serialize_with_config(&uncompressed_config).unwrap();
 
