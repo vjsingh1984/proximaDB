@@ -9,7 +9,7 @@
 // Write Buffer-specific configuration uses the unified type
 pub use crate::core::CompressionAlgorithm;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Encryption configuration for WAL (TD-016)
 #[derive(Debug, Clone)]
