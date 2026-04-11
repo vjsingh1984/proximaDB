@@ -551,7 +551,7 @@ pub struct CollectionEffectiveConfig {
 }
 
 /// Cloud backup configuration for WAL
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudBackupConfig {
     /// Enable cloud backup for WAL batches
     pub enabled: bool,
@@ -603,7 +603,7 @@ pub enum CloudBackupStrategy {
 }
 
 /// Backup frequency configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackupFrequency {
     /// Backup every N operations
     pub operations_threshold: Option<u64>,
@@ -624,7 +624,7 @@ impl Default for BackupFrequency {
 }
 
 /// Cloud cleanup policy
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudCleanupPolicy {
     /// Retain backups for N days
     pub retention_days: u32,
@@ -645,7 +645,7 @@ impl Default for CloudCleanupPolicy {
 }
 
 /// Cloud retry configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudRetryConfig {
     /// Maximum retry attempts
     pub max_retries: u32,

@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Unified quantization level configuration
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct UnifiedQuantizationLevel {
     pub level_type: Option<QuantizationLevel>,
 }

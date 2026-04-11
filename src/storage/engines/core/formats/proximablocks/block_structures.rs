@@ -143,7 +143,7 @@ enum VectorDataPattern {
 /// - **PatchedBase**: Base encoding with exceptions
 /// - **Dictionary**: Replace values with dictionary indices
 /// - **RunLength**: Compress runs of identical values
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProximaMetadata {
     /// Encoding scheme used for this block
     pub scheme: ProximaScheme,
@@ -172,7 +172,7 @@ pub struct ProximaMetadata {
 }
 
 /// Quantized section for hierarchical storage
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QuantizedSection {
     pub binary_vectors: Option<Vec<Vec<u8>>>,
     pub int8_vectors: Option<Vec<Vec<i8>>>,
@@ -181,7 +181,7 @@ pub struct QuantizedSection {
 }
 
 /// Block metadata statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockMetadataStats {
     pub unique_keys: u32,
     pub null_values: u32,
@@ -901,7 +901,7 @@ pub struct QuantizationStatistics {
 }
 
 /// Vector encoding layout strategies for Proxima compression
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum VectorEncodingLayout {
     /// TransposeFieldEncodedAndCompressedVector: transpose RxD → DxR, store each dimension as separate field
     /// Each dimension field gets Proxima encoding + field-level compression
@@ -937,7 +937,7 @@ pub enum VectorEncodingLayout {
 }
 
 /// Block compression configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockCompressionConfig {
     pub algorithm: CompressionAlgorithm,
     pub compression_level: u8,
@@ -952,7 +952,7 @@ pub struct BlockCompressionConfig {
 }
 
 /// Block statistics for performance monitoring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockStatistics {
     pub read_count: u64,
     pub write_count: u64,

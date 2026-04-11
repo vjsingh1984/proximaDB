@@ -52,7 +52,7 @@ pub type IndexingAlgorithm = String;
 /// Storage engine name (e.g., "sst", "viper", "helix")
 pub type StorageEngine = String;
 /// Compression algorithms for data storage and transmission
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
