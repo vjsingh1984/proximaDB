@@ -3088,7 +3088,8 @@ mod decompression_cache_tests {
             block_offset: 0,
         };
 
-        let block = ProximaDataBlock::new(vec![], config);
+        let block_config = BlockCompressionConfig::default();
+        let block = ProximaDataBlock::new(vec![], block_config);
         cache.put(key.clone(), block, None).await.unwrap();
 
         // Verify it's cached
@@ -3131,7 +3132,6 @@ mod compression_tests {
             create_test_record("test2", 128),
         ];
 
-        let block = ProximaDataBlock::new(records.clone(), config);
         let config = BlockCompressionConfig {
             enable_vector_compression: false,
             enable_metadata_compression: false,
@@ -3142,6 +3142,8 @@ mod compression_tests {
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         };
+
+        let block = ProximaDataBlock::new(records.clone(), config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3163,7 +3165,6 @@ mod compression_tests {
             create_test_record("test3", 256),
         ];
 
-        let block = ProximaDataBlock::new(records.clone(), config);
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3172,8 +3173,10 @@ mod compression_tests {
             algorithm: UnifiedCompressionAlgorithm::Zstd,
             dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),
-            metadata_algorithm: Some(CompressionAlgorithm::CompressionZstd),
+            metadata_algorithm: Some(CompressionAlgorithm::Zstd),
         };
+
+        let block = ProximaDataBlock::new(records.clone(), config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3194,7 +3197,6 @@ mod compression_tests {
             create_test_record("test2", 512),
         ];
 
-        let block = ProximaDataBlock::new(records.clone(), config);
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3205,6 +3207,8 @@ mod compression_tests {
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         };
+
+        let block = ProximaDataBlock::new(records.clone(), config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3221,7 +3225,6 @@ mod compression_tests {
     fn test_snappy_compression() {
         let records = vec![create_test_record("test1", 384)];
 
-        let block = ProximaDataBlock::new(records.clone(), config);
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3232,6 +3235,8 @@ mod compression_tests {
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         };
+
+        let block = ProximaDataBlock::new(records.clone(), config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3251,7 +3256,6 @@ mod compression_tests {
             create_test_record("gzip_test2", 128),
         ];
 
-        let block = ProximaDataBlock::new(records.clone(), config);
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3262,6 +3266,8 @@ mod compression_tests {
             metadata_algorithm: None,
             ..Default::default()
         };
+
+        let block = ProximaDataBlock::new(records.clone(), config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3278,7 +3284,6 @@ mod compression_tests {
     fn test_brotli_compression() {
         let records = vec![create_test_record("brotli_test", 256)];
 
-        let block = ProximaDataBlock::new(records.clone(), config);
         let config = BlockCompressionConfig {
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -3289,6 +3294,8 @@ mod compression_tests {
             metadata_algorithm: None,
             ..Default::default()
         };
+
+        let block = ProximaDataBlock::new(records.clone(), config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -3325,7 +3332,6 @@ mod compression_tests {
         ];
 
         for (algo, expected_marker, level) in algorithms {
-            let block = ProximaDataBlock::new(records.clone(), config);
             let config = BlockCompressionConfig {
                 enable_vector_compression: true,
                 enable_metadata_compression: true,
@@ -3336,6 +3342,8 @@ mod compression_tests {
                 metadata_algorithm: None,
                 ..Default::default()
             };
+
+            let block = ProximaDataBlock::new(records.clone(), config.clone());
 
             let serialized = block.serialize_with_config(&config).unwrap();
 
