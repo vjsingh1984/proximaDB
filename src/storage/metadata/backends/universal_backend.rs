@@ -2146,7 +2146,6 @@ mod integration_tests {
                 dimension: 384,
                 distance_metric: DistanceMetric::Cosine as i32,
                 storage_engine: StorageEngine::Viper as i32,
-                primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
                 filterable_columns: vec![
                     FilterableColumnSpec {
                         name: "category".to_string(),
@@ -2175,8 +2174,6 @@ mod integration_tests {
                 vector_count: 1000,
                 data_size_bytes: 1024 * 1024,
                 index_size_bytes: 512 * 1024,
-                wal_size_bytes: 256 * 1024,
-                last_updated: chrono::Utc::now().timestamp(),
             }),
         }
     }
