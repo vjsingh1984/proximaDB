@@ -224,7 +224,7 @@ pub struct BlockMetadataStats {
 /// ```
 ///
 /// **See module documentation for complete usage examples and best practices!**
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ProximaDataBlock {
     /// PROXIMA ENCODING MARKER (1 byte) - First byte of serialized block
     ///

@@ -9,6 +9,8 @@
 // Write Buffer-specific configuration uses the unified type
 pub use crate::core::CompressionAlgorithm;
 
+use serde::{Serialize, Deserialize};
+
 /// Encryption configuration for WAL (TD-016)
 #[derive(Debug, Clone)]
 pub struct EncryptionConfig {
@@ -176,7 +178,7 @@ pub enum DurabilityLevel {
 }
 
 /// WAL strategy type selection
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum WriteBufferStrategyType {
     /// Modern Avro batch strategy with zero-copy optimization
     AvroBatch,
@@ -216,7 +218,7 @@ pub struct MultiDiskConfig {
 }
 
 /// Strategy for distributing collections across disks
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum DiskDistributionStrategy {
     /// Round-robin distribution
     RoundRobin,
@@ -253,7 +255,7 @@ pub struct MemTableConfig {
 }
 
 /// Memtable strategy type selection
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub enum MemTableType {
     /// Skip List - High write throughput, ordered data (RocksDB/LevelDB default)
     SkipList,
