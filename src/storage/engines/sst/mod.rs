@@ -2301,7 +2301,7 @@ mod compression_tests_unified {
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         };
-        let block = ProximaDataBlock::new(vec![record], uncompressed_config);
+        let block = ProximaDataBlock::new(vec![record], uncompressed_config.clone());
         let uncompressed = block.serialize_with_config(&uncompressed_config).unwrap();
 
         // Test with various compression algorithms
@@ -2355,7 +2355,7 @@ mod compression_tests_unified {
             vector_layout: VectorEncodingLayout::default(),
             metadata_algorithm: None,
         };
-        let block = ProximaDataBlock::new(records, config);
+        let block = ProximaDataBlock::new(records, config.clone());
 
         let serialized = block.serialize_with_config(&config).unwrap();
 
@@ -2414,7 +2414,7 @@ mod compression_tests_unified {
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
             };
-            let block = ProximaDataBlock::new(records, config);
+            let block = ProximaDataBlock::new(records, config.clone());
 
             let serialized = block.serialize_with_config(&config).unwrap();
             serialized_blocks.push((serialized, algorithm.clone()));
@@ -3447,7 +3447,7 @@ mod compression_tests {
 mod simple_sstable_tests {
     use super::*;
     use crate::core::config::SstConfig;
-    use crate::proto::proximadb_v1::VectorRecord;
+    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, SqlValueType};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -3492,7 +3492,36 @@ mod simple_sstable_tests {
 
         // Write records using streaming approach for production consistency
         let record_count = records.len();
-        let sorted_records_iter = records.into_iter(); // BTreeMap already sorted by key
+        let sorted_records_iter = records.into_iter().map(|(id, sst_record)| {
+            let vector_record = VectorRecord {
+                id,
+                vector: sst_record.vector.unwrap_or_default(),
+                metadata: sst_record.metadata
+                    .map(|v| {
+                        v.as_object()
+                            .map(|obj| {
+                                obj.iter()
+                                    .filter_map(|(k, v)| {
+                                        v.as_str().map(|s| {
+                                            (k.clone(), SqlValue {
+                                                value: Some(s.to_string()),
+                                                value_type: SqlValueType::Text as i32,
+                                            })
+                                        })
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default(),
+                timestamp: Some(sst_record.timestamp as i64),
+                updated_at: None,
+                expires_at: None,
+                version: Some(0),
+                source: None,
+            };
+            (vector_record.id.clone(), vector_record)
+        }); // BTreeMap already sorted by key
         writer
             .write_sorted_vector_records(sorted_records_iter, record_count)
             .await

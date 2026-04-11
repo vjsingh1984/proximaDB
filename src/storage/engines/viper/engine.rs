@@ -3125,7 +3125,8 @@ mod minimal_compaction_tests {
         let flush_result = engine.do_flush(&flush_params).await?;
         debug!(
             "[TEST] Flush complete: {} files created, {} entries flushed",
-            flush_result.files_created, flush_result.entries_flushed
+            flush_result.files_created,
+            flush_result.entries_flushed.unwrap_or(0)
         );
 
         // Run compaction
@@ -3139,19 +3140,20 @@ mod minimal_compaction_tests {
             timeout_ms: None,
             priority: crate::storage::traits::OperationPriority::Medium,
             collection_config: None,
+            estimated_input_size: 1024,
         };
 
         let compact_result = engine.do_compact(&compact_params).await?;
         debug!(
             "[TEST] Compaction complete: {} input files, {} output files, {} entries processed",
-            compact_result.input_files,
-            compact_result.output_files,
-            compact_result.entries_processed
+            compact_result.input_files.unwrap_or(0),
+            compact_result.output_files.unwrap_or(0),
+            compact_result.entries_processed.unwrap_or(0)
         );
 
         assert!(compact_result.success, "Compaction should succeed");
         assert_eq!(
-            compact_result.entries_processed, 3,
+            compact_result.entries_processed.unwrap_or(0), 3,
             "Should process 3 entries"
         );
 
