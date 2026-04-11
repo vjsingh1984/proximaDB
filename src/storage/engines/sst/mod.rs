@@ -3483,7 +3483,7 @@ mod compression_tests {
 mod simple_sstable_tests {
     use super::*;
     use crate::core::config::SstConfig;
-    use crate::proto::proximadb_v1::{VectorRecord, SqlValue};
+    use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use std::collections::BTreeMap;
     use std::sync::Arc;

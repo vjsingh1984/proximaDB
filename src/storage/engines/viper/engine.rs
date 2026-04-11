@@ -3153,7 +3153,8 @@ mod minimal_compaction_tests {
 
         assert!(compact_result.success, "Compaction should succeed");
         assert_eq!(
-            compact_result.entries_processed.unwrap_or(0), 3,
+            compact_result.entries_processed.unwrap_or(0),
+            3,
             "Should process 3 entries"
         );
 
