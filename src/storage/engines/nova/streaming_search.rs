@@ -130,19 +130,19 @@ pub(crate) struct PerformanceTracker {
 
 /// Individual query execution record
 #[derive(Debug, Clone)]
-struct QueryExecution {
+pub(crate) struct QueryExecution {
     #[allow(dead_code)]
-    query_id: String,
+    pub query_id: String,
     #[allow(dead_code)]
-    start_time: Instant,
+    pub start_time: Instant,
     #[allow(dead_code)]
-    end_time: Option<Instant>,
+    pub end_time: Option<Instant>,
     #[allow(dead_code)]
-    query_characteristics: QueryCharacteristics,
+    pub query_characteristics: QueryCharacteristics,
     #[allow(dead_code)]
-    actual_performance: Option<ActualPerformance>,
+    pub actual_performance: Option<ActualPerformance>,
     #[allow(dead_code)]
-    predicted_performance: Option<PredictedPerformance>,
+    pub predicted_performance: Option<PredictedPerformance>,
 }
 
 /// Query characteristics for performance prediction
@@ -161,17 +161,17 @@ struct QueryCharacteristics {
 /// Actual performance measurements
 #[derive(Debug, Clone)]
 pub(crate) struct ActualPerformance {
-    latency_ms: u64,
+    pub latency_ms: u64,
     #[allow(dead_code)]
-    memory_peak: usize,
+    pub memory_peak: usize,
     #[allow(dead_code)]
-    candidates_processed: usize,
+    pub candidates_processed: usize,
     #[allow(dead_code)]
-    pruning_effectiveness: f32,
+    pub pruning_effectiveness: f32,
     #[allow(dead_code)]
-    recall: Option<f32>,
+    pub recall: Option<f32>,
     #[allow(dead_code)]
-    precision: Option<f32>,
+    pub precision: Option<f32>,
 }
 
 /// Predicted performance estimates

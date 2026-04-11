@@ -3439,7 +3439,6 @@ mod compression_tests {
 
         for (i, (algo, _expected_marker)) in blocks_data.iter().enumerate() {
             let records = vec![create_test_record(&format!("test_{}", i), 128)];
-            let block = ProximaDataBlock::new(i as u32, records);
 
             let config = BlockCompressionConfig {
                 enable_vector_compression: *algo != CompressionAlgorithm::CompressionNone,
@@ -3447,6 +3446,8 @@ mod compression_tests {
                 compression_level: 3,
                 ..Default::default()
             };
+
+            let block = ProximaDataBlock::new(records, config.clone());
 
             let serialized = block.serialize_with_config(&config).unwrap();
             serialized_blocks.push(serialized);
@@ -3464,6 +3465,8 @@ mod compression_tests {
     fn test_backward_compatibility() {
         // Test that old bincode format can still be deserialized
         let records = vec![create_test_record("legacy", 64)];
+
+        let config = BlockCompressionConfig::default();
         let block = ProximaDataBlock::new(records, config);
 
         // Use bincode directly (old format)
@@ -3537,7 +3540,7 @@ mod simple_sstable_tests {
                                     .filter_map(|(k, v)| {
                                         v.as_str().map(|s| {
                                             (k.clone(), SqlValue {
-                                                value: Some(sql_value::Value::StringValue(s.to_string())),
+                                                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s.to_string())),
                                             })
                                         })
                                     })

@@ -3058,13 +3058,13 @@ mod minimal_compaction_tests {
     /// Create test vector
     fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
         VectorRecord {
-            id: Some(id.to_string()),
+            id: id.to_string(),
             vector: (0..dimension)
                 .map(|i| (i as f32) / (dimension as f32))
                 .collect(),
-            metadata: vec![],
-            timestamp: chrono::Utc::now().timestamp() as u32,
-            updated_at: Some(chrono::Utc::now().timestamp() as u32),
+            metadata: std::collections::HashMap::new(),
+            timestamp: Some(chrono::Utc::now().timestamp()),
+            updated_at: Some(chrono::Utc::now().timestamp()),
             expires_at: None,
             version: Some(1),
             source: None,

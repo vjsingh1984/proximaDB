@@ -2144,8 +2144,8 @@ mod integration_tests {
             config: Some(CollectionConfig {
                 name: name.to_string(),
                 dimension: 384,
-                distance_metric: DistanceMetric::Cosine as i32,
-                storage_engine: StorageEngine::Viper as i32,
+                distance_metric: Some(DistanceMetric::Cosine as i32),
+                storage_engine: Some(StorageEngine::Viper as i32),
                 filterable_columns: vec![
                     FilterableColumnSpec {
                         name: "category".to_string(),
