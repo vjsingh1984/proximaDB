@@ -3109,6 +3109,46 @@ mod minimal_compaction_tests {
             create_test_vector("vec_2", 128),
         ];
 
+        // Create collection config with dimension and storage assignment for flush
+        let collection_config = Some(crate::proto::proximadb_v1::Collection {
+            id: collection_id.to_string(),
+            config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 128,
+                distance_metric: Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
+                storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Viper as i32),
+                filterable_columns: vec![],
+                index_configs: vec![],
+                quantization: None,
+                storage_config: None,
+                primary_index: Some("default".to_string()),
+                auto_index_selection: Some(true),
+                description: None,
+                tags: vec![],
+                owner: None,
+                embedding_models: vec![],
+                enable_proxima_record: None,
+                record_schema: None,
+                text_columns: vec![],
+                text_storage_configs: vec![],
+            }),
+            stats: Some(crate::proto::proximadb_v1::CollectionStats {
+                vector_count: 0,
+                data_size_bytes: 0,
+                index_size_bytes: 0,
+            }),
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+            storage_assignment: Some(crate::proto::proximadb_v1::StorageAssignment {
+                primary_path: data_dir.to_string(),
+                backup_paths: vec![],
+                engine: crate::proto::proximadb_v1::StorageEngine::Viper as i32,
+                engine_config: std::collections::HashMap::new(),
+                base_location: base_path.to_string(),
+                assigned_at: chrono::Utc::now().timestamp_micros(),
+            }),
+        });
+
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
             force: true,
@@ -3118,7 +3158,7 @@ mod minimal_compaction_tests {
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
             trigger_compaction: false,
-            collection_config: None,
+            collection_config,
             estimated_size: 1024, // 1KB estimated size
         };
 
