@@ -2806,18 +2806,20 @@ mod decompression_cache_tests {
             // Create a block with some data
             let mut records = vec![];
             for j in 0..100 {
-                records.push(SstRecord {
+                records.push(VectorRecord {
                     id: format!("id_{}", j),
-                    vector: Some(vec![0.0; 128]),
-                    metadata: None,
-                    sequence_number: 0,
-                    level: 0,
-                    is_tombstone: false,
-                    timestamp: 0,
+                    vector: vec![0.0; 128],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: Some(0),
+                    source: None,
                 });
             }
 
-            let block = ProximaDataBlock::new(i, records);
+            let config = BlockCompressionConfig::default();
+            let block = ProximaDataBlock::new(records, config);
             cache.put(key, block, None).await.unwrap();
         }
 
@@ -2844,7 +2846,8 @@ mod decompression_cache_tests {
                 block_offset: i as u64 * 1000,
             };
 
-            let block = ProximaDataBlock::new(i, vec![]);
+            let config = BlockCompressionConfig::default();
+            let block = ProximaDataBlock::new(vec![], config);
             cache.put(key, block, None).await.unwrap();
         }
 
@@ -2856,7 +2859,8 @@ mod decompression_cache_tests {
                 block_offset: i as u64 * 1000,
             };
 
-            let block = ProximaDataBlock::new(i, vec![]);
+            let config = BlockCompressionConfig::default();
+            let block = ProximaDataBlock::new(vec![], config);
             cache.put(key, block, None).await.unwrap();
         }
 
@@ -2982,19 +2986,29 @@ mod decompression_cache_tests {
         for i in 0..10 {
             let mut records = vec![];
             for j in 0..10 {
-                records.push(SstRecord {
+                records.push(VectorRecord {
                     id: format!("id_{}_{}", i, j),
-                    vector: Some(vec![i as f32; 64]),
-                    metadata: None,
-                    sequence_number: 0,
-                    level: 0,
-                    is_tombstone: false,
-                    timestamp: 0,
+                    vector: vec![i as f32; 64],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: Some(0),
+                    source: None,
                 });
             }
+            let config = BlockCompressionConfig {
+                algorithm: CompressionAlgorithm::Lz4,
+                compression_level: 6,
+                enable_vector_compression: true,
+                enable_metadata_compression: true,
+                dictionary_compression: false,
+                vector_layout: VectorEncodingLayout::default(),
+                metadata_algorithm: None,
+            };
             blocks.push((
                 i,
-                ProximaDataBlock::new(i, records),
+                ProximaDataBlock::new(records, config),
                 Some(CompressionAlgorithm::Lz4),
             ));
         }
@@ -3032,7 +3046,16 @@ mod decompression_cache_tests {
                     block_offset: j as u64 * 1000,
                 };
 
-                let block = ProximaDataBlock::new(j, vec![]);
+                let config = BlockCompressionConfig {
+                    algorithm: algo.clone(),
+                    compression_level: 6,
+                    enable_vector_compression: true,
+                    enable_metadata_compression: true,
+                    dictionary_compression: false,
+                    vector_layout: VectorEncodingLayout::default(),
+                    metadata_algorithm: None,
+                };
+                let block = ProximaDataBlock::new(vec![], config);
                 cache.put(key, block, Some(*algo)).await.unwrap();
             }
         }
