@@ -3003,6 +3003,7 @@ mod decompression_cache_tests {
                 enable_vector_compression: true,
                 enable_metadata_compression: true,
                 dictionary_compression: false,
+                compression_threshold_bytes: 100,
                 vector_layout: VectorEncodingLayout::default(),
                 metadata_algorithm: None,
             };
@@ -3052,6 +3053,7 @@ mod decompression_cache_tests {
                     enable_vector_compression: true,
                     enable_metadata_compression: true,
                     dictionary_compression: false,
+                    compression_threshold_bytes: 100,
                     vector_layout: VectorEncodingLayout::default(),
                     metadata_algorithm: None,
                 };
@@ -3172,8 +3174,9 @@ mod compression_tests {
             compression_level: 3,
             algorithm: UnifiedCompressionAlgorithm::Zstd,
             dictionary_compression: false,
+            compression_threshold_bytes: 100,
             vector_layout: VectorEncodingLayout::default(),
-            metadata_algorithm: Some(CompressionAlgorithm::Zstd),
+            metadata_algorithm: None,
         };
 
         let block = ProximaDataBlock::new(records.clone(), config.clone());
