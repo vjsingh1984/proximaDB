@@ -3125,7 +3125,7 @@ mod minimal_compaction_tests {
         let flush_result = engine.do_flush(&flush_params).await?;
         debug!(
             "[TEST] Flush complete: {} files created, {} entries flushed",
-            flush_result.files_created,
+            flush_result.files_created.unwrap_or(0),
             flush_result.entries_flushed.unwrap_or(0)
         );
 

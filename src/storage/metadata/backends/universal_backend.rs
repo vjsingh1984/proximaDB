@@ -2164,6 +2164,7 @@ mod integration_tests {
                 ],
                 index_configs: vec![],
                 quantization: None,
+                storage_config: None,
                 primary_index: Some("default".to_string()),
                 auto_index_selection: Some(true),
                 description: None,

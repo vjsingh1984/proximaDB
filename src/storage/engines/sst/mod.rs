@@ -3447,7 +3447,7 @@ mod compression_tests {
 mod simple_sstable_tests {
     use super::*;
     use crate::core::config::SstConfig;
-    use crate::proto::proximadb_v1::{VectorRecord, SqlValue, SqlValueType};
+    use crate::proto::proximadb_v1::{VectorRecord, SqlValue};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -3504,8 +3504,7 @@ mod simple_sstable_tests {
                                     .filter_map(|(k, v)| {
                                         v.as_str().map(|s| {
                                             (k.clone(), SqlValue {
-                                                value: Some(s.to_string()),
-                                                value_type: SqlValueType::Text as i32,
+                                                value: Some(proto::proximadb_v1::sql_value::Value::StringValue(s.to_string())),
                                             })
                                         })
                                     })
