@@ -1699,18 +1699,27 @@ mod tests {
             fs.write(path, &data[..], None).await.unwrap();
         }
 
+        // Ensure all writes are fully flushed before starting concurrent syncs
+        // This prevents race condition where sync operations run before async writes complete
+        tokio::task::yield_now().await;
+
+        // Verify all files exist before spawning sync tasks
+        for (path, _) in &files {
+            assert!(
+                fs.exists(path).await.unwrap_or(false),
+                "File should exist after write: {}",
+                path
+            );
+        }
+
         // Sync all files concurrently
         let mut handles = vec![];
         for (path, _) in &files {
             let fs_clone = Arc::clone(&fs);
             let path = path.to_string();
             handles.push(tokio::spawn(async move {
-                // Verify file exists before syncing to avoid race condition
-                if fs_clone.exists(&path).await.unwrap_or(false) {
-                    fs_clone.sync_file(&path).await
-                } else {
-                    Ok(())
-                }
+                // File existence already verified above, safe to sync directly
+                fs_clone.sync_file(&path).await
             }));
         }
 
