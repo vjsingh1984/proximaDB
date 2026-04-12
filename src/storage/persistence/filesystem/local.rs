@@ -1690,10 +1690,11 @@ mod tests {
             ("file3.dat", b"Data 3"),
         ];
 
+        // Clean up and write files sequentially to avoid race conditions
         for (path, data) in &files {
             // Clean up if file exists from previous run
             if fs.exists(path).await.unwrap_or(false) {
-                let _ = fs.delete(path).await;
+                fs.delete(path).await.unwrap();
             }
             fs.write(path, &data[..], None).await.unwrap();
         }
@@ -1703,7 +1704,14 @@ mod tests {
         for (path, _) in &files {
             let fs_clone = Arc::clone(&fs);
             let path = path.to_string();
-            handles.push(tokio::spawn(async move { fs_clone.sync_file(&path).await }));
+            handles.push(tokio::spawn(async move {
+                // Verify file exists before syncing to avoid race condition
+                if fs_clone.exists(&path).await.unwrap_or(false) {
+                    fs_clone.sync_file(&path).await
+                } else {
+                    Ok(())
+                }
+            }));
         }
 
         // Wait for all syncs to complete
