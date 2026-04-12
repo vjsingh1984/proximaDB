@@ -848,7 +848,16 @@ impl HelixEngine {
         let dir_path = data_dir
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("HELIX: Invalid data directory path"))?;
-        let files = filesystem.list(dir_path).await?;
+
+        // If directory doesn't exist yet, return empty levels (normal for new engine)
+        let files = match filesystem.list(dir_path).await {
+            Ok(files) => files,
+            Err(e) if e.to_string().contains("No such file or directory") => {
+                // Directory doesn't exist, which is normal for a new HELIX engine
+                return Ok(levels);
+            }
+            Err(e) => return Err(e.into()),
+        };
 
         for file in files {
             let file_name = &file.name;
