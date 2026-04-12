@@ -1720,11 +1720,7 @@ mod tests {
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             }
-            assert!(
-                exists,
-                "File should exist after write: {}",
-                path
-            );
+            assert!(exists, "File should exist after write: {}", path);
         }
 
         // Sync all files concurrently
