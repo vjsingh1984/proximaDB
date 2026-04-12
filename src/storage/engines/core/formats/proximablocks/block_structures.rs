@@ -2430,41 +2430,38 @@ impl ProximaDataBlock {
 
                 // If compression is actually beneficial
                 if compressed.len() < result.len() {
-                trace!(
-                    "[ENCODE] Compression beneficial: {} -> {} bytes",
-                    result.len(),
-                    compressed.len()
-                );
-                // Write compressed format: compression marker + original size + compressed data
-                let mut final_result = Vec::new();
+                    trace!(
+                        "[ENCODE] Compression beneficial: {} -> {} bytes",
+                        result.len(),
+                        compressed.len()
+                    );
+                    // Write compressed format: compression marker + original size + compressed data
+                    let mut final_result = Vec::new();
 
-                // Write compression marker (using standard markers from compression_marker())
-                use crate::core::compression::compression_marker;
-                let marker_val = compression_marker(&config.algorithm);
-                final_result.push(marker_val);
-                trace!(
-                    "[ENCODE] Using compression marker: 0x{:02X}",
-                    marker_val
-                );
+                    // Write compression marker (using standard markers from compression_marker())
+                    use crate::core::compression::compression_marker;
+                    let marker_val = compression_marker(&config.algorithm);
+                    final_result.push(marker_val);
+                    trace!("[ENCODE] Using compression marker: 0x{:02X}", marker_val);
 
-                // Write original size for decompression
-                final_result.extend(&(result.len() as u32).to_le_bytes());
+                    // Write original size for decompression
+                    final_result.extend(&(result.len() as u32).to_le_bytes());
 
-                // Write compressed data
-                final_result.extend(compressed);
+                    // Write compressed data
+                    final_result.extend(compressed);
 
-                trace!(
-                    "[ENCODE] Final compressed size: {} bytes",
-                    final_result.len()
-                );
-                return Ok(final_result);
-            } else {
-                trace!(
-                    "[ENCODE] Compression not beneficial: {} -> {} bytes",
-                    result.len(),
-                    compressed.len()
-                );
-            }
+                    trace!(
+                        "[ENCODE] Final compressed size: {} bytes",
+                        final_result.len()
+                    );
+                    return Ok(final_result);
+                } else {
+                    trace!(
+                        "[ENCODE] Compression not beneficial: {} -> {} bytes",
+                        result.len(),
+                        compressed.len()
+                    );
+                }
             } else {
                 trace!(
                     "[ENCODE] Data size {} bytes below compression threshold {} - skipping compression",
@@ -2701,23 +2698,26 @@ impl ProximaDataBlock {
         // Check compression/encoding status
         let (decompressed_data, encoding_marker) = if (0x02..=0x0E).contains(&first_byte) {
             // New compression marker format (0x02-0x0E)
-            trace!("[DECODE] New compression marker format detected: 0x{:02X}", first_byte);
+            trace!(
+                "[DECODE] New compression marker format detected: 0x{:02X}",
+                first_byte
+            );
 
             // Map compression marker to algorithm
             compression_algorithm = match first_byte {
-                0x02 => CompressionAlgorithm::None,      // MARKER_UNCOMPRESSED
-                0x03 => CompressionAlgorithm::Zstd,      // MARKER_ZSTD
-                0x04 => CompressionAlgorithm::Lz4,       // MARKER_LZ4
-                0x05 => CompressionAlgorithm::Snappy,    // MARKER_SNAPPY
-                0x06 => CompressionAlgorithm::Gzip,      // MARKER_GZIP
-                0x07 => CompressionAlgorithm::Brotli,    // MARKER_BROTLI
-                0x08 => CompressionAlgorithm::Bzip2,     // MARKER_BZIP2
-                0x09 => CompressionAlgorithm::Deflate,   // MARKER_DEFLATE
-                0x0A => CompressionAlgorithm::Xz,        // MARKER_XZ
-                0x0B => CompressionAlgorithm::Zlib,      // MARKER_ZLIB
-                0x0C => CompressionAlgorithm::Lz4hc,     // MARKER_LZ4HC
-                0x0D => CompressionAlgorithm::Lzma,      // MARKER_LZMA
-                0x0E => CompressionAlgorithm::Lzo,       // MARKER_LZO
+                0x02 => CompressionAlgorithm::None,    // MARKER_UNCOMPRESSED
+                0x03 => CompressionAlgorithm::Zstd,    // MARKER_ZSTD
+                0x04 => CompressionAlgorithm::Lz4,     // MARKER_LZ4
+                0x05 => CompressionAlgorithm::Snappy,  // MARKER_SNAPPY
+                0x06 => CompressionAlgorithm::Gzip,    // MARKER_GZIP
+                0x07 => CompressionAlgorithm::Brotli,  // MARKER_BROTLI
+                0x08 => CompressionAlgorithm::Bzip2,   // MARKER_BZIP2
+                0x09 => CompressionAlgorithm::Deflate, // MARKER_DEFLATE
+                0x0A => CompressionAlgorithm::Xz,      // MARKER_XZ
+                0x0B => CompressionAlgorithm::Zlib,    // MARKER_ZLIB
+                0x0C => CompressionAlgorithm::Lz4hc,   // MARKER_LZ4HC
+                0x0D => CompressionAlgorithm::Lzma,    // MARKER_LZMA
+                0x0E => CompressionAlgorithm::Lzo,     // MARKER_LZO
                 _ => CompressionAlgorithm::None,
             };
 
@@ -2732,17 +2732,24 @@ impl ProximaDataBlock {
                 let actual_marker = data[1];
                 let actual_data = &data[2..]; // Skip compression marker and encoding marker
 
-                trace!("[DECODE] Encoding marker: 0x{:02X}, data starts at byte 2", actual_marker);
+                trace!(
+                    "[DECODE] Encoding marker: 0x{:02X}, data starts at byte 2",
+                    actual_marker
+                );
                 (actual_data.to_vec(), actual_marker)
             } else {
                 // Compressed data: read original size and decompress
-                trace!("[DECODE] Compressed data with algorithm: {:?}", compression_algorithm);
+                trace!(
+                    "[DECODE] Compressed data with algorithm: {:?}",
+                    compression_algorithm
+                );
                 if data.len() < 5 {
                     return Err(anyhow::anyhow!("Insufficient data for compressed block"));
                 }
 
                 // Read original size
-                let original_size = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+                let original_size =
+                    u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
                 trace!("[DECODE] Original size: {} bytes", original_size);
 
                 // Decompress the rest of the data
@@ -2751,7 +2758,11 @@ impl ProximaDataBlock {
                     "[DECODE] Compressed data size: {} bytes",
                     compressed_data.len()
                 );
-                let decompressed = decompress(compressed_data, compression_algorithm, CompressionContext::Block)?;
+                let decompressed = decompress(
+                    compressed_data,
+                    compression_algorithm,
+                    CompressionContext::Block,
+                )?;
                 trace!("[DECODE] Decompressed size: {} bytes", decompressed.len());
 
                 // The decompressed data starts with encoding marker
@@ -2782,7 +2793,10 @@ impl ProximaDataBlock {
                 0x83 => CompressionAlgorithm::Gzip,
                 _ => CompressionAlgorithm::None,
             };
-            trace!("[DECODE] Compression algorithm: {:?}", compression_algorithm);
+            trace!(
+                "[DECODE] Compression algorithm: {:?}",
+                compression_algorithm
+            );
 
             // Read original size
             let original_size = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
@@ -2794,7 +2808,11 @@ impl ProximaDataBlock {
                 "[DECODE] Compressed data size: {} bytes",
                 compressed_data.len()
             );
-            let decompressed = decompress(compressed_data, compression_algorithm, CompressionContext::Block)?;
+            let decompressed = decompress(
+                compressed_data,
+                compression_algorithm,
+                CompressionContext::Block,
+            )?;
             trace!("[DECODE] Decompressed size: {} bytes", decompressed.len());
 
             // The decompressed data starts with encoding marker
@@ -2824,10 +2842,7 @@ impl ProximaDataBlock {
             } else {
                 0x00
             };
-            trace!(
-                "[DECODE] Encoding marker: 0x{:02X}",
-                actual_marker
-            );
+            trace!("[DECODE] Encoding marker: 0x{:02X}", actual_marker);
             (actual_data.to_vec(), actual_marker)
         } else {
             // Legacy format: first byte is encoding marker directly

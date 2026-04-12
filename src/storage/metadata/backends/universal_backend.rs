@@ -2351,7 +2351,10 @@ mod integration_tests {
 
         // Check if snapshots directory exists first
         let fs = filesystem_factory.get_filesystem("file://").unwrap();
-        let directory_exists = fs.exists(&snapshots_dir.to_string_lossy()).await.unwrap_or(false);
+        let directory_exists = fs
+            .exists(&snapshots_dir.to_string_lossy())
+            .await
+            .unwrap_or(false);
 
         let entries = if directory_exists {
             fs.list(&snapshots_dir.to_string_lossy()).await.unwrap()

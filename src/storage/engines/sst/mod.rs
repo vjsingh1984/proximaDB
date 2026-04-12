@@ -2253,8 +2253,8 @@ mod compression_tests_unified {
             let config = BlockCompressionConfig {
                 algorithm: algorithm.clone(),
                 compression_level: 3,
-                enable_vector_compression: false,  // Disable to avoid vector decompression complexity
-                enable_metadata_compression: false,  // Disable to avoid metadata decompression complexity
+                enable_vector_compression: false, // Disable to avoid vector decompression complexity
+                enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
                 compression_threshold_bytes: 100,
                 dictionary_compression: false,
                 vector_layout: VectorEncodingLayout::default(),
@@ -2315,8 +2315,8 @@ mod compression_tests_unified {
             let config = BlockCompressionConfig {
                 algorithm: algorithm.clone(),
                 compression_level: 6,
-                enable_vector_compression: false,  // Disable to avoid vector decompression complexity
-                enable_metadata_compression: false,  // Disable to avoid metadata decompression complexity
+                enable_vector_compression: false, // Disable to avoid vector decompression complexity
+                enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
                 compression_threshold_bytes: 100,
                 dictionary_compression: false,
                 vector_layout: VectorEncodingLayout::default(),
@@ -2348,8 +2348,8 @@ mod compression_tests_unified {
         let config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::Zstd,
             compression_level: 3,
-            enable_vector_compression: false,  // Disable to avoid vector decompression complexity
-            enable_metadata_compression: false,  // Disable to avoid metadata decompression complexity
+            enable_vector_compression: false, // Disable to avoid vector decompression complexity
+            enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
             compression_threshold_bytes: 10000, // High threshold
             dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),
@@ -2407,8 +2407,8 @@ mod compression_tests_unified {
             let config = BlockCompressionConfig {
                 algorithm: algorithm.clone(),
                 compression_level: 3,
-                enable_vector_compression: false,  // Disable to avoid vector decompression complexity
-                enable_metadata_compression: false,  // Disable to avoid metadata decompression complexity
+                enable_vector_compression: false, // Disable to avoid vector decompression complexity
+                enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
                 compression_threshold_bytes: 100,
                 dictionary_compression: false,
                 vector_layout: VectorEncodingLayout::default(),
@@ -3153,14 +3153,22 @@ mod compression_tests {
         assert_eq!(serialized[0], MARKER_UNCOMPRESSED);
 
         // Debug: print serialized data
-        eprintln!("Serialized data (first 20 bytes): {:02X?}", &serialized[..serialized.len().min(20)]);
+        eprintln!(
+            "Serialized data (first 20 bytes): {:02X?}",
+            &serialized[..serialized.len().min(20)]
+        );
 
         // Deserialize and verify
         let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
         eprintln!("Deserialized block_id: {}", deserialized.block_id);
         eprintln!("Deserialized records.len(): {}", deserialized.records.len());
         for (i, record) in deserialized.records.iter().enumerate() {
-            eprintln!("Record {}: id={}, vector.len()={}", i, record.id, record.vector.len());
+            eprintln!(
+                "Record {}: id={}, vector.len()={}",
+                i,
+                record.id,
+                record.vector.len()
+            );
         }
         assert_eq!(deserialized.block_id, 0);
         assert_eq!(deserialized.records.len(), 2);
@@ -3236,8 +3244,8 @@ mod compression_tests {
         let records = vec![create_test_record("test1", 384)];
 
         let config = BlockCompressionConfig {
-            enable_vector_compression: false,  // Disable to avoid vector decompression complexity
-            enable_metadata_compression: false,  // Disable to avoid metadata decompression complexity
+            enable_vector_compression: false, // Disable to avoid vector decompression complexity
+            enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
             compression_threshold_bytes: 100,
             compression_level: 0, // Snappy doesn't use levels
             algorithm: UnifiedCompressionAlgorithm::Snappy,
@@ -3267,8 +3275,8 @@ mod compression_tests {
         ];
 
         let config = BlockCompressionConfig {
-            enable_vector_compression: false,  // Keep vectors uncompressed for this test
-            enable_metadata_compression: false,  // Keep metadata uncompressed for this test
+            enable_vector_compression: false, // Keep vectors uncompressed for this test
+            enable_metadata_compression: false, // Keep metadata uncompressed for this test
             compression_threshold_bytes: 100,
             compression_level: 6,
             algorithm: UnifiedCompressionAlgorithm::Gzip,
@@ -3296,8 +3304,8 @@ mod compression_tests {
         let records = vec![create_test_record("brotli_test", 256)];
 
         let config = BlockCompressionConfig {
-            enable_vector_compression: false,  // Keep vectors uncompressed for this test
-            enable_metadata_compression: false,  // Keep metadata uncompressed for this test
+            enable_vector_compression: false, // Keep vectors uncompressed for this test
+            enable_metadata_compression: false, // Keep metadata uncompressed for this test
             compression_threshold_bytes: 100,
             compression_level: 4,
             algorithm: UnifiedCompressionAlgorithm::Brotli,
@@ -3345,8 +3353,8 @@ mod compression_tests {
 
         for (algo, expected_marker, level) in algorithms {
             let config = BlockCompressionConfig {
-                enable_vector_compression: false,  // Disable to avoid vector decompression complexity
-                enable_metadata_compression: false,  // Disable to avoid metadata decompression complexity
+                enable_vector_compression: false, // Disable to avoid vector decompression complexity
+                enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
                 compression_threshold_bytes: 100,
                 compression_level: level,
                 algorithm: algo,
@@ -3383,8 +3391,8 @@ mod compression_tests {
         let config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::Zstd,
             compression_level: 3,
-            enable_vector_compression: false,  // Disable to avoid vector decompression complexity
-            enable_metadata_compression: false,  // Disable to avoid metadata decompression complexity
+            enable_vector_compression: false, // Disable to avoid vector decompression complexity
+            enable_metadata_compression: false, // Disable to avoid metadata decompression complexity
             compression_threshold_bytes: 10000, // High threshold
             dictionary_compression: false,
             vector_layout: VectorEncodingLayout::default(),
