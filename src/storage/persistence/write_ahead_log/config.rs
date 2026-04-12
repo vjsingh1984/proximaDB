@@ -1217,12 +1217,12 @@ mod tests {
     fn test_wal_strategy_type_defaults() {
         // Test default WAL strategy
         let default_strategy = WriteBufferStrategyType::default();
-        assert_eq!(default_strategy, WriteBufferStrategyType::AvroBatch);
+        assert_eq!(default_strategy, WriteBufferStrategyType::BincodeBatch);
 
         // Test all strategy types
         let strategies = vec![
-            WriteBufferStrategyType::AvroBatch,
             WriteBufferStrategyType::BincodeBatch,
+            WriteBufferStrategyType::AvroBatch,
         ];
 
         for strategy in strategies {

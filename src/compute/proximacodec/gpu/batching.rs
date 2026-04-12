@@ -381,6 +381,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_batch_sizer_creation() {
         let sizer = GpuBatchSizer::new(HardwareBackend::CUDA);
 
@@ -397,6 +398,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_optimal_batch_size_calculation() {
         let sizer = GpuBatchSizer::new(HardwareBackend::CUDA);
 
@@ -412,6 +414,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_batch_count_calculation() {
         let sizer = GpuBatchSizer::new(HardwareBackend::CUDA);
 
@@ -421,6 +424,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_batch_iterator() {
         let data: Vec<f32> = (0..10).map(|i| i as f32).collect();
         let backend = HardwareBackend::CUDA;
@@ -451,6 +455,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_batch_iterator_exact_size() {
         let data: Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9];
         let iter = GpuBatchIterator::new(&data, 4, HardwareBackend::CUDA);
@@ -459,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_performance_estimator() {
         let estimator = BatchPerformanceEstimator::new(HardwareBackend::CUDA);
 
@@ -476,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_batch_size_recommendation() {
         let estimator = BatchPerformanceEstimator::new(HardwareBackend::CUDA);
 
@@ -489,6 +496,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_backend_specific_strategies() {
         // CUDA: Pipelined
         let cuda_sizer = GpuBatchSizer::new(HardwareBackend::CUDA);

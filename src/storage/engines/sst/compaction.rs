@@ -2004,7 +2004,7 @@ mod tests {
 
         // Test tombstone ages
         let tombstone_cases = vec![
-            ("recent_tombstone", one_hour_ago - 1000, true), // Should be kept (< 1 hour)
+            ("recent_tombstone", one_hour_ago + 1000, true), // Should be kept (< 1 hour) - 1 second less than 1 hour old
             ("old_tombstone", two_hours_ago, false),         // Should be removed (> 1 hour)
             ("boundary_tombstone", current_time - (60 * 60 * 1000), false), // Exactly 1 hour (should be removed)
         ];

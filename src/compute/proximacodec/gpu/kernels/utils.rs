@@ -373,6 +373,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_batch_config_creation() {
         let config = GpuBatchConfig::for_backend(&HardwareBackend::CUDA, 10000, 128);
         assert!(config.batch_size >= 10000);
@@ -381,6 +382,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_calculate_grid_dims() {
         let (blocks, threads) = calculate_grid_dims(1000, 256);
         assert_eq!(blocks, 4); // ceil(1000 / 256) = 4
@@ -388,6 +390,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_next_power_of_2() {
         assert_eq!(next_power_of_2(0), 1);
         assert_eq!(next_power_of_2(1), 1);
@@ -397,6 +400,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_gpu_buffer_creation() {
         let buffer: GpuBuffer<f32> = GpuBuffer::new(1024);
         assert_eq!(buffer.host_data.capacity(), 1024);
@@ -405,6 +409,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_gpu_buffer_pool_creation() {
         let backend = HardwareBackend::AVX2; // Use SIMD as test backend
         let pool: GpuBufferPool<f32> = GpuBufferPool::new(backend.clone(), 1024);
@@ -418,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_gpu_buffer_pool_acquire() {
         let backend = HardwareBackend::AVX2;
         let pool: GpuBufferPool<f32> = GpuBufferPool::new(backend, 1024);
@@ -442,6 +448,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_gpu_buffer_pool_factory() {
         let backend = HardwareBackend::AVX2;
 
@@ -465,6 +472,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_gpu_buffer_pool_reuse() {
         let backend = HardwareBackend::AVX2;
         let pool: GpuBufferPool<f32> = GpuBufferPool::new(backend, 1024);

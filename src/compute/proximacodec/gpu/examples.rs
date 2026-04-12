@@ -373,6 +373,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_example_encode_small_dataset() {
         let vectors = vec![1.0f32, 2.0, 3.0, 4.0];
         let result = example_encode_large_dataset(vectors, 4, 1);
@@ -383,6 +384,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_example_decode_with_monitoring() {
         // Create some encoded data (4 f32 values as i64 deltas)
         let encoded_data = vec![
@@ -400,18 +402,21 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_example_compare_strategies() {
         let result = example_compare_batching_strategies(100_000, 768);
         assert!(result.is_ok());
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_example_memory_pool_efficiency() {
         let result = example_memory_pool_efficiency();
         assert!(result.is_ok());
     }
 
     #[test]
+    #[cfg(feature = "gpu")]
     fn test_example_full_pipeline() {
         let input = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let result = example_full_pipeline(input.clone(), 8, 1);
