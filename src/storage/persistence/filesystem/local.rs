@@ -1570,6 +1570,9 @@ mod tests {
         }
         fs.write(test_path, test_data, None).await.unwrap();
 
+        // Yield to ensure async write completes before sync
+        tokio::task::yield_now().await;
+
         // Call sync_file - should succeed
         fs.sync_file(test_path).await.unwrap();
 
