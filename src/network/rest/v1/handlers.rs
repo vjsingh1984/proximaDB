@@ -384,10 +384,7 @@ pub async fn collection_operation(
     if let Some(ref config) = request.collection_config {
         info!(
             "🔍 DEBUG CollectionConfig: name={}, dimension={}, distance_metric={:?}, storage_engine={:?}",
-            config.name,
-            config.dimension,
-            config.distance_metric,
-            config.storage_engine
+            config.name, config.dimension, config.distance_metric, config.storage_engine
         );
     }
 

@@ -20,7 +20,10 @@ pub fn apply_collection_config_defaults(config: &mut CollectionConfig) {
         tracing::debug!("🔧 Applying default distance_metric: COSINE (1)");
         config.distance_metric = Some(DistanceMetric::Cosine as i32);
     } else {
-        tracing::debug!("✅ distance_metric already set: {:?}", config.distance_metric);
+        tracing::debug!(
+            "✅ distance_metric already set: {:?}",
+            config.distance_metric
+        );
     }
 
     // Default storage_engine to SST (primary production engine)
