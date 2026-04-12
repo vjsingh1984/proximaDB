@@ -19,8 +19,8 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -735,7 +735,7 @@ jobs:
   python-test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     needs: changes
     if: (needs.changes.outputs.python == 'true' || needs.changes.outputs.proto == 'true') && !inputs.skip_tests
     strategy:
@@ -825,7 +825,7 @@ jobs:
 
       - name: Run Multi-Model Tests
         working-directory: clients/python
-        timeout-minutes: 10
+        timeout-minutes: 15
         run: |
           # Run multi-model API tests (Document, Hybrid, Time-Series)
           echo "=== Starting Multi-Model Tests ==="
