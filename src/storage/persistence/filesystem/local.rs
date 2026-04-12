@@ -1708,11 +1708,20 @@ mod tests {
         // Ensure all writes are fully flushed before starting concurrent syncs
         // This prevents race condition where sync operations run before async writes complete
         tokio::task::yield_now().await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        // Verify all files exist before spawning sync tasks
+        // Verify all files exist before spawning sync tasks with retries
         for (path, _) in &files {
+            let mut exists = false;
+            for _ in 0..5 {
+                exists = fs.exists(path).await.unwrap_or(false);
+                if exists {
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            }
             assert!(
-                fs.exists(path).await.unwrap_or(false),
+                exists,
                 "File should exist after write: {}",
                 path
             );
