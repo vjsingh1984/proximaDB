@@ -380,6 +380,17 @@ pub async fn collection_operation(
         }
     };
 
+    // DEBUG: Log collection config values to diagnose bug
+    if let Some(ref config) = request.collection_config {
+        info!(
+            "🔍 DEBUG CollectionConfig: name={}, dimension={}, distance_metric={:?}, storage_engine={:?}",
+            config.name,
+            config.dimension,
+            config.distance_metric,
+            config.storage_engine
+        );
+    }
+
     info!(
         "Collection operation: {:?} for collection: {:?}",
         operation, request.collection_id
