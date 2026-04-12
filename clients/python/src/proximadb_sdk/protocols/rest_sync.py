@@ -804,13 +804,14 @@ class ProximaDBClient:
 
             # Map Proto enum integers to string values for Pydantic
             # Server returns Proto enums as integers
+            # NOTE: These MUST match the proto enum values from proximadb.proto
+            # DistanceMetric: COSINE=1, EUCLIDEAN=2, DOT_PRODUCT=3, HAMMING=4, MANHATTAN=5, JACCARD=6, ...
             DISTANCE_METRIC_MAP = {
-                0: "cosine",
                 1: "cosine",
                 2: "euclidean",
                 3: "dot_product",
-                4: "manhattan",
-                5: "hamming",
+                4: "hamming",
+                5: "manhattan",
                 6: "jaccard",
                 7: "chebyshev",
                 8: "canberra",
@@ -821,7 +822,8 @@ class ProximaDBClient:
                 13: "custom",
             }
             STORAGE_ENGINE_MAP = {
-                0: "viper",
+                # NOTE: These MUST match the proto enum values from proximadb.proto
+                # StorageEngine: VIPER=1, SST=2, NOVA=3, HELIX=4, SWIFT=5, RAPTOR=6, MMAP=7, HYBRID=8
                 1: "viper",
                 2: "sst",
                 3: "nova",
@@ -1086,7 +1088,8 @@ class ProximaDBClient:
                 13: "custom",
             }
             STORAGE_ENGINE_MAP = {
-                0: "viper",
+                # NOTE: These MUST match the proto enum values from proximadb.proto
+                # StorageEngine: VIPER=1, SST=2, NOVA=3, HELIX=4, SWIFT=5, RAPTOR=6, MMAP=7, HYBRID=8
                 1: "viper",
                 2: "sst",
                 3: "nova",
