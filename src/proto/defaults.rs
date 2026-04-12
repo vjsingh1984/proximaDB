@@ -7,9 +7,9 @@ use super::proximadb_v1::*;
 
 /// Apply smart defaults to CollectionConfig based on proto comments
 pub fn apply_collection_config_defaults(config: &mut CollectionConfig) {
-    // DEBUG: Log incoming values before applying defaults
-    tracing::debug!(
-        "🔍 DEBUG apply_collection_config_defaults: name={}, distance_metric={:?}, storage_engine={:?}",
+    // INFO: Log incoming values before applying defaults (will be visible in CI)
+    tracing::info!(
+        "🔍 INFO defaults BEFORE: name={}, distance_metric={:?}, storage_engine={:?}",
         config.name,
         config.distance_metric,
         config.storage_engine
@@ -17,10 +17,10 @@ pub fn apply_collection_config_defaults(config: &mut CollectionConfig) {
 
     // Default distance_metric to COSINE
     if config.distance_metric.is_none() {
-        tracing::debug!("🔧 Applying default distance_metric: COSINE (1)");
+        tracing::info!("🔧 Applying default distance_metric: COSINE (1)");
         config.distance_metric = Some(DistanceMetric::Cosine as i32);
     } else {
-        tracing::debug!(
+        tracing::info!(
             "✅ distance_metric already set: {:?}",
             config.distance_metric
         );
@@ -28,10 +28,10 @@ pub fn apply_collection_config_defaults(config: &mut CollectionConfig) {
 
     // Default storage_engine to SST (primary production engine)
     if config.storage_engine.is_none() {
-        tracing::debug!("🔧 Applying default storage_engine: SST (2)");
+        tracing::info!("🔧 Applying default storage_engine: SST (2)");
         config.storage_engine = Some(StorageEngine::Sst as i32);
     } else {
-        tracing::debug!("✅ storage_engine already set: {:?}", config.storage_engine);
+        tracing::info!("✅ storage_engine already set: {:?}", config.storage_engine);
     }
 
     // Default primary_index to empty string (no primary index)
@@ -43,6 +43,14 @@ pub fn apply_collection_config_defaults(config: &mut CollectionConfig) {
     if config.auto_index_selection.is_none() {
         config.auto_index_selection = Some(true);
     }
+
+    // INFO: Log final values after applying defaults
+    tracing::info!(
+        "🔍 INFO defaults AFTER: name={}, distance_metric={:?}, storage_engine={:?}",
+        config.name,
+        config.distance_metric,
+        config.storage_engine
+    );
 }
 
 /// Apply smart defaults to IndexConfig

@@ -1238,8 +1238,20 @@ impl UnifiedHandlers {
             .collection_config
             .context("Missing collection config")?;
 
+        // INFO: Log incoming config BEFORE applying defaults
+        info!(
+            "⚠️ INFO BEFORE DEFAULTS: name={}, distance_metric={:?}, storage_engine={:?}",
+            config.name, config.distance_metric, config.storage_engine
+        );
+
         // Apply smart defaults at API boundary
         crate::proto::defaults::apply_collection_config_defaults(&mut config);
+
+        // INFO: Log config AFTER applying defaults
+        info!(
+            "✅ INFO AFTER DEFAULTS: name={}, distance_metric={:?}, storage_engine={:?}",
+            config.name, config.distance_metric, config.storage_engine
+        );
 
         let response = match tenant_context {
             Some(tenant_ctx) => {
