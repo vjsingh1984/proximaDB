@@ -1662,6 +1662,9 @@ mod tests {
         // Append more data
         fs.append(test_path, b" - Appended data").await.unwrap();
 
+        // Yield to ensure async operations complete
+        tokio::task::yield_now().await;
+
         // Sync after append
         fs.sync_file(test_path).await.unwrap();
 
