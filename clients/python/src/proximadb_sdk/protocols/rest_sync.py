@@ -600,6 +600,10 @@ class ProximaDBClient:
             "angular": 7,
             "chebyshev": 8,
             "canberra": 9,
+            "minkowski": 10,
+            "bray_curtis": 11,
+            "hellinger": 12,
+            "custom": 13,
         }
         STORAGE_ENGINE_MAP = {
             "viper": 1,

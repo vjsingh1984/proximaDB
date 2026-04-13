@@ -243,7 +243,15 @@ class TestComprehensiveBenchmark:
         # Check top results for expected terms
         found_terms = set()
         for i, result in enumerate(results[:top_k]):
-            text = result.get("metadata", {}).get("text_preview", "").lower()
+            # Handle both dict and SearchResult objects
+            if hasattr(result, 'model_dump'):  # Pydantic model
+                metadata = result.metadata if result.metadata else {}
+            elif isinstance(result, dict):  # Regular dict
+                metadata = result.get("metadata", {})
+            else:
+                metadata = {}
+
+            text = metadata.get("text_preview", "").lower()
             for term in expected_terms:
                 if term.lower() in text:
                     found_terms.add(term)
