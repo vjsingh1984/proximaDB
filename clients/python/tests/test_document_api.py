@@ -27,9 +27,9 @@ from proximadb_sdk.document import (
 
 
 @pytest.fixture
-def client():
+def client(embedded_rest_client):
     """Create a ProximaDB client for testing."""
-    return ProximaDBClient(url="http://localhost:5678")
+    return embedded_rest_client
 
 
 @pytest.fixture

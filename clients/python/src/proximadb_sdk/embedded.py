@@ -718,6 +718,16 @@ class EmbeddedProximaDB:
                 if shutil.which(path):
                     return path
 
+        # Debug logging
+        import sys
+        print(f"[DEBUG] __file__ = {__file__}")
+        print(f"[DEBUG] Search paths checked:")
+        for i, path in enumerate(search_paths):
+            if isinstance(path, Path):
+                print(f"  {i}. {path} (exists: {path.exists()})")
+            else:
+                print(f"  {i}. {path} (in PATH: {shutil.which(path) is not None})")
+
         raise RuntimeError(
             "proximadb-server binary not found. "
             "Please build with `cargo build --release` or install via pip."
@@ -1154,6 +1164,500 @@ prefetch_budget = 4
                 return response.status_code == 200
         except Exception:
             return False
+
+    # =============================================================================
+    # Multi-Model API: Document API
+    # =============================================================================
+
+    async def create_document_collection(
+        self,
+        name: str,
+        indexes: Optional[List[Dict[str, Any]]] = None,
+        enable_fulltext: bool = False,
+        fulltext_paths: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Create a document collection.
+
+        Args:
+            name: Collection name
+            indexes: List of index definitions (path, type)
+            enable_fulltext: Enable full-text search
+            fulltext_paths: JSON paths for full-text indexing
+
+        Returns:
+            Creation result with collection_id
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        payload = {
+            "name": name,
+            "indexes": indexes or [],
+            "enable_fulltext": enable_fulltext,
+        }
+        if fulltext_paths:
+            payload["fulltext_paths"] = fulltext_paths
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.rest_url}/api/v1/documents/collections",
+                json=payload,
+                timeout=30.0,
+            )
+            return response.json()
+
+    async def insert_document(
+        self,
+        collection_name: str,
+        document: Dict[str, Any],
+        id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Insert a document into a collection.
+
+        Args:
+            collection_name: Collection name
+            document: Document data (JSON-serializable dict)
+            id: Optional document ID
+
+        Returns:
+            Insert result with document ID and version
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        payload = {"document": document}
+        if id:
+            payload["id"] = id
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents",
+                json=payload,
+                timeout=30.0,
+            )
+            return response.json()
+
+    async def get_document(
+        self,
+        collection_name: str,
+        doc_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a document by ID.
+
+        Args:
+            collection_name: Collection name
+            doc_id: Document ID
+
+        Returns:
+            Document data or None if not found
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                timeout=10.0,
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            return None
+
+    async def query_documents(
+        self,
+        collection_name: str,
+        filter: Optional[Dict[str, Any]] = None,
+        projection: Optional[List[str]] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Query documents in a collection.
+
+        Args:
+            collection_name: Collection name
+            filter: Filter criteria (dict)
+            projection: Fields to return
+            limit: Max results
+            offset: Result offset
+
+        Returns:
+            Query results with documents list
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        params: Dict[str, Any] = {"limit": limit}
+        if offset:
+            params["skip"] = offset
+        if filter:
+            params["filter"] = filter if isinstance(filter, str) else str(filter)
+        if projection:
+            params["projection"] = ",".join(projection)
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents",
+                params=params,
+                timeout=30.0,
+            )
+            return response.json()
+
+    async def update_document(
+        self,
+        collection_name: str,
+        doc_id: str,
+        updates: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Update a document.
+
+        Args:
+            collection_name: Collection name
+            doc_id: Document ID
+            updates: List of update operations (SET, PUSH, PULL, etc.)
+
+        Returns:
+            Update result with new version
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        payload = {"updates": updates}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.patch(
+                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                json=payload,
+                timeout=30.0,
+            )
+            return response.json()
+
+    async def delete_document(
+        self,
+        collection_name: str,
+        doc_id: str,
+    ) -> bool:
+        """Delete a document.
+
+        Args:
+            collection_name: Collection name
+            doc_id: Document ID
+
+        Returns:
+            True if deleted successfully
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{self.rest_url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                timeout=30.0,
+            )
+            return response.status_code in (200, 204)
+
+    async def delete_document_collection(
+        self,
+        collection_name: str,
+    ) -> bool:
+        """Delete a document collection.
+
+        Args:
+            collection_name: Collection name
+
+        Returns:
+            True if deleted successfully
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{self.rest_url}/api/v1/documents/collections/{collection_name}",
+                timeout=30.0,
+            )
+            return response.status_code in (200, 204)
+
+    # =============================================================================
+    # Multi-Model API: Time Series API
+    # =============================================================================
+
+    async def create_timeseries_collection(
+        self,
+        name: str,
+        timestamp_column: str = "timestamp",
+        value_columns: Optional[List[Dict[str, Any]]] = None,
+        tag_columns: Optional[List[str]] = None,
+        retention_ms: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Create a time-series collection.
+
+        Args:
+            name: Collection name
+            timestamp_column: Name of timestamp column
+            value_columns: List of value column definitions (name, data_type, aggregation)
+            tag_columns: List of tag column names
+            retention_ms: Data retention period in milliseconds
+
+        Returns:
+            Creation result with collection_id
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        payload = {
+            "name": name,
+            "timestamp_column": timestamp_column,
+            "value_columns": value_columns or [],
+            "tag_columns": tag_columns or [],
+        }
+        if retention_ms:
+            payload["retention_ms"] = retention_ms
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.rest_url}/api/v1/timeseries/collections",
+                json=payload,
+                timeout=30.0,
+            )
+            return response.json()
+
+    async def ingest_timeseries(
+        self,
+        collection_name: str,
+        points: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Ingest time-series data points.
+
+        Args:
+            collection_name: Collection name
+            points: List of data points with timestamp, values, and tags
+
+        Returns:
+            Ingest result with counts
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        payload = {
+            "collection_id": collection_name,
+            "points": points,
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.rest_url}/api/v1/timeseries/{collection_name}/ingest",
+                json=payload,
+                timeout=60.0,
+            )
+            return response.json()
+
+    async def query_timeseries(
+        self,
+        collection_name: str,
+        start_time: str,
+        end_time: str,
+        aggregation: Optional[str] = None,
+        bucket_ms: Optional[int] = None,
+        tag_filters: Optional[Dict[str, Any]] = None,
+        limit: int = 1000,
+    ) -> Dict[str, Any]:
+        """Query time-series data.
+
+        Args:
+            collection_name: Collection name
+            start_time: Start time (ISO format)
+            end_time: End time (ISO format)
+            aggregation: Aggregation type (AVG, SUM, MIN, MAX, COUNT, OHLC)
+            bucket_ms: Bucket size in milliseconds for aggregation
+            tag_filters: Tag filters
+            limit: Max results
+
+        Returns:
+            Query results with metrics/raw_points
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        payload = {
+            "collection_id": collection_name,
+            "start_time": start_time,
+            "end_time": end_time,
+            "limit": limit,
+        }
+        if aggregation:
+            payload["aggregation"] = aggregation
+        if bucket_ms:
+            payload["bucket_ms"] = bucket_ms
+        if tag_filters:
+            payload["tag_filters"] = tag_filters
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.rest_url}/api/v1/timeseries/{collection_name}/query",
+                json=payload,
+                timeout=30.0,
+            )
+            return response.json()
+
+    async def aggregate_timeseries(
+        self,
+        collection_name: str,
+        start_time: str,
+        end_time: str,
+        pipeline: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Aggregate time-series data with a pipeline.
+
+        Args:
+            collection_name: Collection name
+            start_time: Start time (ISO format)
+            end_time: End time (ISO format)
+            pipeline: Aggregation pipeline stages
+
+        Returns:
+            Aggregation results
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        payload = {
+            "collection_id": collection_name,
+            "start_time": start_time,
+            "end_time": end_time,
+            "pipeline": pipeline,
+        }
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.rest_url}/api/v1/timeseries/{collection_name}/aggregate",
+                json=payload,
+                timeout=60.0,
+            )
+            return response.json()
+
+    async def delete_timeseries_collection(
+        self,
+        collection_name: str,
+    ) -> bool:
+        """Delete a time-series collection.
+
+        Args:
+            collection_name: Collection name
+
+        Returns:
+            True if deleted successfully
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{self.rest_url}/api/v1/timeseries/collections/{collection_name}",
+                timeout=30.0,
+            )
+            return response.status_code in (200, 204)
+
+    # =============================================================================
+    # Multi-Model API: Hybrid Search API
+    # =============================================================================
+
+    async def hybrid_search(
+        self,
+        vector_collection: str,
+        query_vector: List[float],
+        text_query: Optional[str] = None,
+        fusion_strategy: str = "rrf",
+        top_k: int = 10,
+        filters: Optional[Dict[str, Any]] = None,
+        fusion_params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Perform hybrid search combining vector and text search.
+
+        Args:
+            vector_collection: Vector collection name
+            query_vector: Query embedding vector
+            text_query: Optional text query for BM25
+            fusion_strategy: Fusion strategy (rrf, weighted_linear, cascade, etc.)
+            top_k: Number of results
+            filters: Optional metadata filters
+            fusion_params: Optional fusion strategy parameters
+
+        Returns:
+            Hybrid search results with fused scores
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        payload = {
+            "vector_collection": vector_collection,
+            "query_vector": query_vector,
+            "fusion_strategy": fusion_strategy,
+            "top_k": top_k,
+        }
+        if text_query:
+            payload["text_query"] = text_query
+        if filters:
+            payload["filters"] = self._convert_metadata(filters)
+        if fusion_params:
+            payload["fusion_params"] = fusion_params
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.rest_url}/api/v1/hybrid/search",
+                json=payload,
+                timeout=30.0,
+            )
+            return response.json()
+
+    async def list_fusion_strategies(self) -> List[Dict[str, Any]]:
+        """List available fusion strategies for hybrid search.
+
+        Returns:
+            List of fusion strategy definitions
+        """
+        if not self._started:
+            await self.start()
+
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.rest_url}/api/v1/hybrid/strategies",
+                timeout=10.0,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("strategies", [])
+
+        return []
 
     async def execute_multi_modal_query(
         self,

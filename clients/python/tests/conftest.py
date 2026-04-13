@@ -133,7 +133,7 @@ def embedded_db(embedded_db_config):
             rest_port=embedded_db_config["rest_port"],
             grpc_port=embedded_db_config["grpc_port"],
         )
-        db = EmbeddedProximaDB(config)
+        db = EmbeddedProximaDB(config=config)
 
         # Start database
         loop = asyncio.new_event_loop()

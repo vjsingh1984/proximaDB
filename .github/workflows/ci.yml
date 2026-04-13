@@ -827,12 +827,13 @@ jobs:
         working-directory: clients/python
         timeout-minutes: 15
         run: |
-          # TEMPORARILY SKIP Multi-Model API tests (Document, Hybrid, Time-Series)
-          # These tests require a running server which is not available in CI
-          # Re-enable after implementing proper server startup or mocking
-          echo "=== Skipping Multi-Model Tests (require server infrastructure) ==="
-          echo "Tests skipped: test_document_api.py, test_hybrid_api.py, test_timeseries_api.py"
-          exit 0
+          # Run Multi-Model API tests (Document, Hybrid, Time-Series)
+          # These tests now use the embedded database fixture which starts
+          # a local server for testing
+          echo "=== Running Multi-Model Tests (embedded mode) ==="
+          pytest tests/test_document_api.py -v --tb=short
+          pytest tests/test_hybrid_api.py -v --tb=short
+          pytest tests/test_timeseries_api.py -v --tb=short
 
       - name: Test Summary
         if: always()
