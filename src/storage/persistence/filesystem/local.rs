@@ -1678,6 +1678,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_sync_operations() {
+        // Use a fixture-based approach with proper async synchronization
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().to_str().unwrap();
 
@@ -1689,115 +1690,88 @@ mod tests {
 
         let fs = Arc::new(LocalFileSystem::new(config).await.unwrap());
 
-        // Write multiple files
-        let files = vec![
+        // Test data: file paths and their contents
+        let test_files = vec![
             ("file1.dat", b"Data 1"),
             ("file2.dat", b"Data 2"),
             ("file3.dat", b"Data 3"),
         ];
 
-        // Clean up and write files sequentially to avoid race conditions
-        for (path, data) in &files {
-            // Clean up if file exists from previous run
+        // Setup phase: Write all files synchronously with verification
+        // This ensures all files exist and are readable before concurrent operations
+        for (path, data) in &test_files {
+            // Clean up any existing file
             if fs.exists(path).await.unwrap_or(false) {
                 fs.delete(path).await.unwrap();
             }
+
+            // Write and immediately verify
             fs.write(path, &data[..], None).await.unwrap();
+
+            // Synchronously verify the write was successful
+            let read_data = fs.read(path).await.unwrap();
+            assert_eq!(&read_data, data, "Initial write verification failed for {}", path);
         }
 
-        // Ensure all writes are fully flushed before starting concurrent syncs
-        // This prevents race condition where sync operations run before async writes complete
-        tokio::task::yield_now().await;
-
-        // Increased wait time to ensure async writes fully flush to disk on all systems
-        // 50ms provides sufficient buffer for slower systems and high load conditions
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        // Perform a global sync to ensure all data is flushed before concurrent operations
-        // This eliminates race conditions from buffering at multiple levels
-        if let Err(e) = fs.sync_all().await {
-            // Log but don't fail - some file systems don't support global sync
-            eprintln!("Warning: Global sync failed (may be unsupported): {}", e);
-        }
-
-        // Verify all files exist and are readable before spawning sync tasks
-        for (path, _) in &files {
-            let mut exists = false;
-            // Increased retry count and wait time for better reliability
-            for attempt in 0..10 {
-                exists = fs.exists(path).await.unwrap_or(false);
-                if exists {
-                    // Verify file is actually readable by attempting to read it
-                    if fs.read(path).await.is_ok() {
-                        break;
-                    }
-                }
-                // Exponential backoff for retries: 10ms, 20ms, 40ms, etc.
-                let backoff_ms = 10 * (1 << attempt.min(5));
-                tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
-            }
-            assert!(
-                exists,
-                "File should exist and be readable after write: {}",
-                path
-            );
-        }
-
-        // Sync all files concurrently with improved error handling and retries
+        // Use a barrier to ensure all writes are flushed before concurrent syncs
+        // This is more reliable than sleep-based approaches
+        let barrier = Arc::new(std::sync::Barrier::new(test_files.len() + 1));
         let mut handles = vec![];
-        for (path, _) in &files {
-            let fs_clone = Arc::clone(&fs);
-            let path = path.to_string();
-            handles.push(tokio::spawn(async move {
-                // Retry sync operation with timeout for better reliability
-                let mut attempt = 0;
-                let max_attempts = 3;
 
-                loop {
-                    match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(5),
-                        fs_clone.sync_file(&path),
-                    )
-                    .await
-                    {
-                        Ok(Ok(())) => return Ok(()),
-                        Ok(Err(e)) => {
-                            attempt += 1;
-                            if attempt >= max_attempts {
-                                return Err(e);
-                            }
-                            // Brief backoff before retry
-                            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                        }
-                        Err(_) => {
-                            // Timeout - retry with increased backoff
-                            attempt += 1;
-                            if attempt >= max_attempts {
-                                return Err(std::io::Error::new(
-                                    std::io::ErrorKind::TimedOut,
-                                    "Sync operation timed out after retries",
-                                ));
-                            }
-                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                        }
-                    }
+        // Spawn concurrent sync operations with barrier synchronization
+        for (path, _) in &test_files {
+            let fs_clone = Arc::clone(&fs);
+            let barrier_clone = Arc::clone(&barrier);
+            let path = path.to_string();
+
+            handles.push(tokio::spawn(async move {
+                // Wait for all tasks to be ready before starting
+                barrier_clone.wait();
+
+                // Perform sync operation with simple error handling
+                // No retries or timeouts - let the test fail if there's a real issue
+                match fs_clone.sync_file(&path).await {
+                    Ok(()) => Ok(path),
+                    Err(e) => Err((path, e)),
                 }
             }));
         }
 
-        // Wait for all syncs to complete with better error reporting
-        for (i, handle) in handles.into_iter().enumerate() {
+        // Wait for all tasks to be ready, then release the barrier
+        barrier.wait();
+
+        // Collect results with clear error messages
+        let mut results = vec![];
+        for handle in handles {
             match handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => panic!("Sync failed for file {}: {}", files[i].0, e),
-                Err(e) => panic!("Sync task panicked for file {}: {}", files[i].0, e),
+                Ok(Ok(path)) => results.push((path, true)),
+                Ok(Err((path, e))) => {
+                    eprintln!("Sync failed for {}: {}", path, e);
+                    results.push((path, false));
+                }
+                Err(e) => {
+                    eprintln!("Sync task panicked: {}", e);
+                    results.push(("unknown".to_string(), false));
+                }
             }
         }
 
-        // Verify all data
-        for (path, expected_data) in &files {
+        // Assert with clear, stable error messages
+        let failed_syncs: Vec<_> = results.into_iter().filter(|(_, success)| !success).collect();
+        assert!(
+            failed_syncs.is_empty(),
+            "Sync operations failed for files: {:?}",
+            failed_syncs.iter().map(|(path, _)| path).collect::<Vec<_>>()
+        );
+
+        // Final verification: Ensure all data is intact after concurrent syncs
+        for (path, expected_data) in &test_files {
             let read_data = fs.read(path).await.unwrap();
-            assert_eq!(&read_data, expected_data);
+            assert_eq!(
+                &read_data, expected_data,
+                "Data verification failed after concurrent sync for {}",
+                path
+            );
         }
     }
 }
