@@ -372,29 +372,107 @@ pub async fn collection_operation(
     })?;
 
     // WORKAROUND: Fix enum values that were incorrectly deserialized
-    // The prost-derived Deserialize treats enums as strings instead of integers,
-    // causing values like 5 (MANHATTAN) to default to 1 (COSINE)
+    // The prost-derived Deserialize can't handle string enum values from Python SDK
+    // Python SDK sends: "manhattan", "viper" (strings)
+    // Server expects: 5, 1 (integers per prost-generated proto)
     if let Some(ref mut config) = request.collection_config {
-        // Read the raw JSON values to get the correct integer values
         if let Some(obj) = value.as_object() {
             if let Some(config_obj) = obj.get("collection_config") {
                 if let Some(config_inner) = config_obj.as_object() {
-                    // Fix distance_metric if present
+                    // Fix distance_metric if present (handle both string and int)
                     if let Some(dm_value) = config_inner.get("distance_metric") {
-                        if let Some(dm_int) = dm_value.as_i64() {
-                            if dm_int != config.distance_metric.unwrap_or(0) as i64 {
-                                info!("🔧 WORKAROUND: Fixing distance_metric from {:?} to {}", config.distance_metric, dm_int);
-                                config.distance_metric = Some(dm_int as i32);
+                        let correct_dm = if let Some(dm_str) = dm_value.as_str() {
+                            // Python SDK sends string values - map to integers
+                            match dm_str {
+                                "unspecified" => 0,
+                                "cosine" => 1,
+                                "euclidean" => 2,
+                                "dot_product" => 3,
+                                "hamming" => 4,
+                                "manhattan" => 5,
+                                "jaccard" => 6,
+                                "chebyshev" => 7,
+                                "canberra" => 8,
+                                "minkowski" => 9,
+                                "angular" => 10,
+                                "bray_curtis" => 11,
+                                "hellinger" => 12,
+                                "custom" => 13,
+                                _ => {
+                                    info!("⚠️ Unknown distance_metric string: {}", dm_str);
+                                    return;
+                                }
                             }
+                        } else if let Some(dm_int) = dm_value.as_i64() {
+                            dm_int as i32
+                        } else {
+                            return;
+                        };
+
+                        if correct_dm != config.distance_metric.unwrap_or(0) {
+                            info!("🔧 WORKAROUND: Fixing distance_metric from {:?} to {}", config.distance_metric, correct_dm);
+                            config.distance_metric = Some(correct_dm);
                         }
                     }
-                    // Fix storage_engine if present
+
+                    // Fix storage_engine if present (handle both string and int)
                     if let Some(se_value) = config_inner.get("storage_engine") {
-                        if let Some(se_int) = se_value.as_i64() {
-                            if se_int != config.storage_engine.unwrap_or(0) as i64 {
-                                info!("🔧 WORKAROUND: Fixing storage_engine from {:?} to {}", config.storage_engine, se_int);
-                                config.storage_engine = Some(se_int as i32);
+                        let correct_se = if let Some(se_str) = se_value.as_str() {
+                            // Python SDK sends string values - map to integers
+                            match se_str {
+                                "unspecified" => 0,
+                                "sst" => 1,
+                                "helix" => 2,
+                                "viper" => 3,
+                                "swift" => 4,
+                                "nova" => 5,
+                                "raptor" => 6,
+                                "mmap" => 7,
+                                "hybrid" => 8,
+                                _ => {
+                                    info!("⚠️ Unknown storage_engine string: {}", se_str);
+                                    return;
+                                }
                             }
+                        } else if let Some(se_int) = se_value.as_i64() {
+                            se_int as i32
+                        } else {
+                            return;
+                        };
+
+                        if correct_se != config.storage_engine.unwrap_or(0) {
+                            info!("🔧 WORKAROUND: Fixing storage_engine from {:?} to {}", config.storage_engine, correct_se);
+                            config.storage_engine = Some(correct_se);
+                        }
+                    }
+
+                    // Fix primary_indexing_algorithm if present (handle both string and int)
+                    if let Some(algo_value) = config_inner.get("primary_indexing_algorithm") {
+                        let correct_algo = if let Some(algo_str) = algo_value.as_str() {
+                            // Python SDK sends string values - map to integers
+                            match algo_str {
+                                "unspecified" => 0,
+                                "hnsw" => 1,
+                                "ivf" => 2,
+                                "pq" => 3,
+                                "flat" => 4,
+                                "annoy" => 5,
+                                "lsh" => 6,
+                                "diskann" => 7,
+                                _ => {
+                                    info!("⚠️ Unknown indexing_algorithm string: {}", algo_str);
+                                    return;
+                                }
+                            }
+                        } else if let Some(algo_int) = algo_value.as_i64() {
+                            algo_int as i32
+                        } else {
+                            return;
+                        };
+
+                        if correct_algo != config.primary_indexing_algorithm.unwrap_or(0) {
+                            info!("🔧 WORKAROUND: Fixing primary_indexing_algorithm from {:?} to {}", config.primary_indexing_algorithm, correct_algo);
+                            config.primary_indexing_algorithm = Some(correct_algo);
                         }
                     }
                 }
