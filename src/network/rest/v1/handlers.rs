@@ -387,8 +387,9 @@ pub async fn collection_operation(
 
     // WORKAROUND: Fix enum values that were incorrectly deserialized
     // The prost-derived Deserialize can't handle string enum values from Python SDK
-    // Python SDK sends: "manhattan", "viper" (strings)
+    // Python SDK sends: "manhattan", "viper" (strings) or integer values
     // Server expects: 5, 1 (integers per prost-generated proto)
+    // CRITICAL: Always apply the enum values from the raw JSON, not the deserialized values
     if let Some(ref mut config) = request.collection_config {
         if let Some(obj) = value.as_object() {
             if let Some(config_obj) = obj.get("collection_config") {
@@ -423,17 +424,18 @@ pub async fn collection_operation(
                             }
                         } else if let Some(dm_int) = dm_value.as_i64() {
                             dm_int as i32
+                        } else if let Some(dm_uint) = dm_value.as_u64() {
+                            dm_uint as i32
                         } else {
                             1 // Default to COSINE
                         };
 
-                        if correct_dm != config.distance_metric.unwrap_or(0) {
-                            info!(
-                                "🔧 WORKAROUND: Fixing distance_metric from {:?} to {}",
-                                config.distance_metric, correct_dm
-                            );
-                            config.distance_metric = Some(correct_dm);
-                        }
+                        // ALWAYS apply the value from JSON, ignore deserialized value
+                        info!(
+                            "🔧 WORKAROUND: Setting distance_metric to {} (from JSON: {:?})",
+                            correct_dm, dm_value
+                        );
+                        config.distance_metric = Some(correct_dm);
                     }
 
                     // Fix storage_engine if present (handle both string and int)
@@ -465,17 +467,18 @@ pub async fn collection_operation(
                             }
                         } else if let Some(se_int) = se_value.as_i64() {
                             se_int as i32
+                        } else if let Some(se_uint) = se_value.as_u64() {
+                            se_uint as i32
                         } else {
                             2 // Default to SST
                         };
 
-                        if correct_se != config.storage_engine.unwrap_or(0) {
-                            info!(
-                                "🔧 WORKAROUND: Fixing storage_engine from {:?} to {}",
-                                config.storage_engine, correct_se
-                            );
-                            config.storage_engine = Some(correct_se);
-                        }
+                        // ALWAYS apply the value from JSON, ignore deserialized value
+                        info!(
+                            "🔧 WORKAROUND: Setting storage_engine to {} (from JSON: {:?})",
+                            correct_se, se_value
+                        );
+                        config.storage_engine = Some(correct_se);
                     }
                 }
             }
