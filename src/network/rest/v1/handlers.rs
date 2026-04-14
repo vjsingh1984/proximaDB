@@ -363,13 +363,52 @@ pub async fn collection_operation(
     );
 
     // Parse the JSON value into CollectionRequest
-    let request: CollectionRequest = serde_json::from_value(value.clone()).map_err(|e| {
+    let mut request: CollectionRequest = serde_json::from_value(value.clone()).map_err(|e| {
         error!(
             "🔴 REST API: Failed to parse CollectionRequest from payload: {:?}. Error: {}",
             value, e
         );
         ApiError::InvalidArgument(format!("Invalid request format: {}", e))
     })?;
+
+    // WORKAROUND: Fix enum values that were incorrectly deserialized
+    // The prost-derived Deserialize treats enums as strings instead of integers,
+    // causing values like 5 (MANHATTAN) to default to 1 (COSINE)
+    if let Some(ref mut config) = request.collection_config {
+        // Read the raw JSON values to get the correct integer values
+        if let Some(obj) = value.as_object() {
+            if let Some(config_obj) = obj.get("collection_config") {
+                if let Some(config_inner) = config_obj.as_object() {
+                    // Fix distance_metric if present
+                    if let Some(dm_value) = config_inner.get("distance_metric") {
+                        if let Some(dm_int) = dm_value.as_i64() {
+                            if dm_int != config.distance_metric.unwrap_or(0) as i64 {
+                                info!("🔧 WORKAROUND: Fixing distance_metric from {:?} to {}", config.distance_metric, dm_int);
+                                config.distance_metric = Some(dm_int as i32);
+                            }
+                        }
+                    }
+                    // Fix storage_engine if present
+                    if let Some(se_value) = config_inner.get("storage_engine") {
+                        if let Some(se_int) = se_value.as_i64() {
+                            if se_int != config.storage_engine.unwrap_or(0) as i64 {
+                                info!("🔧 WORKAROUND: Fixing storage_engine from {:?} to {}", config.storage_engine, se_int);
+                                config.storage_engine = Some(se_int as i32);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // DEBUG: Log collection config values to verify workaround
+    if let Some(ref config) = request.collection_config {
+        info!(
+            "🔍 DEBUG CollectionConfig: name={}, dimension={}, distance_metric={:?}, storage_engine={:?}",
+            config.name, config.dimension, config.distance_metric, config.storage_engine
+        );
+    }
 
     let operation = match CollectionOperation::try_from(request.operation) {
         Ok(op) => op,

@@ -548,13 +548,17 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
                             if distance_metric.is_some() {
                                 return Err(serde::de::Error::duplicate_field("distance_metric"));
                             }
-                            distance_metric = Some(map.next_value()?);
+                            let value: i32 = map.next_value()?;
+                            tracing::info!("🔍 Deserializing distance_metric: {}", value);
+                            distance_metric = Some(value);
                         }
                         Field::StorageEngine => {
                             if storage_engine.is_some() {
                                 return Err(serde::de::Error::duplicate_field("storage_engine"));
                             }
-                            storage_engine = Some(map.next_value()?);
+                            let value: i32 = map.next_value()?;
+                            tracing::info!("🔍 Deserializing storage_engine: {}", value);
+                            storage_engine = Some(value);
                         }
                         Field::Tags => {
                             if tags.is_some() {
@@ -574,8 +578,9 @@ impl<'de> Deserialize<'de> for crate::proto::proximadb_v1::CollectionConfig {
 
                 let name = name.ok_or_else(|| serde::de::Error::missing_field("name"))?;
                 let dimension = dimension.ok_or_else(|| serde::de::Error::missing_field("dimension"))?;
-                let distance_metric = distance_metric.ok_or_else(|| serde::de::Error::missing_field("distance_metric"))?;
-                let storage_engine = storage_engine.ok_or_else(|| serde::de::Error::missing_field("storage_engine"))?;
+                // distance_metric and storage_engine are optional in proto, use None if not provided
+                let distance_metric = distance_metric;
+                let storage_engine = storage_engine;
                 let tags = tags.unwrap_or_default();
 
                 Ok(crate::proto::proximadb_v1::CollectionConfig {
@@ -1562,5 +1567,152 @@ struct SearchVectorRecordDef {
     #[serde(default)]
     engine_stats: std::collections::HashMap<String, String>,
     index_path: Option<String>,
+}
+
+// Custom deserialization helper for CollectionConfig to handle prost enums correctly
+// Prost generates enums as Option<i32>, but the default Deserialize derive treats them as strings
+pub struct CollectionConfigDeserialize;
+
+impl CollectionConfigDeserialize {
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<crate::proto::proximadb_v1::CollectionConfig, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct CollectionConfigVisitor;
+
+        impl<'de> Visitor<'de> for CollectionConfigVisitor {
+            type Value = crate::proto::proximadb_v1::CollectionConfig;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct CollectionConfig")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: MapAccess<'de>,
+            {
+                use crate::proto::proximadb_v1::{
+                    CollectionConfig, FilterableColumnSpec, IndexConfig,
+                    QuantizationConfig, StorageConfig,
+                };
+
+                let mut name = None;
+                let mut dimension = None;
+                let mut distance_metric = None;
+                let mut storage_engine = None;
+                let mut tags = None;
+                let mut description = None;
+                let mut filterable_columns = None;
+                let mut index_configs = None;
+                let mut quantization = None;
+                let mut storage_config = None;
+                let mut primary_index = None;
+                let mut auto_index_selection = None;
+                let mut owner = None;
+                let mut replication_factor = None;
+                let mut enable_cross_region_replication = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        "name" => {
+                            name = Some(map.next_value()?);
+                        }
+                        "dimension" => {
+                            dimension = Some(map.next_value()?);
+                        }
+                        "distance_metric" => {
+                            // Handle both integer and string representations
+                            if let Some(value) = map.next_value::<Option<serde_json::Value>>()? {
+                                distance_metric = Some(if let Some(num) = value.as_i64() {
+                                    num as i32
+                                } else if let Some(s) = value.as_str() {
+                                    // If string, try to parse as integer
+                                    s.parse().unwrap_or(1) // Default to COSINE
+                                } else {
+                                    1 // Default to COSINE
+                                });
+                            }
+                        }
+                        "storage_engine" => {
+                            // Handle both integer and string representations
+                            if let Some(value) = map.next_value::<Option<serde_json::Value>>()? {
+                                storage_engine = Some(if let Some(num) = value.as_i64() {
+                                    num as i32
+                                } else if let Some(s) = value.as_str() {
+                                    // If string, try to parse as integer
+                                    s.parse().unwrap_or(2) // Default to SST
+                                } else {
+                                    2 // Default to SST
+                                });
+                            }
+                        }
+                        "tags" => {
+                            tags = Some(map.next_value().unwrap_or_default());
+                        }
+                        "description" => {
+                            description = map.next_value()?;
+                        }
+                        "filterable_columns" => {
+                            filterable_columns = Some(map.next_value().unwrap_or_default());
+                        }
+                        "index_configs" => {
+                            index_configs = Some(map.next_value().unwrap_or_default());
+                        }
+                        "quantization" => {
+                            quantization = map.next_value()?;
+                        }
+                        "storage_config" => {
+                            storage_config = map.next_value()?;
+                        }
+                        "primary_index" => {
+                            primary_index = map.next_value()?;
+                        }
+                        "auto_index_selection" => {
+                            auto_index_selection = map.next_value()?;
+                        }
+                        "owner" => {
+                            owner = map.next_value()?;
+                        }
+                        "replication_factor" => {
+                            replication_factor = map.next_value()?;
+                        }
+                        "enable_cross_region_replication" => {
+                            enable_cross_region_replication = map.next_value()?;
+                        }
+                        _ => {
+                            // Ignore unknown fields
+                            let _ = map.next_value::<serde::de::IgnoredAny>();
+                        }
+                    }
+                }
+
+                let name = name.ok_or_else(|| de::Error::missing_field("name"))?;
+                let dimension = dimension.ok_or_else(|| de::Error::missing_field("dimension"))?;
+
+                Ok(CollectionConfig {
+                    name,
+                    dimension,
+                    distance_metric,
+                    storage_engine,
+                    tags: tags.unwrap_or_default(),
+                    description,
+                    filterable_columns: filterable_columns.unwrap_or_default(),
+                    index_configs: index_configs.unwrap_or_default(),
+                    quantization,
+                    storage_config,
+                    primary_index,
+                    auto_index_selection,
+                    owner,
+                    replication_factor,
+                    enable_cross_region_replication,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(CollectionConfigVisitor)
+    }
 }
 
