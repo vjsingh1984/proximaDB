@@ -397,6 +397,7 @@ pub async fn collection_operation(
                     if let Some(dm_value) = config_inner.get("distance_metric") {
                         let correct_dm = if let Some(dm_str) = dm_value.as_str() {
                             // Python SDK sends string values - map to integers
+                            // Values MUST match proto/proximadb/v1/vector_types.proto
                             match dm_str {
                                 "unspecified" => 0,
                                 "cosine" => 1,
@@ -405,15 +406,18 @@ pub async fn collection_operation(
                                 "hamming" => 4,
                                 "manhattan" => 5,
                                 "jaccard" => 6,
-                                "chebyshev" => 7,
-                                "canberra" => 8,
-                                "minkowski" => 9,
-                                "angular" => 10,
+                                "angular" => 7,
+                                "chebyshev" => 8,
+                                "canberra" => 9,
+                                "minkowski" => 10,
                                 "bray_curtis" => 11,
                                 "hellinger" => 12,
                                 "custom" => 13,
                                 other => {
-                                    info!("⚠️ Unknown distance_metric string: {}, using default", other);
+                                    info!(
+                                        "⚠️ Unknown distance_metric string: {}, using default",
+                                        other
+                                    );
                                     1 // Default to COSINE
                                 }
                             }
@@ -424,7 +428,10 @@ pub async fn collection_operation(
                         };
 
                         if correct_dm != config.distance_metric.unwrap_or(0) {
-                            info!("🔧 WORKAROUND: Fixing distance_metric from {:?} to {}", config.distance_metric, correct_dm);
+                            info!(
+                                "🔧 WORKAROUND: Fixing distance_metric from {:?} to {}",
+                                config.distance_metric, correct_dm
+                            );
                             config.distance_metric = Some(correct_dm);
                         }
                     }
@@ -433,29 +440,40 @@ pub async fn collection_operation(
                     if let Some(se_value) = config_inner.get("storage_engine") {
                         let correct_se = if let Some(se_str) = se_value.as_str() {
                             // Python SDK sends string values - map to integers
+                            // Values MUST match proto/proximadb/v1/vector_types.proto
                             match se_str {
                                 "unspecified" => 0,
-                                "sst" => 1,
-                                "helix" => 2,
-                                "viper" => 3,
-                                "swift" => 4,
-                                "nova" => 5,
+                                "viper" => 1,
+                                "sst" => 2,
+                                "nova" => 3,
+                                "helix" => 4,
+                                "swift" => 5,
                                 "raptor" => 6,
                                 "mmap" => 7,
                                 "hybrid" => 8,
+                                "tst" => 9,
+                                "cedar" => 10,
+                                "titan" => 11,
+                                "chrono" => 12,
                                 other => {
-                                    info!("⚠️ Unknown storage_engine string: {}, using default", other);
-                                    1 // Default to SST
+                                    info!(
+                                        "⚠️ Unknown storage_engine string: {}, using default",
+                                        other
+                                    );
+                                    2 // Default to SST
                                 }
                             }
                         } else if let Some(se_int) = se_value.as_i64() {
                             se_int as i32
                         } else {
-                            1 // Default to SST
+                            2 // Default to SST
                         };
 
                         if correct_se != config.storage_engine.unwrap_or(0) {
-                            info!("🔧 WORKAROUND: Fixing storage_engine from {:?} to {}", config.storage_engine, correct_se);
+                            info!(
+                                "🔧 WORKAROUND: Fixing storage_engine from {:?} to {}",
+                                config.storage_engine, correct_se
+                            );
                             config.storage_engine = Some(correct_se);
                         }
                     }
