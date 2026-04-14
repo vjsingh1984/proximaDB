@@ -377,6 +377,16 @@ pub async fn collection_operation(
         ApiError::InvalidArgument(format!("Invalid request format: {}", e))
     })?;
 
+    // DEBUG: Check if collection_config exists after parsing
+    info!(
+        "🔍 DEBUG after parsing: collection_config is {}",
+        if request.collection_config.is_some() {
+            "Some"
+        } else {
+            "None"
+        }
+    );
+
     // DEBUG: Log parsed request config
     if let Some(ref config) = request.collection_config {
         info!(
@@ -391,12 +401,18 @@ pub async fn collection_operation(
     // Server expects: 5, 1 (integers per prost-generated proto)
     // CRITICAL: Always apply the enum values from the raw JSON, not the deserialized values
     if let Some(ref mut config) = request.collection_config {
-        info!("🔧 WORKAROUND: Applying enum fixes for collection '{}'", config.name);
+        info!(
+            "🔧 WORKAROUND: Applying enum fixes for collection '{}'",
+            config.name
+        );
 
         // Try multiple possible JSON paths that the Python SDK might use
         let possible_paths = [
             // Path 1: value.collection_config.distance_metric
-            value.get("collection_config").and_then(|v| v.as_object()).and_then(|cfg| cfg.get("distance_metric")),
+            value
+                .get("collection_config")
+                .and_then(|v| v.as_object())
+                .and_then(|cfg| cfg.get("distance_metric")),
             // Path 2: Direct value.distance_metric (if no wrapping)
             value.get("distance_metric"),
         ];
@@ -421,7 +437,10 @@ pub async fn collection_operation(
                     "hellinger" => 12,
                     "custom" => 13,
                     other => {
-                        info!("⚠️ Unknown distance_metric string: {}, using default", other);
+                        info!(
+                            "⚠️ Unknown distance_metric string: {}, using default",
+                            other
+                        );
                         1 // Default to COSINE
                     }
                 }
@@ -434,7 +453,10 @@ pub async fn collection_operation(
             };
 
             // ALWAYS apply the value from JSON, ignore deserialized value
-            info!("🔧 WORKAROUND: Setting distance_metric to {} (from JSON: {:?})", correct_dm, dm_value);
+            info!(
+                "🔧 WORKAROUND: Setting distance_metric to {} (from JSON: {:?})",
+                correct_dm, dm_value
+            );
             config.distance_metric = Some(correct_dm);
             break; // Use first valid path
         }
@@ -442,7 +464,10 @@ pub async fn collection_operation(
         // Try multiple possible JSON paths for storage_engine
         let possible_se_paths = [
             // Path 1: value.collection_config.storage_engine
-            value.get("collection_config").and_then(|v| v.as_object()).and_then(|cfg| cfg.get("storage_engine")),
+            value
+                .get("collection_config")
+                .and_then(|v| v.as_object())
+                .and_then(|cfg| cfg.get("storage_engine")),
             // Path 2: Direct value.storage_engine (if no wrapping)
             value.get("storage_engine"),
         ];
@@ -479,13 +504,18 @@ pub async fn collection_operation(
             };
 
             // ALWAYS apply the value from JSON, ignore deserialized value
-            info!("🔧 WORKAROUND: Setting storage_engine to {} (from JSON: {:?})", correct_se, se_value);
+            info!(
+                "🔧 WORKAROUND: Setting storage_engine to {} (from JSON: {:?})",
+                correct_se, se_value
+            );
             config.storage_engine = Some(correct_se);
             break; // Use first valid path
         }
 
-        info!("🔧 WORKAROUND: Final config values - distance_metric={:?}, storage_engine={:?}",
-              config.distance_metric, config.storage_engine);
+        info!(
+            "🔧 WORKAROUND: Final config values - distance_metric={:?}, storage_engine={:?}",
+            config.distance_metric, config.storage_engine
+        );
     }
 
     // DEBUG: Log collection config values to verify workaround
