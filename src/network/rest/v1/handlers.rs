@@ -398,15 +398,15 @@ pub async fn collection_operation(
                                 "bray_curtis" => 11,
                                 "hellinger" => 12,
                                 "custom" => 13,
-                                _ => {
-                                    info!("⚠️ Unknown distance_metric string: {}", dm_str);
-                                    return;
+                                other => {
+                                    info!("⚠️ Unknown distance_metric string: {}, using default", other);
+                                    1 // Default to COSINE
                                 }
                             }
                         } else if let Some(dm_int) = dm_value.as_i64() {
                             dm_int as i32
                         } else {
-                            return;
+                            1 // Default to COSINE
                         };
 
                         if correct_dm != config.distance_metric.unwrap_or(0) {
@@ -429,50 +429,20 @@ pub async fn collection_operation(
                                 "raptor" => 6,
                                 "mmap" => 7,
                                 "hybrid" => 8,
-                                _ => {
-                                    info!("⚠️ Unknown storage_engine string: {}", se_str);
-                                    return;
+                                other => {
+                                    info!("⚠️ Unknown storage_engine string: {}, using default", other);
+                                    1 // Default to SST
                                 }
                             }
                         } else if let Some(se_int) = se_value.as_i64() {
                             se_int as i32
                         } else {
-                            return;
+                            1 // Default to SST
                         };
 
                         if correct_se != config.storage_engine.unwrap_or(0) {
                             info!("🔧 WORKAROUND: Fixing storage_engine from {:?} to {}", config.storage_engine, correct_se);
                             config.storage_engine = Some(correct_se);
-                        }
-                    }
-
-                    // Fix primary_indexing_algorithm if present (handle both string and int)
-                    if let Some(algo_value) = config_inner.get("primary_indexing_algorithm") {
-                        let correct_algo = if let Some(algo_str) = algo_value.as_str() {
-                            // Python SDK sends string values - map to integers
-                            match algo_str {
-                                "unspecified" => 0,
-                                "hnsw" => 1,
-                                "ivf" => 2,
-                                "pq" => 3,
-                                "flat" => 4,
-                                "annoy" => 5,
-                                "lsh" => 6,
-                                "diskann" => 7,
-                                _ => {
-                                    info!("⚠️ Unknown indexing_algorithm string: {}", algo_str);
-                                    return;
-                                }
-                            }
-                        } else if let Some(algo_int) = algo_value.as_i64() {
-                            algo_int as i32
-                        } else {
-                            return;
-                        };
-
-                        if correct_algo != config.primary_indexing_algorithm.unwrap_or(0) {
-                            info!("🔧 WORKAROUND: Fixing primary_indexing_algorithm from {:?} to {}", config.primary_indexing_algorithm, correct_algo);
-                            config.primary_indexing_algorithm = Some(correct_algo);
                         }
                     }
                 }
