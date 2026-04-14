@@ -391,98 +391,101 @@ pub async fn collection_operation(
     // Server expects: 5, 1 (integers per prost-generated proto)
     // CRITICAL: Always apply the enum values from the raw JSON, not the deserialized values
     if let Some(ref mut config) = request.collection_config {
-        if let Some(obj) = value.as_object() {
-            if let Some(config_obj) = obj.get("collection_config") {
-                if let Some(config_inner) = config_obj.as_object() {
-                    // Fix distance_metric if present (handle both string and int)
-                    if let Some(dm_value) = config_inner.get("distance_metric") {
-                        let correct_dm = if let Some(dm_str) = dm_value.as_str() {
-                            // Python SDK sends string values - map to integers
-                            // Values MUST match proto/proximadb/v1/vector_types.proto
-                            match dm_str {
-                                "unspecified" => 0,
-                                "cosine" => 1,
-                                "euclidean" => 2,
-                                "dot_product" => 3,
-                                "hamming" => 4,
-                                "manhattan" => 5,
-                                "jaccard" => 6,
-                                "angular" => 7,
-                                "chebyshev" => 8,
-                                "canberra" => 9,
-                                "minkowski" => 10,
-                                "bray_curtis" => 11,
-                                "hellinger" => 12,
-                                "custom" => 13,
-                                other => {
-                                    info!(
-                                        "⚠️ Unknown distance_metric string: {}, using default",
-                                        other
-                                    );
-                                    1 // Default to COSINE
-                                }
-                            }
-                        } else if let Some(dm_int) = dm_value.as_i64() {
-                            dm_int as i32
-                        } else if let Some(dm_uint) = dm_value.as_u64() {
-                            dm_uint as i32
-                        } else {
-                            1 // Default to COSINE
-                        };
+        info!("🔧 WORKAROUND: Applying enum fixes for collection '{}'", config.name);
 
-                        // ALWAYS apply the value from JSON, ignore deserialized value
-                        info!(
-                            "🔧 WORKAROUND: Setting distance_metric to {} (from JSON: {:?})",
-                            correct_dm, dm_value
-                        );
-                        config.distance_metric = Some(correct_dm);
-                    }
+        // Try multiple possible JSON paths that the Python SDK might use
+        let possible_paths = [
+            // Path 1: value.collection_config.distance_metric
+            value.get("collection_config").and_then(|v| v.as_object()).and_then(|cfg| cfg.get("distance_metric")),
+            // Path 2: Direct value.distance_metric (if no wrapping)
+            value.get("distance_metric"),
+        ];
 
-                    // Fix storage_engine if present (handle both string and int)
-                    if let Some(se_value) = config_inner.get("storage_engine") {
-                        let correct_se = if let Some(se_str) = se_value.as_str() {
-                            // Python SDK sends string values - map to integers
-                            // Values MUST match proto/proximadb/v1/vector_types.proto
-                            match se_str {
-                                "unspecified" => 0,
-                                "viper" => 1,
-                                "sst" => 2,
-                                "nova" => 3,
-                                "helix" => 4,
-                                "swift" => 5,
-                                "raptor" => 6,
-                                "mmap" => 7,
-                                "hybrid" => 8,
-                                "tst" => 9,
-                                "cedar" => 10,
-                                "titan" => 11,
-                                "chrono" => 12,
-                                other => {
-                                    info!(
-                                        "⚠️ Unknown storage_engine string: {}, using default",
-                                        other
-                                    );
-                                    2 // Default to SST
-                                }
-                            }
-                        } else if let Some(se_int) = se_value.as_i64() {
-                            se_int as i32
-                        } else if let Some(se_uint) = se_value.as_u64() {
-                            se_uint as i32
-                        } else {
-                            2 // Default to SST
-                        };
-
-                        // ALWAYS apply the value from JSON, ignore deserialized value
-                        info!(
-                            "🔧 WORKAROUND: Setting storage_engine to {} (from JSON: {:?})",
-                            correct_se, se_value
-                        );
-                        config.storage_engine = Some(correct_se);
+        for dm_value in possible_paths.iter().filter_map(|&v| v) {
+            let correct_dm = if let Some(dm_str) = dm_value.as_str() {
+                // Python SDK sends string values - map to integers
+                // Values MUST match proto/proximadb/v1/vector_types.proto
+                match dm_str {
+                    "unspecified" => 0,
+                    "cosine" => 1,
+                    "euclidean" => 2,
+                    "dot_product" => 3,
+                    "hamming" => 4,
+                    "manhattan" => 5,
+                    "jaccard" => 6,
+                    "angular" => 7,
+                    "chebyshev" => 8,
+                    "canberra" => 9,
+                    "minkowski" => 10,
+                    "bray_curtis" => 11,
+                    "hellinger" => 12,
+                    "custom" => 13,
+                    other => {
+                        info!("⚠️ Unknown distance_metric string: {}, using default", other);
+                        1 // Default to COSINE
                     }
                 }
-            }
+            } else if let Some(dm_int) = dm_value.as_i64() {
+                dm_int as i32
+            } else if let Some(dm_uint) = dm_value.as_u64() {
+                dm_uint as i32
+            } else {
+                continue; // Skip to next path
+            };
+
+            // ALWAYS apply the value from JSON, ignore deserialized value
+            info!("🔧 WORKAROUND: Setting distance_metric to {} (from JSON: {:?})", correct_dm, dm_value);
+            config.distance_metric = Some(correct_dm);
+            break; // Use first valid path
         }
+
+        // Try multiple possible JSON paths for storage_engine
+        let possible_se_paths = [
+            // Path 1: value.collection_config.storage_engine
+            value.get("collection_config").and_then(|v| v.as_object()).and_then(|cfg| cfg.get("storage_engine")),
+            // Path 2: Direct value.storage_engine (if no wrapping)
+            value.get("storage_engine"),
+        ];
+
+        for se_value in possible_se_paths.iter().filter_map(|&v| v) {
+            let correct_se = if let Some(se_str) = se_value.as_str() {
+                // Python SDK sends string values - map to integers
+                // Values MUST match proto/proximadb/v1/vector_types.proto
+                match se_str {
+                    "unspecified" => 0,
+                    "viper" => 1,
+                    "sst" => 2,
+                    "nova" => 3,
+                    "helix" => 4,
+                    "swift" => 5,
+                    "raptor" => 6,
+                    "mmap" => 7,
+                    "hybrid" => 8,
+                    "tst" => 9,
+                    "cedar" => 10,
+                    "titan" => 11,
+                    "chrono" => 12,
+                    other => {
+                        info!("⚠️ Unknown storage_engine string: {}, using default", other);
+                        2 // Default to SST
+                    }
+                }
+            } else if let Some(se_int) = se_value.as_i64() {
+                se_int as i32
+            } else if let Some(se_uint) = se_value.as_u64() {
+                se_uint as i32
+            } else {
+                continue; // Skip to next path
+            };
+
+            // ALWAYS apply the value from JSON, ignore deserialized value
+            info!("🔧 WORKAROUND: Setting storage_engine to {} (from JSON: {:?})", correct_se, se_value);
+            config.storage_engine = Some(correct_se);
+            break; // Use first valid path
+        }
+
+        info!("🔧 WORKAROUND: Final config values - distance_metric={:?}, storage_engine={:?}",
+              config.distance_metric, config.storage_engine);
     }
 
     // DEBUG: Log collection config values to verify workaround
