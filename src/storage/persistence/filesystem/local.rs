@@ -1736,7 +1736,11 @@ mod tests {
                 let backoff_ms = 10 * (1 << attempt.min(5));
                 tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
             }
-            assert!(exists, "File should exist and be readable after write: {}", path);
+            assert!(
+                exists,
+                "File should exist and be readable after write: {}",
+                path
+            );
         }
 
         // Sync all files concurrently with improved error handling and retries
@@ -1752,8 +1756,10 @@ mod tests {
                 loop {
                     match tokio::time::timeout(
                         tokio::time::Duration::from_secs(5),
-                        fs_clone.sync_file(&path)
-                    ).await {
+                        fs_clone.sync_file(&path),
+                    )
+                    .await
+                    {
                         Ok(Ok(())) => return Ok(()),
                         Ok(Err(e)) => {
                             attempt += 1;
@@ -1762,14 +1768,14 @@ mod tests {
                             }
                             // Brief backoff before retry
                             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                        },
+                        }
                         Err(_) => {
                             // Timeout - retry with increased backoff
                             attempt += 1;
                             if attempt >= max_attempts {
                                 return Err(std::io::Error::new(
                                     std::io::ErrorKind::TimedOut,
-                                    "Sync operation timed out after retries"
+                                    "Sync operation timed out after retries",
                                 ));
                             }
                             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -1782,7 +1788,7 @@ mod tests {
         // Wait for all syncs to complete with better error reporting
         for (i, handle) in handles.into_iter().enumerate() {
             match handle.await {
-                Ok(Ok(())) => {},
+                Ok(Ok(())) => {}
                 Ok(Err(e)) => panic!("Sync failed for file {}: {}", files[i].0, e),
                 Err(e) => panic!("Sync task panicked for file {}: {}", files[i].0, e),
             }
