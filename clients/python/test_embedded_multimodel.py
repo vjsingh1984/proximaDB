@@ -100,15 +100,17 @@ async def test_timeseries_via_sql():
         now = int(time.time() * 1e9)  # Convert to nanoseconds
         points = []
         for i, value in enumerate([10.5, 11.2, 10.8, 11.5, 10.9]):
-            points.append({
-                "id": f"ts_point_{i}",
-                "vector": [value, value * 1.1, value * 0.9],
-                "metadata": {
-                    "timestamp": now + (i * 60_000_000_000),  # i minutes later
-                    "source": "sensor1",
-                    "value": value,
+            points.append(
+                {
+                    "id": f"ts_point_{i}",
+                    "vector": [value, value * 1.1, value * 0.9],
+                    "metadata": {
+                        "timestamp": now + (i * 60_000_000_000),  # i minutes later
+                        "source": "sensor1",
+                        "value": value,
+                    },
                 }
-            })
+            )
 
         result = await collection.insert(points)
         print(f"✓ Inserted time-series data points")
@@ -126,6 +128,7 @@ async def test_timeseries_via_sql():
     except Exception as e:
         print(f"❌ Time Series test failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 

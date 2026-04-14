@@ -32,6 +32,7 @@ from proximadb import ProximaDBClient, VectorRecord
 def check_server_available(url: str) -> bool:
     """Check if ProximaDB server is available"""
     import httpx
+
     try:
         r = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
         return r.status_code < 500
@@ -46,7 +47,9 @@ def print_section(title: str):
     print(f"{'='*70}\n")
 
 
-def demo_batch_entity_insertion(client: ProximaDBClient, collection: str, dimension: int = 128):
+def demo_batch_entity_insertion(
+    client: ProximaDBClient, collection: str, dimension: int = 128
+):
     """
     Demo: Batch Entity Insertion
 
@@ -74,8 +77,8 @@ def demo_batch_entity_insertion(client: ProximaDBClient, collection: str, dimens
                 "title": f"Document {i}",
                 "category": ["Technology", "Science", "Business"][i % 3],
                 "timestamp": time.time(),
-                "type": "document"
-            }
+                "type": "document",
+            },
         )
         records.append(record)
 
@@ -99,8 +102,9 @@ def demo_batch_entity_insertion(client: ProximaDBClient, collection: str, dimens
     return records
 
 
-def demo_hybrid_vector_graph_query(client: ProximaDBClient, collection: str,
-                                   dimension: int = 128):
+def demo_hybrid_vector_graph_query(
+    client: ProximaDBClient, collection: str, dimension: int = 128
+):
     """
     Demo: Hybrid Query (Vector Similarity + Graph Traversal)
 
@@ -124,7 +128,7 @@ def demo_hybrid_vector_graph_query(client: ProximaDBClient, collection: str,
                 properties={
                     "title": f"Document {i}",
                     "category": ["Technology", "Science", "Business"][i % 3],
-                }
+                },
             )
 
         # Step 2: Create relationships between documents
@@ -138,7 +142,7 @@ def demo_hybrid_vector_graph_query(client: ProximaDBClient, collection: str,
                 to_node_id=f"doc_{i+2}",
                 edge_type="REFERENCES",
                 properties={"confidence": 0.9},
-                weight=0.9
+                weight=0.9,
             )
 
         # Create SIMILAR_TO edges
@@ -149,7 +153,7 @@ def demo_hybrid_vector_graph_query(client: ProximaDBClient, collection: str,
                 to_node_id=f"doc_{i+6}",
                 edge_type="SIMILAR_TO",
                 properties={"similarity": 0.85},
-                weight=0.85
+                weight=0.85,
             )
 
         print(f"✓ Created graph structure (10 nodes, 12 edges)")
@@ -173,13 +177,15 @@ def demo_hybrid_vector_graph_query(client: ProximaDBClient, collection: str,
         vector=query_vector.tolist(),
         top_k=5,
         include_metadata=True,
-        include_vectors=False
+        include_vectors=False,
     )
     vector_time = (time.time() - start_time) * 1000
 
     print(f"  ✓ Found {len(vector_results)} similar documents ({vector_time:.2f}ms)")
     if vector_results:
-        print(f"    Top result: {vector_results[0].id} (score: {vector_results[0].score:.4f})")
+        print(
+            f"    Top result: {vector_results[0].id} (score: {vector_results[0].score:.4f})"
+        )
 
     # Graph traversal from top result
     if graph_enabled and vector_results:
@@ -191,14 +197,16 @@ def demo_hybrid_vector_graph_query(client: ProximaDBClient, collection: str,
                 max_depth=2,
                 edge_types=["REFERENCES", "SIMILAR_TO"],
                 algorithm="BFS",
-                limit=10
+                limit=10,
             )
             graph_time = (time.time() - start_time) * 1000
 
             nodes = traversal.get("nodes", [])
             edges = traversal.get("edges", [])
 
-            print(f"  ✓ Traversed graph: {len(nodes)} nodes, {len(edges)} edges ({graph_time:.2f}ms)")
+            print(
+                f"  ✓ Traversed graph: {len(nodes)} nodes, {len(edges)} edges ({graph_time:.2f}ms)"
+            )
             print(f"\n  Total hybrid query time: {vector_time + graph_time:.2f}ms")
             print(f"  (Graph-first architecture: 10-20ms typical vs 50-100ms legacy)")
 
@@ -290,10 +298,10 @@ def demo_migration_info():
 
 def main():
     """Main demo execution"""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("  SKS Graph-First Architecture Demo")
     print("  ProximaDB v0.2.0 - Production Ready")
-    print("="*70)
+    print("=" * 70)
 
     # Configuration
     base_url = os.getenv("PROXIMADB_URL", "http://localhost:5678")
@@ -346,15 +354,20 @@ def main():
         print("  ✓ Hybrid queries combine vector similarity + graph traversal")
         print("  ✓ Production ready with full test coverage (12/12 tests passing)")
         print("\nFor more information:")
-        print("  - Migration Guide: docs/02-guides/sks_graph_first_migration_guide.adoc")
+        print(
+            "  - Migration Guide: docs/02-guides/sks_graph_first_migration_guide.adoc"
+        )
         print("  - Status Document: SKS_GRAPH_FIRST_STATUS.md")
-        print("  - Implementation Plan: docs/architecture/SKS_GRAPH_FIRST_IMPLEMENTATION_PLAN.adoc")
+        print(
+            "  - Implementation Plan: docs/architecture/SKS_GRAPH_FIRST_IMPLEMENTATION_PLAN.adoc"
+        )
 
         return 0
 
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -370,4 +383,5 @@ def main():
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

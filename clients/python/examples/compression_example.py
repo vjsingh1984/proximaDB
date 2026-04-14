@@ -56,11 +56,11 @@ def create_compressed_collections(client: ProximaDBClient):
             min_ratio=0.5,  # Minimum compression ratio threshold (0.0-1.0)
         ),
     )
-    
+
     print("Creating SST collection with ZSTD compression...")
     sst_collection = client.create_collection(sst_config.name, sst_config)
     print(f"✅ Created: {sst_collection.id}")
-    
+
     # 2. VIPER collection with LZ4 compression
     viper_config = CollectionConfig(
         name="compressed_viper_collection",
@@ -75,7 +75,7 @@ def create_compressed_collections(client: ProximaDBClient):
             block_size_kb=1024,  # 1MB blocks (1536D fp32 = 6KB/vector, ~170 vectors/block)
         ),
     )
-    
+
     print("Creating VIPER collection with LZ4 compression...")
     viper_collection = client.create_collection(viper_config.name, viper_config)
     print(f"✅ Created: {viper_collection.id}")
@@ -93,28 +93,28 @@ def create_compressed_collections(client: ProximaDBClient):
             block_size_kb=1024,  # 1MB blocks (768D fp32 = 3KB/vector + metadata = 6KB, ~170 vectors/block)
         ),
     )
-    
+
     print("Creating collection with adaptive compression...")
     mixed_collection = client.create_collection(mixed_config.name, mixed_config)
     print(f"✅ Created: {mixed_collection.id}")
-    
+
     return sst_collection, viper_collection, mixed_collection
 
 
 def insert_and_search_compressed(client: ProximaDBClient, collection_name: str):
     """Insert vectors and perform compression-aware searches"""
-    
+
     print(f"\n📝 Working with collection: {collection_name}")
-    
+
     # Generate test data
     num_vectors = 1000
     dimension = 1536
     vectors = generate_random_vectors(num_vectors, dimension)
-    
+
     # Insert vectors
     print(f"Inserting {num_vectors} vectors...")
     start_time = time.time()
-    
+
     records = [
         VectorRecord(
             id=f"vec_{i}",
@@ -123,18 +123,18 @@ def insert_and_search_compressed(client: ProximaDBClient, collection_name: str):
                 "category": f"cat_{i % 10}",
                 "timestamp": int(time.time()),
                 "compressed": True,
-            }
+            },
         )
         for i in range(num_vectors)
     ]
-    
+
     insert_response = client.insert_vectors(collection_name, records)
     insert_time = time.time() - start_time
     print(f"✅ Inserted {num_vectors} vectors in {insert_time:.2f}s")
-    
+
     # Search with compression-aware optimization
     query_vector = generate_random_vectors(1, dimension)[0]
-    
+
     # 1. Regular search
     print("\n🔍 Regular search...")
     start_time = time.time()
@@ -145,7 +145,7 @@ def insert_and_search_compressed(client: ProximaDBClient, collection_name: str):
     )
     regular_time = time.time() - start_time
     print(f"Found {len(regular_results)} results in {regular_time:.3f}s")
-    
+
     # 2. Optimized search (second run - may leverage internal caching)
     print("\n🔍 Optimized search (second run)...")
     start_time = time.time()
@@ -167,7 +167,7 @@ def insert_and_search_compressed(client: ProximaDBClient, collection_name: str):
     )
     cached_time = time.time() - start_time
     print(f"Found {len(cached_results)} results in {cached_time:.3f}s")
-    
+
     # Compare performance
     print("\n📊 Performance Comparison:")
     print(f"  Regular search: {regular_time:.3f}s")
@@ -200,7 +200,7 @@ def demonstrate_adaptive_compression(client: ProximaDBClient):
 
     collection = client.create_collection(config.name, config)
     print(f"✅ Created adaptive collection: {collection.id}")
-    
+
     # Insert sparse vectors (should compress well)
     print("\nInserting sparse vectors (high compressibility)...")
     sparse_vectors = []
@@ -208,13 +208,13 @@ def demonstrate_adaptive_compression(client: ProximaDBClient):
         vec = np.zeros(512)
         vec[np.random.choice(512, 10)] = np.random.randn(10)  # Only 10 non-zero values
         sparse_vectors.append(vec.tolist())
-    
+
     sparse_records = [
         VectorRecord(id=f"sparse_{i}", vector=v, metadata={"type": "sparse"})
         for i, v in enumerate(sparse_vectors)
     ]
     client.insert_vectors(collection.name, sparse_records)
-    
+
     # Insert dense vectors (lower compressibility)
     print("Inserting dense vectors (low compressibility)...")
     dense_vectors = generate_random_vectors(100, 512)
@@ -223,7 +223,7 @@ def demonstrate_adaptive_compression(client: ProximaDBClient):
         for i, v in enumerate(dense_vectors)
     ]
     client.insert_vectors(collection.name, dense_records)
-    
+
     print("✅ Adaptive compression will optimize based on data characteristics")
 
 
@@ -239,20 +239,20 @@ def main():
         protocol="rest",
         timeout=60.0,
     )
-    
+
     try:
         # Create collections with different compression configs
         sst_col, viper_col, mixed_col = create_compressed_collections(client)
-        
+
         # Test compression-aware operations
         insert_and_search_compressed(client, sst_col.name)
         insert_and_search_compressed(client, viper_col.name)
-        
+
         # Demonstrate adaptive compression
         demonstrate_adaptive_compression(client)
-        
+
         print("\n✅ Compression example completed successfully!")
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
     finally:

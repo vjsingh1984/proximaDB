@@ -244,7 +244,7 @@ class TestComprehensiveBenchmark:
         found_terms = set()
         for i, result in enumerate(results[:top_k]):
             # Handle both dict and SearchResult objects
-            if hasattr(result, 'model_dump'):  # Pydantic model
+            if hasattr(result, "model_dump"):  # Pydantic model
                 metadata = result.metadata if result.metadata else {}
             elif isinstance(result, dict):  # Regular dict
                 metadata = result.get("metadata", {})

@@ -6,7 +6,8 @@ Inserts vectors and checks that WAL files are created
 
 import sys
 import os
-sys.path.insert(0, 'src')
+
+sys.path.insert(0, "src")
 
 import requests
 import json
@@ -14,6 +15,7 @@ import numpy as np
 import time
 
 SERVER_URL = "http://localhost:5678"
+
 
 def test_wal_directory_creation():
     """Test that WAL files are created when vectors are inserted"""
@@ -27,28 +29,30 @@ def test_wal_directory_creation():
         "name": collection_name,
         "dimension": 128,
         "distance_metric": 1,  # COSINE
-        "storage_engine": 1,    # VIPER
+        "storage_engine": 1,  # VIPER
         "tags": [],
         "filterable_columns": [],
-        "index_configs": [{
-            "index_name": f"{collection_name}_primary",
-            "algorithm": 1,  # HNSW
-            "parameters": {},
-            "enabled": True,
-            "update_mode": 0,
-            "enable_background_optimization": True,
-            "build_concurrency": 4,
-            "memory_limit_mb": 512,
-            "checkpoint_interval_ms": 60000,
-            "is_primary": True,
-            "use_cases": [],
-            "selectivity_threshold": 0.5,
-            "use_quantization": False,
-            "queue_representation": "vector"
-        }],
+        "index_configs": [
+            {
+                "index_name": f"{collection_name}_primary",
+                "algorithm": 1,  # HNSW
+                "parameters": {},
+                "enabled": True,
+                "update_mode": 0,
+                "enable_background_optimization": True,
+                "build_concurrency": 4,
+                "memory_limit_mb": 512,
+                "checkpoint_interval_ms": 60000,
+                "is_primary": True,
+                "use_cases": [],
+                "selectivity_threshold": 0.5,
+                "use_quantization": False,
+                "queue_representation": "vector",
+            }
+        ],
         "primary_index": f"{collection_name}_primary",
         "auto_index_selection": True,
-        "embedding_models": []
+        "embedding_models": [],
     }
 
     request_data = {
@@ -56,13 +60,13 @@ def test_wal_directory_creation():
         "collection_config": collection_config,
         "query_params": {},
         "options": {},
-        "migration_config": {}
+        "migration_config": {},
     }
 
     response = requests.post(
         f"{SERVER_URL}/api/v1/collections",
         json=request_data,
-        headers={"Content-Type": "application/json"}
+        headers={"Content-Type": "application/json"},
     )
 
     print(f"   Response status: {response.status_code}")
@@ -76,7 +80,9 @@ def test_wal_directory_creation():
         result = response.json()
         print(f"   Response parsed successfully")
         print(f"   Result type: {type(result)}")
-        print(f"   Result keys: {result.keys() if isinstance(result, dict) else 'Not a dict'}")
+        print(
+            f"   Result keys: {result.keys() if isinstance(result, dict) else 'Not a dict'}"
+        )
     except Exception as e:
         print(f"❌ Failed to parse JSON response: {e}")
         print(f"   Response text: {response.text}")
@@ -86,26 +92,28 @@ def test_wal_directory_creation():
         print(f"❌ Result is None or empty")
         return False
 
-    if 'collection' not in result:
+    if "collection" not in result:
         print(f"❌ 'collection' key not in result")
         print(f"   Available keys: {list(result.keys())}")
         return False
 
-    if result['collection'] is None:
+    if result["collection"] is None:
         print(f"❌ result['collection'] is None")
         print(f"   Full result: {json.dumps(result, indent=2)}")
         return False
 
-    collection_id = result['collection']['id']
-    storage_path = result['collection']['storage_assignment']['primary_path']
+    collection_id = result["collection"]["id"]
+    storage_path = result["collection"]["storage_assignment"]["primary_path"]
     print(f"✅ Collection created: {collection_id}")
     print(f"   Storage path: {storage_path}")
 
     # Extract file path from storage_path (format: file:///path/to/dir)
-    if storage_path.startswith('file://'):
+    if storage_path.startswith("file://"):
         base_path = storage_path[7:]  # Remove 'file://'
-        wal_path = os.path.join(base_path, collection_id, 'wal')  # Changed from 'write_buffer' to 'wal'
-        data_path = os.path.join(base_path, collection_id, 'data')
+        wal_path = os.path.join(
+            base_path, collection_id, "wal"
+        )  # Changed from 'write_buffer' to 'wal'
+        data_path = os.path.join(base_path, collection_id, "data")
 
         print(f"\n2️⃣ Checking directory structure...")
         print(f"   WAL directory: {wal_path}")
@@ -125,24 +133,23 @@ def test_wal_directory_creation():
         from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
 
         client = ProximaDBSyncGrpcClient(
-            server_address='localhost:5679',
-            enable_compression=False
+            server_address="localhost:5679", enable_compression=False
         )
 
         # Create 100 vectors
         vectors = []
         for i in range(100):
-            vectors.append({
-                'id': f'wal_vec_{i}',
-                'vector': np.random.rand(128).astype(np.float32).tolist(),
-                'metadata': {'batch': 1, 'index': i}
-            })
+            vectors.append(
+                {
+                    "id": f"wal_vec_{i}",
+                    "vector": np.random.rand(128).astype(np.float32).tolist(),
+                    "metadata": {"batch": 1, "index": i},
+                }
+            )
 
         # Use the high-level insert method
         response = client.insert_vectors(
-            collection_id=collection_id,
-            vectors=vectors,
-            upsert=False
+            collection_id=collection_id, vectors=vectors, upsert=False
         )
 
         print(f"   Insert response: {response}")
@@ -154,11 +161,14 @@ def test_wal_directory_creation():
             print(f"   Error message: {response.error_message}")
             return False
 
-        print(f"   ✅ Inserted {response.metrics.successful_count} vectors successfully")
+        print(
+            f"   ✅ Inserted {response.metrics.successful_count} vectors successfully"
+        )
 
     except Exception as e:
         print(f"   ❌ Insert failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -185,7 +195,7 @@ def test_wal_directory_creation():
     print(f"\n6️⃣ Checking collection stats...")
     response = requests.get(f"{SERVER_URL}/api/v1/collections/{collection_id}")
     if response.status_code == 200:
-        stats = response.json().get('collection', {}).get('stats', {})
+        stats = response.json().get("collection", {}).get("stats", {})
         print(f"   Vector count: {stats.get('vector_count', 0)}")
         print(f"   Index size: {stats.get('index_size_bytes', 0)} bytes")
         print(f"   Data size: {stats.get('data_size_bytes', 0)} bytes")
@@ -194,6 +204,7 @@ def test_wal_directory_creation():
     print("✅ WAL verification test completed!")
     return True
 
+
 if __name__ == "__main__":
     try:
         success = test_wal_directory_creation()
@@ -201,5 +212,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Test failed with exception: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

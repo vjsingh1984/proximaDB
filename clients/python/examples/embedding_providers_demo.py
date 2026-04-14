@@ -35,7 +35,7 @@ from proximadb.embedding_providers import (
     SentenceTransformerProvider,
     SimulatedEmbeddingProvider,
     EmbeddingProviderFactory,
-    EmbeddingConfig
+    EmbeddingConfig,
 )
 
 
@@ -44,16 +44,16 @@ def demo_sfr_provider():
     Demo: SFR Provider - Top MTEB Accuracy (66.4)
     Best for: Maximum accuracy, research, when quality is paramount
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("1. SFR PROVIDER - TOP ACCURACY (MTEB 66.4)")
-    print("="*80)
+    print("=" * 80)
 
     # Initialize with default (SFR-Embedding-2_R)
     config = EmbeddingConfig(
         model_name="Salesforce/SFR-Embedding-2_R",
         dimension=4096,
         batch_size=16,  # Smaller batch due to large dimensions
-        normalize=True
+        normalize=True,
     )
 
     print(f"Model: {config.model_name}")
@@ -75,16 +75,16 @@ def demo_bge_provider():
     Demo: BGE Provider - Top Retrieval Performance
     Best for: Production retrieval, semantic search
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("2. BGE PROVIDER - TOP RETRIEVAL")
-    print("="*80)
+    print("=" * 80)
 
     # Show different BGE model options
     models = [
         ("BAAI/bge-large-en-v1.5", 1024, "Best quality"),
         ("BAAI/bge-base-en-v1.5", 768, "Balanced"),
         ("BAAI/bge-small-en-v1.5", 384, "Fast"),
-        ("BAAI/bge-m3", 1024, "Multilingual (100+ languages)")
+        ("BAAI/bge-m3", 1024, "Multilingual (100+ languages)"),
     ]
 
     print("\nAvailable BGE models:")
@@ -93,9 +93,7 @@ def demo_bge_provider():
 
     # Example with large model
     config = EmbeddingConfig(
-        model_name="BAAI/bge-large-en-v1.5",
-        dimension=1024,
-        normalize=True
+        model_name="BAAI/bge-large-en-v1.5", dimension=1024, normalize=True
     )
 
     print(f"\nSelected: {config.model_name}")
@@ -115,16 +113,16 @@ def demo_e5_provider():
     Demo: E5 Provider - Excellent General Purpose
     Best for: General purpose production use
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("3. E5 PROVIDER - EXCELLENT GENERAL PURPOSE")
-    print("="*80)
+    print("=" * 80)
 
     # Show E5 model variants
     models = [
         ("intfloat/e5-large-v2", 1024, "Best quality"),
         ("intfloat/e5-base-v2", 768, "Balanced"),
         ("intfloat/e5-small-v2", 384, "Fast"),
-        ("intfloat/multilingual-e5-large", 1024, "Multilingual")
+        ("intfloat/multilingual-e5-large", 1024, "Multilingual"),
     ]
 
     print("\nAvailable E5 models:")
@@ -134,7 +132,7 @@ def demo_e5_provider():
     config = EmbeddingConfig(
         model_name="intfloat/e5-large-v2",
         dimension=1024,
-        normalize=True  # Required for E5
+        normalize=True,  # Required for E5
     )
 
     print(f"\nSelected: {config.model_name}")
@@ -154,15 +152,15 @@ def demo_sentence_transformer_provider():
     Demo: Sentence-Transformers Provider - Wide Variety
     Best for: Quick start, many model options
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("4. SENTENCE-TRANSFORMERS PROVIDER - MOST VERSATILE")
-    print("="*80)
+    print("=" * 80)
 
     # Popular models
     models = [
         ("all-mpnet-base-v2", 768, "Best quality general purpose"),
         ("all-MiniLM-L6-v2", 384, "Fastest, most popular"),
-        ("paraphrase-multilingual-mpnet-base-v2", 768, "Multilingual")
+        ("paraphrase-multilingual-mpnet-base-v2", 768, "Multilingual"),
     ]
 
     print("\nPopular models (100+ available):")
@@ -173,7 +171,7 @@ def demo_sentence_transformer_provider():
     config = EmbeddingConfig(
         model_name="all-MiniLM-L6-v2",
         dimension=384,
-        batch_size=64  # Larger batches for smaller dimensions
+        batch_size=64,  # Larger batches for smaller dimensions
     )
 
     print(f"\nSelected: {config.model_name}")
@@ -190,9 +188,9 @@ def demo_factory_pattern():
     Demo: Using EmbeddingProviderFactory
     Best for: Dynamic provider selection
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("5. FACTORY PATTERN - DYNAMIC PROVIDER SELECTION")
-    print("="*80)
+    print("=" * 80)
 
     print("\nAvailable provider types:")
     providers = [
@@ -200,7 +198,7 @@ def demo_factory_pattern():
         ("bge", "BAAI/bge-large-en-v1.5"),
         ("e5", "intfloat/e5-large-v2"),
         ("sentence-transformer", "all-mpnet-base-v2"),
-        ("simulated", "test-model")
+        ("simulated", "test-model"),
     ]
 
     for provider_type, default_model in providers:
@@ -223,9 +221,9 @@ def demo_proximadb_integration():
     Demo: Complete ProximaDB Integration
     Shows end-to-end workflow with embeddings
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("6. COMPLETE PROXIMADB INTEGRATION")
-    print("="*80)
+    print("=" * 80)
 
     print("\nEnd-to-end workflow:")
     print("""
@@ -286,28 +284,52 @@ def demo_model_comparison():
     """
     Demo: Model Comparison and Selection Guide
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("7. MODEL COMPARISON & SELECTION GUIDE")
-    print("="*80)
+    print("=" * 80)
 
     print("\nPerformance comparison:")
-    print("┌─────────────────────────┬──────────┬────────┬────────────┬───────────────────────┐")
-    print("│ Model                   │ Provider │ Dims   │ MTEB Score │ Use Case              │")
-    print("├─────────────────────────┼──────────┼────────┼────────────┼───────────────────────┤")
-    print("│ SFR-Embedding-2_R       │ SFR      │ 4096   │ 66.4       │ Best accuracy         │")
-    print("│ bge-large-en-v1.5       │ BGE      │ 1024   │ 64+        │ Production retrieval  │")
-    print("│ e5-large-v2             │ E5       │ 1024   │ 65+        │ General purpose       │")
-    print("│ all-mpnet-base-v2       │ ST       │ 768    │ 63+        │ Balanced quality      │")
-    print("│ bge-base-en-v1.5        │ BGE      │ 768    │ 63+        │ Production balanced   │")
-    print("│ all-MiniLM-L6-v2        │ ST       │ 384    │ 59+        │ High throughput       │")
-    print("│ bge-small-en-v1.5       │ BGE      │ 384    │ 62+        │ Latency-sensitive     │")
-    print("└─────────────────────────┴──────────┴────────┴────────────┴───────────────────────┘")
+    print(
+        "┌─────────────────────────┬──────────┬────────┬────────────┬───────────────────────┐"
+    )
+    print(
+        "│ Model                   │ Provider │ Dims   │ MTEB Score │ Use Case              │"
+    )
+    print(
+        "├─────────────────────────┼──────────┼────────┼────────────┼───────────────────────┤"
+    )
+    print(
+        "│ SFR-Embedding-2_R       │ SFR      │ 4096   │ 66.4       │ Best accuracy         │"
+    )
+    print(
+        "│ bge-large-en-v1.5       │ BGE      │ 1024   │ 64+        │ Production retrieval  │"
+    )
+    print(
+        "│ e5-large-v2             │ E5       │ 1024   │ 65+        │ General purpose       │"
+    )
+    print(
+        "│ all-mpnet-base-v2       │ ST       │ 768    │ 63+        │ Balanced quality      │"
+    )
+    print(
+        "│ bge-base-en-v1.5        │ BGE      │ 768    │ 63+        │ Production balanced   │"
+    )
+    print(
+        "│ all-MiniLM-L6-v2        │ ST       │ 384    │ 59+        │ High throughput       │"
+    )
+    print(
+        "│ bge-small-en-v1.5       │ BGE      │ 384    │ 62+        │ Latency-sensitive     │"
+    )
+    print(
+        "└─────────────────────────┴──────────┴────────┴────────────┴───────────────────────┘"
+    )
 
     print("\nSelection guide:")
     print("  • Maximum Accuracy       → SFR-Embedding-2_R (4096 dims)")
     print("  • Production Quality     → bge-large-en-v1.5 or e5-large-v2 (1024 dims)")
     print("  • Balanced               → bge-base-en-v1.5 or e5-base-v2 (768 dims)")
-    print("  • High Speed             → all-MiniLM-L6-v2 or bge-small-en-v1.5 (384 dims)")
+    print(
+        "  • High Speed             → all-MiniLM-L6-v2 or bge-small-en-v1.5 (384 dims)"
+    )
     print("  • Multilingual           → bge-m3 or multilingual-e5-large (1024 dims)")
 
 
@@ -316,14 +338,12 @@ def demo_simulated_provider():
     Demo: Simulated Provider for Testing
     Best for: Development and testing without downloading models
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("8. SIMULATED PROVIDER - TESTING & DEVELOPMENT")
-    print("="*80)
+    print("=" * 80)
 
     config = EmbeddingConfig(
-        model_name="test-model",
-        dimension=128,  # Configurable dimension
-        normalize=True
+        model_name="test-model", dimension=128, normalize=True  # Configurable dimension
     )
 
     print(f"Dimension: {config.dimension}")
@@ -339,11 +359,7 @@ def demo_simulated_provider():
     print(f"  ✓ Query embedding shape: {query_emb.shape}")
 
     # Test document embeddings
-    docs = [
-        {"text": "document 1"},
-        {"text": "document 2"},
-        {"text": "document 3"}
-    ]
+    docs = [{"text": "document 1"}, {"text": "document 2"}, {"text": "document 3"}]
     doc_embs = provider.embed_documents(docs)
     print(f"  ✓ Document embeddings shape: {doc_embs.shape}")
 
@@ -364,10 +380,12 @@ def demo_simulated_provider():
 
 def main():
     """Run all demonstrations"""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(" " * 20 + "PROXIMADB EMBEDDING PROVIDERS DEMO")
-    print("="*80)
-    print("\nThis demonstration shows all available embedding providers and how to use them.")
+    print("=" * 80)
+    print(
+        "\nThis demonstration shows all available embedding providers and how to use them."
+    )
     print("Note: Real model downloads are disabled to keep the demo fast.")
     print("      Enable providers by uncommenting initialization code in each demo.")
 
@@ -381,9 +399,9 @@ def main():
     demo_proximadb_integration()
     demo_model_comparison()
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("DEMO COMPLETE")
-    print("="*80)
+    print("=" * 80)
     print("\nFor more information, see:")
     print("  • EMBEDDING_PROVIDERS.md - Comprehensive documentation")
     print("  • tests/unit/test_embedding_providers.py - Test suite")
@@ -408,5 +426,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
         exit(1)

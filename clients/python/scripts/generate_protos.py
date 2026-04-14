@@ -61,7 +61,9 @@ def generate_proto(proto_path: str, proto_dir: Path, python_out: Path) -> bool:
     try:
         result = subprocess.run(
             [
-                sys.executable, "-m", "grpc_tools.protoc",
+                sys.executable,
+                "-m",
+                "grpc_tools.protoc",
                 f"--proto_path={proto_dir}",
                 f"--python_out={python_out}",
                 f"--grpc_python_out={python_out}",
@@ -91,7 +93,9 @@ def fix_imports(python_out: Path) -> None:
     print("Fixing import paths...")
 
     # Find all generated _pb2.py and _pb2_grpc.py files
-    proto_files = list(python_out.glob("*_pb2.py")) + list(python_out.glob("*_pb2_grpc.py"))
+    proto_files = list(python_out.glob("*_pb2.py")) + list(
+        python_out.glob("*_pb2_grpc.py")
+    )
 
     for proto_file in proto_files:
         # Read the file
@@ -121,7 +125,9 @@ def move_nested_files(python_out: Path) -> None:
     print("Moving nested files...")
 
     # Find all files in the nested directory
-    nested_files = list(nested_dir.glob("*_pb2.py")) + list(nested_dir.glob("*_pb2_grpc.py"))
+    nested_files = list(nested_dir.glob("*_pb2.py")) + list(
+        nested_dir.glob("*_pb2_grpc.py")
+    )
 
     for nested_file in nested_files:
         # Move to parent directory
@@ -164,9 +170,9 @@ def verify_generation(python_out: Path) -> bool:
         print("  All proto files imported successfully!")
 
         # Check for key services
-        assert hasattr(document_pb2_grpc, 'DocumentServiceStub')
-        assert hasattr(hybrid_pb2_grpc, 'HybridSearchServiceStub')
-        assert hasattr(timeseries_pb2_grpc, 'TimeSeriesServiceStub')
+        assert hasattr(document_pb2_grpc, "DocumentServiceStub")
+        assert hasattr(hybrid_pb2_grpc, "HybridSearchServiceStub")
+        assert hasattr(timeseries_pb2_grpc, "TimeSeriesServiceStub")
 
         print("  All service stubs found!")
 

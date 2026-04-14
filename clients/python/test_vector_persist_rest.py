@@ -17,21 +17,19 @@ print(f"1. Using existing collection '{collection_name}'")
 print("\n2. Inserting vectors via REST API:")
 vectors = []
 for i in range(5):
-    vectors.append({
-        "id": f"persist_test_{i}_{int(time.time())}",
-        "vector": [random.random() for _ in range(128)],
-        "metadata": {
-            "test": "persistence",
-            "index": i,
-            "timestamp": time.time()
+    vectors.append(
+        {
+            "id": f"persist_test_{i}_{int(time.time())}",
+            "vector": [random.random() for _ in range(128)],
+            "metadata": {"test": "persistence", "index": i, "timestamp": time.time()},
         }
-    })
+    )
 
-insert_data = {
-    "vectors": vectors
-}
+insert_data = {"vectors": vectors}
 
-response = requests.post(f"{base_url}/api/v1/vectors/{collection_name}", json=insert_data)
+response = requests.post(
+    f"{base_url}/api/v1/vectors/{collection_name}", json=insert_data
+)
 print(f"   Insert response: {response.status_code}")
 if response.status_code == 200:
     print(f"   ✓ Vectors inserted successfully")
@@ -47,11 +45,10 @@ print("3. Checking vector operations:")
 
 # Try search
 print("   a) Search endpoint:")
-search_data = {
-    "vector": [0.5] * 128,
-    "top_k": 10
-}
-response = requests.post(f"{base_url}/api/v1/search/{collection_name}", json=search_data)
+search_data = {"vector": [0.5] * 128, "top_k": 10}
+response = requests.post(
+    f"{base_url}/api/v1/search/{collection_name}", json=search_data
+)
 print(f"      Status: {response.status_code}")
 
 # Try list
@@ -82,6 +79,7 @@ print()
 # 5. Check WAL directory
 print("5. Checking WAL files:")
 import os
+
 wal_dir = "./lsm_wal"
 if os.path.exists(wal_dir):
     files = os.listdir(wal_dir)

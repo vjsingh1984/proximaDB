@@ -92,7 +92,9 @@ class TestResponseCacheIntegration:
 
     def test_client_initialization_with_caching(self, config, cache_config):
         """Test client initialization with caching enabled"""
-        with patch("proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(
                 config=config, enable_caching=True, cache_config=cache_config
             )
@@ -105,7 +107,9 @@ class TestResponseCacheIntegration:
 
     def test_client_initialization_without_caching(self, config):
         """Test client initialization without caching"""
-        with patch("proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(config=config)
 
             assert client.enable_caching is False
@@ -376,7 +380,9 @@ class TestResponseCacheIntegration:
 
     def test_cache_management_disabled_errors(self, config):
         """Test errors when trying cache management on disabled caching"""
-        with patch("proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(config=config)  # No caching
 
             try:

@@ -27,6 +27,7 @@ Licensed under the Apache License, Version 2.0
 import sys
 from typing import Optional
 
+
 # Check for required dependencies
 def check_dependencies():
     """Check if required dependencies are installed."""
@@ -58,6 +59,7 @@ def check_dependencies():
 # =============================================================================
 # Example 1: Basic Connection to Arrow Flight
 # =============================================================================
+
 
 def example_basic_connection():
     """
@@ -108,6 +110,7 @@ def example_basic_connection():
 # Example 2: Listing Files in a Collection
 # =============================================================================
 
+
 def example_list_files(collection_id: str = "embeddings"):
     """
     List available files in a collection for export.
@@ -148,18 +151,12 @@ def example_list_files(collection_id: str = "embeddings"):
 
         # Filter by format (e.g., only Arrow files)
         print(f"\nFiltering for Arrow files only...")
-        arrow_files = client.list_files(
-            collection_id,
-            format_filter=FileFormat.ARROW
-        )
+        arrow_files = client.list_files(collection_id, format_filter=FileFormat.ARROW)
         print(f"  Found {len(arrow_files)} Arrow files")
 
         # Filter by pattern (glob-style)
         print(f"\nFiltering by pattern 'block_*.arrow'...")
-        pattern_files = client.list_files(
-            collection_id,
-            pattern="block_*.arrow"
-        )
+        pattern_files = client.list_files(collection_id, pattern="block_*.arrow")
         print(f"  Found {len(pattern_files)} matching files")
 
         # Get detailed info for a specific file
@@ -182,6 +179,7 @@ def example_list_files(collection_id: str = "embeddings"):
 # =============================================================================
 # Example 3: Reading Files into PyArrow Table
 # =============================================================================
+
 
 def example_read_pyarrow(collection_id: str = "embeddings"):
     """
@@ -226,9 +224,11 @@ def example_read_pyarrow(collection_id: str = "embeddings"):
             for i in range(min(3, table.num_rows)):
                 row = {col: table[col][i].as_py() for col in table.column_names}
                 # Truncate vector for display
-                if 'vector' in row and row['vector']:
-                    vec = row['vector']
-                    row['vector'] = f"[{vec[0]:.4f}, {vec[1]:.4f}, ... ({len(vec)} dims)]"
+                if "vector" in row and row["vector"]:
+                    vec = row["vector"]
+                    row["vector"] = (
+                        f"[{vec[0]:.4f}, {vec[1]:.4f}, ... ({len(vec)} dims)]"
+                    )
                 print(f"    {i}: {row}")
 
         # Read entire collection (all files concatenated)
@@ -249,6 +249,7 @@ def example_read_pyarrow(collection_id: str = "embeddings"):
 # =============================================================================
 # Example 4: Converting to Polars DataFrame
 # =============================================================================
+
 
 def example_polars_conversion(collection_id: str = "embeddings"):
     """
@@ -289,13 +290,13 @@ def example_polars_conversion(collection_id: str = "embeddings"):
         print(df.head(3))
 
         # Example: Filter and analyze with Polars
-        if 'metadata' in df.columns:
+        if "metadata" in df.columns:
             print("\nMetadata analysis with Polars:")
             # Note: metadata structure depends on your data
-            print(df.select(['id', 'metadata']).head(3))
+            print(df.select(["id", "metadata"]).head(3))
 
         # Example: Get vector statistics
-        if 'vector' in df.columns:
+        if "vector" in df.columns:
             print("\nVector column info:")
             print(f"  Type: {df['vector'].dtype}")
             print(f"  Non-null count: {df['vector'].count()}")
@@ -303,12 +304,7 @@ def example_polars_conversion(collection_id: str = "embeddings"):
         # Lazy evaluation example (for large datasets)
         print("\nLazy evaluation example:")
         lazy_df = df.lazy()
-        result = (
-            lazy_df
-            .select(['id'])
-            .limit(5)
-            .collect()
-        )
+        result = lazy_df.select(["id"]).limit(5).collect()
         print(f"  Collected {len(result)} IDs")
 
     return True
@@ -317,6 +313,7 @@ def example_polars_conversion(collection_id: str = "embeddings"):
 # =============================================================================
 # Example 5: Loading into DuckDB for SQL Analytics
 # =============================================================================
+
 
 def example_duckdb_analytics(collection_id: str = "embeddings"):
     """
@@ -391,9 +388,7 @@ def example_duckdb_analytics(collection_id: str = "embeddings"):
         if len(files) > 1:
             for i, f in enumerate(files[:3]):
                 conn = client.to_duckdb(
-                    f.path,
-                    table_name=f"vectors_{i}",
-                    conn=conn  # Reuse connection
+                    f.path, table_name=f"vectors_{i}", conn=conn  # Reuse connection
                 )
             print(f"    Registered {min(3, len(files))} tables")
 
@@ -410,6 +405,7 @@ def example_duckdb_analytics(collection_id: str = "embeddings"):
 # =============================================================================
 # Example 6: Extracting Vectors as NumPy Arrays
 # =============================================================================
+
 
 def example_numpy_extraction(collection_id: str = "embeddings"):
     """
@@ -470,7 +466,7 @@ def example_numpy_extraction(collection_id: str = "embeddings"):
             # Example: Compute pairwise cosine similarities
             if len(vectors) >= 2:
                 print(f"\nPairwise cosine similarity (first 3 vectors):")
-                subset = vectors[:min(3, len(vectors))]
+                subset = vectors[: min(3, len(vectors))]
                 # Normalize for cosine similarity
                 normalized = subset / np.linalg.norm(subset, axis=1, keepdims=True)
                 similarity_matrix = normalized @ normalized.T
@@ -488,6 +484,7 @@ def example_numpy_extraction(collection_id: str = "embeddings"):
 # =============================================================================
 # Example 7: Streaming Large Files in Batches
 # =============================================================================
+
 
 def example_streaming_batches(collection_id: str = "embeddings"):
     """
@@ -531,8 +528,8 @@ def example_streaming_batches(collection_id: str = "embeddings"):
 
             # Process each batch
             # Example: Extract vectors from this batch
-            if 'vector' in batch.schema.names:
-                vector_col = batch.column('vector')
+            if "vector" in batch.schema.names:
+                vector_col = batch.column("vector")
                 print(f"    Vector column length: {len(vector_col)}")
 
             # Example: Convert batch to pandas for processing
@@ -576,6 +573,7 @@ def example_streaming_batches(collection_id: str = "embeddings"):
 # Example 8: Collection Statistics
 # =============================================================================
 
+
 def example_collection_stats(collection_id: str = "embeddings"):
     """
     Get comprehensive statistics for a collection.
@@ -608,23 +606,29 @@ def example_collection_stats(collection_id: str = "embeddings"):
         print(f"  Vector dimension: {stats['dimension']}")
 
         # Format breakdown
-        if stats['formats']:
+        if stats["formats"]:
             print(f"\n  File format breakdown:")
-            for fmt, info in stats['formats'].items():
+            for fmt, info in stats["formats"].items():
                 print(f"    {fmt.upper()}:")
                 print(f"      Files: {info['count']}")
                 print(f"      Records: {info['records']}")
                 print(f"      Size: {info['bytes'] / 1024:.2f} KB")
 
         # Calculate derived metrics
-        if stats['total_records'] > 0 and stats['dimension'] > 0:
+        if stats["total_records"] > 0 and stats["dimension"] > 0:
             # Assuming float32 vectors (4 bytes per dimension)
-            theoretical_vector_size = stats['total_records'] * stats['dimension'] * 4
-            compression_ratio = theoretical_vector_size / max(stats['total_size_bytes'], 1)
+            theoretical_vector_size = stats["total_records"] * stats["dimension"] * 4
+            compression_ratio = theoretical_vector_size / max(
+                stats["total_size_bytes"], 1
+            )
 
             print(f"\n  Derived metrics:")
-            print(f"    Bytes per record: {stats['total_size_bytes'] / stats['total_records']:.2f}")
-            print(f"    Theoretical vector size: {theoretical_vector_size / (1024*1024):.2f} MB")
+            print(
+                f"    Bytes per record: {stats['total_size_bytes'] / stats['total_records']:.2f}"
+            )
+            print(
+                f"    Theoretical vector size: {theoretical_vector_size / (1024*1024):.2f} MB"
+            )
             print(f"    Compression ratio: {compression_ratio:.2f}x")
 
         # List all files with details
@@ -632,7 +636,9 @@ def example_collection_stats(collection_id: str = "embeddings"):
         if files:
             print(f"\n  Individual file details:")
             for f in files[:5]:  # Limit to first 5 files
-                print(f"    {f.filename}: {f.total_records} records, {f.size_bytes/1024:.1f} KB")
+                print(
+                    f"    {f.filename}: {f.total_records} records, {f.size_bytes/1024:.1f} KB"
+                )
             if len(files) > 5:
                 print(f"    ... and {len(files) - 5} more files")
 
@@ -642,6 +648,7 @@ def example_collection_stats(collection_id: str = "embeddings"):
 # =============================================================================
 # Main Demo Function
 # =============================================================================
+
 
 def main():
     """
@@ -761,7 +768,9 @@ def main():
                 print(f"\n[{name}] No data available - skipped")
         except Exception as e:
             print(f"\n[{name}] Error: {e}")
-            print("  (This may be expected if the collection is empty or doesn't exist)")
+            print(
+                "  (This may be expected if the collection is empty or doesn't exist)"
+            )
 
     print("\n" + "=" * 70)
     print("Arrow Export Examples Completed")

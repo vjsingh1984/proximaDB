@@ -34,14 +34,15 @@ import numpy as np
 from proximadb import ProximaDBClient, VectorRecord
 from proximadb.filters import MetadataFilter, FilterClause, ComparisonOp, LogicalOp
 
-
 # ============================================================================
 # Configuration and Setup
 # ============================================================================
 
+
 def check_server_available(url: str) -> bool:
     """Check if ProximaDB server is running"""
     import httpx
+
     try:
         response = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
         return response.status_code < 500
@@ -67,6 +68,7 @@ def print_step(step_num: int, title: str):
 # Sample Data: Academic Papers
 # ============================================================================
 
+
 def generate_papers(num_papers: int = 100) -> List[Dict[str, Any]]:
     """Generate a corpus of academic papers for demonstration"""
 
@@ -79,7 +81,7 @@ def generate_papers(num_papers: int = 100) -> List[Dict[str, Any]]:
             "year": 2017,
             "category": "Deep Learning",
             "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks...",
-            "citations": []
+            "citations": [],
         },
         {
             "id": "paper_002",
@@ -88,7 +90,7 @@ def generate_papers(num_papers: int = 100) -> List[Dict[str, Any]]:
             "year": 2018,
             "category": "NLP",
             "abstract": "We introduce a new language representation model called BERT...",
-            "citations": ["paper_001"]
+            "citations": ["paper_001"],
         },
         {
             "id": "paper_003",
@@ -97,7 +99,7 @@ def generate_papers(num_papers: int = 100) -> List[Dict[str, Any]]:
             "year": 2020,
             "category": "NLP",
             "abstract": "Recent work has demonstrated substantial gains on many NLP tasks and benchmarks...",
-            "citations": ["paper_001", "paper_002"]
+            "citations": ["paper_001", "paper_002"],
         },
         {
             "id": "paper_004",
@@ -106,7 +108,7 @@ def generate_papers(num_papers: int = 100) -> List[Dict[str, Any]]:
             "year": 2015,
             "category": "Computer Vision",
             "abstract": "Deeper neural networks are more difficult to train...",
-            "citations": []
+            "citations": [],
         },
         {
             "id": "paper_005",
@@ -115,20 +117,38 @@ def generate_papers(num_papers: int = 100) -> List[Dict[str, Any]]:
             "year": 2020,
             "category": "Computer Vision",
             "abstract": "Transformers have become the model of choice in natural language processing...",
-            "citations": ["paper_001", "paper_004"]
+            "citations": ["paper_001", "paper_004"],
         },
     ]
 
     # Categories for generated papers
     categories = [
-        "Deep Learning", "NLP", "Computer Vision", "Graph Learning",
-        "Reinforcement Learning", "Generative Models", "Meta Learning",
-        "Federated Learning", "Neural Architecture Search"
+        "Deep Learning",
+        "NLP",
+        "Computer Vision",
+        "Graph Learning",
+        "Reinforcement Learning",
+        "Generative Models",
+        "Meta Learning",
+        "Federated Learning",
+        "Neural Architecture Search",
     ]
 
     # Author name pools
-    first_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia",
-                   "Miller", "Davis", "Rodriguez", "Martinez", "Lee", "Wang"]
+    first_names = [
+        "Smith",
+        "Johnson",
+        "Williams",
+        "Brown",
+        "Jones",
+        "Garcia",
+        "Miller",
+        "Davis",
+        "Rodriguez",
+        "Martinez",
+        "Lee",
+        "Wang",
+    ]
 
     papers = base_papers.copy()
 
@@ -159,17 +179,20 @@ def generate_papers(num_papers: int = 100) -> List[Dict[str, Any]]:
             "year": year,
             "category": category,
             "abstract": f"This paper explores novel approaches to {category.lower()} with applications in various domains...",
-            "citations": citations
+            "citations": citations,
         }
         papers.append(paper)
 
     return papers
 
+
 # Generate 100 papers by default (can be changed)
 PAPERS = generate_papers(100)
 
 
-def generate_paper_embedding(paper: Dict[str, Any], dimension: int = 128) -> List[float]:
+def generate_paper_embedding(
+    paper: Dict[str, Any], dimension: int = 128
+) -> List[float]:
     """
     Generate a simple embedding for a paper based on its metadata.
     In a real application, you would use a pre-trained model like BERT or sentence-transformers.
@@ -204,11 +227,14 @@ def generate_paper_embedding(paper: Dict[str, Any], dimension: int = 128) -> Lis
 # Demo Functions
 # ============================================================================
 
+
 def demo_1_setup_collection(client: ProximaDBClient, collection: str, dimension: int):
     """Demo 1: Create collection for academic papers"""
     print_step(1, "Create Collection for Academic Papers")
 
-    print(f"Creating collection '{collection}' with {dimension}-dimensional embeddings...")
+    print(
+        f"Creating collection '{collection}' with {dimension}-dimensional embeddings..."
+    )
     client.create_collection(collection, dimension=dimension)
     print(f"✓ Collection created successfully\n")
 
@@ -219,7 +245,9 @@ def demo_1_setup_collection(client: ProximaDBClient, collection: str, dimension:
     print(f"  - Features: Unified entity+embedding+relation storage")
 
 
-def demo_2_insert_papers(client: ProximaDBClient, collection: str, dimension: int) -> List[Dict]:
+def demo_2_insert_papers(
+    client: ProximaDBClient, collection: str, dimension: int
+) -> List[Dict]:
     """Demo 2: Insert academic papers with embeddings"""
     print_step(2, f"Insert {len(PAPERS)} Academic Papers with Embeddings")
 
@@ -236,8 +264,8 @@ def demo_2_insert_papers(client: ProximaDBClient, collection: str, dimension: in
                 "authors": ", ".join(paper["authors"]),
                 "year": paper["year"],
                 "category": paper["category"],
-                "abstract": paper["abstract"][:200] + "..."  # Truncate for demo
-            }
+                "abstract": paper["abstract"][:200] + "...",  # Truncate for demo
+            },
         )
         records.append(record)
 
@@ -270,16 +298,19 @@ def demo_3_create_citation_graph(client: ProximaDBClient, papers: List[Dict]):
     print("Ensuring 'default' graph collection exists...")
     try:
         import httpx
+
         base_url = "http://localhost:5678"
         response = httpx.post(
             f"{base_url}/api/v1/graph/graphs",
             json={"graph_id": "default", "name": "Default Graph"},
-            timeout=5.0
+            timeout=5.0,
         )
         if response.status_code == 200 or response.status_code == 409:
             print(f"✓ Default graph ready\n")
         else:
-            print(f"⚠ Graph creation returned {response.status_code}: {response.text[:100]}\n")
+            print(
+                f"⚠ Graph creation returned {response.status_code}: {response.text[:100]}\n"
+            )
     except Exception as e:
         print(f"⚠ Could not create default graph: {str(e).splitlines()[0][:80]}\n")
 
@@ -294,14 +325,16 @@ def demo_3_create_citation_graph(client: ProximaDBClient, papers: List[Dict]):
                 properties={
                     "title": paper["title"],
                     "year": paper["year"],
-                    "category": paper["category"]
-                }
+                    "category": paper["category"],
+                },
             )
             nodes_created += 1
         except Exception as e:
             # Node might already exist or graph API not available
             if "400" not in str(e) and "404" not in str(e):
-                print(f"  Note: Node creation for {paper['id']}: {str(e).splitlines()[0][:60]}")
+                print(
+                    f"  Note: Node creation for {paper['id']}: {str(e).splitlines()[0][:60]}"
+                )
 
     print(f"✓ Created {nodes_created} graph nodes\n")
 
@@ -318,9 +351,7 @@ def demo_3_create_citation_graph(client: ProximaDBClient, papers: List[Dict]):
                     to_node_id=cited_paper_id,
                     edge_type="CITES",
                     weight=1.0,
-                    properties={
-                        "relationship": "citation"
-                    }
+                    properties={"relationship": "citation"},
                 )
                 edges_created += 1
             except Exception as e:
@@ -336,7 +367,9 @@ def demo_3_create_citation_graph(client: ProximaDBClient, papers: List[Dict]):
     print(f"  - Example: Vision Transformer cites Attention paper and ResNet")
 
 
-def demo_4_vector_similarity_search(client: ProximaDBClient, collection: str, dimension: int):
+def demo_4_vector_similarity_search(
+    client: ProximaDBClient, collection: str, dimension: int
+):
     """Demo 4: Find similar papers using vector similarity"""
     print_step(4, "Vector Similarity Search - Find Similar Papers")
 
@@ -353,10 +386,7 @@ def demo_4_vector_similarity_search(client: ProximaDBClient, collection: str, di
     # Search
     start_time = time.time()
     results = client.search(
-        collection_id=collection,
-        vector=query_vector,
-        top_k=5,
-        include_metadata=True
+        collection_id=collection, vector=query_vector, top_k=5, include_metadata=True
     )
     search_time = (time.time() - start_time) * 1000
 
@@ -371,7 +401,7 @@ def demo_4_vector_similarity_search(client: ProximaDBClient, collection: str, di
             value = meta.get(key, default)
             if isinstance(value, dict):
                 # Proto-wrapped format: {'string_value': 'text'} or {'int64_value': 123}
-                return value.get('string_value') or value.get('int64_value') or default
+                return value.get("string_value") or value.get("int64_value") or default
             return value
 
         title = get_metadata_value(metadata, "title")
@@ -401,10 +431,7 @@ def demo_5_hybrid_query(client: ProximaDBClient, collection: str, dimension: int
     print("Part 1: Vector Similarity Search")
     start_time = time.time()
     vector_results = client.search(
-        collection_id=collection,
-        vector=query_vector,
-        top_k=3,
-        include_metadata=True
+        collection_id=collection, vector=query_vector, top_k=3, include_metadata=True
     )
     vector_time = (time.time() - start_time) * 1000
 
@@ -412,9 +439,9 @@ def demo_5_hybrid_query(client: ProximaDBClient, collection: str, dimension: int
     for i, result in enumerate(vector_results[:3]):
         metadata = result.metadata or {}
         # Handle proto-wrapped format
-        title = metadata.get('title', 'Unknown')
+        title = metadata.get("title", "Unknown")
         if isinstance(title, dict):
-            title = title.get('string_value', 'Unknown')
+            title = title.get("string_value", "Unknown")
         print(f"  {i+1}. {title} (score: {result.score:.4f})")
 
     # Part 2: Graph traversal from seed paper
@@ -428,7 +455,7 @@ def demo_5_hybrid_query(client: ProximaDBClient, collection: str, dimension: int
             max_depth=2,
             edge_types=["CITES"],
             algorithm="BFS",
-            limit=10
+            limit=10,
         )
         graph_time = (time.time() - start_time) * 1000
 
@@ -466,18 +493,10 @@ def demo_6_metadata_filtering(client: ProximaDBClient, collection: str, dimensio
     # Define the server-side metadata filter
     filter_expression = MetadataFilter(
         clauses=[
-            FilterClause(
-                field="category",
-                op=ComparisonOp.EQ,
-                string_value="NLP"
-            ),
-            FilterClause(
-                field="year",
-                op=ComparisonOp.GTE,
-                int_value=2018
-            )
+            FilterClause(field="category", op=ComparisonOp.EQ, string_value="NLP"),
+            FilterClause(field="year", op=ComparisonOp.GTE, int_value=2018),
         ],
-        op=LogicalOp.AND
+        op=LogicalOp.AND,
     )
 
     # Search with metadata filter
@@ -486,7 +505,7 @@ def demo_6_metadata_filtering(client: ProximaDBClient, collection: str, dimensio
         vector=query_vector.tolist(),
         top_k=10,
         include_metadata=True,
-        filter_expression=filter_expression # Apply server-side filter
+        filter_expression=filter_expression,  # Apply server-side filter
     )
 
     print(f"✓ Found {len(results)} NLP papers from 2018+ (server-side filtered):\n")
@@ -494,9 +513,9 @@ def demo_6_metadata_filtering(client: ProximaDBClient, collection: str, dimensio
     # No client-side filtering needed, results are already filtered
     for i, result in enumerate(results):
         metadata = result.metadata
-        title = metadata.get('title', {}).get('string_value', 'Unknown')
-        year = metadata.get('year', {}).get('int64_value', 'N/A')
-        authors = metadata.get('authors', {}).get('string_value', 'Unknown')
+        title = metadata.get("title", {}).get("string_value", "Unknown")
+        year = metadata.get("year", {}).get("int64_value", "N/A")
+        authors = metadata.get("authors", {}).get("string_value", "Unknown")
 
         print(f"  {i+1}. {title}")
         print(f"     Year: {year}")
@@ -518,7 +537,9 @@ def demo_7_statistics(client: ProximaDBClient, collection: str):
 
     print("Demo Summary:")
     print(f"  ✓ {len(PAPERS)} academic papers stored")
-    print(f"  ✓ Citation graph with {sum(len(p['citations']) for p in PAPERS)} relationships")
+    print(
+        f"  ✓ Citation graph with {sum(len(p['citations']) for p in PAPERS)} relationships"
+    )
     print(f"  ✓ Vector similarity search < 50ms")
     print(f"  ✓ Hybrid queries (vector + graph) < 100ms")
     print(f"  ✓ Metadata filtering for targeted results")
@@ -533,6 +554,7 @@ def demo_7_statistics(client: ProximaDBClient, collection: str):
 # ============================================================================
 # Main Demo
 # ============================================================================
+
 
 def main():
     """Run the complete SKS real-world demo"""
@@ -602,6 +624,7 @@ def main():
     except Exception as e:
         print(f"\n❌ Error during demo: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 

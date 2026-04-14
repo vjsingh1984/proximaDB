@@ -720,6 +720,7 @@ class EmbeddedProximaDB:
 
         # Debug logging
         import sys
+
         print(f"[DEBUG] __file__ = {__file__}")
         print(f"[DEBUG] Search paths checked:")
         for i, path in enumerate(search_paths):

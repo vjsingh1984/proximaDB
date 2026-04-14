@@ -2,10 +2,12 @@
 """Quick test to verify search endpoint fix"""
 
 import sys
-sys.path.insert(0, 'src')
+
+sys.path.insert(0, "src")
 
 from proximadb import ProximaDBClient
 import numpy as np
+
 
 def main():
     # Create client
@@ -14,10 +16,7 @@ def main():
     # Create collection
     print("Creating collection...")
     try:
-        collection = client.create_collection(
-            name="test_search_fix",
-            dimension=128
-        )
+        collection = client.create_collection(name="test_search_fix", dimension=128)
         print(f"✓ Collection created: {collection.name}")
     except Exception as e:
         print(f"✗ Failed to create collection: {e}")
@@ -30,7 +29,7 @@ def main():
             {
                 "id": f"vec_{i}",
                 "vector": np.random.rand(128).tolist(),
-                "metadata": {"index": i}
+                "metadata": {"index": i},
             }
             for i in range(10)
         ]
@@ -45,9 +44,7 @@ def main():
     try:
         query_vector = np.random.rand(128).tolist()
         results = client.search(
-            collection_id="test_search_fix",
-            vector=query_vector,
-            top_k=5
+            collection_id="test_search_fix", vector=query_vector, top_k=5
         )
         print(f"✓ Search successful! Found {len(results)} results")
         if results:
@@ -55,10 +52,12 @@ def main():
     except Exception as e:
         print(f"✗ Search failed: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 
     print("\n✅ All tests passed! Search fix is working.")
+
 
 if __name__ == "__main__":
     main()

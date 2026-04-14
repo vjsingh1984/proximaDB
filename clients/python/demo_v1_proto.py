@@ -9,6 +9,7 @@ import numpy as np
 import time
 from proximadb.protocols.grpc_sync import ProximaDBSyncGrpcClient
 
+
 def main():
     print("=" * 70)
     print("ProximaDB v1 Proto Migration Demo")
@@ -19,8 +20,7 @@ def main():
     print("📡 Step 1: Connecting to ProximaDB gRPC server...")
     try:
         client = ProximaDBSyncGrpcClient(
-            server_address="localhost:5679",
-            enable_compression=False
+            server_address="localhost:5679", enable_compression=False
         )
         print("   ✅ Connected successfully")
     except Exception as e:
@@ -34,9 +34,7 @@ def main():
     print(f"\n📁 Step 2: Creating collection '{collection_name}'...")
     try:
         client.create_collection(
-            name=collection_name,
-            dimension=dimension,
-            distance_metric="COSINE"
+            name=collection_name, dimension=dimension, distance_metric="COSINE"
         )
         print(f"   ✅ Collection created")
         print(f"      - Name: {collection_name}")
@@ -53,14 +51,14 @@ def main():
 
     for i in range(num_vectors):
         vector_data = {
-            'id': f'vec_{i}',
-            'vector': np.random.rand(dimension).tolist(),
-            'metadata': {
-                'index': i,
-                'category': 'demo' if i % 2 == 0 else 'test',
-                'score': float(i * 0.1),
-                'active': bool(i % 3 == 0)
-            }
+            "id": f"vec_{i}",
+            "vector": np.random.rand(dimension).tolist(),
+            "metadata": {
+                "index": i,
+                "category": "demo" if i % 2 == 0 else "test",
+                "score": float(i * 0.1),
+                "active": bool(i % 3 == 0),
+            },
         }
         vectors.append(vector_data)
 
@@ -81,6 +79,7 @@ def main():
     except Exception as e:
         print(f"   ❌ Insert failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
@@ -94,8 +93,8 @@ def main():
             collection_id=collection_name,
             query_vector=query_vector,
             top_k=10,
-            metadata_filters={'category': 'demo'},
-            include_metadata=True
+            metadata_filters={"category": "demo"},
+            include_metadata=True,
         )
         elapsed = time.time() - start_time
 
@@ -108,23 +107,26 @@ def main():
             print(f"\n   📊 Top 3 Results:")
             for i, result in enumerate(results[:3], 1):
                 print(f"      {i}. ID: {result.id if hasattr(result, 'id') else 'N/A'}")
-                print(f"         Similarity: {result.similarity if hasattr(result, 'similarity') else 0:.4f}")
-                if hasattr(result, 'metadata') and result.metadata:
+                print(
+                    f"         Similarity: {result.similarity if hasattr(result, 'similarity') else 0:.4f}"
+                )
+                if hasattr(result, "metadata") and result.metadata:
                     print(f"         Metadata: {result.metadata}")
     except Exception as e:
         print(f"   ❌ Search failed: {e}")
         import traceback
+
         traceback.print_exc()
         return 1
 
     # Get specific vector
     print(f"\n🔎 Step 5: Retrieving specific vector...")
     try:
-        vector_result = client.get_vector(collection_name, 'vec_0')
+        vector_result = client.get_vector(collection_name, "vec_0")
         print(f"   ✅ Vector retrieved")
-        if hasattr(vector_result, 'id'):
+        if hasattr(vector_result, "id"):
             print(f"      - ID: {vector_result.id}")
-        if hasattr(vector_result, 'metadata') and vector_result.metadata:
+        if hasattr(vector_result, "metadata") and vector_result.metadata:
             print(f"      - Metadata: {vector_result.metadata}")
     except Exception as e:
         print(f"   ❌ Get vector failed: {e}")
@@ -144,5 +146,6 @@ def main():
 
     return 0
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     sys.exit(main())

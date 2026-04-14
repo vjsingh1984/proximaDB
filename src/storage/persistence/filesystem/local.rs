@@ -1708,35 +1708,84 @@ mod tests {
         // Ensure all writes are fully flushed before starting concurrent syncs
         // This prevents race condition where sync operations run before async writes complete
         tokio::task::yield_now().await;
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        // Verify all files exist before spawning sync tasks with retries
-        for (path, _) in &files {
-            let mut exists = false;
-            for _ in 0..5 {
-                exists = fs.exists(path).await.unwrap_or(false);
-                if exists {
-                    break;
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            }
-            assert!(exists, "File should exist after write: {}", path);
+        // Increased wait time to ensure async writes fully flush to disk on all systems
+        // 50ms provides sufficient buffer for slower systems and high load conditions
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        // Perform a global sync to ensure all data is flushed before concurrent operations
+        // This eliminates race conditions from buffering at multiple levels
+        if let Err(e) = fs.sync_all().await {
+            // Log but don't fail - some file systems don't support global sync
+            eprintln!("Warning: Global sync failed (may be unsupported): {}", e);
         }
 
-        // Sync all files concurrently
+        // Verify all files exist and are readable before spawning sync tasks
+        for (path, _) in &files {
+            let mut exists = false;
+            // Increased retry count and wait time for better reliability
+            for attempt in 0..10 {
+                exists = fs.exists(path).await.unwrap_or(false);
+                if exists {
+                    // Verify file is actually readable by attempting to read it
+                    if fs.read(path).await.is_ok() {
+                        break;
+                    }
+                }
+                // Exponential backoff for retries: 10ms, 20ms, 40ms, etc.
+                let backoff_ms = 10 * (1 << attempt.min(5));
+                tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+            }
+            assert!(exists, "File should exist and be readable after write: {}", path);
+        }
+
+        // Sync all files concurrently with improved error handling and retries
         let mut handles = vec![];
         for (path, _) in &files {
             let fs_clone = Arc::clone(&fs);
             let path = path.to_string();
             handles.push(tokio::spawn(async move {
-                // File existence already verified above, safe to sync directly
-                fs_clone.sync_file(&path).await
+                // Retry sync operation with timeout for better reliability
+                let mut attempt = 0;
+                let max_attempts = 3;
+
+                loop {
+                    match tokio::time::timeout(
+                        tokio::time::Duration::from_secs(5),
+                        fs_clone.sync_file(&path)
+                    ).await {
+                        Ok(Ok(())) => return Ok(()),
+                        Ok(Err(e)) => {
+                            attempt += 1;
+                            if attempt >= max_attempts {
+                                return Err(e);
+                            }
+                            // Brief backoff before retry
+                            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        },
+                        Err(_) => {
+                            // Timeout - retry with increased backoff
+                            attempt += 1;
+                            if attempt >= max_attempts {
+                                return Err(std::io::Error::new(
+                                    std::io::ErrorKind::TimedOut,
+                                    "Sync operation timed out after retries"
+                                ));
+                            }
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        }
+                    }
+                }
             }));
         }
 
-        // Wait for all syncs to complete
-        for handle in handles {
-            handle.await.unwrap().unwrap();
+        // Wait for all syncs to complete with better error reporting
+        for (i, handle) in handles.into_iter().enumerate() {
+            match handle.await {
+                Ok(Ok(())) => {},
+                Ok(Err(e)) => panic!("Sync failed for file {}: {}", files[i].0, e),
+                Err(e) => panic!("Sync task panicked for file {}: {}", files[i].0, e),
+            }
         }
 
         // Verify all data

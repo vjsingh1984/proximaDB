@@ -31,7 +31,7 @@ from proximadb.models import (
     VectorRecord,
     DistanceMetric,
     StorageEngine,
-    SearchOptimization
+    SearchOptimization,
 )
 
 
@@ -39,7 +39,14 @@ def extract_metadata_value(value):
     """Extract value from dict-wrapped metadata or return as-is"""
     if isinstance(value, dict):
         # Try all common dict wrapping patterns
-        for key in ['string_value', 'number_value', 'int_value', 'integer_value', 'bool_value', 'boolean_value']:
+        for key in [
+            "string_value",
+            "number_value",
+            "int_value",
+            "integer_value",
+            "bool_value",
+            "boolean_value",
+        ]:
             if key in value:
                 return value[key]
         # If no known pattern, try to return a single value if dict has only one key
@@ -54,7 +61,7 @@ def generate_product_embeddings(num_products: int) -> List[Dict[str, Any]]:
     """Generate synthetic product data with embeddings"""
     categories = ["Electronics", "Books", "Clothing", "Home & Garden", "Sports"]
     brands = ["TechCorp", "BookWorld", "FashionHub", "HomeStyle", "SportPro"]
-    
+
     products = []
     for i in range(num_products):
         # Generate clean BERT embedding without artificial clustering
@@ -80,19 +87,19 @@ def generate_product_embeddings(num_products: int) -> List[Dict[str, Any]]:
                 "tags": np.random.choice(
                     ["popular", "sale", "new", "featured", "limited"],
                     size=np.random.randint(0, 3),
-                    replace=False
-                ).tolist()
-            }
+                    replace=False,
+                ).tolist(),
+            },
         }
         products.append(product)
-    
+
     return products
 
 
 def setup_collection(client: ProximaDBClient, collection_name: str) -> None:
     """Set up collection with product data"""
     print(f"📦 Setting up collection '{collection_name}'...")
-    
+
     # Create collection optimized for search
     config = CollectionConfig(
         name=collection_name,
@@ -102,44 +109,41 @@ def setup_collection(client: ProximaDBClient, collection_name: str) -> None:
         metadata={
             "description": "Product catalog for advanced search demo",
             "index_type": "hnsw",
-            "index_params": {"m": 16, "ef_construction": 200}
-        }
+            "index_params": {"m": 16, "ef_construction": 200},
+        },
     )
-    
+
     try:
         client.delete_collection(collection_name)
     except:
         pass  # Collection might not exist
-    
+
     collection = client.create_collection(collection_name, config)
     print(f"✅ Collection created: {collection.id}")
-    
+
     # Insert product data
     print("📝 Inserting product data...")
     products = generate_product_embeddings(50)  # Reduced for better performance
-    
+
     vectors = [
-        VectorRecord(
-            id=p["id"],
-            vector=p["embedding"],
-            metadata=p["metadata"]
-        )
+        VectorRecord(id=p["id"], vector=p["embedding"], metadata=p["metadata"])
         for p in products
     ]
-    
+
     # Batch insert
     batch_size = 100
     for i in range(0, len(vectors), batch_size):
-        batch = vectors[i:i + batch_size]
+        batch = vectors[i : i + batch_size]
         response = client.insert_vectors(collection_name, batch)
         print(f"   Inserted batch {i//batch_size + 1}/{len(vectors)//batch_size + 1}")
-    
+
     print("✅ Product data inserted successfully")
     return products
 
 
-def demo_basic_filtering(client: ProximaDBClient, collection_name: str,
-                              query_vector: List[float]) -> None:
+def demo_basic_filtering(
+    client: ProximaDBClient, collection_name: str, query_vector: List[float]
+) -> None:
     """Demonstrate basic metadata filtering with client-side post-filtering"""
     print("\n🔍 Example 1: Basic Metadata Filtering")
     print("=" * 50)
@@ -151,32 +155,33 @@ def demo_basic_filtering(client: ProximaDBClient, collection_name: str,
         collection_id=collection_name,
         vector=query_vector,
         top_k=50,  # Get more candidates for filtering
-        include_metadata=True
+        include_metadata=True,
     )
 
     # Client-side filtering for Electronics under $500
     filtered_results = []
     for result in results:
-        category = extract_metadata_value(result.metadata.get('category'))
-        price = extract_metadata_value(result.metadata.get('price'))
+        category = extract_metadata_value(result.metadata.get("category"))
+        price = extract_metadata_value(result.metadata.get("price"))
 
-        if category == 'Electronics' and price and price < 500:
+        if category == "Electronics" and price and price < 500:
             filtered_results.append(result)
             if len(filtered_results) >= 5:  # Limit to 5 results
                 break
 
     print("📱 Electronics under $500:")
     for i, result in enumerate(filtered_results):
-        name = extract_metadata_value(result.metadata['name'])
-        price = extract_metadata_value(result.metadata['price'])
-        brand = extract_metadata_value(result.metadata['brand'])
-        rating = extract_metadata_value(result.metadata['rating'])
+        name = extract_metadata_value(result.metadata["name"])
+        price = extract_metadata_value(result.metadata["price"])
+        brand = extract_metadata_value(result.metadata["brand"])
+        rating = extract_metadata_value(result.metadata["rating"])
         print(f"{i+1}. {name} - ${price}")
         print(f"   Brand: {brand}, Rating: ⭐ {rating}")
 
 
-def demo_complex_filtering(client: ProximaDBClient, collection_name: str,
-                                query_vector: List[float]) -> None:
+def demo_complex_filtering(
+    client: ProximaDBClient, collection_name: str, query_vector: List[float]
+) -> None:
     """Demonstrate complex compound filters with client-side post-filtering"""
     print("\n🔍 Example 2: Complex Compound Filtering")
     print("=" * 50)
@@ -187,41 +192,40 @@ def demo_complex_filtering(client: ProximaDBClient, collection_name: str,
         collection_id=collection_name,
         vector=query_vector,
         top_k=50,  # Get more candidates
-        include_metadata=True
+        include_metadata=True,
     )
 
     # Client-side filtering for rating >= 4.5, in_stock=True, reviews > 100
     filtered_results = []
     for result in results:
-        rating = extract_metadata_value(result.metadata.get('rating'))
-        in_stock = extract_metadata_value(result.metadata.get('in_stock'))
-        reviews = extract_metadata_value(result.metadata.get('reviews'))
+        rating = extract_metadata_value(result.metadata.get("rating"))
+        in_stock = extract_metadata_value(result.metadata.get("in_stock"))
+        reviews = extract_metadata_value(result.metadata.get("reviews"))
 
-        if (rating and rating >= 4.5 and
-            in_stock is True and
-            reviews and reviews > 100):
+        if rating and rating >= 4.5 and in_stock is True and reviews and reviews > 100:
             filtered_results.append(result)
             if len(filtered_results) >= 10:
                 break
 
     print("⭐ High-rated products with 100+ reviews in stock:")
     for i, result in enumerate(filtered_results[:5]):
-        name = extract_metadata_value(result.metadata['name'])
-        rating = extract_metadata_value(result.metadata['rating'])
-        reviews = extract_metadata_value(result.metadata['reviews'])
-        price = extract_metadata_value(result.metadata['price'])
-        tags = extract_metadata_value(result.metadata.get('tags', []))
+        name = extract_metadata_value(result.metadata["name"])
+        rating = extract_metadata_value(result.metadata["rating"])
+        reviews = extract_metadata_value(result.metadata["reviews"])
+        price = extract_metadata_value(result.metadata["price"])
+        tags = extract_metadata_value(result.metadata.get("tags", []))
         print(f"{i+1}. {name} (Score: {result.score:.3f})")
         print(f"   Rating: ⭐ {rating} from {reviews} reviews")
         print(f"   Price: ${price}, Tags: {tags}")
 
 
-def demo_sql_search(client: ProximaDBClient, collection_name: str,
-                         query_vector: List[float]) -> None:
+def demo_sql_search(
+    client: ProximaDBClient, collection_name: str, query_vector: List[float]
+) -> None:
     """Demonstrate SQL-based vector search"""
     print("\n🔍 Example 3: SQL-based Vector Search")
     print("=" * 50)
-    
+
     # SQL query with vector similarity
     sql_query = f"""
     SELECT id, metadata.name, metadata.category, metadata.price, metadata.rating
@@ -233,20 +237,21 @@ def demo_sql_search(client: ProximaDBClient, collection_name: str,
     ORDER BY VECTOR_SIMILARITY(vector, :query_vector, 'cosine')
     LIMIT 10
     """
-    
+
     try:
         results = client.execute_sql(
-            sql_query,
-            parameters={"query_vector": query_vector}
+            sql_query, parameters={"query_vector": query_vector}
         )
-        
+
         print("📊 SQL Query Results:")
         print("Category      | Product Name           | Price   | Rating | Score")
         print("-" * 70)
-        
+
         for row in results.rows:
-            print(f"{row['category']:12} | {row['name']:20} | ${row['price']:6.2f} | "
-                  f"⭐ {row['rating']} | {row.get('_score', 0):.3f}")
+            print(
+                f"{row['category']:12} | {row['name']:20} | ${row['price']:6.2f} | "
+                f"⭐ {row['rating']} | {row.get('_score', 0):.3f}"
+            )
     except Exception as e:
         print(f"⚠️  SQL search not available: {e}")
         print("   Make sure ProximaDB server supports SQL queries")
@@ -256,11 +261,11 @@ def demo_hybrid_search(client: ProximaDBClient, collection_name: str) -> None:
     """Demonstrate hybrid search combining multiple signals"""
     print("\n🔍 Example 4: Hybrid Search (Text + Vector + Filters)")
     print("=" * 50)
-    
+
     # Simulate a text query converted to embedding
     # In real usage, you'd use a text embedding model
     text_query = "high-end gaming laptop"
-    
+
     # Create honest query embedding from real text (no artificial bias)
     query_text = "gaming laptop with high performance graphics"
     print(f"🔍 Searching for: '{query_text}'")
@@ -268,7 +273,7 @@ def demo_hybrid_search(client: ProximaDBClient, collection_name: str) -> None:
     query_embedding = np.random.rand(384)
     query_embedding = query_embedding / np.linalg.norm(query_embedding)  # Normalize
     # No artificial bias - let semantic similarity work naturally
-    
+
     # Multi-stage search
     print(f"🔎 Searching for: '{text_query}'")
 
@@ -277,35 +282,40 @@ def demo_hybrid_search(client: ProximaDBClient, collection_name: str) -> None:
         collection_id=collection_name,
         vector=query_embedding.tolist(),
         top_k=50,  # Get more candidates
-        include_metadata=True
+        include_metadata=True,
     )
 
     # Stage 2: Client-side filtering for high-end electronics
     # Filter for: category=Electronics, price > 500, rating >= 4.0
     refined_results = []
     for result in broad_results:
-        category = extract_metadata_value(result.metadata.get('category'))
-        price = extract_metadata_value(result.metadata.get('price'))
-        rating = extract_metadata_value(result.metadata.get('rating'))
+        category = extract_metadata_value(result.metadata.get("category"))
+        price = extract_metadata_value(result.metadata.get("price"))
+        rating = extract_metadata_value(result.metadata.get("rating"))
 
-        if (category == 'Electronics' and
-            price and price > 500 and
-            rating and rating >= 4.0):
+        if (
+            category == "Electronics"
+            and price
+            and price > 500
+            and rating
+            and rating >= 4.0
+        ):
             refined_results.append(result)
             if len(refined_results) >= 5:
                 break
 
     print("\n💎 Top high-end electronics matches:")
     for i, result in enumerate(refined_results):
-        name = extract_metadata_value(result.metadata['name'])
-        price = extract_metadata_value(result.metadata['price'])
-        rating = extract_metadata_value(result.metadata['rating'])
+        name = extract_metadata_value(result.metadata["name"])
+        price = extract_metadata_value(result.metadata["price"])
+        rating = extract_metadata_value(result.metadata["rating"])
         print(f"{i+1}. {name} - ${price}")
         print(f"   Similarity: {result.score:.3f}, Rating: ⭐ {rating}")
 
 
-def demo_search_caching(client: ProximaDBClient, collection_name: str,
-                             query_vector: List[float]) -> None:
+def demo_search_caching(
+    client: ProximaDBClient, collection_name: str, query_vector: List[float]
+) -> None:
     """Demonstrate search result caching"""
     print("\n🔍 Example 5: Search Result Caching")
     print("=" * 50)
@@ -323,7 +333,7 @@ def demo_search_caching(client: ProximaDBClient, collection_name: str,
         vector=query_vector,
         top_k=10,
         metadata_filter=metadata_filter,
-        include_metadata=True
+        include_metadata=True,
     )
     time1 = time.time() - start
     print(f"❄️  Cold search time: {time1*1000:.2f}ms")
@@ -335,7 +345,7 @@ def demo_search_caching(client: ProximaDBClient, collection_name: str,
         vector=query_vector,
         top_k=10,
         metadata_filter=metadata_filter,
-        include_metadata=True
+        include_metadata=True,
     )
     time2 = time.time() - start
     print(f"🔥 Warm search time: {time2*1000:.2f}ms")
@@ -343,11 +353,14 @@ def demo_search_caching(client: ProximaDBClient, collection_name: str,
     if time2 < time1 * 0.5:
         print(f"✅ Cache hit! {(1 - time2/time1)*100:.1f}% faster")
     else:
-        print("ℹ️  No significant caching detected (enable with ResilientProximaDBClient)")
+        print(
+            "ℹ️  No significant caching detected (enable with ResilientProximaDBClient)"
+        )
 
 
-def demo_streaming_search(client: ProximaDBClient, collection_name: str,
-                               query_vector: List[float]) -> None:
+def demo_streaming_search(
+    client: ProximaDBClient, collection_name: str, query_vector: List[float]
+) -> None:
     """Demonstrate paginated search for large result sets"""
     print("\n🔍 Example 6: Paginated Search Results")
     print("=" * 50)
@@ -362,9 +375,7 @@ def demo_streaming_search(client: ProximaDBClient, collection_name: str,
 
     # Fetch results in batches
     results = client.search(
-        collection_id=collection_name,
-        vector=query_vector,
-        top_k=max_results
+        collection_id=collection_name, vector=query_vector, top_k=max_results
     )
 
     for result in results:
@@ -380,12 +391,15 @@ def demo_streaming_search(client: ProximaDBClient, collection_name: str,
 
     print(f"\n✅ Processed {total_processed} total results")
     print("📊 Category distribution:")
-    for category, count in sorted(categories_count.items(), key=lambda x: x[1], reverse=True):
+    for category, count in sorted(
+        categories_count.items(), key=lambda x: x[1], reverse=True
+    ):
         print(f"   - {category}: {count} products")
 
 
-def demo_optimization_hints(client: ProximaDBClient, collection_name: str,
-                                 query_vector: List[float]) -> None:
+def demo_optimization_hints(
+    client: ProximaDBClient, collection_name: str, query_vector: List[float]
+) -> None:
     """Demonstrate search with optimization configuration"""
     print("\n🔍 Example 7: Search Optimization Hints")
     print("=" * 50)
@@ -397,14 +411,14 @@ def demo_optimization_hints(client: ProximaDBClient, collection_name: str,
         collection_id=collection_name,
         vector=query_vector,
         top_k=50,  # Get more candidates for filtering
-        include_metadata=True
+        include_metadata=True,
     )
 
     # Client-side filtering for Electronics or Books
     filtered_results = []
     for result in results:
-        category = extract_metadata_value(result.metadata.get('category'))
-        if category in ['Electronics', 'Books']:
+        category = extract_metadata_value(result.metadata.get("category"))
+        if category in ["Electronics", "Books"]:
             filtered_results.append(result)
             if len(filtered_results) >= 10:
                 break
@@ -425,22 +439,22 @@ def main():
     # Initialize client
     print("🚀 Advanced Search Example for ProximaDB")
     print("=" * 50)
-    
+
     client = ProximaDBClient(
         url="http://localhost:5678",
         protocol="rest",
-        timeout=60.0  # Longer timeout for complex queries
+        timeout=60.0,  # Longer timeout for complex queries
     )
-    
+
     collection_name = "product_catalog"
-    
+
     try:
         # Set up collection with data
         products = setup_collection(client, collection_name)
-        
+
         # Use first product's embedding as query
         query_vector = products[0]["embedding"]
-        
+
         # Run all demos
         demo_basic_filtering(client, collection_name, query_vector)
         demo_complex_filtering(client, collection_name, query_vector)
@@ -449,9 +463,9 @@ def main():
         demo_search_caching(client, collection_name, query_vector)
         demo_streaming_search(client, collection_name, query_vector)
         demo_optimization_hints(client, collection_name, query_vector)
-        
+
         print("\n✅ All advanced search examples completed!")
-        
+
     finally:
         # Cleanup
         print("\n🧹 Cleaning up...")
