@@ -362,6 +362,12 @@ pub async fn collection_operation(
         serde_json::to_string_pretty(&value).unwrap_or_else(|_| "invalid json".to_string())
     );
 
+    // DEBUG: Log raw incoming JSON payload
+    info!(
+        "🔍 DEBUG Incoming JSON: {}",
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "invalid json".to_string())
+    );
+
     // Parse the JSON value into CollectionRequest
     let mut request: CollectionRequest = serde_json::from_value(value.clone()).map_err(|e| {
         error!(
@@ -370,6 +376,14 @@ pub async fn collection_operation(
         );
         ApiError::InvalidArgument(format!("Invalid request format: {}", e))
     })?;
+
+    // DEBUG: Log parsed request config
+    if let Some(ref config) = request.collection_config {
+        info!(
+            "🔍 DEBUG Parsed CollectionConfig: name={}, distance_metric={:?}, storage_engine={:?}",
+            config.name, config.distance_metric, config.storage_engine
+        );
+    }
 
     // WORKAROUND: Fix enum values that were incorrectly deserialized
     // The prost-derived Deserialize can't handle string enum values from Python SDK
