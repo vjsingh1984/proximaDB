@@ -1710,7 +1710,11 @@ mod tests {
 
             // Synchronously verify the write was successful
             let read_data = fs.read(path).await.unwrap();
-            assert_eq!(&read_data, data, "Initial write verification failed for {}", path);
+            assert_eq!(
+                &read_data, data,
+                "Initial write verification failed for {}",
+                path
+            );
         }
 
         // Use a barrier to ensure all writes are flushed before concurrent syncs
@@ -1757,11 +1761,17 @@ mod tests {
         }
 
         // Assert with clear, stable error messages
-        let failed_syncs: Vec<_> = results.into_iter().filter(|(_, success)| !success).collect();
+        let failed_syncs: Vec<_> = results
+            .into_iter()
+            .filter(|(_, success)| !success)
+            .collect();
         assert!(
             failed_syncs.is_empty(),
             "Sync operations failed for files: {:?}",
-            failed_syncs.iter().map(|(path, _)| path).collect::<Vec<_>>()
+            failed_syncs
+                .iter()
+                .map(|(path, _)| path)
+                .collect::<Vec<_>>()
         );
 
         // Final verification: Ensure all data is intact after concurrent syncs
