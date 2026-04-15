@@ -129,7 +129,9 @@ class TestCollectionConfigComprehensive:
                         f"collection created successfully but metric differs"
                     )
                 else:
-                    logger.info(f"✓ REST: Created collection with {metric.value} metric")
+                    logger.info(
+                        f"✓ REST: Created collection with {metric.value} metric"
+                    )
             except ProximaDBError as e:
                 if "not supported" in str(e).lower():
                     logger.warning(f"⚠ REST: {metric.value} metric not supported")
@@ -153,7 +155,9 @@ class TestCollectionConfigComprehensive:
                         f"collection created successfully but metric differs"
                     )
                 else:
-                    logger.info(f"✓ gRPC: Created collection with {metric.value} metric")
+                    logger.info(
+                        f"✓ gRPC: Created collection with {metric.value} metric"
+                    )
             except ProximaDBError as e:
                 if "not supported" in str(e).lower():
                     logger.warning(f"⚠ gRPC: {metric.value} metric not supported")
@@ -186,7 +190,9 @@ class TestCollectionConfigComprehensive:
                         f"collection created successfully but engine differs"
                     )
                 else:
-                    logger.info(f"✓ REST: Created collection with {engine.value} engine")
+                    logger.info(
+                        f"✓ REST: Created collection with {engine.value} engine"
+                    )
             except ProximaDBError as e:
                 if "not supported" in str(e).lower():
                     logger.warning(f"⚠ REST: {engine.value} engine not supported")
@@ -210,7 +216,9 @@ class TestCollectionConfigComprehensive:
                         f"collection created successfully but engine differs"
                     )
                 else:
-                    logger.info(f"✓ gRPC: Created collection with {engine.value} engine")
+                    logger.info(
+                        f"✓ gRPC: Created collection with {engine.value} engine"
+                    )
             except ProximaDBError as e:
                 if "not supported" in str(e).lower():
                     logger.warning(f"⚠ gRPC: {engine.value} engine not supported")

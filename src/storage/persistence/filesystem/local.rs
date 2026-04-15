@@ -1719,7 +1719,8 @@ mod tests {
 
         // Use a barrier to ensure all writes are flushed before concurrent syncs
         // This is more reliable than sleep-based approaches
-        let barrier = Arc::new(std::sync::Barrier::new(test_files.len() + 1));
+        // Use tokio::sync::Barrier for async-compatible synchronization
+        let barrier = Arc::new(tokio::sync::Barrier::new(test_files.len() + 1));
         let mut handles = vec![];
 
         // Spawn concurrent sync operations with barrier synchronization
@@ -1730,7 +1731,7 @@ mod tests {
 
             handles.push(tokio::spawn(async move {
                 // Wait for all tasks to be ready before starting
-                barrier_clone.wait();
+                barrier_clone.wait().await;
 
                 // Perform sync operation with simple error handling
                 // No retries or timeouts - let the test fail if there's a real issue
@@ -1742,7 +1743,7 @@ mod tests {
         }
 
         // Wait for all tasks to be ready, then release the barrier
-        barrier.wait();
+        barrier.wait().await;
 
         // Collect results with clear error messages
         let mut results = vec![];
