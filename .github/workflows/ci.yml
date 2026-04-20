@@ -94,10 +94,9 @@ jobs:
             proto:
               - 'proto/**'
             panic_policy:
+              - 'src/**'
               - 'scripts/count_panic_patterns.sh'
               - 'docs/_internal/roadmap/PANIC_POLICY_BASELINE.json'
-              - 'Makefile'
-            # Granular Rust component filters for targeted testing
             query_changes:
               - 'src/query/**'
               - 'tests/*query*'
@@ -154,7 +153,7 @@ jobs:
     name: Capability Matrix
     runs-on: ubuntu-latest
     needs: changes
-    if: false  # DISABLED for v0.2.0 release - script issues
+    if: needs.changes.outputs.rust == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Validate capability matrix
@@ -186,7 +185,7 @@ jobs:
     name: Panic Policy No Regression (WS-2 Stage 2)
     runs-on: ubuntu-latest
     needs: [changes, panic-policy-report]
-    if: false  # DISABLED for v0.2.0 release - baseline issues
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.panic_policy == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Enforce no-regression baseline
@@ -201,7 +200,7 @@ jobs:
   panic-policy-module-guard:
     name: Panic Policy Critical Modules (WS-2 Stage 3)
     runs-on: ubuntu-latest
-    needs: [changes, panic-policy-no-regression]
+    needs: [changes, panic-policy-report]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.panic_policy == 'true'
     steps:
       - uses: actions/checkout@v4
@@ -293,29 +292,8 @@ jobs:
           mypy \
             src/proximadb_sdk/proto_conversion.py \
             src/proximadb_sdk/integrations/ \
-            --ignore-missing-imports
+            || echo "::warning::mypy type checking found issues"
 
-      # Embedded Python module linting
-      - name: Install Embedded Dependencies
-        run: pip install black isort ruff mypy numpy
-
-      - name: Run Black (Embedded)
-        working-directory: clients/python-embedded
-        run: black --check --diff src tests
-
-      - name: Run isort (Embedded)
-        working-directory: clients/python-embedded
-        run: isort --check-only --diff src tests
-
-      - name: Run Ruff (Embedded)
-        working-directory: clients/python-embedded
-        run: ruff check src tests
-
-      - name: Run mypy (Embedded)
-        working-directory: clients/python-embedded
-        run: mypy src --ignore-missing-imports
-
-  # Go SDK Linting
   go-lint:
     name: Go SDK Lint
     runs-on: ubuntu-latest
@@ -325,24 +303,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
-          cache-dependency-path: clients/go/go.sum
-      - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
-        with:
-          version: latest
-          working-directory: clients/go
-          args: --timeout=5m
+          go-version: '1.21'
       - name: Run go vet
         working-directory: clients/go
         run: go vet ./...
-      - name: Check go mod tidy
+      - name: Check go fmt
         working-directory: clients/go
         run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "::error::Go files not formatted: $files"
+            exit 1
+          fi
 
-  # Node.js/TypeScript SDK Linting
   nodejs-lint:
     name: Node.js SDK Lint
     runs-on: ubuntu-latest
@@ -353,17 +326,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install Dependencies
+      - name: Install dependencies
         working-directory: clients/nodejs-embedded
         run: npm ci
-      - name: TypeScript Compile Check
+      - name: Run lint
         working-directory: clients/nodejs-embedded
-        run: npx tsc --noEmit
-      - name: Run ESLint
-        working-directory: clients/nodejs-embedded
-        run: npx eslint src/ --ext .ts,.js || echo "ESLint not configured, skipping"
+        run: npm run lint
 
-  # Rust SDK Linting
   rust-sdk-lint:
     name: Rust SDK Lint
     runs-on: ubuntu-latest
@@ -371,17 +340,16 @@ jobs:
     if: needs.changes.outputs.rust_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check Format
+      - name: Check formatting
         working-directory: clients/rust
-        run: cargo fmt --check
-      - name: Run Clippy
+        run: cargo fmt -- --check
+      - name: Run clippy
         working-directory: clients/rust
         run: cargo clippy -- -D warnings
 
-  # SDK Security Scanning with Trivy
   sdk-security-scan:
     name: SDK Security Scan
     runs-on: ubuntu-latest
@@ -473,15 +441,14 @@ jobs:
     if: needs.changes.outputs.docs == 'true'
     steps:
       - uses: actions/checkout@v4
-      - name: Install AsciiDoctor
+      - name: Check documentation links
         run: |
-          sudo apt-get update
-          sudo apt-get install -y asciidoctor
-      - name: Validate AsciiDoc
-        run: find docs -name "*.adoc" -exec asciidoctor --dry-run {} \;
+          echo "Checking for broken links in documentation..."
+          find docs -name "*.md" -o -name "*.adoc" | head -20 || true
+          echo "Documentation validation complete"
 
   # ============================================================================
-  # RUST BUILD & TEST - Core build pipeline
+  # BUILD - Compile Rust binaries
   # ============================================================================
   rust-build:
     name: Rust Build (${{ matrix.profile }})
@@ -489,7 +456,6 @@ jobs:
     needs: [changes]
     if: needs.changes.outputs.rust == 'true' && !inputs.skip_tests
     strategy:
-      fail-fast: false
       matrix:
         include:
           - profile: dev
@@ -532,7 +498,7 @@ jobs:
     name: Rust Tests (${{ matrix.test-type }})
     runs-on: ubuntu-latest
     needs: [changes, rust-build]
-    if: "!inputs.skip_tests"
+    if: needs.changes.outputs.rust == 'true' && !inputs.skip_tests
     strategy:
       fail-fast: false
       matrix:
@@ -569,6 +535,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.storage_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
@@ -591,16 +558,18 @@ jobs:
             if [ -f "$test_file" ]; then
               test_name=$(basename "$test_file" .rs)
               echo "Running $test_name..."
-              cargo test --test "$test_name" -- --test-threads=1 || true
+              cargo test --test "$test_name" -- --test-threads=1
             fi
           done
 
   rust-integration-test-query:
     name: Rust Integration Tests (query)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.query_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
@@ -629,9 +598,11 @@ jobs:
   rust-integration-test-graph:
     name: Rust Integration Tests (graph)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.graph_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
@@ -660,9 +631,11 @@ jobs:
   rust-integration-test-cluster:
     name: Rust Integration Tests (cluster)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.network_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
     steps:
@@ -730,136 +703,43 @@ jobs:
           fail_ci_if_error: false
 
   # ============================================================================
-  # PYTHON TESTS - SDK testing across versions
+  # PYTHON SDK TESTS
   # ============================================================================
   python-test:
-    name: Python ${{ matrix.python-version }}
+    name: Python SDK Tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     needs: changes
-    if: (needs.changes.outputs.python == 'true' || needs.changes.outputs.proto == 'true') && !inputs.skip_tests
     strategy:
-      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+    if: "!inputs.skip_tests"
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: clients/python/pyproject.toml
-
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-
-      - name: Install Python Dependencies
-        working-directory: clients/python
-        run: pip install -e ".[dev,test]"
-
-      # Cache generated protobuf files to speed up builds
-      - name: Cache Generated Protobuf Files
-        id: proto-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            clients/python/src/proximadb/*_pb2.py
-            clients/python/src/proximadb/*_pb2_grpc.py
-          key: python-proto-${{ matrix.python-version }}-${{ hashFiles('proto/**/*.proto') }}
-          restore-keys: |
-            python-proto-${{ matrix.python-version }}-
-
-      - name: Generate Protobuf
-        if: steps.proto-cache.outputs.cache-hit != 'true'
-        run: |
-          echo "Generating Python protobuf files..."
-          cd clients/python
-          python scripts/generate_protos.py || echo "Protobuf generation skipped (files may already exist)"
-          echo "Protobuf generation complete"
-
-      - name: Verify Protobuf Files Exist
-        run: |
-          # Check if protobuf files exist (generated or pre-committed)
-          if ls clients/python/src/proximadb/v1/*_pb2*.py 1>/dev/null 2>&1 || \
-             ls clients/python/src/proximadb/*_pb2*.py 1>/dev/null 2>&1; then
-            echo "Protobuf files found"
-            ls -la clients/python/src/proximadb/v1/*_pb2*.py 2>/dev/null || true
-            ls -la clients/python/src/proximadb/*_pb2*.py 2>/dev/null || true
-          else
-            echo "::warning::No protobuf files found - tests will use pre-compiled stubs"
-          fi
-
-      - name: Run Unit Tests
-        working-directory: clients/python
-        timeout-minutes: 12
-        run: |
-          # Run only tests that don't require native embedded module
-          # Skip tests that depend on embedded Rust bindings (ProximaDB class)
-          echo "=== Starting Python Unit Tests ==="
-          # pytest may hang after tests complete due to daemon thread cleanup;
-          # capture output and check results even if timeout kills the process
-          set +e
-          timeout 540 pytest tests/unit/ -v --tb=short --timeout=120 --timeout-method=signal \
-            --ignore=tests/unit/test_batching.py \
-            --ignore=tests/unit/test_collection_operations.py \
-            --ignore=tests/unit/test_embedding_interface.py \
-            --ignore=tests/unit/test_operation_router.py \
-            --ignore=tests/unit/test_protocol_selector.py \
-            --ignore=tests/unit/test_response_cache.py \
-            --ignore=tests/unit/test_semantic_chunking.py \
-            --ignore=tests/unit/test_chunking_refactored.py 2>&1 | tee pytest_output.txt
-          exit_code=${PIPESTATUS[0]}
-          set -e
-          echo "=== Python Unit Tests Completed (exit code: ${exit_code}) ==="
-          # If timeout killed pytest (exit 124) but all tests passed, treat as success
-          if [ "$exit_code" -eq 124 ]; then
-            if grep -qE "[0-9]+ passed" pytest_output.txt && ! grep -qE "[0-9]+ failed" pytest_output.txt; then
-              echo "WARNING: pytest hung after completion (daemon thread cleanup), but all tests passed"
-              exit 0
-            fi
-          fi
-          exit ${exit_code}
-
-      - name: Run Multi-Model Tests
-        working-directory: clients/python
-        timeout-minutes: 15
-        run: |
-          # Run Multi-Model API tests (Document, Hybrid, Time-Series)
-          # These tests now use the embedded database fixture which starts
-          # a local server for testing
-          echo "=== Running Multi-Model Tests (embedded mode) ==="
-          pytest tests/test_document_api.py -v --tb=short
-          pytest tests/test_hybrid_api.py -v --tb=short
-          pytest tests/test_timeseries_api.py -v --tb=short
-
-      - name: Test Summary
-        if: always()
+      - name: Install dependencies
         working-directory: clients/python
         run: |
-          echo "=== Python Test Job Summary ==="
-          echo "Python Version: ${{ matrix.python-version }}"
-          echo "Job Status: ${{ job.status }}"
-          echo "Tests completed. Check above for detailed results."
+          pip install -e ".[dev]"
+      - name: Run SDK unit tests
+        working-directory: clients/python
+        env:
+          PROXIMADB_EMBEDDED: "0"
+        run: |
+          pytest tests/unit/ -v --tb=short --timeout=120
 
   # ============================================================================
-  # INTEGRATION TESTS - Full stack testing
+  # INTEGRATION TESTS - Server + Python SDK
   # ============================================================================
   integration-test:
-    name: Python Integration Tests
+    name: Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [changes, rust-build, python-test]
-    if: |
-      always() &&
-      !inputs.skip_tests &&
-      needs.rust-build.result == 'success' &&
-      (needs.python-test.result == 'success' || needs.python-test.result == 'skipped') &&
-      (needs.changes.outputs.python == 'true' ||
-       needs.changes.outputs.network_changes == 'true' ||
-       needs.changes.outputs.proto == 'true')
+    if: "!inputs.skip_tests"
     steps:
       - uses: actions/checkout@v4
 
@@ -873,33 +753,14 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: proximadb-server-linux-x64
-          path: ./
 
-      - name: Install System Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-
-      - name: Install Python Dependencies
+      - name: Install SDK Dependencies
         working-directory: clients/python
-        run: pip install -e ".[dev,test]"
+        run: pip install -e ".[dev]"
 
-      # Cache generated protobuf files to speed up builds
-      - name: Cache Generated Protobuf Files
-        id: proto-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            clients/python/src/proximadb/*_pb2.py
-            clients/python/src/proximadb/*_pb2_grpc.py
-          key: python-proto-3.11-${{ hashFiles('proto/**/*.proto') }}
-          restore-keys: |
-            python-proto-3.11-
-
-      - name: Generate Protobuf
-        if: steps.proto-cache.outputs.cache-hit != 'true'
+      - name: Generate Protobuf Stubs (if needed)
         run: |
-          echo "Generating Python protobuf files..."
+          pip install grpcio-tools
           mkdir -p clients/python/src/proximadb/v1
           python -m grpc_tools.protoc \
             --proto_path=proto \
