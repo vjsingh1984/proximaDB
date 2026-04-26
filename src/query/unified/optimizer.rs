@@ -194,6 +194,43 @@ impl QueryOptimizer {
         }
     }
 
+    /// Time a query future and record its wall-clock duration on success.
+    ///
+    /// This is the recommended integration point for the unified executor
+    /// (TD-047 sub A wiring): wrap the run of a plan with this helper and
+    /// the [`PlanExecutionCache`] is fed automatically. Contract:
+    ///
+    /// - `Ok(_)` outcomes are recorded in microseconds.
+    /// - `Err(_)` outcomes are NOT recorded -- failed queries have
+    ///   unrepresentative timing (fail-fast paths, retries, partial work)
+    ///   and would skew the running mean used as fitness.
+    /// - When measured-fitness is disabled, this reduces to a thin
+    ///   pass-through. The single `Instant::now()` overhead is ~ns; we keep
+    ///   it unconditional so the call site never has to special-case it.
+    /// - The cast from `u128` microseconds to `u64` is saturating, so
+    ///   absurdly long futures (>584,000 years) cannot panic the executor.
+    pub async fn time_and_record_if_ok<F, T, E>(
+        &self,
+        components: &[QueryComponent],
+        execution_order: &[usize],
+        fut: F,
+    ) -> std::result::Result<T, E>
+    where
+        F: std::future::Future<Output = std::result::Result<T, E>>,
+    {
+        let start = std::time::Instant::now();
+        let result = fut.await;
+        if result.is_ok() {
+            let elapsed_us: u64 = start
+                .elapsed()
+                .as_micros()
+                .try_into()
+                .unwrap_or(u64::MAX);
+            self.record_plan_execution(components, execution_order, elapsed_us);
+        }
+        result
+    }
+
     /// Access the measured-fitness cache (mostly for tests and observability).
     pub fn plan_execution_cache(
         &self,
@@ -1985,6 +2022,146 @@ mod tests {
             order,
             vec![1, 0],
             "evolutionary planner should converge to the empirically faster order"
+        );
+    }
+
+    // ============================================================
+    // TD-047 sub A wiring: time_and_record_if_ok
+    //
+    // Robustness contract:
+    //   - Only successful runs (Result::Ok) are recorded.
+    //   - Failed runs (Result::Err) MUST NOT pollute the cache.
+    //   - When measured-fitness is disabled, the helper is a thin pass-through.
+    //   - Wall-time is measured as Instant::elapsed() in microseconds, with
+    //     a saturating cast (no panic on absurdly long futures).
+    // ============================================================
+
+    fn make_optimizer_with_measured_fitness() -> QueryOptimizer {
+        let mut config = OptimizerConfig::default();
+        config.enable_evolutionary_optimizer = true;
+        config.enable_measured_fitness = true;
+        config.measured_fitness_max_entries = 8;
+        QueryOptimizer::new(config)
+    }
+
+    #[tokio::test]
+    async fn test_time_and_record_records_on_ok() {
+        let optimizer = make_optimizer_with_measured_fitness();
+        let components = vec![
+            make_vector_search_component(None, 10),
+            make_document_query_component(vec![]),
+        ];
+        let order = [0, 1];
+        let cache = optimizer.plan_execution_cache().unwrap().clone();
+        let before = cache.total_samples();
+
+        // The success path: run a future that returns Ok and assert the
+        // cache picks up exactly one sample for this (shape, order).
+        let result: Result<u32, &'static str> = optimizer
+            .time_and_record_if_ok(&components, &order, async { Ok(42) })
+            .await;
+
+        assert_eq!(result.unwrap(), 42, "helper must propagate Ok payload");
+        assert_eq!(
+            cache.total_samples(),
+            before + 1,
+            "successful run should produce exactly one sample"
+        );
+
+        let shape = crate::query::unified::plan_execution_cache::shape_hash(&components);
+        let mean = cache
+            .get_mean_us(shape, &order)
+            .expect("cache should hold the recorded sample");
+        // We don't assert a specific value -- timing varies. Just assert it
+        // is a non-negative finite number, which is the contract.
+        assert!(mean.is_finite() && mean >= 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_time_and_record_skips_on_err() {
+        let optimizer = make_optimizer_with_measured_fitness();
+        let components = vec![
+            make_vector_search_component(None, 10),
+            make_document_query_component(vec![]),
+        ];
+        let order = [0, 1];
+        let cache = optimizer.plan_execution_cache().unwrap().clone();
+        let before = cache.total_samples();
+
+        // The failure path: a Result::Err MUST NOT be recorded. Failed
+        // queries have unrepresentative timing (e.g. fail-fast on a missing
+        // collection) and would skew the running mean.
+        let result: Result<u32, &'static str> = optimizer
+            .time_and_record_if_ok(&components, &order, async { Err("boom") })
+            .await;
+
+        assert!(result.is_err(), "helper must propagate Err");
+        assert_eq!(
+            cache.total_samples(),
+            before,
+            "failed run must NOT produce a sample"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_time_and_record_is_noop_when_measured_fitness_disabled() {
+        // Default config has enable_measured_fitness = false. The helper
+        // must still execute the future and propagate the result -- it's a
+        // pass-through with no side effects.
+        let optimizer = QueryOptimizer::with_defaults();
+        let components = vec![make_vector_search_component(None, 10)];
+        assert!(optimizer.plan_execution_cache().is_none());
+
+        let result: Result<&'static str, ()> = optimizer
+            .time_and_record_if_ok(&components, &[0], async { Ok("ok") })
+            .await;
+        assert_eq!(result.unwrap(), "ok");
+
+        // No cache means nothing to inspect; just confirm we did not panic
+        // and that the optimizer's cache is still absent.
+        assert!(optimizer.plan_execution_cache().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_time_and_record_concurrent_calls_are_safe() {
+        // Hammer the helper from many tasks at once on the same (shape, order).
+        // The cache uses a parking_lot::RwLock, so concurrent recording must
+        // be safe and the sample count must equal the number of OK calls.
+        let optimizer = std::sync::Arc::new(make_optimizer_with_measured_fitness());
+        let components = std::sync::Arc::new(vec![
+            make_vector_search_component(None, 10),
+            make_document_query_component(vec![]),
+        ]);
+        let cache = optimizer.plan_execution_cache().unwrap().clone();
+        let before = cache.total_samples();
+
+        let mut handles = Vec::new();
+        for i in 0..16 {
+            let opt = optimizer.clone();
+            let comps = components.clone();
+            handles.push(tokio::spawn(async move {
+                // Half OK, half Err -- cache should grow by exactly 8.
+                if i % 2 == 0 {
+                    let r: Result<u32, &'static str> = opt
+                        .time_and_record_if_ok(&comps, &[0, 1], async { Ok(i) })
+                        .await;
+                    r.unwrap();
+                } else {
+                    let r: Result<u32, &'static str> = opt
+                        .time_and_record_if_ok(&comps, &[0, 1], async { Err("err") })
+                        .await;
+                    assert!(r.is_err());
+                }
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(
+            cache.total_samples(),
+            before + 8,
+            "exactly 8 of 16 calls (the OK ones) should be recorded"
         );
     }
 }
