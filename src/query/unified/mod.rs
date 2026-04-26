@@ -70,6 +70,7 @@ pub mod fusion;
 pub mod learned_fusion;
 pub mod lower; // UQL to MultiModelPlan lowering (Issue #45, SB-15)
 pub mod optimizer;
+pub mod plan_execution_cache;
 pub mod reranking;
 pub mod uql;
 

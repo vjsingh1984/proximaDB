@@ -44,6 +44,10 @@ pub struct QueryOptimizer {
     config: OptimizerConfig,
     /// Query plan cache (optional, based on config)
     plan_cache: Option<Arc<PlanCache>>,
+    /// Measured-runtime cache feeding the evolutionary fitness function
+    /// (TD-047 sub A). Populated by callers via [`record_plan_execution`]
+    /// after queries complete. `None` when measured fitness is disabled.
+    plan_execution_cache: Option<Arc<super::plan_execution_cache::PlanExecutionCache>>,
 }
 
 /// Configuration for the query optimizer
@@ -67,6 +71,12 @@ pub struct OptimizerConfig {
     pub evolutionary_population_size: usize,
     /// Number of generations for evolutionary optimizer
     pub evolutionary_generations: usize,
+    /// Use measured wall-clock time as evolutionary fitness when a plan has
+    /// been observed before (TD-047 sub A). Falls back to estimated cost on
+    /// cold cache. Implies `enable_evolutionary_optimizer`.
+    pub enable_measured_fitness: bool,
+    /// Soft cap on measured-fitness cache entries.
+    pub measured_fitness_max_entries: usize,
 }
 
 impl Default for OptimizerConfig {
@@ -81,6 +91,8 @@ impl Default for OptimizerConfig {
             enable_evolutionary_optimizer: false, // Disabled by default
             evolutionary_population_size: 20,
             evolutionary_generations: 5,
+            enable_measured_fitness: false, // Disabled by default; opt-in
+            measured_fitness_max_entries: 1024,
         }
     }
 }
@@ -150,12 +162,43 @@ impl QueryOptimizer {
         } else {
             None
         };
+        let plan_execution_cache = if config.enable_measured_fitness {
+            Some(super::plan_execution_cache::shared(
+                config.measured_fitness_max_entries,
+            ))
+        } else {
+            None
+        };
 
         Self {
             stats: Arc::new(QueryStatistics::new()),
             config,
             plan_cache,
+            plan_execution_cache,
         }
+    }
+
+    /// Record a measured wall-clock time for a plan that has just executed.
+    ///
+    /// No-op when measured-fitness is disabled. Callers should invoke this
+    /// from the query executor after the result is materialized.
+    pub fn record_plan_execution(
+        &self,
+        components: &[QueryComponent],
+        execution_order: &[usize],
+        wall_time_us: u64,
+    ) {
+        if let Some(cache) = &self.plan_execution_cache {
+            let shape = super::plan_execution_cache::shape_hash(components);
+            cache.record(shape, execution_order, wall_time_us);
+        }
+    }
+
+    /// Access the measured-fitness cache (mostly for tests and observability).
+    pub fn plan_execution_cache(
+        &self,
+    ) -> Option<&Arc<super::plan_execution_cache::PlanExecutionCache>> {
+        self.plan_execution_cache.as_ref()
     }
 
     /// Create with default configuration
@@ -583,7 +626,21 @@ impl QueryOptimizer {
         order
     }
 
-    /// Compute optimal order using evolutionary algorithms
+    /// Compute optimal order using evolutionary algorithms.
+    ///
+    /// Fitness function:
+    /// 1. If measured-fitness is enabled and the cache holds a sample for
+    ///    this `(shape, order)`, return the running mean wall-clock time
+    ///    in microseconds.
+    /// 2. Otherwise fall back to [`estimate_total_cost`].
+    ///
+    /// The two ranges are not directly comparable (microseconds vs unitless
+    /// cost), so on warm caches the optimizer effectively converges toward
+    /// observed-fast plans; on cold caches it follows the estimate. As a
+    /// plan accumulates samples it transitions from estimate-driven to
+    /// measurement-driven without a discontinuity at the optimizer level
+    /// (each evolutionary generation is internally consistent because the
+    /// fitness function is deterministic for a given `(shape, order)`).
     fn evolutionary_optimize(
         &self,
         components: &[QueryComponent],
@@ -596,7 +653,15 @@ impl QueryOptimizer {
             self.config.evolutionary_generations,
         );
 
+        let exec_cache = self.plan_execution_cache.as_ref();
+        let shape = exec_cache.map(|_| super::plan_execution_cache::shape_hash(components));
+
         optimizer.optimize(components, selectivity, |sel, order| {
+            if let (Some(cache), Some(s)) = (exec_cache, shape) {
+                if let Some(measured) = cache.get_mean_us(s, order) {
+                    return measured;
+                }
+            }
             self.estimate_total_cost(sel, order)
         })
     }
@@ -1833,5 +1898,93 @@ mod tests {
     fn test_fusion_strategy_no_components() {
         let strategy = select_fusion_strategy(false, false, 0.5);
         assert_eq!(strategy, FusionStrategy::Union);
+    }
+
+    #[test]
+    fn test_record_plan_execution_no_op_when_disabled() {
+        // Default config has enable_measured_fitness = false; recording is a
+        // no-op and the cache is absent.
+        let optimizer = QueryOptimizer::with_defaults();
+        assert!(optimizer.plan_execution_cache().is_none());
+
+        let components = vec![
+            make_vector_search_component(None, 10),
+            make_document_query_component(vec![]),
+        ];
+        // Should not panic.
+        optimizer.record_plan_execution(&components, &[0, 1], 1234);
+    }
+
+    #[test]
+    fn test_record_plan_execution_populates_cache_when_enabled() {
+        let mut config = OptimizerConfig::default();
+        config.enable_evolutionary_optimizer = true;
+        config.enable_measured_fitness = true;
+        config.measured_fitness_max_entries = 16;
+        let optimizer = QueryOptimizer::new(config);
+
+        let components = vec![
+            make_vector_search_component(None, 10),
+            make_document_query_component(vec![]),
+        ];
+
+        let cache = optimizer
+            .plan_execution_cache()
+            .expect("cache should exist when enable_measured_fitness=true");
+        assert!(cache.is_empty());
+
+        optimizer.record_plan_execution(&components, &[0, 1], 5_000);
+        optimizer.record_plan_execution(&components, &[0, 1], 7_000);
+
+        let shape =
+            crate::query::unified::plan_execution_cache::shape_hash(&components);
+        let mean = cache
+            .get_mean_us(shape, &[0, 1])
+            .expect("cache should hold the recorded plan");
+        assert!((mean - 6_000.0).abs() < 1e-6, "mean was {}", mean);
+    }
+
+    #[test]
+    fn test_evolutionary_optimize_uses_measured_fitness_when_available() {
+        // Set up an optimizer with measured fitness on. Two query orders;
+        // one is much faster according to recorded measurements but slower
+        // according to the cost estimator. The optimizer should converge
+        // toward the empirically faster one.
+        let mut config = OptimizerConfig::default();
+        config.enable_evolutionary_optimizer = true;
+        config.enable_measured_fitness = true;
+        config.evolutionary_population_size = 12;
+        config.evolutionary_generations = 8;
+        let optimizer = QueryOptimizer::new(config);
+
+        // Two independent components -- the dependency graph allows either
+        // order, so the evolutionary search has a real choice.
+        let components = vec![
+            make_vector_search_component(Some(0.5), 100),
+            make_document_query_component(vec![]),
+        ];
+
+        // Seed the cache: order [1, 0] is dramatically faster in measured
+        // time, regardless of what the cost estimator might prefer.
+        let shape =
+            crate::query::unified::plan_execution_cache::shape_hash(&components);
+        let cache = optimizer.plan_execution_cache().unwrap();
+        cache.record(shape, &[0, 1], 100_000);
+        cache.record(shape, &[1, 0], 1_000);
+
+        // Manually drive the evolutionary path. (We bypass `optimize` here
+        // because `optimize_query` requires a full UnifiedQuery construction
+        // and we want to test the order selection in isolation.)
+        let selectivity: Vec<_> = components
+            .iter()
+            .map(|c| optimizer.estimate_selectivity(c))
+            .collect();
+        let order = optimizer.evolutionary_optimize(&components, &selectivity);
+
+        assert_eq!(
+            order,
+            vec![1, 0],
+            "evolutionary planner should converge to the empirically faster order"
+        );
     }
 }
