@@ -737,6 +737,122 @@ See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analy
 | Maintainability improvement only.
 |===
 
+== Phase 5: Agentic Intelligence & Research Frontier (2026 Strategic Alignment)
+
+The following items represent the frontier of AI database research, aligned with ProximaDB's mission to be the primary memory for agentic systems.
+
+[cols="1,3,1,1,1,4,2,4", options="header"]
+|===
+| ID | Area | Phase | Priority | Status | Impact | Effort | Notes
+
+| TD-043
+| Semantic Disentanglement Pipeline (SDP) + Entanglement Index
+| P5
+| HIGH
+| Open
+| Multi-topic documents produce embeddings with cross-topic overlap, hurting Top-K precision (paper shows 32% precision under fixed-token chunking, 82% under SDP). Implement (a) Entanglement Index metric for measurement, (b) 4-stage preprocessing pipeline that restructures documents prior to embedding (arXiv:2604.17677, Loghmani 2026, *verified*).
+| 4-6 weeks (split into two sub-deliverables)
+| **Verified**: April 25, 2026. Paper's contribution is at the **chunking/preprocessing layer**, NOT the index layer — earlier TD draft incorrectly placed this in AXIS. **Where**: document chunking in `src/services/operations/`; new analytics module needed at `src/analytics/entanglement/`. **Next step**: (1) ship EI analyzer first as a measurement tool (`GET /api/v1/collections/{id}/entanglement`); (2) build SDP as a configurable chunker before embedding. **Acceptance**: EI computable for any collection; SDP reduces EI ≥30% on multi-topic test corpus; Top-K precision improvement ≥10pp on same corpus (paper claims 50pp). See `PROXIMADB_RECOMMENDATIONS.md` §1.1.
+
+| TD-044
+| Projection Fusion (B5) — Speed/Diversity Tradeoff
+| P5
+| MEDIUM
+| *Implemented — needs benchmark + corrected positioning*
+| Projection Fusion projects normalized BM25+vector scores onto a unit vector parameterized by `theta = alpha*pi/2`. Paper offers it as a **faster, more diverse alternative** to RRF, NOT as a quality replacement (arXiv:2604.13728, Prajapati 2026, *verified*).
+| 3-4 weeks (1-2 weeks remaining for benchmark + SDK)
+| **Verified**: April 25, 2026. Paper data: **RRF wins relevance** (nDCG@10 = 0.828, best of 6 configs); B5 is the speed/diversity option. Earlier TD framing as a strict upgrade was wrong — downgraded from HIGH to MEDIUM. **Status**: Implemented April 2026. **Where**: `src/core/search/hybrid/fusion.rs:106-253`; `src/core/search/hybrid/mod.rs:213-228`. Tests at `fusion.rs:2074-2160`. **Remaining work**: (1) benchmark RRF vs Projection on MS MARCO/BEIR — confirm relevance/speed/diversity tradeoff; (2) docs framing it as "default RRF for relevance, choose Projection for diversity or low-latency fusion"; (3) SDK opt-in only — do NOT default to Projection; (4) REST hybrid endpoint exposure. **Acceptance**: benchmark report shows tradeoff; SDK exposes `hybrid_mode="projection"`; default remains `"rrf"`. See `PROXIMADB_RECOMMENDATIONS.md` §1.2.
+
+| TD-045
+| Modular Graph RAG (RGL)
+| P5
+| CRITICAL
+| Open
+| Modular framework spanning the full graph-RAG pipeline: indexing, dynamic node retrieval, subgraph construction, tokenization. Paper reports **143× speedup** over conventional methods, mainly through dynamic node filtering (arXiv:2503.19314, Li/Hu/Jiang/Liu/Hooi/He 2025, *verified — NUS authors*).
+| 6-8 weeks
+| **Verified**: April 25, 2026. The paper's 143× speedup is largely **engineering** (optimized component implementations + dynamic filtering at the retriever→builder boundary), not a novel algorithm. **Where**: new module `src/graph/rag/` (does not exist); graph engines `src/graph/engines/`, AXIS for vector retrieval, traversal `src/graph/service_traversal_api.rs`. **Next step**: (1) check whether RGL has a public reference implementation to learn from; (2) define `NodeRetriever` (`query -> Vec<NodeId>`) and `SubgraphBuilder` (`seeds -> Subgraph`) traits; (3) implement dynamic filtering at the boundary (the headline lever); (4) expose via `POST /api/v1/graph/{id}/rag`. **Acceptance**: ≥2 retrievers × ≥2 builders compose; 1M-node graph latency <100ms p95 for k=5 + 2-hop limit=100; ≥5× token-budget reduction vs naive BFS dump. **Depends on**: TD-046. See `PROXIMADB_RECOMMENDATIONS.md` §2.1.
+
+| TD-046
+| Tool-Based Navigation (GraphWalk)
+| P5
+| HIGH
+| *Partial — BFS-bounded primitive exists; single-step variant + tool exposure missing*
+| Equip LLMs with **minimal graph operations** (move, look, remember) so they traverse arbitrarily large structures via tool calls. Gains "more pronounced as scale increases" (arXiv:2604.01610, Ghandi/Mahyar/Klaiman 2026, *verified*).
+| 2-3 weeks (1-2 weeks remaining)
+| **Verified**: April 25, 2026. Paper's contribution is **iterative single-step navigation**, not breadth-bounded walks. Our current implementation does breadth-bounded BFS in one call — useful but doesn't directly match the paper's approach. **Status**: Implemented April 2026 at `src/graph/service_traversal_api.rs:355-410`; test at `src/graph/service.rs::test_graph_walk_tool`. **Remaining work**: (1) add a true *single-step* primitive `graph_step(current_node, edge_filter) -> {neighbors, properties}` alongside the bounded walk; (2) REST endpoints `POST /api/v1/graph/{id}/walk` and `POST /api/v1/graph/{id}/step`; (3) proto `GraphWalkRequest/StepRequest/Response` + gRPC; (4) MCP / OpenAI function-call schema; (5) edge-filter + projection support; (6) LangChain/CrewAI tool integration in `clients/python/src/proximadb_sdk/integrations/`. **Acceptance**: agent walks 1M-node graph with ≤8K tokens/step; both walk and step interfaces available. See `PROXIMADB_RECOMMENDATIONS.md` §2.2.
+
+| TD-047
+| Evolutionary Query Planning (DBPlanBench-style)
+| P5
+| MEDIUM
+| *Partial — generic evolutionary scaffold exists; LLM-mutation operator (the paper's novelty) does NOT*
+| Expose physical plans as compact serialized form; let an LLM propose **localized plan edits**; evolutionary search refines candidates. Up to **4.78× speedup**; transfers small→large databases (arXiv:2602.10387, Erol/Hao/Bianchi/Greco/Tagliabue/Zou 2026, *verified*).
+| 4-6 weeks (split into two sub-deliverables)
+| **Verified**: April 25, 2026. **Important**: paper's contribution is **LLM-as-mutation-operator + DBPlanBench harness on DataFusion**. Our skeleton uses *random topological-order swaps* — useful, but classical genetic-scheduling, not the paper's contribution. Track these as separate sub-deliverables. **Status**: Skeleton at `src/query/unified/evolutionary.rs` (file **untracked in git** — must commit first). Wired into `src/query/unified/optimizer.rs:226-242` behind `OptimizerConfig.enable_evolutionary_optimizer` (default `false`); config at `optimizer.rs:62-69`. **Sub-deliverable A (no LLM)**: (1) commit skeleton; (2) measured wall-time fitness via `PlanExecutionCache` — the existing `cost_fn` callback in `evolutionary.rs:28-35` supports this; (3) regression benchmark `benches/query_optimizer.rs`. **Sub-deliverable B (paper's contribution)**: (4) spec under `docs/_internal/roadmap/specifications/` for LLM-mutation + DBPlanBench-style harness on top of `ProximaTableProvider`/`ProximaScanExec`; build only after Context Lake/RUBICON decisions clarify hot-path LLM dependency. **Acceptance**: A — ≥5% improvement over greedy on 4+ component joins; never worse on simple. B — DBPlanBench-style benchmark with reproducible 4×+ speedup on at least one workload. See `PROXIMADB_RECOMMENDATIONS.md` §3.1.
+
+| TD-048
+| Agentic View Decomposition (AV-SQL) — 3-Agent Pipeline
+| P5
+| HIGH
+| Open
+| Decompose complex NL→SQL via **three specialized agents**: (1) rewriter compresses/clarifies the NL query; (2) view generator produces per-schema-chunk "agentic views"; (3) planner/generator/revisor composes views into final SQL. Reports **70.38% execution accuracy on Spider 2.0** (arXiv:2604.07041, Pham et al. 2026, *verified*).
+| 3-5 weeks
+| **Verified**: April 25, 2026. The 3-agent split (rewriter / view-generator / composer) is the load-bearing structural choice — match it. **Where**: starting point `src/query/unified/decomposition.rs`; SQL frontend `src/query/federated/`; LLM via `[llm]` config in `config/config.toml`. **Next step**: (1) new module `src/query/nl/` with three traits — `Rewriter`, `ViewGenerator`, `ComposerAgent`; (2) rule-based default impls for v1; (3) LLM impls behind feature flag `llm-nl-query`; (4) REST endpoint `POST /api/v1/query/nl` returning final SQL **+ intermediate views** for traceability (matches RUBICON spirit, TD-050); (5) Spider 2.0 evaluation harness in `benches/`. **Acceptance**: end-to-end NL→federated-SQL test (vector+graph+document join); response exposes intermediate views; ≥30% Spider 2.0 execution accuracy on a sample (paper hits 70% with tuned LLM stack). **Depends on**: TD-050 audit substrate. See `PROXIMADB_RECOMMENDATIONS.md` §3.2.
+
+| TD-049
+| Block-Batched Semantic Joins
+| P5
+| HIGH
+| *Partial — cosine-only join exists; LLM block-batched join does not*
+| **Block nested loops join** for semantic joins: pack batches of rows from *both* tables into a single LLM prompt, ask the model to identify all matching pairs in one shot. Includes formulas for optimal batch size given context limits, plus an adaptive variant for unpredictable output sizes (arXiv:2510.08489, Trummer 2025, *verified — Cornell*).
+| 3-4 weeks
+| **Verified**: April 25, 2026. **Important rename**: earlier TD draft called this "Evolutionary Semantic Joins" — that was wrong. The paper proposes **block nested loops with batched prompts**, not evolutionary sampling. Different cost model and complexity analysis. **Status**: Cosine semantic join at `src/query/unified/executor.rs:1619-1707`; join AST at `src/query/unified/ast.rs:148-156` (`JoinType::Semantic { threshold, top_k }`). **Remaining work**: (1) extend `JoinType::Semantic` with `mode: SemanticJoinMode { Cosine | LlmBlockBatch { batch_size_left, batch_size_right, max_calls } }`; (2) feature flag `llm-joins`; (3) implement the paper's optimal batch-size formula given configured LLM context window; (4) adaptive variant for cases where output size is unpredictable; (5) Prometheus metric for LLM call count. **Acceptance**: ≥10× LLM-call reduction vs nested-loop baseline at equal precision@10; bounded and observable. See `PROXIMADB_RECOMMENDATIONS.md` §3.3.
+
+| TD-050
+| RUBICON-Style Auditable Query Layer (AQL)
+| P5
+| CRITICAL
+| Open
+| Replace opaque LLM agent chains with **explicit, auditable query plans**. Stonebraker et al. propose **RUBICON** architecture and **AQL (Agentic Query Language)** with `Find`, `From`, `Where` operators executed through source-specific wrappers. Emphasizes **traceability, determinism, and trust** for enterprise use (arXiv:2604.21413, Wenz/Treutwein/Arenja/Demiralp/Stonebraker 2026, *verified*).
+| 8-12 weeks
+| **Verified**: April 25, 2026. **Important rename**: earlier TD draft called this "Context Lake / DBOS principles" — that was wrong. The paper does NOT discuss DBOS or memory stores. It proposes a **query language and architectural pattern** for replacing LLM agent chains with auditable plans. Closer to a federated query rewriter + audit trail than to agent memory persistence. **Foundation already in place**: cross-model joins (`src/query/federated/`), `VECTOR_SEARCH()`/`GRAPH_QUERY()`/`DOCUMENT_QUERY()` SQL extensions, audit logging in `src/security/`. **Next step**: (1) **read the paper in full** before designing — operator semantics matter; (2) check whether authors publish a reference implementation; (3) write `docs/_internal/roadmap/specifications/RUBICON_ALIGNMENT.adoc`; (4) map AQL Find/From/Where onto existing federated primitives; (5) build structured `EXPLAIN VERBOSE` for federated queries — every step traceable (which engine, which collection, which filters, which costs); (6) drop "Context Lake" naming everywhere — paper does not justify it. **Acceptance**: spec reviewed; `EXPLAIN VERBOSE` produces compliance-grade trace; one customer-facing example of "NL query → AQL plan → audit trail". See `PROXIMADB_RECOMMENDATIONS.md` §4.1.
+
+| TD-051
+| Dual-Use Embedding Integration (Unified Retrieval + Compression)
+| P5
+| MEDIUM
+| Open
+| A unified model in which the **same** representation serves both retrieval kNN and as the compressed context fed to the LLM. Reports performance matching traditional RAG using ~**1/10 of the context**, with no extra storage vs multi-vector retrieval (arXiv:2604.14403, Killingback/Meshi/Li/Zamani/Karimzadehgan 2026, *verified — Google*).
+| 4-6 weeks
+| **Verified**: April 25, 2026. **Important framing**: this is an *integration story*, NOT a database-internal compression scheme. The paper's contribution is a **trained model** whose embeddings double as compressed context — ProximaDB doesn't train embeddings, so the DB-side work is exposing a contract for users who plug in such a model. **Where**: collection metadata in `src/services/operations/`; document/embedding storage path; SDK examples in `clients/python/`. **Next step**: (1) add collection metadata flag `embedding.dual_use = true` — when set, DB skips storing raw context bytes and reconstructs at query time via a registered decompression callback; (2) Python SDK example showing how to plug in a compatible model; (3) do NOT bake a specific compression scheme into the storage engine — model is the contract. **Acceptance**: flag honored end-to-end; storage footprint with dual_use ≤55% of equivalent embedding+raw-text collection on representative corpus. See `PROXIMADB_RECOMMENDATIONS.md` §1.3.
+
+| TD-052
+| Proactive Agentic Memory Retrieval (Speculative — No Citation)
+| P5
+| LOW
+| Open — speculative
+| Don't wait for explicit retrieval calls. Use RL to predict when stored memory is relevant to the current intent and surface it proactively.
+| 6-8 weeks
+| **Verified**: April 25, 2026 — the "PASK" acronym used in earlier drafts has **NO paper backing**. It was synthesized by the auto-pipeline and not a real research term. Downgraded from MEDIUM to LOW since it has no concrete research basis. **Recommendation**: treat as future research direction, not a planned feature. **If pursued**: integrate with Thompson Sampling planner in `src/query/unified/optimizer.rs` and AutoML infrastructure `src/automl/`; reward signal is task-success. **Wait for**: TD-050 audit substrate to land first — proactive retrieval without an auditable trail is exactly the failure mode RUBICON warns against. See `PROXIMADB_RECOMMENDATIONS.md` §4.2.
+|===
+
+[NOTE]
+====
+**Phase 5 arXiv references — verified 2026-04-25**: All 9 cited arXiv papers were fetched and
+abstracts read on April 25, 2026. They exist as real papers. **However, the original auto-pipeline
+summaries were inaccurate in five technically meaningful ways** — the entries above have been
+corrected and renamed:
+
+* TD-043 was "centroid + residual topic vectors in AXIS" → actually **document preprocessing pipeline (SDP)** + Entanglement Index metric. The fix is at the chunking layer, not the index.
+* TD-044 was framed as a strict upgrade over RRF → actually a **speed/diversity tradeoff**. RRF still wins relevance (nDCG@10=0.828, paper's data); B5 is opt-in for diversity/latency. Priority downgraded.
+* TD-049 was "Evolutionary Semantic Joins" → actually **Block-Batched Semantic Joins** (block nested loops with batched LLM prompts). Renamed.
+* TD-050 was "Context Lake / DBOS principles" → actually **RUBICON / AQL** auditable query layer. Renamed; "Context Lake" branding dropped throughout.
+* TD-052's "PASK" acronym had **no paper backing** — synthesized by the auto-pipeline. Downgraded to LOW + speculative.
+* TD-047's paper contribution is **LLM-as-mutation-operator + DBPlanBench harness**; our skeleton is generic evolutionary search. Split into sub-deliverables A (skeleton + measured fitness) and B (paper's actual contribution, follow-up).
+
+See `PROXIMADB_RECOMMENDATIONS.md` §7 for the verification table and §6 for sequencing guidance.
+====
+
 == Notes
 
 * If you fix a debt item, add a short entry under "Recently Resolved" and remove it from "Current Priorities".
@@ -746,9 +862,12 @@ See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analy
 * TD-021 through TD-030 added March 15, 2026 from comprehensive codebase review.
 * TD-031 through TD-037 added March 21, 2026 from architectural review comparing foundational layers against DuckDB/Polars patterns.
 * TD-038 through TD-042 added March 26, 2026 from comprehensive architectural review covering multi-modal integration reality, cross-modal transaction gaps, parallelism gaps, and cache architecture assessment.
+* TD-043 through TD-050 added Phase 5 entries for agentic intelligence research direction (initial draft).
+* TD-043..TD-052 refined April 25, 2026 with concrete code anchors, current implementation status, acceptance criteria, and dependency graph. TD-049 (Block-Batched Semantic Joins), TD-051 (Dual-Use Embedding Integration), TD-052 (Proactive Memory — speculative) added in this refinement. Phase 5 work *already started in code* during the April 2026 sprint: TD-044 (Projection Fusion implemented), TD-046 (GraphWalk BFS primitive implemented), TD-047 (Evolutionary planner skeleton — uncommitted), TD-049 (cosine semantic join implemented). See `PROXIMADB_RECOMMENDATIONS.md` for the design narrative and §6 sequencing guidance.
+* TD-043..TD-052 corrected April 25, 2026 after fetching all 9 cited arXiv papers. Five entries renamed/rescoped to match what the papers actually say (TD-043 chunking-layer not index-layer; TD-044 tradeoff not upgrade; TD-049 block-batched not evolutionary; TD-050 RUBICON/AQL not Context Lake; TD-052 speculative not PASK). See the NOTE block in the Phase 5 section.
 * **Phase 2.5 (Foundational Performance)** is a recommended new phase to address execution layer gaps before Phase 3 ecosystem work.
-* **TD-041 is the single highest-ROI item**: the vectorized executor already exists but is not wired into the primary query path.
+* **TD-041 is the single highest-ROI item** in Phase 2.5; for Phase 5, **TD-047 + TD-044 benchmark are the highest-ROI starting points** because the implementations already exist and only need closure.
 
 '''
 
-_Last Updated_: March 27, 2026
+_Last Updated_: April 25, 2026
