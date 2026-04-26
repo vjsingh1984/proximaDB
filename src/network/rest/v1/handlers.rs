@@ -1634,6 +1634,15 @@ pub fn create_router(state: AppState) -> axum::Router {
     router = router.nest("/api/v1/experimental/hybrid", hybrid_router);
     info!("✅ Experimental Hybrid API endpoints enabled at /api/v1/experimental/hybrid");
 
+    // Read-only collection analytics (Entanglement Index, etc.) — TD-043 sub-2
+    let analytics_router = {
+        use crate::network::rest::v1::analytics::{self, AnalyticsApiState};
+
+        analytics::create_router().with_state(AnalyticsApiState::new())
+    };
+    router = router.nest("/api/v1/analytics", analytics_router);
+    info!("✅ Analytics API endpoints enabled at /api/v1/analytics");
+
     // Convert to Router<()> by providing state, with default tenant context for all routes
     let default_tenant = TenantContext::new(
         "default",
