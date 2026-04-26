@@ -104,6 +104,9 @@ pub mod infrastructure;
 #[allow(missing_docs)]
 pub mod compute;
 
+/// Read-only collection analyzers (Entanglement Index, etc.)
+pub mod analytics;
+
 // pub mod consensus;  // Disabled - requires raft dependency
 
 /// Core types, errors, configuration, and foundational components
