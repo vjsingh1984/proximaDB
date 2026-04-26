@@ -12,6 +12,7 @@ __all__ = [
     "langchain",
     "langgraph",
     "llama_index",
+    "mcp_tools",
     "victor",
     "victor_multi",
 ]
