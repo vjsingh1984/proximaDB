@@ -38,6 +38,8 @@
 //! GET    /api/v1/graph/graphs/{graph_id}/edges/{id}    - Get edge by ID
 //! GET    /api/v1/graph/graphs/{graph_id}/stats         - Graph statistics
 //! POST   /api/v1/graph/graphs/{graph_id}/traverse      - Graph traversal
+//! POST   /api/v1/graph/graphs/{graph_id}/walk          - Agentic GraphWalk (BFS bounded)
+//! POST   /api/v1/graph/graphs/{graph_id}/step          - Agentic single-step navigation
 //! POST   /api/v1/graph/graphs/{graph_id}/shortest_path - Dijkstra shortest path
 //! POST   /api/v1/graph/graphs/{graph_id}/query         - Declarative graph query
 //! POST   /api/v1/graph/graphs/{graph_id}/nodes/batch   - Batch create nodes
@@ -93,6 +95,53 @@ pub struct RestTraversalRequest {
     _return_path: bool,
     /// Traversal algorithm (bfs, dfs, parallel_bfs)
     algorithm: String,
+}
+
+/// Agentic GraphWalk request: bounded BFS expansion in one call.
+///
+/// Maps to `GraphOperationsService::graph_walk()`. Tradeoff vs `WalkStepRequest`:
+/// `walk` returns up to `limit` nodes within `max_depth` hops in a single response;
+/// `step` returns the immediate neighbors of one node, leaving the agent to drive.
+#[derive(Debug, serde::Deserialize)]
+pub struct WalkRequest {
+    /// Starting node ID
+    pub start_node_id: String,
+    /// Maximum BFS depth (0 = unbounded)
+    #[serde(default = "default_walk_depth")]
+    pub max_depth: u32,
+    /// Maximum number of nodes to return
+    #[serde(default = "default_walk_limit")]
+    pub limit: u32,
+}
+
+fn default_walk_depth() -> u32 {
+    2
+}
+
+fn default_walk_limit() -> u32 {
+    100
+}
+
+/// Agentic single-step navigation request: return the neighbors of one node.
+///
+/// Maps to `GraphOperationsService::graph_step()`. The agent calls this
+/// repeatedly to walk the graph, picking which neighbor to step to next, so
+/// the database never has to materialize a subgraph that doesn't fit in the
+/// agent's context window (arXiv:2604.01610 GraphWalk pattern).
+#[derive(Debug, serde::Deserialize)]
+pub struct WalkStepRequest {
+    /// Current node ID
+    pub node_id: String,
+    /// Optional edge-type filter (empty = all edges)
+    #[serde(default)]
+    pub edge_type: Option<String>,
+    /// Maximum neighbors to return (0 = no cap, but you should set one)
+    #[serde(default = "default_step_limit")]
+    pub limit: u32,
+}
+
+fn default_step_limit() -> u32 {
+    50
 }
 
 /// REST-compatible NodeQuery wrapper for JSON deserialization
@@ -690,6 +739,9 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/graphs/:graph_id/edges/:id", delete(delete_edge))
         // Multi-graph traversal and querying
         .route("/graphs/:graph_id/traverse", post(traverse_graph))
+        // Agentic GraphWalk surface (TD-046, arXiv:2604.01610)
+        .route("/graphs/:graph_id/walk", post(walk_graph))
+        .route("/graphs/:graph_id/step", post(step_graph))
         .route("/graphs/:graph_id/shortest_path", post(shortest_path))
         .route("/graphs/:graph_id/query/nodes", post(query_nodes))
         .route("/graphs/:graph_id/query/edges", post(query_edges))
@@ -1361,6 +1413,83 @@ pub async fn traverse_graph(
         }
         Err(err) => {
             error!("Failed to traverse graph: {}", err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<TraversalResults>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Bounded BFS expansion for agentic graph navigation.
+///
+/// Returns up to `limit` nodes within `max_depth` hops of `start_node_id`.
+/// See `WalkRequest` for the tradeoff vs single-step `step_graph`.
+pub async fn walk_graph(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<WalkRequest>,
+) -> impl IntoResponse {
+    debug!(
+        "GraphWalk: graph={} start={} max_depth={} limit={}",
+        graph_id, request.start_node_id, request.max_depth, request.limit
+    );
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .graph_walk(
+            &graph_id,
+            &request.start_node_id,
+            request.max_depth,
+            request.limit as usize,
+        )
+        .await
+    {
+        Ok(results) => Json(GraphResponse::success(results)).into_response(),
+        Err(err) => {
+            error!("GraphWalk failed for graph {}: {}", graph_id, err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<TraversalResults>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Single-step graph navigation: return the immediate neighbors of one node.
+///
+/// The starting node is included as the first entry in `nodes` so the agent
+/// has its own properties without an extra round trip. Use this primitive in a
+/// loop when the agent needs to drive traversal step by step.
+pub async fn step_graph(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<WalkStepRequest>,
+) -> impl IntoResponse {
+    debug!(
+        "GraphStep: graph={} node={} edge_type={:?} limit={}",
+        graph_id, request.node_id, request.edge_type, request.limit
+    );
+
+    match app_state
+        .unified_handlers
+        .graph_operations_service
+        .graph_step(
+            &graph_id,
+            &request.node_id,
+            request.edge_type.as_deref(),
+            request.limit as usize,
+        )
+        .await
+    {
+        Ok(results) => Json(GraphResponse::success(results)).into_response(),
+        Err(err) => {
+            error!("GraphStep failed for graph {}: {}", graph_id, err);
             let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
             (
                 StatusCode::BAD_REQUEST,

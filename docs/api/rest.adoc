@@ -26,6 +26,8 @@ ProximaDB's multi-model query engine enables cross-model joins that are impossib
 | Vector search | POST | `/api/v1/search` | Single-model vector search
 | Documents | POST | `/api/v1/documents/collections/:collection/documents` | Document insert
 | Graph traversal | POST | `/api/v1/graph/graphs/:graph_id/traverse` | Graph traversal
+| Graph walk (agentic) | POST | `/api/v1/graph/graphs/:graph_id/walk` | Bounded BFS for LLM tool-calling (TD-046)
+| Graph step (agentic) | POST | `/api/v1/graph/graphs/:graph_id/step` | One-hop neighbors for LLM tool-calling (TD-046)
 | Log ingest | POST | `/api/v1/observability/namespaces/:namespace/logs` | Log ingestion
 | Log search | POST | `/api/v1/observability/namespaces/:namespace/logs/_search` | Log query
 | Metric aggregate | POST | `/api/v1/observability/namespaces/:namespace/metrics/_aggregate` | Metric aggregation

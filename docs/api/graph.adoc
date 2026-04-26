@@ -21,7 +21,15 @@ Graph API for nodes, edges, and traversal. Base path: `/api/v1/graph`.
 | Create node | POST | `/graphs/:id/nodes`
 | Create edge | POST | `/graphs/:id/edges`
 | Traverse | POST | `/graphs/:id/traverse`
+| Agentic walk (BFS bounded) | POST | `/graphs/:id/walk`
+| Agentic single-step | POST | `/graphs/:id/step`
 |===
+
+NOTE: `/walk` and `/step` are agentic GraphWalk primitives (TD-046,
+arXiv:2604.01610). `/walk` returns up to `limit` nodes within `max_depth`
+hops in one call; `/step` returns the immediate neighbors of a single node
+so the agent can drive traversal step by step. Choose `/step` when the
+graph is too large to materialize subgraphs in the agent's context window.
 
 ---
 

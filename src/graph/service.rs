@@ -2740,4 +2740,78 @@ mod tests {
         assert!(ids.contains(&&"n1".to_string()));
         assert!(ids.contains(&&"n2".to_string()));
     }
+
+    #[tokio::test]
+    async fn test_graph_step_tool() {
+        let service = GraphOperationsService::new();
+        let graph_id = "step_test_graph";
+
+        let req = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: graph_id.to_string(),
+            name: Some("Step Test".to_string()),
+            description: None,
+            schema: None,
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        service.create_graph_collection(req).await.unwrap();
+
+        // n1 -> n2 (NEXT), n1 -> n3 (REF), n1 -> n4 (NEXT)
+        for id in ["n1", "n2", "n3", "n4"] {
+            let node = Node {
+                id: id.to_string(),
+                labels: vec!["Test".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_node(graph_id, node).await.unwrap();
+        }
+        for (id, from, to, et) in [
+            ("e12", "n1", "n2", "NEXT"),
+            ("e13", "n1", "n3", "REF"),
+            ("e14", "n1", "n4", "NEXT"),
+        ] {
+            let edge = Edge {
+                id: id.to_string(),
+                from_node_id: from.to_string(),
+                to_node_id: to.to_string(),
+                edge_type: et.to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_edge(graph_id, edge).await.unwrap();
+        }
+
+        // Step from n1 with no edge filter: start node + 3 neighbors.
+        let unfiltered = service.graph_step(graph_id, "n1", None, 50).await.unwrap();
+        assert_eq!(unfiltered.nodes.len(), 4, "expected n1 + 3 neighbors");
+        assert_eq!(unfiltered.nodes[0].id, "n1");
+
+        // Step from n1 filtered to NEXT: start node + 2 NEXT neighbors.
+        let next_only = service
+            .graph_step(graph_id, "n1", Some("NEXT"), 50)
+            .await
+            .unwrap();
+        assert_eq!(next_only.nodes.len(), 3, "expected n1 + 2 NEXT neighbors");
+        let ids: Vec<_> = next_only.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains(&"n1"));
+        assert!(ids.contains(&"n2"));
+        assert!(ids.contains(&"n4"));
+        assert!(!ids.contains(&"n3"), "REF neighbor should be filtered out");
+
+        // Limit caps neighbor count.
+        let limited = service.graph_step(graph_id, "n1", None, 1).await.unwrap();
+        assert_eq!(limited.nodes.len(), 2, "expected n1 + 1 neighbor under limit");
+
+        // Missing node returns NotFound.
+        let missing = service
+            .graph_step(graph_id, "no-such-node", None, 10)
+            .await;
+        assert!(missing.is_err(), "missing node should error");
+    }
 }

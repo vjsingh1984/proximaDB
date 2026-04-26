@@ -7,6 +7,7 @@
 use super::Result;
 use crate::core::error::ProximaDBError;
 use crate::graph::NodeId;
+use crate::graph::engines::GraphEngine;
 use tracing::debug;
 
 impl super::GraphOperationsService {
@@ -352,6 +353,67 @@ impl super::GraphOperationsService {
                 .await;
         }
         Ok(result)
+    }
+
+    /// Single-step graph navigation for agentic tool-calling.
+    ///
+    /// Returns the immediate neighbors of `node_id` (optionally filtered by
+    /// `edge_type`), capped at `limit`. This is the primitive that maps most
+    /// directly to GraphWalk's "move + look" tool surface (arXiv:2604.01610):
+    /// the agent picks one neighbor and calls again, so the database is never
+    /// asked to materialize a subgraph that won't fit in the agent's context
+    /// window.
+    ///
+    /// Use `graph_walk` when you want a bounded BFS expansion in one call.
+    /// Use `graph_step` when you want the agent to drive traversal step by step.
+    pub async fn graph_step(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        edge_type: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::graph::canonical::TraversalResults> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let node_id_owned = node_id.to_string();
+
+        // Current node, then neighbors -- include the start so the agent has
+        // its own properties available without an extra round trip.
+        let current = engine
+            .get_node(&node_id_owned)?
+            .ok_or_else(|| {
+                ProximaDBError::InvalidInput(format!("node '{}' not found", node_id))
+            })?;
+
+        let neighbors = engine.get_neighbors(&node_id_owned, edge_type)?;
+        let cap = if limit == 0 { neighbors.len() } else { limit.min(neighbors.len()) };
+
+        let mut canonical_nodes = Vec::with_capacity(cap + 1);
+        canonical_nodes.push(crate::graph::canonical::CanonicalNode::from_proto(
+            current.as_ref(),
+        ));
+        for n in neighbors.iter().take(cap) {
+            canonical_nodes.push(crate::graph::canonical::CanonicalNode::from_proto(
+                n.as_ref(),
+            ));
+        }
+
+        Ok(crate::graph::canonical::TraversalResults {
+            nodes: canonical_nodes,
+            edges: Vec::new(),
+            paths: None,
+            stats: Some(crate::graph::canonical::TraversalStats {
+                nodes_visited: cap as u64 + 1,
+                edges_traversed: cap as u64,
+                max_depth_reached: 1,
+                execution_time_ms: None,
+            }),
+        })
     }
 
     /// Perform an iterative GraphWalk optimized for agentic tool-calling.

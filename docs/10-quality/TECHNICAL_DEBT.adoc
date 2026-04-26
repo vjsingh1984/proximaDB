@@ -776,10 +776,10 @@ The following items represent the frontier of AI database research, aligned with
 | Tool-Based Navigation (GraphWalk)
 | P5
 | HIGH
-| *Partial — BFS-bounded primitive exists; single-step variant + tool exposure missing*
+| *Mostly closed — proto + MCP + SDK integration are the only remaining gaps*
 | Equip LLMs with **minimal graph operations** (move, look, remember) so they traverse arbitrarily large structures via tool calls. Gains "more pronounced as scale increases" (arXiv:2604.01610, Ghandi/Mahyar/Klaiman 2026, *verified*).
-| 2-3 weeks (1-2 weeks remaining)
-| **Verified**: April 25, 2026. Paper's contribution is **iterative single-step navigation**, not breadth-bounded walks. Our current implementation does breadth-bounded BFS in one call — useful but doesn't directly match the paper's approach. **Status**: Implemented April 2026 at `src/graph/service_traversal_api.rs:355-410`; test at `src/graph/service.rs::test_graph_walk_tool`. **Remaining work**: (1) add a true *single-step* primitive `graph_step(current_node, edge_filter) -> {neighbors, properties}` alongside the bounded walk; (2) REST endpoints `POST /api/v1/graph/{id}/walk` and `POST /api/v1/graph/{id}/step`; (3) proto `GraphWalkRequest/StepRequest/Response` + gRPC; (4) MCP / OpenAI function-call schema; (5) edge-filter + projection support; (6) LangChain/CrewAI tool integration in `clients/python/src/proximadb_sdk/integrations/`. **Acceptance**: agent walks 1M-node graph with ≤8K tokens/step; both walk and step interfaces available. See `PROXIMADB_RECOMMENDATIONS.md` §2.2.
+| 1 week remaining (proto + MCP schema + SDK)
+| **Status as of April 26, 2026**: REST exposure landed; both BFS-bounded `walk` and single-step `step` primitives in tree. **Where**: service primitives in `src/graph/service_traversal_api.rs` (`graph_walk` and `graph_step` with edge-type filter); REST handlers `walk_graph` and `step_graph` in `src/network/rest/v1/graph.rs`; routes `POST /api/v1/graph/graphs/{graph_id}/walk` and `POST /api/v1/graph/graphs/{graph_id}/step`. Service tests cover BFS depth, single-step, edge-type filter, limit cap, missing-node error. **Remaining work**: (1) proto `WalkRequest`/`WalkStepRequest`/`Response` in `proto/proximadb/v1/graph.proto` + gRPC handler; (2) MCP / OpenAI function-call schema doc so agents can register the tool; (3) LangChain/CrewAI tool integration in `clients/python/src/proximadb_sdk/integrations/`. **Acceptance**: agent walks 1M-node graph with ≤8K tokens/step. See `PROXIMADB_RECOMMENDATIONS.md` §2.2.
 
 | TD-047
 | Evolutionary Query Planning (DBPlanBench-style)
