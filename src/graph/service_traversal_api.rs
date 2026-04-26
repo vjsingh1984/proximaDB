@@ -353,4 +353,60 @@ impl super::GraphOperationsService {
         }
         Ok(result)
     }
+
+    /// Perform an iterative GraphWalk optimized for agentic tool-calling.
+    ///
+    /// This method provides a breadth-first exploration of the graph from a starting
+    /// node, specifically designed for LLM agents to iteratively discover
+    /// information without overwhelming their context window.
+    pub async fn graph_walk(
+        &self,
+        graph_id: &str,
+        start_node_id: &str,
+        max_depth: u32,
+        limit: usize,
+    ) -> Result<crate::graph::canonical::TraversalResults> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+
+        let start_node_id_string = start_node_id.to_string();
+
+        // Use generic BFS as it returns the structured results we need
+        let gtr = crate::graph::engines::generic_traversal::bfs_generic(
+            engine.as_ref(),
+            &start_node_id_string,
+            None, // No specific edge types
+            if max_depth > 0 {
+                Some(max_depth)
+            } else {
+                None
+            },
+            Some(limit),
+        )?;
+
+        Ok(crate::graph::canonical::TraversalResults {
+            nodes: gtr
+                .nodes
+                .iter()
+                .map(|n| crate::graph::canonical::CanonicalNode::from_proto(n))
+                .collect(),
+            edges: gtr
+                .edges
+                .iter()
+                .map(|e| crate::graph::canonical::CanonicalEdge::from_proto(e))
+                .collect(),
+            paths: None,
+            stats: Some(crate::graph::canonical::TraversalStats {
+                nodes_visited: gtr.nodes.len() as u64,
+                edges_traversed: gtr.edges.len() as u64,
+                max_depth_reached: max_depth,
+                execution_time_ms: None,
+            }),
+        })
+    }
 }

@@ -137,7 +137,7 @@ pub struct ComponentDependency {
 }
 
 /// Join types for cross-model queries
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum JoinType {
     /// Inner join - only matching records
     Inner,
@@ -147,6 +147,13 @@ pub enum JoinType {
     Semi,
     /// Anti join - not exists check
     Anti,
+    /// Semantic join - based on vector similarity
+    Semantic {
+        /// Similarity threshold (0.0 to 1.0)
+        threshold: f32,
+        /// Maximum number of matches per left record
+        top_k: u32,
+    },
 }
 
 /// Data models supported by ProximaDB.

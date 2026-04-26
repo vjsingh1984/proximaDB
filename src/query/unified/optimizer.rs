@@ -61,6 +61,12 @@ pub struct OptimizerConfig {
     pub enable_plan_cache: bool,
     /// Plan cache TTL in seconds
     pub plan_cache_ttl_secs: u64,
+    /// Enable evolutionary optimizer for complex queries
+    pub enable_evolutionary_optimizer: bool,
+    /// Population size for evolutionary optimizer
+    pub evolutionary_population_size: usize,
+    /// Number of generations for evolutionary optimizer
+    pub evolutionary_generations: usize,
 }
 
 impl Default for OptimizerConfig {
@@ -72,6 +78,9 @@ impl Default for OptimizerConfig {
             max_reorder_components: 10,
             enable_plan_cache: true,
             plan_cache_ttl_secs: 300,
+            enable_evolutionary_optimizer: false, // Disabled by default
+            evolutionary_population_size: 20,
+            evolutionary_generations: 5,
         }
     }
 }
@@ -216,7 +225,9 @@ impl QueryOptimizer {
             .collect();
 
         // Step 2: Determine optimal execution order
-        let execution_order = if self.config.enable_reordering {
+        let execution_order = if self.config.enable_evolutionary_optimizer && query.components.len() > 1 {
+            self.evolutionary_optimize(&query.components, &selectivity_estimates)
+        } else if self.config.enable_reordering {
             self.compute_optimal_order(&query.components, &selectivity_estimates)
         } else {
             (0..query.components.len()).collect()
@@ -570,6 +581,24 @@ impl QueryOptimizer {
         }
 
         order
+    }
+
+    /// Compute optimal order using evolutionary algorithms
+    fn evolutionary_optimize(
+        &self,
+        components: &[QueryComponent],
+        selectivity: &[SelectivityEstimate],
+    ) -> Vec<usize> {
+        use super::evolutionary::EvolutionaryOptimizer;
+
+        let optimizer = EvolutionaryOptimizer::new(
+            self.config.evolutionary_population_size,
+            self.config.evolutionary_generations,
+        );
+
+        optimizer.optimize(components, selectivity, |sel, order| {
+            self.estimate_total_cost(sel, order)
+        })
     }
 
     /// Extract filters that can be pushed down to engines

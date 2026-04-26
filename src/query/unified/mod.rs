@@ -64,6 +64,7 @@
 
 pub mod ast;
 pub mod decomposition;
+pub mod evolutionary;
 pub mod executor;
 pub mod fusion;
 pub mod learned_fusion;

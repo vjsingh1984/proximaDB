@@ -210,6 +210,23 @@ pub enum FusionStrategy {
     /// let strategy = FusionStrategy::Adaptive;
     /// ```
     Adaptive,
+
+    /// Projection-Based Fusion (B5)
+    ///
+    /// Formula: `score = project([s_bm25, s_vector], [cos(theta), sin(theta)])`
+    /// where theta = alpha * (pi/2)
+    ///
+    /// # Arguments
+    /// * `alpha` - Balance parameter (0.0 to 1.0)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let strategy = FusionStrategy::Projection { alpha: 0.5 };
+    /// ```
+    Projection {
+        /// Balance parameter alpha (0.0 to 1.0)
+        alpha: f64,
+    },
 }
 
 impl std::fmt::Display for FusionStrategy {
@@ -255,6 +272,9 @@ impl std::fmt::Display for FusionStrategy {
             }
             FusionStrategy::Adaptive => {
                 write!(f, "Adaptive")
+            }
+            FusionStrategy::Projection { alpha } => {
+                write!(f, "Projection(alpha={:.2})", alpha)
             }
         }
     }

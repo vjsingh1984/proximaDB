@@ -2684,4 +2684,60 @@ mod tests {
         // This is placeholder compilation fix
         assert_eq!(node.id, "test_node_1");
     }
+
+    #[tokio::test]
+    async fn test_graph_walk_tool() {
+        let service = GraphOperationsService::new();
+        let graph_id = "walk_test_graph";
+
+        // Create graph
+        let req = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: graph_id.to_string(),
+            name: Some("Walk Test".to_string()),
+            description: None,
+            schema: None,
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        service.create_graph_collection(req).await.unwrap();
+
+        // Create n1 -> n2 -> n3
+        let nodes = vec!["n1", "n2", "n3"];
+        for id in nodes {
+            let node = Node {
+                id: id.to_string(),
+                labels: vec!["Test".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_node(graph_id, node).await.unwrap();
+        }
+
+        let edges = vec![("e12", "n1", "n2"), ("e23", "n2", "n3")];
+        for (id, from, to) in edges {
+            let edge = Edge {
+                id: id.to_string(),
+                from_node_id: from.to_string(),
+                to_node_id: to.to_string(),
+                edge_type: "NEXT".to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_edge(graph_id, edge).await.unwrap();
+        }
+
+        // Walk from n1 with depth 1
+        let results = service.graph_walk(graph_id, "n1", 1, 10).await.unwrap();
+
+        // Should find n1 and n2 (BFS depth 1)
+        assert_eq!(results.nodes.len(), 2);
+        let ids: Vec<_> = results.nodes.iter().map(|n| &n.id).collect();
+        assert!(ids.contains(&&"n1".to_string()));
+        assert!(ids.contains(&&"n2".to_string()));
+    }
 }

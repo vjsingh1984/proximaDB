@@ -1285,7 +1285,7 @@ impl JoinResult {
         join_type: &JoinType,
     ) -> SubQueryResult {
         let records = match join_type {
-            JoinType::Inner | JoinType::Semi => self.matched,
+            JoinType::Inner | JoinType::Semi | JoinType::Semantic { .. } => self.matched,
             JoinType::LeftOuter => {
                 let mut all = self.matched;
                 all.extend(self.unmatched_left);
@@ -1330,6 +1330,10 @@ pub fn execute_join(
         right.len()
     );
 
+    if let JoinType::Semantic { threshold, top_k } = dependency.join_type {
+        return execute_semantic_join(left, right, join_field, threshold, top_k);
+    }
+
     // Build a hash map of right side values for efficient lookup
     let right_index: HashMap<String, Vec<&UnifiedRecord>> = build_join_index(right, join_field);
 
@@ -1359,6 +1363,9 @@ pub fn execute_join(
                     }
                     JoinType::Anti => {
                         // For Anti, we'll handle in the loop (found_match = true means exclude)
+                    }
+                    JoinType::Semantic { .. } => {
+                        // Handled by early return above; unreachable here.
                     }
                 }
             }
@@ -1391,6 +1398,35 @@ pub fn execute_join(
         unmatched_left,
         has_matches,
     }
+}
+
+/// Extract a vector from a record for semantic join
+fn extract_vector(record: &UnifiedRecord, field: &str) -> Option<Vec<f32>> {
+    // 1. Try to extract from the data JSON
+    if let Some(val) = record.data.get(field) {
+        if let Some(arr) = val.as_array() {
+            let vec: Vec<f32> = arr
+                .iter()
+                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                .collect();
+            if !vec.is_empty() {
+                return Some(vec);
+            }
+        }
+    }
+
+    // 2. Try to extract from metadata if stored as comma-separated string
+    if let Some(val) = record.metadata.get(field) {
+        let vec: Vec<f32> = val
+            .split(',')
+            .filter_map(|s| s.trim().parse::<f32>().ok())
+            .collect();
+        if !vec.is_empty() {
+            return Some(vec);
+        }
+    }
+
+    None
 }
 
 /// Build a hash index of records by join field value
@@ -1581,6 +1617,93 @@ pub fn filter_by_ids(
         })
         .cloned()
         .collect()
+}
+
+/// Execute a semantic join based on vector similarity
+fn execute_semantic_join(
+    left: &[UnifiedRecord],
+    right: &[UnifiedRecord],
+    join_field: &str,
+    threshold: f32,
+    top_k: u32,
+) -> JoinResult {
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::compute::distance_computation::DistanceMetric;
+
+    let mut matched = Vec::new();
+    let mut unmatched_left = Vec::new();
+    let mut has_matches = false;
+
+    // Use Cosine similarity for semantic matching by default
+    let engine = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
+
+    // Prepare right vectors for efficient comparison
+    let right_vectors: Vec<(usize, Vec<f32>)> = right
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| extract_vector(r, join_field).map(|v| (i, v)))
+        .collect();
+
+    if right_vectors.is_empty() {
+        return JoinResult {
+            matched: Vec::new(),
+            unmatched_left: left.to_vec(),
+            has_matches: false,
+        };
+    }
+
+    for left_record in left {
+        if let Some(left_vec) = extract_vector(left_record, join_field) {
+            let mut matches: Vec<(f32, &UnifiedRecord)> = Vec::new();
+
+            for (right_idx, right_vec) in &right_vectors {
+                // UnifiedDistanceCompute returns (1 - similarity) for Cosine
+                // So LOWER = MORE SIMILAR.
+                // We want similarity > threshold, which means distance < (1 - threshold)
+                let distance = engine.distance(&left_vec, right_vec);
+                let similarity = 1.0 - distance;
+
+                if similarity >= threshold {
+                    matches.push((similarity, &right[*right_idx]));
+                }
+            }
+
+            if !matches.is_empty() {
+                has_matches = true;
+                // Sort by similarity descending
+                matches.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+                // Take top_k
+                for (_, right_record) in matches.iter().take(top_k as usize) {
+                    let mut joined = left_record.clone();
+                    // Merge data from right record
+                    if let Some(obj) = joined.data.as_object_mut() {
+                        if let Some(right_obj) = right_record.data.as_object() {
+                            for (k, v) in right_obj {
+                                if !obj.contains_key(k) {
+                                    obj.insert(k.clone(), v.clone());
+                                } else {
+                                    // Prefix with right_ if collision
+                                    obj.insert(format!("right_{}", k), v.clone());
+                                }
+                            }
+                        }
+                    }
+                    matched.push(joined);
+                }
+            } else {
+                unmatched_left.push(left_record.clone());
+            }
+        } else {
+            unmatched_left.push(left_record.clone());
+        }
+    }
+
+    JoinResult {
+        matched,
+        unmatched_left,
+        has_matches,
+    }
 }
 
 #[cfg(test)]
@@ -2419,5 +2542,88 @@ mod tests {
         assert!(resolved.contains(&"user_alice".to_string()));
         assert!(resolved.contains(&"user_bob".to_string()));
         assert!(resolved.contains(&"user_charlie".to_string()));
+    }
+
+    #[test]
+    fn test_semantic_join() {
+        use serde_json::json;
+
+        // Left side: User interests (Document model)
+        let left = vec![
+            UnifiedRecord {
+                id: "user1".to_string(),
+                source_model: DataModel::Document,
+                data: json!({
+                    "name": "Alice",
+                    "interest_vec": [1.0, 0.0, 0.0]
+                }),
+                score: None,
+                metadata: HashMap::new(),
+            },
+            UnifiedRecord {
+                id: "user2".to_string(),
+                source_model: DataModel::Document,
+                data: json!({
+                    "name": "Bob",
+                    "interest_vec": [0.0, 1.0, 0.0]
+                }),
+                score: None,
+                metadata: HashMap::new(),
+            }
+        ];
+
+        // Right side: Products (Vector model)
+        let right = vec![
+            UnifiedRecord {
+                id: "prod1".to_string(),
+                source_model: DataModel::Vector,
+                data: json!({
+                    "product": "Red Apple",
+                    "vec": [0.9, 0.1, 0.0] // Close to Alice
+                }),
+                score: None,
+                metadata: HashMap::new(),
+            },
+            UnifiedRecord {
+                id: "prod2".to_string(),
+                source_model: DataModel::Vector,
+                data: json!({
+                    "product": "Green Broccoli",
+                    "vec": [0.1, 0.9, 0.0] // Close to Bob
+                }),
+                score: None,
+                metadata: HashMap::new(),
+            }
+        ];
+
+        let dependency = ComponentDependency {
+            component_index: 0,
+            join_field: "interest_vec".to_string(), // Note: we'll use interest_vec for left, but right uses 'vec' in data? 
+                                                  // Actually extract_vector is called with join_field for BOTH.
+                                                  // I should adjust the test data to have same field name or improve extractor.
+            join_type: JoinType::Semantic { threshold: 0.8, top_k: 1 },
+        };
+        
+        // Adjusting right side to match join_field for this test
+        let mut right_fixed = right.clone();
+        if let Some(obj) = right_fixed[0].data.as_object_mut() {
+            obj.insert("interest_vec".to_string(), json!([0.9, 0.1, 0.0]));
+        }
+        if let Some(obj) = right_fixed[1].data.as_object_mut() {
+            obj.insert("interest_vec".to_string(), json!([0.1, 0.9, 0.0]));
+        }
+
+        let result = execute_join(&left, &right_fixed, &dependency);
+
+        assert!(result.has_matches);
+        assert_eq!(result.matched.len(), 2);
+        
+        // Alice (user1) should match Red Apple (prod1)
+        let alice_match = result.matched.iter().find(|r| r.id == "user1").unwrap();
+        assert_eq!(alice_match.data["product"], "Red Apple");
+
+        // Bob (user2) should match Green Broccoli (prod2)
+        let bob_match = result.matched.iter().find(|r| r.id == "user2").unwrap();
+        assert_eq!(bob_match.data["product"], "Green Broccoli");
     }
 }
