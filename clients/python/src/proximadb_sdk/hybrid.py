@@ -108,6 +108,12 @@ class FusionStrategy(str, Enum):
     # Parallel with balanced scores
     BALANCED = "balanced"
 
+    # Projection Fusion B5 (arXiv:2604.13728): faster than RRF with greater
+    # result diversity, but RRF wins relevance (nDCG@10) on TREC-COVID. Choose
+    # this when low fusion latency or higher result diversity matters more
+    # than peak relevance.
+    PROJECTION = "projection"
+
 
 class JoinType(str, Enum):
     """Join types for multi-model queries."""

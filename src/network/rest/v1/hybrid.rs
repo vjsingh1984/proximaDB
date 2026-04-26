@@ -26,6 +26,7 @@
 //! - **condorcet** - Condorcet pairwise fusion
 //! - **dempster_shafer** - Dempster-Shafer evidence theory (alpha=0.5)
 //! - **adaptive** - Adaptive strategy selection
+//! - **projection** - Projection Fusion B5 (alpha=0.5; speed/diversity tradeoff vs RRF)
 //!
 //! ## Example Usage
 //!
@@ -406,6 +407,16 @@ async fn list_strategies(
             description: "Dynamically selects strategy based on result overlap".to_string(),
             parameters: None,
         },
+        FusionStrategyInfo {
+            id: "projection".to_string(),
+            name: "Projection Fusion (B5)".to_string(),
+            description: "Latent-space projection: score = bm25*cos(theta) + vector*sin(theta), theta=alpha*pi/2. Tradeoff option from arXiv:2604.13728: faster than RRF with greater diversity, but RRF wins relevance (nDCG@10) on TREC-COVID. Use when low fusion latency or higher result diversity matters more than peak relevance.".to_string(),
+            parameters: {
+                let mut params = HashMap::new();
+                params.insert("alpha".to_string(), serde_json::json!(0.5));
+                Some(params)
+            },
+        },
     ];
 
     Ok(Json(StrategiesResponse { strategies }))
@@ -430,8 +441,9 @@ fn parse_fusion_strategy(strategy_str: &str) -> Result<FusionStrategy, ApiError>
         "condorcet" => Ok(FusionStrategy::Condorcet),
         "dempster_shafer" => Ok(FusionStrategy::DempsterShafer { alpha: 0.5 }),
         "adaptive" => Ok(FusionStrategy::Adaptive),
+        "projection" | "projection_b5" => Ok(FusionStrategy::Projection { alpha: 0.5 }),
         _ => Err(ApiError::InvalidArgument(format!(
-            "Unknown fusion strategy: '{}'. Valid options: rrf, weighted_linear, rbp, borda_count, comb_sum, comb_min, comb_max, condorcet, dempster_shafer, adaptive",
+            "Unknown fusion strategy: '{}'. Valid options: rrf, weighted_linear, rbp, borda_count, comb_sum, comb_min, comb_max, condorcet, dempster_shafer, adaptive, projection",
             strategy_str
         ))),
     }
@@ -511,6 +523,17 @@ mod tests {
         let borda =
             parse_fusion_strategy("borda_count").expect("Should parse valid fusion strategy");
         assert!(matches!(borda, FusionStrategy::BordaCount));
+
+        let projection =
+            parse_fusion_strategy("projection").expect("Should parse projection strategy");
+        match projection {
+            FusionStrategy::Projection { alpha } => assert!((alpha - 0.5).abs() < f64::EPSILON),
+            _ => panic!("Expected Projection"),
+        }
+
+        let projection_alias =
+            parse_fusion_strategy("projection_b5").expect("Should parse projection_b5 alias");
+        assert!(matches!(projection_alias, FusionStrategy::Projection { .. }));
 
         let invalid = parse_fusion_strategy("invalid_strategy");
         assert!(invalid.is_err());
