@@ -8,6 +8,7 @@ __all__ = [
     "autogen",
     "crewai",
     "dspy",
+    "graph_walk_client",
     "haystack",
     "langchain",
     "langgraph",

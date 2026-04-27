@@ -118,6 +118,37 @@ for block in response.content:
         # ... fire the request, feed the result back to the model
 ----
 
+== Higher-level: GraphWalkClient
+
+If you want the schema validation + HTTP turn in one object,
+`graph_walk_client.GraphWalkClient` composes the renderer with an
+injected HTTP transport. The transport callable is the seam that lets
+the SDK stay backend-agnostic — plug in `httpx`, `requests`,
+`aiohttp`, or anything else.
+
+[source,python]
+----
+import httpx
+from proximadb_sdk.integrations.graph_walk_client import GraphWalkClient
+
+def httpx_transport(method: str, url: str, json: dict) -> dict:
+    return httpx.request(method, url, json=json).json()
+
+client = GraphWalkClient("http://localhost:5678", transport=httpx_transport)
+
+# Convenience methods with typed signatures.
+result = client.walk(graph_id="ontology", start_node_id="n1", max_depth=2, limit=50)
+result = client.step(graph_id="ontology", node_id="n1", edge_type="REFERS_TO", limit=10)
+
+# Or generic dispatch when the agent emits a name+args pair.
+result = client.invoke("graph_walk", {"graph_id": "ontology", "start_node_id": "n1"})
+----
+
+`GraphWalkClient` validates argument shape via `mcp_tools.render_invocation`
+(missing required args → `ValueError`), normalizes trailing slashes
+on the base URL, and wraps transport errors in `GraphWalkError` so
+callers don't have to import every backend's exception type.
+
 == Status
 
 `graph_walk` and `graph_step` are exposed via REST today. gRPC parity
