@@ -1,16 +1,43 @@
 //! Modular Graph RAG (TD-045, arXiv:2503.19314 RGL).
 //!
-//! The RGL paper's central observation is that GraphRAG implementations
-//! conflate three distinct concerns — *which seed nodes to start from*,
-//! *which subgraph to expand into*, and *how much of that subgraph to
-//! pass to the LLM* — and report a 143× speedup once those concerns are
-//! decoupled. The biggest single lever is **dynamic node filtering at
-//! the retriever → builder boundary**: trim the seed set before
-//! materializing a subgraph, not after.
+//! ## Paper attribution (corrected April 26, 2026 from a deeper read)
 //!
-//! This module defines the trait surface that lets callers compose
-//! retrievers and builders independently, and a [`RagPipeline`]
-//! orchestrator that runs the boundary filter between them.
+//! The RGL paper proposes a 5-stage pipeline — Indexing → Node Retrieval
+//! → **Graph Retrieval** → Tokenization → Generation — wrapped in a
+//! Python library with four architectural layers (Kernel, Runtime, API,
+//! Applications). The paper's headline **143× speedup** is on the
+//! *graph retrieval phase only* (10K queries on OGBN-Arxiv complete in
+//! <5 minutes vs. NetworkX's 11 hours) and is achieved by **C++
+//! efficient implementations and batching of the underlying graph
+//! algorithms**, NOT primarily by dynamic filtering. "Dynamic node
+//! filtering" in the paper is a *token-budget* lever — it reduces what
+//! the downstream LLM sees, not what the database computes.
+//!
+//! ## What this module ships
+//!
+//! A trait surface and orchestrator for the **two stages** that live in
+//! the database layer:
+//!
+//! - [`NodeRetriever`] — covers the paper's *Node Retrieval* stage.
+//! - [`SubgraphBuilder`] — covers the paper's *Graph Retrieval* stage.
+//! - [`RagPipeline`] composes them with a [`RagBudget`] enforced at
+//!   both boundaries (the token-budget lever, plus a guard against
+//!   over-expanding builders).
+//!
+//! Stages 1 (Indexing) and 4–5 (Tokenization, Generation) are out of
+//! DB scope. Stage 1 is satisfied by ProximaDB's existing graph
+//! engines (ORION etc.); stages 4–5 are LLM-side concerns.
+//!
+//! ## Latency expectations
+//!
+//! ProximaDB's graph engines are already in Rust with the same
+//! engineering tradeoffs the paper used to beat NetworkX. The lift
+//! callers should expect from this module is **not** the paper's 143×
+//! speedup vs NetworkX — it is the *modularity* benefit (compose
+//! retrievers and builders independently) and the *token-budget*
+//! benefit (LLM context shrinks predictably).
+//!
+//! ## Architecture
 //!
 //! ## Architecture
 //!

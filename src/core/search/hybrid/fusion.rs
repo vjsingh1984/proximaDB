@@ -103,12 +103,37 @@ impl HybridFusionEngine {
         }
     }
 
-    /// Projection-Based Fusion (B5)
+    /// Score-level projection fusion ("Projection", inspired-by-B5).
     ///
-    /// Implements a diverse, high-performance fusion strategy by projecting
-    /// normalized scores into a latent representation.
-    /// Formula: score = s_bm25 * cos(theta) + s_vector * sin(theta)
-    /// where theta = alpha * (pi/2).
+    /// **Naming caveat**: arXiv:2604.13728 introduces a "B5 Projection
+    /// Fusion" that operates in *vector space* — combining BGE-dense
+    /// (768d) with SPLADE-sparse (30522d, projected to 768d via an
+    /// Achlioptas sparse random projection matrix R∈ℝ^{768×30522}) into
+    /// one dense vector for ANN, then `q = α_query·d̂ + (1−α_query)·p̂`
+    /// followed by L2-normalize, with α_query=0.95 (tuned), α_doc=0.50
+    /// (fixed). This implementation is a **score-level** analog:
+    /// after BM25 and vector search have each returned ranked lists,
+    /// we combine the post-retrieval scalar scores via
+    ///
+    ///     score = bm25_norm * cos(theta) + vector_norm * sin(theta),
+    ///     where theta = alpha * pi/2.
+    ///
+    /// We min-max normalize before projection and apply a small
+    /// diversity boost for documents present in both sets.
+    ///
+    /// This is a different layer of the stack than the paper's B5
+    /// (paper fuses *before* retrieval; we fuse *after*). Score-level
+    /// projection is a useful operator on its own — it produces a
+    /// diversity-leaning alternative to RRF that fits the existing
+    /// post-retrieval fusion API — but its quantitative properties are
+    /// NOT the same as those the paper measured (paper: B5 nDCG@10
+    /// =0.6779 vs RRF=0.8282 — RRF wins relevance; B5 ILD@10=0.389 vs
+    /// RRF=0.176 — B5 wins diversity 2.2×).
+    ///
+    /// A vector-space B5 implementation would require (1) a sparse
+    /// encoder integrated into the retrieval path, (2) the Achlioptas
+    /// projection matrix, and (3) a single combined-vector ANN index.
+    /// Tracked separately, see TD-044 in TECHNICAL_DEBT.adoc.
     fn projection_fusion(
         &self,
         bm25_results: Vec<BM25Result>,

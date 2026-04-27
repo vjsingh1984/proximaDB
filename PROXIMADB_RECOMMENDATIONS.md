@@ -377,6 +377,31 @@ Each step has its own benchmark/acceptance gate. Do not advance until the curren
 
 ## 7. Findings From Paper Verification
 
+### Second pass — April 26, 2026 (deeper read of papers we shipped code for)
+
+A second verification round fetched method-section content (not just abstracts) for the four
+papers backing TD-044, TD-045, TD-046, TD-047 — i.e. the ones with code in tree. Material drift
+between paper claims and shipped code:
+
+| TD | Paper | Drift |
+|----|-------|-------|
+| **TD-044** | 2604.13728 (Prajapati 2026) | Paper's B5 is **vector-space pre-fusion** (BGE 768d + Achlioptas-projected SPLADE 30522d→768d, single dense vector for ANN). Our `FusionStrategy::Projection` is a **score-level** fusion of post-retrieval scalar scores. Same name, different layer. Quantitative results don't transfer. |
+| **TD-045** | 2503.19314 (Li et al. 2025) | The 143× speedup is on the **graph-retrieval phase** vs NetworkX, achieved by C++ implementations + batching — NOT primarily by dynamic filtering. Our docs previously credited the boundary filter for the speedup; corrected. ProximaDB's graph engines already use Rust/C++ bindings, so the headline number doesn't directly transfer. |
+| **TD-046** | 2604.01610 (Ghandi et al. 2026) | Paper exposes **4 tools** (`get_node_by_property`, `get_all_nearest_neighbors`, `get_unique_property_values`, `think`) and uses **strict sequential single-step** navigation (iteration cap 30). Our `graph_step` ≈ `get_all_nearest_neighbors`; `graph_walk` (bounded BFS) is **not a paper concept**. Property-search and unique-values primitives unimplemented as agent tools. |
+| **TD-047** | 2602.10387 (Erol et al. 2026) | Paper's mutation operator is **GPT-5 producing RFC-6902 JSON Patches** with two specific patch types (join-side selection, join reordering). Plans flattened from DAG to node list (~10× compression) before being sent to LLM. Fitness = min latency over 50 sandboxed runs. DBPlanBench: 240 queries (TPC-H + TPC-DS) on Apache DataFusion. 4.78× speedup is on a TPC-DS cross-channel sales query. Our skeleton uses random topological-order swaps — **not the paper's contribution**, correctly tagged sub A vs sub B. |
+
+The TD register has been updated with these corrections. Module-level rustdocs in
+`src/core/search/hybrid/fusion.rs` and `src/graph/rag/mod.rs` carry honest "paper attribution"
+sections so future readers don't repeat the conflation.
+
+**Note on arXiv:2604.17677 (Disentanglement / TD-043)**: the HTML version 404'd on second
+fetch and the abstract does not expose the EI formula. Our EI implementation in
+`src/analytics/entanglement.rs` documents itself as a *defensible operationalization*
+(within-vs-cross-topic cosine ratio) rather than a faithful paper reproduction. A future
+follow-up that reads the full PDF should reconcile.
+
+### First pass — April 25, 2026 (initial verification)
+
 All 9 cited arXiv papers were fetched on 2026-04-25 and confirmed to exist. **However, the
 auto-generated V3 summaries were inaccurate in five technically meaningful ways:**
 
