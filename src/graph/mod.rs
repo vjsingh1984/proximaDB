@@ -56,6 +56,7 @@
 
 pub mod canonical;
 pub mod engines;
+pub mod rag;
 // Generic, engine-agnostic traversal utilities
 pub use engines::generic_traversal;
 pub mod hybrid;
