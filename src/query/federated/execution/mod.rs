@@ -193,6 +193,7 @@ struct NativeVectorColumnSpec {
 }
 
 const VECTOR_SOURCE_PATH_METADATA_KEY: &str = "proximadb.federated.vector_source_path";
+const VECTOR_SOURCE_ALIAS_METADATA_KEY: &str = "proximadb.federated.vector_source_alias";
 
 /// Federated query executor
 pub struct FederatedExecutor {
@@ -282,13 +283,26 @@ impl FederatedExecutor {
                 PlanNodeType::GraphTraversal {
                     cypher,
                     start_nodes,
+                    source_alias,
                 } => {
-                    self.execute_graph_traversal(cypher, start_nodes.as_ref())
-                        .await
+                    self.execute_graph_traversal(
+                        cypher,
+                        start_nodes.as_ref(),
+                        source_alias.as_deref(),
+                    )
+                    .await
                 }
-                PlanNodeType::DocumentQuery { collection, filter } => {
-                    self.execute_document_query(collection, filter.as_ref())
-                        .await
+                PlanNodeType::DocumentQuery {
+                    collection,
+                    filter,
+                    source_alias,
+                } => {
+                    self.execute_document_query(
+                        collection,
+                        filter.as_ref(),
+                        source_alias.as_deref(),
+                    )
+                    .await
                 }
                 PlanNodeType::ObservabilityQuery {
                     namespace,
@@ -422,11 +436,11 @@ impl FederatedExecutor {
 
                 if documents.is_empty() {
                     return Ok(ExecutionResult::empty_with_schema(
-                        Self::document_query_schema(&[]),
+                        Self::document_query_schema(&[], None),
                     ));
                 }
 
-                let batch = Self::build_document_record_batch(&documents)?;
+                let batch = Self::build_document_record_batch(&documents, None)?;
                 Ok(ExecutionResult::from_batch(batch))
             }
 
@@ -439,11 +453,11 @@ impl FederatedExecutor {
                 let nodes = graph_store.fetch_all_nodes().await?;
                 if nodes.is_empty() {
                     return Ok(ExecutionResult::empty_with_schema(
-                        Self::graph_query_schema(&[]),
+                        Self::graph_query_schema(&[], None),
                     ));
                 }
 
-                let batch = Self::build_graph_node_batch(&nodes)?;
+                let batch = Self::build_graph_node_batch(&nodes, None)?;
                 Ok(ExecutionResult::from_batch(batch))
             }
 
@@ -531,6 +545,7 @@ impl FederatedExecutor {
         &self,
         cypher: &str,
         start_nodes: Option<&Vec<String>>,
+        source_alias: Option<&str>,
     ) -> Result<ExecutionResult> {
         let graph_store = self
             .storage
@@ -567,11 +582,11 @@ impl FederatedExecutor {
 
         if nodes.is_empty() {
             return Ok(ExecutionResult::empty_with_schema(
-                Self::graph_query_schema(&[]),
+                Self::graph_query_schema(&[], source_alias),
             ));
         }
 
-        let batch = Self::build_graph_node_batch(&nodes)?;
+        let batch = Self::build_graph_node_batch(&nodes, source_alias)?;
 
         Ok(ExecutionResult::from_batch(batch))
     }
@@ -581,6 +596,7 @@ impl FederatedExecutor {
         &self,
         collection: &str,
         filter: Option<&String>,
+        source_alias: Option<&str>,
     ) -> Result<ExecutionResult> {
         let doc_store = self
             .storage
@@ -619,35 +635,49 @@ impl FederatedExecutor {
 
         if documents.is_empty() {
             return Ok(ExecutionResult::empty_with_schema(
-                Self::document_query_schema(&[]),
+                Self::document_query_schema(&[], source_alias),
             ));
         }
 
-        let batch = Self::build_document_record_batch(&documents)?;
+        let batch = Self::build_document_record_batch(&documents, source_alias)?;
 
         Ok(ExecutionResult::from_batch(batch))
     }
 
-    fn document_query_schema(vector_columns: &[NativeVectorColumnSpec]) -> Arc<Schema> {
+    fn document_query_schema(
+        vector_columns: &[NativeVectorColumnSpec],
+        source_alias: Option<&str>,
+    ) -> Arc<Schema> {
         let mut fields = vec![
             Field::new("id", DataType::Utf8, false),
             Field::new("document", DataType::Utf8, true),
         ];
-        fields.extend(vector_columns.iter().map(Self::native_vector_field));
+        fields.extend(
+            vector_columns
+                .iter()
+                .map(|spec| Self::native_vector_field(spec, source_alias)),
+        );
         Arc::new(Schema::new(fields))
     }
 
-    fn graph_query_schema(vector_columns: &[NativeVectorColumnSpec]) -> Arc<Schema> {
+    fn graph_query_schema(
+        vector_columns: &[NativeVectorColumnSpec],
+        source_alias: Option<&str>,
+    ) -> Arc<Schema> {
         let mut fields = vec![
             Field::new("node_id", DataType::Utf8, false),
             Field::new("label", DataType::Utf8, true),
             Field::new("properties", DataType::Utf8, true),
         ];
-        fields.extend(vector_columns.iter().map(Self::native_vector_field));
+        fields.extend(
+            vector_columns
+                .iter()
+                .map(|spec| Self::native_vector_field(spec, source_alias)),
+        );
         Arc::new(Schema::new(fields))
     }
 
-    fn native_vector_field(spec: &NativeVectorColumnSpec) -> Field {
+    fn native_vector_field(spec: &NativeVectorColumnSpec, source_alias: Option<&str>) -> Field {
         let data_type = match spec.layout {
             NativeVectorLayout::FixedSize(dimension) => DataType::FixedSizeList(
                 Arc::new(Field::new("item", DataType::Float32, false)),
@@ -662,12 +692,21 @@ impl FederatedExecutor {
             VECTOR_SOURCE_PATH_METADATA_KEY.to_string(),
             spec.source_path.clone(),
         );
+        if let Some(source_alias) = source_alias {
+            metadata.insert(
+                VECTOR_SOURCE_ALIAS_METADATA_KEY.to_string(),
+                source_alias.to_string(),
+            );
+        }
         Field::new(&spec.output_name, data_type, true).with_metadata(metadata)
     }
 
-    fn build_document_record_batch(documents: &[DocumentRecord]) -> Result<RecordBatch> {
+    fn build_document_record_batch(
+        documents: &[DocumentRecord],
+        source_alias: Option<&str>,
+    ) -> Result<RecordBatch> {
         let vector_columns = Self::collect_document_vector_columns(documents);
-        let schema = Self::document_query_schema(&vector_columns);
+        let schema = Self::document_query_schema(&vector_columns, source_alias);
         let ids: Vec<String> = documents
             .iter()
             .map(|document| document.id.clone())
@@ -694,9 +733,12 @@ impl FederatedExecutor {
         RecordBatch::try_new(schema, columns).map_err(Into::into)
     }
 
-    fn build_graph_node_batch(nodes: &[Arc<Node>]) -> Result<RecordBatch> {
+    fn build_graph_node_batch(
+        nodes: &[Arc<Node>],
+        source_alias: Option<&str>,
+    ) -> Result<RecordBatch> {
         let vector_columns = Self::collect_graph_vector_columns(nodes);
-        let schema = Self::graph_query_schema(&vector_columns);
+        let schema = Self::graph_query_schema(&vector_columns, source_alias);
         let node_ids: Vec<String> = nodes.iter().map(|node| node.id.clone()).collect();
         let labels: Vec<Option<String>> = nodes
             .iter()
@@ -1244,6 +1286,7 @@ impl FederatedExecutor {
             if let Some(resolution) = Self::resolve_metadata_vector_candidate(
                 outer_batch,
                 outer_row,
+                table,
                 column_path,
                 &exact_candidates,
             )? {
@@ -1253,11 +1296,8 @@ impl FederatedExecutor {
                     DirectVectorResolution::Missing => {}
                 }
             }
-            match Self::resolve_direct_vector_candidate(
-                outer_batch,
-                outer_row,
-                &exact_candidates,
-            )? {
+            match Self::resolve_direct_vector_candidate(outer_batch, outer_row, &exact_candidates)?
+            {
                 DirectVectorResolution::Resolved(vector) => return Ok(Some(vector)),
                 DirectVectorResolution::SkipRow => return Ok(None),
                 DirectVectorResolution::Missing => {}
@@ -1402,6 +1442,7 @@ impl FederatedExecutor {
     fn resolve_metadata_vector_candidate(
         batch: &RecordBatch,
         row: usize,
+        table: &str,
         column_path: &str,
         candidates: &[String],
     ) -> Result<Option<DirectVectorResolution>> {
@@ -1423,7 +1464,27 @@ impl FederatedExecutor {
             return Ok(None);
         }
 
-        let named_matches = matching_indices
+        let alias_matches = matching_indices
+            .iter()
+            .copied()
+            .filter(|idx| {
+                let schema = batch.schema();
+                schema
+                    .field(*idx)
+                    .metadata()
+                    .get(VECTOR_SOURCE_ALIAS_METADATA_KEY)
+                    .map(|source_alias| source_alias.as_str() == table)
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+
+        let candidate_pool = if alias_matches.is_empty() {
+            matching_indices
+        } else {
+            alias_matches
+        };
+
+        let named_matches = candidate_pool
             .iter()
             .copied()
             .filter(|idx| {
@@ -1437,7 +1498,7 @@ impl FederatedExecutor {
 
         let selected_index = match named_matches.as_slice() {
             [idx] => Some(*idx),
-            [] if matching_indices.len() == 1 => Some(matching_indices[0]),
+            [] if candidate_pool.len() == 1 => Some(candidate_pool[0]),
             _ => None,
         };
 
@@ -3804,7 +3865,7 @@ mod tests {
             },
         ];
 
-        let batch = FederatedExecutor::build_document_record_batch(&documents)
+        let batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
         let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
@@ -3879,7 +3940,7 @@ mod tests {
             updated_at_ns: 1,
         }];
 
-        let batch = FederatedExecutor::build_document_record_batch(&documents)
+        let batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
         let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
@@ -3924,8 +3985,8 @@ mod tests {
             }),
         ];
 
-        let batch =
-            FederatedExecutor::build_graph_node_batch(&nodes).expect("graph batch should build");
+        let batch = FederatedExecutor::build_graph_node_batch(&nodes, None)
+            .expect("graph batch should build");
         let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         assert!(
@@ -3977,8 +4038,8 @@ mod tests {
             updated_at_ms: 0,
         })];
 
-        let batch =
-            FederatedExecutor::build_graph_node_batch(&nodes).expect("graph batch should build");
+        let batch = FederatedExecutor::build_graph_node_batch(&nodes, None)
+            .expect("graph batch should build");
         let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         let vector = executor
@@ -4030,10 +4091,10 @@ mod tests {
             updated_at_ms: 0,
         })];
 
-        let document_batch = FederatedExecutor::build_document_record_batch(&documents)
+        let document_batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
-        let graph_batch =
-            FederatedExecutor::build_graph_node_batch(&nodes).expect("graph batch should build");
+        let graph_batch = FederatedExecutor::build_graph_node_batch(&nodes, None)
+            .expect("graph batch should build");
         let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
         let joined = executor
             .join_batches(&document_batch, &graph_batch, &[Some(0)], &[Some(0)])
@@ -4093,9 +4154,9 @@ mod tests {
             updated_at_ns: 1,
         }];
 
-        let graph_batch =
-            FederatedExecutor::build_graph_node_batch(&nodes).expect("graph batch should build");
-        let document_batch = FederatedExecutor::build_document_record_batch(&documents)
+        let graph_batch = FederatedExecutor::build_graph_node_batch(&nodes, None)
+            .expect("graph batch should build");
+        let document_batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
         let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
         let joined = executor
@@ -4180,7 +4241,7 @@ mod tests {
             created_at_ns: 1,
             updated_at_ns: 1,
         }];
-        let batch = FederatedExecutor::build_document_record_batch(&documents)
+        let batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
         let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 

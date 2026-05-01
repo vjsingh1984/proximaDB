@@ -412,6 +412,7 @@ mod tests {
             node_type: PlanNodeType::GraphTraversal {
                 cypher: "MATCH (n) RETURN n".to_string(),
                 start_nodes: None,
+                source_alias: None,
             },
             estimated_cost: 2.0,
             estimated_rows: 100,

@@ -78,6 +78,10 @@ pub struct FederatedQuery {
     pub query_type: QueryType,
     /// Detected SQL extensions
     pub extensions: Vec<SqlExtension>,
+    /// Source-order byte positions for each detected extension
+    pub extension_positions: Vec<usize>,
+    /// Source aliases for each detected extension when present
+    pub extension_aliases: Vec<Option<String>>,
     /// Target tables/collections
     pub targets: Vec<QueryTarget>,
     /// Extracted parameters
@@ -143,44 +147,25 @@ impl FederatedParser {
 
     /// Parse a SQL query with extensions
     pub fn parse(&self, sql: &str) -> Result<FederatedQuery> {
-        let sql_upper = sql.to_uppercase();
+        let sql_upper = sql.to_ascii_uppercase();
         let mut extensions = Vec::new();
+        let mut extension_positions = Vec::new();
+        let mut extension_aliases = Vec::new();
         let mut query_type = QueryType::Sql;
         let mut is_cross_model_join = false;
 
-        // Detect VECTOR_SEARCH extension
-        if let Some(ext) = self.parse_vector_search(sql) {
-            extensions.push(ext);
-            query_type = QueryType::VectorSearch;
-        }
-
-        // Detect GRAPH_QUERY extension
-        if let Some(ext) = self.parse_graph_query(sql) {
-            extensions.push(ext);
-            query_type = QueryType::GraphQuery;
-        }
-
-        // Detect DOCUMENT_QUERY extension
-        if let Some(ext) = self.parse_document_query(sql) {
-            extensions.push(ext);
-            query_type = QueryType::DocumentQuery;
-        }
-
-        // Detect LOGS extension
-        if let Some(ext) = self.parse_logs_query(sql) {
-            extensions.push(ext);
-            query_type = QueryType::LogQuery;
-        }
-
-        // Detect METRICS extension
-        if let Some(ext) = self.parse_metrics_query(sql) {
-            extensions.push(ext);
-            query_type = QueryType::MetricQuery;
+        for (extension, position, alias) in self.parse_function_extensions(sql) {
+            query_type = Self::query_type_for_extension(&extension);
+            extensions.push(extension);
+            extension_positions.push(position);
+            extension_aliases.push(alias);
         }
 
         // Detect vector distance operator <->
-        if let Some(ext) = self.parse_vector_distance(sql) {
+        if let Some((ext, position)) = self.parse_vector_distance(sql) {
             extensions.push(ext);
+            extension_positions.push(position);
+            extension_aliases.push(None);
             if query_type == QueryType::Sql {
                 query_type = QueryType::VectorSearch;
             }
@@ -218,15 +203,86 @@ impl FederatedParser {
             sql: sql.to_string(),
             query_type,
             extensions,
+            extension_positions,
+            extension_aliases,
             targets,
             parameters: HashMap::new(),
             is_cross_model_join,
         })
     }
 
+    fn query_type_for_extension(extension: &SqlExtension) -> QueryType {
+        match extension {
+            SqlExtension::VectorSearch { .. } | SqlExtension::VectorDistance { .. } => {
+                QueryType::VectorSearch
+            }
+            SqlExtension::GraphQuery { .. } => QueryType::GraphQuery,
+            SqlExtension::DocumentQuery { .. } => QueryType::DocumentQuery,
+            SqlExtension::Logs { .. } => QueryType::LogQuery,
+            SqlExtension::Metrics { .. } => QueryType::MetricQuery,
+        }
+    }
+
+    fn parse_function_extensions(&self, sql: &str) -> Vec<(SqlExtension, usize, Option<String>)> {
+        const FUNCTION_NAMES: [&str; 5] = [
+            "VECTOR_SEARCH",
+            "GRAPH_QUERY",
+            "DOCUMENT_QUERY",
+            "LOGS",
+            "METRICS",
+        ];
+
+        let sql_upper = sql.to_ascii_uppercase();
+        let mut search_from = 0;
+        let mut extensions = Vec::new();
+
+        while search_from < sql_upper.len() {
+            let next_match = FUNCTION_NAMES
+                .iter()
+                .filter_map(|function_name| {
+                    let needle = format!("{}(", function_name);
+                    sql_upper[search_from..]
+                        .find(&needle)
+                        .map(|relative| (*function_name, search_from + relative))
+                })
+                .min_by_key(|(_, position)| *position);
+
+            let Some((function_name, position)) = next_match else {
+                break;
+            };
+
+            if let Some((args, end_position)) =
+                self.extract_function_args_at(sql, position, function_name)
+            {
+                if let Some(extension) = self.parse_function_extension(function_name, args) {
+                    extensions.push((
+                        extension,
+                        position,
+                        self.parse_extension_alias(sql, end_position),
+                    ));
+                }
+                search_from = end_position;
+            } else {
+                search_from = position + function_name.len();
+            }
+        }
+
+        extensions
+    }
+
+    fn parse_function_extension(&self, function_name: &str, args: &str) -> Option<SqlExtension> {
+        match function_name {
+            "VECTOR_SEARCH" => self.parse_vector_search_args(args),
+            "GRAPH_QUERY" => self.parse_graph_query_args(args),
+            "DOCUMENT_QUERY" => self.parse_document_query_args(args),
+            "LOGS" => self.parse_logs_query_args(args),
+            "METRICS" => self.parse_metrics_query_args(args),
+            _ => None,
+        }
+    }
+
     /// Parse VECTOR_SEARCH(collection, vector, top_k)
-    fn parse_vector_search(&self, sql: &str) -> Option<SqlExtension> {
-        let args = self.extract_function_args(sql, "VECTOR_SEARCH")?;
+    fn parse_vector_search_args(&self, args: &str) -> Option<SqlExtension> {
         let parts = self.split_function_args(args);
         if parts.len() < 2 {
             return None;
@@ -244,19 +300,13 @@ impl FederatedParser {
     }
 
     /// Parse GRAPH_QUERY('cypher')
-    fn parse_graph_query(&self, sql: &str) -> Option<SqlExtension> {
-        let cypher = self
-            .extract_function_args(sql, "GRAPH_QUERY")?
-            .trim()
-            .trim_matches('\'')
-            .trim_matches('"')
-            .to_string();
+    fn parse_graph_query_args(&self, args: &str) -> Option<SqlExtension> {
+        let cypher = args.trim().trim_matches('\'').trim_matches('"').to_string();
         Some(SqlExtension::GraphQuery { cypher })
     }
 
     /// Parse DOCUMENT_QUERY(collection, filter)
-    fn parse_document_query(&self, sql: &str) -> Option<SqlExtension> {
-        let args = self.extract_function_args(sql, "DOCUMENT_QUERY")?;
+    fn parse_document_query_args(&self, args: &str) -> Option<SqlExtension> {
         let parts = self.split_function_args(args);
         let collection = parts
             .first()?
@@ -270,29 +320,19 @@ impl FederatedParser {
     }
 
     /// Parse LOGS(namespace)
-    fn parse_logs_query(&self, sql: &str) -> Option<SqlExtension> {
-        let namespace = self
-            .extract_function_args(sql, "LOGS")?
-            .trim()
-            .trim_matches('\'')
-            .trim_matches('"')
-            .to_string();
+    fn parse_logs_query_args(&self, args: &str) -> Option<SqlExtension> {
+        let namespace = args.trim().trim_matches('\'').trim_matches('"').to_string();
         Some(SqlExtension::Logs { namespace })
     }
 
     /// Parse METRICS(namespace)
-    fn parse_metrics_query(&self, sql: &str) -> Option<SqlExtension> {
-        let namespace = self
-            .extract_function_args(sql, "METRICS")?
-            .trim()
-            .trim_matches('\'')
-            .trim_matches('"')
-            .to_string();
+    fn parse_metrics_query_args(&self, args: &str) -> Option<SqlExtension> {
+        let namespace = args.trim().trim_matches('\'').trim_matches('"').to_string();
         Some(SqlExtension::Metrics { namespace })
     }
 
     /// Parse vector distance operator <->
-    fn parse_vector_distance(&self, sql: &str) -> Option<SqlExtension> {
+    fn parse_vector_distance(&self, sql: &str) -> Option<(SqlExtension, usize)> {
         if !sql.contains("<->") {
             return None;
         }
@@ -313,10 +353,13 @@ impl FederatedParser {
             // Get first token after <->
             let right_literal = after.split_whitespace().next().unwrap_or("[]").to_string();
 
-            return Some(SqlExtension::VectorDistance {
-                left_column,
-                right_literal,
-            });
+            return Some((
+                SqlExtension::VectorDistance {
+                    left_column,
+                    right_literal,
+                },
+                pos,
+            ));
         }
         None
     }
@@ -324,7 +367,7 @@ impl FederatedParser {
     /// Parse FROM clause to extract table targets
     fn parse_from_targets(&self, sql: &str) -> Vec<QueryTarget> {
         let mut targets = Vec::new();
-        let upper = sql.to_uppercase();
+        let upper = sql.to_ascii_uppercase();
 
         // Find FROM clause
         if let Some(from_pos) = upper.find("FROM") {
@@ -334,7 +377,7 @@ impl FederatedParser {
             let end_keywords = ["WHERE", "JOIN", "ORDER", "GROUP", "LIMIT", "HAVING", ";"];
             let mut end_pos = after_from.len();
             for keyword in end_keywords {
-                if let Some(pos) = after_from.to_uppercase().find(keyword)
+                if let Some(pos) = after_from.to_ascii_uppercase().find(keyword)
                     && pos < end_pos
                 {
                     end_pos = pos;
@@ -344,7 +387,7 @@ impl FederatedParser {
             let from_clause = after_from[..end_pos].trim();
 
             // Check if this is a function call (contains parentheses at start)
-            let from_upper = from_clause.to_uppercase();
+            let from_upper = from_clause.to_ascii_uppercase();
             let is_function_call = from_upper.starts_with("VECTOR_SEARCH")
                 || from_upper.starts_with("GRAPH_QUERY")
                 || from_upper.starts_with("DOCUMENT_QUERY")
@@ -362,7 +405,7 @@ impl FederatedParser {
                 let parts: Vec<&str> = table_ref.split_whitespace().collect();
                 if !parts.is_empty() {
                     let name = parts[0].to_string();
-                    let alias = if parts.len() > 1 && parts[1].to_uppercase() != "AS" {
+                    let alias = if parts.len() > 1 && parts[1].to_ascii_uppercase() != "AS" {
                         Some(parts[1].to_string())
                     } else if parts.len() > 2 {
                         Some(parts[2].to_string())
@@ -476,10 +519,12 @@ impl FederatedParser {
         result
     }
 
-    fn extract_function_args<'a>(&self, sql: &'a str, function_name: &str) -> Option<&'a str> {
-        let upper = sql.to_uppercase();
-        let function_call = format!("{}(", function_name);
-        let start = upper.find(&function_call)?;
+    fn extract_function_args_at<'a>(
+        &self,
+        sql: &'a str,
+        start: usize,
+        function_name: &str,
+    ) -> Option<(&'a str, usize)> {
         let content = &sql[start + function_name.len() + 1..];
         let mut depth = 1;
         let mut in_quote = None;
@@ -500,7 +545,8 @@ impl FederatedParser {
                 ')' => {
                     depth -= 1;
                     if depth == 0 {
-                        return Some(&content[..i]);
+                        let end_position = start + function_name.len() + 2 + i;
+                        return Some((&content[..i], end_position));
                     }
                 }
                 _ => {}
@@ -510,6 +556,53 @@ impl FederatedParser {
         }
 
         None
+    }
+
+    fn parse_extension_alias(&self, sql: &str, mut position: usize) -> Option<String> {
+        const RESERVED_TOKENS: [&str; 15] = [
+            "JOIN", "LEFT", "RIGHT", "INNER", "FULL", "CROSS", "LATERAL", "ON", "WHERE", "ORDER",
+            "GROUP", "LIMIT", "HAVING", "UNION", "EXCEPT",
+        ];
+
+        while let Some(ch) = sql[position..].chars().next() {
+            if ch.is_whitespace() {
+                position += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        if position >= sql.len() {
+            return None;
+        }
+
+        let mut remainder = sql[position..].trim_start();
+        let mut token = Self::parse_identifier_token(remainder)?;
+        if token.eq_ignore_ascii_case("AS") {
+            remainder = &remainder[token.len()..];
+            remainder = remainder.trim_start();
+            token = Self::parse_identifier_token(remainder)?;
+        }
+
+        if RESERVED_TOKENS.contains(&token.to_ascii_uppercase().as_str()) {
+            return None;
+        }
+
+        Some(token.to_string())
+    }
+
+    fn parse_identifier_token(input: &str) -> Option<&str> {
+        let first = input.chars().next()?;
+        if !matches!(first, 'A'..='Z' | 'a'..='z' | '_') {
+            return None;
+        }
+
+        let token_end = input
+            .char_indices()
+            .find(|(_, ch)| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_'))
+            .map(|(idx, _)| idx)
+            .unwrap_or(input.len());
+        Some(&input[..token_end])
     }
 
     fn parse_vector_argument(&self, arg: &str) -> Option<VectorQuery> {
@@ -678,6 +771,49 @@ mod tests {
         ).unwrap();
         assert_eq!(query.query_type, QueryType::Federated);
         assert!(query.is_cross_model_join);
+    }
+
+    #[test]
+    fn test_parse_multiple_function_sources_preserves_order_and_aliases() {
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') p, DOCUMENT_QUERY('right_profiles') q JOIN LATERAL VECTOR_SEARCH('products', q.document.embedding, 1) v ON true",
+            )
+            .expect("parser should preserve repeated function-backed sources");
+
+        assert_eq!(query.extensions.len(), 3);
+        assert_eq!(
+            query.extension_aliases,
+            vec![
+                Some("p".to_string()),
+                Some("q".to_string()),
+                Some("v".to_string())
+            ]
+        );
+        assert!(query.extension_positions.windows(2).all(|w| w[0] < w[1]));
+
+        match &query.extensions[0] {
+            SqlExtension::DocumentQuery { collection, .. } => {
+                assert_eq!(collection, "left_profiles");
+            }
+            other => panic!("expected first extension to be left document query, got {other:?}"),
+        }
+        match &query.extensions[1] {
+            SqlExtension::DocumentQuery { collection, .. } => {
+                assert_eq!(collection, "right_profiles");
+            }
+            other => panic!("expected second extension to be right document query, got {other:?}"),
+        }
+        match &query.extensions[2] {
+            SqlExtension::VectorSearch { query_vector, .. } => {
+                assert_eq!(
+                    query_vector,
+                    &VectorQuery::Expression("q.document.embedding".to_string())
+                );
+            }
+            other => panic!("expected third extension to be vector search, got {other:?}"),
+        }
     }
 
     #[test]

@@ -46,6 +46,8 @@ pub enum PlanNodeType {
         cypher: String,
         /// Optional starting node IDs
         start_nodes: Option<Vec<String>>,
+        /// SQL alias for the source when present
+        source_alias: Option<String>,
     },
     /// Document query
     DocumentQuery {
@@ -53,6 +55,8 @@ pub enum PlanNodeType {
         collection: String,
         /// Optional filter expression
         filter: Option<String>,
+        /// SQL alias for the source when present
+        source_alias: Option<String>,
     },
     /// Observability query (logs/metrics)
     ObservabilityQuery {
@@ -437,6 +441,7 @@ impl PlanNode {
             PlanNodeType::GraphTraversal {
                 cypher,
                 start_nodes: _,
+                source_alias: _,
             } => {
                 capabilities.add(Capability::GraphQuery);
                 capabilities.add(Capability::GraphTraversal);
@@ -452,6 +457,7 @@ impl PlanNode {
             PlanNodeType::DocumentQuery {
                 collection: _,
                 filter,
+                source_alias: _,
             } => {
                 capabilities.add(Capability::DocumentQuery);
                 capabilities.add(Capability::Scan);
@@ -763,7 +769,10 @@ struct SelectItem {
 
 #[derive(Clone, Copy)]
 enum QuerySourceRef<'a> {
-    Extension(&'a SqlExtension),
+    Extension {
+        extension: &'a SqlExtension,
+        ordinal: usize,
+    },
     Target(&'a QueryTarget),
 }
 
@@ -2251,14 +2260,18 @@ impl CrossModelOptimizer {
     }
 
     fn ordered_query_sources<'a>(query: &'a FederatedQuery) -> Vec<QuerySourceRef<'a>> {
-        let sql_upper = query.sql.to_uppercase();
+        let sql_upper = query.sql.to_ascii_uppercase();
         let mut sources = Vec::new();
 
         for (ordinal, extension) in query.extensions.iter().enumerate() {
             sources.push((
-                Self::query_source_position(&sql_upper, QuerySourceRef::Extension(extension)),
+                Self::query_source_position(
+                    query,
+                    &sql_upper,
+                    QuerySourceRef::Extension { extension, ordinal },
+                ),
                 ordinal,
-                QuerySourceRef::Extension(extension),
+                QuerySourceRef::Extension { extension, ordinal },
             ));
         }
 
@@ -2271,7 +2284,7 @@ impl CrossModelOptimizer {
             }
 
             sources.push((
-                Self::query_source_position(&sql_upper, QuerySourceRef::Target(target)),
+                Self::query_source_position(query, &sql_upper, QuerySourceRef::Target(target)),
                 query.extensions.len() + ordinal,
                 QuerySourceRef::Target(target),
             ));
@@ -2284,19 +2297,23 @@ impl CrossModelOptimizer {
             .collect::<Vec<_>>()
     }
 
-    fn query_source_position(sql_upper: &str, source: QuerySourceRef<'_>) -> usize {
+    fn query_source_position(
+        query: &FederatedQuery,
+        sql_upper: &str,
+        source: QuerySourceRef<'_>,
+    ) -> usize {
         match source {
-            QuerySourceRef::Extension(extension) => match extension {
-                SqlExtension::VectorSearch { .. } => sql_upper.find("VECTOR_SEARCH("),
-                SqlExtension::GraphQuery { .. } => sql_upper.find("GRAPH_QUERY("),
-                SqlExtension::DocumentQuery { .. } => sql_upper.find("DOCUMENT_QUERY("),
-                SqlExtension::Logs { .. } => sql_upper.find("LOGS("),
-                SqlExtension::Metrics { .. } => sql_upper.find("METRICS("),
-                SqlExtension::VectorDistance { .. } => sql_upper.find("<->"),
-            }
-            .unwrap_or(usize::MAX),
+            QuerySourceRef::Extension { ordinal, .. } => query
+                .extension_positions
+                .get(ordinal)
+                .copied()
+                .unwrap_or(usize::MAX),
             QuerySourceRef::Target(target) => Self::target_position(sql_upper, target),
         }
+    }
+
+    fn extension_alias(query: &FederatedQuery, ordinal: usize) -> Option<String> {
+        query.extension_aliases.get(ordinal).cloned().flatten()
     }
 
     fn target_position(sql_upper: &str, target: &QueryTarget) -> usize {
@@ -2600,6 +2617,7 @@ impl CrossModelOptimizer {
             node_type: PlanNodeType::GraphTraversal {
                 cypher,
                 start_nodes: None, // Will be populated from query parsing
+                source_alias: None,
             },
             estimated_cost: cost,
             estimated_rows: rows,
@@ -2656,7 +2674,11 @@ impl CrossModelOptimizer {
 
         Ok(PlanNode {
             id: self.next_id(),
-            node_type: PlanNodeType::DocumentQuery { collection, filter },
+            node_type: PlanNodeType::DocumentQuery {
+                collection,
+                filter,
+                source_alias: None,
+            },
             estimated_cost: cost,
             estimated_rows: rows,
             output_columns: vec!["id".to_string(), "document".to_string()],
@@ -2675,11 +2697,15 @@ impl CrossModelOptimizer {
 
         for source in Self::ordered_query_sources(query) {
             let sub_plan = match source {
-                QuerySourceRef::Extension(SqlExtension::VectorSearch {
-                    collection,
-                    query_vector,
-                    top_k,
-                }) => {
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::VectorSearch {
+                            collection,
+                            query_vector,
+                            top_k,
+                        },
+                    ..
+                } => {
                     let vec_stats = stats.get(collection).and_then(|s| {
                         if let ModelStatistics::Vector(vs) = s {
                             Some(vs)
@@ -2710,7 +2736,10 @@ impl CrossModelOptimizer {
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
-                QuerySourceRef::Extension(SqlExtension::GraphQuery { cypher }) => {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::GraphQuery { cypher },
+                    ordinal,
+                } => {
                     let max_depth = cypher.matches("->").count().max(1);
                     // Use default stats for graph
                     let default_stats = GraphStats::default();
@@ -2723,6 +2752,7 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::GraphTraversal {
                             cypher: cypher.clone(),
                             start_nodes: None, // Will be populated from query parsing
+                            source_alias: Self::extension_alias(query, ordinal),
                         },
                         estimated_cost: cost,
                         estimated_rows: 100,
@@ -2734,7 +2764,10 @@ impl CrossModelOptimizer {
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
-                QuerySourceRef::Extension(SqlExtension::DocumentQuery { collection, filter }) => {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::DocumentQuery { collection, filter },
+                    ordinal,
+                } => {
                     let doc_stats = stats.get(collection).and_then(|s| {
                         if let ModelStatistics::Document(ds) = s {
                             Some(ds)
@@ -2756,6 +2789,7 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::DocumentQuery {
                             collection: collection.clone(),
                             filter: filter.clone(),
+                            source_alias: Self::extension_alias(query, ordinal),
                         },
                         estimated_cost: cost,
                         estimated_rows: rows,
@@ -2763,7 +2797,10 @@ impl CrossModelOptimizer {
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
-                QuerySourceRef::Extension(SqlExtension::Logs { namespace }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Logs { namespace },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -2779,7 +2816,10 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::Metrics { namespace }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Metrics { namespace },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -2795,10 +2835,14 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::VectorDistance {
-                    left_column,
-                    right_literal,
-                }) => {
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::VectorDistance {
+                            left_column,
+                            right_literal,
+                        },
+                    ..
+                } => {
                     let target = query
                         .targets
                         .first()
@@ -3626,6 +3670,7 @@ impl CrossModelOptimizer {
             node_type: PlanNodeType::GraphTraversal {
                 cypher,
                 start_nodes: None,
+                source_alias: None,
             },
             estimated_cost: 50.0,
             estimated_rows: 100,
@@ -3653,7 +3698,11 @@ impl CrossModelOptimizer {
 
         Ok(PlanNode {
             id: self.next_id(),
-            node_type: PlanNodeType::DocumentQuery { collection, filter },
+            node_type: PlanNodeType::DocumentQuery {
+                collection,
+                filter,
+                source_alias: None,
+            },
             estimated_cost: 30.0,
             estimated_rows: 500,
             output_columns: vec!["id".to_string(), "document".to_string()],
@@ -3716,11 +3765,15 @@ impl CrossModelOptimizer {
 
         for source in Self::ordered_query_sources(query) {
             let sub_plan = match source {
-                QuerySourceRef::Extension(SqlExtension::VectorSearch {
-                    collection,
-                    query_vector,
-                    top_k,
-                }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::VectorSearch {
+                            collection,
+                            query_vector,
+                            top_k,
+                        },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::VectorSearch {
                         collection: collection.clone(),
@@ -3732,11 +3785,15 @@ impl CrossModelOptimizer {
                     output_columns: vec!["id".to_string(), "score".to_string()],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::GraphQuery { cypher }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::GraphQuery { cypher },
+                    ordinal,
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::GraphTraversal {
                         cypher: cypher.clone(),
                         start_nodes: None,
+                        source_alias: Self::extension_alias(query, ordinal),
                     },
                     estimated_cost: 50.0,
                     estimated_rows: 100,
@@ -3747,20 +3804,25 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::DocumentQuery { collection, filter }) => {
-                    PlanNode {
-                        id: self.next_id(),
-                        node_type: PlanNodeType::DocumentQuery {
-                            collection: collection.clone(),
-                            filter: filter.clone(),
-                        },
-                        estimated_cost: 30.0,
-                        estimated_rows: 500,
-                        output_columns: vec!["id".to_string(), "document".to_string()],
-                        required_capabilities: CapabilitySet::new(),
-                    }
-                }
-                QuerySourceRef::Extension(SqlExtension::Logs { namespace }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::DocumentQuery { collection, filter },
+                    ordinal,
+                } => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::DocumentQuery {
+                        collection: collection.clone(),
+                        filter: filter.clone(),
+                        source_alias: Self::extension_alias(query, ordinal),
+                    },
+                    estimated_cost: 30.0,
+                    estimated_rows: 500,
+                    output_columns: vec!["id".to_string(), "document".to_string()],
+                    required_capabilities: CapabilitySet::new(),
+                },
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Logs { namespace },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -3776,7 +3838,10 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::Metrics { namespace }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Metrics { namespace },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -3792,10 +3857,14 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::VectorDistance {
-                    left_column,
-                    right_literal,
-                }) => {
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::VectorDistance {
+                            left_column,
+                            right_literal,
+                        },
+                    ..
+                } => {
                     let target = query
                         .targets
                         .first()
@@ -4174,7 +4243,11 @@ impl CrossModelOptimizer {
                     predicate_pushed: false,
                 })
             }
-            PlanNodeType::DocumentQuery { collection, filter } => {
+            PlanNodeType::DocumentQuery {
+                collection,
+                filter,
+                source_alias,
+            } => {
                 // Document queries can have filters pushed into them
                 if self.predicate_references_target(&predicate, collection) {
                     let new_filter = match filter {
@@ -4192,6 +4265,7 @@ impl CrossModelOptimizer {
                             node_type: PlanNodeType::DocumentQuery {
                                 collection: collection.clone(),
                                 filter: new_filter,
+                                source_alias: source_alias.clone(),
                             },
                             estimated_cost: node.estimated_cost * selectivity,
                             estimated_rows: ((node.estimated_rows as f64) * selectivity) as u64,
@@ -5462,6 +5536,8 @@ mod tests {
             sql: "SELECT * FROM users".to_string(),
             query_type: QueryType::Sql,
             extensions: vec![],
+            extension_positions: vec![],
+            extension_aliases: vec![],
             targets: vec![super::super::parser::QueryTarget {
                 name: "users".to_string(),
                 alias: None,
@@ -5489,6 +5565,8 @@ mod tests {
                 query_vector: VectorQuery::Literal(vec![0.1]),
                 top_k: 10,
             }],
+            extension_positions: vec![14],
+            extension_aliases: vec![None],
             targets: vec![],
             parameters: HashMap::new(),
             is_cross_model_join: false,
@@ -5526,6 +5604,56 @@ mod tests {
                 ));
                 assert!(matches!(inner.node_type, PlanNodeType::VectorSearch { .. }));
                 assert_eq!(correlation, &vec!["p.document.embedding".to_string()]);
+                match &outer.node_type {
+                    PlanNodeType::DocumentQuery { source_alias, .. } => {
+                        assert_eq!(source_alias.as_deref(), Some("p"));
+                    }
+                    other => panic!("expected document outer plan, got {:?}", other),
+                }
+            }
+            other => panic!("expected nested-loop join, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lateral_plan_preserves_right_document_alias_in_multi_document_outer_join() {
+        let parser = super::super::parser::FederatedParser::new();
+        let query = parser
+            .parse(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') p, DOCUMENT_QUERY('right_profiles') q JOIN LATERAL VECTOR_SEARCH('products', q.document.embedding, 1) v ON true",
+            )
+            .expect("parser should accept repeated function-backed sources");
+        let optimizer = CrossModelOptimizer::new();
+
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimizer should preserve distinct document aliases");
+
+        match &plan.root.node_type {
+            PlanNodeType::NestedLoopJoin {
+                outer,
+                inner,
+                correlation,
+            } => {
+                assert!(matches!(inner.node_type, PlanNodeType::VectorSearch { .. }));
+                assert_eq!(correlation, &vec!["q.document.embedding".to_string()]);
+                match &outer.node_type {
+                    PlanNodeType::NestedLoopJoin { outer, inner, .. } => {
+                        match &outer.node_type {
+                            PlanNodeType::DocumentQuery { source_alias, .. } => {
+                                assert_eq!(source_alias.as_deref(), Some("p"));
+                            }
+                            other => panic!("expected left document source, got {:?}", other),
+                        }
+                        match &inner.node_type {
+                            PlanNodeType::DocumentQuery { source_alias, .. } => {
+                                assert_eq!(source_alias.as_deref(), Some("q"));
+                            }
+                            other => panic!("expected right document source, got {:?}", other),
+                        }
+                    }
+                    other => panic!("expected nested outer document join, got {:?}", other),
+                }
             }
             other => panic!("expected nested-loop join, got {:?}", other),
         }
@@ -6206,6 +6334,8 @@ mod tests {
                 query_vector: VectorQuery::Literal(vec![0.1]),
                 top_k: 5,
             }],
+            extension_positions: vec![14],
+            extension_aliases: vec![None],
             targets: vec![],
             parameters: HashMap::new(),
             is_cross_model_join: false,
@@ -6395,6 +6525,7 @@ mod tests {
             node_type: PlanNodeType::GraphTraversal {
                 cypher: "MATCH (a)-[:KNOWS]->(b) RETURN b".to_string(),
                 start_nodes: None,
+                source_alias: None,
             },
             estimated_cost: 75.0,
             estimated_rows: 100,
@@ -6419,6 +6550,7 @@ mod tests {
             node_type: PlanNodeType::DocumentQuery {
                 collection: "docs".to_string(),
                 filter: Some("status = 'active'".to_string()),
+                source_alias: None,
             },
             estimated_cost: 60.0,
             estimated_rows: 500,
