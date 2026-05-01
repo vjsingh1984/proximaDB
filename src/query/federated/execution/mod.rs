@@ -187,9 +187,12 @@ enum NativeVectorLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NativeVectorColumnSpec {
     output_name: String,
+    source_path: String,
     path: Vec<String>,
     layout: NativeVectorLayout,
 }
+
+const VECTOR_SOURCE_PATH_METADATA_KEY: &str = "proximadb.federated.vector_source_path";
 
 /// Federated query executor
 pub struct FederatedExecutor {
@@ -654,7 +657,12 @@ impl FederatedExecutor {
                 DataType::List(Arc::new(Field::new("item", DataType::Float32, false)))
             }
         };
-        Field::new(&spec.output_name, data_type, true)
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            VECTOR_SOURCE_PATH_METADATA_KEY.to_string(),
+            spec.source_path.clone(),
+        );
+        Field::new(&spec.output_name, data_type, true).with_metadata(metadata)
     }
 
     fn build_document_record_batch(documents: &[DocumentRecord]) -> Result<RecordBatch> {
@@ -759,6 +767,7 @@ impl FederatedExecutor {
             Self::register_vector_column(
                 columns,
                 Self::document_vector_output_name(path),
+                Self::document_vector_source_path(path),
                 path.to_vec(),
                 vector.len(),
             );
@@ -779,6 +788,7 @@ impl FederatedExecutor {
             Self::register_vector_column(
                 columns,
                 Self::graph_vector_output_name(path),
+                Self::graph_vector_source_path(path),
                 path.to_vec(),
                 vector.len(),
             );
@@ -797,6 +807,7 @@ impl FederatedExecutor {
     fn register_vector_column(
         columns: &mut BTreeMap<String, NativeVectorColumnSpec>,
         output_name: String,
+        source_path: String,
         path: Vec<String>,
         dimension: usize,
     ) {
@@ -821,6 +832,7 @@ impl FederatedExecutor {
             })
             .or_insert(NativeVectorColumnSpec {
                 output_name,
+                source_path,
                 path,
                 layout: NativeVectorLayout::FixedSize(dimension),
             });
@@ -840,6 +852,14 @@ impl FederatedExecutor {
         } else {
             format!("properties.{}", path.join("."))
         }
+    }
+
+    fn document_vector_source_path(path: &[String]) -> String {
+        format!("document.{}", path.join("."))
+    }
+
+    fn graph_vector_source_path(path: &[String]) -> String {
+        format!("properties.{}", path.join("."))
     }
 
     fn build_native_vector_array<T, F>(
@@ -1221,6 +1241,18 @@ impl FederatedExecutor {
                 column_path.to_string(),
                 format!("{}.{}", table, column_path),
             ];
+            if let Some(resolution) = Self::resolve_metadata_vector_candidate(
+                outer_batch,
+                outer_row,
+                column_path,
+                &exact_candidates,
+            )? {
+                match resolution {
+                    DirectVectorResolution::Resolved(vector) => return Ok(Some(vector)),
+                    DirectVectorResolution::SkipRow => return Ok(None),
+                    DirectVectorResolution::Missing => {}
+                }
+            }
             match Self::resolve_direct_vector_candidate(
                 outer_batch,
                 outer_row,
@@ -1361,44 +1393,99 @@ impl FederatedExecutor {
             let Some(idx) = Self::resolve_column_index(batch.schema().as_ref(), candidate) else {
                 continue;
             };
-            let array = batch.column(idx);
-            if array.is_null(row) {
-                return Ok(DirectVectorResolution::SkipRow);
-            }
-            if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), row) {
-                return Ok(DirectVectorResolution::Resolved(vector));
-            }
-
-            match array.data_type() {
-                DataType::Utf8 => {
-                    let values = array
-                        .as_any()
-                        .downcast_ref::<StringArray>()
-                        .ok_or_else(|| anyhow!("Failed to downcast Utf8 correlated column"))?;
-                    let raw = values.value(row);
-                    if raw.trim().eq_ignore_ascii_case("null") {
-                        return Ok(DirectVectorResolution::SkipRow);
-                    }
-                    return Self::parse_vector_from_serialized_value(raw, candidate, &[])
-                        .map(DirectVectorResolution::Resolved);
-                }
-                DataType::FixedSizeList(_, _) | DataType::List(_) => {
-                    return Err(anyhow!(
-                        "Correlated vector source '{}' has Arrow list type but could not extract Float32 values",
-                        candidate
-                    ));
-                }
-                other => {
-                    return Err(anyhow!(
-                        "Correlated vector source '{}' uses unsupported outer column type {:?}",
-                        candidate,
-                        other
-                    ));
-                }
-            }
+            return Self::resolve_direct_vector_index(batch, row, idx, candidate);
         }
 
         Ok(DirectVectorResolution::Missing)
+    }
+
+    fn resolve_metadata_vector_candidate(
+        batch: &RecordBatch,
+        row: usize,
+        column_path: &str,
+        candidates: &[String],
+    ) -> Result<Option<DirectVectorResolution>> {
+        let matching_indices = batch
+            .schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, field)| {
+                field
+                    .metadata()
+                    .get(VECTOR_SOURCE_PATH_METADATA_KEY)
+                    .filter(|source_path| source_path.as_str() == column_path)
+                    .map(|_| idx)
+            })
+            .collect::<Vec<_>>();
+
+        if matching_indices.is_empty() {
+            return Ok(None);
+        }
+
+        let named_matches = matching_indices
+            .iter()
+            .copied()
+            .filter(|idx| {
+                let schema = batch.schema();
+                let field_name = schema.field(*idx).name().clone();
+                candidates
+                    .iter()
+                    .any(|candidate| candidate.as_str() == field_name.as_str())
+            })
+            .collect::<Vec<_>>();
+
+        let selected_index = match named_matches.as_slice() {
+            [idx] => Some(*idx),
+            [] if matching_indices.len() == 1 => Some(matching_indices[0]),
+            _ => None,
+        };
+
+        selected_index
+            .map(|idx| {
+                let source = batch.schema().field(idx).name().clone();
+                Self::resolve_direct_vector_index(batch, row, idx, &source)
+            })
+            .transpose()
+    }
+
+    fn resolve_direct_vector_index(
+        batch: &RecordBatch,
+        row: usize,
+        index: usize,
+        source: &str,
+    ) -> Result<DirectVectorResolution> {
+        let array = batch.column(index);
+        if array.is_null(row) {
+            return Ok(DirectVectorResolution::SkipRow);
+        }
+        if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), row) {
+            return Ok(DirectVectorResolution::Resolved(vector));
+        }
+
+        match array.data_type() {
+            DataType::Utf8 => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .ok_or_else(|| anyhow!("Failed to downcast Utf8 correlated column"))?;
+                let raw = values.value(row);
+                if raw.trim().eq_ignore_ascii_case("null") {
+                    return Ok(DirectVectorResolution::SkipRow);
+                }
+                Self::parse_vector_from_serialized_value(raw, source, &[])
+                    .map(DirectVectorResolution::Resolved)
+            }
+            DataType::FixedSizeList(_, _) | DataType::List(_) => Err(anyhow!(
+                "Correlated vector source '{}' has Arrow list type but could not extract Float32 values",
+                source
+            )),
+            other => Err(anyhow!(
+                "Correlated vector source '{}' uses unsupported outer column type {:?}",
+                source,
+                other
+            )),
+        }
     }
 
     fn parse_vector_from_serialized_value(
@@ -2724,14 +2811,19 @@ impl FederatedExecutor {
                 name = format!("right_{}", name);
             }
             seen.insert(name.clone());
-            fields.push(Field::new(
-                &name,
-                field.data_type().clone(),
-                field.is_nullable(),
-            ));
+            fields.push(Self::clone_field_with_name(field.as_ref(), &name));
         }
 
         Arc::new(Schema::new(fields))
+    }
+
+    fn clone_field_with_name(field: &Field, name: &str) -> Field {
+        if field.name() == name {
+            field.clone()
+        } else {
+            Field::new(name, field.data_type().clone(), field.is_nullable())
+                .with_metadata(field.metadata().clone())
+        }
     }
 
     fn plan_output_schema(&self, node: &PlanNode) -> Result<Arc<Schema>> {
@@ -3208,11 +3300,7 @@ impl FederatedExecutor {
                 if field.name() == requested_name {
                     field.as_ref().clone()
                 } else {
-                    Field::new(
-                        requested_name,
-                        field.data_type().clone(),
-                        field.is_nullable(),
-                    )
+                    Self::clone_field_with_name(field.as_ref(), requested_name)
                 }
             })
             .collect::<Vec<_>>();
@@ -3292,11 +3380,7 @@ impl FederatedExecutor {
                 if field.name() == requested_name {
                     field.as_ref().clone()
                 } else {
-                    Field::new(
-                        requested_name,
-                        field.data_type().clone(),
-                        field.is_nullable(),
-                    )
+                    Self::clone_field_with_name(field.as_ref(), requested_name)
                 }
             })
             .collect::<Vec<_>>();
@@ -3901,6 +3985,132 @@ mod tests {
             .resolve_vector_from_outer_column(&batch, 0, "g", "properties.profile.embedding")
             .expect("nested graph vector path should resolve from exact Arrow column");
         assert_eq!(vector, vec![0.9, 0.1]);
+    }
+
+    #[test]
+    fn test_joined_batch_resolves_graph_vector_from_renamed_native_column() {
+        let documents = vec![DocumentRecord {
+            id: "doc-1".to_string(),
+            document: SqlObject {
+                fields: HashMap::from([(
+                    "embedding".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::ArrayValue(
+                            crate::proto::proximadb_v1::SqlArray {
+                                values: vec![
+                                    SqlValue {
+                                        value: Some(sql_value::Value::NumberValue(9.0)),
+                                    },
+                                    SqlValue {
+                                        value: Some(sql_value::Value::NumberValue(8.0)),
+                                    },
+                                ],
+                            },
+                        )),
+                    },
+                )]),
+            },
+            version: 1,
+            created_at_ns: 1,
+            updated_at_ns: 1,
+        }];
+        let nodes = vec![Arc::new(Node {
+            id: "node-1".to_string(),
+            labels: vec!["Entity".to_string()],
+            properties: HashMap::from([(
+                "embedding".to_string(),
+                PropertyValue {
+                    value: Some(property_value::Value::VectorValue(VectorData {
+                        values: vec![0.9, 0.1],
+                    })),
+                },
+            )]),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        })];
+
+        let document_batch = FederatedExecutor::build_document_record_batch(&documents)
+            .expect("document batch should build");
+        let graph_batch =
+            FederatedExecutor::build_graph_node_batch(&nodes).expect("graph batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+        let joined = executor
+            .join_batches(&document_batch, &graph_batch, &[Some(0)], &[Some(0)])
+            .expect("joined batch should build");
+
+        assert!(
+            joined.schema().field_with_name("right_embedding").is_ok(),
+            "graph vector column should be renamed on collision"
+        );
+
+        let vector = executor
+            .resolve_vector_from_outer_column(&joined, 0, "g", "properties.embedding")
+            .expect("graph vector should resolve from renamed native column");
+        assert_eq!(vector, vec![0.9, 0.1]);
+    }
+
+    #[test]
+    fn test_joined_batch_resolves_document_vector_from_renamed_native_column() {
+        let nodes = vec![Arc::new(Node {
+            id: "node-1".to_string(),
+            labels: vec!["Entity".to_string()],
+            properties: HashMap::from([(
+                "embedding".to_string(),
+                PropertyValue {
+                    value: Some(property_value::Value::VectorValue(VectorData {
+                        values: vec![7.0, 6.0],
+                    })),
+                },
+            )]),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        })];
+        let documents = vec![DocumentRecord {
+            id: "doc-1".to_string(),
+            document: SqlObject {
+                fields: HashMap::from([(
+                    "embedding".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::ArrayValue(
+                            crate::proto::proximadb_v1::SqlArray {
+                                values: vec![
+                                    SqlValue {
+                                        value: Some(sql_value::Value::NumberValue(0.1)),
+                                    },
+                                    SqlValue {
+                                        value: Some(sql_value::Value::NumberValue(0.2)),
+                                    },
+                                ],
+                            },
+                        )),
+                    },
+                )]),
+            },
+            version: 1,
+            created_at_ns: 1,
+            updated_at_ns: 1,
+        }];
+
+        let graph_batch =
+            FederatedExecutor::build_graph_node_batch(&nodes).expect("graph batch should build");
+        let document_batch = FederatedExecutor::build_document_record_batch(&documents)
+            .expect("document batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+        let joined = executor
+            .join_batches(&graph_batch, &document_batch, &[Some(0)], &[Some(0)])
+            .expect("joined batch should build");
+
+        assert!(
+            joined.schema().field_with_name("right_embedding").is_ok(),
+            "document vector column should be renamed on collision"
+        );
+
+        let vector = executor
+            .resolve_vector_from_outer_column(&joined, 0, "p", "document.embedding")
+            .expect("document vector should resolve from renamed native column");
+        assert_eq!(vector, vec![0.1, 0.2]);
     }
 
     #[test]
