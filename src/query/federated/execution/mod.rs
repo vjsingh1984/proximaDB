@@ -119,6 +119,12 @@ enum JoinKey {
     Boolean(bool),
 }
 
+enum DirectVectorResolution {
+    Missing,
+    SkipRow,
+    Resolved(Vec<f32>),
+}
+
 #[derive(Debug, Clone)]
 enum AggregateValue {
     Int64(Option<i64>),
@@ -1215,10 +1221,14 @@ impl FederatedExecutor {
                 column_path.to_string(),
                 format!("{}.{}", table, column_path),
             ];
-            if let Some(vector) =
-                Self::try_extract_vector_from_candidates(outer_batch, outer_row, &exact_candidates)
-            {
-                return Ok(Some(vector));
+            match Self::resolve_direct_vector_candidate(
+                outer_batch,
+                outer_row,
+                &exact_candidates,
+            )? {
+                DirectVectorResolution::Resolved(vector) => return Ok(Some(vector)),
+                DirectVectorResolution::SkipRow => return Ok(None),
+                DirectVectorResolution::Missing => {}
             }
 
             if nested_path.len() == 1 {
@@ -1227,30 +1237,14 @@ impl FederatedExecutor {
                     leaf_column.to_string(),
                     format!("{}.{}", table, leaf_column),
                 ];
-                if let Some(vector) = Self::try_extract_vector_from_candidates(
+                match Self::resolve_direct_vector_candidate(
                     outer_batch,
                     outer_row,
                     &leaf_candidates,
-                ) {
-                    return Ok(Some(vector));
-                }
-            }
-        }
-
-        // Also try the full column_path as a direct column name (before base_column split)
-        {
-            let full_path_idx =
-                Self::resolve_column_index(outer_batch.schema().as_ref(), column_path).or_else(
-                    || {
-                        let prefixed = format!("{}.{}", table, column_path);
-                        Self::resolve_column_index(outer_batch.schema().as_ref(), &prefixed)
-                    },
-                );
-            if let Some(idx) = full_path_idx {
-                let array = outer_batch.column(idx);
-                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
-                {
-                    return Ok(Some(vector));
+                )? {
+                    DirectVectorResolution::Resolved(vector) => return Ok(Some(vector)),
+                    DirectVectorResolution::SkipRow => return Ok(None),
+                    DirectVectorResolution::Missing => {}
                 }
             }
         }
@@ -1358,21 +1352,53 @@ impl FederatedExecutor {
         None
     }
 
-    fn try_extract_vector_from_candidates(
+    fn resolve_direct_vector_candidate(
         batch: &RecordBatch,
         row: usize,
         candidates: &[String],
-    ) -> Option<Vec<f32>> {
+    ) -> Result<DirectVectorResolution> {
         for candidate in candidates {
             let Some(idx) = Self::resolve_column_index(batch.schema().as_ref(), candidate) else {
                 continue;
             };
             let array = batch.column(idx);
+            if array.is_null(row) {
+                return Ok(DirectVectorResolution::SkipRow);
+            }
             if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), row) {
-                return Some(vector);
+                return Ok(DirectVectorResolution::Resolved(vector));
+            }
+
+            match array.data_type() {
+                DataType::Utf8 => {
+                    let values = array
+                        .as_any()
+                        .downcast_ref::<StringArray>()
+                        .ok_or_else(|| anyhow!("Failed to downcast Utf8 correlated column"))?;
+                    let raw = values.value(row);
+                    if raw.trim().eq_ignore_ascii_case("null") {
+                        return Ok(DirectVectorResolution::SkipRow);
+                    }
+                    return Self::parse_vector_from_serialized_value(raw, candidate, &[])
+                        .map(DirectVectorResolution::Resolved);
+                }
+                DataType::FixedSizeList(_, _) | DataType::List(_) => {
+                    return Err(anyhow!(
+                        "Correlated vector source '{}' has Arrow list type but could not extract Float32 values",
+                        candidate
+                    ));
+                }
+                other => {
+                    return Err(anyhow!(
+                        "Correlated vector source '{}' uses unsupported outer column type {:?}",
+                        candidate,
+                        other
+                    ));
+                }
             }
         }
-        None
+
+        Ok(DirectVectorResolution::Missing)
     }
 
     fn parse_vector_from_serialized_value(
@@ -3874,6 +3900,46 @@ mod tests {
         let vector = executor
             .resolve_vector_from_outer_column(&batch, 0, "g", "properties.profile.embedding")
             .expect("nested graph vector path should resolve from exact Arrow column");
+        assert_eq!(vector, vec![0.9, 0.1]);
+    }
+
+    #[test]
+    fn test_legacy_direct_document_path_column_resolves_utf8_vector() {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "document.profile.embedding",
+            DataType::Utf8,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(StringArray::from(vec![Some("[0.1,0.2]")])) as ArrayRef],
+        )
+        .expect("record batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+
+        let vector = executor
+            .resolve_vector_from_outer_column(&batch, 0, "p", "document.profile.embedding")
+            .expect("legacy direct document path column should resolve");
+        assert_eq!(vector, vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn test_legacy_direct_graph_path_column_resolves_utf8_vector() {
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "properties.embedding",
+            DataType::Utf8,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(StringArray::from(vec![Some("[0.9,0.1]")])) as ArrayRef],
+        )
+        .expect("record batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+
+        let vector = executor
+            .resolve_vector_from_outer_column(&batch, 0, "g", "properties.embedding")
+            .expect("legacy direct graph path column should resolve");
         assert_eq!(vector, vec![0.9, 0.1]);
     }
 
