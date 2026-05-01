@@ -1146,18 +1146,19 @@ impl FederatedExecutor {
         source: &VectorSource,
         outer_batch: &RecordBatch,
         outer_row: usize,
-    ) -> Result<Vec<f32>> {
+    ) -> Result<Option<Vec<f32>>> {
         match source {
-            VectorSource::Literal(vector) => Ok(vector.clone()),
-            VectorSource::Expression(expr) => Self::parse_vector_literal(expr).ok_or_else(|| {
-                anyhow!(
-                    "Unsupported vector expression '{}' in federated executor; provide a literal vector for now",
-                    expr
-                )
-            }),
-            VectorSource::ColumnRef { table, column } => {
-                self.resolve_vector_from_outer_column(outer_batch, outer_row, table, column)
+            VectorSource::Literal(vector) => Ok(Some(vector.clone())),
+            VectorSource::Expression(expr) => {
+                Self::parse_vector_literal(expr).map(Some).ok_or_else(|| {
+                    anyhow!(
+                        "Unsupported vector expression '{}' in federated executor; provide a literal vector for now",
+                        expr
+                    )
+                })
             }
+            VectorSource::ColumnRef { table, column } => self
+                .resolve_vector_from_outer_column_optional(outer_batch, outer_row, table, column),
             VectorSource::Subquery(_) => Err(anyhow!(
                 "Subquery-derived vector sources are not yet executable in the federated executor"
             )),
@@ -1171,6 +1172,24 @@ impl FederatedExecutor {
         table: &str,
         column_path: &str,
     ) -> Result<Vec<f32>> {
+        self.resolve_vector_from_outer_column_optional(outer_batch, outer_row, table, column_path)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "Correlated vector source '{}.{}' was null or missing for outer row {}",
+                    table,
+                    column_path,
+                    outer_row
+                )
+            })
+    }
+
+    fn resolve_vector_from_outer_column_optional(
+        &self,
+        outer_batch: &RecordBatch,
+        outer_row: usize,
+        table: &str,
+        column_path: &str,
+    ) -> Result<Option<Vec<f32>>> {
         let mut path_segments = column_path
             .split('.')
             .map(str::trim)
@@ -1199,7 +1218,7 @@ impl FederatedExecutor {
             if let Some(vector) =
                 Self::try_extract_vector_from_candidates(outer_batch, outer_row, &exact_candidates)
             {
-                return Ok(vector);
+                return Ok(Some(vector));
             }
 
             if nested_path.len() == 1 {
@@ -1213,7 +1232,7 @@ impl FederatedExecutor {
                     outer_row,
                     &leaf_candidates,
                 ) {
-                    return Ok(vector);
+                    return Ok(Some(vector));
                 }
             }
         }
@@ -1231,7 +1250,7 @@ impl FederatedExecutor {
                 let array = outer_batch.column(idx);
                 if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
                 {
-                    return Ok(vector);
+                    return Ok(Some(vector));
                 }
             }
         }
@@ -1254,18 +1273,14 @@ impl FederatedExecutor {
 
         let array = outer_batch.column(column_index);
         if array.is_null(outer_row) {
-            return Err(anyhow!(
-                "Correlated vector source '{}' was null for outer row {}",
-                requested,
-                outer_row
-            ));
+            return Ok(None);
         }
 
         // Fast path: try direct Arrow extraction (no JSON parsing needed)
         if nested_path.is_empty()
             && let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
         {
-            return Ok(vector);
+            return Ok(Some(vector));
         }
 
         match array.data_type() {
@@ -1274,11 +1289,24 @@ impl FederatedExecutor {
                     .as_any()
                     .downcast_ref::<StringArray>()
                     .ok_or_else(|| anyhow!("Failed to downcast Utf8 correlated column"))?;
-                Self::parse_vector_from_serialized_value(
-                    values.value(outer_row),
-                    &requested,
-                    &nested_path,
-                )
+                if nested_path.is_empty() {
+                    if let Some(vector) = Self::parse_vector_literal(values.value(outer_row)) {
+                        Ok(Some(vector))
+                    } else if values.value(outer_row).trim().eq_ignore_ascii_case("null") {
+                        Ok(None)
+                    } else {
+                        Err(anyhow!(
+                            "Correlated vector source '{}' did not contain a vector literal",
+                            requested
+                        ))
+                    }
+                } else {
+                    Self::parse_nested_vector_from_serialized_value(
+                        values.value(outer_row),
+                        &requested,
+                        &nested_path,
+                    )
+                }
             }
             DataType::FixedSizeList(_, _) | DataType::List(_) => {
                 // Arrow extraction was already attempted above; if it didn't work then error
@@ -1385,6 +1413,37 @@ impl FederatedExecutor {
         }
 
         Self::parse_vector_from_json_value(current, source, nested_path)
+    }
+
+    fn parse_nested_vector_from_serialized_value(
+        raw: &str,
+        source: &str,
+        nested_path: &[&str],
+    ) -> Result<Option<Vec<f32>>> {
+        let json: serde_json::Value = serde_json::from_str(raw).map_err(|error| {
+            anyhow!(
+                "Correlated vector source '{}' is not valid JSON for nested path resolution: {}",
+                source,
+                error
+            )
+        })?;
+        let mut current = &json;
+        for segment in nested_path {
+            let Some(next) = current.get(*segment).or_else(|| {
+                current
+                    .get("fields")
+                    .and_then(|fields| fields.get(*segment))
+            }) else {
+                return Ok(None);
+            };
+            current = next;
+        }
+
+        if current.is_null() {
+            return Ok(None);
+        }
+
+        Self::parse_vector_from_json_value(current, source, nested_path).map(Some)
     }
 
     fn parse_vector_from_json_value(
@@ -2718,24 +2777,35 @@ impl FederatedExecutor {
         node: &mut PlanNode,
         outer_batch: &RecordBatch,
         outer_row: usize,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match &mut node.node_type {
             PlanNodeType::VectorSearch {
                 query_vector_source,
                 ..
             } => {
-                let resolved =
-                    self.resolve_query_vector_for_row(query_vector_source, outer_batch, outer_row)?;
+                let Some(resolved) =
+                    self.resolve_query_vector_for_row(query_vector_source, outer_batch, outer_row)?
+                else {
+                    return Ok(false);
+                };
                 *query_vector_source = VectorSource::Literal(resolved);
             }
             PlanNodeType::HashJoin { left, right, .. }
             | PlanNodeType::IndexJoin { left, right, .. } => {
-                self.resolve_correlations_in_node(left, outer_batch, outer_row)?;
-                self.resolve_correlations_in_node(right, outer_batch, outer_row)?;
+                if !self.resolve_correlations_in_node(left, outer_batch, outer_row)? {
+                    return Ok(false);
+                }
+                if !self.resolve_correlations_in_node(right, outer_batch, outer_row)? {
+                    return Ok(false);
+                }
             }
             PlanNodeType::NestedLoopJoin { outer, inner, .. } => {
-                self.resolve_correlations_in_node(outer, outer_batch, outer_row)?;
-                self.resolve_correlations_in_node(inner, outer_batch, outer_row)?;
+                if !self.resolve_correlations_in_node(outer, outer_batch, outer_row)? {
+                    return Ok(false);
+                }
+                if !self.resolve_correlations_in_node(inner, outer_batch, outer_row)? {
+                    return Ok(false);
+                }
             }
             PlanNodeType::Filter { input, .. }
             | PlanNodeType::Project { input, .. }
@@ -2743,11 +2813,15 @@ impl FederatedExecutor {
             | PlanNodeType::Sort { input, .. }
             | PlanNodeType::Limit { input, .. }
             | PlanNodeType::Aggregate { input, .. } => {
-                self.resolve_correlations_in_node(input, outer_batch, outer_row)?;
+                if !self.resolve_correlations_in_node(input, outer_batch, outer_row)? {
+                    return Ok(false);
+                }
             }
             PlanNodeType::Union { inputs, .. } => {
                 for input in inputs {
-                    self.resolve_correlations_in_node(input, outer_batch, outer_row)?;
+                    if !self.resolve_correlations_in_node(input, outer_batch, outer_row)? {
+                        return Ok(false);
+                    }
                 }
             }
             PlanNodeType::Scan { .. }
@@ -2756,7 +2830,7 @@ impl FederatedExecutor {
             | PlanNodeType::ObservabilityQuery { .. } => {}
         }
 
-        Ok(())
+        Ok(true)
     }
 
     fn join_batches(
@@ -2981,7 +3055,8 @@ impl FederatedExecutor {
 
         for outer_row in 0..outer_batch.num_rows() {
             let mut resolved_inner = inner.clone();
-            self.resolve_correlations_in_node(&mut resolved_inner, &outer_batch, outer_row)
+            let should_execute_inner = self
+                .resolve_correlations_in_node(&mut resolved_inner, &outer_batch, outer_row)
                 .map_err(|error| {
                     anyhow!(
                         "Failed to resolve lateral join correlations {:?} for outer row {}: {}",
@@ -2990,6 +3065,9 @@ impl FederatedExecutor {
                         error
                     )
                 })?;
+            if !should_execute_inner {
+                continue;
+            }
 
             let inner_result = self.execute_node(&resolved_inner, false).await?;
             let inner_batch = self.merge_batches(&inner_result)?;

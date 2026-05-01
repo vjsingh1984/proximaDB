@@ -1413,6 +1413,170 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_lateral_join_skips_document_rows_without_correlated_vector() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "profile-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[0.1, 0.2]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "profile-2".to_string(),
+                    document: sql_object(&[("title", "No embedding")]),
+                    version: 1,
+                    created_at_ns: 2,
+                    updated_at_ns: 2,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 1) v ON true",
+            )
+            .await
+            .expect("lateral join should skip rows without a correlated vector");
+
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(vector_engine.recorded_queries(), vec![vec![0.1, 0.2]]);
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_skips_graph_rows_without_correlated_vector_property() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "node-1".to_string(),
+                    labels: vec!["Entity".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.9, 0.1],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "node-2".to_string(),
+                    labels: vec!["Entity".to_string()],
+                    properties: HashMap::from([(
+                        "title".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::StringValue(
+                                "No embedding".to_string(),
+                            )),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Entity) RETURN n') g JOIN LATERAL VECTOR_SEARCH('products', g.properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect("lateral join should skip graph rows without a correlated vector property");
+
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(vector_engine.recorded_queries(), vec![vec![0.9, 0.1]]);
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_rejects_malformed_document_correlated_vector() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine as Arc<dyn UnifiedStorageEngine>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![DocumentRecord {
+                id: "profile-1".to_string(),
+                document: sql_object(&[("embedding", "not-a-vector")]),
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            }],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 1) v ON true",
+            )
+            .await
+            .expect_err("malformed correlated vectors should still fail");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("Failed to resolve lateral join correlations"));
+        assert!(error_text.contains("did not contain a vector literal"));
+    }
+
+    #[tokio::test]
     async fn test_document_query_root_hides_internal_native_vector_columns() {
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
             "profiles".to_string(),
