@@ -16,11 +16,14 @@ pub mod source_executors;
 use anyhow::{Result, anyhow};
 use arrow::array::{
     Array, ArrayRef, FixedSizeListArray, Float32Array, Int64Array, ListArray, RecordBatch,
-    StringArray, UInt32Builder, new_null_array,
+    StringArray, UInt32Builder,
+    builder::{Float32Builder, ListBuilder},
+    new_null_array,
 };
 use arrow::compute::{concat, take};
 use arrow::datatypes::{DataType, Field, Schema};
-use std::collections::{HashMap, HashSet};
+use arrow_buffer::NullBuffer;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::optimizer::{
@@ -29,12 +32,13 @@ use super::optimizer::{
 };
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{
-    Collection, DocFilterCondition, DocFilterOperator, DocumentFilter, SqlValue, sql_value,
+    Collection, DocFilterCondition, DocFilterOperator, DocumentFilter, Node, PropertyValue,
+    SqlObject, SqlValue, property_value, sql_value,
 };
 use crate::storage::multimodel::{ModelType, MultiModelStorageFacade};
 use crate::storage::traits::{
-    DocumentStorageOperations, MetricAggregationParams, ObservabilityStorageOperations,
-    StorageQueryContext,
+    DocumentRecord, DocumentStorageOperations, MetricAggregationParams,
+    ObservabilityStorageOperations, StorageQueryContext,
 };
 
 /// Execution result containing Arrow record batches
@@ -168,6 +172,19 @@ impl AggregateValue {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NativeVectorLayout {
+    FixedSize(usize),
+    Variable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeVectorColumnSpec {
+    output_name: String,
+    path: Vec<String>,
+    layout: NativeVectorLayout,
+}
+
 /// Federated query executor
 pub struct FederatedExecutor {
     /// Multi-model storage facade
@@ -218,7 +235,7 @@ impl FederatedExecutor {
     pub async fn execute(&self, plan: QueryPlan) -> Result<ExecutionResult> {
         let start = std::time::Instant::now();
 
-        let result = self.execute_node(&plan.root).await?;
+        let result = self.execute_node(&plan.root, true).await?;
 
         let mut stats = result.stats.clone();
         stats.execution_time_us = start.elapsed().as_micros() as u64;
@@ -235,6 +252,7 @@ impl FederatedExecutor {
     fn execute_node<'a>(
         &'a self,
         node: &'a PlanNode,
+        is_root: bool,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionResult>> + Send + 'a>>
     {
         Box::pin(async move {
@@ -315,7 +333,7 @@ impl FederatedExecutor {
                 PlanNodeType::Union { inputs, all } => self.execute_union(inputs, *all).await,
             }?;
 
-            self.project_result_to_output_columns(result, &node.output_columns)
+            self.project_result_to_output_columns(result, &node.output_columns, !is_root)
         })
     }
 
@@ -394,31 +412,12 @@ impl FederatedExecutor {
                     .await?;
 
                 if documents.is_empty() {
-                    let schema = Arc::new(Schema::new(vec![
-                        Field::new("id", DataType::Utf8, false),
-                        Field::new("document", DataType::Utf8, true),
-                    ]));
-                    return Ok(ExecutionResult::empty_with_schema(schema));
+                    return Ok(ExecutionResult::empty_with_schema(
+                        Self::document_query_schema(&[]),
+                    ));
                 }
 
-                let schema = Arc::new(Schema::new(vec![
-                    Field::new("id", DataType::Utf8, false),
-                    Field::new("document", DataType::Utf8, true),
-                ]));
-                let ids: Vec<String> = documents.iter().map(|d| d.id.clone()).collect();
-                let docs: Vec<String> = documents
-                    .iter()
-                    .map(|d| {
-                        serde_json::to_string(&d.document).unwrap_or_else(|_| "{}".to_string())
-                    })
-                    .collect();
-                let batch = RecordBatch::try_new(
-                    schema,
-                    vec![
-                        Arc::new(StringArray::from(ids)) as ArrayRef,
-                        Arc::new(StringArray::from(docs)) as ArrayRef,
-                    ],
-                )?;
+                let batch = Self::build_document_record_batch(&documents)?;
                 Ok(ExecutionResult::from_batch(batch))
             }
 
@@ -428,34 +427,14 @@ impl FederatedExecutor {
                     anyhow!("Graph store is not configured for target '{}'", target)
                 })?;
 
-                let schema = Arc::new(Schema::new(vec![
-                    Field::new("node_id", DataType::Utf8, false),
-                    Field::new("label", DataType::Utf8, true),
-                    Field::new("properties", DataType::Utf8, true),
-                ]));
-
                 let nodes = graph_store.fetch_all_nodes().await?;
                 if nodes.is_empty() {
-                    return Ok(ExecutionResult::empty_with_schema(schema));
+                    return Ok(ExecutionResult::empty_with_schema(
+                        Self::graph_query_schema(&[]),
+                    ));
                 }
 
-                let node_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
-                let labels: Vec<Option<String>> =
-                    nodes.iter().map(|n| n.labels.first().cloned()).collect();
-                let props: Vec<String> = nodes
-                    .iter()
-                    .map(|n| {
-                        serde_json::to_string(&n.properties).unwrap_or_else(|_| "{}".to_string())
-                    })
-                    .collect();
-                let batch = RecordBatch::try_new(
-                    schema,
-                    vec![
-                        Arc::new(StringArray::from(node_ids)) as ArrayRef,
-                        Arc::new(StringArray::from(labels)) as ArrayRef,
-                        Arc::new(StringArray::from(props)) as ArrayRef,
-                    ],
-                )?;
+                let batch = Self::build_graph_node_batch(&nodes)?;
                 Ok(ExecutionResult::from_batch(batch))
             }
 
@@ -544,12 +523,6 @@ impl FederatedExecutor {
         cypher: &str,
         start_nodes: Option<&Vec<String>>,
     ) -> Result<ExecutionResult> {
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("node_id", DataType::Utf8, false),
-            Field::new("label", DataType::Utf8, true),
-            Field::new("properties", DataType::Utf8, true),
-        ]));
-
         let graph_store = self
             .storage
             .get_graph_store()
@@ -584,24 +557,12 @@ impl FederatedExecutor {
         };
 
         if nodes.is_empty() {
-            return Ok(ExecutionResult::empty_with_schema(schema));
+            return Ok(ExecutionResult::empty_with_schema(
+                Self::graph_query_schema(&[]),
+            ));
         }
 
-        let node_ids: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
-        let labels: Vec<Option<String>> = nodes.iter().map(|n| n.labels.first().cloned()).collect();
-        let props: Vec<String> = nodes
-            .iter()
-            .map(|n| serde_json::to_string(&n.properties).unwrap_or_else(|_| "{}".to_string()))
-            .collect();
-
-        let batch = RecordBatch::try_new(
-            schema.clone(),
-            vec![
-                Arc::new(StringArray::from(node_ids)) as ArrayRef,
-                Arc::new(StringArray::from(labels)) as ArrayRef,
-                Arc::new(StringArray::from(props)) as ArrayRef,
-            ],
-        )?;
+        let batch = Self::build_graph_node_batch(&nodes)?;
 
         Ok(ExecutionResult::from_batch(batch))
     }
@@ -648,78 +609,59 @@ impl FederatedExecutor {
             .await?;
 
         if documents.is_empty() {
-            let schema = Arc::new(Schema::new(vec![
-                Field::new("id", DataType::Utf8, false),
-                Field::new("document", DataType::Utf8, false),
-            ]));
-            return Ok(ExecutionResult::empty_with_schema(schema));
-        }
-
-        // ── Arrow-native document conversion (TD-032) ───────────────────────
-        // Detect vector-like fields in documents (SqlArray of numbers) and
-        // store them as native Arrow FixedSizeList<Float32> columns instead
-        // of JSON strings. This eliminates the serde_json round-trip in
-        // LATERAL joins (previously: SqlObject → JSON string → parse → extract).
-        //
-        // Non-vector fields are still stored as a JSON string column for
-        // backward compatibility.
-
-        // Scan first document to detect vector fields and their dimensions
-        let mut vector_fields: Vec<(String, usize)> = Vec::new(); // (field_name, dimension)
-        if let Some(first_doc) = documents.first() {
-            for (field_name, sql_value) in &first_doc.document.fields {
-                if let Some(sql_value::Value::ArrayValue(arr)) = sql_value.value.as_ref() {
-                    // Check if this array contains only numbers (likely a vector)
-                    let all_numeric = arr.values.iter().all(|v| {
-                        matches!(
-                            v.value.as_ref(),
-                            Some(sql_value::Value::NumberValue(_))
-                                | Some(sql_value::Value::Int64Value(_))
-                        )
-                    });
-                    if all_numeric && !arr.values.is_empty() {
-                        vector_fields.push((field_name.clone(), arr.values.len()));
-                    }
-                }
-            }
-        }
-
-        // Build schema with native Arrow columns for detected vector fields
-        let mut fields = vec![
-            Field::new("id", DataType::Utf8, false),
-            Field::new("document", DataType::Utf8, true), // remaining non-vector fields
-        ];
-        for (field_name, dim) in &vector_fields {
-            fields.push(Field::new(
-                field_name,
-                DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float32, false)),
-                    *dim as i32,
-                ),
-                true,
+            return Ok(ExecutionResult::empty_with_schema(
+                Self::document_query_schema(&[]),
             ));
         }
-        let schema = Arc::new(Schema::new(fields));
 
-        // Build column arrays
-        let ids: Vec<String> = documents.iter().map(|d| d.id.clone()).collect();
-        let num_docs = documents.len();
+        let batch = Self::build_document_record_batch(&documents)?;
 
-        // For the document column, serialize only non-vector fields
+        Ok(ExecutionResult::from_batch(batch))
+    }
+
+    fn document_query_schema(vector_columns: &[NativeVectorColumnSpec]) -> Arc<Schema> {
+        let mut fields = vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("document", DataType::Utf8, true),
+        ];
+        fields.extend(vector_columns.iter().map(Self::native_vector_field));
+        Arc::new(Schema::new(fields))
+    }
+
+    fn graph_query_schema(vector_columns: &[NativeVectorColumnSpec]) -> Arc<Schema> {
+        let mut fields = vec![
+            Field::new("node_id", DataType::Utf8, false),
+            Field::new("label", DataType::Utf8, true),
+            Field::new("properties", DataType::Utf8, true),
+        ];
+        fields.extend(vector_columns.iter().map(Self::native_vector_field));
+        Arc::new(Schema::new(fields))
+    }
+
+    fn native_vector_field(spec: &NativeVectorColumnSpec) -> Field {
+        let data_type = match spec.layout {
+            NativeVectorLayout::FixedSize(dimension) => DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+                dimension as i32,
+            ),
+            NativeVectorLayout::Variable => {
+                DataType::List(Arc::new(Field::new("item", DataType::Float32, false)))
+            }
+        };
+        Field::new(&spec.output_name, data_type, true)
+    }
+
+    fn build_document_record_batch(documents: &[DocumentRecord]) -> Result<RecordBatch> {
+        let vector_columns = Self::collect_document_vector_columns(documents);
+        let schema = Self::document_query_schema(&vector_columns);
+        let ids: Vec<String> = documents
+            .iter()
+            .map(|document| document.id.clone())
+            .collect();
         let docs: Vec<String> = documents
             .iter()
-            .map(|d| {
-                if vector_fields.is_empty() {
-                    // No vector fields detected — serialize entire document (original behavior)
-                    serde_json::to_string(&d.document).unwrap_or_else(|_| "{}".to_string())
-                } else {
-                    // Filter out vector fields from the JSON string
-                    let mut filtered = d.document.clone();
-                    for (vf, _) in &vector_fields {
-                        filtered.fields.remove(vf);
-                    }
-                    serde_json::to_string(&filtered).unwrap_or_else(|_| "{}".to_string())
-                }
+            .map(|document| {
+                serde_json::to_string(&document.document).unwrap_or_else(|_| "{}".to_string())
             })
             .collect();
 
@@ -727,46 +669,306 @@ impl FederatedExecutor {
             Arc::new(StringArray::from(ids)) as ArrayRef,
             Arc::new(StringArray::from(docs)) as ArrayRef,
         ];
-
-        // Build FixedSizeList<Float32> columns for each vector field
-        for (field_name, dim) in &vector_fields {
-            let mut all_values: Vec<f32> = Vec::with_capacity(num_docs * dim);
-
-            for doc in &documents {
-                if let Some(sql_val) = doc.document.fields.get(field_name) {
-                    if let Some(sql_value::Value::ArrayValue(arr)) = sql_val.value.as_ref() {
-                        for v in &arr.values {
-                            let f = match v.value.as_ref() {
-                                Some(sql_value::Value::NumberValue(n)) => *n as f32,
-                                Some(sql_value::Value::Int64Value(n)) => *n as f32,
-                                _ => 0.0,
-                            };
-                            all_values.push(f);
-                        }
-                    } else {
-                        // Field missing or wrong type — fill with zeros
-                        all_values.extend(std::iter::repeat_n(0.0f32, *dim));
-                    }
-                } else {
-                    all_values.extend(std::iter::repeat_n(0.0f32, *dim));
-                }
-            }
-
-            let values_array = Float32Array::from(all_values);
-            let fixed_list = FixedSizeListArray::try_new(
-                Arc::new(Field::new("item", DataType::Float32, false)),
-                *dim as i32,
-                Arc::new(values_array),
-                None,
-            )
-            .map_err(|e| anyhow!("Failed to create FixedSizeList for {}: {}", field_name, e))?;
-
-            columns.push(Arc::new(fixed_list) as ArrayRef);
+        for spec in &vector_columns {
+            columns.push(Self::build_native_vector_array(
+                documents,
+                spec,
+                |document, path| Self::extract_sql_object_vector(&document.document, path),
+            )?);
         }
 
-        let batch = RecordBatch::try_new(schema.clone(), columns)?;
+        RecordBatch::try_new(schema, columns).map_err(Into::into)
+    }
 
-        Ok(ExecutionResult::from_batch(batch))
+    fn build_graph_node_batch(nodes: &[Arc<Node>]) -> Result<RecordBatch> {
+        let vector_columns = Self::collect_graph_vector_columns(nodes);
+        let schema = Self::graph_query_schema(&vector_columns);
+        let node_ids: Vec<String> = nodes.iter().map(|node| node.id.clone()).collect();
+        let labels: Vec<Option<String>> = nodes
+            .iter()
+            .map(|node| node.labels.first().cloned())
+            .collect();
+        let properties: Vec<String> = nodes
+            .iter()
+            .map(|node| {
+                serde_json::to_string(&node.properties).unwrap_or_else(|_| "{}".to_string())
+            })
+            .collect();
+
+        let mut columns: Vec<ArrayRef> = vec![
+            Arc::new(StringArray::from(node_ids)) as ArrayRef,
+            Arc::new(StringArray::from(labels)) as ArrayRef,
+            Arc::new(StringArray::from(properties)) as ArrayRef,
+        ];
+        for spec in &vector_columns {
+            columns.push(Self::build_native_vector_array(
+                nodes,
+                spec,
+                |node, path| Self::extract_property_vector(&node.properties, path),
+            )?);
+        }
+
+        RecordBatch::try_new(schema, columns).map_err(Into::into)
+    }
+
+    fn collect_document_vector_columns(
+        documents: &[DocumentRecord],
+    ) -> Vec<NativeVectorColumnSpec> {
+        let mut columns = BTreeMap::new();
+        for document in documents {
+            Self::collect_sql_object_vector_columns_into(&document.document, &[], &mut columns);
+        }
+        columns.into_values().collect()
+    }
+
+    fn collect_graph_vector_columns(nodes: &[Arc<Node>]) -> Vec<NativeVectorColumnSpec> {
+        let mut columns = BTreeMap::new();
+        for node in nodes {
+            for (name, value) in &node.properties {
+                let path = vec![name.clone()];
+                Self::collect_property_vector_columns_into(value, &path, &mut columns);
+            }
+        }
+        columns.into_values().collect()
+    }
+
+    fn collect_sql_object_vector_columns_into(
+        object: &SqlObject,
+        prefix: &[String],
+        columns: &mut BTreeMap<String, NativeVectorColumnSpec>,
+    ) {
+        for (name, value) in &object.fields {
+            let mut path = prefix.to_vec();
+            path.push(name.clone());
+            Self::collect_sql_value_vector_columns_into(value, &path, columns);
+        }
+    }
+
+    fn collect_sql_value_vector_columns_into(
+        value: &SqlValue,
+        path: &[String],
+        columns: &mut BTreeMap<String, NativeVectorColumnSpec>,
+    ) {
+        if let Some(vector) = Self::sql_value_to_vector(value) {
+            Self::register_vector_column(
+                columns,
+                Self::document_vector_output_name(path),
+                path.to_vec(),
+                vector.len(),
+            );
+            return;
+        }
+
+        if let Some(sql_value::Value::ObjectValue(object)) = value.value.as_ref() {
+            Self::collect_sql_object_vector_columns_into(object, path, columns);
+        }
+    }
+
+    fn collect_property_vector_columns_into(
+        value: &PropertyValue,
+        path: &[String],
+        columns: &mut BTreeMap<String, NativeVectorColumnSpec>,
+    ) {
+        if let Some(vector) = Self::property_value_to_vector(value) {
+            Self::register_vector_column(
+                columns,
+                Self::graph_vector_output_name(path),
+                path.to_vec(),
+                vector.len(),
+            );
+            return;
+        }
+
+        if let Some(property_value::Value::ObjectValue(object)) = value.value.as_ref() {
+            for (name, nested) in &object.fields {
+                let mut nested_path = path.to_vec();
+                nested_path.push(name.clone());
+                Self::collect_property_vector_columns_into(nested, &nested_path, columns);
+            }
+        }
+    }
+
+    fn register_vector_column(
+        columns: &mut BTreeMap<String, NativeVectorColumnSpec>,
+        output_name: String,
+        path: Vec<String>,
+        dimension: usize,
+    ) {
+        if dimension == 0 {
+            return;
+        }
+
+        columns
+            .entry(output_name.clone())
+            .and_modify(|existing| {
+                if existing.path != path {
+                    return;
+                }
+                match existing.layout {
+                    NativeVectorLayout::FixedSize(existing_dimension)
+                        if existing_dimension != dimension =>
+                    {
+                        existing.layout = NativeVectorLayout::Variable;
+                    }
+                    NativeVectorLayout::FixedSize(_) | NativeVectorLayout::Variable => {}
+                }
+            })
+            .or_insert(NativeVectorColumnSpec {
+                output_name,
+                path,
+                layout: NativeVectorLayout::FixedSize(dimension),
+            });
+    }
+
+    fn document_vector_output_name(path: &[String]) -> String {
+        if path.len() == 1 {
+            path[0].clone()
+        } else {
+            format!("document.{}", path.join("."))
+        }
+    }
+
+    fn graph_vector_output_name(path: &[String]) -> String {
+        if path.len() == 1 {
+            path[0].clone()
+        } else {
+            format!("properties.{}", path.join("."))
+        }
+    }
+
+    fn build_native_vector_array<T, F>(
+        items: &[T],
+        spec: &NativeVectorColumnSpec,
+        mut extractor: F,
+    ) -> Result<ArrayRef>
+    where
+        F: FnMut(&T, &[String]) -> Option<Vec<f32>>,
+    {
+        match spec.layout {
+            NativeVectorLayout::FixedSize(dimension) => {
+                let mut values = Vec::with_capacity(items.len() * dimension);
+                let mut validity = Vec::with_capacity(items.len());
+
+                for item in items {
+                    if let Some(vector) = extractor(item, &spec.path)
+                        && vector.len() == dimension
+                    {
+                        values.extend(vector);
+                        validity.push(true);
+                    } else {
+                        values.resize(values.len() + dimension, 0.0);
+                        validity.push(false);
+                    }
+                }
+
+                let values_array = Arc::new(Float32Array::from(values)) as ArrayRef;
+                let nulls = (!validity.iter().all(|value| *value))
+                    .then(|| NullBuffer::from(validity.clone()));
+                let list = FixedSizeListArray::try_new(
+                    Arc::new(Field::new("item", DataType::Float32, false)),
+                    dimension as i32,
+                    values_array,
+                    nulls,
+                )
+                .map_err(|error| {
+                    anyhow!(
+                        "Failed to build native vector column '{}': {}",
+                        spec.output_name,
+                        error
+                    )
+                })?;
+                Ok(Arc::new(list) as ArrayRef)
+            }
+            NativeVectorLayout::Variable => {
+                let item_field = Arc::new(Field::new("item", DataType::Float32, false));
+                let mut builder = ListBuilder::new(Float32Builder::new()).with_field(item_field);
+                for item in items {
+                    if let Some(vector) = extractor(item, &spec.path) {
+                        for value in vector {
+                            builder.values().append_value(value);
+                        }
+                        builder.append(true);
+                    } else {
+                        builder.append(false);
+                    }
+                }
+                Ok(Arc::new(builder.finish()) as ArrayRef)
+            }
+        }
+    }
+
+    fn extract_sql_object_vector(object: &SqlObject, path: &[String]) -> Option<Vec<f32>> {
+        let (first, rest) = path.split_first()?;
+        let value = object.fields.get(first)?;
+        Self::extract_sql_value_vector(value, rest)
+    }
+
+    fn extract_sql_value_vector(value: &SqlValue, path: &[String]) -> Option<Vec<f32>> {
+        if path.is_empty() {
+            return Self::sql_value_to_vector(value);
+        }
+
+        match value.value.as_ref()? {
+            sql_value::Value::ObjectValue(object) => Self::extract_sql_object_vector(object, path),
+            _ => None,
+        }
+    }
+
+    fn extract_property_vector(
+        properties: &HashMap<String, PropertyValue>,
+        path: &[String],
+    ) -> Option<Vec<f32>> {
+        let (first, rest) = path.split_first()?;
+        let value = properties.get(first)?;
+        Self::extract_property_value_vector(value, rest)
+    }
+
+    fn extract_property_value_vector(value: &PropertyValue, path: &[String]) -> Option<Vec<f32>> {
+        if path.is_empty() {
+            return Self::property_value_to_vector(value);
+        }
+
+        match value.value.as_ref()? {
+            property_value::Value::ObjectValue(object) => {
+                Self::extract_property_vector(&object.fields, path)
+            }
+            _ => None,
+        }
+    }
+
+    fn sql_value_to_vector(value: &SqlValue) -> Option<Vec<f32>> {
+        match value.value.as_ref()? {
+            sql_value::Value::ArrayValue(array) => array
+                .values
+                .iter()
+                .map(|value| match value.value.as_ref()? {
+                    sql_value::Value::NumberValue(number) => Some(*number as f32),
+                    sql_value::Value::Int64Value(number) => Some(*number as f32),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .filter(|vector| !vector.is_empty()),
+            _ => None,
+        }
+    }
+
+    fn property_value_to_vector(value: &PropertyValue) -> Option<Vec<f32>> {
+        match value.value.as_ref()? {
+            property_value::Value::VectorValue(vector) => {
+                (!vector.values.is_empty()).then(|| vector.values.clone())
+            }
+            property_value::Value::ArrayValue(array) => array
+                .values
+                .iter()
+                .map(|value| match value.value.as_ref()? {
+                    property_value::Value::DoubleValue(number) => Some(*number as f32),
+                    property_value::Value::IntValue(number) => Some(*number as f32),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .filter(|vector| !vector.is_empty()),
+            _ => None,
+        }
     }
 
     /// Execute observability query
@@ -983,35 +1185,34 @@ impl FederatedExecutor {
         let nested_path = path_segments.collect::<Vec<_>>();
 
         // ── Arrow-native fast path (TD-032) ─────────────────────────────────
-        // When documents contain vector fields, execute_document_query now
-        // stores them as top-level FixedSizeList<Float32> Arrow columns.
-        // For path "document.embedding", check if "embedding" exists as a
-        // direct column in the batch before falling into JSON parsing.
+        // Document and graph executors materialize vector-bearing fields as
+        // native Arrow list columns, including nested document paths like
+        // `document.profile.embedding` and graph property paths like
+        // `properties.embedding`. Probe the exact correlated path first, then
+        // use the leaf-name fallback only for one-level aliases such as
+        // `document.embedding` -> `embedding`.
         if !nested_path.is_empty() {
-            let leaf_column = nested_path.last().unwrap_or(&base_column);
-            // Try the leaf name directly, then with table prefix
-            let leaf_idx = Self::resolve_column_index(outer_batch.schema().as_ref(), leaf_column)
-                .or_else(|| {
-                    let prefixed = format!("{}.{}", table, leaf_column);
-                    Self::resolve_column_index(outer_batch.schema().as_ref(), &prefixed)
-                });
-
-            if let Some(idx) = leaf_idx {
-                let array = outer_batch.column(idx);
-                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
-                {
-                    return Ok(vector);
-                }
+            let exact_candidates = [
+                column_path.to_string(),
+                format!("{}.{}", table, column_path),
+            ];
+            if let Some(vector) =
+                Self::try_extract_vector_from_candidates(outer_batch, outer_row, &exact_candidates)
+            {
+                return Ok(vector);
             }
 
-            // Also try joining all path segments as a column name
-            // e.g., for path "document.embedding", try "document.embedding" as column name
-            let full_nested = format!("{}.{}", base_column, nested_path.join("."));
-            let full_idx = Self::resolve_column_index(outer_batch.schema().as_ref(), &full_nested);
-            if let Some(idx) = full_idx {
-                let array = outer_batch.column(idx);
-                if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), outer_row)
-                {
+            if nested_path.len() == 1 {
+                let leaf_column = nested_path[0];
+                let leaf_candidates = [
+                    leaf_column.to_string(),
+                    format!("{}.{}", table, leaf_column),
+                ];
+                if let Some(vector) = Self::try_extract_vector_from_candidates(
+                    outer_batch,
+                    outer_row,
+                    &leaf_candidates,
+                ) {
                     return Ok(vector);
                 }
             }
@@ -1126,6 +1327,23 @@ impl FederatedExecutor {
             }
         }
 
+        None
+    }
+
+    fn try_extract_vector_from_candidates(
+        batch: &RecordBatch,
+        row: usize,
+        candidates: &[String],
+    ) -> Option<Vec<f32>> {
+        for candidate in candidates {
+            let Some(idx) = Self::resolve_column_index(batch.schema().as_ref(), candidate) else {
+                continue;
+            };
+            let array = batch.column(idx);
+            if let Some(vector) = Self::try_extract_vector_from_arrow(array.as_ref(), row) {
+                return Some(vector);
+            }
+        }
         None
     }
 
@@ -2583,8 +2801,8 @@ impl FederatedExecutor {
         join_keys: &[(String, String)],
         join_type: &JoinType,
     ) -> Result<ExecutionResult> {
-        let left_result = self.execute_node(left).await?;
-        let right_result = self.execute_node(right).await?;
+        let left_result = self.execute_node(left, false).await?;
+        let right_result = self.execute_node(right, false).await?;
 
         let left_batch = self.merge_batches(&left_result)?;
         let right_batch = self.merge_batches(&right_result)?;
@@ -2748,7 +2966,7 @@ impl FederatedExecutor {
         inner: &PlanNode,
         correlation: &[String],
     ) -> Result<ExecutionResult> {
-        let outer_result = self.execute_node(outer).await?;
+        let outer_result = self.execute_node(outer, false).await?;
         let outer_batch = self.merge_batches(&outer_result)?;
         let inner_schema = self.plan_output_schema(inner)?;
         let joined_schema =
@@ -2773,7 +2991,7 @@ impl FederatedExecutor {
                     )
                 })?;
 
-            let inner_result = self.execute_node(&resolved_inner).await?;
+            let inner_result = self.execute_node(&resolved_inner, false).await?;
             let inner_batch = self.merge_batches(&inner_result)?;
             if inner_batch.num_rows() == 0 {
                 continue;
@@ -2819,7 +3037,7 @@ impl FederatedExecutor {
         input: &PlanNode,
         predicate: &super::optimizer::Predicate,
     ) -> Result<ExecutionResult> {
-        let result = self.execute_node(input).await?;
+        let result = self.execute_node(input, false).await?;
         let batch = self.merge_batches(&result)?;
 
         if batch.num_rows() == 0 {
@@ -2858,7 +3076,7 @@ impl FederatedExecutor {
         columns: &[String],
         output_columns: &[String],
     ) -> Result<ExecutionResult> {
-        let result = self.execute_node(input).await?;
+        let result = self.execute_node(input, false).await?;
         if columns.iter().any(|column| column == "*") {
             return Ok(result);
         }
@@ -2912,6 +3130,7 @@ impl FederatedExecutor {
         &self,
         result: ExecutionResult,
         output_columns: &[String],
+        allow_native_vector_passthrough: bool,
     ) -> Result<ExecutionResult> {
         if output_columns.is_empty() || output_columns.iter().any(|column| column == "*") {
             return Ok(result);
@@ -2941,7 +3160,7 @@ impl FederatedExecutor {
         // dynamically added by execute_document_query but aren't in the optimizer's
         // output_columns. This allows Arrow-native vector columns to pass through
         // to LATERAL join resolution without JSON parsing.
-        {
+        if allow_native_vector_passthrough {
             let bs = batch.schema();
             for (idx, field) in bs.fields().iter().enumerate() {
                 if !projected_indices.contains(&idx)
@@ -3001,7 +3220,7 @@ impl FederatedExecutor {
 
     /// Execute DISTINCT on the current result schema.
     async fn execute_distinct(&self, input: &PlanNode) -> Result<ExecutionResult> {
-        let result = self.execute_node(input).await?;
+        let result = self.execute_node(input, false).await?;
         let batch = self.merge_batches(&result)?;
 
         if batch.num_rows() <= 1 {
@@ -3035,7 +3254,7 @@ impl FederatedExecutor {
         input: &PlanNode,
         order_by: &[super::optimizer::OrderByClause],
     ) -> Result<ExecutionResult> {
-        let result = self.execute_node(input).await?;
+        let result = self.execute_node(input, false).await?;
         if order_by.is_empty() {
             return Ok(result);
         }
@@ -3102,7 +3321,7 @@ impl FederatedExecutor {
         limit: usize,
         offset: usize,
     ) -> Result<ExecutionResult> {
-        let result = self.execute_node(input).await?;
+        let result = self.execute_node(input, false).await?;
 
         // Apply limit/offset to batches
         let mut remaining_offset = offset;
@@ -3147,7 +3366,7 @@ impl FederatedExecutor {
         group_by: &[String],
         aggregates: &[super::optimizer::AggregateExpr],
     ) -> Result<ExecutionResult> {
-        let result = self.execute_node(input).await?;
+        let result = self.execute_node(input, false).await?;
         let batch = self.merge_batches(&result)?;
 
         if !group_by.is_empty() {
@@ -3278,7 +3497,7 @@ impl FederatedExecutor {
         let mut schema = None;
 
         for input in inputs {
-            let result = self.execute_node(input).await?;
+            let result = self.execute_node(input, false).await?;
             if schema.is_none() {
                 schema = Some(result.schema.clone());
             }
@@ -3296,6 +3515,8 @@ impl FederatedExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::{VectorData, property_value};
+    use std::collections::HashMap;
 
     #[test]
     fn test_execution_result_empty() {
@@ -3316,5 +3537,328 @@ mod tests {
         let storage = Arc::new(MultiModelStorageFacade::new());
         let executor = FederatedExecutor::new(storage);
         assert!(executor.config.parallel_execution);
+    }
+
+    #[test]
+    fn test_document_batch_exposes_nested_native_vector_columns() {
+        let documents = vec![
+            DocumentRecord {
+                id: "doc-1".to_string(),
+                document: SqlObject {
+                    fields: HashMap::from([(
+                        "profile".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::ObjectValue(SqlObject {
+                                fields: HashMap::from([(
+                                    "embedding".to_string(),
+                                    SqlValue {
+                                        value: Some(sql_value::Value::ArrayValue(
+                                            crate::proto::proximadb_v1::SqlArray {
+                                                values: vec![
+                                                    SqlValue {
+                                                        value: Some(sql_value::Value::NumberValue(
+                                                            0.1,
+                                                        )),
+                                                    },
+                                                    SqlValue {
+                                                        value: Some(sql_value::Value::NumberValue(
+                                                            0.2,
+                                                        )),
+                                                    },
+                                                ],
+                                            },
+                                        )),
+                                    },
+                                )]),
+                            })),
+                        },
+                    )]),
+                },
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            },
+            DocumentRecord {
+                id: "doc-2".to_string(),
+                document: SqlObject {
+                    fields: HashMap::from([(
+                        "profile".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::ObjectValue(SqlObject {
+                                fields: HashMap::from([(
+                                    "embedding".to_string(),
+                                    SqlValue {
+                                        value: Some(sql_value::Value::ArrayValue(
+                                            crate::proto::proximadb_v1::SqlArray {
+                                                values: vec![
+                                                    SqlValue {
+                                                        value: Some(sql_value::Value::NumberValue(
+                                                            0.3,
+                                                        )),
+                                                    },
+                                                    SqlValue {
+                                                        value: Some(sql_value::Value::NumberValue(
+                                                            0.4,
+                                                        )),
+                                                    },
+                                                ],
+                                            },
+                                        )),
+                                    },
+                                )]),
+                            })),
+                        },
+                    )]),
+                },
+                version: 1,
+                created_at_ns: 2,
+                updated_at_ns: 2,
+            },
+        ];
+
+        let batch = FederatedExecutor::build_document_record_batch(&documents)
+            .expect("document batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+
+        assert!(
+            batch
+                .schema()
+                .field_with_name("document.profile.embedding")
+                .is_ok(),
+            "nested embedding column should be materialized natively"
+        );
+        let vector = executor
+            .resolve_vector_from_outer_column(&batch, 1, "p", "document.profile.embedding")
+            .expect("nested vector path should resolve from Arrow");
+        assert_eq!(vector, vec![0.3, 0.4]);
+    }
+
+    #[test]
+    fn test_document_nested_vector_path_beats_leaf_name_collision() {
+        let documents = vec![DocumentRecord {
+            id: "doc-1".to_string(),
+            document: SqlObject {
+                fields: HashMap::from([
+                    (
+                        "embedding".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::ArrayValue(
+                                crate::proto::proximadb_v1::SqlArray {
+                                    values: vec![
+                                        SqlValue {
+                                            value: Some(sql_value::Value::NumberValue(9.0)),
+                                        },
+                                        SqlValue {
+                                            value: Some(sql_value::Value::NumberValue(8.0)),
+                                        },
+                                    ],
+                                },
+                            )),
+                        },
+                    ),
+                    (
+                        "profile".to_string(),
+                        SqlValue {
+                            value: Some(sql_value::Value::ObjectValue(SqlObject {
+                                fields: HashMap::from([(
+                                    "embedding".to_string(),
+                                    SqlValue {
+                                        value: Some(sql_value::Value::ArrayValue(
+                                            crate::proto::proximadb_v1::SqlArray {
+                                                values: vec![
+                                                    SqlValue {
+                                                        value: Some(sql_value::Value::NumberValue(
+                                                            0.1,
+                                                        )),
+                                                    },
+                                                    SqlValue {
+                                                        value: Some(sql_value::Value::NumberValue(
+                                                            0.2,
+                                                        )),
+                                                    },
+                                                ],
+                                            },
+                                        )),
+                                    },
+                                )]),
+                            })),
+                        },
+                    ),
+                ]),
+            },
+            version: 1,
+            created_at_ns: 1,
+            updated_at_ns: 1,
+        }];
+
+        let batch = FederatedExecutor::build_document_record_batch(&documents)
+            .expect("document batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+
+        let vector = executor
+            .resolve_vector_from_outer_column(&batch, 0, "p", "document.profile.embedding")
+            .expect("nested vector path should resolve from exact Arrow column");
+        assert_eq!(vector, vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn test_graph_batch_exposes_native_vector_property_columns() {
+        let nodes = vec![
+            Arc::new(Node {
+                id: "node-1".to_string(),
+                labels: vec!["Entity".to_string()],
+                properties: HashMap::from([(
+                    "embedding".to_string(),
+                    PropertyValue {
+                        value: Some(property_value::Value::VectorValue(VectorData {
+                            values: vec![0.9, 0.1],
+                        })),
+                    },
+                )]),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            }),
+            Arc::new(Node {
+                id: "node-2".to_string(),
+                labels: vec!["Entity".to_string()],
+                properties: HashMap::from([(
+                    "embedding".to_string(),
+                    PropertyValue {
+                        value: Some(property_value::Value::VectorValue(VectorData {
+                            values: vec![0.2, 0.8],
+                        })),
+                    },
+                )]),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            }),
+        ];
+
+        let batch =
+            FederatedExecutor::build_graph_node_batch(&nodes).expect("graph batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+
+        assert!(
+            batch.schema().field_with_name("embedding").is_ok(),
+            "graph vector property should become a native Arrow column"
+        );
+        let vector = executor
+            .resolve_vector_from_outer_column(&batch, 0, "g", "properties.embedding")
+            .expect("graph vector property should resolve from Arrow");
+        assert_eq!(vector, vec![0.9, 0.1]);
+    }
+
+    #[test]
+    fn test_graph_nested_vector_path_beats_leaf_name_collision() {
+        let nodes = vec![Arc::new(Node {
+            id: "node-1".to_string(),
+            labels: vec!["Entity".to_string()],
+            properties: HashMap::from([
+                (
+                    "embedding".to_string(),
+                    PropertyValue {
+                        value: Some(property_value::Value::VectorValue(VectorData {
+                            values: vec![7.0, 6.0],
+                        })),
+                    },
+                ),
+                (
+                    "profile".to_string(),
+                    PropertyValue {
+                        value: Some(property_value::Value::ObjectValue(
+                            crate::proto::proximadb_v1::PropertyObject {
+                                fields: HashMap::from([(
+                                    "embedding".to_string(),
+                                    PropertyValue {
+                                        value: Some(property_value::Value::VectorValue(
+                                            VectorData {
+                                                values: vec![0.9, 0.1],
+                                            },
+                                        )),
+                                    },
+                                )]),
+                            },
+                        )),
+                    },
+                ),
+            ]),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        })];
+
+        let batch =
+            FederatedExecutor::build_graph_node_batch(&nodes).expect("graph batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+
+        let vector = executor
+            .resolve_vector_from_outer_column(&batch, 0, "g", "properties.profile.embedding")
+            .expect("nested graph vector path should resolve from exact Arrow column");
+        assert_eq!(vector, vec![0.9, 0.1]);
+    }
+
+    #[test]
+    fn test_root_projection_does_not_leak_native_vector_columns() {
+        let documents = vec![DocumentRecord {
+            id: "doc-1".to_string(),
+            document: SqlObject {
+                fields: HashMap::from([(
+                    "embedding".to_string(),
+                    SqlValue {
+                        value: Some(sql_value::Value::ArrayValue(
+                            crate::proto::proximadb_v1::SqlArray {
+                                values: vec![
+                                    SqlValue {
+                                        value: Some(sql_value::Value::NumberValue(0.1)),
+                                    },
+                                    SqlValue {
+                                        value: Some(sql_value::Value::NumberValue(0.2)),
+                                    },
+                                ],
+                            },
+                        )),
+                    },
+                )]),
+            },
+            version: 1,
+            created_at_ns: 1,
+            updated_at_ns: 1,
+        }];
+        let batch = FederatedExecutor::build_document_record_batch(&documents)
+            .expect("document batch should build");
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
+
+        let stripped = executor
+            .project_result_to_output_columns(
+                ExecutionResult::from_batch(batch.clone()),
+                &["id".to_string(), "document".to_string()],
+                false,
+            )
+            .expect("root projection should strip internal native vectors");
+        let preserved = executor
+            .project_result_to_output_columns(
+                ExecutionResult::from_batch(batch),
+                &["id".to_string(), "document".to_string()],
+                true,
+            )
+            .expect("intermediate projection should preserve native vectors");
+
+        let stripped_fields: Vec<String> = stripped
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        let preserved_fields: Vec<String> = preserved
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+
+        assert_eq!(stripped_fields, vec!["id", "document"]);
+        assert_eq!(preserved_fields, vec!["id", "document", "embedding"]);
     }
 }

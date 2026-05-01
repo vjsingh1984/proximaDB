@@ -351,15 +351,19 @@ impl FederatedQueryContext {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::error::ProximaDBError;
     use crate::core::search::results::OptimizedSearchRecord;
+    use crate::graph::engines::GraphEngine;
+    use crate::graph::{Edge, EdgeId, Node, NodeId};
     use crate::proto::proximadb_v1::{
-        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlArray, SqlObject, SqlValue,
-        sql_value,
+        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, PropertyValue, SqlArray,
+        SqlObject, SqlValue, VectorData, property_value, sql_value,
     };
     use crate::query::federated::{FederatedQueryContext, QueryResultCache};
     use crate::storage::MultiModelStorageFacade;
     use crate::storage::multimodel::stores::{
-        DocumentStore, DocumentStoreConfig, VectorStore, VectorStoreConfig,
+        DocumentStore, DocumentStoreConfig, GraphStore, GraphStoreConfig, VectorStore,
+        VectorStoreConfig,
     };
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
@@ -454,6 +458,111 @@ mod tests {
 
         fn get_filesystem_factory(&self) -> &FilesystemFactory {
             &self.filesystem_factory
+        }
+    }
+
+    struct MockGraphEngine {
+        nodes: Vec<Arc<Node>>,
+    }
+
+    impl MockGraphEngine {
+        fn new(nodes: Vec<Node>) -> Self {
+            Self {
+                nodes: nodes.into_iter().map(Arc::new).collect(),
+            }
+        }
+
+        fn unsupported_graph_operation() -> ProximaDBError {
+            ProximaDBError::NotImplemented("mock graph mutation not implemented".to_string())
+        }
+    }
+
+    #[async_trait]
+    impl GraphEngine for MockGraphEngine {
+        async fn insert_node(&self, _node: Node) -> std::result::Result<Arc<Node>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        fn get_node(&self, id: &NodeId) -> std::result::Result<Option<Arc<Node>>, ProximaDBError> {
+            Ok(self.nodes.iter().find(|node| node.id == *id).cloned())
+        }
+
+        async fn update_node(&self, _node: Node) -> std::result::Result<Arc<Node>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        async fn delete_node(
+            &self,
+            _id: &NodeId,
+        ) -> std::result::Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        async fn insert_edge(&self, _edge: Edge) -> std::result::Result<Arc<Edge>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        fn get_edge(&self, _id: &EdgeId) -> std::result::Result<Option<Arc<Edge>>, ProximaDBError> {
+            Ok(None)
+        }
+
+        async fn update_edge(&self, _edge: Edge) -> std::result::Result<Arc<Edge>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        async fn delete_edge(
+            &self,
+            _id: &EdgeId,
+        ) -> std::result::Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        fn get_outgoing_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> std::result::Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Ok(Vec::new())
+        }
+
+        fn get_incoming_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> std::result::Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Ok(Vec::new())
+        }
+
+        fn get_neighbors(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+            Ok(Vec::new())
+        }
+
+        fn get_nodes_by_label(
+            &self,
+            label: &str,
+        ) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+            Ok(self
+                .nodes
+                .iter()
+                .filter(|node| node.labels.iter().any(|node_label| node_label == label))
+                .cloned()
+                .collect())
+        }
+
+        fn node_count(&self) -> std::result::Result<usize, ProximaDBError> {
+            Ok(self.nodes.len())
+        }
+
+        fn edge_count(&self) -> std::result::Result<usize, ProximaDBError> {
+            Ok(0)
+        }
+
+        fn get_all_nodes(&self) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+            Ok(self.nodes.clone())
         }
     }
 
@@ -582,6 +691,17 @@ mod tests {
                     .map(|value| SqlValue {
                         value: Some(sql_value::Value::NumberValue(*value)),
                     })
+                    .collect(),
+            })),
+        }
+    }
+
+    fn object_value(fields: Vec<(&str, SqlValue)>) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::ObjectValue(SqlObject {
+                fields: fields
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value))
                     .collect(),
             })),
         }
@@ -1133,6 +1253,198 @@ mod tests {
             vector_engine.recorded_queries(),
             vec![vec![0.1, 0.2], vec![0.3, 0.4]]
         );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_executes_for_nested_document_vector_path() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "profile-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "profile".to_string(),
+                            object_value(vec![("embedding", array_value(&[0.1, 0.2]))]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "profile-2".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "profile".to_string(),
+                            object_value(vec![("embedding", array_value(&[0.3, 0.4]))]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 2,
+                    updated_at_ns: 2,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.profile.embedding, 1) v ON true",
+            )
+            .await
+            .expect("nested function-backed lateral join should execute");
+
+        assert_eq!(result.row_count(), 2);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(
+            field_names,
+            vec![
+                "id",
+                "document",
+                "document.profile.embedding",
+                "right_id",
+                "score"
+            ]
+        );
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_executes_for_graph_vector_property_path() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "node-1".to_string(),
+                    labels: vec!["Entity".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.9, 0.1],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "node-2".to_string(),
+                    labels: vec!["Entity".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.2, 0.8],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Entity) RETURN n') g JOIN LATERAL VECTOR_SEARCH('products', g.properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect("graph-backed correlated vector search should execute");
+
+        assert_eq!(result.row_count(), 2);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(
+            field_names,
+            vec!["node_id", "label", "properties", "embedding", "id", "score"]
+        );
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.9, 0.1], vec![0.2, 0.8]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_document_query_root_hides_internal_native_vector_columns() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![DocumentRecord {
+                id: "profile-1".to_string(),
+                document: SqlObject {
+                    fields: HashMap::from([("embedding".to_string(), array_value(&[0.1, 0.2]))]),
+                },
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            }],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM DOCUMENT_QUERY('profiles')")
+            .await
+            .expect("plain document query should execute");
+
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["id", "document"]);
     }
 
     #[tokio::test]
