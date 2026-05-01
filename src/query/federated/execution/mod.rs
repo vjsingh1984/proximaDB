@@ -1473,7 +1473,7 @@ impl FederatedExecutor {
                     .field(*idx)
                     .metadata()
                     .get(VECTOR_SOURCE_ALIAS_METADATA_KEY)
-                    .map(|source_alias| source_alias.as_str() == table)
+                    .map(|source_alias| source_alias.eq_ignore_ascii_case(table))
                     .unwrap_or(false)
             })
             .collect::<Vec<_>>();
