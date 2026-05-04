@@ -577,32 +577,62 @@ impl FederatedParser {
         }
 
         let mut remainder = sql[position..].trim_start();
-        let mut token = Self::parse_identifier_token(remainder)?;
+        let mut token = Self::parse_alias_token(remainder)?;
         if token.eq_ignore_ascii_case("AS") {
             remainder = &remainder[token.len()..];
             remainder = remainder.trim_start();
-            token = Self::parse_identifier_token(remainder)?;
+            token = Self::parse_alias_token(remainder)?;
         }
 
-        if RESERVED_TOKENS.contains(&token.to_ascii_uppercase().as_str()) {
+        if !Self::is_quoted_identifier(token)
+            && RESERVED_TOKENS.contains(&token.to_ascii_uppercase().as_str())
+        {
             return None;
         }
 
         Some(token.to_string())
     }
 
-    fn parse_identifier_token(input: &str) -> Option<&str> {
-        let first = input.chars().next()?;
-        if !matches!(first, 'A'..='Z' | 'a'..='z' | '_') {
+    fn parse_alias_token(input: &str) -> Option<&str> {
+        match input.chars().next()? {
+            '"' => Self::parse_quoted_identifier_token(input),
+            'A'..='Z' | 'a'..='z' | '_' => {
+                let token_end = input
+                    .char_indices()
+                    .find(|(_, ch)| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_'))
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(input.len());
+                Some(&input[..token_end])
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_quoted_identifier_token(input: &str) -> Option<&str> {
+        let mut chars = input.char_indices().peekable();
+        let (_, first) = chars.next()?;
+        if first != '"' {
             return None;
         }
 
-        let token_end = input
-            .char_indices()
-            .find(|(_, ch)| !matches!(ch, 'A'..='Z' | 'a'..='z' | '0'..='9' | '_'))
-            .map(|(idx, _)| idx)
-            .unwrap_or(input.len());
-        Some(&input[..token_end])
+        while let Some((idx, ch)) = chars.next() {
+            if ch != '"' {
+                continue;
+            }
+
+            if matches!(chars.peek(), Some((_, '"'))) {
+                chars.next();
+                continue;
+            }
+
+            return Some(&input[..idx + ch.len_utf8()]);
+        }
+
+        None
+    }
+
+    fn is_quoted_identifier(token: &str) -> bool {
+        token.len() >= 2 && token.starts_with('"') && token.ends_with('"')
     }
 
     fn parse_vector_argument(&self, arg: &str) -> Option<VectorQuery> {
@@ -810,6 +840,36 @@ mod tests {
                 assert_eq!(
                     query_vector,
                     &VectorQuery::Expression("q.document.embedding".to_string())
+                );
+            }
+            other => panic!("expected third extension to be vector search, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_multiple_function_sources_preserves_quoted_aliases() {
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') \"LeftAlias\", DOCUMENT_QUERY('right_profiles') AS \"RightAlias\" JOIN LATERAL VECTOR_SEARCH('products', \"RightAlias\".document.embedding, 1) v ON true",
+            )
+            .expect("parser should preserve quoted function-backed source aliases");
+
+        assert_eq!(query.extensions.len(), 3);
+        assert_eq!(
+            query.extension_aliases,
+            vec![
+                Some("\"LeftAlias\"".to_string()),
+                Some("\"RightAlias\"".to_string()),
+                Some("v".to_string())
+            ]
+        );
+
+        match &query.extensions[2] {
+            SqlExtension::VectorSearch { query_vector, .. } => {
+                assert_eq!(
+                    query_vector,
+                    &VectorQuery::Expression("\"RightAlias\".document.embedding".to_string())
                 );
             }
             other => panic!("expected third extension to be vector search, got {other:?}"),

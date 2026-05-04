@@ -1473,7 +1473,7 @@ impl FederatedExecutor {
                     .field(*idx)
                     .metadata()
                     .get(VECTOR_SOURCE_ALIAS_METADATA_KEY)
-                    .map(|source_alias| source_alias.eq_ignore_ascii_case(table))
+                    .map(|source_alias| Self::source_alias_matches(source_alias, table))
                     .unwrap_or(false)
             })
             .collect::<Vec<_>>();
@@ -1508,6 +1508,28 @@ impl FederatedExecutor {
                 Self::resolve_direct_vector_index(batch, row, idx, &source)
             })
             .transpose()
+    }
+
+    fn source_alias_matches(source_alias: &str, table: &str) -> bool {
+        let source_alias = source_alias.trim();
+        let table = table.trim();
+
+        match (
+            Self::quoted_identifier_contents(source_alias),
+            Self::quoted_identifier_contents(table),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => source_alias.eq_ignore_ascii_case(table),
+            _ => false,
+        }
+    }
+
+    fn quoted_identifier_contents(identifier: &str) -> Option<&str> {
+        if identifier.len() >= 2 && identifier.starts_with('"') && identifier.ends_with('"') {
+            Some(&identifier[1..identifier.len() - 1])
+        } else {
+            None
+        }
     }
 
     fn resolve_direct_vector_index(
@@ -3779,6 +3801,26 @@ mod tests {
         let config = ExecutionConfig::default();
         assert_eq!(config.batch_size, 10_000);
         assert!(config.parallel_execution);
+    }
+
+    #[test]
+    fn test_source_alias_matching_respects_identifier_quoting() {
+        assert!(FederatedExecutor::source_alias_matches(
+            "RightAlias",
+            "rightalias"
+        ));
+        assert!(FederatedExecutor::source_alias_matches(
+            "\"RightAlias\"",
+            "\"RightAlias\""
+        ));
+        assert!(!FederatedExecutor::source_alias_matches(
+            "\"RightAlias\"",
+            "\"RIGHTALIAS\""
+        ));
+        assert!(!FederatedExecutor::source_alias_matches(
+            "\"RightAlias\"",
+            "RightAlias"
+        ));
     }
 
     #[tokio::test]
