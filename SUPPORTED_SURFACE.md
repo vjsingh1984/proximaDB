@@ -1,8 +1,26 @@
 # ProximaDB Supported Surface
 
 **Version**: 0.2.0  
-**Last Updated**: April 4, 2026  
+**Last Updated**: May 1, 2026 (Wave 2 & Wave 3 updates)  
 **Status**: **Production Ready** (Specific Use Cases)
+
+## Recent Updates
+
+### Wave 2: Graph Query Completeness (Completed May 1, 2026)
+- ✅ **TD-035**: Graph Query Executor enhanced with BFS/DFS/A* algorithms
+- ✅ **TD-035**: Arrow integration for vectorized processing
+- ✅ **TD-035**: Cost-based query optimization with statistics
+- ⏸️ **TD-046**: gRPC parity blocked by proto regeneration workflow
+
+### Wave 3: Cache Consolidation (Completed May 1, 2026)
+- ✅ **TD-042**: Unified cache interface for cross-cache operations
+- ✅ **TD-042**: Coordinated eviction policies with priority system
+- ✅ **TD-042**: Automated memory pressure handling
+
+### Wave 1: Foundation Infrastructure (Completed May 1, 2026)
+- ✅ **#55**: Fixed test binary cdylib issue (feature-gated approach)
+- ✅ **#30**: Created feature toggle and production readiness documentation
+- ✅ 48+ gap implementation tests now visible and executable
 
 This document describes the officially supported features, APIs, and capabilities of ProximaDB v0.2.0. Only features marked as ✅ **Supported** are covered by compatibility guarantees.
 
@@ -286,15 +304,25 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 - ✅ Full Cypher query language support
 - ✅ Advanced features: UNWIND, REDUCE, comprehensions
 - ✅ Pattern matching
-- ✅ BFS/DFS traversal
+- ✅ BFS/DFS/A* traversal algorithms (TD-035: Enhanced executor)
+- ✅ Edge filtering with property and weight constraints (TD-035)
 - ✅ Path queries
 - ✅ Property filtering
 - ✅ WAL persistence
 - ✅ CSR format for efficiency
+- ✅ **NEW**: Arrow-native result format (TD-035 Phase 2)
+- ✅ **NEW**: Cost-based query optimization (TD-035 Phase 3)
+- ✅ **NEW**: Streaming support for large traversals (TD-035)
 
 **API**: REST `/api/v1/graph/query`, gRPC `GraphQuery()`, SQL `GRAPH_QUERY()`
 
 **Performance**: 150+ tests, production-ready for in-memory graphs
+
+**Recent Improvements (Wave 2 - TD-035)**:
+- Implemented actual traversal algorithms (BFS, DFS, A*) instead of stub implementations
+- Added Arrow integration for vectorized processing and federated queries
+- Implemented cost-based query optimizer with statistics and hints
+- Added cross-cache invalidation and coordinated eviction (TD-042)
 
 ---
 

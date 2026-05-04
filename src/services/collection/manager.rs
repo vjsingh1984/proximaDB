@@ -1902,6 +1902,7 @@ mod tests {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
         };
 
         // Test create with valid config
@@ -2057,6 +2058,7 @@ mod tests {
                 enable_proxima_record: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
             };
 
             let result = service

@@ -112,6 +112,8 @@
 //! 5. **Memory Budget**: Stay within memory limits
 //!
 
+pub mod aql; // TD-050: Agentic Query Language (RUBICON)
+pub mod arrow_graph_bridge; // TD-035: Arrow bridge for graph query results
 pub mod ast;
 pub mod cache; // C2: Query result caching for agentic AI workloads with repetitive queries
 pub mod capability; // Capability registry for query validation and API parity
@@ -128,6 +130,7 @@ pub mod materialized_view; // A1: Materialized views for complex dashboard queri
 pub mod multimodal; // MultiModelPlan v1 - Unified cross-model query execution
 pub mod multimodel_executor; // Multi-model SQL executor - SqlPlan lowering + dispatch
 pub mod multimodel_router; // Multi-model SQL router - StoreType detection + result envelope
+pub mod nl; // AV-SQL (TD-048) — 3-Agent Decomposition
 pub mod parsers; // Query language parsers (MongoDB, etc.)
 pub mod prepared; // Prepared statements for parse-once-execute-many pattern
 pub mod rl_planner; // RL-based adaptive query planner
@@ -147,6 +150,13 @@ pub use unified_query_optimizer::{
     UnifiedOptimizerConfig, UnifiedQueryOptimizer as QueryOptimizer,
 };
 pub use vector_search::{SearchParameters, VectorSearchQuery, VectorSearchResult};
+
+// Re-export AQL types - TD-050 RUBICON
+pub use aql::{
+    AqlFind, AqlFrom, AqlPredicate, AqlProjection, AqlQuery, AqlResult, AqlSource, AqlValue,
+    AqlWhere, AuditContext, AuditFrame, AuditOp, AuditOutcome, AuditTrail,
+    DataModel as AqlDataModel, JoinType as AqlJoinType,
+};
 
 // Re-export capability registry types
 pub use capability::{Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet};

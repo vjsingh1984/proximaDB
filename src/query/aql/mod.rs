@@ -1,0 +1,244 @@
+//! # Agentic Query Language (AQL) — TD-050.
+//!
+//! Implementation of the auditable query layer aligned with the RUBICON
+//! architecture (arXiv:2604.21413, Stonebraker 2026).
+//!
+//! RUBICON replaces opaque LLM reasoning chains with explicit, auditable
+//! query plans expressed in AQL. ProximaDB uses AQL as a structured
+//! intermediate representation that guarantees a structured audit trail
+//! for every cross-model operation.
+
+use crate::core::error::ProximaDBError;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+pub mod executor;
+pub mod sources;
+
+#[cfg(test)]
+mod executor_test;
+
+pub type Result<T> = std::result::Result<T, ProximaDBError>;
+
+// ---------------------------------------------------------------------------
+// AQL AST
+// ---------------------------------------------------------------------------
+
+/// Top-level AQL query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AqlQuery {
+    pub find: AqlFind,
+    pub from: AqlFrom,
+    pub where_clause: AqlWhere,
+}
+
+/// Head of the AQL query, defining the projection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AqlFind {
+    pub projections: Vec<AqlProjection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AqlProjection {
+    pub field: String,
+    pub alias: Option<String>,
+}
+
+/// Data source definition, supporting single sources and joins.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AqlFrom {
+    /// A single named source (e.g., a collection or graph).
+    Source { name: String, alias: Option<String> },
+    /// A join between two AQL sources.
+    Join {
+        left: Box<AqlFrom>,
+        right: Box<AqlFrom>,
+        on: AqlPredicate,
+        join_type: JoinType,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum JoinType {
+    Inner,
+    Left,
+    Right,
+    Full,
+}
+
+/// The filter part of an AQL query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AqlWhere {
+    pub predicate: Option<AqlPredicate>,
+}
+
+/// Predicates for filtering and join conditions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AqlPredicate {
+    Equals {
+        field: String,
+        value: AqlValue,
+    },
+    GreaterThan {
+        field: String,
+        value: AqlValue,
+    },
+    LessThan {
+        field: String,
+        value: AqlValue,
+    },
+    Contains {
+        field: String,
+        value: AqlValue,
+    },
+    And {
+        lhs: Box<AqlPredicate>,
+        rhs: Box<AqlPredicate>,
+    },
+    Or {
+        lhs: Box<AqlPredicate>,
+        rhs: Box<AqlPredicate>,
+    },
+    Not {
+        inner: Box<AqlPredicate>,
+    },
+    /// Semantic similarity filter (vector search).
+    SemanticMatch {
+        field: String,
+        query: String,
+        threshold: f32,
+        top_k: u32,
+    },
+}
+
+/// Literal values in AQL predicates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AqlValue {
+    String(String),
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Vector(Vec<f32>),
+    Null,
+}
+
+// ---------------------------------------------------------------------------
+// Audit Trail (The load-bearing change)
+// ---------------------------------------------------------------------------
+
+/// A complete auditable trace of an AQL query execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditTrail {
+    pub query_id: Uuid,
+    pub started_at_ms: i64,
+    pub finished_at_ms: i64,
+    pub plan: AqlQuery,
+    pub frames: Vec<AuditFrame>,
+    pub outcome: AuditOutcome,
+}
+
+/// A single step in the execution of an AQL query.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditFrame {
+    pub frame_id: u64,
+    pub source: DataModel,
+    pub op: AuditOp,
+    pub filters_pushed: Vec<String>, // Serialized predicates
+    pub filters_post: Vec<String>,
+    pub records_scanned: u64,
+    pub records_returned: u64,
+    pub wall_time_us: u64,
+    pub error: Option<String>,
+    pub redaction_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DataModel {
+    Vector,
+    Graph,
+    Document,
+    Observability,
+    Relational,
+    Event,
+}
+
+/// Operations captured in the audit trail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AuditOp {
+    VectorSearch {
+        collection: String,
+        top_k: u32,
+        metric: String,
+    },
+    GraphTraversal {
+        graph_id: String,
+        depth: u32,
+        algorithm: String,
+    },
+    DocumentQuery {
+        collection: String,
+    },
+    Join {
+        join_type: JoinType,
+        left_frame: u64,
+        right_frame: u64,
+    },
+    Scan {
+        source: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AuditOutcome {
+    Success,
+    PartialFailure { failed_frames: Vec<u64> },
+    Failure { reason: String },
+}
+
+/// Context passed through the executor to collect audit frames.
+pub struct AuditContext {
+    pub query_id: Uuid,
+    pub frames: Vec<AuditFrame>,
+    pub next_frame_id: u64,
+}
+
+impl AuditContext {
+    pub fn new() -> Self {
+        Self {
+            query_id: Uuid::new_v4(),
+            frames: Vec::new(),
+            next_frame_id: 1,
+        }
+    }
+
+    pub fn push_frame(&mut self, mut frame: AuditFrame) -> u64 {
+        let id = self.next_frame_id;
+        frame.frame_id = id;
+        self.frames.push(frame);
+        self.next_frame_id += 1;
+        id
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Source Wrapper Trait
+// ---------------------------------------------------------------------------
+
+/// Trait for data sources that can resolve AQL operations.
+#[async_trait::async_trait]
+pub trait AqlSource: Send + Sync {
+    /// The data model this wrapper resolves.
+    fn model(&self) -> DataModel;
+
+    /// Execute the wrapped operation and emit an audit frame.
+    async fn execute(&self, query: &AqlQuery, ctx: &mut AuditContext) -> Result<AqlResult>;
+}
+
+/// Result from an AQL source execution.
+pub struct AqlResult {
+    /// The resulting rows (columns -> values).
+    pub rows: Vec<HashMap<String, AqlValue>>,
+    /// ID of the audit frame generated for this result.
+    pub frame_id: u64,
+}

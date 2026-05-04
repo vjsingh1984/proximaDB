@@ -113,6 +113,7 @@ async fn test_create_collection() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
     };
 
     let response = service.create_collection(&config).await?;
@@ -147,6 +148,7 @@ async fn test_get_collection() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -189,6 +191,7 @@ async fn test_list_collections() -> Result<()> {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
         };
 
         let response = service.create_collection(&config).await?;
@@ -226,6 +229,7 @@ async fn test_delete_collection() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -268,6 +272,7 @@ async fn test_tenant_scoped_collection_access_and_delete() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
     };
 
     let create_response = service
@@ -334,6 +339,7 @@ async fn test_tenant_collection_limit_enforced() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
     };
 
     let config_two = CollectionConfig {
@@ -385,6 +391,7 @@ async fn test_tenant_scoped_collection_listing() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
     };
 
     let config_b = CollectionConfig {

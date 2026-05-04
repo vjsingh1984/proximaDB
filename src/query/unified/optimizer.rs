@@ -221,11 +221,7 @@ impl QueryOptimizer {
         let start = std::time::Instant::now();
         let result = fut.await;
         if result.is_ok() {
-            let elapsed_us: u64 = start
-                .elapsed()
-                .as_micros()
-                .try_into()
-                .unwrap_or(u64::MAX);
+            let elapsed_us: u64 = start.elapsed().as_micros().try_into().unwrap_or(u64::MAX);
             self.record_plan_execution(components, execution_order, elapsed_us);
         }
         result
@@ -305,13 +301,14 @@ impl QueryOptimizer {
             .collect();
 
         // Step 2: Determine optimal execution order
-        let execution_order = if self.config.enable_evolutionary_optimizer && query.components.len() > 1 {
-            self.evolutionary_optimize(&query.components, &selectivity_estimates)
-        } else if self.config.enable_reordering {
-            self.compute_optimal_order(&query.components, &selectivity_estimates)
-        } else {
-            (0..query.components.len()).collect()
-        };
+        let execution_order =
+            if self.config.enable_evolutionary_optimizer && query.components.len() > 1 {
+                self.evolutionary_optimize(&query.components, &selectivity_estimates)
+            } else if self.config.enable_reordering {
+                self.compute_optimal_order(&query.components, &selectivity_estimates)
+            } else {
+                (0..query.components.len()).collect()
+            };
 
         // Step 3: Push down filters where possible
         let pushed_filters = if self.config.enable_filter_pushdown {
@@ -1973,8 +1970,7 @@ mod tests {
         optimizer.record_plan_execution(&components, &[0, 1], 5_000);
         optimizer.record_plan_execution(&components, &[0, 1], 7_000);
 
-        let shape =
-            crate::query::unified::plan_execution_cache::shape_hash(&components);
+        let shape = crate::query::unified::plan_execution_cache::shape_hash(&components);
         let mean = cache
             .get_mean_us(shape, &[0, 1])
             .expect("cache should hold the recorded plan");
@@ -2003,8 +1999,7 @@ mod tests {
 
         // Seed the cache: order [1, 0] is dramatically faster in measured
         // time, regardless of what the cost estimator might prefer.
-        let shape =
-            crate::query::unified::plan_execution_cache::shape_hash(&components);
+        let shape = crate::query::unified::plan_execution_cache::shape_hash(&components);
         let cache = optimizer.plan_execution_cache().unwrap();
         cache.record(shape, &[0, 1], 100_000);
         cache.record(shape, &[1, 0], 1_000);

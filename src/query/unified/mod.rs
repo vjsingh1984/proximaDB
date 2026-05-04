@@ -229,16 +229,12 @@ impl UnifiedQueryEngine {
         );
 
         // 2. Optionally reorder by the optimizer's plan (TD-047 sub A).
-        let execution_order =
-            self.apply_optimizer_reorder(&mut multi_model_query)?;
+        let execution_order = self.apply_optimizer_reorder(&mut multi_model_query)?;
 
         // 3. Execute sub-queries in parallel, optionally feeding the
         //    optimizer's measured-fitness cache on success.
         let sub_results = self
-            .run_executor_with_optional_recording(
-                &multi_model_query,
-                execution_order.as_deref(),
-            )
+            .run_executor_with_optional_recording(&multi_model_query, execution_order.as_deref())
             .await?;
 
         // 4. Fuse results based on strategy
@@ -258,14 +254,10 @@ impl UnifiedQueryEngine {
         let mut multi_model_query = self.decomposer.decompose(query)?;
         multi_model_query.fusion_strategy = fusion;
 
-        let execution_order =
-            self.apply_optimizer_reorder(&mut multi_model_query)?;
+        let execution_order = self.apply_optimizer_reorder(&mut multi_model_query)?;
 
         let sub_results = self
-            .run_executor_with_optional_recording(
-                &multi_model_query,
-                execution_order.as_deref(),
-            )
+            .run_executor_with_optional_recording(&multi_model_query, execution_order.as_deref())
             .await?;
 
         self.fuser
@@ -279,10 +271,7 @@ impl UnifiedQueryEngine {
     ///
     /// Thin shim around [`reorder_components_with_optimizer`] -- the free
     /// function is the testable seam, this method just plumbs `&self.optimizer`.
-    fn apply_optimizer_reorder(
-        &self,
-        query: &mut MultiModelQuery,
-    ) -> Result<Option<Vec<usize>>> {
+    fn apply_optimizer_reorder(&self, query: &mut MultiModelQuery) -> Result<Option<Vec<usize>>> {
         reorder_components_with_optimizer(self.optimizer.as_ref(), query)
     }
 
@@ -562,8 +551,7 @@ mod tests {
         let optimizer = Arc::new(QueryOptimizer::new(config));
 
         let mut q = empty_query(vec![vector_component()]);
-        let result =
-            reorder_components_with_optimizer(Some(&optimizer), &mut q).unwrap();
+        let result = reorder_components_with_optimizer(Some(&optimizer), &mut q).unwrap();
         assert!(result.is_none(), "single component -> no reorder");
         assert_eq!(q.components.len(), 1);
     }
@@ -575,8 +563,7 @@ mod tests {
         let optimizer = Arc::new(QueryOptimizer::new(config));
 
         let mut q = empty_query(vec![]);
-        let result =
-            reorder_components_with_optimizer(Some(&optimizer), &mut q).unwrap();
+        let result = reorder_components_with_optimizer(Some(&optimizer), &mut q).unwrap();
         assert!(result.is_none());
         assert!(q.components.is_empty());
     }
@@ -601,8 +588,7 @@ mod tests {
         let components = vec![vector_component(), document_component()];
 
         // Seed the cache with measurements that strongly prefer [1, 0].
-        let shape =
-            crate::query::unified::plan_execution_cache::shape_hash(&components);
+        let shape = crate::query::unified::plan_execution_cache::shape_hash(&components);
         let cache = optimizer.plan_execution_cache().unwrap();
         cache.record(shape, &[0, 1], 100_000);
         cache.record(shape, &[1, 0], 1_000);
@@ -643,8 +629,7 @@ mod tests {
         }];
         let mut q = empty_query(vec![vector_component(), c1]);
 
-        let order =
-            reorder_components_with_optimizer(Some(&optimizer), &mut q).unwrap();
+        let order = reorder_components_with_optimizer(Some(&optimizer), &mut q).unwrap();
         let order = order.expect("multi-component -> reorder applied");
         assert_eq!(
             order,
@@ -667,8 +652,7 @@ mod tests {
         let optimizer = Arc::new(QueryOptimizer::new(config));
 
         let mut q = empty_query(vec![vector_component(), document_component()]);
-        let order =
-            reorder_components_with_optimizer(Some(&optimizer), &mut q).unwrap();
+        let order = reorder_components_with_optimizer(Some(&optimizer), &mut q).unwrap();
         let order = order.unwrap();
         // Whatever order the optimizer picks, every entry must be a
         // valid index into the original 0..2 range, no duplicates.

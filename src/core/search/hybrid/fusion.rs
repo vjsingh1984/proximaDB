@@ -151,10 +151,7 @@ impl HybridFusionEngine {
         }
 
         // Find max scores for min-max normalization
-        let bm25_max = bm25_results
-            .iter()
-            .map(|r| r.score)
-            .fold(0.0_f64, f64::max);
+        let bm25_max = bm25_results.iter().map(|r| r.score).fold(0.0_f64, f64::max);
         let bm25_min = bm25_results
             .iter()
             .map(|r| r.score)

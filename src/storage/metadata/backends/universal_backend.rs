@@ -1818,6 +1818,7 @@ mod tests {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
         };
 
         // Create a proto collection
@@ -1969,6 +1970,7 @@ mod integration_tests {
                 enable_proxima_record: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
@@ -2068,6 +2070,7 @@ mod integration_tests {
                 enable_proxima_record: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
@@ -2175,6 +2178,7 @@ mod integration_tests {
                 record_schema: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 1000,

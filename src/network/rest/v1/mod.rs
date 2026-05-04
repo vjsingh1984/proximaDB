@@ -1,5 +1,7 @@
 /// REST handlers for read-only collection analytics (Entanglement Index)
 pub mod analytics;
+/// REST handlers for Agentic Query Language (RUBICON)
+pub mod aql;
 #[cfg(feature = "enterprise-catalogs")]
 /// REST handlers for enterprise catalog operations (Polaris, Delta Lake)
 pub mod catalog;

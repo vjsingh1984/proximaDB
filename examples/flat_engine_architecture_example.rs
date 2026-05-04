@@ -67,19 +67,16 @@ async fn demonstrate_automatic_selection() -> Result<(), Box<dyn std::error::Err
     println!("   ✅ StorageEngineFactory automatically selects optimal engine:");
     println!();
 
-    // OLTP workload → SST engine
-    let oltp_engine =
-        StorageEngineFactory::create_optimal_engine(WorkloadType::OLTP, &Default::default())?;
-    println!("   📊 OLTP Workload → SST Engine (Real-time queries, frequent updates)");
+    // Transactional workload → SST engine
+    let oltp_engine = StorageEngineFactory::create_for_workload(WorkloadType::Transactional)?;
+    println!("   📊 Transactional Workload → SST Engine (Real-time queries, frequent updates)");
 
-    // OLAP workload → VIPER engine
-    let olap_engine =
-        StorageEngineFactory::create_optimal_engine(WorkloadType::OLAP, &Default::default())?;
-    println!("   📈 OLAP Workload → VIPER Engine (Analytics, batch operations)");
+    // Analytics workload → VIPER engine
+    let olap_engine = StorageEngineFactory::create_for_workload(WorkloadType::Analytics)?;
+    println!("   📈 Analytics Workload → VIPER Engine (Analytics, batch operations)");
 
     // Mixed workload → NOVA engine
-    let mixed_engine =
-        StorageEngineFactory::create_optimal_engine(WorkloadType::Mixed, &Default::default())?;
+    let mixed_engine = StorageEngineFactory::create_for_workload(WorkloadType::Mixed)?;
     println!("   🔀 Mixed Workload → NOVA Engine (Combined OLTP/OLAP)");
 
     println!("\n   💡 Factory pattern remains unchanged - backward compatible!");
@@ -94,10 +91,14 @@ async fn demonstrate_all_engines() -> Result<(), Box<dyn std::error::Error>> {
     println!("   ───────────────────────────────");
 
     let engines = vec![
-        ("SST", "Real-time queries, frequent updates", "OLTP"),
-        ("VIPER", "Analytics, batch operations", "OLAP"),
+        (
+            "SST",
+            "Real-time queries, frequent updates",
+            "Transactional",
+        ),
+        ("VIPER", "Analytics, batch operations", "Analytics"),
         ("NOVA", "Mixed workloads", "Mixed"),
-        ("SWIFT", "High-throughput", "Throughput"),
+        ("SWIFT", "High-throughput", "Experimental"),
         ("RAPTOR", "Matrix operations", "Analytics"),
         ("HELIX", "Spatial queries, range scans", "Spatial"),
         ("CEDAR", "JSON document CRUD", "Documents"),

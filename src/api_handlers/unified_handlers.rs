@@ -2795,6 +2795,7 @@ mod tests {
             enable_proxima_record: Some(false),
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
         };
 
         assert_eq!(config.dimension, 768);

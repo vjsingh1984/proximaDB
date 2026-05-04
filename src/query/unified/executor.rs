@@ -37,6 +37,8 @@ pub struct ParallelExecutor {
     semaphore: Arc<Semaphore>,
     /// RBAC manager for permission validation
     rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
+    /// LLM engine for semantic operations (TD-049)
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 }
 
 impl ParallelExecutor {
@@ -46,7 +48,17 @@ impl ParallelExecutor {
             max_parallel,
             semaphore: Arc::new(Semaphore::new(max_parallel)),
             rbac_manager: None,
+            llm_engine: None,
         }
+    }
+
+    /// Attach an LLM integration engine for semantic operations
+    pub fn with_llm_engine(
+        mut self,
+        llm_engine: Arc<crate::ai::llm_integration::LLMIntegrationEngine>,
+    ) -> Self {
+        self.llm_engine = Some(llm_engine);
+        self
     }
 
     /// Create a new parallel executor with RBAC enabled
@@ -55,6 +67,7 @@ impl ParallelExecutor {
             max_parallel,
             semaphore: Arc::new(Semaphore::new(max_parallel)),
             rbac_manager: Some(rbac_manager),
+            llm_engine: None,
         }
     }
 
@@ -283,6 +296,7 @@ impl ParallelExecutor {
             let doc_service = document_service.clone();
             let graph_svc = graph_service.clone();
             let obs_svc = observability_service.clone();
+            let llm_engine = self.llm_engine.clone();
             let semaphore = self.semaphore.clone();
 
             let handle = tokio::spawn(async move {
@@ -292,9 +306,15 @@ impl ParallelExecutor {
                     .await
                     .map_err(|e| anyhow!("Semaphore error: {}", e))?;
 
-                let result =
-                    execute_component_full(&component, vec_ops, doc_service, graph_svc, obs_svc)
-                        .await?;
+                let result = execute_component_full(
+                    &component,
+                    vec_ops,
+                    doc_service,
+                    graph_svc,
+                    obs_svc,
+                    llm_engine,
+                )
+                .await?;
                 Ok::<(usize, SubQueryResult), anyhow::Error>((idx, result))
             });
 
@@ -366,6 +386,7 @@ impl ParallelExecutor {
             graph_service,
             observability_service,
             &context,
+            self.llm_engine.clone(),
         )
         .await
     }
@@ -378,7 +399,7 @@ async fn execute_component(
     vector_ops: Option<Arc<VectorOperationsService>>,
     document_service: Arc<DocumentService>,
 ) -> Result<SubQueryResult> {
-    execute_component_full(component, vector_ops, document_service, None, None).await
+    execute_component_full(component, vector_ops, document_service, None, None, None).await
 }
 
 /// Execute a single query component with all services
@@ -388,6 +409,7 @@ async fn execute_component_full(
     document_service: Arc<DocumentService>,
     graph_service: Option<Arc<GraphOperationsService>>,
     observability_service: Option<Arc<ObservabilityService>>,
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> Result<SubQueryResult> {
     let start = Instant::now();
 
@@ -429,6 +451,7 @@ async fn execute_component_with_context(
         None,
         None,
         context,
+        None,
     )
     .await
 }
@@ -446,6 +469,7 @@ async fn execute_component_with_context_full(
     graph_service: Option<Arc<GraphOperationsService>>,
     observability_service: Option<Arc<ObservabilityService>>,
     context: &HashMap<usize, &SubQueryResult>,
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> Result<SubQueryResult> {
     let start = Instant::now();
 
@@ -482,7 +506,7 @@ async fn execute_component_with_context_full(
                     component.dependencies.len(),
                     r.records.len()
                 );
-                Ok(execute_multi_join(&r, &component.dependencies, context))
+                Ok(execute_multi_join(&r, &component.dependencies, context, llm_engine).await)
             } else {
                 Ok(r)
             }
@@ -1315,10 +1339,11 @@ impl JoinResult {
 ///
 /// # Returns
 /// A JoinResult containing matched and unmatched records
-pub fn execute_join(
+pub async fn execute_join(
     left: &[UnifiedRecord],
     right: &[UnifiedRecord],
     dependency: &ComponentDependency,
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> JoinResult {
     let join_field = &dependency.join_field;
 
@@ -1330,8 +1355,14 @@ pub fn execute_join(
         right.len()
     );
 
-    if let JoinType::Semantic { threshold, top_k } = dependency.join_type {
-        return execute_semantic_join(left, right, join_field, threshold, top_k);
+    if let JoinType::Semantic {
+        threshold,
+        top_k,
+        ref mode,
+    } = dependency.join_type
+    {
+        return dispatch_semantic_join(left, right, join_field, threshold, top_k, mode, llm_engine)
+            .await;
     }
 
     // Build a hash map of right side values for efficient lookup
@@ -1569,10 +1600,11 @@ fn merge_records(left: &UnifiedRecord, right: &UnifiedRecord, join_field: &str) 
 }
 
 /// Execute multiple joins in sequence for components with multiple dependencies
-pub fn execute_multi_join(
+pub async fn execute_multi_join(
     component_result: &SubQueryResult,
     dependencies: &[ComponentDependency],
     prior_results: &HashMap<usize, &SubQueryResult>,
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> SubQueryResult {
     if dependencies.is_empty() {
         return component_result.clone();
@@ -1583,7 +1615,8 @@ pub fn execute_multi_join(
 
     for dep in dependencies {
         if let Some(prior) = prior_results.get(&dep.component_index) {
-            let join_result = execute_join(&current_records, &prior.records, dep);
+            let join_result =
+                execute_join(&current_records, &prior.records, dep, llm_engine.clone()).await;
             current_records = join_result
                 .to_subquery_result(source_model.clone(), &dep.join_type)
                 .records;
@@ -1619,6 +1652,178 @@ pub fn filter_by_ids(
         .collect()
 }
 
+/// Dispatch a semantic join to the right backend based on the mode.
+///
+/// Cosine routes to [`execute_semantic_join`] (always available).
+/// LlmBlockBatch routes to [`execute_block_batch_semantic_join`],
+/// which is feature-gated behind `llm-joins`. When the feature is
+/// off, the LLM path returns a JoinResult with no matches and logs
+/// the misconfiguration so callers can see it in server logs.
+async fn dispatch_semantic_join(
+    left: &[UnifiedRecord],
+    right: &[UnifiedRecord],
+    join_field: &str,
+    threshold: f32,
+    top_k: u32,
+    mode: &crate::query::unified::ast::SemanticJoinMode,
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+) -> JoinResult {
+    use crate::query::unified::ast::SemanticJoinMode;
+    match mode {
+        SemanticJoinMode::Cosine => {
+            execute_semantic_join(left, right, join_field, threshold, top_k)
+        }
+        SemanticJoinMode::LlmBlockBatch(config) => {
+            execute_block_batch_semantic_join(left, right, join_field, top_k, config, llm_engine)
+                .await
+        }
+    }
+}
+
+/// LLM block-batched semantic join (TD-049, arXiv:2510.08489).
+///
+/// Per-mode behavior:
+///
+/// - `#[cfg(feature = "llm-joins")]`: pack batches of rows from both
+///   sides into a single prompt (block nested loops with batched
+///   prompts), ask the LLM to identify matching pairs, repeat until
+///   the cross-product is exhausted or `max_calls` is hit. Currently
+///   a stub that validates config and returns an error tagged with
+///   the missing LLM-client wiring point — the integration is
+///   gated on `[llm]` config maturity (TD-050 audit substrate
+///   landing first).
+/// - default (feature off): logs a clear error and returns no
+///   matches so the surrounding pipeline behaves predictably.
+async fn execute_block_batch_semantic_join(
+    left: &[UnifiedRecord],
+    right: &[UnifiedRecord],
+    join_field: &str,
+    _top_k: u32,
+    config: &crate::query::unified::ast::BlockBatchConfig,
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+) -> JoinResult {
+    if let Err(reason) = config.validate() {
+        warn!(
+            "LlmBlockBatch semantic join: invalid config: {}. Returning empty result.",
+            reason
+        );
+        return JoinResult {
+            matched: Vec::new(),
+            unmatched_left: left.to_vec(),
+            has_matches: false,
+        };
+    }
+
+    let Some(llm) = llm_engine else {
+        warn!(
+            "LlmBlockBatch semantic join requested but no LLM engine is available. Returning empty result."
+        );
+        return JoinResult {
+            matched: Vec::new(),
+            unmatched_left: left.to_vec(),
+            has_matches: false,
+        };
+    };
+
+    #[cfg(not(feature = "llm-joins"))]
+    {
+        warn!(
+            "LlmBlockBatch semantic join requested but the `llm-joins` feature is OFF. \
+             Build with --features llm-joins to enable. Returning empty result so the \
+             surrounding pipeline behaves predictably."
+        );
+        let _ = (left, right, config, llm);
+        JoinResult {
+            matched: Vec::new(),
+            unmatched_left: left.to_vec(),
+            has_matches: false,
+        }
+    }
+
+    #[cfg(feature = "llm-joins")]
+    {
+        let mut matched = Vec::new();
+        let mut unmatched_left_map: HashMap<String, UnifiedRecord> =
+            left.iter().map(|r| (r.id.clone(), r.clone())).collect();
+        let mut calls_made = 0;
+
+        for left_chunk in left.chunks(config.batch_size_left as usize) {
+            for right_chunk in right.chunks(config.batch_size_right as usize) {
+                if calls_made >= config.max_calls {
+                    break;
+                }
+
+                // Construct prompt for this block pair
+                let mut prompt = String::from(
+                    "Identify semantic matches between these two sets of records based on content similarity.\n\n",
+                );
+                prompt.push_str("LEFT SET:\n");
+                for r in left_chunk {
+                    prompt.push_str(&format!("- ID: {}, Content: {}\n", r.id, r.data));
+                }
+                prompt.push_str("\nRIGHT SET:\n");
+                for r in right_chunk {
+                    prompt.push_str(&format!("- ID: {}, Content: {}\n", r.id, r.data));
+                }
+                prompt.push_str("\nReturn a JSON array of [left_id, right_id] pairs for all matches. Example: [[\"L1\", \"R1\"], [\"L2\", \"R3\"]]. If no matches, return [].\n");
+                prompt.push_str("MATCHES: ");
+
+                // Call LLM
+                match llm.query_with_fallback(&prompt).await {
+                    Ok(response) => {
+                        // Very basic parsing for the JSON array
+                        if let Some(start) = response.content.find('[') {
+                            if let Some(end) = response.content.rfind(']') {
+                                let json_str = &response.content[start..=end];
+                                if let Ok(pairs) =
+                                    serde_json::from_str::<Vec<Vec<String>>>(json_str)
+                                {
+                                    for pair in pairs {
+                                        if pair.len() == 2 {
+                                            let lid = &pair[0];
+                                            let rid = &pair[1];
+
+                                            // Find the actual records
+                                            let l_rec = left_chunk.iter().find(|r| &r.id == lid);
+                                            let r_rec = right_chunk.iter().find(|r| &r.id == rid);
+
+                                            if let (Some(l), Some(r)) = (l_rec, r_rec) {
+                                                matched.push(JoinedRecord {
+                                                    left: l.clone(),
+                                                    right: r.clone(),
+                                                    score: 0.9, // LLM match default score
+                                                });
+                                                unmatched_left_map.remove(lid);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("LLM join call failed: {}", e);
+                    }
+                }
+
+                calls_made += 1;
+            }
+            if calls_made >= config.max_calls {
+                break;
+            }
+        }
+
+        let unmatched_left: Vec<UnifiedRecord> = unmatched_left_map.into_values().collect();
+        let has_matches = !matched.is_empty();
+
+        JoinResult {
+            matched,
+            unmatched_left,
+            has_matches,
+        }
+    }
+}
+
 /// Execute a semantic join based on vector similarity
 fn execute_semantic_join(
     left: &[UnifiedRecord],
@@ -1627,8 +1832,8 @@ fn execute_semantic_join(
     threshold: f32,
     top_k: u32,
 ) -> JoinResult {
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
     let mut matched = Vec::new();
     let mut unmatched_left = Vec::new();
@@ -1846,8 +2051,8 @@ mod tests {
         assert!(values.is_empty());
     }
 
-    #[test]
-    fn test_inner_join() {
+    #[tokio::test]
+    async fn test_inner_join() {
         // Left: documents with user_id field
         let left = vec![
             make_test_record(
@@ -1888,7 +2093,7 @@ mod tests {
             join_type: JoinType::Inner,
         };
 
-        let result = execute_join(&left, &right, &dependency);
+        let result = execute_join(&left, &right, &dependency, None).await;
 
         // Should only have 2 matches (u1 and u2)
         assert_eq!(result.matched.len(), 2);
@@ -1896,8 +2101,8 @@ mod tests {
         assert!(result.has_matches);
     }
 
-    #[test]
-    fn test_left_outer_join() {
+    #[tokio::test]
+    async fn test_left_outer_join() {
         let left = vec![
             make_test_record(
                 "doc_1",
@@ -1929,7 +2134,7 @@ mod tests {
             join_type: JoinType::LeftOuter,
         };
 
-        let result = execute_join(&left, &right, &dependency);
+        let result = execute_join(&left, &right, &dependency, None).await;
 
         // Should have 1 match + 2 unmatched
         assert_eq!(result.matched.len(), 1);
@@ -1941,8 +2146,8 @@ mod tests {
         assert_eq!(subquery.records.len(), 3); // All left records included
     }
 
-    #[test]
-    fn test_semi_join() {
+    #[tokio::test]
+    async fn test_semi_join() {
         let left = vec![
             make_test_record(
                 "doc_1",
@@ -1981,15 +2186,15 @@ mod tests {
             join_type: JoinType::Semi,
         };
 
-        let result = execute_join(&left, &right, &dependency);
+        let result = execute_join(&left, &right, &dependency, None).await;
 
         // Semi join: doc_1 and doc_3 match (both have user_id=u1), doc_2 doesn't
         assert_eq!(result.matched.len(), 2);
         // Semi join should not duplicate left records even if multiple matches
     }
 
-    #[test]
-    fn test_anti_join() {
+    #[tokio::test]
+    async fn test_anti_join() {
         let left = vec![
             make_test_record(
                 "doc_1",
@@ -2021,7 +2226,7 @@ mod tests {
             join_type: JoinType::Anti,
         };
 
-        let result = execute_join(&left, &right, &dependency);
+        let result = execute_join(&left, &right, &dependency, None).await;
 
         // Anti join: only records that DON'T match
         assert_eq!(result.matched.len(), 2); // u2 and u3 don't match
@@ -2030,8 +2235,8 @@ mod tests {
         assert!(!result.matched.iter().any(|r| r.id == "doc_1")); // u1 matched, excluded
     }
 
-    #[test]
-    fn test_join_by_id() {
+    #[tokio::test]
+    async fn test_join_by_id() {
         let left = vec![
             make_test_record(
                 "shared_1",
@@ -2064,7 +2269,7 @@ mod tests {
             join_type: JoinType::Inner,
         };
 
-        let result = execute_join(&left, &right, &dependency);
+        let result = execute_join(&left, &right, &dependency, None).await;
 
         assert_eq!(result.matched.len(), 1);
         assert_eq!(result.matched[0].id, "shared_1");
@@ -2142,8 +2347,8 @@ mod tests {
         assert!(!result.has_matches);
     }
 
-    #[test]
-    fn test_execute_multi_join() {
+    #[tokio::test]
+    async fn test_execute_multi_join() {
         // Simulate a chain: Vector -> Document (joined on product_id field)
 
         // Prior results: vector search found these with product_id field
@@ -2202,7 +2407,7 @@ mod tests {
         let mut prior_results: HashMap<usize, &SubQueryResult> = HashMap::new();
         prior_results.insert(0, &vector_result);
 
-        let joined = execute_multi_join(&doc_result, &dependencies, &prior_results);
+        let joined = execute_multi_join(&doc_result, &dependencies, &prior_results, None).await;
 
         // Should have 2 matches (p1 and p2)
         assert_eq!(joined.records.len(), 2);
@@ -2268,8 +2473,8 @@ mod tests {
         assert!(ids.contains(&"node_gamma".to_string()));
     }
 
-    #[test]
-    fn test_vector_to_graph_to_document_chain() {
+    #[tokio::test]
+    async fn test_vector_to_graph_to_document_chain() {
         // Simulate a 3-stage pipeline:
         // Stage 1: Vector search finds similar embeddings
         // Stage 2: Graph traversal from those vectors to find related entities
@@ -2405,7 +2610,7 @@ mod tests {
         prior_results.insert(1, &graph_result); // Stage 1: graph
 
         // Join documents with graph results
-        let joined = execute_multi_join(&doc_result, &dependencies, &prior_results);
+        let joined = execute_multi_join(&doc_result, &dependencies, &prior_results, None).await;
 
         // Should have 4 matches (all graph nodes have corresponding documents)
         assert_eq!(joined.records.len(), 4);
@@ -2417,8 +2622,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_multi_model_join_with_partial_matches() {
+    #[tokio::test]
+    async fn test_multi_model_join_with_partial_matches() {
         // Test case where not all records match across models
 
         // Vector results with product IDs
@@ -2479,7 +2684,7 @@ mod tests {
         let mut prior: HashMap<usize, &SubQueryResult> = HashMap::new();
         prior.insert(0, &vector_result);
 
-        let inner_joined = execute_multi_join(&doc_result, &inner_dep, &prior);
+        let inner_joined = execute_multi_join(&doc_result, &inner_dep, &prior, None).await;
         assert_eq!(inner_joined.records.len(), 2); // Only p1 and p2 match
 
         // Left outer join: should include all left records
@@ -2489,7 +2694,7 @@ mod tests {
             join_type: JoinType::LeftOuter,
         }];
 
-        let left_joined = execute_multi_join(&doc_result, &left_dep, &prior);
+        let left_joined = execute_multi_join(&doc_result, &left_dep, &prior, None).await;
         assert_eq!(left_joined.records.len(), 2); // All documents included
     }
 
@@ -2544,8 +2749,8 @@ mod tests {
         assert!(resolved.contains(&"user_charlie".to_string()));
     }
 
-    #[test]
-    fn test_semantic_join() {
+    #[tokio::test]
+    async fn test_semantic_join() {
         use serde_json::json;
 
         // Left side: User interests (Document model)
@@ -2569,7 +2774,7 @@ mod tests {
                 }),
                 score: None,
                 metadata: HashMap::new(),
-            }
+            },
         ];
 
         // Right side: Products (Vector model)
@@ -2593,17 +2798,21 @@ mod tests {
                 }),
                 score: None,
                 metadata: HashMap::new(),
-            }
+            },
         ];
 
         let dependency = ComponentDependency {
             component_index: 0,
-            join_field: "interest_vec".to_string(), // Note: we'll use interest_vec for left, but right uses 'vec' in data? 
-                                                  // Actually extract_vector is called with join_field for BOTH.
-                                                  // I should adjust the test data to have same field name or improve extractor.
-            join_type: JoinType::Semantic { threshold: 0.8, top_k: 1 },
+            join_field: "interest_vec".to_string(), // Note: we'll use interest_vec for left, but right uses 'vec' in data?
+            // Actually extract_vector is called with join_field for BOTH.
+            // I should adjust the test data to have same field name or improve extractor.
+            join_type: JoinType::Semantic {
+                threshold: 0.8,
+                top_k: 1,
+                mode: crate::query::unified::ast::SemanticJoinMode::default(),
+            },
         };
-        
+
         // Adjusting right side to match join_field for this test
         let mut right_fixed = right.clone();
         if let Some(obj) = right_fixed[0].data.as_object_mut() {
@@ -2613,11 +2822,11 @@ mod tests {
             obj.insert("interest_vec".to_string(), json!([0.1, 0.9, 0.0]));
         }
 
-        let result = execute_join(&left, &right_fixed, &dependency);
+        let result = execute_join(&left, &right_fixed, &dependency, None).await;
 
         assert!(result.has_matches);
         assert_eq!(result.matched.len(), 2);
-        
+
         // Alice (user1) should match Red Apple (prod1)
         let alice_match = result.matched.iter().find(|r| r.id == "user1").unwrap();
         assert_eq!(alice_match.data["product"], "Red Apple");
@@ -2625,5 +2834,148 @@ mod tests {
         // Bob (user2) should match Green Broccoli (prod2)
         let bob_match = result.matched.iter().find(|r| r.id == "user2").unwrap();
         assert_eq!(bob_match.data["product"], "Green Broccoli");
+    }
+
+    // ----------------------------------------------------------------
+    // TD-049: dispatch tests for the LlmBlockBatch semantic-join mode.
+    //
+    // The LLM client integration is gated on the `llm-joins` Cargo
+    // feature AND on a runtime [llm] config substrate that has not
+    // yet matured. While we wait, the dispatch must:
+    //   - Validate the BlockBatchConfig and degrade gracefully on
+    //     bad config rather than panicking.
+    //   - Return an empty JoinResult so the surrounding pipeline
+    //     keeps running predictably (a None match is structurally
+    //     no different from a real "no LLM matches found" outcome).
+    //   - Log the misconfiguration / missing-feature so operators
+    //     see *why* nothing matched in the server logs.
+    //
+    // These tests pin the dispatch contract independent of whether
+    // the feature is on; the actual prompt-packing + LLM call lands
+    // in a follow-up commit once [llm] config is in tree.
+    // ----------------------------------------------------------------
+
+    fn _semantic_record(id: &str, vec: Vec<f32>) -> UnifiedRecord {
+        use serde_json::json;
+        let vec_json: Vec<serde_json::Value> = vec.into_iter().map(|v| json!(v)).collect();
+        UnifiedRecord {
+            id: id.to_string(),
+            source_model: DataModel::Vector,
+            data: json!({ "vec": vec_json }),
+            score: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn block_batch_mode_returns_empty_with_no_panic() {
+        // Whether the feature is on or off, dispatching to
+        // LlmBlockBatch with no LLM client wired must not panic and
+        // must return a JoinResult with no matches and the original
+        // left rows in unmatched_left so callers can fall back.
+        use crate::query::unified::ast::{BlockBatchConfig, SemanticJoinMode};
+
+        let left = vec![
+            _semantic_record("l1", vec![1.0, 0.0]),
+            _semantic_record("l2", vec![0.0, 1.0]),
+        ];
+        let right = vec![_semantic_record("r1", vec![1.0, 0.0])];
+
+        let dependency = ComponentDependency {
+            component_index: 0,
+            join_field: "vec".to_string(),
+            join_type: JoinType::Semantic {
+                threshold: 0.0, // unused in LlmBlockBatch mode
+                top_k: 1,
+                mode: SemanticJoinMode::LlmBlockBatch(BlockBatchConfig::default()),
+            },
+        };
+
+        let result = execute_join(&left, &right, &dependency, None).await;
+
+        // No matches because no LLM is wired.
+        assert!(!result.has_matches);
+        assert!(result.matched.is_empty());
+        // unmatched_left preserves the input so callers can fall
+        // back to a simpler join strategy if they wish.
+        assert_eq!(result.unmatched_left.len(), 2);
+        assert_eq!(result.unmatched_left[0].id, "l1");
+        assert_eq!(result.unmatched_left[1].id, "l2");
+    }
+
+    #[tokio::test]
+    async fn block_batch_mode_with_invalid_config_does_not_panic() {
+        // Even an explicitly-invalid config (zero batch size) must
+        // produce a clean empty-result outcome rather than panicking.
+        // This is the worst-case-input robustness contract.
+        use crate::query::unified::ast::{BlockBatchConfig, SemanticJoinMode};
+
+        let bad_config = BlockBatchConfig {
+            batch_size_left: 0, // invalid
+            batch_size_right: 16,
+            max_calls: 64,
+        };
+
+        let left = vec![_semantic_record("l1", vec![1.0, 0.0])];
+        let right = vec![_semantic_record("r1", vec![1.0, 0.0])];
+
+        let dependency = ComponentDependency {
+            component_index: 0,
+            join_field: "vec".to_string(),
+            join_type: JoinType::Semantic {
+                threshold: 0.0,
+                top_k: 1,
+                mode: SemanticJoinMode::LlmBlockBatch(bad_config),
+            },
+        };
+
+        // Must not panic. Return shape: empty matches, all left rows
+        // in unmatched_left so the caller sees the join produced
+        // nothing rather than a partial result.
+        let result = execute_join(&left, &right, &dependency, None).await;
+        assert!(!result.has_matches);
+        assert!(result.matched.is_empty());
+        assert_eq!(result.unmatched_left.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cosine_mode_remains_default_dispatch() {
+        // Backward-compat regression guard: a JoinType::Semantic
+        // constructed with `mode: SemanticJoinMode::default()`
+        // exhibits the original cosine behavior. If a future change
+        // accidentally flips the default to LlmBlockBatch, all
+        // existing semantic joins would silently degrade to
+        // empty-match -- this test catches that.
+        use crate::query::unified::ast::SemanticJoinMode;
+        use serde_json::json;
+
+        let left = vec![UnifiedRecord {
+            id: "u1".into(),
+            source_model: DataModel::Vector,
+            data: json!({ "v": [1.0, 0.0, 0.0] }),
+            score: None,
+            metadata: HashMap::new(),
+        }];
+        let right = vec![UnifiedRecord {
+            id: "r1".into(),
+            source_model: DataModel::Vector,
+            data: json!({ "v": [0.99, 0.01, 0.0] }),
+            score: None,
+            metadata: HashMap::new(),
+        }];
+
+        let dep = ComponentDependency {
+            component_index: 0,
+            join_field: "v".to_string(),
+            join_type: JoinType::Semantic {
+                threshold: 0.8,
+                top_k: 1,
+                mode: SemanticJoinMode::default(),
+            },
+        };
+
+        let result = execute_join(&left, &right, &dep, None).await;
+        assert!(result.has_matches, "default mode must still match cosine");
+        assert_eq!(result.matched.len(), 1);
     }
 }

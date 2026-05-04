@@ -64,12 +64,16 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // For base64 encoding of bytes (using standard library instead)
 // use base64;
 
 // Use proto types directly with custom serde implementations
+use crate::graph::engines::GraphEngine;
+use crate::graph::rag::engine_impls::{KHopSubgraphBuilder, VectorNodeRetriever};
+use crate::graph::rag::{RagBudget, RagPipeline, RagQuery, Subgraph};
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{Edge, Node};
 use crate::proto::proximadb_v1::{EmbeddingVersion, PropertyValue};
@@ -176,6 +180,94 @@ pub struct RestEdgeQuery {
     offset: Option<u32>,
     /// Token for continuing a previous query
     continuation_token: Option<String>,
+}
+
+/// Request for Modular Graph RAG (RGL) retrieval.
+#[derive(Debug, serde::Deserialize)]
+pub struct RagRequest {
+    /// Seed retrieval query (text).
+    #[serde(default)]
+    pub query: String,
+    /// Seed retrieval vector (optional).
+    #[serde(default)]
+    pub query_vector: Option<Vec<f32>>,
+    /// Node labels to filter seeds (optional).
+    #[serde(default)]
+    pub allowed_labels: Vec<String>,
+    /// Graph budget for retrieval and expansion.
+    #[serde(default)]
+    pub budget: RestRagBudget,
+    /// Collection to use for seed retrieval (default: graph_id).
+    pub seed_collection: Option<String>,
+    /// Number of hops for subgraph expansion (default: 2).
+    #[serde(default = "default_rag_hops")]
+    pub hops: u32,
+}
+
+fn default_rag_hops() -> u32 {
+    2
+}
+
+/// Budget constraints for RAG retrieval.
+#[derive(Debug, serde::Deserialize)]
+pub struct RestRagBudget {
+    /// Maximum number of seed nodes to retrieve.
+    #[serde(default = "default_max_seeds")]
+    pub max_seeds: usize,
+    /// Maximum number of total nodes in the final subgraph.
+    #[serde(default = "default_max_subgraph_nodes")]
+    pub max_subgraph_nodes: usize,
+}
+
+impl Default for RestRagBudget {
+    fn default() -> Self {
+        Self {
+            max_seeds: default_max_seeds(),
+            max_subgraph_nodes: default_max_subgraph_nodes(),
+        }
+    }
+}
+
+fn default_max_seeds() -> usize {
+    10
+}
+
+fn default_max_subgraph_nodes() -> usize {
+    100
+}
+
+/// Subgraph response for RAG.
+#[derive(Debug, serde::Serialize)]
+pub struct RestSubgraph {
+    /// Node IDs in the subgraph.
+    pub nodes: Vec<String>,
+    /// Edges in the subgraph.
+    pub edges: Vec<RestSubgraphEdge>,
+}
+
+/// One edge in the RAG subgraph.
+#[derive(Debug, serde::Serialize)]
+pub struct RestSubgraphEdge {
+    pub from: String,
+    pub to: String,
+    pub edge_type: String,
+}
+
+impl From<Subgraph> for RestSubgraph {
+    fn from(s: Subgraph) -> Self {
+        Self {
+            nodes: s.nodes,
+            edges: s
+                .edges
+                .into_iter()
+                .map(|e| RestSubgraphEdge {
+                    from: e.from,
+                    to: e.to,
+                    edge_type: e.edge_type,
+                })
+                .collect(),
+        }
+    }
 }
 
 // Conversion implementations for REST types to Proto types
@@ -747,6 +839,8 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/graphs/:graph_id/query/edges", post(query_edges))
         // Declarative graph query (Cypher)
         .route("/graphs/:graph_id/query", post(execute_graph_query))
+        // Modular Graph RAG (RGL, TD-045)
+        .route("/graphs/:graph_id/rag", post(rag_query))
         // Multi-graph batch operations
         .route("/graphs/:graph_id/nodes/batch", post(batch_create_nodes))
         .route("/graphs/:graph_id/edges/batch", post(batch_create_edges))
@@ -2485,6 +2579,91 @@ pub async fn trigger_migration(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(GraphResponse::<serde_json::Value>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Modular Graph RAG (RGL) retrieval: find seed nodes and expand to a subgraph.
+///
+/// This endpoint implements the RGL pattern (arXiv:2503.19314) by decomposing
+/// retrieval into (1) seed node retrieval via vector similarity and (2)
+/// subgraph expansion via k-hop traversal.
+pub async fn rag_query(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<RagRequest>,
+) -> impl IntoResponse {
+    let seed_collection = request
+        .seed_collection
+        .clone()
+        .unwrap_or_else(|| graph_id.clone());
+
+    // 1. Get graph engine
+    let engine = match app_state
+        .unified_handlers
+        .graph_operations_service
+        .get_or_create_graph_engine(&graph_id)
+        .await
+    {
+        Ok(e) => e,
+        Err(err) => {
+            let graph_error = GraphError::new(
+                ErrorCode::InvalidArgument,
+                format!("Graph '{}' not found: {}", graph_id, err),
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<RestSubgraph>::error(graph_error)),
+            )
+                .into_response();
+        }
+    };
+
+    // 2. Setup RGL pipeline components
+    let retriever = VectorNodeRetriever::new(
+        app_state.unified_handlers.vector_operations_service.clone(),
+        seed_collection,
+        request.budget.max_seeds,
+    );
+
+    let builder = KHopSubgraphBuilder::new(
+        engine.clone() as Arc<dyn GraphEngine>,
+        request.hops,
+        None, // All edge types
+    );
+
+    let budget = RagBudget {
+        max_seeds: request.budget.max_seeds,
+        max_subgraph_nodes: request.budget.max_subgraph_nodes,
+    };
+
+    let pipeline = RagPipeline::new(retriever, builder, budget);
+
+    // 3. Execute RGL query
+    let rag_query = RagQuery {
+        query: request.query,
+        query_vector: request.query_vector,
+        allowed_labels: request.allowed_labels,
+    };
+
+    match pipeline.run(&rag_query).await {
+        Ok(subgraph) => {
+            info!(
+                "Successfully executed RGL query for graph {}: {} nodes, {} edges",
+                graph_id,
+                subgraph.nodes.len(),
+                subgraph.edges.len()
+            );
+            Json(GraphResponse::success(RestSubgraph::from(subgraph))).into_response()
+        }
+        Err(err) => {
+            error!("RGL query failed for graph {}: {}", graph_id, err);
+            let graph_error = GraphError::new(ErrorCode::InternalError, err.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<RestSubgraph>::error(graph_error)),
             )
                 .into_response()
         }

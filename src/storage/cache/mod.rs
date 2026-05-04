@@ -194,6 +194,8 @@ pub mod orchestrator;
 pub mod performance_optimizer;
 pub mod specialized;
 pub mod traits;
+pub mod unified_cache; // TD-042: Unified cache interface
+pub mod unified_eviction; // TD-042: Unified eviction policies
 pub mod warming;
 
 // Re-export main types
@@ -208,6 +210,22 @@ pub use orchestrator::{
 };
 pub use performance_optimizer::{CacheOptimizer, OptimizationReport};
 pub use traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
+pub use unified_cache::{
+    // TD-042: Unified cache interface
+    CacheDependency,
+    CacheId,
+    CacheStats,
+    UnifiedCache,
+    UnifiedCacheCoordinator,
+};
+pub use unified_eviction::{
+    // TD-042: Unified eviction policies
+    CachePriority,
+    EvictionConfig,
+    EvictionResult,
+    PressureStatus,
+    UnifiedEvictionPolicy,
+};
 
 // Re-export specialized caches
 pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache};

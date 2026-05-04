@@ -533,7 +533,10 @@ mod tests {
 
         let projection_alias =
             parse_fusion_strategy("projection_b5").expect("Should parse projection_b5 alias");
-        assert!(matches!(projection_alias, FusionStrategy::Projection { .. }));
+        assert!(matches!(
+            projection_alias,
+            FusionStrategy::Projection { .. }
+        ));
 
         let invalid = parse_fusion_strategy("invalid_strategy");
         assert!(invalid.is_err());

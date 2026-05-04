@@ -1240,3 +1240,385 @@ mod tests {
         );
     }
 }
+
+// ========== Graph Query Optimization Interface (TD-035 Phase 3) ==========
+
+/// Graph-specific query optimizer for cost-based optimization
+///
+/// This module provides query optimization capabilities specific to graph queries,
+/// integrating with ProximaDB's unified query optimizer while providing graph-specific
+/// cost estimation and plan optimization.
+///
+/// # Architecture
+///
+/// ```text
+/// Graph Query Plan
+///        ↓
+/// GraphQueryOptimizer
+///    ↓           ↓
+/// Cost Estimator   Statistics Provider
+///    ↓           ↓
+/// Optimized Plan with:
+/// - Index selection (property indexes, label indexes)
+/// - Traversal order optimization
+/// - Predicate pushdown to graph engine
+/// - Join reordering for multi-hop traversals
+/// ```
+pub struct GraphQueryOptimizer {
+    /// Graph operations service for statistics
+    graph_service: Arc<GraphOperationsService>,
+    /// Cached graph statistics
+    statistics_cache: HashMap<String, GraphStatistics>,
+}
+
+/// Statistics about a graph for cost estimation
+#[derive(Debug, Clone)]
+pub struct GraphStatistics {
+    /// Total number of nodes
+    pub node_count: usize,
+    /// Total number of edges
+    pub edge_count: usize,
+    /// Average fanout (edges per node)
+    pub avg_fanout: f64,
+    /// Label distribution
+    pub label_distribution: HashMap<String, f64>, // label → fraction of nodes
+    /// Property index availability
+    pub property_indexes: HashMap<String, PropertyIndexStats>,
+    /// Edge type distribution
+    pub edge_type_distribution: HashMap<String, f64>, // edge_type → fraction of edges
+}
+
+/// Statistics about a property index
+#[derive(Debug, Clone)]
+pub struct PropertyIndexStats {
+    /// Property name
+    pub property_name: String,
+    /// Number of distinct values
+    pub distinct_count: usize,
+    /// Index selectivity (0.0 = highly selective, 1.0 = not selective)
+    pub selectivity: f64,
+    /// Whether index exists
+    pub exists: bool,
+}
+
+/// Cost estimate for a graph operation
+#[derive(Debug, Clone)]
+pub struct GraphOperationCost {
+    /// Estimated number of nodes to scan
+    pub node_scan_cost: f64,
+    /// Estimated number of edges to traverse
+    pub edge_traversal_cost: f64,
+    /// Estimated number of results
+    pub result_count: f64,
+    /// Total cost (weighted sum)
+    pub total_cost: f64,
+}
+
+/// Optimization hints for graph queries
+#[derive(Debug, Clone)]
+pub struct GraphOptimizationHints {
+    /// Suggest using property index
+    pub use_property_index: Option<String>,
+    /// Suggest traversal order
+    pub traversal_order: Vec<String>,
+    /// Suggest algorithm for traversal
+    pub suggested_algorithm: TraversalAlgorithmHint,
+    /// Predicate pushdown recommendations
+    pub pushdown_predicates: Vec<String>,
+}
+
+/// Algorithm hint for traversal
+#[derive(Debug, Clone)]
+pub enum TraversalAlgorithmHint {
+    /// Use BFS for unweighted shortest path
+    BFS,
+    /// Use DFS for deep traversal
+    DFS,
+    /// Use Dijkstra for weighted shortest path
+    Dijkstra,
+    /// Use A* for weighted shortest path
+    AStar,
+    /// Let executor decide based on query
+    Auto,
+}
+
+impl GraphQueryOptimizer {
+    /// Create a new graph query optimizer
+    pub fn new(graph_service: Arc<GraphOperationsService>) -> Self {
+        Self {
+            graph_service,
+            statistics_cache: HashMap::new(),
+        }
+    }
+
+    /// Optimize a graph query plan
+    ///
+    /// # Arguments
+    ///
+    /// * `plan` - Original query plan
+    /// * `graph_id` - Graph ID for statistics
+    ///
+    /// # Returns
+    ///
+    /// Optimization hints and estimated cost
+    pub async fn optimize_query(
+        &mut self,
+        plan: &crate::graph::query::planner::QueryPlan,
+        graph_id: &str,
+    ) -> Result<(GraphOptimizationHints, GraphOperationCost), VectorDBError> {
+        // Get or load graph statistics
+        let stats = self.get_graph_statistics(graph_id).await?;
+
+        // Analyze plan to estimate cost
+        let cost = self.estimate_plan_cost(plan, &stats)?;
+
+        // Generate optimization hints
+        let hints = self.generate_hints(plan, &stats, &cost)?;
+
+        Ok((hints, cost))
+    }
+
+    /// Get statistics for a graph, loading from cache or service
+    async fn get_graph_statistics(
+        &mut self,
+        graph_id: &str,
+    ) -> Result<GraphStatistics, VectorDBError> {
+        // Check cache first
+        if let Some(stats) = self.statistics_cache.get(graph_id) {
+            return Ok(stats.clone());
+        }
+
+        // Load from graph service
+        // TODO: Implement actual statistics collection from graph service
+        // For now, return default statistics
+        let stats = GraphStatistics {
+            node_count: 10000,
+            edge_count: 50000,
+            avg_fanout: 5.0,
+            label_distribution: HashMap::new(),
+            property_indexes: HashMap::new(),
+            edge_type_distribution: HashMap::new(),
+        };
+
+        // Cache for future use
+        self.statistics_cache
+            .insert(graph_id.to_string(), stats.clone());
+        Ok(stats)
+    }
+
+    /// Estimate cost of executing a query plan
+    fn estimate_plan_cost(
+        &self,
+        plan: &crate::graph::query::planner::QueryPlan,
+        stats: &GraphStatistics,
+    ) -> Result<GraphOperationCost, VectorDBError> {
+        let mut node_scan_cost = 0.0;
+        let mut edge_traversal_cost = 0.0;
+        let mut result_count = stats.node_count as f64; // Start with all nodes
+
+        for step in &plan.steps {
+            match &step.step_type {
+                crate::graph::query::planner::PlanStepType::NodeScan {
+                    labels,
+                    property_filters,
+                } => {
+                    // Estimate node scan cost based on selectivity
+                    let selectivity =
+                        self.estimate_node_selectivity(labels, property_filters, stats)?;
+                    node_scan_cost += stats.node_count as f64 * selectivity;
+                    result_count *= selectivity;
+                }
+                crate::graph::query::planner::PlanStepType::Traverse { max_depth, .. } => {
+                    // Estimate edge traversal cost
+                    let depth = max_depth.unwrap_or(1) as f64;
+                    let traversal_cost = result_count * stats.avg_fanout * depth;
+                    edge_traversal_cost += traversal_cost;
+                    result_count *= stats.avg_fanout;
+                }
+                crate::graph::query::planner::PlanStepType::Filter { .. } => {
+                    // Filters reduce result count
+                    result_count *= 0.5; // Assume 50% selectivity
+                }
+                _ => {
+                    // Other steps have minimal cost
+                }
+            }
+        }
+
+        // Total cost: weighted sum (scans are cheaper than traversals)
+        let total_cost = node_scan_cost * 0.1 + edge_traversal_cost * 1.0;
+
+        Ok(GraphOperationCost {
+            node_scan_cost,
+            edge_traversal_cost,
+            result_count,
+            total_cost,
+        })
+    }
+
+    /// Estimate selectivity of node filters
+    fn estimate_node_selectivity(
+        &self,
+        labels: &Option<Vec<String>>,
+        property_filters: &[crate::graph::query::planner::PropertyFilter],
+        stats: &GraphStatistics,
+    ) -> Result<f64, VectorDBError> {
+        let mut selectivity = 1.0;
+
+        // Label selectivity
+        if let Some(labels) = labels {
+            if let Some(label) = labels.first() {
+                if let Some(&label_frac) = stats.label_distribution.get(label) {
+                    selectivity *= label_frac;
+                } else {
+                    // Unknown label - assume 10% selectivity
+                    selectivity *= 0.1;
+                }
+            }
+        }
+
+        // Property filter selectivity
+        for filter in property_filters {
+            if let Some(index_stats) = stats.property_indexes.get(&filter.property_name) {
+                if index_stats.exists {
+                    selectivity *= index_stats.selectivity;
+                } else {
+                    // No index - assume 50% selectivity
+                    selectivity *= 0.5;
+                }
+            } else {
+                // Unknown property - assume 50% selectivity
+                selectivity *= 0.5;
+            }
+        }
+
+        Ok(selectivity.min(1.0))
+    }
+
+    /// Generate optimization hints based on plan and statistics
+    fn generate_hints(
+        &self,
+        plan: &crate::graph::query::planner::QueryPlan,
+        stats: &GraphStatistics,
+        cost: &GraphOperationCost,
+    ) -> Result<GraphOptimizationHints, VectorDBError> {
+        let mut hints = GraphOptimizationHints {
+            use_property_index: None,
+            traversal_order: Vec::new(),
+            suggested_algorithm: TraversalAlgorithmHint::Auto,
+            pushdown_predicates: Vec::new(),
+        };
+
+        // Analyze plan steps
+        for step in &plan.steps {
+            match &step.step_type {
+                crate::graph::query::planner::PlanStepType::NodeScan {
+                    labels,
+                    property_filters,
+                } => {
+                    // Suggest property index if available and selective
+                    for filter in property_filters {
+                        if let Some(index_stats) = stats.property_indexes.get(&filter.property_name)
+                        {
+                            if index_stats.exists && index_stats.selectivity < 0.1 {
+                                hints.use_property_index = Some(filter.property_name.clone());
+                            }
+                        }
+                    }
+
+                    // Record traversal order (labels indicate starting points)
+                    if let Some(labels) = labels {
+                        hints.traversal_order.extend(labels.clone());
+                    }
+                }
+                crate::graph::query::planner::PlanStepType::Traverse {
+                    algorithm,
+                    max_depth,
+                    ..
+                } => {
+                    // Suggest algorithm based on depth and cost
+                    match algorithm {
+                        crate::graph::query::planner::TraversalAlgorithm::BFS => {
+                            hints.suggested_algorithm = TraversalAlgorithmHint::BFS;
+                        }
+                        crate::graph::query::planner::TraversalAlgorithm::DFS => {
+                            hints.suggested_algorithm = TraversalAlgorithmHint::DFS;
+                        }
+                        crate::graph::query::planner::TraversalAlgorithm::Dijkstra => {
+                            hints.suggested_algorithm = TraversalAlgorithmHint::Dijkstra;
+                        }
+                        crate::graph::query::planner::TraversalAlgorithm::AStar => {
+                            hints.suggested_algorithm = TraversalAlgorithmHint::AStar;
+                        }
+                    }
+
+                    // For deep traversals, suggest DFS
+                    if max_depth.unwrap_or(1) > 3 {
+                        hints.suggested_algorithm = TraversalAlgorithmHint::DFS;
+                    }
+                }
+                crate::graph::query::planner::PlanStepType::Filter { condition } => {
+                    // Suggest pushing down filters to graph engine
+                    // TODO: Parse condition and extract pushdown predicates
+                    let _ = condition;
+                    hints
+                        .pushdown_predicates
+                        .push("filter_condition".to_string());
+                }
+                _ => {}
+            }
+        }
+
+        Ok(hints)
+    }
+
+    /// Estimate cost of a specific graph operation
+    pub fn estimate_operation_cost(
+        &self,
+        operation: &GraphOperation,
+        stats: &GraphStatistics,
+    ) -> GraphOperationCost {
+        match operation {
+            GraphOperation::NodeScan { labels, filters } => {
+                let selectivity = self
+                    .estimate_node_selectivity(labels, filters, stats)
+                    .unwrap_or(0.5);
+                GraphOperationCost {
+                    node_scan_cost: stats.node_count as f64 * selectivity,
+                    edge_traversal_cost: 0.0,
+                    result_count: stats.node_count as f64 * selectivity,
+                    total_cost: stats.node_count as f64 * selectivity * 0.1,
+                }
+            }
+            GraphOperation::EdgeTraversal { start_count, depth } => {
+                let traversal_cost = *start_count as f64 * stats.avg_fanout * *depth as f64;
+                GraphOperationCost {
+                    node_scan_cost: 0.0,
+                    edge_traversal_cost: traversal_cost,
+                    result_count: *start_count as f64 * stats.avg_fanout.powi(*depth as i32),
+                    total_cost: traversal_cost,
+                }
+            }
+        }
+    }
+
+    /// Clear statistics cache
+    pub fn clear_cache(&mut self) {
+        self.statistics_cache.clear();
+    }
+}
+
+/// Graph operation for cost estimation
+#[derive(Debug, Clone)]
+pub enum GraphOperation {
+    /// Node scan operation
+    NodeScan {
+        labels: Option<Vec<String>>,
+        filters: Vec<crate::graph::query::planner::PropertyFilter>,
+    },
+    /// Edge traversal operation
+    EdgeTraversal { start_count: usize, depth: u32 },
+}
+
+// Re-export types at module level
+pub use crate::core::error::VectorDBError;

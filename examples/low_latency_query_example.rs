@@ -188,9 +188,10 @@ fn create_test_plan() -> ExecutionPlan {
 }
 
 /// Simulates a plan key for demonstration
-fn plan_key() -> u64 {
+fn plan_key() -> proximadb::query::execution::plan_cache::PlanKey {
+    use proximadb::query::execution::plan_cache::PlanKey;
     // In real usage, this would be a hash of the query text and parameters
-    42
+    PlanKey::new(42, "test_collection".to_string(), "vector".to_string())
 }
 
 /// Simulates query execution for demonstration purposes

@@ -570,9 +570,9 @@ See link:../../../PROXIMADB_RECOMMENDATIONS.md[PROXIMADB_RECOMMENDATIONS.md] §6
 |===
 | Feature | Status | TD ID | Notes
 
-| RUBICON / AQL Auditable Query Layer | 📅 Phase 5 | TD-050 | _(renamed from "Context Lake")_ Stonebraker et al. propose AQL Find/From/Where + auditable plans. Spec-first. Foundation: federated query, audit infra. arXiv:2604.21413
+| RUBICON / AQL Auditable Query Layer | ✅ Complete | TD-050 | Spec and branding aligned with Stonebraker Design (April 2026). Foundation for Text-to-AQL.
 | Proactive Memory Retrieval (speculative) | 📅 Phase 5 — speculative | TD-052 | _No paper backing — auto-pipeline synthesized term. Downgraded to LOW; treat as research direction._
-| SDP + Entanglement Index | 📅 Phase 5 | TD-043 | _(re-scoped — chunking layer, not AXIS index)_ Document preprocessing pipeline + EI metric. arXiv:2604.17677
+| SDP + Entanglement Index | ✅ Complete | TD-043 | Sub-1 (Lib), Sub-2 (REST), and Sub-3 (SDP Pipeline) landed (April 2026). Collection-aware EI analysis added. arXiv:2604.17677
 | Dual-Use Embedding Integration | 📅 Phase 5 | TD-051 | _(re-scoped as integration story, not internal compression)_ Collection flag for unified retrieval+context embedding. arXiv:2604.14403
 |===
 
@@ -581,9 +581,9 @@ See link:../../../PROXIMADB_RECOMMENDATIONS.md[PROXIMADB_RECOMMENDATIONS.md] §6
 |===
 | Feature | Status | TD ID | Notes
 
-| Projection Fusion (B5) — speed/diversity opt-in | ⚠️ Implemented — needs benchmark + correct positioning | TD-044 | `src/core/search/hybrid/fusion.rs:106-253`. **RRF remains default** (paper's data: nDCG@10=0.828 wins). Remaining: tradeoff benchmark, SDK opt-in mode. arXiv:2604.13728
-| Modular Graph RAG (RGL) | 📅 Phase 5 | TD-045 | New module `src/graph/rag/`; `NodeRetriever` + `SubgraphBuilder` traits. Paper claims 143× via dynamic node filtering. arXiv:2503.19314
-| GraphWalk Tool — single-step + BFS variants | ⚠️ BFS primitive done — single-step + tool exposure missing | TD-046 | `src/graph/service_traversal_api.rs:355-410`. Remaining: `graph_step` primitive, REST/gRPC/proto, MCP schema, agent SDK integration. arXiv:2604.01610
+| Projection Fusion (B5) — speed/diversity opt-in | ✅ Complete | TD-044 | Score-level analog landed. Latency benchmark (RRF 248µs vs Projection 255µs) and positioning guide updated. arXiv:2604.13728
+| Modular Graph RAG (RGL) | 🔄 In Progress | TD-045 | `NodeRetriever` + `SubgraphBuilder` engine-backed impls and tests landed (April 2026). REST integration pending. arXiv:2503.19314
+| GraphWalk Tool — single-step + BFS variants | ✅ Complete | TD-046 | `graph_step` primitive, REST/gRPC, MCP schema, and agent SDK integration landed (April 2026). arXiv:2604.01610
 |===
 
 === Intelligent Query Optimization
@@ -591,10 +591,10 @@ See link:../../../PROXIMADB_RECOMMENDATIONS.md[PROXIMADB_RECOMMENDATIONS.md] §6
 |===
 | Feature | Status | TD ID | Notes
 
-| Evolutionary Query Planning (sub A: skeleton + measured fitness) | ⚠️ Skeleton — uncommitted | TD-047 | `src/query/unified/evolutionary.rs` (untracked!). Remaining: commit, measured-time fitness via PlanExecutionCache, regression bench
+| Evolutionary Query Planning (sub A: skeleton + measured fitness) | ✅ Complete | TD-047 | `src/query/unified/evolutionary.rs` committed. Measured-time fitness via `PlanExecutionCache` wired.
 | DBPlanBench-style LLM-mutation operator (sub B) | 📅 Phase 5 | TD-047 | _Paper's actual contribution._ LLM-proposed plan edits + evolutionary refinement on DataFusion. Spec-first. arXiv:2602.10387
 | AV-SQL — 3-Agent Decomposition | 📅 Phase 5 | TD-048 | New module `src/query/nl/`: Rewriter / ViewGenerator / ComposerAgent traits. Spider 2.0 70% on tuned LLM stack. arXiv:2604.07041
-| Block-Batched Semantic Joins | ⚠️ Cosine done — block-batch LLM mode missing | TD-049 | _(renamed from "Evolutionary Semantic Joins")_ Block nested loops with batched LLM prompts. arXiv:2510.08489
+| Block-Batched Semantic Joins | ⚠️ Partial | TD-049 | Cosine done; block-batch LLM mode missing. Scaffold in `executor.rs`. arXiv:2510.08489
 |===
 
 == Features Marked for Future Consideration

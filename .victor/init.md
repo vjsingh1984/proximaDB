@@ -1,60 +1,122 @@
-# Project Overview
+# init.md — ProximaDB
 
-ProximaDB is a multi-model vector database system with support for embeddings, graph, and full-text search. It is primarily implemented in Python, with components in Rust, Go, and JavaScript. Key capabilities include RAG enhancement, progressive search, and vector optimization.
+## Project Overview
 
-# Package Layout
+ProximaDB is a high-performance, multi-model vector database written in Rust (Edition 2024) with Python and Node.js client SDKs. It supports multiple access protocols—REST/gRPC, PostgreSQL wire protocol, and Arrow Flight—and provides vector similarity search, graph database queries, metadata filtering, and AI embedding integration. The project targets ML/AI engineers and database operators needing embedded or standalone vector storage at scale. Python SDK version is 0.2.0 (Beta).
 
-| Path       | Description                   |
-|------------|-------------------------------|
-| `src/`     | Core source code              |
-| `docs/`    | Documentation                 |
-| `examples/`| Sample workflows              |
-| `scripts/` | Automation and helper scripts |
-| `tests/`   | Unit and integration tests    |
-| `demo/`    | Demo and showcase code        |
-| `tools/`   | Utility tools                 |
+## System Flow
 
-# Key Entry Points
-
-| Component                     | Path                                    | Description                                                  |
-|------------------------------|-----------------------------------------|--------------------------------------------------------------|
-| ProximaDBProgressiveClient   | `demo/progressive_search_demo.py:28`    | Client for progressive search support                        |
-| BERTEmbeddingService         | `demo/utils/bert_embedding_service.py:24` | Service for generating BERT embeddings from text             |
-| ChunkingService              | `demo/utils/chunking_utils.py:17`       | Service for chunking text and preparing vectors with metadata |
-| LLMService                   | `demo/utils/llm_service.py:38`          | Lightweight LLM service for RAG enhancement                  |
-| ProximaDBEmbeddingService    | `demo/showcases/advanced/embedding_service.py:72` | Comprehensive embedding service with real BERT embeddings    |
-| PDFTranscriber               | `tools/pdf_transcriber.py:52`           | Class for PDF transcription                                  |
-| SafePDFTranscriber           | `tools/safe_pdf_transcriber.py:20`      | Safe PDF transcription class                                 |
-| ProximaDBFeatureShowcase     | `demo/quickstart/feature_showcase.py:48` | Class for showcasing core ProximaDB features                 |
-| ProgressiveSearchConfig      | `demo/progressive_search_demo.py:20`    | Configuration for progressive search stages                  |
-| DemoSetup                    | `demo/setup.py:46`                      | Setup class for demo environments                            |
-| FilingType                   | `demo/showcases/advanced/sec_edgar_complete.py:76` | Enum-like class for SEC filing types                         |
-| SectionType                  | `demo/showcases/advanced/sec_edgar_complete.py:88` | Enum-like class for SEC document sections                    |
-
-# Development Commands
-
-```bash
-npm install
-pytest
-pip install -e ".[dev]"
+```
+Client → Network Layer (REST/gRPC/PG Wire/Arrow Flight) → Auth → API Handlers → Query Engine → Storage Engine (Raptor) → WAL → Disk
 ```
 
-# Dependencies
+## Package Layout
 
-Core dependencies: numpy
+| Path | Type | Description |
+|------|------|-------------|
+| `src/` | Library root | Core Rust crate — storage, query, network, WAL, observability |
+| `src/storage/engines/raptor/` | Storage engine | Raptor vector storage engine with bloom filters |
+| `src/storage/persistence/write_ahead_log/` | Persistence | WAL subsystem with background maintenance |
+| `src/storage/cache/` | Cache | Caching layer with health monitoring |
+| `src/query/federated/` | Query engine | Federated query execution with catalog management |
+| `src/api_handlers/` | API handlers | REST/gRPC endpoint handlers (including AI endpoints) |
+| `src/network/auth/` | Auth | Authentication service |
+| `src/observability/` | Observability | Alerting and monitoring subsystem |
+| `src/operations/` | Operations | Backup and maintenance operations |
+| `proto/` | Protobuf | Protobuf definitions; watched by `build.rs` for prost-build regeneration |
+| `config/` | Config | Default `config.toml` |
+| `clients/python/` | Python SDK | PyO3/maturin-based Python bindings with native module |
+| `clients/rust/` | Rust SDK | Workspace member Rust client (`--features client`) |
+| `clients/nodejs-embedded/` | Node.js SDK | TypeScript/Node embedded client |
+| `tests/` | Tests | Integration, engine, WAL, and graph tests |
+| `benches/` | Benchmarks | Criterion benchmarks |
+| `ui/` | Dashboard | Web UI (npm-based) |
+| `demo/` | Demos | Example workflows including BERT embedding service |
+| `scripts/` | Scripts | Automation and helper scripts |
+| `docs/` | Documentation | Architecture docs and internal reports |
 
-# Configuration
+## Key Entry Points
 
-Settings are loaded from `.env`, `~/.victor/profiles.yaml`, and CLI flags in that order.
+| Component | Type | Path:line | Description |
+|-----------|------|-----------|-------------|
+| `proximadb-server` | Binary | `src/bin/proximadb-server.rs` | Main server entry point (ports 5678–5680) |
+| `proximadb-bench` | Binary | `src/bin/proximadb-bench.rs` | Consolidated benchmark tool |
+| `proximadb-migrate` | Binary | `src/bin/proximadb-migrate.rs` | Schema migration utility |
+| `ManagerRegistry` | Struct | `src/storage/persistence/write_ahead_log/mod.rs:390` | Registry coordinating all WAL manager instances |
+| `WriteAheadLogManager` | Struct | `src/storage/persistence/write_ahead_log/mod.rs:1226` | Core WAL write/replay engine |
+| `BackgroundMaintenanceManager` | Struct | `src/storage/persistence/write_ahead_log/background_manager.rs:53` | WAL compaction and cleanup |
+| `Federated` (CatalogManager) | Struct | `src/query/federated/mod.rs:137` | Federated query coordinator with catalog |
+| `ArtusBloomManager` | Struct | `src/storage/engines/raptor/artus_bloom.rs:61` | Bloom filter index in Raptor engine |
+| `AuthService` | Struct | `src/network/auth/mod.rs:163` | Authentication and authorization gateway |
+| `AIServiceState` | Struct | `src/api_handlers/ai_endpoints.rs:24` | AI/embedding endpoint handler |
+| `AlertManager` | Struct | `src/storage/cache/health_monitor.rs:66` | Cache health monitoring and alerting |
+| `AlertingService` | Struct | `src/observability/alerting/mod.rs:34` | System-wide observability alerts |
+| `BackupManager` | Struct | `src/operations/backup/mod.rs:24` | Backup and restore operations |
+| `BERTEmbeddingService` | Class | `demo/utils/bert_embedding_service.py:24` | Python demo embedding generation |
 
-# Architecture Notes
+## Architecture Patterns
 
-- Multi-model architecture with vector, graph, and full-text search support
-- Embedding and chunking services are central to RAG workflows
-- Progressive search client enables staged query execution
-- Rust and Go components provide core performance-critical modules
-- Demo and showcase classes act as entry points for system exploration
+- **Multi-protocol front-end**: A unified server exposes REST+gRPC (5678), gRPC multi-port (5679), PostgreSQL wire protocol (5433), and Arrow Flight (5680) from a single binary, routing through a shared auth and handler layer.
+- **WAL-first persistence**: All writes flow through `WriteAheadLogManager` with a `ManagerRegistry` coordinating per-collection logs and `BackgroundMaintenanceManager` handling compaction. WAL manifests stored as JSONL at `/tmp/proximadb/manifest/`.
+- **Raptor storage engine**: Pluggable storage engine architecture with the Raptor engine as primary, using `ArtusBloomManager` for probabilistic filter indexes alongside vector indexes.
+- **Proto-driven API**: `build.rs` watches `proto/` and regenerates Rust code via `prost-build`, making protobuf the source of truth for the gRPC surface.
+- **Dual crate output**: The library crate produces both `rlib` (for the server binary and Rust SDK) and `cdylib` (for PyO3 Python bindings via maturin).
+- **Dev/test profile parity**: `dev` and `test` profiles share `opt-level=0` for 100% artifact reuse; dependencies like arrow/parquet compile at `opt-level=2` even in dev. A `release-server` profile provides LTO-optimized server builds.
+- **Co-located unit tests**: Inline `#[cfg(test)] mod tests` blocks in source files test private APIs; standalone integration tests in `tests/` cover cross-module concerns. CI uses feature flags (`test-quick`, `test-standard`, `test-full`) to gate test categories.
+- **Federated query with catalog**: The `Federated` coordinator holds a `CatalogManager` to resolve and dispatch queries across collections, enabling cross-collection graph and vector operations.
 
-# Codebase Scale
+## Development Commands
 
-1,488,398 lines of code across 2,677 files (1,291,024 LOC source, 197,374 LOC config)
+```bash
+# Build
+cargo build                              # Debug
+cargo build --release                    # Release (opt-level=3, LTO)
+cargo build --profile release-server     # Optimized server build
+cargo check --all-targets                # Fast syntax check
+
+# Run server
+cargo run --bin proximadb-server         # Debug (port 5678)
+cargo run --release --bin proximadb-server
+
+# Test
+cargo test                               # All tests
+cargo test --lib                         # Inline unit tests only
+cargo test --test integration            # Integration tests
+cargo test --test graph_integration_test # Graph tests
+cargo test -- --test-threads=1           # Sequential (port-binding tests)
+RUST_LOG=debug cargo test test_name -- --nocapture --test-threads=1
+
+# Quality
+cargo fmt && cargo clippy -- -D warnings && cargo test
+
+# Python SDK
+cd clients/python && pip install -e .
+PYTHONPATH=clients/python/src pytest clients/python/tests/ -v
+
+# Rust SDK
+cd clients/rust && cargo build --features client
+
+# Web UI
+cd ui && npm install && npm start
+
+# Benchmarks
+cargo bench
+cargo run --bin proximadb-bench
+
+# Full check via Makefile
+make check
+```
+
+## Dependencies
+
+**Rust** (Cargo workspace, root + `clients/rust`): arrow, parquet, prost/prost-build, tokio, tonic. **Python SDK** (pip/maturin): numpy≥1.21, pytest, maturin≥1.4. **Node SDK**: TypeScript with native bindings.
+
+## Configuration
+
+Primary config: `config/config.toml`. Default data directory: `/tmp/proximadb/`. Server ports (5678–5680, 5433) are configurable via config file or CLI flags. WAL manifests written to `/tmp/proximadb/manifest/` as JSONL files. Health check: `curl http://localhost:5678/health`.
+
+## Codebase Scale
+
+~1.49M LOC across 2,679 files (2,391 source, 288 config). Primarily Rust (1,863 files) with Python (467), TypeScript (26), Go (17), and client SDKs in multiple languages.
+
+Run `/init --update` to refresh after code changes.

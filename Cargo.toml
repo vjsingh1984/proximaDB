@@ -277,6 +277,13 @@ network-rest = []
 # Note: rdkafka dependency would be added when enabling this feature
 cdc-kafka = []
 
+# LLM-driven semantic join modes (TD-049, arXiv:2510.08489 block-batched joins).
+# When enabled, JoinType::Semantic { mode: LlmBlockBatch { ... } } is dispatched
+# to an LLM-backed batched-prompt path. When disabled, only the cosine mode runs;
+# the LlmBlockBatch mode returns a clear NotImplemented error so server logs
+# attribute the failure correctly.
+llm-joins = []
+
 # Protobuf compilation (for distributed gRPC service generation)
 compile_protobuf = []
 
@@ -385,6 +392,11 @@ experimental-cdc-connectors = ["dep:tokio-postgres"]
 
 # Python embedded mode (PyO3 bindings with zero-copy numpy support)
 python = ["dep:pyo3", "dep:numpy"]  # Enable Python bindings with zero-copy numpy support
+
+# Python cdylib output (for PyO3/FFI builds)
+# When enabled, changes crate-type to include cdylib for Python shared library generation
+# See ADR-006: Feature-gated approach prevents test exclusion issues
+pylib = []  # Enable cdylib output for Python/FFI builds
 
 # Java embedded mode (JNI bindings)
 java = ["dep:jni"]  # Enable Java bindings for embedded database mode
@@ -592,6 +604,11 @@ path = "benches/bench_20_facade_routing.rs"
 name = "bench_21_query_cache"
 harness = false
 path = "benches/bench_21_query_cache.rs"
+
+[[bench]]
+name = "bench_21_hybrid_search_fusion"
+harness = false
+path = "benches/bench_21_hybrid_search_fusion.rs"
 
 [[bench]]
 name = "bench_22_multimodal_queries"

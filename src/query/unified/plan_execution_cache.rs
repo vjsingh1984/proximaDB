@@ -197,8 +197,8 @@ pub fn shared(max_entries: usize) -> Arc<PlanExecutionCache> {
 mod tests {
     use super::*;
     use crate::query::unified::ast::{
-        ComponentDependency, DataModel, DistanceMetric, JoinType, ModelOperation,
-        QueryComponent, VectorSearchExpr, VectorSearchParams,
+        ComponentDependency, DataModel, DistanceMetric, JoinType, ModelOperation, QueryComponent,
+        VectorSearchExpr, VectorSearchParams,
     };
 
     fn vec_component(collection: &str, deps: Vec<usize>) -> QueryComponent {
@@ -238,14 +238,8 @@ mod tests {
     #[test]
     fn shape_hash_distinguishes_dependency_topology() {
         // Same models, but different dependency wiring should hash differently.
-        let q1 = vec![
-            vec_component("a", vec![]),
-            vec_component("b", vec![0]),
-        ];
-        let q2 = vec![
-            vec_component("a", vec![]),
-            vec_component("b", vec![]),
-        ];
+        let q1 = vec![vec_component("a", vec![]), vec_component("b", vec![0])];
+        let q2 = vec![vec_component("a", vec![]), vec_component("b", vec![])];
         assert_ne!(shape_hash(&q1), shape_hash(&q2));
     }
 
@@ -260,7 +254,9 @@ mod tests {
         cache.record(shape, &order, 3000);
         cache.record(shape, &order, 2000);
 
-        let mean = cache.get_mean_us(shape, &order).expect("should have samples");
+        let mean = cache
+            .get_mean_us(shape, &order)
+            .expect("should have samples");
         // Welford should average to 2000.
         assert!((mean - 2000.0).abs() < 1e-6, "mean was {}", mean);
         assert_eq!(cache.total_samples(), 3);
@@ -295,7 +291,10 @@ mod tests {
         cache.record(3, &[0], 300);
 
         assert!(cache.get_mean_us(3, &[0]).is_some(), "newest survives");
-        assert!(cache.get_mean_us(1, &[0]).is_some(), "recently-touched survives");
+        assert!(
+            cache.get_mean_us(1, &[0]).is_some(),
+            "recently-touched survives"
+        );
         assert!(cache.get_mean_us(2, &[0]).is_none(), "LRU evicted");
         assert_eq!(cache.evictions(), 1);
     }

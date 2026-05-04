@@ -147,13 +147,105 @@ pub enum JoinType {
     Semi,
     /// Anti join - not exists check
     Anti,
-    /// Semantic join - based on vector similarity
+    /// Semantic join - matches based on a [`SemanticJoinMode`].
+    ///
+    /// The `mode` field selects between cheap cosine-similarity matching
+    /// (the default, always available) and LLM-driven block-batched
+    /// matching (arXiv:2510.08489 Trummer 2025, gated behind the
+    /// `llm-joins` feature). See [`SemanticJoinMode`] for details.
     Semantic {
-        /// Similarity threshold (0.0 to 1.0)
+        /// Similarity threshold for the [`SemanticJoinMode::Cosine`] mode
+        /// (0.0 to 1.0, higher is stricter). Currently unused by
+        /// [`SemanticJoinMode::LlmBlockBatch`] which uses LLM judgement
+        /// rather than a numeric threshold.
         threshold: f32,
-        /// Maximum number of matches per left record
+        /// Maximum number of right-side matches per left record.
         top_k: u32,
+        /// Matching strategy. Defaults to [`SemanticJoinMode::Cosine`]
+        /// for backward compatibility with callers constructed before
+        /// TD-049 (the field is `#[serde(default)]` so JSON omitting
+        /// it is accepted unchanged).
+        mode: SemanticJoinMode,
     },
+}
+
+/// Strategies for evaluating a [`JoinType::Semantic`] join.
+///
+/// `Cosine` is the simple, dependency-free path: extract a vector
+/// from each row, compute cosine similarity, accept matches above
+/// `threshold`. Always available regardless of feature flags.
+///
+/// `LlmBlockBatch` is the paper-faithful path
+/// (arXiv:2510.08489 Trummer 2025, Cornell): pack batches of rows
+/// from *both* sides into a single LLM prompt and ask the model to
+/// identify all matching pairs in one shot. Includes formulas for
+/// optimal batch size given the LLM context window. Significant
+/// cost reduction vs. per-pair LLM calls. Gated behind the
+/// `llm-joins` Cargo feature so production builds without an LLM
+/// integration produce clear errors at dispatch time rather than
+/// silent fallbacks.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SemanticJoinMode {
+    /// Cosine similarity over an extracted vector field. Cheapest
+    /// option, always available. The default.
+    Cosine,
+    /// LLM-driven block-batched matching (TD-049, arXiv:2510.08489).
+    LlmBlockBatch(BlockBatchConfig),
+}
+
+impl Default for SemanticJoinMode {
+    fn default() -> Self {
+        Self::Cosine
+    }
+}
+
+/// Configuration for [`SemanticJoinMode::LlmBlockBatch`].
+///
+/// Batch sizes follow the paper's optimal-batching formula given the
+/// LLM context window. Defaults are conservative — tune for your
+/// model's context size and the row width of your tables.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockBatchConfig {
+    /// Number of left-side rows packed into each prompt.
+    pub batch_size_left: u32,
+    /// Number of right-side rows packed into each prompt.
+    pub batch_size_right: u32,
+    /// Hard cap on LLM calls per query. Once exceeded, the join
+    /// returns whatever it has matched so far. Mandatory because
+    /// LLM costs blow up fast on accidental Cartesian products.
+    pub max_calls: u32,
+}
+
+impl Default for BlockBatchConfig {
+    fn default() -> Self {
+        // Conservative defaults tuned for an 8K-token context model
+        // and ~256-token row width. Halve `batch_size_*` for 4K
+        // models, double for 32K+. `max_calls` is intentionally
+        // small so a misconfigured query fails fast and visibly.
+        Self {
+            batch_size_left: 16,
+            batch_size_right: 16,
+            max_calls: 64,
+        }
+    }
+}
+
+impl BlockBatchConfig {
+    /// Validate the config. All sizes must be > 0 -- a zero batch
+    /// size is unrecoverable (no work would happen) and a zero
+    /// `max_calls` would prevent any LLM dispatch.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.batch_size_left == 0 {
+            return Err("batch_size_left must be > 0");
+        }
+        if self.batch_size_right == 0 {
+            return Err("batch_size_right must be > 0");
+        }
+        if self.max_calls == 0 {
+            return Err("max_calls must be > 0");
+        }
+        Ok(())
+    }
 }
 
 /// Data models supported by ProximaDB.
@@ -529,5 +621,119 @@ mod tests {
         };
 
         assert!(!dependent_component.is_parallelizable());
+    }
+
+    // ==========================================================
+    // TD-049 SemanticJoinMode + BlockBatchConfig
+    //
+    // Pin the contracts that other code paths rely on:
+    //   - Default mode is Cosine (backward compat).
+    //   - JoinType::Semantic carries `mode` and survives PartialEq.
+    //   - BlockBatchConfig::default() yields valid config.
+    //   - validate() rejects every zero-sized field with a clear msg.
+    // ==========================================================
+
+    #[test]
+    fn semantic_join_mode_defaults_to_cosine() {
+        // Critical for backward compat: callers constructing
+        // JoinType::Semantic without specifying mode must get
+        // cosine semantics.
+        let mode: SemanticJoinMode = Default::default();
+        assert_eq!(mode, SemanticJoinMode::Cosine);
+    }
+
+    #[test]
+    fn semantic_join_carries_mode_and_compares_by_value() {
+        let a = JoinType::Semantic {
+            threshold: 0.8,
+            top_k: 5,
+            mode: SemanticJoinMode::Cosine,
+        };
+        let b = JoinType::Semantic {
+            threshold: 0.8,
+            top_k: 5,
+            mode: SemanticJoinMode::Cosine,
+        };
+        assert_eq!(a, b, "same fields including mode -> structurally equal");
+
+        let c = JoinType::Semantic {
+            threshold: 0.8,
+            top_k: 5,
+            mode: SemanticJoinMode::LlmBlockBatch(BlockBatchConfig::default()),
+        };
+        assert_ne!(
+            a, c,
+            "different mode -> not equal even with same threshold/top_k"
+        );
+    }
+
+    #[test]
+    fn block_batch_config_default_is_valid() {
+        // Our shipped defaults must pass validation -- a zero-sized
+        // default would be a footgun for anyone constructing the
+        // mode without overriding fields.
+        BlockBatchConfig::default()
+            .validate()
+            .expect("default must validate");
+    }
+
+    #[test]
+    fn block_batch_config_default_values_are_conservative() {
+        let cfg = BlockBatchConfig::default();
+        // These are the documented conservative defaults; a change
+        // here is API-visible and warrants reviewing the rustdoc.
+        assert_eq!(cfg.batch_size_left, 16);
+        assert_eq!(cfg.batch_size_right, 16);
+        assert_eq!(cfg.max_calls, 64);
+    }
+
+    #[test]
+    fn block_batch_config_rejects_zero_left_batch() {
+        let mut cfg = BlockBatchConfig::default();
+        cfg.batch_size_left = 0;
+        match cfg.validate() {
+            Err(msg) => assert!(msg.contains("batch_size_left")),
+            Ok(()) => panic!("zero left batch must be rejected"),
+        }
+    }
+
+    #[test]
+    fn block_batch_config_rejects_zero_right_batch() {
+        let mut cfg = BlockBatchConfig::default();
+        cfg.batch_size_right = 0;
+        match cfg.validate() {
+            Err(msg) => assert!(msg.contains("batch_size_right")),
+            Ok(()) => panic!("zero right batch must be rejected"),
+        }
+    }
+
+    #[test]
+    fn block_batch_config_rejects_zero_max_calls() {
+        let mut cfg = BlockBatchConfig::default();
+        cfg.max_calls = 0;
+        match cfg.validate() {
+            Err(msg) => assert!(msg.contains("max_calls")),
+            Ok(()) => panic!("zero max_calls must be rejected"),
+        }
+    }
+
+    #[test]
+    fn block_batch_config_validates_first_failure() {
+        // When multiple fields are zero, validate returns ONE error
+        // at a time (the first encountered) so callers can fix
+        // problems sequentially. Pin the order: left -> right -> max.
+        let cfg = BlockBatchConfig {
+            batch_size_left: 0,
+            batch_size_right: 0,
+            max_calls: 0,
+        };
+        match cfg.validate() {
+            Err(msg) => assert!(
+                msg.contains("batch_size_left"),
+                "first error should be batch_size_left, got: {}",
+                msg
+            ),
+            Ok(()) => panic!("all-zero must be rejected"),
+        }
     }
 }

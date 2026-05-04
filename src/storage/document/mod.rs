@@ -15,6 +15,7 @@ pub mod aggregation;
 pub mod aggregation_extensions;
 pub mod indexes;
 pub mod query;
+pub mod sdp;
 pub mod service;
 pub mod storage;
 

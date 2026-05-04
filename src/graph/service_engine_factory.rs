@@ -43,7 +43,7 @@ use std::sync::Arc;
 
 impl super::GraphOperationsService {
     /// Get or create a graph engine for the specified graph ID
-    pub(crate) async fn get_or_create_graph_engine(
+    pub async fn get_or_create_graph_engine(
         &self,
         graph_id: &str,
     ) -> Result<Arc<crate::graph::engines::GraphEngineImpl>> {

@@ -6144,6 +6144,10 @@ pub struct CollectionConfig {
     #[prost(message, repeated, tag = "23")]
     #[serde(default)]
     pub text_storage_configs: ::prost::alloc::vec::Vec<TextStorageConfig>,
+    /// Dual-use embedding configuration (TD-051)
+    /// When true, indicates the same embedding is used for retrieval AND context.
+    #[prost(bool, optional, tag = "24")]
+    pub enable_dual_use_embeddings: ::core::option::Option<bool>,
 }
 #[derive(
     serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Hash, ::prost::Message,

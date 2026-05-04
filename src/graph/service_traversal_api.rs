@@ -386,12 +386,14 @@ impl super::GraphOperationsService {
         // its own properties available without an extra round trip.
         let current = engine
             .get_node(&node_id_owned)?
-            .ok_or_else(|| {
-                ProximaDBError::InvalidInput(format!("node '{}' not found", node_id))
-            })?;
+            .ok_or_else(|| ProximaDBError::InvalidInput(format!("node '{}' not found", node_id)))?;
 
         let neighbors = engine.get_neighbors(&node_id_owned, edge_type)?;
-        let cap = if limit == 0 { neighbors.len() } else { limit.min(neighbors.len()) };
+        let cap = if limit == 0 {
+            neighbors.len()
+        } else {
+            limit.min(neighbors.len())
+        };
 
         let mut canonical_nodes = Vec::with_capacity(cap + 1);
         canonical_nodes.push(crate::graph::canonical::CanonicalNode::from_proto(
@@ -443,11 +445,7 @@ impl super::GraphOperationsService {
             engine.as_ref(),
             &start_node_id_string,
             None, // No specific edge types
-            if max_depth > 0 {
-                Some(max_depth)
-            } else {
-                None
-            },
+            if max_depth > 0 { Some(max_depth) } else { None },
             Some(limit),
         )?;
 

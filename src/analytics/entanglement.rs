@@ -132,11 +132,7 @@ pub fn entanglement_index(
                 actual: c.embedding.len(),
             });
         }
-        let norm_sq: f64 = c
-            .embedding
-            .iter()
-            .map(|v| (*v as f64) * (*v as f64))
-            .sum();
+        let norm_sq: f64 = c.embedding.iter().map(|v| (*v as f64) * (*v as f64)).sum();
         if norm_sq < EPS {
             return Err(EntanglementError::ZeroNormEmbedding {
                 chunk_id: c.chunk_id.clone(),
@@ -151,12 +147,7 @@ pub fn entanglement_index(
     let normalized: Vec<Vec<f32>> = chunks
         .iter()
         .map(|c| {
-            let n: f32 = c
-                .embedding
-                .iter()
-                .map(|v| v * v)
-                .sum::<f32>()
-                .sqrt();
+            let n: f32 = c.embedding.iter().map(|v| v * v).sum::<f32>().sqrt();
             c.embedding.iter().map(|v| v / n).collect()
         })
         .collect();
@@ -198,8 +189,7 @@ pub fn entanglement_index(
             }
             // distance() with DistanceMetric::Cosine returns
             // (1 - cosine_similarity); recover the similarity directly.
-            let sim =
-                1.0_f64 - engine.distance(&normalized[i], &normalized[j]) as f64;
+            let sim = 1.0_f64 - engine.distance(&normalized[i], &normalized[j]) as f64;
             if peer.topic == c.topic {
                 intra_sum += sim;
                 intra_n += 1;

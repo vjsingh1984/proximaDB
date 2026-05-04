@@ -4,14 +4,17 @@
 //! multi-model queries. This approaches global optima that greedy selectivity-based
 //! reordering might miss.
 
-use rand::prelude::*;
 use super::ast::QueryComponent;
 use super::optimizer::SelectivityEstimate;
+use crate::ai::llm_integration::LLMIntegrationEngine;
+use rand::prelude::*;
+use std::sync::Arc;
 
 /// Evolutionary optimizer for query plans
 pub struct EvolutionaryOptimizer {
     population_size: usize,
     generations: usize,
+    llm_engine: Option<Arc<LLMIntegrationEngine>>,
 }
 
 impl EvolutionaryOptimizer {
@@ -20,6 +23,7 @@ impl EvolutionaryOptimizer {
         Self {
             population_size,
             generations,
+            llm_engine: None,
         }
     }
 
@@ -49,8 +53,9 @@ impl EvolutionaryOptimizer {
         }
 
         let mut rng = thread_rng();
-        let mut population = self.generate_initial_population(n, &dependents, &in_degrees, &mut rng);
-        
+        let mut population =
+            self.generate_initial_population(n, &dependents, &in_degrees, &mut rng);
+
         let mut best_order = population[0].clone();
         let mut min_cost = cost_fn(selectivity, &best_order);
 
@@ -71,7 +76,7 @@ impl EvolutionaryOptimizer {
 
             // Selection & Evolve
             let mut new_population = Vec::with_capacity(self.population_size);
-            
+
             // Elitism: Keep best
             new_population.push(best_order.clone());
 
@@ -91,6 +96,12 @@ impl EvolutionaryOptimizer {
                 if rng.gen_bool(0.2) {
                     self.mutate(&mut child, &dependents, &in_degrees, &mut rng);
                 }
+
+                // TODO: LLM-assisted mutation (arXiv:2602.10387)
+                // if self.llm_engine.is_some() && rng.gen_bool(0.05) {
+                //    let llm_child = self.llm_mutate(&child, components, selectivity).await;
+                //    if let Some(c) = llm_child { child = c; }
+                // }
 
                 new_population.push(child);
             }
@@ -177,11 +188,13 @@ impl EvolutionaryOptimizer {
     ) {
         let i = rng.gen_range(0..order.len());
         let j = rng.gen_range(0..order.len());
-        if i == j { return; }
-        
+        if i == j {
+            return;
+        }
+
         // Try swap
         order.swap(i, j);
-        
+
         // Check validity
         if !self.is_valid(order, in_degrees, dependents) {
             // Rollback
@@ -190,15 +203,57 @@ impl EvolutionaryOptimizer {
     }
 
     /// Simple crossover
-    fn crossover(
-        &self,
-        p1: &[usize],
-        p2: &[usize],
-    ) -> Vec<usize> {
+    fn crossover(&self, p1: &[usize], p2: &[usize]) -> Vec<usize> {
         if thread_rng().gen_bool(0.5) {
             p1.to_vec()
         } else {
             p2.to_vec()
+        }
+    }
+
+    /// Attach an LLM engine for mutation operators (DBPlanBench-style)
+    pub fn with_llm(mut self, engine: Arc<LLMIntegrationEngine>) -> Self {
+        self.llm_engine = Some(engine);
+        self
+    }
+
+    /// LLM-based mutation operator (arXiv:2602.10387)
+    ///
+    /// Proposes a new plan order based on higher-level reasoning about the
+    /// components and their estimated selectivity.
+    #[allow(dead_code)]
+    pub async fn llm_mutate(
+        &self,
+        current_order: &[usize],
+        components: &[QueryComponent],
+        selectivity: &[SelectivityEstimate],
+    ) -> Option<Vec<usize>> {
+        let llm = self.llm_engine.as_ref()?;
+
+        let mut prompt = String::from(
+            "Given these query components and their selectivity, propose an optimal execution order (list of indices).\n\n",
+        );
+        for (i, c) in components.iter().enumerate() {
+            prompt.push_str(&format!(
+                "Component {}: Model={:?}, Estimated Selectivity={:.2}\n",
+                i, c.model, selectivity[i].selectivity
+            ));
+        }
+        prompt.push_str(&format!("\nCurrent order: {:?}\n", current_order));
+        prompt.push_str("Propose a potentially better order as a JSON list of indices. Just the list, nothing else.");
+
+        match llm.query_with_fallback(&prompt).await {
+            Ok(resp) => {
+                // Parse indices from response
+                if let Ok(new_order) = serde_json::from_str::<Vec<usize>>(&resp.content) {
+                    // Basic validation: same length and all indices present
+                    if new_order.len() == current_order.len() {
+                        return Some(new_order);
+                    }
+                }
+                None
+            }
+            Err(_) => None,
         }
     }
 
@@ -219,7 +274,10 @@ impl EvolutionaryOptimizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::unified::ast::{QueryComponent, ModelOperation, VectorSearchExpr, DataModel, VectorSearchParams, DistanceMetric};
+    use crate::query::unified::ast::{
+        DataModel, DistanceMetric, ModelOperation, QueryComponent, VectorSearchExpr,
+        VectorSearchParams,
+    };
 
     fn mock_component(id: usize, deps: Vec<usize>) -> QueryComponent {
         QueryComponent {
@@ -233,11 +291,14 @@ mod tests {
                 params: VectorSearchParams::default(),
             }),
             filters: vec![],
-            dependencies: deps.into_iter().map(|d| crate::query::unified::ast::ComponentDependency {
-                component_index: d,
-                join_field: "id".to_string(),
-                join_type: crate::query::unified::ast::JoinType::Inner,
-            }).collect(),
+            dependencies: deps
+                .into_iter()
+                .map(|d| crate::query::unified::ast::ComponentDependency {
+                    component_index: d,
+                    join_field: "id".to_string(),
+                    join_type: crate::query::unified::ast::JoinType::Inner,
+                })
+                .collect(),
         }
     }
 
@@ -249,7 +310,7 @@ mod tests {
             mock_component(2, vec![0]),
             mock_component(3, vec![1, 2]),
         ];
-        
+
         let mut dependents = vec![vec![]; 4];
         let mut in_degrees = vec![0; 4];
         for (i, c) in components.iter().enumerate() {
@@ -261,9 +322,10 @@ mod tests {
 
         let optimizer = EvolutionaryOptimizer::new(10, 5);
         let mut rng = thread_rng();
-        
+
         for _ in 0..100 {
-            let order = optimizer.generate_random_valid_order(4, &dependents, &in_degrees, &mut rng);
+            let order =
+                optimizer.generate_random_valid_order(4, &dependents, &in_degrees, &mut rng);
             assert!(optimizer.is_valid(&order, &in_degrees, &dependents));
             assert_eq!(order[0], 0);
             assert_eq!(order[3], 3);
@@ -275,24 +337,36 @@ mod tests {
         let c0 = mock_component(0, vec![]); // Vector
         let c1 = QueryComponent {
             model: DataModel::Document,
-            operation: ModelOperation::DocumentQuery(crate::query::unified::ast::DocumentQueryExpr {
-                collection: "c1".to_string(),
-                path_filters: vec![],
-                text_search: None,
-                projection: vec![],
-                sort: None,
-                limit: Some(0),
-            }),
+            operation: ModelOperation::DocumentQuery(
+                crate::query::unified::ast::DocumentQueryExpr {
+                    collection: "c1".to_string(),
+                    path_filters: vec![],
+                    text_search: None,
+                    projection: vec![],
+                    sort: None,
+                    limit: Some(0),
+                },
+            ),
             filters: vec![],
             dependencies: vec![],
         };
-        
+
         let components = vec![c0, c1];
         let selectivity = vec![
-            SelectivityEstimate { selectivity: 0.1, confidence: 1.0, estimated_rows: 100, method: crate::query::unified::optimizer::EstimationMethod::Statistics },
-            SelectivityEstimate { selectivity: 0.5, confidence: 1.0, estimated_rows: 500, method: crate::query::unified::optimizer::EstimationMethod::Statistics },
+            SelectivityEstimate {
+                selectivity: 0.1,
+                confidence: 1.0,
+                estimated_rows: 100,
+                method: crate::query::unified::optimizer::EstimationMethod::Statistics,
+            },
+            SelectivityEstimate {
+                selectivity: 0.5,
+                confidence: 1.0,
+                estimated_rows: 500,
+                method: crate::query::unified::optimizer::EstimationMethod::Statistics,
+            },
         ];
-        
+
         let optimizer = EvolutionaryOptimizer::new(20, 10);
         let best_order = optimizer.optimize(&components, &selectivity, |sel, order| {
             let mut total_cost = 0.0;
@@ -304,7 +378,7 @@ mod tests {
             }
             total_cost
         });
-        
+
         assert_eq!(best_order, vec![1, 0]); // Should pick the lower base cost first
     }
 }

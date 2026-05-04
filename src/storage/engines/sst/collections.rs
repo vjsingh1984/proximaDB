@@ -60,6 +60,7 @@ impl SstEngine {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
         };
 
         let stats = CollectionStats {

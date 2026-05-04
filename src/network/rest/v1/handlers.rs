@@ -14,18 +14,23 @@ use std::sync::Arc;
 #[cfg(any(feature = "ai_endpoints", feature = "sales_endpoints"))]
 use tracing::warn;
 use tracing::{debug, error, info};
+use uuid::Uuid;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::health;
+use crate::network::rest::v1::analytics::{self, AnalyticsApiState};
+use crate::network::rest::v1::aql::{self, AqlApiState};
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
 use crate::query::QueryFacadeAdapter;
+use crate::query::aql::executor::AqlExecutor;
+use crate::query::aql::sources::graph::GraphAqlSource;
+use crate::query::aql::sources::vector::VectorAqlSource;
 use crate::query::execution::QueryEngine;
 use crate::query::explain::ExplainPlan;
-use crate::utils::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
 /// Shared application state
@@ -1636,12 +1641,37 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     // Read-only collection analytics (Entanglement Index, etc.) — TD-043 sub-2
     let analytics_router = {
-        use crate::network::rest::v1::analytics::{self, AnalyticsApiState};
-
-        analytics::create_router().with_state(AnalyticsApiState::new())
+        let analytics_state = AnalyticsApiState::new(Some(
+            state.unified_handlers.vector_operations_service.clone(),
+        ));
+        analytics::create_router().with_state(analytics_state)
     };
     router = router.nest("/api/v1/analytics", analytics_router);
     info!("✅ Analytics API endpoints enabled at /api/v1/analytics");
+
+    // Agentic Query Language (RUBICON / AQL) — TD-050
+    let aql_router = {
+        let mut executor = AqlExecutor::new();
+
+        // Register sources
+        executor.register_source(
+            "vector".to_string(),
+            Arc::new(VectorAqlSource::new(
+                state.unified_handlers.vector_operations_service.clone(),
+            )),
+        );
+        executor.register_source(
+            "graph".to_string(),
+            Arc::new(GraphAqlSource::new(
+                state.unified_handlers.graph_operations_service.clone(),
+            )),
+        );
+
+        let aql_state = AqlApiState::new(executor);
+        aql::create_router().with_state(aql_state)
+    };
+    router = router.nest("/api/v1/aql", aql_router);
+    info!("✅ AQL (RUBICON) API endpoints enabled at /api/v1/aql");
 
     // Convert to Router<()> by providing state, with default tenant context for all routes
     let default_tenant = TenantContext::new(

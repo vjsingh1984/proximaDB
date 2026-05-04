@@ -571,6 +571,7 @@ pub fn build_collection_config(
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
     };
 
     // Apply smart defaults from proto comments

@@ -64,6 +64,7 @@ impl CollectionService for CollectionServiceImpl {
                 enable_proxima_record: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
             }),
             query_params: Default::default(),
             options: Default::default(),

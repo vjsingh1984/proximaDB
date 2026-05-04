@@ -75,6 +75,11 @@
 //! on top in follow-up commits — see TD-045 in
 //! `docs/10-quality/TECHNICAL_DEBT.adoc`.
 
+pub mod engine_impls;
+
+#[cfg(test)]
+mod engine_impls_test;
+
 use crate::core::error::ProximaDBError;
 use crate::graph::NodeId;
 use async_trait::async_trait;
@@ -178,9 +183,9 @@ impl RagBudget {
             subgraph.nodes.truncate(self.max_subgraph_nodes);
         }
         let surviving: HashSet<&NodeId> = subgraph.nodes.iter().collect();
-        subgraph.edges.retain(|e| {
-            surviving.contains(&e.from) && surviving.contains(&e.to)
-        });
+        subgraph
+            .edges
+            .retain(|e| surviving.contains(&e.from) && surviving.contains(&e.to));
     }
 }
 
@@ -346,7 +351,9 @@ mod tests {
     #[async_trait]
     impl SubgraphBuilder for FailingBuilder {
         async fn build(&self, _seeds: &[NodeId]) -> Result<Subgraph> {
-            Err(ProximaDBError::InvalidInput("synthetic builder failure".into()))
+            Err(ProximaDBError::InvalidInput(
+                "synthetic builder failure".into(),
+            ))
         }
     }
 
@@ -358,11 +365,9 @@ mod tests {
 
     #[tokio::test]
     async fn pipeline_composes_retriever_and_builder() {
-        let (retriever, retriever_calls) =
-            StaticRetriever::new(ids(&["a", "b"]));
+        let (retriever, retriever_calls) = StaticRetriever::new(ids(&["a", "b"]));
         let (builder, builder_seen) = ObservingBuilder::new();
-        let pipeline =
-            RagPipeline::with_default_budget(retriever, builder);
+        let pipeline = RagPipeline::with_default_budget(retriever, builder);
 
         let result = pipeline.run(&RagQuery::text("hello")).await.unwrap();
 
@@ -378,8 +383,7 @@ mod tests {
         // The paper's headline lever: trim the seed set BEFORE
         // expanding into a subgraph, not after. This test pins that
         // ordering by inspecting what the builder actually received.
-        let (retriever, _) =
-            StaticRetriever::new(ids(&["a", "b", "c", "d", "e"]));
+        let (retriever, _) = StaticRetriever::new(ids(&["a", "b", "c", "d", "e"]));
         let (builder, builder_seen) = ObservingBuilder::new();
         let budget = RagBudget {
             max_seeds: 2,
@@ -401,8 +405,7 @@ mod tests {
         // a 3-node cap, the pipeline should keep the first 3 in the
         // builder's output order and drop edges that reference dropped
         // endpoints (no dangling refs).
-        let (retriever, _) =
-            StaticRetriever::new(ids(&["a", "b", "c"]));
+        let (retriever, _) = StaticRetriever::new(ids(&["a", "b", "c"]));
         let (builder, _) = ObservingBuilder::new();
         let budget = RagBudget {
             max_seeds: 10,
@@ -431,8 +434,7 @@ mod tests {
 
     #[tokio::test]
     async fn budget_is_noop_when_outputs_already_fit() {
-        let (retriever, _) =
-            StaticRetriever::new(ids(&["a", "b"]));
+        let (retriever, _) = StaticRetriever::new(ids(&["a", "b"]));
         let (builder, builder_seen) = ObservingBuilder::new();
         let budget = RagBudget {
             max_seeds: 100,
@@ -449,8 +451,7 @@ mod tests {
     #[tokio::test]
     async fn pipeline_propagates_builder_errors() {
         let (retriever, _) = StaticRetriever::new(ids(&["a"]));
-        let pipeline =
-            RagPipeline::with_default_budget(retriever, FailingBuilder);
+        let pipeline = RagPipeline::with_default_budget(retriever, FailingBuilder);
 
         let err = pipeline.run(&RagQuery::text("any")).await.unwrap_err();
         assert!(matches!(err, ProximaDBError::InvalidInput(_)));
@@ -463,8 +464,7 @@ mod tests {
         // simple) and the result should be empty.
         let (retriever, _) = StaticRetriever::new(vec![]);
         let (builder, builder_seen) = ObservingBuilder::new();
-        let pipeline =
-            RagPipeline::with_default_budget(retriever, builder);
+        let pipeline = RagPipeline::with_default_budget(retriever, builder);
 
         let result = pipeline.run(&RagQuery::text("any")).await.unwrap();
         assert_eq!(*builder_seen.lock(), Vec::<NodeId>::new());

@@ -28,6 +28,10 @@ message CollectionConfig {
   optional bool enable_proxima_record = 21;  // Feature flag for ProximaRecord (default: false)
   repeated string text_columns = 22;         // Column names to store as TEXT (not in metadata)
   repeated TextStorageConfig text_storage_configs = 23;  // Detailed TEXT column configurations
+
+  // Dual-use embedding configuration (TD-051)
+  // When true, indicates the same embedding is used for retrieval AND context.
+  optional bool enable_dual_use_embeddings = 24;
 }
 
 message CollectionStats {

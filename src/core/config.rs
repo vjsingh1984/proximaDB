@@ -1,3 +1,4 @@
+use crate::ai::LLMConfig;
 use crate::network::NetworkConfig;
 use crate::security::SecurityConfig;
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,8 @@ pub struct Config {
     /// Query processing configuration (including RL planner)
     #[serde(default)]
     pub query: Option<QueryConfig>,
+    /// LLM integration configuration (optional)
+    pub llm: Option<LLMConfig>,
 }
 
 /// TLS transport security configuration
@@ -221,6 +224,7 @@ impl Default for Config {
             graph: Some(GraphRuntimeConfig::default()),
             hybrid: Some(HybridRuntimeConfig::default()),
             query: None, // Uses default RL planner settings when None
+            llm: None,
         }
     }
 }

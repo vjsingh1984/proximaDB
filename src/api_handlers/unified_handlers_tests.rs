@@ -36,6 +36,7 @@ mod tests {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
         }
     }
 
@@ -289,6 +290,7 @@ mod tests {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
         };
 
         assert_eq!(config.dimension, 256);
@@ -384,6 +386,7 @@ mod tests {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
         };
 
         assert_eq!(config.tags.len(), 2);

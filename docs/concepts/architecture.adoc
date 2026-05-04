@@ -148,6 +148,11 @@ ProximaDB's vision extends the current 4-model architecture (vector, graph, docu
 | Multi-modal embeddings (CLIP, ImageBind)
 | Image, audio, video search
 | Planned
+
+| *Agentic*
+| RUBICON / AQL (Stonebraker Design)
+| Auditable agentic plans, Text-to-AQL, traceability
+| Research (P5)
 |===
 
 == Federated Query Engine
@@ -313,9 +318,10 @@ flowchart TB
 | Unified query | P2 | ✅ Stable | Cross-model SQL
 | External catalogs | P3 | 🔄 In Progress | Iceberg, Delta Lake
 | Distributed ops | P3 | 🔄 In Progress | Raft, sharding
-| Hybrid search (BM25) | P4 | Planned | tantivy integration
-| Time-series engine | P4 | Planned | TST engine
-| Event sourcing | P4 | Planned | Append-only WAL
+| Hybrid search (BM25) | P4 | ✅ Stable | tantivy integration (Feb 2025)
+| Time-series engine | P4 | ✅ Stable | TST engine (Feb 2025)
+| Event sourcing | P4 | ✅ Stable | Append-only WAL (Feb 2025)
+| Agentic Intelligence | P5 | 📅 Planned | Research frontier (arXiv:2604)
 |===
 
 See link:vision.adoc[Vision Document (legacy)] and link:../00-product/VISION.adoc[Refined Vision Document] for phase definitions.

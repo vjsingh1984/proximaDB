@@ -2806,12 +2806,14 @@ mod tests {
 
         // Limit caps neighbor count.
         let limited = service.graph_step(graph_id, "n1", None, 1).await.unwrap();
-        assert_eq!(limited.nodes.len(), 2, "expected n1 + 1 neighbor under limit");
+        assert_eq!(
+            limited.nodes.len(),
+            2,
+            "expected n1 + 1 neighbor under limit"
+        );
 
         // Missing node returns NotFound.
-        let missing = service
-            .graph_step(graph_id, "no-such-node", None, 10)
-            .await;
+        let missing = service.graph_step(graph_id, "no-such-node", None, 10).await;
         assert!(missing.is_err(), "missing node should error");
     }
 }

@@ -26,8 +26,14 @@ use super::planner::{
 use super::{QueryContext, QueryResult};
 use crate::core::error::VectorDBError;
 use crate::graph::GraphOperationsService;
+use async_recursion::async_recursion;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
+use tracing::{debug, info, warn};
+
+// Arrow integration imports
+use futures::Stream;
 
 /// Query executor responsible for executing a QueryPlan
 pub struct QueryExecutor {
@@ -192,70 +198,348 @@ impl QueryExecutor {
     }
 
     /// Execute a Traverse step: use current results as starting points and expand edges
+    ///
+    /// Now supports algorithm selection (BFS/DFS/A*) and edge filtering
     async fn execute_traverse(
         &self,
         context: &QueryContext,
         current_results: &[HashMap<String, serde_json::Value>],
-        _algorithm: &TraversalAlgorithm,
+        algorithm: &TraversalAlgorithm,
         max_depth: &Option<u32>,
-        _edge_filters: &[EdgeFilter],
+        edge_filters: &[EdgeFilter],
     ) -> QueryResult<Vec<HashMap<String, serde_json::Value>>> {
-        let mut traversal_results = Vec::new();
         let depth = max_depth.unwrap_or(1);
 
-        for result in current_results {
-            if let Some(node_id) = result
-                .get("node")
-                .and_then(|v| v.get("id"))
-                .and_then(|v| v.as_str())
-            {
-                let node_val = result
+        // Extract starting node IDs from current results
+        let start_node_ids: Vec<String> = current_results
+            .iter()
+            .filter_map(|result| {
+                result
                     .get("node")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null);
-                use crate::proto::proximadb_v1::EdgeQuery;
-                let edge_query = EdgeQuery {
-                    graph_id: context.graph_id.clone(),
-                    from_node_id: Some(node_id.to_string()),
-                    to_node_id: None,
-                    edge_types: vec![],
-                    filters: vec![],
-                    limit: None,
-                    offset: None,
-                    continuation_token: None,
-                };
-                match self
-                    .graph_service
-                    .query_edges(&context.graph_id, edge_query)
-                    .await
-                {
-                    Ok(edges) => {
-                        for edge in edges {
-                            let mut result_map = HashMap::new();
-                            result_map.insert("source".to_string(), node_val.clone());
-                            result_map.insert(
-                                "edge".to_string(),
-                                serde_json::to_value(edge.as_ref()).map_err(|e| {
-                                    VectorDBError::Internal(format!(
-                                        "JSON serialization error: {}",
-                                        e
-                                    ))
-                                })?,
-                            );
-                            result_map.insert(
-                                "depth".to_string(),
-                                serde_json::Value::Number(serde_json::Number::from(depth)),
-                            );
-                            traversal_results.push(result_map);
+                    .and_then(|v| v.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+
+        if start_node_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            "Executing graph traversal with algorithm: {:?}, depth: {}, edge_filters: {:?}, from {} nodes",
+            algorithm,
+            depth,
+            edge_filters,
+            start_node_ids.len()
+        );
+
+        // Execute traversal using selected algorithm
+        let traversal_results = match algorithm {
+            TraversalAlgorithm::BFS => {
+                self.bfs_traverse(context, &start_node_ids, depth, edge_filters)
+                    .await?
+            }
+            TraversalAlgorithm::DFS => {
+                self.dfs_traverse(context, &start_node_ids, depth, edge_filters)
+                    .await?
+            }
+            TraversalAlgorithm::Dijkstra | TraversalAlgorithm::AStar => {
+                self.astar_traverse(context, &start_node_ids, depth, edge_filters)
+                    .await?
+            }
+        };
+
+        Ok(traversal_results)
+    }
+
+    /// Breadth-first search traversal with edge filtering
+    async fn bfs_traverse(
+        &self,
+        context: &QueryContext,
+        start_node_ids: &[String],
+        max_depth: u32,
+        edge_filters: &[EdgeFilter],
+    ) -> QueryResult<Vec<HashMap<String, serde_json::Value>>> {
+        use std::collections::VecDeque;
+
+        let mut results = Vec::new();
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut queue: VecDeque<(String, u32)> = VecDeque::new();
+
+        // Initialize queue with start nodes
+        for node_id in start_node_ids {
+            queue.push_back((node_id.clone(), 0));
+            visited.insert(node_id.clone());
+        }
+
+        // BFS traversal
+        while let Some((current_id, current_depth)) = queue.pop_front() {
+            if current_depth >= max_depth {
+                continue;
+            }
+
+            // Query edges from current node
+            use crate::proto::proximadb_v1::EdgeQuery;
+            let edge_query = EdgeQuery {
+                graph_id: context.graph_id.clone(),
+                from_node_id: Some(current_id.clone()),
+                to_node_id: None,
+                edge_types: vec![],
+                filters: vec![],
+                limit: Some(100), // Limit edges per node to prevent explosion
+                offset: None,
+                continuation_token: None,
+            };
+
+            match self
+                .graph_service
+                .query_edges(&context.graph_id, edge_query)
+                .await
+            {
+                Ok(edges) => {
+                    for edge in edges {
+                        // Apply edge filters
+                        if !self.passes_edge_filters(&edge, edge_filters) {
+                            continue;
                         }
+
+                        // Get target node ID
+                        let target_id = edge.to_node_id.clone();
+
+                        // Skip already visited nodes
+                        if visited.contains(&target_id) {
+                            continue;
+                        }
+
+                        // Create result for this edge
+                        let mut result_map = HashMap::new();
+                        result_map.insert("source".to_string(), serde_json::json!(current_id));
+                        result_map.insert(
+                            "edge".to_string(),
+                            serde_json::to_value(edge.as_ref()).map_err(|e| {
+                                VectorDBError::Internal(format!("JSON serialization error: {}", e))
+                            })?,
+                        );
+                        result_map
+                            .insert("depth".to_string(), serde_json::json!(current_depth + 1));
+
+                        results.push(result_map);
+
+                        // Add target to queue for next level
+                        queue.push_back((target_id.clone(), current_depth + 1));
+                        visited.insert(target_id);
                     }
-                    Err(_) => {
-                        // Skip nodes with no edges
-                    }
+                }
+                Err(e) => {
+                    warn!("Failed to query edges from node {}: {}", current_id, e);
+                    // Continue with other nodes
                 }
             }
         }
-        Ok(traversal_results)
+
+        Ok(results)
+    }
+
+    /// Depth-first search traversal with edge filtering
+    async fn dfs_traverse(
+        &self,
+        context: &QueryContext,
+        start_node_ids: &[String],
+        max_depth: u32,
+        edge_filters: &[EdgeFilter],
+    ) -> QueryResult<Vec<HashMap<String, serde_json::Value>>> {
+        let mut results = Vec::new();
+        let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        for start_id in start_node_ids {
+            self.dfs_recursive(
+                context,
+                start_id,
+                0,
+                max_depth,
+                edge_filters,
+                &mut visited,
+                &mut results,
+            )
+            .await?;
+        }
+
+        Ok(results)
+    }
+
+    /// Recursive DFS traversal
+    #[async_recursion]
+    async fn dfs_recursive(
+        &self,
+        context: &QueryContext,
+        node_id: &str,
+        current_depth: u32,
+        max_depth: u32,
+        edge_filters: &[EdgeFilter],
+        visited: &mut std::collections::HashSet<String>,
+        results: &mut Vec<HashMap<String, serde_json::Value>>,
+    ) -> QueryResult<()> {
+        if current_depth >= max_depth || visited.contains(node_id) {
+            return Ok(());
+        }
+
+        visited.insert(node_id.to_string());
+
+        // Query edges from current node
+        use crate::proto::proximadb_v1::EdgeQuery;
+        let edge_query = EdgeQuery {
+            graph_id: context.graph_id.clone(),
+            from_node_id: Some(node_id.to_string()),
+            to_node_id: None,
+            edge_types: vec![],
+            filters: vec![],
+            limit: Some(100),
+            offset: None,
+            continuation_token: None,
+        };
+
+        match self
+            .graph_service
+            .query_edges(&context.graph_id, edge_query)
+            .await
+        {
+            Ok(edges) => {
+                for edge in edges {
+                    // Apply edge filters
+                    if !self.passes_edge_filters(&edge, edge_filters) {
+                        continue;
+                    }
+
+                    let target_id = edge.to_node_id.clone();
+
+                    // Create result
+                    let mut result_map = HashMap::new();
+                    result_map.insert("source".to_string(), serde_json::json!(node_id));
+                    result_map.insert(
+                        "edge".to_string(),
+                        serde_json::to_value(edge.as_ref()).map_err(|e| {
+                            VectorDBError::Internal(format!("JSON serialization error: {}", e))
+                        })?,
+                    );
+                    result_map.insert("depth".to_string(), serde_json::json!(current_depth + 1));
+                    results.push(result_map);
+
+                    // Recurse into target node
+                    self.dfs_recursive(
+                        context,
+                        &target_id,
+                        current_depth + 1,
+                        max_depth,
+                        edge_filters,
+                        visited,
+                        results,
+                    )
+                    .await?;
+                }
+            }
+            Err(e) => {
+                warn!("Failed to query edges from node {}: {}", node_id, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// A* traversal with heuristic (simplified implementation)
+    async fn astar_traverse(
+        &self,
+        context: &QueryContext,
+        start_node_ids: &[String],
+        max_depth: u32,
+        edge_filters: &[EdgeFilter],
+    ) -> QueryResult<Vec<HashMap<String, serde_json::Value>>> {
+        // A* is more complex and requires heuristic function
+        // For now, fall back to BFS which is optimal for unweighted graphs
+        info!("A* traversal falling back to BFS (unweighted graph)");
+        self.bfs_traverse(context, start_node_ids, max_depth, edge_filters)
+            .await
+    }
+
+    /// Check if an edge passes all edge filters
+    fn passes_edge_filters(
+        &self,
+        edge: &crate::proto::proximadb_v1::Edge,
+        filters: &[EdgeFilter],
+    ) -> bool {
+        filters.iter().all(|filter| {
+            if let Some(edge_type) = &filter.edge_type
+                && edge.edge_type != *edge_type
+            {
+                return false;
+            }
+
+            filter.property_filters.iter().all(|property_filter| {
+                edge.properties
+                    .get(&property_filter.property_name)
+                    .map(|prop_val| {
+                        let json_value = self.property_value_to_json(prop_val);
+                        self.compare_values(
+                            &json_value,
+                            &property_filter.operator,
+                            &property_filter.value,
+                        )
+                    })
+                    .unwrap_or(false)
+            })
+        })
+    }
+
+    fn property_value_to_json(
+        &self,
+        value: &crate::proto::proximadb_v1::PropertyValue,
+    ) -> serde_json::Value {
+        match &value.value {
+            Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {
+                serde_json::Value::String(s.clone())
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
+                serde_json::Value::Number(serde_json::Number::from(*i))
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+                serde_json::Number::from_f64(*d)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
+                serde_json::Value::Bool(*b)
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(_)) | None => {
+                serde_json::Value::Null
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(values)) => {
+                serde_json::Value::Array(
+                    values
+                        .values
+                        .iter()
+                        .map(|value| self.property_value_to_json(value))
+                        .collect(),
+                )
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(obj)) => {
+                serde_json::Value::Object(
+                    obj.fields
+                        .iter()
+                        .map(|(key, value)| (key.clone(), self.property_value_to_json(value)))
+                        .collect(),
+                )
+            }
+            Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(vector)) => {
+                serde_json::Value::Array(
+                    vector
+                        .values
+                        .iter()
+                        .filter_map(|value| serde_json::Number::from_f64(f64::from(*value)))
+                        .map(serde_json::Value::Number)
+                        .collect(),
+                )
+            }
+        }
     }
 
     /// Apply a Filter step: filter results based on a FilterCondition
@@ -695,6 +979,127 @@ impl QueryExecutor {
         }
 
         Ok(joined)
+    }
+
+    // ========== Arrow Integration (TD-035 Phase 2) ==========
+
+    /// Execute query and return results in Arrow format
+    ///
+    /// This method provides Arrow-native results for:
+    /// - Federated multi-model queries (graph + vector + document)
+    /// - Arrow Flight API responses
+    /// - Columnar processing pipelines
+    ///
+    /// # Arguments
+    ///
+    /// * `plan` - Query plan to execute
+    /// * `context` - Query context (graph_id, params, etc.)
+    /// * `include_edges` - Whether to include edge information (for traversals)
+    ///
+    /// # Returns
+    ///
+    /// Arrow RecordBatch with columnar graph results
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let plan = planner.create_plan(&query)?;
+    /// let batch = executor.execute_as_arrow(&plan, &context, true).await?;
+    /// // Process batch with Arrow operations
+    /// ```
+    pub async fn execute_as_arrow(
+        &self,
+        plan: &QueryPlan,
+        context: &QueryContext,
+        include_edges: bool,
+    ) -> QueryResult<arrow::record_batch::RecordBatch> {
+        // Execute query normally
+        let results = self.execute(plan, context).await?;
+
+        // Convert to Arrow using bridge
+        crate::query::arrow_graph_bridge::GraphArrowBridge::graph_results_to_arrow(
+            &results,
+            include_edges,
+        )
+        .map_err(|e| VectorDBError::Internal(format!("Arrow conversion failed: {}", e)))
+    }
+
+    /// Stream query results in Arrow batches
+    ///
+    /// Useful for:
+    /// - Large graph traversals that don't fit in memory
+    /// - Real-time streaming via Arrow Flight
+    /// - Incremental processing of large result sets
+    ///
+    /// # Arguments
+    ///
+    /// * `plan` - Query plan to execute
+    /// * `context` - Query context
+    /// * `batch_size` - Number of rows per RecordBatch
+    ///
+    /// # Returns
+    ///
+    /// Stream of Arrow RecordBatches
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use futures::stream::StreamExt;
+    ///
+    /// let mut stream = executor.stream_as_arrow(&plan, &context, 1000).await?;
+    /// while let Some(batch_result) = stream.next().await {
+    ///     let batch = batch_result?;
+    ///     // Process batch
+    /// }
+    /// ```
+    pub async fn stream_as_arrow<'a>(
+        &'a self,
+        plan: &'a QueryPlan,
+        context: &'a QueryContext,
+        batch_size: usize,
+    ) -> QueryResult<
+        Pin<Box<dyn Stream<Item = QueryResult<arrow::record_batch::RecordBatch>> + Send + 'a>>,
+    > {
+        use futures::stream::{self, StreamExt};
+
+        // Execute query to get all results
+        let results = self.execute(plan, context).await?;
+
+        // Convert to stream of batches
+        let stream = stream::iter(results.into_iter())
+            .chunks(batch_size)
+            .map(move |batch| {
+                crate::query::arrow_graph_bridge::GraphArrowBridge::graph_results_to_arrow(
+                    &batch, true, // include edges for traversals
+                )
+                .map_err(|e| VectorDBError::Internal(format!("Batch conversion failed: {}", e)))
+            });
+
+        Ok(Box::pin(stream))
+    }
+
+    /// Convert existing HashMap results to Arrow format
+    ///
+    /// Convenience method for converting already-executed results
+    ///
+    /// # Arguments
+    ///
+    /// * `results` - Query results in HashMap format
+    /// * `include_edges` - Whether to include edge information
+    ///
+    /// # Returns
+    ///
+    /// Arrow RecordBatch
+    pub fn convert_to_arrow(
+        &self,
+        results: &[HashMap<String, serde_json::Value>],
+        include_edges: bool,
+    ) -> QueryResult<arrow::record_batch::RecordBatch> {
+        crate::query::arrow_graph_bridge::GraphArrowBridge::graph_results_to_arrow(
+            results,
+            include_edges,
+        )
+        .map_err(|e| VectorDBError::Internal(format!("Arrow conversion failed: {}", e)))
     }
 }
 

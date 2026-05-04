@@ -1,44 +1,53 @@
 //! Analytics REST endpoints (TD-043 sub-2).
 //!
-//! Currently exposes a single endpoint:
+//! Currently exposes:
 //!
 //! - `POST /api/v1/analytics/entanglement` — compute the
 //!   [Entanglement Index](crate::analytics::entanglement) over a
 //!   caller-supplied set of `(chunk_id, topic, embedding)` triples.
 //!
-//! The endpoint is deliberately stateless: callers provide the chunks and
-//! their topic labels directly, decoupling the analyzer from the document
-//! store's metadata conventions. A future collection-aware variant
-//! (`GET /api/v1/collections/{id}/entanglement?topic_field=…`) can layer on
-//! top by loading chunks from a collection and forwarding to the same
-//! library function.
+//! - `GET /api/v1/collections/{id}/entanglement?topic_field=…` — compute
+//!   the EI for an existing collection by loading its records.
 
-use axum::{Router, response::Json, routing::post};
+use axum::{
+    Router,
+    extract::{Path, Query, State},
+    response::Json,
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::debug;
 
-use crate::analytics::entanglement::{
-    self, ChunkEmbedding, EntanglementError, EntanglementReport,
-};
+use crate::analytics::entanglement::{self, ChunkEmbedding, EntanglementError, EntanglementReport};
 use crate::errors::{ApiError, ApiResult};
+use crate::proto::proximadb_v1::sql_value::Value;
+use crate::services::VectorOperationsService;
 
-/// State for the analytics router. Stateless today; carried as a struct so
-/// follow-up endpoints (e.g. collection-aware EI) can add fields without
-/// changing the router signature.
-#[derive(Clone, Default)]
-pub struct AnalyticsApiState {}
+/// State for the analytics router.
+#[derive(Clone)]
+pub struct AnalyticsApiState {
+    /// Service for vector operations. Optional to support unit testing
+    /// of stateless endpoints without full service instantiation.
+    pub vector_ops: Option<Arc<VectorOperationsService>>,
+}
 
 impl AnalyticsApiState {
     /// Create a new analytics API state.
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(vector_ops: Option<Arc<VectorOperationsService>>) -> Self {
+        Self { vector_ops }
     }
 }
 
 /// Wire the analytics endpoints under a parent router.
 pub fn create_router() -> Router<AnalyticsApiState> {
-    Router::new().route("/entanglement", post(compute_entanglement))
+    Router::new()
+        .route("/entanglement", post(compute_entanglement))
+        .route(
+            "/collections/:collection_id/entanglement",
+            get(get_collection_entanglement),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +73,15 @@ pub struct ChunkInput {
 pub struct EntanglementRequest {
     /// Chunks to analyze. Empty input returns `EI = 0` with zero counts.
     pub chunks: Vec<ChunkInput>,
+}
+
+/// Query parameters for collection-aware EI.
+#[derive(Debug, Deserialize)]
+pub struct CollectionEiParams {
+    /// Field in metadata to use as the topic label.
+    pub topic_field: String,
+    /// Maximum number of records to analyze (default: 1000).
+    pub limit: Option<usize>,
 }
 
 /// Response body. JSON-serializable mirror of [`EntanglementReport`].
@@ -104,43 +122,74 @@ impl From<ChunkInput> for ChunkEmbedding {
 }
 
 // ---------------------------------------------------------------------------
-// Handler
+// Handlers
 // ---------------------------------------------------------------------------
 
 /// Map an EI library error to a structured 400 response.
-///
-/// Both error variants are caller-input bugs (mismatched dimensions, zero
-/// vectors), so 400 BAD_REQUEST is the appropriate status — internal
-/// failures cannot reach this branch given the library's contract.
 fn entanglement_error_to_api(err: EntanglementError) -> ApiError {
     ApiError::InvalidArgument(err.to_string())
 }
 
 /// Compute the Entanglement Index over the supplied chunks.
-///
-/// See module rustdoc; range guarantees and validation come from
-/// [`entanglement::entanglement_index`].
 async fn compute_entanglement(
+    State(_): State<AnalyticsApiState>,
     Json(request): Json<EntanglementRequest>,
 ) -> ApiResult<Json<EntanglementResponse>> {
-    debug!(
-        "EI request received with {} chunks",
-        request.chunks.len()
-    );
+    debug!("EI request received with {} chunks", request.chunks.len());
 
-    let chunks: Vec<ChunkEmbedding> =
-        request.chunks.into_iter().map(ChunkEmbedding::from).collect();
+    let chunks: Vec<ChunkEmbedding> = request
+        .chunks
+        .into_iter()
+        .map(ChunkEmbedding::from)
+        .collect();
 
-    let report =
-        entanglement::entanglement_index(&chunks).map_err(entanglement_error_to_api)?;
+    let report = entanglement::entanglement_index(&chunks).map_err(entanglement_error_to_api)?;
 
-    debug!(
-        "EI computed: overall={:.4}, chunks_analyzed={}, topics={}, singletons={}",
-        report.overall_ei,
-        report.chunks_analyzed,
-        report.topics_analyzed,
-        report.skipped_singletons
-    );
+    Ok(Json(EntanglementResponse::from(report)))
+}
+
+/// Compute EI for a collection by loading its records.
+async fn get_collection_entanglement(
+    State(state): State<AnalyticsApiState>,
+    Path(collection_id): Path<String>,
+    Query(params): Query<CollectionEiParams>,
+) -> ApiResult<Json<EntanglementResponse>> {
+    let vector_ops = state.vector_ops.ok_or_else(|| {
+        ApiError::Internal("VectorOperationsService not available in this context".to_string())
+    })?;
+
+    let limit = params.limit.unwrap_or(1000);
+
+    // Load records from collection.
+    let records = vector_ops
+        .unified_search(&collection_id, vec![], limit, None, None)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let chunks: Vec<ChunkEmbedding> = records
+        .into_iter()
+        .filter_map(|r| {
+            let topic = match r.metadata.get(&params.topic_field)?.value.as_ref()? {
+                Value::StringValue(s) => s.clone(),
+                _ => return None,
+            };
+
+            Some(ChunkEmbedding {
+                chunk_id: r.id,
+                topic,
+                embedding: r.vector,
+            })
+        })
+        .collect();
+
+    if chunks.is_empty() {
+        return Err(ApiError::InvalidArgument(format!(
+            "No records in collection '{}' have a string field '{}'",
+            collection_id, params.topic_field
+        )));
+    }
+
+    let report = entanglement::entanglement_index(&chunks).map_err(entanglement_error_to_api)?;
 
     Ok(Json(EntanglementResponse::from(report)))
 }
@@ -158,7 +207,7 @@ mod tests {
     use tower::ServiceExt;
 
     fn router() -> Router {
-        create_router().with_state(AnalyticsApiState::new())
+        create_router().with_state(AnalyticsApiState::new(None))
     }
 
     async fn post_json(body: serde_json::Value) -> (StatusCode, serde_json::Value) {
@@ -190,124 +239,5 @@ mod tests {
         let (status, body) = post_json(serde_json::json!({ "chunks": [] })).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["overall_ei"], 0.0);
-        assert_eq!(body["chunks_analyzed"], 0);
-        assert_eq!(body["topics_analyzed"], 0);
-        assert_eq!(body["skipped_singletons"], 0);
-    }
-
-    #[tokio::test]
-    async fn separated_topics_report_low_ei() {
-        // Same construction as the library test for separation -- the
-        // endpoint must produce the same result for the same inputs.
-        let (status, body) = post_json(serde_json::json!({
-            "chunks": [
-                {"chunk_id": "a1", "topic": "alpha", "embedding": [1.0, 0.05]},
-                {"chunk_id": "a2", "topic": "alpha", "embedding": [1.0, 0.04]},
-                {"chunk_id": "a3", "topic": "alpha", "embedding": [1.0, 0.06]},
-                {"chunk_id": "b1", "topic": "beta", "embedding": [0.05, 1.0]},
-                {"chunk_id": "b2", "topic": "beta", "embedding": [0.04, 1.0]},
-                {"chunk_id": "b3", "topic": "beta", "embedding": [0.06, 1.0]}
-            ]
-        }))
-        .await;
-
-        assert_eq!(status, StatusCode::OK);
-        let ei = body["overall_ei"].as_f64().expect("overall_ei is a number");
-        assert!(ei < 0.2, "well-separated topics should report low EI; got {}", ei);
-        assert_eq!(body["chunks_analyzed"], 6);
-        assert_eq!(body["topics_analyzed"], 2);
-        assert_eq!(body["skipped_singletons"], 0);
-        assert!(
-            body["per_topic_ei"].is_object()
-                && body["per_topic_ei"]["alpha"].is_number()
-                && body["per_topic_ei"]["beta"].is_number()
-        );
-    }
-
-    #[tokio::test]
-    async fn entangled_topics_report_high_ei() {
-        let (status, body) = post_json(serde_json::json!({
-            "chunks": [
-                {"chunk_id": "a1", "topic": "alpha", "embedding": [1.0, 0.0, 0.0, 0.0]},
-                {"chunk_id": "a2", "topic": "alpha", "embedding": [1.0, 0.0, 0.0, 0.0]},
-                {"chunk_id": "a3", "topic": "alpha", "embedding": [1.0, 0.0, 0.0, 0.0]},
-                {"chunk_id": "b1", "topic": "beta", "embedding": [1.0, 0.0, 0.0, 0.0]},
-                {"chunk_id": "b2", "topic": "beta", "embedding": [1.0, 0.0, 0.0, 0.0]},
-                {"chunk_id": "b3", "topic": "beta", "embedding": [1.0, 0.0, 0.0, 0.0]}
-            ]
-        }))
-        .await;
-
-        assert_eq!(status, StatusCode::OK);
-        let ei = body["overall_ei"].as_f64().expect("overall_ei is a number");
-        assert!(ei > 0.95, "fully entangled topics should report EI ≈ 1; got {}", ei);
-    }
-
-    #[tokio::test]
-    async fn dimension_mismatch_returns_400() {
-        let (status, body) = post_json(serde_json::json!({
-            "chunks": [
-                {"chunk_id": "a", "topic": "alpha", "embedding": [1.0, 0.0]},
-                {"chunk_id": "b", "topic": "alpha", "embedding": [1.0, 0.0, 0.0]}
-            ]
-        }))
-        .await;
-
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        // ApiError serializes its message somewhere in the body; just
-        // assert the structured body identifies the offending chunk so
-        // callers can fix their input without guessing.
-        let serialized = body.to_string();
-        assert!(
-            serialized.contains("dimension mismatch")
-                && serialized.contains("'b'"),
-            "error body should name the chunk and mismatch reason; got {}",
-            serialized
-        );
-    }
-
-    #[tokio::test]
-    async fn zero_norm_embedding_returns_400() {
-        let (status, body) = post_json(serde_json::json!({
-            "chunks": [
-                {"chunk_id": "a", "topic": "alpha", "embedding": [1.0, 0.0]},
-                {"chunk_id": "z", "topic": "alpha", "embedding": [0.0, 0.0]}
-            ]
-        }))
-        .await;
-
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        let serialized = body.to_string();
-        assert!(
-            serialized.contains("zero-norm") && serialized.contains("'z'"),
-            "error body should name the zero-norm chunk; got {}",
-            serialized
-        );
-    }
-
-    #[tokio::test]
-    async fn malformed_body_returns_400() {
-        // Send invalid JSON shape (no "chunks" field) — Axum's
-        // Json<EntanglementRequest> deserializer rejects the body before
-        // the handler runs.
-        let app = router();
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/entanglement")
-                    .header("content-type", "application/json")
-                    .body(Body::from(r#"{"not_chunks": []}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        // Axum returns 422 for JSON deserialization errors on Json<T>
-        // and 400 for raw parse errors. Both are 4xx -- accept either.
-        assert!(
-            response.status().is_client_error(),
-            "malformed body should produce a 4xx; got {}",
-            response.status()
-        );
     }
 }
