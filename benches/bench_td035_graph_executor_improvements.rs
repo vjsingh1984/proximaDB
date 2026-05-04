@@ -17,14 +17,14 @@
 //! # TD-035 Graph Query Executor Improvements - Performance Benchmarks
 //!
 //! This benchmark suite measures the performance improvements from TD-035 implementation:
-//! - A* traversal algorithm vs BFS/DFS
+//! - Parallel BFS traversal vs sequential BFS/DFS
 //! - Arrow integration (HashMap → RecordBatch conversion)
 //! - Query optimization effectiveness
 //! - Edge filtering performance
 //!
 //! ## Expected Performance Improvements
 //!
-//! 1. **A* Algorithm**: Should be 2-5× faster than BFS for targeted searches
+//! 1. **Parallel BFS**: Should be 1.5-3× faster than sequential BFS for large graphs
 //! 2. **Arrow Integration**: Zero-copy conversion, < 1ms overhead
 //! 3. **Query Optimization**: 20-50% reduction in query execution time
 //! 4. **Edge Filtering**: 10-30% faster traversal with selective edge types
@@ -130,7 +130,7 @@ async fn create_td035_benchmark_graph(
     Ok(())
 }
 
-/// Benchmark A* algorithm vs BFS/DFS for targeted search
+/// Benchmark traversal algorithms (BFS vs Parallel BFS)
 fn bench_traversal_algorithms(c: &mut Criterion) {
     let mut group = c.benchmark_group("td035_traversal_algorithms");
     group.measurement_time(Duration::from_secs(10));
@@ -194,14 +194,14 @@ fn bench_traversal_algorithms(c: &mut Criterion) {
         });
     });
 
-    // Benchmark A* (TD-035 improvement)
-    group.bench_function("astar_improvement", |b| {
+    // Benchmark Parallel BFS (TD-035 improvement)
+    group.bench_function("parallel_bfs_improvement", |b| {
         b.iter(|| {
             runtime.block_on(async {
                 let request = TraversalRequest {
                     graph_id: BENCHMARK_GRAPH_ID.to_string(),
                     start_node_id: "node_0".to_string(),
-                    algorithm: TraversalAlgorithm::Astar as i32,
+                    algorithm: TraversalAlgorithm::TraversalAlgorithmParallelBfs as i32,
                     max_depth: 5,
                     edge_types: vec![],
                     node_labels: vec![],
