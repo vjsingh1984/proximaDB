@@ -3949,7 +3949,7 @@ impl CrossModelOptimizer {
 
     fn vector_source_from_expression(expr: &str) -> VectorSource {
         let trimmed = expr.trim();
-        if let Some((table, column)) = trimmed.split_once('.') {
+        if let Some((table, column)) = Self::split_qualified_reference(trimmed) {
             VectorSource::ColumnRef {
                 table: table.trim().to_string(),
                 column: column.trim().to_string(),
@@ -3957,6 +3957,27 @@ impl CrossModelOptimizer {
         } else {
             VectorSource::Expression(trimmed.to_string())
         }
+    }
+
+    fn split_qualified_reference(expr: &str) -> Option<(&str, &str)> {
+        let mut in_quotes = false;
+        let mut chars = expr.char_indices().peekable();
+
+        while let Some((idx, ch)) = chars.next() {
+            match ch {
+                '"' => {
+                    if in_quotes && matches!(chars.peek(), Some((_, '"'))) {
+                        chars.next();
+                        continue;
+                    }
+                    in_quotes = !in_quotes;
+                }
+                '.' if !in_quotes => return Some((&expr[..idx], &expr[idx + ch.len_utf8()..])),
+                _ => {}
+            }
+        }
+
+        None
     }
 
     fn parse_vector_literal(raw: &str) -> Option<Vec<f32>> {
@@ -5655,6 +5676,38 @@ mod tests {
                     other => panic!("expected nested outer document join, got {:?}", other),
                 }
             }
+            other => panic!("expected nested-loop join, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_lateral_plan_preserves_quoted_alias_with_dot_in_vector_source() {
+        let parser = super::super::parser::FederatedParser::new();
+        let query = parser
+            .parse(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') \"Left.Alias\", DOCUMENT_QUERY('right_profiles') \"Right.Alias\" JOIN LATERAL VECTOR_SEARCH('products', \"Right.Alias\".document.embedding, 1) v ON true",
+            )
+            .expect("parser should accept quoted dotted aliases");
+        let optimizer = CrossModelOptimizer::new();
+
+        let plan = optimizer
+            .optimize(&query)
+            .expect("optimizer should preserve quoted dotted alias boundaries");
+
+        match &plan.root.node_type {
+            PlanNodeType::NestedLoopJoin { inner, .. } => match &inner.node_type {
+                PlanNodeType::VectorSearch {
+                    query_vector_source,
+                    ..
+                } => match query_vector_source {
+                    VectorSource::ColumnRef { table, column } => {
+                        assert_eq!(table, "\"Right.Alias\"");
+                        assert_eq!(column, "document.embedding");
+                    }
+                    other => panic!("expected correlated column ref, got {:?}", other),
+                },
+                other => panic!("expected vector search inner plan, got {:?}", other),
+            },
             other => panic!("expected nested-loop join, got {:?}", other),
         }
     }
