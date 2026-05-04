@@ -1478,6 +1478,21 @@ impl FederatedExecutor {
             })
             .collect::<Vec<_>>();
 
+        let has_alias_metadata = matching_indices.iter().any(|idx| {
+            batch
+                .schema()
+                .field(*idx)
+                .metadata()
+                .contains_key(VECTOR_SOURCE_ALIAS_METADATA_KEY)
+        });
+        if has_alias_metadata && alias_matches.is_empty() {
+            return Err(anyhow!(
+                "Correlated vector source '{}.{}' did not match any outer source alias",
+                table,
+                column_path
+            ));
+        }
+
         let candidate_pool = if alias_matches.is_empty() {
             matching_indices
         } else {

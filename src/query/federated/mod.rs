@@ -1905,6 +1905,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_lateral_join_rejects_mismatched_quoted_document_alias_case() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([
+            (
+                "left_profiles".to_string(),
+                vec![DocumentRecord {
+                    id: "left-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[9.0, 8.0]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                }],
+            ),
+            (
+                "right_profiles".to_string(),
+                vec![DocumentRecord {
+                    id: "right-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[0.1, 0.2]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 2,
+                    updated_at_ns: 2,
+                }],
+            ),
+        ]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') \"LeftAlias\", DOCUMENT_QUERY('right_profiles') \"RightAlias\" JOIN LATERAL VECTOR_SEARCH('products', \"RIGHTALIAS\".document.embedding, 1) v ON true",
+            )
+            .await
+            .expect_err("quoted document alias case mismatch should not silently bind another source");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("did not match any outer source alias"));
+        assert!(error_text.contains("\"RIGHTALIAS\".document.embedding"));
+    }
+
+    #[tokio::test]
     async fn test_lateral_join_uses_right_graph_alias_in_multi_graph_outer_join() {
         let vector_engine = Arc::new(
             MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
@@ -2145,6 +2211,70 @@ mod tests {
             vector_engine.recorded_queries(),
             vec![vec![0.1, 0.2], vec![0.3, 0.4]]
         );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_rejects_mismatched_quoted_graph_alias_case() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "left-1".to_string(),
+                    labels: vec!["Left".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![9.0, 8.0],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "right-1".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.1, 0.2],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Left) RETURN n') \"LeftAlias\", GRAPH_QUERY('MATCH (n:Right) RETURN n') \"RightAlias\" JOIN LATERAL VECTOR_SEARCH('products', \"RIGHTALIAS\".properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect_err("quoted graph alias case mismatch should not silently bind another source");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("did not match any outer source alias"));
+        assert!(error_text.contains("\"RIGHTALIAS\".properties.embedding"));
     }
 
     #[tokio::test]
