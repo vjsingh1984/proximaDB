@@ -219,12 +219,18 @@ flamegraph.svg
 
 # Benchmark results
 benches/target/
+benches/venv/
+benches/vectordbbench/
 # criterion/ - commented out to allow target/criterion/ tracking
 
 # Benchmark output files
 benchmark_*.txt
 *_benchmark_*.txt
 system_monitor.txt
+artifacts/proximadb_*/
+artifacts/embedded_victor_shape*.json
+artifacts/panic_policy/
+src/graph/rag/engine_impls_test.rs.disabled
 
 # Serverless/Cloud function packages
 *.zip

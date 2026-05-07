@@ -30,6 +30,7 @@
 //! 4. **Serialization**: Protocol Buffers should be 2-3× faster than JSON
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use prost::Message;
 use proximadb::{
     graph::{Edge, Node, PropertyValue, service::GraphOperationsService},
     proto::proximadb_v1::{CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig},
@@ -320,8 +321,8 @@ fn bench_serialization_performance(c: &mut Criterion) {
     let proto_bytes = prost::Message::encode_to_vec(&sample_node);
     group.bench_function("proto_deserialization", |b| {
         b.iter(|| {
-            let mut buf = &*black_box(&proto_bytes);
-            black_box(Node::decode(&mut buf).unwrap());
+            let buf = black_box(proto_bytes.as_slice());
+            black_box(Node::decode(buf).unwrap());
         });
     });
 
@@ -343,7 +344,7 @@ fn bench_error_handling(c: &mut Criterion) {
             runtime.block_on(async {
                 black_box(
                     service
-                        .get_node("nonexistent_graph", "nonexistent_node")
+                        .get_node("nonexistent_graph", &"nonexistent_node".to_string())
                         .await,
                 );
             });
@@ -356,7 +357,7 @@ fn bench_error_handling(c: &mut Criterion) {
             runtime.block_on(async {
                 black_box(
                     service
-                        .get_node(BENCHMARK_GRAPH_ID, "nonexistent_node")
+                        .get_node(BENCHMARK_GRAPH_ID, &"nonexistent_node".to_string())
                         .await,
                 );
             });

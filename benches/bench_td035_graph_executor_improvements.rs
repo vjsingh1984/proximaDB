@@ -201,7 +201,7 @@ fn bench_traversal_algorithms(c: &mut Criterion) {
                 let request = TraversalRequest {
                     graph_id: BENCHMARK_GRAPH_ID.to_string(),
                     start_node_id: "node_0".to_string(),
-                    algorithm: TraversalAlgorithm::TraversalAlgorithmParallelBfs as i32,
+                    algorithm: TraversalAlgorithm::ParallelBfs as i32,
                     max_depth: 5,
                     edge_types: vec![],
                     node_labels: vec![],

@@ -18,9 +18,10 @@ Databases tested:
 - FAISS (Facebook AI Similarity Search)
 - Qdrant (Rust-based with filtering)
 
-Test configurations: 1024, 5000, and 10000 vectors (dimension=384)
+Default test configurations: 10K, 100K, and 1M vectors (dimension=384)
 """
 
+import argparse
 import gc
 import os
 import shutil
@@ -46,19 +47,37 @@ except ImportError:
 
 # ProximaDB (native Rust via PyO3)
 try:
-    import proximadb_sdk
+    import proximadb
 
     PROXIMADB_AVAILABLE = True
-    print(f"ProximaDB v{proximadb.__version__} loaded")
-except ImportError as e:
-    PROXIMADB_AVAILABLE = False
-    print(f"ProximaDB not available: {e}")
+    print(f"ProximaDB v{getattr(proximadb, '__version__', 'unknown')} loaded")
+except ImportError:
+    try:
+        import proximadb_embedded as proximadb
+
+        PROXIMADB_AVAILABLE = True
+        print(
+            f"ProximaDB embedded v{getattr(proximadb, '__version__', 'unknown')} loaded"
+        )
+    except ImportError as e:
+        PROXIMADB_AVAILABLE = False
+        print(f"ProximaDB not available: {e}")
 
 # ChromaDB
-import chromadb
+try:
+    import chromadb
+
+    CHROMADB_AVAILABLE = True
+except ImportError:
+    CHROMADB_AVAILABLE = False
 
 # LanceDB
-import lancedb
+try:
+    import lancedb
+
+    LANCEDB_AVAILABLE = True
+except ImportError:
+    LANCEDB_AVAILABLE = False
 
 # FAISS
 try:
@@ -91,7 +110,10 @@ def generate_random_vectors(num_vectors: int, dimension: int = 384) -> np.ndarra
 
 
 def benchmark_proximadb(
-    vectors: np.ndarray, temp_dir: str, engine: str = "sst"
+    vectors: np.ndarray,
+    temp_dir: str,
+    engine: str = "sst",
+    search_mode: str = "sqrt",
 ) -> Dict[str, Any]:
     """Benchmark ProximaDB embedded mode with specified storage engine."""
     if not PROXIMADB_AVAILABLE:
@@ -102,22 +124,44 @@ def benchmark_proximadb(
 
     try:
         disk_config = proximadb.DiskConfig(data_dir, weight=1)
-        db = proximadb.ProximaDB([disk_config])
+        db = proximadb.ProximaDB([disk_config], prune_mode=search_mode)
         db.create_collection("benchmark", vectors.shape[1], engine)
 
         ids = [f"vec_{i}" for i in range(len(vectors))]
-        vectors_list = [v.tolist() for v in vectors]
 
         start = time.perf_counter()
-        db.insert("benchmark", ids, vectors_list, None)
+        if hasattr(db, "insert_numpy"):
+            db.insert_numpy("benchmark", ids, vectors)
+        else:
+            vectors_list = [v.tolist() for v in vectors]
+            db.insert("benchmark", ids, vectors_list, None)
         insert_time = time.perf_counter() - start
 
-        query = vectors[0].tolist()
+        query = vectors[0]
         search_times = []
         results = []
+        explicit_search_mode = (
+            search_mode
+            if search_mode in {"exact", "approximate", "adaptive"}
+            else None
+        )
         for _ in range(10):
             start = time.perf_counter()
-            results = db.search("benchmark", query, 10)
+            if hasattr(db, "search_numpy"):
+                if explicit_search_mode is None:
+                    results = db.search_numpy("benchmark", query, 10)
+                else:
+                    results = db.search_numpy(
+                        "benchmark", query, 10, search_mode=explicit_search_mode
+                    )
+            else:
+                query_list = query.tolist()
+                if explicit_search_mode is None:
+                    results = db.search("benchmark", query_list, 10)
+                else:
+                    results = db.search(
+                        "benchmark", query_list, 10, search_mode=explicit_search_mode
+                    )
             search_times.append((time.perf_counter() - start) * 1000)
 
         return {
@@ -135,6 +179,9 @@ def benchmark_proximadb(
 
 def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
     """Benchmark ChromaDB embedded mode."""
+    if not CHROMADB_AVAILABLE:
+        return {"error": "ChromaDB not available"}
+
     data_dir = os.path.join(temp_dir, "chroma_data")
 
     try:
@@ -172,6 +219,9 @@ def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
 
 def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
     """Benchmark LanceDB embedded mode."""
+    if not LANCEDB_AVAILABLE:
+        return {"error": "LanceDB not available"}
+
     data_dir = os.path.join(temp_dir, "lance_data")
 
     try:
@@ -288,7 +338,26 @@ def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def run_benchmark(batch_sizes: List[int] = [1024, 5000, 10000]):
+def parse_sizes(raw: str) -> List[int]:
+    """Parse comma-separated vector counts."""
+    return [int(part.strip()) for part in raw.split(",") if part.strip()]
+
+
+def parse_engines(raw: str) -> List[str]:
+    """Parse comma-separated engine names."""
+    all_engines = ["sst", "helix", "viper", "nova", "swift", "raptor"]
+    if raw.strip().lower() == "all":
+        return all_engines
+    return [part.strip().lower() for part in raw.split(",") if part.strip()]
+
+
+def run_benchmark(
+    batch_sizes: List[int] = [10_000, 100_000, 1_000_000],
+    dimension: int = 384,
+    proximadb_engines: List[str] | None = None,
+    include_competitors: bool = False,
+    search_mode: str = "sqrt",
+):
     """Run the embedded vector database benchmark."""
 
     print("=" * 80)
@@ -299,26 +368,27 @@ def run_benchmark(batch_sizes: List[int] = [1024, 5000, 10000]):
     print("All databases run in-process (embedded mode)")
     print()
 
-    dimension = 384  # Standard embedding dimension
-
     # ProximaDB storage engines to test
-    proximadb_engines = ["sst", "helix", "viper", "nova", "swift", "raptor"]
+    proximadb_engines = proximadb_engines or ["sst"]
 
     benchmarks = [
-        # ProximaDB with all storage engines
         *[
             (
                 f"ProximaDB-{eng.upper()}",
-                lambda v, t, e=eng: benchmark_proximadb(v, t, e),
+                lambda v, t, e=eng, m=search_mode: benchmark_proximadb(v, t, e, m),
             )
             for eng in proximadb_engines
-        ],
-        # Other embedded databases
-        ("ChromaDB", benchmark_chromadb),
-        ("LanceDB", benchmark_lancedb),
-        ("FAISS", benchmark_faiss),
-        ("Qdrant", benchmark_qdrant),
+        ]
     ]
+    if include_competitors:
+        benchmarks.extend(
+            [
+                ("ChromaDB", benchmark_chromadb),
+                ("LanceDB", benchmark_lancedb),
+                ("FAISS", benchmark_faiss),
+                ("Qdrant", benchmark_qdrant),
+            ]
+        )
 
     all_results: Dict[int, Dict[str, Dict[str, Any]]] = {}
 
@@ -364,8 +434,8 @@ def run_benchmark(batch_sizes: List[int] = [1024, 5000, 10000]):
     print("=" * 80)
     print()
 
-    render_summary_table(all_results, proximadb_engines)
-    write_markdown_report(all_results, proximadb_engines)
+    render_summary_table(all_results, proximadb_engines, include_competitors)
+    write_markdown_report(all_results, proximadb_engines, include_competitors)
 
 
 def render_batch_table(batch_size: int, results: Dict[str, Dict[str, Any]]) -> None:
@@ -437,19 +507,18 @@ def render_batch_table(batch_size: int, results: Dict[str, Dict[str, Any]]) -> N
 
 
 def render_summary_table(
-    all_results: Dict[int, Dict[str, Dict[str, Any]]], proximadb_engines: List[str]
+    all_results: Dict[int, Dict[str, Dict[str, Any]]],
+    proximadb_engines: List[str],
+    include_competitors: bool,
 ) -> None:
     """Render cross-batch summary for throughput."""
     print("\n" + "=" * 80)
     print("SUMMARY: Insert Throughput (vectors/second)")
     print("=" * 80)
     batch_sizes = list(all_results.keys())
-    db_names = [f"ProximaDB-{eng.upper()}" for eng in proximadb_engines] + [
-        "ChromaDB",
-        "LanceDB",
-        "FAISS",
-        "Qdrant",
-    ]
+    db_names = [f"ProximaDB-{eng.upper()}" for eng in proximadb_engines]
+    if include_competitors:
+        db_names.extend(["ChromaDB", "LanceDB", "FAISS", "Qdrant"])
 
     if RICH_AVAILABLE:
         console = Console()
@@ -486,7 +555,9 @@ def render_summary_table(
 
 
 def write_markdown_report(
-    all_results: Dict[int, Dict[str, Dict[str, Any]]], proximadb_engines: List[str]
+    all_results: Dict[int, Dict[str, Dict[str, Any]]],
+    proximadb_engines: List[str],
+    include_competitors: bool,
 ) -> None:
     """Persist a Markdown-friendly snapshot for sharing."""
     target_dir = Path("target")
@@ -495,9 +566,12 @@ def write_markdown_report(
 
     lines.append("# Embedded Vector DB Benchmark")
     lines.append("")
-    lines.append(
-        "Databases: ProximaDB (SST/HELIX/VIPER/NOVA/SWIFT/RAPTOR), ChromaDB, LanceDB, FAISS, Qdrant."
-    )
+    if include_competitors:
+        lines.append(
+            "Databases: ProximaDB plus ChromaDB, LanceDB, FAISS, and Qdrant."
+        )
+    else:
+        lines.append("Databases: ProximaDB only.")
     lines.append("")
 
     for batch_size, results in all_results.items():
@@ -530,12 +604,9 @@ def write_markdown_report(
     lines.append("")
     lines.append(summary_header)
     lines.append(summary_sep)
-    db_names = [f"ProximaDB-{eng.upper()}" for eng in proximadb_engines] + [
-        "ChromaDB",
-        "LanceDB",
-        "FAISS",
-        "Qdrant",
-    ]
+    db_names = [f"ProximaDB-{eng.upper()}" for eng in proximadb_engines]
+    if include_competitors:
+        db_names.extend(["ChromaDB", "LanceDB", "FAISS", "Qdrant"])
     for db_name in db_names:
         row = [db_name]
         for batch_size in all_results.keys():
@@ -552,4 +623,41 @@ def write_markdown_report(
 
 
 if __name__ == "__main__":
-    run_benchmark([1024, 5000, 10000])
+    parser = argparse.ArgumentParser(
+        description="Embedded vector database benchmark"
+    )
+    parser.add_argument(
+        "--sizes",
+        default="10000,100000,1000000",
+        help="Comma-separated vector counts to benchmark",
+    )
+    parser.add_argument(
+        "--dimension",
+        type=int,
+        default=384,
+        help="Synthetic vector dimension",
+    )
+    parser.add_argument(
+        "--engines",
+        default="sst",
+        help="Comma-separated ProximaDB engines or 'all'",
+    )
+    parser.add_argument(
+        "--include-competitors",
+        action="store_true",
+        help="Also benchmark competitor embedded databases when dependencies are installed",
+    )
+    parser.add_argument(
+        "--search-mode",
+        default="sqrt",
+        choices=["sqrt", "exact"],
+        help="ProximaDB search mode to benchmark",
+    )
+    args = parser.parse_args()
+    run_benchmark(
+        parse_sizes(args.sizes),
+        dimension=args.dimension,
+        proximadb_engines=parse_engines(args.engines),
+        include_competitors=args.include_competitors,
+        search_mode=args.search_mode,
+    )

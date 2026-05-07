@@ -2,6 +2,7 @@
 name = "proximadb"
 version = "0.2.0"
 edition = "2024"
+autobenches = false
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
 license = "Apache-2.0"
@@ -28,6 +29,18 @@ path = "src/bin/proximadb-bench-consolidated.rs"
 [[bin]]
 name = "proximadb-migrate"
 path = "src/bin/proximadb-migrate.rs"
+
+[[bin]]
+name = "simple-perf-bench"
+path = "benches/simple_perf_bench.rs"
+
+[[bin]]
+name = "grpc-benchmark"
+path = "benches/grpc_benchmark.rs"
+
+[[bin]]
+name = "quick-perf-bench"
+path = "benches/quick_perf_bench.rs"
 
 # Python embedded library (cdylib for PyO3)
 [lib]

@@ -99,13 +99,16 @@ Total Benchmarks Created: 300+
   • TD-042: Cache consolidation (100+ benchmarks)
   • TD-046: gRPC parity (100+ benchmarks)
 
-Expected Performance Improvements:
-  • Parallel BFS: 1.5-3× faster than sequential BFS
-  • Arrow Integration: < 1ms overhead, zero-copy
-  • Query Optimization: 20-50% faster execution
-  • String Interner: 50-70% memory reduction
-  • gRPC vs REST: 20-40% faster
-  • Coordinated Eviction: 20-40% faster decisions
+Performance Baselines Established:
+  • TD-042 Integration Tests: 10m 18s (10 tests)
+  • TD-035 Integration Tests: 8m 17s (5 tests)
+  • TD-046 Integration Tests: 1m 21s (9 tests)
+  • Standard Library Baselines: Measured
+
+Important Limitation:
+  ⚠️ Performance improvements are THEORETICAL, not measured
+  ⚠️ No before/after comparison data available
+  ℹ️ See BASELINE-PERFORMANCE-REPORT.md for details
 ```
 
 ### **Documentation**

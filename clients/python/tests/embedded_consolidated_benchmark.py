@@ -251,6 +251,7 @@ class StandardDatasets:
         # Support configurable dimensions for real-world embedding models
         dim_names = {
             128: "SIFT",
+            384: "Victor/BGE-small",
             768: "BGE-base",
             960: "GIST",
             1024: "BGE-large",
@@ -4331,6 +4332,7 @@ def run_standard_dataset_benchmarks(
     # Get dimension name for display
     dim_names = {
         128: "SIFT",
+        384: "Victor/BGE-small",
         768: "BGE-base",
         960: "GIST",
         1024: "BGE-large",
@@ -4416,9 +4418,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dimension",
         type=int,
-        default=768,
-        choices=[128, 768, 960, 1024, 1536],
-        help="Vector dimension: 128=SIFT, 768=BGE-base, 960=GIST, 1024=BGE-large, 1536=OpenAI (default: 768)",
+        default=384,
+        choices=[128, 384, 768, 960, 1024, 1536],
+        help="Vector dimension: 128=SIFT, 384=Victor/BGE-small, 768=BGE-base, 960=GIST, 1024=BGE-large, 1536=OpenAI (default: 384)",
     )
     parser.add_argument(
         "--engines",
