@@ -1,0 +1,500 @@
+= ProximaDB Workspace Refactor Plan
+:toc: auto
+:toclevels: 3
+
+== Decision
+
+Yes, the codebase should move deeper into a real workspace-oriented structure, but *not* as a one-shot crate explosion.
+
+The current repository already declares a Cargo workspace, but the root `proximadb` crate still owns nearly all modality, query, storage, server, and embedded concerns. That keeps the dependency graph wide, increases rebuild scope, and makes ownership boundaries fuzzy.
+
+The right target is:
+
+* modality crates for `vector`, `graph`, `document`, `relational`, and `observability`
+* a *small* set of common/foundation crates
+* a thin cross-model/query layer depending on modality traits, not modality internals
+* application crates for server, benchmarks, and embedded/bindings
+* a compatibility period where the existing root crate re-exports the new internal crates
+
+This is a technical-debt reduction and build-productivity initiative first, not just a directory cleanup.
+
+== Why This Refactor Is Worth Doing
+
+=== Current Problems
+
+* The root crate mixes storage engines, graph services, query planning, network protocols, bindings, security, and observability.
+* A change in one modality often forces a much larger rebuild than necessary.
+* Public API concerns and engine concerns are too close together.
+* Cross-model code can reach directly into concrete implementations instead of stable service traits.
+* Optional dependency weight is concentrated in one crate, which increases compile time and complicates feature gating.
+
+=== Expected Payoff
+
+* touching graph internals should not rebuild unrelated vector/document internals
+* touching pgwire or REST should mostly rebuild API/server crates
+* touching Python embedded glue should not force broad engine recompiles beyond its real dependencies
+* modality ownership becomes explicit
+* cross-model query logic becomes easier to reason about because it depends on stable contracts
+
+== Design Principles
+
+=== 1. Split by bounded context, not by file count
+
+The first split should follow architectural ownership, not arbitrary folder moves.
+
+=== 2. Keep common layers small
+
+Only genuinely shared types and contracts go into common crates. Common crates must not become a new monolith.
+
+=== 3. Query depends on traits, not concrete engines
+
+Cross-model planning and execution should consume modality service traits and capability contracts.
+
+=== 4. Avoid per-engine crate proliferation initially
+
+Do *not* create a crate for every storage engine (`sst`, `viper`, `nova`, etc.) in phase 1. That would create too many edges and too much churn too early.
+
+=== 5. Preserve compatibility during migration
+
+The root `proximadb` crate should remain as a transitional facade until downstream imports, binaries, and bindings are stable.
+
+=== 6. Optimize for incremental rebuilds
+
+Crate boundaries should align with change frequency and dependency weight.
+
+== Non-Goals
+
+* No big-bang rewrite.
+* No immediate rename of every public Rust path.
+* No splitting every submodule into its own crate.
+* No protocol-specific duplication of business logic.
+
+== Target Workspace Shape
+
+[source,text]
+----
+Cargo.toml
+crates/
+  foundation/
+    proximadb-kernel/
+    proximadb-config/
+    proximadb-proto/
+    proximadb-telemetry/
+  storage/
+    proximadb-storage-common/
+  modalities/
+    proximadb-vector/
+    proximadb-graph/
+    proximadb-document/
+    proximadb-relational/
+    proximadb-observability/
+  crossmodel/
+    proximadb-query/
+    proximadb-facade/
+  platform/
+    proximadb-api/
+    proximadb-runtime/
+apps/
+  proximadb-server/
+  proximadb-bench/
+bindings/
+  python-embedded/
+  nodejs-embedded/
+  java-embedded/
+clients/
+  rust/
+----
+
+== Crate Responsibilities
+
+=== `proximadb-kernel`
+
+Purpose:
+
+* core error/result types
+* IDs, metadata primitives, capability enums, common schemas
+* stable traits shared across modalities
+
+Must not contain:
+
+* transport code
+* engine implementations
+* modality-specific service logic
+
+=== `proximadb-config`
+
+Purpose:
+
+* config models
+* feature/profile/config loading primitives
+* validated runtime configuration objects
+
+Rationale:
+
+* config changes should not rebuild engine code unless types actually flow into those crates
+
+=== `proximadb-proto`
+
+Purpose:
+
+* protobuf-generated types
+* tonic/prost codegen ownership
+* protocol conversion helpers
+
+Rationale:
+
+* `build.rs` and proto generation move out of the root monolith
+* proto-only changes rebuild protocol dependents, not everything else first
+
+=== `proximadb-telemetry`
+
+Purpose:
+
+* tracing, metrics facade, instrumentation helpers
+* shared observability contracts
+
+=== `proximadb-storage-common`
+
+Purpose:
+
+* storage abstractions genuinely shared across modalities
+* object store adapters, file abstraction, mmap helpers, WAL/IO primitives where truly common
+
+Must not become:
+
+* a second monolith that all modalities dump code into
+
+Rule:
+
+* if a storage abstraction is only used by one modality, keep it in that modality crate
+
+=== `proximadb-vector`
+
+Owns:
+
+* vector search engines and indexing
+* quantization, ANN, scoring, vector operations services
+* vector-specific storage engines and execution contracts
+
+Current source gravity:
+
+* `src/core/search/**`
+* vector portions of `src/index/**`
+* vector-specific `src/storage/engines/**`
+* vector operations in `src/services/**`
+
+=== `proximadb-graph`
+
+Owns:
+
+* graph engines
+* graph services and traversal APIs
+* graph query parser/executor/planner
+* graph hybrid/rag internals
+
+Current source gravity:
+
+* `src/graph/**`
+* graph-specific storage and service wiring
+* graph subset/runtime helpers after stabilization
+
+=== `proximadb-document`
+
+Owns:
+
+* document store
+* full-text indexing/querying
+* document ingestion and query service contracts
+
+Current source gravity:
+
+* document portions of `src/storage/document/**`
+* document query operations and text retrieval pieces
+
+=== `proximadb-relational`
+
+Owns:
+
+* SQL frontend pieces that are fundamentally relational/tabular
+* pgwire-facing relational semantics
+* table/schema/row-layer contracts
+
+Current source gravity:
+
+* SQL parser integration and relational execution pieces
+* `src/network/postgres/**` once split from server glue
+
+=== `proximadb-observability`
+
+Owns:
+
+* logs, metrics, traces, event-log style observability services
+* observability-specific ingestion and query contracts
+
+Current source gravity:
+
+* `src/observability/**`
+* observability parts of `src/storage/**`
+
+=== `proximadb-query`
+
+Purpose:
+
+* unified/federated/facade/cross-model planning and execution
+* capability registry
+* lowering and fusion
+
+Depends on:
+
+* modality traits/contracts
+* kernel/proto/config
+
+Must not depend on:
+
+* server transport code
+* embedded Python details
+
+=== `proximadb-api`
+
+Purpose:
+
+* REST, gRPC, Arrow Flight, pgwire adapters
+* request/response shaping
+* protocol-level validation and mapping
+
+Rule:
+
+* protocol crates call into runtime/query/service contracts
+* business logic stays out
+
+=== `proximadb-runtime`
+
+Purpose:
+
+* top-level orchestration
+* service composition
+* auth/security/middleware integration
+* cluster/runtime wiring
+
+=== App and Binding Crates
+
+`apps/proximadb-server`:
+
+* binary entrypoint only
+
+`bindings/*`:
+
+* embedded/language binding glue only
+* should consume runtime/query/modality contracts rather than define them
+
+== Dependency Rules
+
+The workspace should enforce a mostly one-way flow:
+
+[source,text]
+----
+foundation -> storage-common -> modality crates -> query/facade -> api/runtime -> apps/bindings
+----
+
+Detailed rules:
+
+* `foundation/*` must not depend on modality crates.
+* modality crates may depend on `foundation/*` and `storage-common`.
+* `proximadb-query` may depend on modality traits and shared contracts, but not server glue.
+* `proximadb-api` may depend on `proximadb-query` and `proximadb-runtime`, but not concrete engine internals directly.
+* bindings must depend on stable runtime/query/modality surfaces, not reach back into random internal modules.
+
+== Transitional Compatibility Strategy
+
+The existing root crate should remain temporarily as:
+
+* a facade/re-export crate
+* a migration shell for downstream imports
+* a compatibility point for existing binaries and embedded builds
+
+During transition:
+
+* move code physically into new crates
+* re-export public paths from root where needed
+* gradually update binaries, tests, and bindings to target new crates directly
+* only remove root re-export layers after consumers are stable
+
+== Recommended Migration Phases
+
+=== Phase 0: Workspace Hygiene
+
+Do first:
+
+* normalize `[workspace]` metadata and shared dependency versions
+* introduce workspace-wide lint/profile policy
+* create `xtask` or scripts for crate graph checks, forbidden dependency edges, and coverage/build workflows
+
+Output:
+
+* reproducible workspace conventions before code movement
+
+=== Phase 1: Extract Foundation Crates
+
+Move first because they are lowest-risk and highest rebuild leverage:
+
+* `proximadb-proto`
+* `proximadb-kernel`
+* `proximadb-config`
+* `proximadb-telemetry`
+
+Why first:
+
+* these reduce root crate breadth immediately
+* they establish clean dependency anchors for later crate extraction
+
+=== Phase 2: Extract Modality Service Boundaries
+
+Before moving large code volumes:
+
+* define modality service traits and stable request/result types
+* make cross-model/query code depend on those traits
+* reduce direct cross-module concrete calls
+
+This is the most important design phase because it prevents cyclic crates later.
+
+=== Phase 3: Extract `proximadb-graph` and `proximadb-vector`
+
+These are the highest-value first modality crates because:
+
+* they are large
+* they change frequently
+* they have the most obvious ownership boundaries
+* they drive many rebuilds today
+
+Important:
+
+* keep graph query parser/executor with graph
+* keep vector engines/indexing with vector
+* do not strand shared cross-model query logic inside either crate
+
+=== Phase 4: Extract `proximadb-document`, `proximadb-observability`, and `proximadb-relational`
+
+After graph/vector boundaries are proven:
+
+* move document services and text indexing
+* move logs/metrics/traces/event-log behavior
+* move relational/tabular SQL execution pieces
+
+=== Phase 5: Extract `proximadb-query`, `proximadb-api`, and `proximadb-runtime`
+
+Once modality crates are real:
+
+* shrink the current `src/query/**` into a true cross-model crate
+* move transport adapters into `proximadb-api`
+* move orchestration/security/cluster composition into `proximadb-runtime`
+
+=== Phase 6: Thin Root Crate and Direct App Wiring
+
+Final state:
+
+* root crate is minimal compatibility shell or removed from hot-path development
+* `apps/proximadb-server` depends on runtime/api/query/modality crates explicitly
+* bindings depend on stable exported contracts
+
+== Rebuild Impact Model
+
+This refactor is justified only if rebuild scope becomes materially smaller.
+
+Examples:
+
+* changing `proximadb-graph` query runtime should rebuild `proximadb-graph`, `proximadb-query`, `proximadb-api/runtime`, and dependent apps, but not vector/document internals
+* changing `proximadb-vector` ANN logic should not rebuild graph internals
+* changing REST handler serialization should mostly rebuild `proximadb-api` and app crates
+* changing protobufs should rebuild `proximadb-proto` dependents, not force a full monolith-style recompilation first
+* changing Python embedded binding code should rebuild the binding crate and its direct runtime dependencies, not unrelated modality internals
+
+== Critical Risks
+
+=== Risk 1: Cyclic dependencies
+
+Mitigation:
+
+* trait-first extraction before crate extraction
+* dependency graph checks in CI
+
+=== Risk 2: “Common” crates becoming junk drawers
+
+Mitigation:
+
+* strict admission rule for shared crates
+* if code is not used by multiple bounded contexts, it stays local
+
+=== Risk 3: Over-splitting too early
+
+Mitigation:
+
+* start with modality crates, not engine-per-crate
+* delay finer-grained engine extraction until compile telemetry proves it is worth it
+
+=== Risk 4: Public API churn
+
+Mitigation:
+
+* transitional root facade
+* staged re-exports
+* binding/client migration after internal boundaries settle
+
+== CI and Tooling Changes Required
+
+The workspace plan should be accompanied by:
+
+* per-crate `cargo check` and `cargo test` CI targets
+* dependency direction linting
+* crate-level coverage baselines
+* incremental build timing capture before and after each phase
+* `cargo hakari` or equivalent only if dependency unification becomes painful
+
+== Success Metrics
+
+Success should be measured, not assumed.
+
+Target metrics:
+
+* materially lower incremental rebuild time for graph/vector-only changes
+* smaller average crate dependency fan-in/out
+* fewer direct imports across unrelated modalities
+* reduced root crate LOC and dependency count
+* clearer ownership for graph, vector, document, relational, and observability code
+
+== Recommended First Implementation Slice
+
+Do *not* start by moving everything.
+
+Start with:
+
+1. `proximadb-proto`
+2. `proximadb-kernel`
+3. `proximadb-config`
+4. `proximadb-telemetry`
+5. graph/vector service trait cleanup in place
+6. extract `proximadb-graph`
+7. extract `proximadb-vector`
+
+This sequence gives the best signal on whether workspace modularization is improving rebuild scope without destabilizing the entire product.
+
+== Immediate Follow-Up Deliverables
+
+The next concrete follow-ups should be:
+
+* crate dependency map of current `src/**` modules to proposed target crates
+* “forbidden dependency edges” list
+* build/rebuild benchmark baseline before extraction
+* phase-1 implementation checklist for foundation crate extraction
+
+== Bottom Line
+
+Refactor into a deeper workspace, yes.
+
+Do it as a staged architectural split with trait-first boundaries and a temporary compatibility facade, not as a one-shot file move or a crate-per-folder explosion.
+
+That approach is the best fit for:
+
+* faster rebuilds
+* cleaner modality ownership
+* better long-term maintainability
+* scalable cross-model evolution without duplicating logic across graph, vector, document, relational, and embedded surfaces

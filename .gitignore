@@ -230,6 +230,9 @@ system_monitor.txt
 artifacts/proximadb_*/
 artifacts/embedded_victor_shape*.json
 artifacts/panic_policy/
+artifacts/coverage/
+artifacts/proximadb_embedded*/
+artifacts/tmp_embedded_site*/
 src/graph/rag/engine_impls_test.rs.disabled
 
 # Serverless/Cloud function packages
