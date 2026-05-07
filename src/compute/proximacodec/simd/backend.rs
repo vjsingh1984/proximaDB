@@ -3,7 +3,6 @@
 //! This module handles hardware detection and memory pool configuration
 //! for SIMD operations.
 
-use anyhow::Result;
 use std::sync::{Arc, OnceLock};
 use tracing::debug;
 

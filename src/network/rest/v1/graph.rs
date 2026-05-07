@@ -72,8 +72,9 @@ use tracing::{debug, error, info, warn};
 
 // Use proto types directly with custom serde implementations
 use crate::graph::engines::GraphEngine;
-use crate::graph::rag::engine_impls::{KHopSubgraphBuilder, VectorNodeRetriever};
-use crate::graph::rag::{RagBudget, RagPipeline, RagQuery, Subgraph};
+use crate::graph::rag::{
+    KHopSubgraphBuilder, RagBudget, RagPipeline, RagQuery, Subgraph, VectorNodeRetriever,
+};
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{Edge, Node};
 use crate::proto::proximadb_v1::{EmbeddingVersion, PropertyValue};
@@ -202,6 +203,9 @@ pub struct RagRequest {
     /// Number of hops for subgraph expansion (default: 2).
     #[serde(default = "default_rag_hops")]
     pub hops: u32,
+    /// Whether to use LLM-based dynamic node filtering (TD-045).
+    #[serde(default)]
+    pub use_llm_filter: bool,
 }
 
 fn default_rag_hops() -> u32 {
@@ -2639,16 +2643,46 @@ pub async fn rag_query(
         max_subgraph_nodes: request.budget.max_subgraph_nodes,
     };
 
-    let pipeline = RagPipeline::new(retriever, builder, budget);
-
-    // 3. Execute RGL query
+    // 3. Execute RGL query with optional LLM filtering
     let rag_query = RagQuery {
         query: request.query,
         query_vector: request.query_vector,
         allowed_labels: request.allowed_labels,
     };
 
-    match pipeline.run(&rag_query).await {
+    if request.use_llm_filter {
+        if app_state.llm_engine.is_some() {
+            warn!(
+                "LLM filter requested for graph {} but no LLM-aware node filter is currently wired; using the standard RAG pipeline",
+                graph_id
+            );
+            let pipeline = RagPipeline::without_filter(retriever, builder, budget);
+            execute_rag_pipeline(pipeline, &rag_query, &graph_id).await
+        } else {
+            warn!(
+                "LLM filter requested but LLM engine not available; using the standard RAG pipeline"
+            );
+            let pipeline = RagPipeline::without_filter(retriever, builder, budget);
+            execute_rag_pipeline(pipeline, &rag_query, &graph_id).await
+        }
+    } else {
+        let pipeline = RagPipeline::without_filter(retriever, builder, budget);
+        execute_rag_pipeline(pipeline, &rag_query, &graph_id).await
+    }
+}
+
+/// Helper to execute the pipeline and format the response
+async fn execute_rag_pipeline<R, B, F>(
+    pipeline: RagPipeline<R, B, F>,
+    query: &RagQuery,
+    graph_id: &str,
+) -> Response
+where
+    R: crate::graph::rag::NodeRetriever,
+    B: crate::graph::rag::SubgraphBuilder,
+    F: crate::graph::rag::NodeFilter,
+{
+    match pipeline.run(query).await {
         Ok(subgraph) => {
             info!(
                 "Successfully executed RGL query for graph {}: {} nodes, {} edges",
@@ -2660,7 +2694,7 @@ pub async fn rag_query(
         }
         Err(err) => {
             error!("RGL query failed for graph {}: {}", graph_id, err);
-            let graph_error = GraphError::new(ErrorCode::InternalError, err.to_string());
+            let graph_error = GraphError::internal(err.to_string());
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(GraphResponse::<RestSubgraph>::error(graph_error)),

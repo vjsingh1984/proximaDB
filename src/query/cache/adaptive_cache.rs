@@ -263,7 +263,7 @@ impl AdaptiveQueryCache {
         let mut prefetch_count = 0;
 
         // Find entries with predicted access times within the next minute
-        self.cache.retain(|key, entry| {
+        self.cache.retain(|_key, entry| {
             if let Some(predicted_access) = entry.predicted_next_access {
                 let time_until_access = predicted_access.saturating_duration_since(now);
 
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_cache_entry_expiration() {
-        let mut entry =
+        let entry =
             AdaptiveCacheEntry::new(CachedQueryResult::default(), Duration::from_millis(100));
 
         // Initially not expired

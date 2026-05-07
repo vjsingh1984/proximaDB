@@ -147,7 +147,7 @@ impl LowLatencyExecutor {
     /// Execute a single operation with potential streaming
     async fn execute_operation_streaming(
         &self,
-        operation: &ExecutionOperation,
+        _operation: &ExecutionOperation,
     ) -> Result<Vec<QueryRow>> {
         // Simulate operation execution
         // In real implementation, this would delegate to specific operation handlers
@@ -155,7 +155,7 @@ impl LowLatencyExecutor {
     }
 
     /// Execute a single operation
-    async fn execute_operation(&self, operation: &ExecutionOperation) -> Result<Vec<QueryRow>> {
+    async fn execute_operation(&self, _operation: &ExecutionOperation) -> Result<Vec<QueryRow>> {
         // Delegate to existing executor logic
         // This is a placeholder for the actual implementation
         Ok(vec![])
@@ -212,7 +212,7 @@ impl LowLatencyExecutor {
     }
 
     /// Try to convert query result to cacheable format
-    fn try_convert_to_cacheable(&self, result: &QueryResult) -> Option<CachedQueryResult> {
+    fn try_convert_to_cacheable(&self, _result: &QueryResult) -> Option<CachedQueryResult> {
         // Convert to cacheable result format
         // This is a simplified implementation
         Some(CachedQueryResult {
@@ -298,8 +298,8 @@ impl LowLatencyMetrics {
 
 /// Query execution with streaming support
 pub async fn execute_query_streaming(
-    executor: &LowLatencyExecutor,
-    plan: &ExecutionPlan,
+    _executor: &LowLatencyExecutor,
+    _plan: &ExecutionPlan,
 ) -> Result<impl Stream<Item = Vec<QueryRow>>> {
     // This would return a proper async stream in production
     // For now, return a placeholder

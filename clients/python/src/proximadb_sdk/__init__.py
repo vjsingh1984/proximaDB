@@ -590,6 +590,10 @@ _OPTIONAL_EXPORTS = {
         ".integrations.victor",
         "ProximaDBEmbeddingProvider",
     ),
+    "ProximaDBGraphStore": (
+        ".integrations.victor_graph",
+        "ProximaDBGraphStore",
+    ),
     "ProximaDBKnowledgeSource": (
         ".integrations.crewai",
         "ProximaDBKnowledgeSource",

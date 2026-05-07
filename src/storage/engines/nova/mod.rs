@@ -475,8 +475,6 @@ mod tests {
         hierarchical_stats::*, progressive_search::*, streaming_processor::*, streaming_search::*,
         zone_maps::*,
     };
-    use anyhow::Result;
-    use std::sync::Arc;
     use tokio;
 
     mod hierarchical_stats_tests {
@@ -490,7 +488,7 @@ mod tests {
                 vec![7.0, 8.0, 9.0],
             ];
 
-            let zone_map = ZoneMap::from_vectors(&vectors).unwrap();
+            let zone_map = hierarchical_stats::ZoneMap::from_vectors(&vectors).unwrap();
 
             // Test basic properties
             assert_eq!(zone_map.dimension, 3);
@@ -535,8 +533,11 @@ mod tests {
         }
 
         fn create_test_enhanced_stats(id: u32) -> EnhancedRowGroupStats {
-            let zone_map =
-                ZoneMap::from_vectors(&[vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]).unwrap();
+            let zone_map = hierarchical_stats::ZoneMap::from_vectors(&[
+                vec![1.0, 2.0, 3.0],
+                vec![4.0, 5.0, 6.0],
+            ])
+            .unwrap();
 
             EnhancedRowGroupStats {
                 row_group_id: id,
@@ -694,7 +695,7 @@ mod tests {
             let other_sketch = BinarySketch::from_vector(&other_vector);
 
             let distance = sketch.hamming_distance(&other_sketch);
-            assert!(distance >= 0);
+            assert_eq!(distance, 0);
         }
 
         #[test]
@@ -733,7 +734,7 @@ mod tests {
         fn test_query_characteristics() {
             let query = vec![1.0, 0.0, 2.0, 0.0, 3.0];
             let characteristics =
-                QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
+                zone_maps::QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
 
             assert_eq!(characteristics.top_k, 10);
             assert_eq!(characteristics.sparsity, 0.4); // 2/5 zeros
@@ -750,7 +751,7 @@ mod tests {
                 training_samples: 100,
             };
 
-            let characteristics = QueryCharacteristics {
+            let characteristics = zone_maps::QueryCharacteristics {
                 norm: 2.0,
                 sparsity: 0.3,
                 dominant_dimensions: vec![0, 1, 2],
@@ -797,9 +798,9 @@ mod tests {
             use crate::storage::engines::nova::streaming_search::{
                 ActualPerformance, PerformanceTracker,
             };
-            let mut tracker = PerformanceTracker::new();
+            let tracker = PerformanceTracker::new();
 
-            let characteristics = zone_maps::QueryCharacteristics {
+            let _characteristics = zone_maps::QueryCharacteristics {
                 norm: 1.0,
                 sparsity: 0.1,
                 dominant_dimensions: vec![0, 1, 2], // First 3 dimensions are dominant
@@ -807,7 +808,7 @@ mod tests {
                 top_k: 10,
             };
 
-            let performance = ActualPerformance {
+            let _performance = ActualPerformance {
                 latency_ms: 500,
                 memory_peak: 64 * 1024 * 1024,
                 candidates_processed: 1000,
@@ -826,10 +827,10 @@ mod tests {
         #[test]
         fn test_selectivity_estimation() {
             use crate::storage::engines::nova::streaming_search::PerformanceTracker;
-            let tracker = PerformanceTracker::new();
+            let _tracker = PerformanceTracker::new();
 
             // Test sparse query
-            let sparse_characteristics = zone_maps::QueryCharacteristics {
+            let _sparse_characteristics = zone_maps::QueryCharacteristics {
                 norm: 1.0,
                 sparsity: 0.9, // Very sparse
                 dominant_dimensions: vec![0, 1, 2],
@@ -842,7 +843,7 @@ mod tests {
             // assert_eq!(selectivity, 0.1); // Should be highly selective
 
             // Test dense query
-            let dense_characteristics = zone_maps::QueryCharacteristics {
+            let _dense_characteristics = zone_maps::QueryCharacteristics {
                 norm: 1.0,
                 sparsity: 0.1, // Dense
                 dominant_dimensions: vec![0, 1, 2],
@@ -875,7 +876,7 @@ mod tests {
 
             // 1. Create test data
             let vectors = create_test_vectors(1000, 768);
-            let zone_map = ZoneMap::from_vectors(&vectors).unwrap();
+            let zone_map = hierarchical_stats::ZoneMap::from_vectors(&vectors).unwrap();
 
             // 2. Create enhanced statistics
             let enhanced_stats = create_test_enhanced_stats_vec(10);
@@ -891,7 +892,7 @@ mod tests {
             // 5. Test query characteristics analysis
             let query = create_test_query(768);
             let characteristics =
-                QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
+                zone_maps::QueryCharacteristics::from_query(&query, "euclidean".to_string(), 10);
 
             // Dimension is derived from query vector length, not stored in QueryCharacteristics
             assert_eq!(characteristics.top_k, 10);
@@ -930,8 +931,11 @@ mod tests {
         fn create_test_enhanced_stats_vec(count: usize) -> Vec<EnhancedRowGroupStats> {
             (0..count)
                 .map(|i| {
-                    let zone_map =
-                        ZoneMap::from_vectors(&[vec![1.0, 2.0, 3.0], vec![4.0, 5.0, 6.0]]).unwrap();
+                    let zone_map = hierarchical_stats::ZoneMap::from_vectors(&[
+                        vec![1.0, 2.0, 3.0],
+                        vec![4.0, 5.0, 6.0],
+                    ])
+                    .unwrap();
 
                     EnhancedRowGroupStats {
                         row_group_id: i as u32,
@@ -978,7 +982,7 @@ mod tests {
             let vectors = create_large_test_dataset(10000, 768);
 
             let start = Instant::now();
-            let zone_map = ZoneMap::from_vectors(&vectors).unwrap();
+            let zone_map = hierarchical_stats::ZoneMap::from_vectors(&vectors).unwrap();
             let creation_time = start.elapsed();
 
             // Verify reasonable creation time (should be under 1 second)
@@ -1036,9 +1040,9 @@ mod tests {
             let large_vectors = create_large_test_dataset(5000, 512);
 
             // Create zone maps and verify they complete successfully
-            let small_zone = ZoneMap::from_vectors(&small_vectors).unwrap();
-            let medium_zone = ZoneMap::from_vectors(&medium_vectors).unwrap();
-            let large_zone = ZoneMap::from_vectors(&large_vectors).unwrap();
+            let small_zone = hierarchical_stats::ZoneMap::from_vectors(&small_vectors).unwrap();
+            let medium_zone = hierarchical_stats::ZoneMap::from_vectors(&medium_vectors).unwrap();
+            let large_zone = hierarchical_stats::ZoneMap::from_vectors(&large_vectors).unwrap();
 
             // Verify dimensions are correct
             assert_eq!(small_zone.dimension, 128);

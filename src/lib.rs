@@ -364,7 +364,6 @@ pub use connectors::{
 };
 
 // Re-export key storage format types for format abstraction
-use std::sync::Arc;
 pub use storage::formats::{
     // Format registry
     FormatRegistry,
@@ -375,11 +374,6 @@ pub use storage::formats::{
     StorageFormat,
     WriteContext as FormatWriteContext,
 };
-use tokio::sync::RwLock;
-use tracing::info;
-
-// RL Planner checkpoint interval (5 minutes default)
-const RL_CHECKPOINT_INTERVAL_SECS: u64 = 300;
 
 /// Convenience result type using a boxed dynamic error for cross-layer propagation.
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;

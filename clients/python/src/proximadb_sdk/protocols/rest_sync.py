@@ -2976,6 +2976,104 @@ class ProximaDBClient:
             "next_token": result.get("next_token"),
         }
 
+    def query_edges(
+        self,
+        edge_type: str = "",
+        from_node_id: Optional[str] = None,
+        to_node_id: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        graph_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Query edges by endpoints, type, and properties via REST."""
+        payload: Dict[str, Any] = {
+            "edge_type": edge_type,
+            "properties": properties or {},
+        }
+        if from_node_id is not None:
+            payload["from_node_id"] = from_node_id
+        if to_node_id is not None:
+            payload["to_node_id"] = to_node_id
+        if limit is not None:
+            payload["limit"] = limit
+        if offset is not None:
+            payload["offset"] = offset
+
+        response = self._http_client.post(
+            f"/api/v1/graph/graphs/{graph_id}/query/edges", json=payload
+        )
+        response.raise_for_status()
+        result = response.json()
+        return {
+            "success": result.get("success", True),
+            "edges": result.get("data", []),
+            "total_count": len(result.get("data", [])),
+            "next_token": result.get("next_token"),
+        }
+
+    def get_node(
+        self,
+        node_id: str,
+        graph_id: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Get a graph node by ID via REST."""
+        response = self._http_client.get(f"/api/v1/graph/graphs/{graph_id}/nodes/{node_id}")
+        response.raise_for_status()
+        result = response.json()
+        return result.get("data", result)
+
+    def get_outgoing_edges(
+        self,
+        node_id: str,
+        edge_types: Optional[List[str]] = None,
+        graph_id: str = "default",
+    ) -> List[Dict[str, Any]]:
+        """Get outgoing graph edges for a node via REST."""
+        edge_types = edge_types or [""]
+        edges: List[Dict[str, Any]] = []
+        for edge_type in edge_types:
+            result = self.query_edges(
+                edge_type=edge_type,
+                from_node_id=node_id,
+                graph_id=graph_id,
+                limit=10000,
+            )
+            edges.extend(result.get("edges", []))
+        return edges
+
+    def get_incoming_edges(
+        self,
+        node_id: str,
+        edge_types: Optional[List[str]] = None,
+        graph_id: str = "default",
+    ) -> List[Dict[str, Any]]:
+        """Get incoming graph edges for a node via REST."""
+        edge_types = edge_types or [""]
+        edges: List[Dict[str, Any]] = []
+        for edge_type in edge_types:
+            result = self.query_edges(
+                edge_type=edge_type,
+                to_node_id=node_id,
+                graph_id=graph_id,
+                limit=10000,
+            )
+            edges.extend(result.get("edges", []))
+        return edges
+
+    def delete_node(
+        self,
+        node_id: str,
+        graph_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Delete a graph node by ID via REST."""
+        response = self._http_client.delete(
+            f"/api/v1/graph/graphs/{graph_id}/nodes/{node_id}"
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result.get("data", result)
+
     # ==================== Graph Collection Management ====================
     # Methods for managing graph collections (create, delete, list, get)
 

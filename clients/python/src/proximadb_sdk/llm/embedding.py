@@ -23,7 +23,7 @@ class EmbeddingService:
     Usage:
         service = EmbeddingService(EmbeddingConfig(
             provider=EmbeddingProvider.SENTENCE_TRANSFORMERS,
-            model_name="all-MiniLM-L12-v2",
+            model_name="BAAI/bge-small-en-v1.5",
         ))
         await service.initialize()
         embedding = await service.embed_text("Hello, world!")

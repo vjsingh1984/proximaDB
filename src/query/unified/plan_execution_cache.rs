@@ -28,7 +28,7 @@
 //! executor (TD-047 sub A wiring follow-up); shipping the cache and
 //! optimizer integration first keeps the change reviewable.
 
-use super::ast::{ModelOperation, QueryComponent};
+use super::ast::QueryComponent;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;

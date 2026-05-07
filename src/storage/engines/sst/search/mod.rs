@@ -554,24 +554,27 @@ impl SstEngine {
             return Ok(all_files);
         }
 
-        // [AGENT_FIX] If the search mode is not explicitly 'Approximate' with a defined
-        // pruning strategy, it should be treated as an exact search. This corrects a
-        // flaw where default-constructed SearchParams would lead to an unintended
-        // approximate search.
-        if !matches!(search_mode, SearchMode::Approximate { .. }) {
+        // Only Approximate and large-dataset Adaptive searches should use centroid pruning.
+        if !matches!(
+            search_mode,
+            SearchMode::Approximate { .. } | SearchMode::Adaptive { .. }
+        ) {
             tracing::warn!(
-                "Search mode is not 'Approximate', but centroid pruning was called. Forcing exact search by returning all files."
+                "Search mode is neither 'Approximate' nor 'Adaptive', forcing exact search by returning all files."
             );
             return Ok(all_files);
         }
 
-        // For adaptive mode with small datasets, search all files
-        if let SearchMode::Adaptive {
-            threshold: _threshold,
-        } = search_mode
-            && all_files.len() <= 3
-        {
-            return Ok(all_files);
+        if let SearchMode::Adaptive { threshold } = search_mode {
+            let estimated_dataset_size = all_files.len() * 1000;
+            if estimated_dataset_size < *threshold {
+                tracing::debug!(
+                    "Adaptive SST pruning skipped: estimated dataset size {} < threshold {}",
+                    estimated_dataset_size,
+                    threshold
+                );
+                return Ok(all_files);
+            }
         }
 
         // Calculate effective nprobe based on search mode and number of files

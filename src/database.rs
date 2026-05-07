@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-// Convenience result type using a boxed dynamic error for cross-layer propagation
+/// Convenience result type using a boxed dynamic error for cross-layer propagation.
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 // RL Planner checkpoint interval (5 minutes default)
@@ -195,6 +195,19 @@ impl ProximaDB {
 
         // SharedServices and metrics collector already created above
 
+        // Initialize LLM engine if configured
+        let llm_engine = if let Some(llm_cfg) = config.llm.clone() {
+            match crate::ai::llm_integration::LLMIntegrationEngine::new(llm_cfg).await {
+                Ok(engine) => Some(Arc::new(engine)),
+                Err(err) => {
+                    tracing::warn!("LLM engine initialization failed: {:?}", err);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
         let rest_auth_enabled = config
@@ -206,6 +219,7 @@ impl ProximaDB {
             shared_services,
             security.clone(),
             rest_auth_enabled,
+            llm_engine,
         );
         // Wire storage engine for PostgreSQL wire protocol support
         multi_server.set_storage(storage.clone());

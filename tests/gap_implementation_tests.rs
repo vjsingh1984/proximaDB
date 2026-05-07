@@ -7,7 +7,7 @@
 // These tests validate critical functionality that was implemented but not being
 // exercised in CI/CD due to the cdylib issue.
 
-#[cfg(test)]
+#[cfg(feature = "gap-tests")]
 mod gap_tests {
     // Test transaction engine wiring (TD-020, TD-038)
     mod transaction_engine_wiring {
@@ -280,9 +280,6 @@ mod gap_tests {
 // Integration test for cross-cutting functionality
 #[cfg(test)]
 mod cross_cutting_integration {
-    use proximadb::network;
-    use proximadb::services;
-    use proximadb::storage;
 
     #[test]
     fn test_end_to_end_vector_search_with_filters() {

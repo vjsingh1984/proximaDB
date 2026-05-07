@@ -23,6 +23,7 @@ use arrow::array::{
 use arrow::compute::{concat, take};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow_buffer::NullBuffer;
+use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -35,6 +36,11 @@ use crate::proto::proximadb_v1::{
     Collection, DocFilterCondition, DocFilterOperator, DocumentFilter, Node, PropertyValue,
     SqlObject, SqlValue, property_value, sql_value,
 };
+use crate::query::graph_lowering::lower_supported_graph_query_expr;
+use crate::query::graph_runtime::{
+    execute_graph_query_expr_with_start_nodes, legacy_graph_row_to_node,
+};
+use crate::query::graph_subset::discover_default_graph_id;
 use crate::storage::multimodel::{ModelType, MultiModelStorageFacade};
 use crate::storage::traits::{
     DocumentRecord, DocumentStorageOperations, MetricAggregationParams,
@@ -184,6 +190,25 @@ enum NativeVectorLayout {
     Variable,
 }
 
+#[derive(Clone, Copy)]
+enum ProjectedGraphColumnType {
+    Boolean,
+    Int64,
+    Float64,
+    Utf8,
+}
+
+impl ProjectedGraphColumnType {
+    fn arrow_type(self) -> DataType {
+        match self {
+            Self::Boolean => DataType::Boolean,
+            Self::Int64 => DataType::Int64,
+            Self::Float64 => DataType::Float64,
+            Self::Utf8 => DataType::Utf8,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NativeVectorColumnSpec {
     output_name: String,
@@ -199,6 +224,12 @@ const VECTOR_SOURCE_ALIAS_METADATA_KEY: &str = "proximadb.federated.vector_sourc
 pub struct FederatedExecutor {
     /// Multi-model storage facade
     storage: Arc<MultiModelStorageFacade>,
+    /// Collection metadata resolver for storage assignments and engine details
+    collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
+    /// Reuse the existing vector service so SQL VECTOR_SEARCH follows the
+    /// same engine resolution, WAL visibility, and scoring path as direct search.
+    vector_operations_service:
+        Option<Arc<crate::services::operations::vectors::VectorOperationsService>>,
     /// Execution configuration
     config: ExecutionConfig,
 }
@@ -232,13 +263,41 @@ impl FederatedExecutor {
     pub fn new(storage: Arc<MultiModelStorageFacade>) -> Self {
         Self {
             storage,
+            collection_service: None,
+            vector_operations_service: None,
             config: ExecutionConfig::default(),
         }
     }
 
     /// Create with custom configuration
     pub fn with_config(storage: Arc<MultiModelStorageFacade>, config: ExecutionConfig) -> Self {
-        Self { storage, config }
+        Self {
+            storage,
+            collection_service: None,
+            vector_operations_service: None,
+            config,
+        }
+    }
+
+    /// Reuse live collection metadata instead of synthesizing collection configs.
+    pub fn with_collection_service(
+        mut self,
+        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+    ) -> Self {
+        self.collection_service = Some(collection_service);
+        self
+    }
+
+    /// Reuse the live vector operations service instead of bypassing it and
+    /// talking directly to the raw storage engine from federated SQL.
+    pub fn with_vector_operations(
+        mut self,
+        vector_operations_service: Arc<
+            crate::services::operations::vectors::VectorOperationsService,
+        >,
+    ) -> Self {
+        self.vector_operations_service = Some(vector_operations_service);
+        self
     }
 
     /// Execute a query plan
@@ -487,13 +546,6 @@ impl FederatedExecutor {
             Field::new("score", DataType::Float32, false),
         ]));
 
-        let vector_store = self
-            .storage
-            .get_vector_store()
-            .ok_or_else(|| anyhow!("Vector store is not configured"))?;
-        let engine = vector_store
-            .primary_engine()
-            .ok_or_else(|| anyhow!("Vector store has no primary engine"))?;
         let query_vector = self.resolve_query_vector(query_vector_source)?;
 
         if query_vector.is_empty() {
@@ -503,16 +555,104 @@ impl FederatedExecutor {
             ));
         }
 
+        if let Some(vector_ops) = &self.vector_operations_service {
+            let request = crate::proto::proximadb_v1::VectorSearchRequest {
+                collection_id: collection.to_string(),
+                queries: vec![crate::proto::proximadb_v1::SearchQuery {
+                    vector: query_vector,
+                    filters: std::collections::HashMap::new(),
+                    advanced_filter: None,
+                }],
+                top_k: top_k as u32,
+                include_fields: Some(crate::proto::proximadb_v1::IncludeFields {
+                    vector: false,
+                    metadata: false,
+                    score: true,
+                    rank: false,
+                    source: false,
+                    source_options: Default::default(),
+                }),
+                search_params: None,
+                distance_metric_override: None,
+                search_optimization: None,
+            };
+
+            let response = vector_ops.search_v1(request).await?;
+            let records = response
+                .results
+                .map(|result| result.results)
+                .unwrap_or_default();
+
+            if records.is_empty() {
+                return Ok(ExecutionResult::empty_with_schema(schema));
+            }
+
+            let ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
+            let scores: Vec<f32> = records
+                .iter()
+                .map(|r| r.similarity.unwrap_or(r.score as f32))
+                .collect();
+
+            let batch = RecordBatch::try_new(
+                schema.clone(),
+                vec![
+                    Arc::new(StringArray::from(ids)) as ArrayRef,
+                    Arc::new(Float32Array::from(scores)) as ArrayRef,
+                ],
+            )?;
+
+            return Ok(ExecutionResult::from_batch(batch));
+        }
+
+        let vector_store = self
+            .storage
+            .get_vector_store()
+            .ok_or_else(|| anyhow!("Vector store is not configured"))?;
+        let engine = vector_store
+            .primary_engine()
+            .ok_or_else(|| anyhow!("Vector store has no primary engine"))?;
+
         use crate::proto::proximadb_v1::CollectionConfig;
-        let collection_config = Arc::new(Collection {
-            id: collection.to_string(),
-            config: Some(CollectionConfig {
-                name: collection.to_string(),
-                dimension: query_vector.len() as u32,
+        let collection_config = if let Some(collection_service) = &self.collection_service {
+            match collection_service.collection(collection).await? {
+                Some(mut resolved) => {
+                    let mut config = resolved.config.take().unwrap_or_else(|| CollectionConfig {
+                        name: collection.to_string(),
+                        dimension: query_vector.len() as u32,
+                        ..Default::default()
+                    });
+
+                    if config.name.is_empty() {
+                        config.name = collection.to_string();
+                    }
+                    if config.dimension == 0 {
+                        config.dimension = query_vector.len() as u32;
+                    }
+
+                    resolved.config = Some(config);
+                    Arc::new(resolved)
+                }
+                None => Arc::new(Collection {
+                    id: collection.to_string(),
+                    config: Some(CollectionConfig {
+                        name: collection.to_string(),
+                        dimension: query_vector.len() as u32,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+            }
+        } else {
+            Arc::new(Collection {
+                id: collection.to_string(),
+                config: Some(CollectionConfig {
+                    name: collection.to_string(),
+                    dimension: query_vector.len() as u32,
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        });
+            })
+        };
 
         let search_params = Arc::new(SearchParams {
             top_k: Some(top_k),
@@ -527,7 +667,10 @@ impl FederatedExecutor {
         }
 
         let ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
-        let scores: Vec<f32> = results.iter().map(|r| r.score).collect();
+        let scores: Vec<f32> = results
+            .iter()
+            .map(|r| r.similarity.unwrap_or(r.score))
+            .collect();
 
         let batch = RecordBatch::try_new(
             schema.clone(),
@@ -551,6 +694,42 @@ impl FederatedExecutor {
             .storage
             .get_graph_store()
             .ok_or_else(|| anyhow!("Graph store is not configured"))?;
+
+        if let Some(graph_service) = graph_store.service() {
+            let default_graph = discover_default_graph_id(graph_service).await;
+            if let Ok(graph_query) =
+                lower_supported_graph_query_expr(cypher, None, default_graph.as_deref())
+            {
+                let executed = execute_graph_query_expr_with_start_nodes(
+                    graph_service,
+                    &graph_query,
+                    start_nodes.map(Vec::as_slice),
+                )
+                .await?;
+                if graph_query.uses_legacy_node_rows {
+                    let nodes = executed
+                        .rows
+                        .iter()
+                        .map(legacy_graph_row_to_node)
+                        .collect::<Result<Vec<_>>>()?;
+
+                    if nodes.is_empty() {
+                        return Ok(ExecutionResult::empty_with_schema(
+                            Self::graph_query_schema(&[], source_alias),
+                        ));
+                    }
+
+                    let batch = Self::build_graph_node_batch(&nodes, source_alias)?;
+                    return Ok(ExecutionResult::from_batch(batch));
+                }
+
+                let batch = Self::build_projected_graph_result_batch(
+                    &executed.rows,
+                    &graph_query.output_columns,
+                )?;
+                return Ok(ExecutionResult::from_batch(batch));
+            }
+        }
 
         let nodes = if let Some(start_node_ids) = start_nodes {
             let mut result_nodes = Vec::new();
@@ -589,6 +768,141 @@ impl FederatedExecutor {
         let batch = Self::build_graph_node_batch(&nodes, source_alias)?;
 
         Ok(ExecutionResult::from_batch(batch))
+    }
+    fn build_projected_graph_result_batch(
+        rows: &[JsonValue],
+        output_columns: &[String],
+    ) -> Result<RecordBatch> {
+        let inferred_types = output_columns
+            .iter()
+            .map(|column| Self::infer_projected_graph_column_type(rows, column))
+            .collect::<Vec<_>>();
+
+        let schema = Arc::new(Schema::new(
+            output_columns
+                .iter()
+                .zip(inferred_types.iter())
+                .map(|(column, column_type)| Field::new(column, column_type.arrow_type(), true))
+                .collect::<Vec<_>>(),
+        ));
+
+        if output_columns.is_empty() {
+            return Ok(RecordBatch::new_empty(schema));
+        }
+
+        let columns = output_columns
+            .iter()
+            .zip(inferred_types.iter())
+            .map(|(column, column_type)| {
+                Self::build_projected_graph_column(rows, column, *column_type)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        RecordBatch::try_new(schema, columns).map_err(Into::into)
+    }
+
+    fn infer_projected_graph_column_type(
+        rows: &[JsonValue],
+        column: &str,
+    ) -> ProjectedGraphColumnType {
+        let mut saw_float = false;
+        let mut saw_int = false;
+        let mut saw_bool = false;
+        let mut saw_string = false;
+        let mut saw_complex = false;
+
+        for row in rows {
+            let Some(value) = row
+                .as_object()
+                .and_then(|object| object.get(column))
+                .filter(|value| !value.is_null())
+            else {
+                continue;
+            };
+
+            match value {
+                JsonValue::Bool(_) => saw_bool = true,
+                JsonValue::Number(number) => {
+                    if number.is_i64() || number.is_u64() {
+                        saw_int = true;
+                    } else {
+                        saw_float = true;
+                    }
+                }
+                JsonValue::String(_) => saw_string = true,
+                JsonValue::Array(_) | JsonValue::Object(_) => saw_complex = true,
+                JsonValue::Null => {}
+            }
+        }
+
+        let scalar_kinds = [saw_bool, saw_int, saw_float, saw_string]
+            .into_iter()
+            .filter(|seen| *seen)
+            .count();
+        if saw_complex || scalar_kinds > 1 {
+            ProjectedGraphColumnType::Utf8
+        } else if saw_bool {
+            ProjectedGraphColumnType::Boolean
+        } else if saw_float {
+            ProjectedGraphColumnType::Float64
+        } else if saw_int {
+            ProjectedGraphColumnType::Int64
+        } else {
+            ProjectedGraphColumnType::Utf8
+        }
+    }
+
+    fn build_projected_graph_column(
+        rows: &[JsonValue],
+        column: &str,
+        column_type: ProjectedGraphColumnType,
+    ) -> Result<ArrayRef> {
+        match column_type {
+            ProjectedGraphColumnType::Boolean => Ok(Arc::new(arrow::array::BooleanArray::from(
+                rows.iter()
+                    .map(|row| {
+                        row.as_object()
+                            .and_then(|object| object.get(column))
+                            .and_then(JsonValue::as_bool)
+                    })
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef),
+            ProjectedGraphColumnType::Int64 => Ok(Arc::new(Int64Array::from(
+                rows.iter()
+                    .map(|row| {
+                        row.as_object()
+                            .and_then(|object| object.get(column))
+                            .and_then(JsonValue::as_i64)
+                    })
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef),
+            ProjectedGraphColumnType::Float64 => Ok(Arc::new(arrow::array::Float64Array::from(
+                rows.iter()
+                    .map(|row| {
+                        row.as_object()
+                            .and_then(|object| object.get(column))
+                            .and_then(JsonValue::as_f64)
+                    })
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef),
+            ProjectedGraphColumnType::Utf8 => Ok(Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| {
+                        row.as_object()
+                            .and_then(|object| object.get(column))
+                            .and_then(Self::projected_graph_utf8_value)
+                    })
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef),
+        }
+    }
+
+    fn projected_graph_utf8_value(value: &JsonValue) -> Option<String> {
+        match value {
+            JsonValue::Null => None,
+            JsonValue::String(value) => Some(value.clone()),
+            other => serde_json::to_string(other).ok(),
+        }
     }
 
     /// Execute document query
@@ -1233,6 +1547,7 @@ impl FederatedExecutor {
         }
     }
 
+    #[cfg(test)]
     fn resolve_vector_from_outer_column(
         &self,
         outer_batch: &RecordBatch,
@@ -3801,7 +4116,10 @@ impl FederatedExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::{VectorData, property_value};
+    use crate::graph::GraphOperationsService;
+    use crate::proto::proximadb_v1::{
+        CreateGraphRequest, Node as ProtoNode, VectorData, property_value,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -3843,6 +4161,236 @@ mod tests {
         let storage = Arc::new(MultiModelStorageFacade::new());
         let executor = FederatedExecutor::new(storage);
         assert!(executor.config.parallel_execution);
+    }
+
+    async fn seed_service_backed_graph() -> Arc<GraphOperationsService> {
+        let service = Arc::new(GraphOperationsService::new());
+        for graph_id in ["left", "right"] {
+            service
+                .create_graph_collection(CreateGraphRequest {
+                    graph_id: graph_id.to_string(),
+                    name: Some(graph_id.to_string()),
+                    description: None,
+                    schema: None,
+                    storage_config: None,
+                    engine_config: None,
+                    access_control: None,
+                })
+                .await
+                .expect("graph creation should succeed");
+        }
+
+        service
+            .create_node(
+                "left",
+                ProtoNode {
+                    id: "left-person".to_string(),
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::from([(
+                        "name".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::StringValue("Alice".to_string())),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            )
+            .await
+            .expect("left graph node should be created");
+        service
+            .create_node(
+                "right",
+                ProtoNode {
+                    id: "right-person".to_string(),
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::from([
+                        (
+                            "name".to_string(),
+                            PropertyValue {
+                                value: Some(property_value::Value::StringValue("Bob".to_string())),
+                            },
+                        ),
+                        (
+                            "embedding".to_string(),
+                            PropertyValue {
+                                value: Some(property_value::Value::VectorValue(VectorData {
+                                    values: vec![0.4, 0.6],
+                                })),
+                            },
+                        ),
+                    ]),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            )
+            .await
+            .expect("right graph node should be created");
+
+        service
+    }
+
+    #[tokio::test]
+    async fn test_graph_query_uses_service_target_and_legacy_node_shape() {
+        let graph_service = seed_service_backed_graph().await;
+        let graph_store = Arc::new(
+            crate::storage::multimodel::stores::GraphStore::new(Default::default())
+                .with_service(graph_service),
+        );
+        let storage = Arc::new(MultiModelStorageFacade::new().with_graph_store(graph_store));
+        let executor = FederatedExecutor::new(storage);
+
+        let result = executor
+            .execute_graph_traversal("MATCH (n:Person) FROM right RETURN n", None, Some("g"))
+            .await
+            .expect("service-backed graph query should execute");
+
+        assert_eq!(result.row_count(), 1);
+        let batch = &result.batches[0];
+        let fields: Vec<String> = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(fields, vec!["node_id", "label", "properties", "embedding"]);
+
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("node_id should be utf8");
+        assert_eq!(ids.value(0), "right-person");
+
+        let vector = executor
+            .resolve_vector_from_outer_column(batch, 0, "g", "properties.embedding")
+            .expect("legacy properties.embedding path should still resolve");
+        assert_eq!(vector, vec![0.4, 0.6]);
+    }
+
+    #[tokio::test]
+    async fn test_graph_query_uses_projected_columns_for_scalar_subset_queries() {
+        let graph_service = seed_service_backed_graph().await;
+        let graph_store = Arc::new(
+            crate::storage::multimodel::stores::GraphStore::new(Default::default())
+                .with_service(graph_service),
+        );
+        let storage = Arc::new(MultiModelStorageFacade::new().with_graph_store(graph_store));
+        let executor = FederatedExecutor::new(storage);
+
+        let result = executor
+            .execute_graph_traversal(
+                "MATCH (n:Person) FROM right RETURN n.name AS person_name",
+                None,
+                None,
+            )
+            .await
+            .expect("scalar graph projection should execute");
+
+        let batch = &result.batches[0];
+        let fields: Vec<String> = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(fields, vec!["person_name"]);
+
+        let names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("projected graph column should be utf8");
+        assert_eq!(names.value(0), "Bob");
+    }
+
+    #[tokio::test]
+    async fn test_graph_query_with_bound_start_nodes_uses_shared_subset_projection() {
+        let graph_service = Arc::new(GraphOperationsService::new());
+        graph_service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: "social".to_string(),
+                name: Some("social".to_string()),
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("graph creation should succeed");
+        for (id, name) in [("alice", "Alice"), ("bob", "Bob")] {
+            graph_service
+                .create_node(
+                    "social",
+                    ProtoNode {
+                        id: id.to_string(),
+                        labels: vec!["Person".to_string()],
+                        properties: HashMap::from([(
+                            "name".to_string(),
+                            PropertyValue {
+                                value: Some(property_value::Value::StringValue(name.to_string())),
+                            },
+                        )]),
+                        embedding: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    },
+                )
+                .await
+                .expect("graph node should be created");
+        }
+        graph_service
+            .create_edge(
+                "social",
+                crate::proto::proximadb_v1::Edge {
+                    id: "knows".to_string(),
+                    from_node_id: "alice".to_string(),
+                    to_node_id: "bob".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            )
+            .await
+            .expect("graph edge should be created");
+
+        let graph_store = Arc::new(
+            crate::storage::multimodel::stores::GraphStore::new(Default::default())
+                .with_service(graph_service),
+        );
+        let storage = Arc::new(MultiModelStorageFacade::new().with_graph_store(graph_store));
+        let executor = FederatedExecutor::new(storage);
+
+        let start_nodes = vec!["alice".to_string()];
+        let result = executor
+            .execute_graph_traversal(
+                "MATCH (n:Person)-[:KNOWS]->(m:Person) FROM social RETURN m.name AS neighbor",
+                Some(&start_nodes),
+                None,
+            )
+            .await
+            .expect("bound graph query should execute");
+
+        let batch = &result.batches[0];
+        let fields: Vec<String> = batch
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(fields, vec!["neighbor"]);
+
+        let names = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("projected graph column should be utf8");
+        assert_eq!(names.value(0), "Bob");
     }
 
     #[test]

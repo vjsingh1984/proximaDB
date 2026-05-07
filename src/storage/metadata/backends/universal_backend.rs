@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::proto::proximadb_v1::{Collection, FilterableDataType};
+use crate::proto::proximadb_v1::Collection;
 use crate::storage::metadata::single_index::SingleCollectionIndex;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{MetadataProvider, UnifiedMetricsCollector};
@@ -2126,7 +2126,7 @@ mod integration_tests {
 
     use crate::proto::proximadb_v1::{
         Collection, CollectionConfig, CollectionStats, DistanceMetric, FilterableColumnSpec,
-        IndexingAlgorithm, StorageEngine,
+        FilterableDataType, StorageEngine,
     };
 
     fn create_test_config_for_proto(temp_dir: &TempDir) -> UniversalMetadataConfig {
@@ -2202,7 +2202,7 @@ mod integration_tests {
                 .expect("Failed to create filesystem factory"),
         );
 
-        let backend = UniversalMetadataBackend::new(config, filesystem_factory)
+        let _backend = UniversalMetadataBackend::new(config, filesystem_factory)
             .await
             .expect("Failed to create filestore backend");
 

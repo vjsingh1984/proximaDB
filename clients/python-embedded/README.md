@@ -16,7 +16,7 @@ ProximaDB Embedded provides direct in-process access to ProximaDB's high-perform
 ## Installation
 
 ```bash
-pip install proximadb-embedded
+pip install proximadb_embedded
 ```
 
 ### Build from Source
@@ -29,7 +29,13 @@ pip install maturin
 
 # Build and install
 cd clients/python-embedded
-maturin develop --features python
+maturin develop -m ../../Cargo.toml --release --features python,pylib -i python
+```
+
+Canonical import:
+
+```python
+import proximadb_embedded
 ```
 
 ## Quick Start

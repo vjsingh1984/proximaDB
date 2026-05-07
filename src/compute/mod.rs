@@ -555,7 +555,6 @@ pub fn get_hardware_info() -> HardwareInfo {
 
 #[cfg(test)]
 mod unified_quantization_tests {
-    use super::*;
     use crate::compute::quantization::types::{
         BinaryQuantization, NoQuantization, ProductQuantization, QuantizationLevel,
         ScalarQuantization, UnifiedQuantizationLevel, UniformQuantization,

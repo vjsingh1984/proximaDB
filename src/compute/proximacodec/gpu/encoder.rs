@@ -45,6 +45,7 @@ pub struct GpuEncoder;
 
 impl GpuEncoder {
     /// Dispatch Delta encoding to appropriate GPU backend
+    #[allow(dead_code)]
     fn gpu_delta_encode(
         &self,
         values: &[f32],

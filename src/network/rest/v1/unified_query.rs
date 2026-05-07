@@ -638,6 +638,31 @@ async fn execute_multi_model_via_adapter(
 ///
 /// Generates SQL with multi-model extensions (VECTOR_SEARCH, GRAPH_QUERY, etc.)
 /// that can be executed through the federated query engine.
+fn inject_graph_target_into_cypher(graph: &str, cypher: &str) -> String {
+    let graph = graph.trim();
+    let cypher = cypher.trim().trim_end_matches(';').trim();
+
+    if graph.is_empty() || graph == "default" {
+        return cypher.to_string();
+    }
+
+    let upper = cypher.to_uppercase();
+    if upper.contains(" FROM ") {
+        return cypher.to_string();
+    }
+
+    let insertion_index = [" WHERE ", " RETURN ", " ORDER BY ", " LIMIT ", " SKIP "]
+        .iter()
+        .filter_map(|needle| upper.find(needle))
+        .min();
+
+    if let Some(index) = insertion_index {
+        format!("{} FROM {}{}", &cypher[..index], graph, &cypher[index..])
+    } else {
+        format!("{} FROM {}", cypher, graph)
+    }
+}
+
 fn convert_multi_model_to_sql(request: &MultiModelQueryRequest) -> ApiResult<String> {
     let mut sql_parts = Vec::new();
 
@@ -700,8 +725,12 @@ fn convert_multi_model_to_sql(request: &MultiModelQueryRequest) -> ApiResult<Str
                     .get("cypher")
                     .and_then(|v| v.as_str())
                     .unwrap_or("MATCH (n) RETURN n");
+                let cypher = inject_graph_target_into_cypher(graph, cypher);
 
-                format!("SELECT * FROM GRAPH_QUERY('{}: {}')", graph, cypher)
+                format!(
+                    "SELECT * FROM GRAPH_QUERY('{}')",
+                    cypher.replace('\'', "''")
+                )
             }
             "log" => {
                 let namespace = component
@@ -2035,6 +2064,37 @@ mod tests {
             serde_json::from_value(minimal).expect("minimal request should parse");
         assert_eq!(req.fusion_strategy, "intersection");
         assert_eq!(req.limit, Some(100));
+    }
+
+    #[test]
+    fn test_convert_multi_model_to_sql_uses_supported_graph_target_lowering() {
+        let request: MultiModelQueryRequest = serde_json::from_value(serde_json::json!({
+            "components": [
+                {
+                    "component_type": "graph",
+                    "config": {
+                        "graph": "social",
+                        "cypher": "MATCH (a)-[:KNOWS]->(b) RETURN b.name"
+                    }
+                }
+            ]
+        }))
+        .expect("request should parse");
+
+        let sql = convert_multi_model_to_sql(&request).expect("sql conversion should succeed");
+        assert_eq!(
+            sql,
+            "SELECT * FROM GRAPH_QUERY('MATCH (a)-[:KNOWS]->(b) FROM social RETURN b.name') LIMIT 100"
+        );
+    }
+
+    #[test]
+    fn test_inject_graph_target_into_cypher_does_not_duplicate_from_clause() {
+        let cypher = "MATCH (n:Person) FROM social RETURN n.name";
+        assert_eq!(
+            inject_graph_target_into_cypher("other", cypher),
+            cypher.to_string()
+        );
     }
 
     #[test]

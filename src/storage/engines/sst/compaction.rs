@@ -1785,12 +1785,11 @@ mod tests {
     #[tokio::test]
     async fn test_sst_compaction_expired_deletion_unit() -> anyhow::Result<()> {
         use chrono::Utc;
-        use std::path::PathBuf;
 
         // Create test data with controlled timestamps
         let current_time = Utc::now().timestamp() as u32;
-        let expired_time = current_time - (5 * 60 * 60); // 5 hours ago
-        let future_time = current_time + (5 * 60 * 60); // 5 hours from now
+        let _expired_time = current_time - (5 * 60 * 60); // 5 hours ago
+        let _future_time = current_time + (5 * 60 * 60); // 5 hours from now
 
         let test_records = vec![
             // Active record (no expiry)
@@ -1853,7 +1852,7 @@ mod tests {
         std::fs::write(&input_file, &input_data)?;
 
         // Create compaction task
-        let task = CompactionTask {
+        let _task = CompactionTask {
             level: 0,
             input_files: vec![input_file],
             output_file: output_file.clone(),
@@ -1863,7 +1862,7 @@ mod tests {
         };
 
         // Create config and perform compaction
-        let config = SstConfig::default();
+        let _config = SstConfig::default();
 
         // Note: This test requires CompactionManager::perform_compaction to be implemented
         // For now, we'll test the basic structure

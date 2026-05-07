@@ -42,14 +42,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::storage::cache::eviction::EvictionPolicy;
-use crate::storage::cache::unified_cache::{CacheId, UnifiedCache, UnifiedCacheCoordinator};
+use crate::storage::cache::unified_cache::{CacheId, UnifiedCacheCoordinator};
 
 /// Unified eviction policy for coordinated cache management
 pub struct UnifiedEvictionPolicy {

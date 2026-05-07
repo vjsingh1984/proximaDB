@@ -44,28 +44,10 @@ impl CollectionService for CollectionServiceImpl {
         let request = crate::proto::proximadb_v1::CollectionRequest {
             operation: crate::proto::proximadb_v1::CollectionOperation::CollectionCreate as i32,
             collection_id: Some(cfg.name.clone()),
-            collection_config: Some(crate::proto::proximadb_v1::CollectionConfig {
-                name: cfg.name.clone(),
-                dimension: cfg.dimension,
-                distance_metric: Some(cfg.distance_metric.unwrap_or(0)),
-                storage_engine: Some(cfg.storage_engine.unwrap_or(0)),
-                filterable_columns: vec![],
-                index_configs: vec![],
-                quantization: None,
-                primary_index: Some("default".to_string()),
-                auto_index_selection: Some(false),
-                storage_config: None,
-                embedding_models: vec![],
-                owner: Some(String::new()),
-                description: cfg.description.clone(),
-                tags: cfg.tags.clone(),
-                // ProximaRecord schema configuration (NEW)
-                record_schema: None,
-                enable_proxima_record: None,
-                text_columns: vec![],
-                text_storage_configs: vec![],
-                enable_dual_use_embeddings: None,
-            }),
+            // Preserve the caller-provided config verbatim so protocol surfaces
+            // stay aligned. If index_configs is omitted, collection creation
+            // remains exact/brute-force by default.
+            collection_config: Some(cfg.clone()),
             query_params: Default::default(),
             options: Default::default(),
             migration_config: Default::default(),

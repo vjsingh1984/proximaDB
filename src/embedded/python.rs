@@ -40,7 +40,7 @@ use std::ffi::CString;
 use std::sync::Arc;
 
 // Zero-copy numpy support
-use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 
 use super::{AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
 use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
@@ -1146,7 +1146,7 @@ impl PyProximaDB {
                     config.block_prune_max_keep = max_k;
                 }
                 PruneModeConfig::Advanced(adv) => {
-                    let (mode, def_ratio, def_min_k, def_max_k) = set_approx_defaults(&adv.r#type);
+                    let (_mode, def_ratio, def_min_k, def_max_k) = set_approx_defaults(&adv.r#type);
                     config.block_prune_mode = adv.r#type;
                     config.block_prune_ratio = adv.ratio.unwrap_or(def_ratio);
                     config.block_prune_min_keep = adv.min_keep.unwrap_or(def_min_k);
@@ -1265,6 +1265,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, ids, vectors, metadata=None))]
     fn insert(
         &self,
+        py: Python<'_>,
         collection: &str,
         ids: Vec<String>,
         vectors: &Bound<'_, PyAny>,
@@ -1298,8 +1299,8 @@ impl PyProximaDB {
                 None
             };
 
-        self.inner
-            .insert(collection, ids, rust_vectors, rust_metadata)
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
     }
 
@@ -1337,6 +1338,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, query, top_k=10, filter=None, search_mode=None))]
     fn search(
         &self,
+        py: Python<'_>,
         collection: &str,
         query: &Bound<'_, PyAny>,
         top_k: usize,
@@ -1350,19 +1352,21 @@ impl PyProximaDB {
             query.extract()?
         };
 
-        self.inner
-            .search_with_mode(collection, query_vec, top_k, filter, search_mode)
-            .map(|results| {
-                results
-                    .into_iter()
-                    .map(|r| PySearchResult {
-                        id: r.id,
-                        score: r.score,
-                        metadata_map: r.metadata,
-                    })
-                    .collect()
-            })
-            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || {
+            inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
+        })
+        .map(|results| {
+            results
+                .into_iter()
+                .map(|r| PySearchResult {
+                    id: r.id,
+                    score: r.score,
+                    metadata_map: r.metadata,
+                })
+                .collect()
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
     }
 
     /// Insert vectors from a NumPy array with ZERO-COPY transfer
@@ -1392,6 +1396,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, ids, vectors, metadata=None))]
     fn insert_numpy(
         &self,
+        py: Python<'_>,
         collection: &str,
         ids: Vec<String>,
         vectors: PyReadonlyArray2<f32>,
@@ -1401,7 +1406,6 @@ impl PyProximaDB {
         let array = vectors.as_array();
         let shape = array.shape();
         let n_vectors = shape[0];
-        let dimension = shape[1];
 
         // Validate dimensions
         if ids.len() != n_vectors {
@@ -1414,8 +1418,15 @@ impl PyProximaDB {
 
         // Convert to Vec<Vec<f32>> - we still need this format for the internal API
         // but at least we avoided the Python .tolist() overhead
-        let rust_vectors: Vec<Vec<f32>> =
-            array.rows().into_iter().map(|row| row.to_vec()).collect();
+        let rust_vectors: Vec<Vec<f32>> = if let Some(slice) = array.as_slice() {
+            let dimension = shape[1];
+            slice
+                .chunks(dimension)
+                .map(|chunk| chunk.to_vec())
+                .collect()
+        } else {
+            array.rows().into_iter().map(|row| row.to_vec()).collect()
+        };
 
         // Convert metadata (same as before)
         let rust_metadata: Option<Vec<HashMap<String, serde_json::Value>>> =
@@ -1436,8 +1447,8 @@ impl PyProximaDB {
                 None
             };
 
-        self.inner
-            .insert(collection, ids, rust_vectors, rust_metadata)
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
     }
 
@@ -1459,6 +1470,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, query, top_k=10, filter=None, search_mode=None))]
     fn search_numpy(
         &self,
+        py: Python<'_>,
         collection: &str,
         query: PyReadonlyArray1<f32>,
         top_k: usize,
@@ -1466,21 +1478,26 @@ impl PyProximaDB {
         search_mode: Option<&str>,
     ) -> PyResult<Vec<PySearchResult>> {
         // Zero-copy access to query vector
-        let query_vec: Vec<f32> = query.as_array().to_vec();
+        let query_vec: Vec<f32> = query
+            .as_slice()
+            .map(|slice| slice.to_vec())
+            .unwrap_or_else(|_| query.as_array().to_vec());
 
-        self.inner
-            .search_with_mode(collection, query_vec, top_k, filter, search_mode)
-            .map(|results| {
-                results
-                    .into_iter()
-                    .map(|r| PySearchResult {
-                        id: r.id,
-                        score: r.score,
-                        metadata_map: r.metadata,
-                    })
-                    .collect()
-            })
-            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || {
+            inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
+        })
+        .map(|results| {
+            results
+                .into_iter()
+                .map(|r| PySearchResult {
+                    id: r.id,
+                    score: r.score,
+                    metadata_map: r.metadata,
+                })
+                .collect()
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
     }
 
     /// Batch search with multiple query vectors (zero-copy)
@@ -1810,6 +1827,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, ids, vectors, metadata=None))]
     fn upsert(
         &self,
+        py: Python<'_>,
         collection: &str,
         ids: Vec<String>,
         vectors: &Bound<'_, PyAny>,
@@ -1843,8 +1861,8 @@ impl PyProximaDB {
                 None
             };
 
-        self.inner
-            .upsert(collection, ids, rust_vectors, rust_metadata)
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert vectors: {}", e)))
     }
 
@@ -1871,6 +1889,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, ids, vectors, metadata=None))]
     fn upsert_numpy(
         &self,
+        py: Python<'_>,
         collection: &str,
         ids: Vec<String>,
         vectors: PyReadonlyArray2<f32>,
@@ -1878,8 +1897,15 @@ impl PyProximaDB {
     ) -> PyResult<(usize, usize)> {
         // Zero-copy access to numpy buffer
         let array = vectors.as_array();
-        let rust_vectors: Vec<Vec<f32>> =
-            array.rows().into_iter().map(|row| row.to_vec()).collect();
+        let rust_vectors: Vec<Vec<f32>> = if let Some(slice) = array.as_slice() {
+            let dimension = array.shape()[1];
+            slice
+                .chunks(dimension)
+                .map(|chunk| chunk.to_vec())
+                .collect()
+        } else {
+            array.rows().into_iter().map(|row| row.to_vec()).collect()
+        };
 
         // Convert metadata (same pattern as insert_numpy)
         let rust_metadata: Option<Vec<HashMap<String, serde_json::Value>>> =
@@ -1900,8 +1926,8 @@ impl PyProximaDB {
                 None
             };
 
-        self.inner
-            .upsert(collection, ids, rust_vectors, rust_metadata)
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert vectors: {}", e)))
     }
 
@@ -2236,6 +2262,61 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create edges: {}", e)))
     }
 
+    #[pyo3(signature = (graph_id, node_id, labels=None, properties=None))]
+    fn create_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        labels: Option<Vec<String>>,
+        properties: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<PyGraphNode> {
+        let mut property_map = HashMap::new();
+        if let Some(dict) = properties {
+            for (k, v) in dict.iter() {
+                let key: String = k.extract()?;
+                property_map.insert(key, v.str()?.to_string());
+            }
+        }
+
+        self.inner
+            .create_node(graph_id, node_id, labels.unwrap_or_default(), property_map)
+            .map(PyGraphNode::from)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create node: {}", e)))
+    }
+
+    #[pyo3(signature = (graph_id, from_node_id, to_node_id, edge_type, id=None, weight=None, properties=None))]
+    fn create_edge(
+        &self,
+        graph_id: &str,
+        from_node_id: &str,
+        to_node_id: &str,
+        edge_type: &str,
+        id: Option<&str>,
+        weight: Option<f64>,
+        properties: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<PyGraphEdge> {
+        let mut property_map = HashMap::new();
+        if let Some(dict) = properties {
+            for (k, v) in dict.iter() {
+                let key: String = k.extract()?;
+                property_map.insert(key, v.str()?.to_string());
+            }
+        }
+
+        self.inner
+            .create_edge(
+                graph_id,
+                id,
+                from_node_id,
+                to_node_id,
+                edge_type,
+                weight,
+                property_map,
+            )
+            .map(PyGraphEdge::from)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create edge: {}", e)))
+    }
+
     /// Get a node by its ID
     ///
     /// Args:
@@ -2276,6 +2357,39 @@ impl PyProximaDB {
         self.inner
             .query_nodes_by_labels(graph_id, labels)
             .map(|nodes| nodes.into_iter().map(|n| n.into()).collect())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query nodes: {}", e)))
+    }
+
+    #[pyo3(signature = (graph_id, labels=None, properties=None, limit=None, offset=None))]
+    fn query_nodes(
+        &self,
+        graph_id: &str,
+        labels: Option<Vec<String>>,
+        properties: Option<&Bound<'_, PyDict>>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PyGraphNode>> {
+        let mut property_map = HashMap::new();
+        if let Some(dict) = properties {
+            for (k, v) in dict.iter() {
+                let key: String = k.extract()?;
+                property_map.insert(key, v.str()?.to_string());
+            }
+        }
+
+        self.inner
+            .query_nodes(
+                graph_id,
+                labels,
+                if property_map.is_empty() {
+                    None
+                } else {
+                    Some(property_map)
+                },
+                limit,
+                offset,
+            )
+            .map(|nodes| nodes.into_iter().map(PyGraphNode::from).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to query nodes: {}", e)))
     }
 
@@ -2349,6 +2463,43 @@ impl PyProximaDB {
             .graph_stats(graph_id)
             .map(|s| s.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get graph stats: {}", e)))
+    }
+
+    #[pyo3(signature = (graph_id, start_node_id, max_depth=3, edge_types=None, limit=None))]
+    fn traverse_graph(
+        &self,
+        py: Python<'_>,
+        graph_id: &str,
+        start_node_id: &str,
+        max_depth: u32,
+        edge_types: Option<Vec<String>>,
+        limit: Option<u32>,
+    ) -> PyResult<PyObject> {
+        let result = self
+            .inner
+            .traverse_graph(graph_id, start_node_id, max_depth, edge_types, limit)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to traverse graph: {}", e)))?;
+
+        let dict = PyDict::new(py);
+        let nodes: Vec<PyGraphNode> = result.nodes.into_iter().map(PyGraphNode::from).collect();
+        let edges: Vec<PyGraphEdge> = result.edges.into_iter().map(PyGraphEdge::from).collect();
+        dict.set_item("nodes", nodes)?;
+        dict.set_item("edges", edges)?;
+        dict.set_item("paths", result.paths)?;
+
+        let stats = PyDict::new(py);
+        if let Some(stat_values) = result.stats {
+            stats.set_item("nodes_visited", stat_values.nodes_visited)?;
+            stats.set_item("edges_traversed", stat_values.edges_traversed)?;
+            stats.set_item("max_depth_reached", stat_values.max_depth_reached)?;
+            stats.set_item(
+                "execution_time_microseconds",
+                stat_values.execution_time_microseconds,
+            )?;
+        }
+        dict.set_item("stats", stats)?;
+
+        Ok(dict.into())
     }
 
     /// Delete entire graph
@@ -2491,6 +2642,24 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to query documents: {}", e)))
     }
 
+    fn update_document(
+        &self,
+        collection: &str,
+        doc_id: &str,
+        updates: &Bound<'_, PyDict>,
+    ) -> PyResult<()> {
+        let mut rust_updates = HashMap::new();
+        for (k, v) in updates.iter() {
+            let key: String = k.extract()?;
+            let value = python_to_json(&v)?;
+            rust_updates.insert(key, value);
+        }
+
+        self.inner
+            .update_document(collection, doc_id, rust_updates)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update document: {}", e)))
+    }
+
     /// Delete a document by ID
     ///
     /// Args:
@@ -2512,6 +2681,12 @@ impl PyProximaDB {
     fn list_document_collections(&self) -> PyResult<Vec<String>> {
         self.inner.list_document_collections().map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to list document collections: {}", e))
+        })
+    }
+
+    fn delete_document_collection(&self, name: &str) -> PyResult<bool> {
+        self.inner.delete_document_collection(name).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete document collection: {}", e))
         })
     }
 
@@ -2561,7 +2736,12 @@ impl PyProximaDB {
     ///     ]
     ///     count = db.ingest_logs("production", logs)
     ///     ```
-    fn ingest_logs(&self, namespace: &str, logs: &Bound<'_, PyList>) -> PyResult<u64> {
+    fn ingest_logs(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        logs: &Bound<'_, PyList>,
+    ) -> PyResult<u64> {
         use super::EmbeddedLogEntry;
 
         let mut rust_logs = Vec::with_capacity(logs.len());
@@ -2610,8 +2790,8 @@ impl PyProximaDB {
             });
         }
 
-        self.inner
-            .ingest_logs(namespace, rust_logs)
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.ingest_logs(namespace, rust_logs))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest logs: {}", e)))
     }
 
@@ -2644,41 +2824,43 @@ impl PyProximaDB {
         query: Option<&str>,
         limit: u32,
     ) -> PyResult<Vec<PyObject>> {
-        self.inner
-            .query_logs(namespace, start_time_ns, end_time_ns, query, limit)
-            .map(|logs| {
-                logs.into_iter()
-                    .map(|log| {
-                        let dict = PyDict::new(py);
-                        dict.set_item("timestamp_ns", log.timestamp_ns).ok();
-                        dict.set_item("severity", &log.severity).ok();
-                        dict.set_item("message", &log.message).ok();
-                        // Handle Option<String> for source and service
-                        if let Some(ref source) = log.source {
-                            dict.set_item("source", source).ok();
-                        } else {
-                            dict.set_item("source", py.None()).ok();
-                        }
-                        if let Some(ref service) = log.service {
-                            dict.set_item("service", service).ok();
-                        } else {
-                            dict.set_item("service", py.None()).ok();
-                        }
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || {
+            inner.query_logs(namespace, start_time_ns, end_time_ns, query, limit)
+        })
+        .map(|logs| {
+            logs.into_iter()
+                .map(|log| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("timestamp_ns", log.timestamp_ns).ok();
+                    dict.set_item("severity", &log.severity).ok();
+                    dict.set_item("message", &log.message).ok();
+                    // Handle Option<String> for source and service
+                    if let Some(ref source) = log.source {
+                        dict.set_item("source", source).ok();
+                    } else {
+                        dict.set_item("source", py.None()).ok();
+                    }
+                    if let Some(ref service) = log.service {
+                        dict.set_item("service", service).ok();
+                    } else {
+                        dict.set_item("service", py.None()).ok();
+                    }
 
-                        let fields_dict = PyDict::new(py);
-                        for (k, v) in &log.fields {
-                            // Convert serde_json::Value to Python
-                            if let Ok(py_val) = json_to_python(py, v) {
-                                fields_dict.set_item(k, py_val).ok();
-                            }
+                    let fields_dict = PyDict::new(py);
+                    for (k, v) in &log.fields {
+                        // Convert serde_json::Value to Python
+                        if let Ok(py_val) = json_to_python(py, v) {
+                            fields_dict.set_item(k, py_val).ok();
                         }
-                        dict.set_item("fields", fields_dict).ok();
+                    }
+                    dict.set_item("fields", fields_dict).ok();
 
-                        dict.into()
-                    })
-                    .collect()
-            })
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query logs: {}", e)))
+                    dict.into()
+                })
+                .collect()
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to query logs: {}", e)))
     }
 
     /// Ingest metric samples
@@ -2698,7 +2880,12 @@ impl PyProximaDB {
     ///     ]
     ///     count = db.ingest_metrics("production", samples)
     ///     ```
-    fn ingest_metrics(&self, namespace: &str, samples: &Bound<'_, PyList>) -> PyResult<u64> {
+    fn ingest_metrics(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        samples: &Bound<'_, PyList>,
+    ) -> PyResult<u64> {
         use super::EmbeddedMetricSample;
 
         let mut rust_samples = Vec::with_capacity(samples.len());
@@ -2739,14 +2926,220 @@ impl PyProximaDB {
             });
         }
 
-        self.inner
-            .ingest_metrics(namespace, rust_samples)
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.ingest_metrics(namespace, rust_samples))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest metrics: {}", e)))
+    }
+
+    #[pyo3(signature = (namespace, metric_name, aggregation="avg", start_time=None, end_time=None, step_seconds=60))]
+    fn aggregate_metrics(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        metric_name: &str,
+        aggregation: &str,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        step_seconds: u32,
+    ) -> PyResult<Vec<PyObject>> {
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || {
+            inner.aggregate_metrics(
+                namespace,
+                metric_name,
+                aggregation,
+                start_time,
+                end_time,
+                step_seconds,
+            )
+        })
+        .and_then(|points| {
+            points
+                .into_iter()
+                .map(|point| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("timestamp_ns", point.timestamp_ns)?;
+                    dict.set_item("value", point.value)?;
+                    Ok(dict.into())
+                })
+                .collect()
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to aggregate metrics: {}", e)))
+    }
+
+    fn ingest_traces(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        traces: &Bound<'_, PyList>,
+    ) -> PyResult<u64> {
+        use super::EmbeddedTraceSpan;
+
+        let mut rust_traces = Vec::with_capacity(traces.len());
+        for item in traces.iter() {
+            let dict = item.downcast::<PyDict>()?;
+            let trace_id: String = dict
+                .get_item("trace_id")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'trace_id'"))?
+                .extract()?;
+            let span_id: String = dict
+                .get_item("span_id")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'span_id'"))?
+                .extract()?;
+            let name: String = dict
+                .get_item("name")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'name'"))?
+                .extract()?;
+            let kind: String = dict
+                .get_item("kind")?
+                .and_then(|v| v.extract::<String>().ok())
+                .unwrap_or_else(|| "INTERNAL".to_string());
+            let start_time_ns: i64 = dict
+                .get_item("start_time_ns")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'start_time_ns'"))?
+                .extract()?;
+            let end_time_ns: i64 = dict
+                .get_item("end_time_ns")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'end_time_ns'"))?
+                .extract()?;
+            let parent_span_id = dict
+                .get_item("parent_span_id")?
+                .and_then(|v| v.extract::<String>().ok());
+            let service = dict
+                .get_item("service")?
+                .and_then(|v| v.extract::<String>().ok());
+            let status_code = dict
+                .get_item("status_code")?
+                .and_then(|v| v.extract::<String>().ok())
+                .unwrap_or_else(|| "UNSET".to_string());
+            let status_message = dict
+                .get_item("status_message")?
+                .and_then(|v| v.extract::<String>().ok());
+
+            let mut attributes = HashMap::new();
+            if let Some(attr_dict) = dict.get_item("attributes")?
+                && let Ok(py_dict) = attr_dict.downcast::<PyDict>()
+            {
+                for (k, v) in py_dict.iter() {
+                    let key: String = k.extract()?;
+                    attributes.insert(key, python_to_json(&v)?);
+                }
+            }
+
+            rust_traces.push(EmbeddedTraceSpan {
+                trace_id,
+                span_id,
+                parent_span_id,
+                name,
+                kind,
+                start_time_ns,
+                end_time_ns,
+                service,
+                status_code,
+                status_message,
+                attributes,
+            });
+        }
+
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.ingest_traces(namespace, rust_traces))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest traces: {}", e)))
+    }
+
+    #[pyo3(signature = (namespace, start_time_ns, end_time_ns, trace_id=None, service=None, operation=None, min_duration_ns=None, status=None, limit=100))]
+    fn query_traces(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
+        trace_id: Option<&str>,
+        service: Option<&str>,
+        operation: Option<&str>,
+        min_duration_ns: Option<i64>,
+        status: Option<&str>,
+        limit: u32,
+    ) -> PyResult<Vec<PyObject>> {
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || {
+            inner.query_traces(
+                namespace,
+                start_time_ns,
+                end_time_ns,
+                trace_id,
+                service,
+                operation,
+                min_duration_ns,
+                status,
+                limit,
+            )
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to query traces: {}", e)))
+        .and_then(|spans| {
+            spans
+                .into_iter()
+                .map(|span| trace_span_to_python(py, span))
+                .collect::<PyResult<Vec<_>>>()
+        })
+    }
+
+    fn get_trace(&self, py: Python<'_>, namespace: &str, trace_id: &str) -> PyResult<PyObject> {
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.get_trace(namespace, trace_id))
+            .and_then(|trace| {
+                let dict = PyDict::new(py);
+                let spans: Vec<PyObject> = trace
+                    .spans
+                    .into_iter()
+                    .map(|span| trace_span_to_python(py, span))
+                    .collect::<PyResult<_>>()?;
+                dict.set_item("spans", spans)?;
+                dict.set_item("complete", trace.complete)?;
+                Ok(dict.into())
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get trace: {}", e)))
     }
 
     // ============================================
     // Unified Multi-Model Query API
     // ============================================
+
+    #[pyo3(signature = (query, parameters=None, collection=None))]
+    fn execute_sql(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        parameters: Option<&Bound<'_, PyAny>>,
+        collection: Option<&str>,
+    ) -> PyResult<PyObject> {
+        let rust_params = if let Some(params) = parameters {
+            let json_value = python_to_json(params)?;
+            Some(match json_value {
+                serde_json::Value::Array(values) => values,
+                other => vec![other],
+            })
+        } else {
+            None
+        };
+
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.execute_sql(query, rust_params, collection))
+            .and_then(|result| {
+                let dict = PyDict::new(py);
+                let rows = PyList::empty(py);
+                for row in result.rows {
+                    rows.append(json_to_python(py, &row)?)?;
+                }
+                dict.set_item("rows", rows)?;
+                dict.set_item("columns", result.columns)?;
+                dict.set_item("column_types", result.column_types)?;
+                dict.set_item("row_count", result.row_count)?;
+                dict.set_item("rows_scanned", result.rows_scanned)?;
+                dict.set_item("execution_time_ms", result.execution_time_ms)?;
+                Ok(dict.into())
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute SQL: {}", e)))
+    }
 
     /// Execute a unified multi-model query
     ///
@@ -3016,6 +3409,28 @@ fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObjec
     }
 }
 
+fn trace_span_to_python(py: Python<'_>, span: super::EmbeddedTraceSpan) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("trace_id", span.trace_id)?;
+    dict.set_item("span_id", span.span_id)?;
+    dict.set_item("parent_span_id", span.parent_span_id)?;
+    dict.set_item("name", span.name)?;
+    dict.set_item("kind", span.kind)?;
+    dict.set_item("start_time_ns", span.start_time_ns)?;
+    dict.set_item("end_time_ns", span.end_time_ns)?;
+    dict.set_item("service", span.service)?;
+    dict.set_item("status_code", span.status_code)?;
+    dict.set_item("status_message", span.status_message)?;
+
+    let attributes = PyDict::new(py);
+    for (key, value) in span.attributes {
+        attributes.set_item(key, json_to_python(py, &value)?)?;
+    }
+    dict.set_item("attributes", attributes)?;
+
+    Ok(dict.into_any().unbind())
+}
+
 /// Initialize tracing/logging for the embedded ProximaDB module.
 ///
 /// This function sets up a tracing subscriber that outputs to stderr.
@@ -3065,10 +3480,7 @@ fn init_logging(level: &str) -> PyResult<()> {
     Ok(())
 }
 
-/// Python module definition
-/// This exports as "proximadb" which is the module name used by benchmarks
-#[pymodule]
-fn proximadb(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn register_python_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core classes
     m.add_class::<PyProximaDB>()?;
     m.add_class::<PyDiskConfig>()?;
@@ -3096,4 +3508,17 @@ fn proximadb(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
     Ok(())
+}
+
+/// Python module definition
+/// This exports as "proximadb" which is the module name used by benchmarks
+#[pymodule]
+fn proximadb(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_python_module(m)
+}
+
+/// Packaged embedded wheel entry point.
+#[pymodule(name = "_proximadb_embedded")]
+fn proximadb_embedded_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_python_module(m)
 }

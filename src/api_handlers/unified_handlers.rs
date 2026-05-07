@@ -208,12 +208,14 @@ impl Default for CollectionIdCache {
 // Import metrics service
 use crate::metrics::query_service::{MetricsQueryOptions, MetricsQueryService};
 
+use crate::observability::ObservabilityService;
 use crate::proto::proximadb_v1::{
     Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorRecord,
 };
 use crate::query::QueryFacadeAdapter;
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::VectorOperationsService;
+use crate::storage::document::DocumentService;
 
 /// Unified handlers that implement all business logic for API operations
 ///
@@ -223,6 +225,10 @@ pub struct UnifiedHandlers {
     pub collection_service: Arc<CollectionService>,
     /// Optimized vector service with eliminated registry overhead
     pub vector_operations_service: Arc<VectorOperationsService>,
+    /// Document storage and retrieval service
+    pub document_service: Arc<DocumentService>,
+    /// Observability service for logs, metrics, and traces
+    pub observability_service: Arc<ObservabilityService>,
     /// Graph collection service for metadata management
     pub graph_collection_service: Arc<crate::services::GraphCollectionService>,
     /// Graph operations service for graph database operations
@@ -261,12 +267,16 @@ impl UnifiedHandlers {
     pub fn new(
         collection_service: Arc<CollectionService>,
         vector_operations_service: Arc<VectorOperationsService>,
+        document_service: Arc<DocumentService>,
+        observability_service: Arc<ObservabilityService>,
         graph_collection_service: Arc<crate::services::GraphCollectionService>,
         graph_operations_service: Arc<crate::graph::GraphOperationsService>,
     ) -> Self {
         Self {
             collection_service,
             vector_operations_service,
+            document_service,
+            observability_service,
             graph_collection_service,
             graph_operations_service,
             metrics_query_service: None,
@@ -280,6 +290,8 @@ impl UnifiedHandlers {
     pub fn with_metrics(
         collection_service: Arc<CollectionService>,
         vector_operations_service: Arc<VectorOperationsService>,
+        document_service: Arc<DocumentService>,
+        observability_service: Arc<ObservabilityService>,
         graph_collection_service: Arc<crate::services::GraphCollectionService>,
         graph_operations_service: Arc<crate::graph::GraphOperationsService>,
         metrics_query_service: Arc<MetricsQueryService>,
@@ -287,6 +299,8 @@ impl UnifiedHandlers {
         Self {
             collection_service,
             vector_operations_service,
+            document_service,
+            observability_service,
             graph_collection_service,
             graph_operations_service,
             metrics_query_service: Some(metrics_query_service),

@@ -296,10 +296,7 @@ impl EventLogCommand for EventLogServiceAdapter {
         // Find the event across all collections and acknowledge it
         for entry in self.manager.event_logs.iter() {
             let queue = entry.value();
-            // Mark the event as processed (no specific index name for general acknowledgment)
-            queue.mark_processed(&event_id, "axis_consumer").await;
-            // Note: mark_processed is now async, so we can't tell if the event existed
-            // But that's okay - if it didn't exist in this queue, it might be in another
+            queue.acknowledge_event(&event_id).await;
         }
 
         // We've attempted to mark it processed in all queues

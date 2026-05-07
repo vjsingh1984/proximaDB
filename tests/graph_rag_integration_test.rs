@@ -92,7 +92,7 @@ async fn test_rag_pipeline_integration() {
         max_subgraph_nodes: 10,
     };
 
-    let pipeline = RagPipeline::new(retriever, builder, budget);
+    let pipeline = RagPipeline::without_filter(retriever, builder, budget);
 
     // 4. Run query
     let query = RagQuery::text("find rust stuff");

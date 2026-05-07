@@ -113,7 +113,7 @@ cache_ttl_hours = 24
 # Embedding provider: sentence-transformers (local), openai, cohere, ollama
 provider = "sentence-transformers"
 # Model name for the provider
-model_name = "all-MiniLM-L12-v2"
+model_name = "BAAI/bge-small-en-v1.5"
 # Batch size for embedding generation
 batch_size = 32
 

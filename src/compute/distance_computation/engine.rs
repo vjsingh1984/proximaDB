@@ -445,7 +445,7 @@ impl SimilarityResult {
                 let normalized_similarity = ((value + 1.0) / 2.0).clamp(0.0, 1.0);
                 (distance, normalized_similarity)
             }
-            DistanceMetric::Cosine => {
+            DistanceMetric::Cosine | DistanceMetric::Unspecified => {
                 // Cosine distance: [0, 2] range, lower = more similar
                 // Convert to normalized similarity [0,1] where higher = more similar
                 let normalized_similarity = if value.is_infinite() {
@@ -701,7 +701,9 @@ impl UnifiedDistanceCompute {
         log_search_backend_first_time(self.platform_capability);
 
         match metric {
-            DistanceMetric::Cosine => self.compute_cosine_simd(vec_a, vec_b),
+            DistanceMetric::Cosine | DistanceMetric::Unspecified => {
+                self.compute_cosine_simd(vec_a, vec_b)
+            }
             DistanceMetric::Euclidean => self.compute_euclidean_simd(vec_a, vec_b),
             DistanceMetric::DotProduct => self.compute_dot_product_simd(vec_a, vec_b),
             DistanceMetric::Manhattan => self.compute_manhattan_scalar(vec_a, vec_b),
@@ -713,7 +715,7 @@ impl UnifiedDistanceCompute {
             DistanceMetric::BrayCurtis => self.compute_bray_curtis_scalar(vec_a, vec_b),
             DistanceMetric::Angular => self.compute_angular_scalar(vec_a, vec_b),
             DistanceMetric::Hellinger => self.compute_hellinger_scalar(vec_a, vec_b),
-            _ => self.compute_euclidean_simd(vec_a, vec_b), // Default fallback
+            _ => self.compute_euclidean_simd(vec_a, vec_b), // Default fallback for unhandled metrics
         }
     }
 

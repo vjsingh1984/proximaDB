@@ -264,7 +264,6 @@ impl CacheValue for crate::proto::proximadb_v1::VectorRecord {
 
 #[cfg(test)]
 mod base_cache_tests {
-    use super::*;
     use crate::storage::cache::backend::CacheTier;
     use crate::storage::cache::base::BaseCacheImpl;
     use crate::storage::cache::traits::{BaseCache, CacheValue};
@@ -378,8 +377,8 @@ mod base_cache_tests {
         // Put and get
         cache.put_with_hooks(key1.clone(), value.clone()).await;
 
-        let result1 = cache.get_with_hooks(&key1).await;
-        let result2 = cache.get_with_hooks(&key2).await;
+        let _result1 = cache.get_with_hooks(&key1).await;
+        let _result2 = cache.get_with_hooks(&key2).await;
 
         // Wait for async metrics recording to complete
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -394,18 +393,17 @@ mod base_cache_tests {
 
 #[cfg(test)]
 mod backend_tests {
-    use super::*;
     use crate::storage::cache::backend::{CacheTier, MemoryBackend, StorageBackend};
 
     #[derive(Clone, Debug)]
     struct TestBytes {
-        data: Box<[u8]>,
+        _data: Box<[u8]>,
     }
 
     impl TestBytes {
         fn new_large() -> Self {
             TestBytes {
-                data: vec![0u8; 2 * 1024 * 1024].into_boxed_slice(),
+                _data: vec![0u8; 2 * 1024 * 1024].into_boxed_slice(),
             }
         }
     }
@@ -521,7 +519,6 @@ mod backend_tests {
 
 #[cfg(test)]
 mod metrics_tests {
-    use super::*;
     use crate::storage::cache::backend::CacheTier;
     use crate::storage::cache::metrics::CacheMetrics;
     use std::time::Duration;
@@ -639,7 +636,7 @@ mod metrics_tests {
 
 #[cfg(test)]
 mod eviction_tests {
-    use super::*;
+
     use crate::storage::cache::eviction::{
         AccessTracker, CacheEvictionConfig, CacheEvictor, EvictionPolicy,
     };

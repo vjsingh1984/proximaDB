@@ -16,5 +16,6 @@ __all__ = [
     "llama_index",
     "mcp_tools",
     "victor",
+    "victor_graph",
     "victor_multi",
 ]

@@ -946,7 +946,7 @@ impl SharedServices {
                     .await;
 
                 info!(
-                    "✅ SharedServices: AXIS EventLog consumer started - automatic index building enabled"
+                    "✅ SharedServices: AXIS EventLog consumer started - background index processing is available for collections that explicitly configure indexes"
                 );
             } else {
                 warn!(
@@ -1190,6 +1190,52 @@ impl SharedServices {
             "✅ SharedServices::new - GraphOperationsService created with shared collection service"
         );
 
+        // Create DocumentService (moved up for UnifiedHandlers)
+        debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
+        let document_base_path = storage_config.metadata_url.replace("file://", "");
+        let document_service = match DocumentService::new_with_wal(
+            sst_engine_for_documents,
+            &document_base_path,
+        )
+        .await
+        {
+            Ok(service) => Arc::new(service),
+            Err(e) => {
+                warn!(
+                    "Failed to create WAL-backed DocumentService: {}. Falling back to in-memory WAL-less service.",
+                    e
+                );
+                Arc::new(DocumentService::new(
+                    vector_operations_service.unified_engine(),
+                ))
+            }
+        };
+
+        // Create ObservabilityService (moved up for UnifiedHandlers)
+        debug!(
+            "🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries..."
+        );
+        let observability_base_path = storage_config.metadata_url.replace("file://", "");
+        let observability_storage = match ObservabilityStorage::new_with_wal(
+            &observability_base_path,
+        )
+        .await
+        {
+            Ok(storage) => Arc::new(storage),
+            Err(e) => {
+                warn!(
+                    "Failed to create WAL-backed ObservabilityStorage: {}. Falling back to non-WAL storage.",
+                    e
+                );
+                Arc::new(ObservabilityStorage::new(&observability_base_path))
+            }
+        };
+        let observability_service = Arc::new(
+            crate::observability::ObservabilityService::new(observability_storage.clone()).await?,
+        );
+        let observability_query_engine =
+            Arc::new(ObservabilityQueryEngine::new(observability_storage.clone()));
+
         // Create unified handlers with SHARED graph services
         // IMPORTANT: Pass the pre-created GraphCollectionService and GraphOperationsService
         // to ensure ALL graph endpoints and operations share the same state
@@ -1197,6 +1243,8 @@ impl SharedServices {
         let unified_handlers_instance = UnifiedHandlers::new(
             collection_service.clone(),
             vector_operations_service.clone(),
+            document_service.clone(),
+            observability_service.clone(),
             graph_collection_service.clone(), // SHARED instance
             graph_service.clone(),            // Uses the SHARED collection service
         );
@@ -1229,52 +1277,12 @@ impl SharedServices {
 
         // Create DocumentStrategy wrapping DocumentService for JSON document queries
         // DocumentService provides MongoDB-like document operations (CRUD, indexing, queries)
-        debug!("🔧 SharedServices::new - Creating DocumentService for document queries...");
-        let document_base_path = storage_config.metadata_url.replace("file://", "");
-        let document_service = match DocumentService::new_with_wal(
-            sst_engine_for_documents,
-            &document_base_path,
-        )
-        .await
-        {
-            Ok(service) => Arc::new(service),
-            Err(e) => {
-                warn!(
-                    "Failed to create WAL-backed DocumentService: {}. Falling back to in-memory WAL-less service.",
-                    e
-                );
-                Arc::new(DocumentService::new(
-                    vector_operations_service.unified_engine(),
-                ))
-            }
-        };
         let document_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
             Arc::new(DocumentStrategy::new(document_service.clone()));
         debug!("✅ SharedServices::new - DocumentStrategy created for document queries");
 
         // Create ObservabilityStrategy wrapping ObservabilityQueryEngine for logs/metrics/traces
         // This enables unified query interface for observability data
-        debug!(
-            "🔧 SharedServices::new - Creating ObservabilityQueryEngine for observability queries..."
-        );
-        let observability_base_path = storage_config.metadata_url.replace("file://", "");
-        let observability_storage = match ObservabilityStorage::new_with_wal(
-            &observability_base_path,
-        )
-        .await
-        {
-            Ok(storage) => Arc::new(storage),
-            Err(e) => {
-                warn!(
-                    "Failed to create WAL-backed ObservabilityStorage: {}. Falling back to non-WAL storage.",
-                    e
-                );
-                Arc::new(ObservabilityStorage::new(&observability_base_path))
-            }
-        };
-        let observability_service = Arc::new(
-            crate::observability::ObservabilityService::new(observability_storage.clone()).await?,
-        );
         const QUERY_TELEMETRY_NAMESPACE: &str = "_proximadb_query";
         let telemetry_namespace_exists = observability_service
             .list_namespaces()
@@ -1308,8 +1316,7 @@ impl SharedServices {
             observability_service.clone(),
             QUERY_TELEMETRY_NAMESPACE,
         );
-        let observability_query_engine =
-            Arc::new(ObservabilityQueryEngine::new(observability_storage.clone()));
+
         let observability_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
             Arc::new(ObservabilityStrategy::new(observability_query_engine));
         debug!(
@@ -1334,10 +1341,11 @@ impl SharedServices {
             crate::storage::multimodel::DocumentStore::new(Default::default())
                 .with_service(document_service.clone()),
         );
+        let obs_base_path = storage_config.metadata_url.replace("file://", "");
         let observability_store = Arc::new(
             crate::storage::multimodel::ObservabilityStore::new(
                 crate::storage::multimodel::stores::observability_store::ObservabilityStoreConfig {
-                    base_path: observability_base_path.clone(),
+                    base_path: obs_base_path,
                     ..Default::default()
                 },
             )
@@ -1354,7 +1362,11 @@ impl SharedServices {
 
         // Create FederatedQueryContext for SQL with multi-model extensions
         debug!("🔧 SharedServices::new - Creating FederatedQueryContext...");
-        let federated_context = Arc::new(FederatedQueryContext::new(multimodel_storage));
+        let federated_context = Arc::new(
+            FederatedQueryContext::new(multimodel_storage)
+                .with_collection_service(collection_service.clone())
+                .with_vector_operations(vector_operations_service.clone()),
+        );
         debug!("✅ SharedServices::new - FederatedQueryContext created");
 
         // Create SqlStrategy wrapping FederatedQueryContext
@@ -1626,6 +1638,8 @@ pub struct MultiServer {
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// Storage engine reference for PostgreSQL wire protocol server
     storage: Option<Arc<RwLock<StorageEngine>>>,
+    /// LLM engine for semantic operations
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 }
 
 impl MultiServer {
@@ -1636,6 +1650,7 @@ impl MultiServer {
         shared_services: SharedServices,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         rest_auth_enabled: bool,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
         info!("🚀 MultiServer: Initializing network orchestrator");
         info!(
@@ -1651,6 +1666,7 @@ impl MultiServer {
             rest_auth_enabled,
             server_handles: Arc::new(Mutex::new(Vec::new())),
             storage: None,
+            llm_engine,
         }
     }
 
@@ -1989,6 +2005,7 @@ impl MultiServer {
             let api_config = self.config.api_config.clone();
             // Compression disabled by default (field doesn't exist in config)
             let enable_compression = false;
+            let llm_engine = self.llm_engine.clone();
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
 
@@ -2008,6 +2025,7 @@ impl MultiServer {
                     rest_security,
                     data_dir,
                     query_adapter,
+                    llm_engine,
                 )
                 .start()
                 .await

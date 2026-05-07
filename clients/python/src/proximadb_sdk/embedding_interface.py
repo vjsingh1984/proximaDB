@@ -148,7 +148,7 @@ class BERTEmbeddingProvider(EmbeddingProvider):
     def __init__(self, config: EmbeddingConfig = None):
         """Initialize BERT embedding provider"""
         config = config or EmbeddingConfig(
-            model_name="all-MiniLM-L6-v2", dimension=384, batch_size=32
+            model_name="BAAI/bge-small-en-v1.5", dimension=384, batch_size=32
         )
         super().__init__(config)
 
@@ -312,6 +312,7 @@ class EmbeddingProviderFactory:
     _providers = {
         "bert": BERTEmbeddingProvider,
         "sentence-transformers": BERTEmbeddingProvider,
+        "BAAI/bge-small-en-v1.5": BERTEmbeddingProvider,
         "all-MiniLM-L6-v2": BERTEmbeddingProvider,
         "all-mpnet-base-v2": BERTEmbeddingProvider,
         "simulated": SimulatedEmbeddingProvider,
@@ -333,7 +334,11 @@ class EmbeddingProviderFactory:
             EmbeddingProvider instance
         """
         # Handle model names as provider types
-        if provider_type in ["all-MiniLM-L6-v2", "all-mpnet-base-v2"]:
+        if provider_type in [
+            "BAAI/bge-small-en-v1.5",
+            "all-MiniLM-L6-v2",
+            "all-mpnet-base-v2",
+        ]:
             config = config or EmbeddingConfig(model_name=provider_type, dimension=384)
             provider_type = "bert"
 
@@ -390,7 +395,7 @@ def create_embedding_provider(
     if kwargs and not (model_name and dimension):
         # Get default config for the provider type
         provider_defaults = {
-            "bert": {"model_name": "all-MiniLM-L6-v2", "dimension": 384},
+            "bert": {"model_name": "BAAI/bge-small-en-v1.5", "dimension": 384},
             "simulated": {"model_name": "simulated", "dimension": 384},
             "cohere": {"model_name": "embed-english-v2.0", "dimension": 4096},
         }

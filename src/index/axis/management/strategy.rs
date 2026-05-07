@@ -216,8 +216,10 @@ impl IndexStrategyBuilder {
 
         // Select algorithm based on size and requirements
         let algorithm = match (total_vectors, self.optimization_config.goal) {
-            // Small collections - use HNSW
-            (n, _) if n < 100_000 => IndexAlgorithm::HNSW {
+            // Small collections - use HNSW. Once collections move past the
+            // brute-force-friendly range, prefer scalable ANN structures earlier
+            // so background hydration in embedded/server modes stays practical.
+            (n, _) if n < 10_000 => IndexAlgorithm::HNSW {
                 m: 16,
                 ef_construction: 200,
                 ef_search: 50,
@@ -435,7 +437,7 @@ mod tests {
     #[test]
     fn test_strategy_builder_small_collection() {
         let stats = CollectionStatistics {
-            total_vectors: 10_000,
+            total_vectors: 9_999,
             vector_dimension: 128,
             avg_vector_sparsity: 0.1,
             has_metadata: true,
@@ -469,5 +471,34 @@ mod tests {
             vector_index.algorithm,
             IndexAlgorithm::HNSW { .. }
         ));
+    }
+
+    #[test]
+    fn test_strategy_builder_prefers_ivf_once_collection_exits_bruteforce_range() {
+        let stats = CollectionStatistics {
+            total_vectors: 10_000,
+            vector_dimension: 128,
+            avg_vector_sparsity: 0.1,
+            has_metadata: false,
+            metadata_cardinality: std::collections::HashMap::new(),
+            has_text_fields: false,
+            update_frequency: 1.0,
+        };
+
+        let patterns = QueryPatterns {
+            avg_queries_per_second: 100.0,
+            filter_usage_ratio: 0.0,
+            text_search_ratio: 0.0,
+            typical_k: 10,
+            recall_requirement: 0.95,
+        };
+
+        let strategy = IndexStrategyBuilder::new(stats, patterns).build().unwrap();
+        let vector_index = strategy
+            .indexes
+            .iter()
+            .find(|idx| matches!(idx.data_type, Data::DenseVector { .. }))
+            .unwrap();
+        assert!(matches!(vector_index.algorithm, IndexAlgorithm::IVF { .. }));
     }
 }

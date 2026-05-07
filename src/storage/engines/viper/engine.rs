@@ -1577,7 +1577,7 @@ impl ViperEngine {
                 // Use metadata directly - it's already HashMap<String, SqlValue>
                 crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id,
-                    score: r.score as f64,
+                    score: r.similarity.unwrap_or(r.score) as f64,
                     vector,
                     metadata: r.metadata.clone(),
                     version: None,

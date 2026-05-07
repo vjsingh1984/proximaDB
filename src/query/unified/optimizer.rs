@@ -32,7 +32,7 @@ use parking_lot::RwLock;
 use tracing::{debug, info, trace};
 
 use super::ast::{
-    DataModel, DocumentQueryExpr, FilterOperator, GraphTraversalExpr, LogQueryExpr,
+    DataModel, DocumentQueryExpr, FilterOperator, GraphQueryExpr, GraphTraversalExpr, LogQueryExpr,
     MetricQueryExpr, ModelOperation, MultiModelQuery, PathFilter, QueryComponent, VectorSearchExpr,
 };
 
@@ -48,6 +48,8 @@ pub struct QueryOptimizer {
     /// (TD-047 sub A). Populated by callers via [`record_plan_execution`]
     /// after queries complete. `None` when measured fitness is disabled.
     plan_execution_cache: Option<Arc<super::plan_execution_cache::PlanExecutionCache>>,
+    /// LLM engine for AI-assisted optimization (optional)
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 }
 
 /// Configuration for the query optimizer
@@ -175,7 +177,17 @@ impl QueryOptimizer {
             config,
             plan_cache,
             plan_execution_cache,
+            llm_engine: None,
         }
+    }
+
+    /// Add an LLM engine for AI-assisted optimization
+    pub fn with_llm(
+        mut self,
+        llm_engine: Arc<crate::ai::llm_integration::LLMIntegrationEngine>,
+    ) -> Self {
+        self.llm_engine = Some(llm_engine);
+        self
     }
 
     /// Record a measured wall-clock time for a plan that has just executed.
@@ -273,7 +285,7 @@ impl QueryOptimizer {
     }
 
     /// Optimize a multi-model query
-    pub fn optimize(&self, query: &MultiModelQuery) -> Result<OptimizedPlan> {
+    pub async fn optimize(&self, query: &MultiModelQuery) -> Result<OptimizedPlan> {
         let start = Instant::now();
         debug!(
             "Optimizing query with {} components",
@@ -304,6 +316,7 @@ impl QueryOptimizer {
         let execution_order =
             if self.config.enable_evolutionary_optimizer && query.components.len() > 1 {
                 self.evolutionary_optimize(&query.components, &selectivity_estimates)
+                    .await
             } else if self.config.enable_reordering {
                 self.compute_optimal_order(&query.components, &selectivity_estimates)
             } else {
@@ -324,7 +337,7 @@ impl QueryOptimizer {
         // Step 4: Reorder components based on execution order
         let reordered_components: Vec<QueryComponent> = execution_order
             .iter()
-            .map(|&idx| query.components[idx].clone())
+            .map(|idx| query.components[*idx].clone())
             .collect();
 
         // Step 5: Estimate total cost
@@ -378,6 +391,7 @@ impl QueryOptimizer {
         match &component.operation {
             ModelOperation::VectorSearch(expr) => self.estimate_vector_selectivity(expr),
             ModelOperation::DocumentQuery(expr) => self.estimate_document_selectivity(expr),
+            ModelOperation::GraphQuery(expr) => self.estimate_graph_query_selectivity(expr),
             ModelOperation::GraphTraversal(expr) => self.estimate_graph_selectivity(expr),
             ModelOperation::LogQuery(expr) => self.estimate_log_selectivity(expr),
             ModelOperation::MetricQuery(expr) => self.estimate_metric_selectivity(expr),
@@ -521,6 +535,21 @@ impl QueryOptimizer {
             estimated_rows,
             method: EstimationMethod::Heuristic,
         }
+    }
+
+    fn estimate_graph_query_selectivity(&self, expr: &GraphQueryExpr) -> SelectivityEstimate {
+        let pseudo_traversal = GraphTraversalExpr {
+            graph_name: expr.graph_name.clone(),
+            start_nodes: super::ast::StartNodeSpec::Label("*".to_string()),
+            edge_types: Vec::new(),
+            direction: super::ast::TraversalDirection::Outgoing,
+            max_depth: expr.max_depth,
+            min_depth: 0,
+            node_filters: Vec::new(),
+            edge_filters: Vec::new(),
+            return_paths: false,
+        };
+        self.estimate_graph_selectivity(&pseudo_traversal)
     }
 
     /// Estimate selectivity for log query
@@ -675,29 +704,36 @@ impl QueryOptimizer {
     /// measurement-driven without a discontinuity at the optimizer level
     /// (each evolutionary generation is internally consistent because the
     /// fitness function is deterministic for a given `(shape, order)`).
-    fn evolutionary_optimize(
+    async fn evolutionary_optimize(
         &self,
         components: &[QueryComponent],
         selectivity: &[SelectivityEstimate],
     ) -> Vec<usize> {
         use super::evolutionary::EvolutionaryOptimizer;
 
-        let optimizer = EvolutionaryOptimizer::new(
+        let mut optimizer = EvolutionaryOptimizer::new(
             self.config.evolutionary_population_size,
             self.config.evolutionary_generations,
         );
 
+        // Attach LLM engine if available for AI-assisted mutation
+        if let Some(llm) = &self.llm_engine {
+            optimizer = optimizer.with_llm(llm.clone());
+        }
+
         let exec_cache = self.plan_execution_cache.as_ref();
         let shape = exec_cache.map(|_| super::plan_execution_cache::shape_hash(components));
 
-        optimizer.optimize(components, selectivity, |sel, order| {
-            if let (Some(cache), Some(s)) = (exec_cache, shape) {
-                if let Some(measured) = cache.get_mean_us(s, order) {
-                    return measured;
+        optimizer
+            .optimize(components, selectivity, |sel, order| {
+                if let (Some(cache), Some(s)) = (exec_cache, shape) {
+                    if let Some(measured) = cache.get_mean_us(s, order) {
+                        return measured;
+                    }
                 }
-            }
-            self.estimate_total_cost(sel, order)
-        })
+                self.estimate_total_cost(sel, order)
+            })
+            .await
     }
 
     /// Extract filters that can be pushed down to engines
@@ -731,6 +767,10 @@ impl QueryOptimizer {
                         target: DataModel::Document,
                     });
                 }
+            }
+            ModelOperation::GraphQuery(_expr) => {
+                // Declarative graph subset queries own their internal filtering.
+                // Leave pushdown accounting to the graph subset executor.
             }
             ModelOperation::GraphTraversal(expr) => {
                 // Edge type and node label filters can be pushed
@@ -1143,6 +1183,17 @@ fn compute_query_hash(query: &MultiModelQuery) -> u64 {
                     std::mem::discriminant(&filter.operator).hash(&mut hasher);
                 }
             }
+            ModelOperation::GraphQuery(expr) => {
+                "GraphQuery".hash(&mut hasher);
+                expr.graph_name.hash(&mut hasher);
+                expr.normalized_query.hash(&mut hasher);
+                expr.max_depth.hash(&mut hasher);
+                expr.uses_legacy_node_rows.hash(&mut hasher);
+                expr.output_columns.len().hash(&mut hasher);
+                for column in &expr.output_columns {
+                    column.hash(&mut hasher);
+                }
+            }
             ModelOperation::GraphTraversal(expr) => {
                 "GraphTraversal".hash(&mut hasher);
                 expr.graph_name.hash(&mut hasher);
@@ -1289,15 +1340,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_optimizer_creation() {
+    #[tokio::test]
+    async fn test_optimizer_creation() {
         let optimizer = QueryOptimizer::with_defaults();
         assert!(optimizer.config.enable_reordering);
         assert!(optimizer.config.enable_filter_pushdown);
     }
 
-    #[test]
-    fn test_vector_selectivity_with_threshold() {
+    #[tokio::test]
+    async fn test_vector_selectivity_with_threshold() {
         let optimizer = QueryOptimizer::with_defaults();
 
         // High threshold = low selectivity (more selective)
@@ -1318,8 +1369,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_vector_selectivity_with_top_k() {
+    #[tokio::test]
+    async fn test_vector_selectivity_with_top_k() {
         let optimizer = QueryOptimizer::with_defaults();
 
         let small_k = make_vector_search_component(None, 10);
@@ -1337,8 +1388,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_document_selectivity_with_filters() {
+    #[tokio::test]
+    async fn test_document_selectivity_with_filters() {
         let optimizer = QueryOptimizer::with_defaults();
 
         // No filters = not selective
@@ -1378,8 +1429,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_graph_selectivity() {
+    #[tokio::test]
+    async fn test_graph_selectivity() {
         let optimizer = QueryOptimizer::with_defaults();
 
         // No edge type filter
@@ -1396,8 +1447,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_component_reordering() {
+    #[tokio::test]
+    async fn test_component_reordering() {
         let optimizer = QueryOptimizer::with_defaults();
 
         // Create query with 3 components of varying selectivity
@@ -1419,6 +1470,7 @@ mod tests {
 
         let plan = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
 
         // Most selective should be first (lowest selectivity value)
@@ -1436,8 +1488,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_filter_pushdown() {
+    #[tokio::test]
+    async fn test_filter_pushdown() {
         let optimizer = QueryOptimizer::with_defaults();
 
         let doc_query = make_document_query_component(vec![PathFilter {
@@ -1452,8 +1504,8 @@ mod tests {
         assert_eq!(pushed[0].target, DataModel::Document);
     }
 
-    #[test]
-    fn test_statistics_collection() {
+    #[tokio::test]
+    async fn test_statistics_collection() {
         let stats = QueryStatistics::new();
 
         // Record some queries
@@ -1470,8 +1522,8 @@ mod tests {
         assert_eq!(avg, 4750); // (5000 + 4500) / 2
     }
 
-    #[test]
-    fn test_collection_stats() {
+    #[tokio::test]
+    async fn test_collection_stats() {
         let stats = QueryStatistics::new();
 
         let collection_stats = OptimizerCollectionStats {
@@ -1490,8 +1542,8 @@ mod tests {
         assert_eq!(retrieved.row_count, 1_000_000);
     }
 
-    #[test]
-    fn test_dependency_aware_ordering() {
+    #[tokio::test]
+    async fn test_dependency_aware_ordering() {
         let optimizer = QueryOptimizer::with_defaults();
 
         // Create query with dependencies
@@ -1518,6 +1570,7 @@ mod tests {
 
         let plan = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
 
         // Vector must come before document due to dependency
@@ -1537,8 +1590,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_optimized_plan_notes() {
+    #[tokio::test]
+    async fn test_optimized_plan_notes() {
         let optimizer = QueryOptimizer::with_defaults();
 
         let query = MultiModelQuery {
@@ -1559,6 +1612,7 @@ mod tests {
 
         let plan = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
 
         // Should have optimization notes
@@ -1571,8 +1625,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_estimate_total_cost() {
+    #[tokio::test]
+    async fn test_estimate_total_cost() {
         let optimizer = QueryOptimizer::with_defaults();
 
         let query = MultiModelQuery {
@@ -1589,6 +1643,7 @@ mod tests {
 
         let plan = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
 
         assert!(
@@ -1599,8 +1654,8 @@ mod tests {
 
     // ==================== Plan Caching Tests ====================
 
-    #[test]
-    fn test_plan_cache_creation() {
+    #[tokio::test]
+    async fn test_plan_cache_creation() {
         // Default optimizer should have cache enabled
         let optimizer = QueryOptimizer::with_defaults();
         assert!(
@@ -1616,8 +1671,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_plan_cache_hit_and_miss() {
+    #[tokio::test]
+    async fn test_plan_cache_hit_and_miss() {
         let optimizer = QueryOptimizer::with_defaults();
 
         let query = MultiModelQuery {
@@ -1632,6 +1687,7 @@ mod tests {
         // First call should be a cache miss
         let _plan1 = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
         let cache = optimizer
             .plan_cache()
@@ -1643,14 +1699,15 @@ mod tests {
         // Second call with same query should be a cache hit
         let _plan2 = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
         let stats2 = cache.stats();
         assert_eq!(stats2.hits, 1, "Second call should be a hit");
         assert_eq!(stats2.misses, 1, "Misses should remain 1");
     }
 
-    #[test]
-    fn test_plan_cache_different_queries() {
+    #[tokio::test]
+    async fn test_plan_cache_different_queries() {
         let optimizer = QueryOptimizer::with_defaults();
 
         let query1 = MultiModelQuery {
@@ -1674,9 +1731,11 @@ mod tests {
         // Two different queries should both be misses
         let _plan1 = optimizer
             .optimize(&query1)
+            .await
             .expect("optimization should succeed");
         let _plan2 = optimizer
             .optimize(&query2)
+            .await
             .expect("optimization should succeed");
 
         let cache = optimizer
@@ -1687,8 +1746,8 @@ mod tests {
         assert_eq!(stats.size, 2, "Cache should have 2 entries");
     }
 
-    #[test]
-    fn test_plan_cache_invalidation() {
+    #[tokio::test]
+    async fn test_plan_cache_invalidation() {
         let optimizer = QueryOptimizer::with_defaults();
 
         let query = MultiModelQuery {
@@ -1703,6 +1762,7 @@ mod tests {
         // Cache a plan
         let _plan1 = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
         let cache = optimizer
             .plan_cache()
@@ -1720,13 +1780,14 @@ mod tests {
         // Next call should be a miss
         let _plan2 = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
         let stats = cache.stats();
         assert_eq!(stats.misses, 2, "Should have 2 misses total");
     }
 
-    #[test]
-    fn test_plan_cache_stats_hit_rate() {
+    #[tokio::test]
+    async fn test_plan_cache_stats_hit_rate() {
         let cache = PlanCache::new(100, 300);
 
         // No queries yet
@@ -1758,8 +1819,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_plan_cache_lru_eviction() {
+    #[tokio::test]
+    async fn test_plan_cache_lru_eviction() {
         // Create cache with max 3 entries
         let cache = PlanCache::new(3, 300);
 
@@ -1790,8 +1851,8 @@ mod tests {
         assert!(cache.get(4).is_some(), "Entry 4 should be present");
     }
 
-    #[test]
-    fn test_query_hash_consistency() {
+    #[tokio::test]
+    async fn test_query_hash_consistency() {
         let query = MultiModelQuery {
             components: vec![make_vector_search_component(Some(0.8), 100)],
             fusion_strategy: super::super::FusionStrategy::Intersection,
@@ -1822,8 +1883,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_query_hash_different_components() {
+    #[tokio::test]
+    async fn test_query_hash_different_components() {
         let vec_query = MultiModelQuery {
             components: vec![make_vector_search_component(Some(0.8), 100)],
             fusion_strategy: super::super::FusionStrategy::Intersection,
@@ -1869,8 +1930,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_optimizer_without_cache_still_works() {
+    #[tokio::test]
+    async fn test_optimizer_without_cache_still_works() {
         let optimizer = QueryOptimizer::without_cache();
 
         let query = MultiModelQuery {
@@ -1885,9 +1946,11 @@ mod tests {
         // Should work without cache
         let plan1 = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
         let plan2 = optimizer
             .optimize(&query)
+            .await
             .expect("optimization should succeed");
 
         // Both should succeed and produce same result
@@ -1903,39 +1966,39 @@ mod tests {
     // FUSION STRATEGY SELECTION TESTS
     // ========================================================================
 
-    #[test]
-    fn test_fusion_strategy_rrf_for_vector_and_graph() {
+    #[tokio::test]
+    async fn test_fusion_strategy_rrf_for_vector_and_graph() {
         let strategy = select_fusion_strategy(true, true, 0.5);
         assert_eq!(strategy, FusionStrategy::Rrf);
     }
 
-    #[test]
-    fn test_fusion_strategy_intersection_for_selective_filter() {
+    #[tokio::test]
+    async fn test_fusion_strategy_intersection_for_selective_filter() {
         let strategy = select_fusion_strategy(true, false, 0.05);
         assert_eq!(strategy, FusionStrategy::Intersection);
     }
 
-    #[test]
-    fn test_fusion_strategy_union_default() {
+    #[tokio::test]
+    async fn test_fusion_strategy_union_default() {
         let strategy = select_fusion_strategy(true, false, 0.5);
         assert_eq!(strategy, FusionStrategy::Union);
     }
 
-    #[test]
-    fn test_fusion_strategy_rrf_overrides_selectivity() {
+    #[tokio::test]
+    async fn test_fusion_strategy_rrf_overrides_selectivity() {
         // Even with low selectivity, vector+graph uses RRF
         let strategy = select_fusion_strategy(true, true, 0.01);
         assert_eq!(strategy, FusionStrategy::Rrf);
     }
 
-    #[test]
-    fn test_fusion_strategy_no_components() {
+    #[tokio::test]
+    async fn test_fusion_strategy_no_components() {
         let strategy = select_fusion_strategy(false, false, 0.5);
         assert_eq!(strategy, FusionStrategy::Union);
     }
 
-    #[test]
-    fn test_record_plan_execution_no_op_when_disabled() {
+    #[tokio::test]
+    async fn test_record_plan_execution_no_op_when_disabled() {
         // Default config has enable_measured_fitness = false; recording is a
         // no-op and the cache is absent.
         let optimizer = QueryOptimizer::with_defaults();
@@ -1949,8 +2012,8 @@ mod tests {
         optimizer.record_plan_execution(&components, &[0, 1], 1234);
     }
 
-    #[test]
-    fn test_record_plan_execution_populates_cache_when_enabled() {
+    #[tokio::test]
+    async fn test_record_plan_execution_populates_cache_when_enabled() {
         let mut config = OptimizerConfig::default();
         config.enable_evolutionary_optimizer = true;
         config.enable_measured_fitness = true;
@@ -1977,8 +2040,8 @@ mod tests {
         assert!((mean - 6_000.0).abs() < 1e-6, "mean was {}", mean);
     }
 
-    #[test]
-    fn test_evolutionary_optimize_uses_measured_fitness_when_available() {
+    #[tokio::test]
+    async fn test_evolutionary_optimize_uses_measured_fitness_when_available() {
         // Set up an optimizer with measured fitness on. Two query orders;
         // one is much faster according to recorded measurements but slower
         // according to the cost estimator. The optimizer should converge
@@ -2011,7 +2074,9 @@ mod tests {
             .iter()
             .map(|c| optimizer.estimate_selectivity(c))
             .collect();
-        let order = optimizer.evolutionary_optimize(&components, &selectivity);
+        let order = optimizer
+            .evolutionary_optimize(&components, &selectivity)
+            .await;
 
         assert_eq!(
             order,

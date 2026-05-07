@@ -42,6 +42,78 @@ impl ParsedGraphQuery {
     pub(crate) fn output_columns(&self) -> &[String] {
         &self.output_columns
     }
+
+    pub(crate) fn uses_legacy_node_rows(&self) -> bool {
+        if self.compiled.return_spec.projections.len() != 1 {
+            return false;
+        }
+
+        match &self.compiled.return_spec.projections[0] {
+            PropertyProjection::Variable(variable) => self
+                .compiled
+                .nodes
+                .iter()
+                .any(|node| node.variable == *variable),
+            _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SupportedGraphQueryDescriptor {
+    graph_id: String,
+    normalized_query: String,
+    output_columns: Vec<String>,
+    uses_legacy_node_rows: bool,
+    max_depth: u32,
+}
+
+impl SupportedGraphQueryDescriptor {
+    pub(crate) fn graph_id(&self) -> &str {
+        &self.graph_id
+    }
+
+    pub(crate) fn normalized_query(&self) -> &str {
+        &self.normalized_query
+    }
+
+    pub(crate) fn output_columns(&self) -> &[String] {
+        &self.output_columns
+    }
+
+    pub(crate) fn uses_legacy_node_rows(&self) -> bool {
+        self.uses_legacy_node_rows
+    }
+
+    pub(crate) fn max_depth(&self) -> u32 {
+        self.max_depth
+    }
+}
+
+pub(crate) fn describe_supported_graph_query(
+    query: &str,
+    request_target: Option<&str>,
+    default_graph: Option<&str>,
+) -> Result<SupportedGraphQueryDescriptor> {
+    let parsed = parse_supported_graph_query(query, request_target, default_graph)?;
+    let uses_legacy_node_rows = parsed.uses_legacy_node_rows();
+    let output_columns = if uses_legacy_node_rows {
+        vec![
+            "node_id".to_string(),
+            "label".to_string(),
+            "properties".to_string(),
+        ]
+    } else {
+        parsed.output_columns().to_vec()
+    };
+
+    Ok(SupportedGraphQueryDescriptor {
+        graph_id: parsed.graph_id().to_string(),
+        normalized_query: parsed.normalized_query().to_string(),
+        output_columns,
+        uses_legacy_node_rows,
+        max_depth: parsed.compiled.edges.len() as u32,
+    })
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -147,31 +219,18 @@ pub(crate) async fn execute_supported_graph_query(
     graph_ops: &GraphOperationsService,
     parsed: &ParsedGraphQuery,
 ) -> Result<ExecutedGraphQuery> {
-    let compiled = &parsed.compiled;
+    execute_supported_graph_query_with_start_nodes(graph_ops, parsed, None).await
+}
 
-    let mut bindings = if compiled.edges.is_empty() {
-        let node_pattern = &compiled.nodes[0];
-        query_candidate_nodes(graph_ops, parsed.graph_id(), node_pattern)
-            .await?
-            .into_iter()
-            .map(|node| {
-                let mut row = BindingRow::new();
-                row.insert(node_pattern.variable.clone(), BoundValue::Node(node));
-                row
-            })
-            .collect::<Vec<_>>()
-    } else {
-        let start_pattern = &compiled.nodes[0];
-        query_candidate_nodes(graph_ops, parsed.graph_id(), start_pattern)
-            .await?
-            .into_iter()
-            .map(|node| {
-                let mut row = BindingRow::new();
-                row.insert(start_pattern.variable.clone(), BoundValue::Node(node));
-                row
-            })
-            .collect::<Vec<_>>()
-    };
+pub(crate) async fn execute_supported_graph_query_with_start_nodes(
+    graph_ops: &GraphOperationsService,
+    parsed: &ParsedGraphQuery,
+    start_node_ids: Option<&[String]>,
+) -> Result<ExecutedGraphQuery> {
+    let compiled = &parsed.compiled;
+    let start_pattern = &compiled.nodes[0];
+    let mut bindings =
+        initial_bindings(graph_ops, parsed.graph_id(), start_pattern, start_node_ids).await?;
 
     for (edge_pattern, next_node_pattern) in
         compiled.edges.iter().zip(compiled.nodes.iter().skip(1))
@@ -282,6 +341,28 @@ pub(crate) async fn execute_supported_graph_query(
         },
         rows,
     })
+}
+
+async fn initial_bindings(
+    graph_ops: &GraphOperationsService,
+    graph_id: &str,
+    start_pattern: &crate::graph::query::ast::NodePattern,
+    start_node_ids: Option<&[String]>,
+) -> Result<Vec<BindingRow>> {
+    let start_nodes = if let Some(start_node_ids) = start_node_ids {
+        query_candidate_start_nodes(graph_ops, graph_id, start_pattern, start_node_ids).await?
+    } else {
+        query_candidate_nodes(graph_ops, graph_id, start_pattern).await?
+    };
+
+    Ok(start_nodes
+        .into_iter()
+        .map(|node| {
+            let mut row = BindingRow::new();
+            row.insert(start_pattern.variable.clone(), BoundValue::Node(node));
+            row
+        })
+        .collect())
 }
 
 fn strip_from_clause(query: &str) -> Result<(String, Option<String>)> {
@@ -560,6 +641,32 @@ async fn query_candidate_nodes(
 
     let mut nodes = graph_ops.query_nodes(graph_id, query).await?;
     nodes.retain(|node| matches_node_pattern(node.as_ref(), pattern));
+    Ok(nodes)
+}
+
+async fn query_candidate_start_nodes(
+    graph_ops: &GraphOperationsService,
+    graph_id: &str,
+    pattern: &crate::graph::query::ast::NodePattern,
+    start_node_ids: &[String],
+) -> Result<Vec<Arc<Node>>> {
+    let mut nodes = Vec::new();
+    let mut seen = HashSet::new();
+
+    for node_id in start_node_ids {
+        if !seen.insert(node_id.clone()) {
+            continue;
+        }
+
+        let Some(node) = graph_ops.get_node(graph_id, node_id).await? else {
+            continue;
+        };
+
+        if matches_node_pattern(node.as_ref(), pattern) {
+            nodes.push(node);
+        }
+    }
+
     Ok(nodes)
 }
 
@@ -1500,7 +1607,7 @@ impl GraphQueryOptimizer {
         &self,
         plan: &crate::graph::query::planner::QueryPlan,
         stats: &GraphStatistics,
-        cost: &GraphOperationCost,
+        _cost: &GraphOperationCost,
     ) -> Result<GraphOptimizationHints, VectorDBError> {
         let mut hints = GraphOptimizationHints {
             use_property_index: None,

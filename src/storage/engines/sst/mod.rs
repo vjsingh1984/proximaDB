@@ -310,7 +310,7 @@ use self::error::{Result, SstError};
 // Import Proxima common structures (shared with SWIFT)
 use crate::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, BlockStatistics, ColumnStatistics, ProximaBlockMetadata,
-    ProximaDataBlock, VectorEncodingLayout,
+    ProximaDataBlock,
 };
 
 // SST filename operations are handled by unified FilenameCodec from compaction_orchestrator
@@ -2211,7 +2211,7 @@ mod compression_tests_unified {
     use crate::core::compression::{
         CompressionAlgorithm as UnifiedCompressionAlgorithm, CompressionContext,
     };
-    use crate::proto::proximadb_v1::MetadataItem;
+    use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
     fn create_test_record(id: &str, vector_dim: usize) -> VectorRecord {
         VectorRecord {
@@ -2366,8 +2366,6 @@ mod compression_tests_unified {
     #[test]
     fn test_unified_compression_context_integration() {
         // Test that SST context is properly used with unified compression
-        use crate::core::compression;
-
         let test_data = b"Test data for compression context verification".repeat(100);
 
         // Compress using unified module with SST context
@@ -2432,11 +2430,10 @@ mod compression_tests_unified {
 
 #[cfg(test)]
 mod bloom_filter_tests {
-    use super::*;
     use crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder;
     use crate::core::bloom::{
-        BloomFilterConfig, BloomFilterStrategy, BloomStrategy, MetadataBloomFilter,
-        factory::BloomFilterFactory, strategies::CompositeBloomFilter,
+        BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter, factory::BloomFilterFactory,
+        strategies::CompositeBloomFilter,
     };
     use crate::core::bloom::{BloomFilterStats, SstableBloomFilter};
     use std::collections::HashMap;
@@ -2722,7 +2719,7 @@ mod bloom_filter_tests {
             metadata_queries_saved: 0,
         };
 
-        let sstable_filter = SstableBloomFilter::new(
+        let _sstable_filter = SstableBloomFilter::new(
             key_config.clone(),
             key_filter.serialize().unwrap(),
             BloomFilterStrategy::serialize(&meta_filter).unwrap(),
@@ -2745,7 +2742,7 @@ mod bloom_filter_tests {
 mod decompression_cache_tests {
     use super::decompression_cache::*;
     use super::*;
-    use tokio::time::{Duration, sleep};
+    use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
     /// Create a test cache config with minimal values
     fn create_test_cache_config(max_size_mb: usize) -> CacheConfig {
@@ -2763,7 +2760,7 @@ mod decompression_cache_tests {
     #[tokio::test]
     async fn test_cache_basic_operations() {
         let cache = DecompressionCache::from_config(create_test_cache_config(10)); // 10MB cache
-        let compression_cfg = BlockCompressionConfig::default();
+        let _compression_cfg = BlockCompressionConfig::default();
 
         let key = BlockCacheKey {
             file_path: "test.sstable".to_string(),
@@ -3111,8 +3108,8 @@ mod compression_tests {
     use super::*;
     use crate::core::compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
     use crate::core::compression::markers::*;
-    use crate::proto::proximadb_v1::{CompressionAlgorithm, CompressionConfig, MetadataItem};
-    use bincode::config;
+    use crate::proto::proximadb_v1::CompressionAlgorithm;
+    use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
     fn create_test_record(id: &str, vector_dim: usize) -> VectorRecord {
         VectorRecord {
@@ -3592,7 +3589,7 @@ mod simple_sstable_tests {
 
         // Read header
         let header_data = &data[offset..offset + header_len];
-        let header: SstableHeader = bincode::deserialize(header_data).unwrap();
+        let _header: SstableHeader = bincode::deserialize(header_data).unwrap();
         offset += header_len;
 
         // Read bloom filter length
@@ -3739,7 +3736,7 @@ mod simple_sstable_tests {
         // Test bloom filter functionality
         let contains_005 = reader.might_contain_key(&file_url, "vec_005").await;
         let contains_009 = reader.might_contain_key(&file_url, "vec_009").await;
-        let contains_fake = reader.might_contain_key(&file_url, "fake_key").await;
+        let _contains_fake = reader.might_contain_key(&file_url, "fake_key").await;
 
         assert!(
             contains_005,

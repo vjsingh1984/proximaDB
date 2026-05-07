@@ -35,13 +35,13 @@ use crate::query::distributed::DistributedQueryCoordinator;
 use crate::query::facade::{
     QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData, QueryStrategy,
 };
-use crate::query::federated::parser::{SqlExtension, TargetModelType, VectorQuery};
+use crate::query::federated::parser::{SqlExtension, VectorQuery};
 use crate::query::federated::{FederatedParser, QueryType as FederatedQueryType};
+use crate::query::graph_lowering::lower_supported_graph_query_component;
 use crate::query::unified::ast::{
-    DataModel, DistanceMetric, DocumentQueryExpr, FilterOperator, FilterValue, GraphTraversalExpr,
-    LogQueryExpr, MetricAggregation, MetricQueryExpr, ModelOperation, MultiModelQuery, NodeFilter,
-    PathFilter, QueryComponent, StartNodeSpec, TraversalDirection, VectorSearchExpr,
-    VectorSearchParams,
+    DataModel, DistanceMetric, DocumentQueryExpr, FilterOperator, FilterValue, LogQueryExpr,
+    MetricAggregation, MetricQueryExpr, ModelOperation, MultiModelQuery, PathFilter,
+    QueryComponent, VectorSearchExpr, VectorSearchParams,
 };
 use crate::query::unified::fusion::SubQueryResult;
 use crate::services::operations::vectors::VectorOperationsService;
@@ -202,50 +202,6 @@ impl DistributedQueryStrategy {
             .captures(sql)
             .and_then(|caps| caps.get(1))
             .and_then(|m| m.as_str().parse::<u32>().ok()))
-    }
-
-    fn parse_graph_label(&self, cypher: &str) -> Result<Option<String>> {
-        let label_re = Regex::new(r":\s*([A-Za-z_][A-Za-z0-9_]*)")
-            .map_err(|error| anyhow!("Failed to compile graph label regex: {error}"))?;
-        Ok(label_re
-            .captures(cypher)
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string()))
-    }
-
-    fn parse_graph_edge_types(&self, cypher: &str) -> Result<Vec<String>> {
-        let edge_re = Regex::new(r"\[:\s*([A-Za-z_][A-Za-z0-9_]*)")
-            .map_err(|error| anyhow!("Failed to compile graph edge regex: {error}"))?;
-        Ok(edge_re
-            .captures_iter(cypher)
-            .filter_map(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-            .collect())
-    }
-
-    fn parse_graph_max_depth(&self, cypher: &str) -> Result<u32> {
-        let range_re = Regex::new(r"\*(?:\d+\.\.)?(\d+)")
-            .map_err(|error| anyhow!("Failed to compile graph depth regex: {error}"))?;
-        Ok(range_re
-            .captures(cypher)
-            .and_then(|caps| caps.get(1))
-            .and_then(|m| m.as_str().parse::<u32>().ok())
-            .unwrap_or_else(|| {
-                if cypher.contains("-[") || cypher.contains("--") {
-                    1
-                } else {
-                    0
-                }
-            }))
-    }
-
-    fn infer_graph_direction(&self, cypher: &str) -> TraversalDirection {
-        let has_incoming = cypher.contains("<-");
-        let has_outgoing = cypher.contains("->");
-        match (has_incoming, has_outgoing) {
-            (true, true) => TraversalDirection::Both,
-            (true, false) => TraversalDirection::Incoming,
-            _ => TraversalDirection::Outgoing,
-        }
     }
 
     fn normalize_document_path(&self, field: &str) -> String {
@@ -450,38 +406,11 @@ impl DistributedQueryStrategy {
                 filters: Vec::new(),
                 dependencies: Vec::new(),
             }),
-            SqlExtension::GraphQuery { cypher } => {
-                let graph_name = request
-                    .target
-                    .clone()
-                    .or_else(|| {
-                        federated.targets.iter().find_map(|target| {
-                            (target.model_type == TargetModelType::Graph)
-                                .then(|| target.name.clone())
-                        })
-                    })
-                    .unwrap_or_else(|| "default".to_string());
-
-                Ok(QueryComponent {
-                    model: DataModel::Graph,
-                    operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
-                        graph_name,
-                        start_nodes: StartNodeSpec::Filter(NodeFilter {
-                            label: self.parse_graph_label(cypher)?,
-                            properties: Vec::new(),
-                        }),
-                        edge_types: self.parse_graph_edge_types(cypher)?,
-                        direction: self.infer_graph_direction(cypher),
-                        max_depth: self.parse_graph_max_depth(cypher)?,
-                        min_depth: 0,
-                        node_filters: Vec::new(),
-                        edge_filters: Vec::new(),
-                        return_paths: false,
-                    }),
-                    filters: Vec::new(),
-                    dependencies: Vec::new(),
-                })
-            }
+            SqlExtension::GraphQuery { cypher } => lower_supported_graph_query_component(
+                cypher,
+                request.target.as_deref(),
+                Some("default"),
+            ),
             SqlExtension::Logs { namespace } => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -677,6 +606,63 @@ mod tests {
             .expect_err("expression vectors should remain unsupported for distributed execution");
 
         assert!(error.to_string().contains("expression-based query vectors"));
+    }
+
+    #[test]
+    fn test_query_to_multimodel_uses_graph_target_from_supported_subset() {
+        let strategy = DistributedQueryStrategy::new(
+            "test-node".to_string(),
+            DistributedStrategyConfig::default(),
+        );
+        let request = QueryRequest::federated(
+            "SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n')",
+        );
+
+        let query = strategy
+            .query_to_multimodel(
+                &request,
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n')",
+            )
+            .expect("graph distributed query should translate");
+
+        assert_eq!(query.components.len(), 1);
+        match &query.components[0].operation {
+            ModelOperation::GraphQuery(expr) => {
+                assert_eq!(expr.graph_name, "social");
+                assert_eq!(expr.normalized_query, "MATCH (n:Person) RETURN n");
+                assert_eq!(
+                    expr.output_columns,
+                    vec![
+                        "node_id".to_string(),
+                        "label".to_string(),
+                        "properties".to_string()
+                    ]
+                );
+                assert!(expr.uses_legacy_node_rows);
+                assert_eq!(expr.max_depth, 0);
+            }
+            other => panic!("expected graph query component, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_query_to_multimodel_rejects_conflicting_graph_target_and_from_clause() {
+        let strategy = DistributedQueryStrategy::new(
+            "test-node".to_string(),
+            DistributedStrategyConfig::default(),
+        );
+        let request =
+            QueryRequest::federated("SELECT * FROM GRAPH_QUERY('MATCH (n) FROM social RETURN n')")
+                .with_target("api_graph");
+
+        let error = strategy
+            .query_to_multimodel(
+                &request,
+                "SELECT * FROM GRAPH_QUERY('MATCH (n) FROM social RETURN n')",
+            )
+            .expect_err("conflicting graph targets should be rejected");
+
+        assert!(error.to_string().contains("target conflict"));
     }
 
     struct MockStorageEngine {

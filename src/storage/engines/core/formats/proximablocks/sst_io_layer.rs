@@ -585,8 +585,8 @@ impl SharedSstFormatReader {
                     let search_record = crate::core::search::results::OptimizedSearchRecord {
                         id: record.id.clone(),
                         vector_id: Some(record.id.clone()),
-                        score: distance_result.distance,
-                        similarity: Some(distance_result.distance),
+                        score: distance_result.normalized_score,
+                        similarity: Some(distance_result.normalized_score),
                         metadata: record.metadata.clone(),
                         vector: Some(Arc::new(record.vector.clone())),
                         debug_info: None,

@@ -3,7 +3,7 @@ mod tests {
     use crate::graph::engines::GraphEngine;
     use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::rag::SubgraphBuilder;
-    use crate::graph::rag::engine_impls::*;
+    use crate::graph::rag::engine_impls::KHopSubgraphBuilder;
     use crate::proto::proximadb_v1::{Edge, Node};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -12,7 +12,6 @@ mod tests {
     async fn test_khop_subgraph_builder() {
         let engine = Arc::new(OrionGraphEngine::new());
 
-        // Setup a small graph: a -> b -> c
         let node_a = Node {
             id: "a".to_string(),
             labels: vec!["Label".to_string()],
@@ -69,7 +68,6 @@ mod tests {
         let builder = KHopSubgraphBuilder::new(engine, 1, None);
         let subgraph = builder.build(&["a".to_string()]).await.unwrap();
 
-        // 1-hop from 'a' should give 'a' and 'b'
         assert_eq!(subgraph.nodes.len(), 2);
         assert!(subgraph.nodes.contains(&"a".to_string()));
         assert!(subgraph.nodes.contains(&"b".to_string()));
@@ -77,7 +75,6 @@ mod tests {
         assert_eq!(subgraph.edges[0].from, "a");
         assert_eq!(subgraph.edges[0].to, "b");
 
-        // 2-hop from 'a'
         let builder_2 = KHopSubgraphBuilder::new(builder.engine().clone(), 2, None);
         let subgraph_2 = builder_2.build(&["a".to_string()]).await.unwrap();
 

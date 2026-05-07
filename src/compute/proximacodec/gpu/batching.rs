@@ -26,7 +26,6 @@
 //! - **Medium batches** (1K-10K): Pipelined transfers
 //! - **Large batches** (>10K): Chunked with async transfers
 
-use anyhow::Result;
 use tracing::{debug, trace};
 
 use super::kernels::utils::GpuBatchConfig;
@@ -214,7 +213,7 @@ pub struct GpuBatchIterator<'a, T> {
     data: &'a [T],
     batch_size: usize,
     current_offset: usize,
-    backend: HardwareBackend,
+    _backend: HardwareBackend,
 }
 
 impl<'a, T> GpuBatchIterator<'a, T> {
@@ -230,7 +229,7 @@ impl<'a, T> GpuBatchIterator<'a, T> {
             data,
             batch_size,
             current_offset: 0,
-            backend,
+            _backend: backend,
         }
     }
 
@@ -378,6 +377,7 @@ impl BatchPerformanceEstimator {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "gpu")]
     use super::*;
 
     #[test]

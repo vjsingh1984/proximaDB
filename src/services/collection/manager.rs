@@ -437,8 +437,18 @@ impl CollectionService {
             );
         }
 
-        // Resolve compression and storage configuration
         let mut enriched_config = config.clone();
+
+        // Persist an explicit default metric so every downstream subsystem
+        // sees the same collection semantics instead of applying its own fallback.
+        let resolved_distance_metric = enriched_config
+            .distance_metric
+            .and_then(|metric| crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok())
+            .filter(|metric| *metric != crate::proto::proximadb_v1::DistanceMetric::Unspecified)
+            .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
+        enriched_config.distance_metric = Some(resolved_distance_metric as i32);
+
+        // Resolve compression and storage configuration
 
         // NEW: Add tenant metadata to collection if tenant context is provided
         if let Some(tenant_ctx) = tenant_context {
@@ -534,42 +544,9 @@ impl CollectionService {
             }
         }
 
-        // Add default HNSW index configuration if not provided
-        // This enables AXIS indexes for accelerated vector search
-        let resolved_engine = crate::proto::proximadb_v1::StorageEngine::try_from(
-            config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
-        )
-        .unwrap_or(StorageEngine::Sst);
-
-        if enriched_config.index_configs.is_empty() && resolved_engine != StorageEngine::Tst {
-            use crate::proto::proximadb_v1::{HnswConfig, IndexConfig, IndexingAlgorithm};
-
-            let default_hnsw_config = IndexConfig {
-                index_name: format!("{}_default_hnsw", config.name),
-                algorithm: IndexingAlgorithm::Hnsw as i32,
-                enabled: Some(true),
-                is_primary: Some(true),
-                hnsw_config: Some(HnswConfig {
-                    m: Some(16),                // Balanced connectivity
-                    ef_construction: Some(200), // Good build quality
-                    ef_search: Some(50),        // Fast search with good recall
-                    max_partition_size: Some(100_000),
-                    adaptive_parameters: Some(true),
-                    use_simd: Some(true),
-                    memory_limit_mb: Some(512),
-                    lazy_loading: Some(false),
-                }),
-                ..Default::default()
-            };
-
-            enriched_config.index_configs.push(default_hnsw_config);
+        if enriched_config.index_configs.is_empty() {
             info!(
-                "📊 Created default HNSW index for collection '{}' (dimension: {})",
-                config.name, config.dimension
-            );
-        } else if enriched_config.index_configs.is_empty() {
-            info!(
-                "📊 Skipping default HNSW index for time-series collection '{}'",
+                "📊 Collection '{}' created without an ANN index; exact/brute-force retrieval remains the default until indexes are explicitly configured",
                 config.name
             );
         }
@@ -2086,6 +2063,139 @@ mod tests {
                 );
             }
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_collection_persists_explicit_cosine_metric() -> Result<()> {
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+
+        let filestore_config = UniversalMetadataConfig {
+            storage_url: temp_path,
+            compression: false,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
+        let backend = Arc::new(
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .context("Failed to create metadata backend for test")?,
+        );
+        let service = CollectionService::new(backend, StorageConfig::default())
+            .await
+            .context("Failed to create collection service for test")?;
+
+        let config = CollectionConfig {
+            name: "metric_default_test".to_string(),
+            dimension: 128,
+            distance_metric: None,
+            storage_engine: Some(StorageEngine::Viper as i32),
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization: None,
+            primary_index: None,
+            auto_index_selection: Some(false),
+            storage_config: None,
+            description: Some("Test collection".to_string()),
+            tags: vec![],
+            owner: Some("test".to_string()),
+            embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
+        };
+
+        let result = service.create_collection(&config).await?;
+        assert!(result.success);
+
+        let stored = service
+            .collection("metric_default_test")
+            .await?
+            .expect("collection should exist");
+        assert_eq!(
+            stored.config.as_ref().and_then(|cfg| cfg.distance_metric),
+            Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_collection_preserves_exact_default_without_indexes() -> Result<()> {
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+
+        let filestore_config = UniversalMetadataConfig {
+            storage_url: temp_path,
+            compression: false,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
+        let backend = Arc::new(
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .context("Failed to create metadata backend for test")?,
+        );
+        let service = CollectionService::new(backend, StorageConfig::default())
+            .await
+            .context("Failed to create collection service for test")?;
+
+        let config = CollectionConfig {
+            name: "exact_default_case".to_string(),
+            dimension: 384,
+            storage_engine: Some(StorageEngine::Sst as i32),
+            index_configs: vec![],
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+
+        let result = service.create_collection(&config).await?;
+        assert!(result.success);
+
+        let stored = service
+            .collection("exact_default_case")
+            .await?
+            .expect("collection should exist");
+        assert!(
+            stored
+                .config
+                .as_ref()
+                .is_some_and(|cfg| cfg.index_configs.is_empty())
+        );
 
         Ok(())
     }

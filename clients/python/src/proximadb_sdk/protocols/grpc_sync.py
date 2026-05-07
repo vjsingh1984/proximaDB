@@ -1705,6 +1705,179 @@ class ProximaDBSyncGrpcClient:
             logger.error(f"gRPC query_nodes failed: {e}")
             raise ProximaDBError(f"query_nodes failed: {e}")
 
+    def query_edges(
+        self,
+        edge_type: str = "",
+        from_node_id: Optional[str] = None,
+        to_node_id: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        graph_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Query edges by endpoints, type, and properties via gRPC."""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+
+            filters = []
+            if properties:
+                for key, value in properties.items():
+                    filters.append(
+                        v1_graph_pb2.PropertyFilter(
+                            key=key,
+                            operator=v1_graph_pb2.PROPERTY_FILTER_OPERATOR_EQUALS,
+                            value=self._convert_to_property_value(value),
+                        )
+                    )
+
+            request = v1_graph_pb2.EdgeQuery(
+                graph_id=graph_id,
+                edge_types=[edge_type] if edge_type else [],
+                filters=filters,
+            )
+
+            if from_node_id is not None:
+                request.from_node_id = from_node_id
+            if to_node_id is not None:
+                request.to_node_id = to_node_id
+            if limit is not None:
+                request.limit = limit
+            if offset is not None:
+                request.offset = offset
+
+            response = stub.QueryEdges(request, timeout=self.timeout)
+            return {
+                "success": response.success if hasattr(response, "success") else True,
+                "edges": [
+                    self._convert_edge_from_proto(edge) for edge in response.edges
+                ],
+                "total_count": len(response.edges),
+                "next_token": (
+                    response.next_token if hasattr(response, "next_token") else None
+                ),
+            }
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC query_edges RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"query_edges RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC query_edges failed: {e}")
+            raise ProximaDBError(f"query_edges failed: {e}")
+
+    def get_node(
+        self,
+        node_id: str,
+        graph_id: str = "default",
+    ) -> Optional[Dict[str, Any]]:
+        """Get a graph node by ID via gRPC."""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            request = v1_graph_pb2.GetNodeRequest(graph_id=graph_id, node_id=node_id)
+            response = stub.GetNode(request, timeout=self.timeout)
+            return self._convert_node_from_proto(response)
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC get_node RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"get_node RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC get_node failed: {e}")
+            raise ProximaDBError(f"get_node failed: {e}")
+
+    def get_outgoing_edges(
+        self,
+        node_id: str,
+        edge_types: Optional[List[str]] = None,
+        graph_id: str = "default",
+    ) -> List[Dict[str, Any]]:
+        """Get outgoing graph edges for a node via gRPC."""
+        edge_types = edge_types or [""]
+        edges: List[Dict[str, Any]] = []
+        for edge_type in edge_types:
+            result = self.query_edges(
+                edge_type=edge_type,
+                from_node_id=node_id,
+                graph_id=graph_id,
+                limit=10000,
+            )
+            edges.extend(result.get("edges", []))
+        return edges
+
+    def get_incoming_edges(
+        self,
+        node_id: str,
+        edge_types: Optional[List[str]] = None,
+        graph_id: str = "default",
+    ) -> List[Dict[str, Any]]:
+        """Get incoming graph edges for a node via gRPC."""
+        edge_types = edge_types or [""]
+        edges: List[Dict[str, Any]] = []
+        for edge_type in edge_types:
+            result = self.query_edges(
+                edge_type=edge_type,
+                to_node_id=node_id,
+                graph_id=graph_id,
+                limit=10000,
+            )
+            edges.extend(result.get("edges", []))
+        return edges
+
+    def delete_node(
+        self,
+        node_id: str,
+        graph_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Delete a graph node by ID via gRPC."""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            request = v1_graph_pb2.DeleteNodeRequest(
+                graph_id=graph_id, node_id=node_id
+            )
+            response = stub.DeleteNode(request, timeout=self.timeout)
+            return self._convert_node_from_proto(response)
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC delete_node RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"delete_node RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC delete_node failed: {e}")
+            raise ProximaDBError(f"delete_node failed: {e}")
+
 
 # Alias for consistency
 ProximaDBClient = ProximaDBSyncGrpcClient

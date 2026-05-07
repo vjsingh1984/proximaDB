@@ -138,11 +138,11 @@ pub(crate) struct QueryExecution {
     #[allow(dead_code)]
     pub end_time: Option<Instant>,
     #[allow(dead_code)]
-    pub query_characteristics: QueryCharacteristics,
+    query_characteristics: QueryCharacteristics,
     #[allow(dead_code)]
     pub actual_performance: Option<ActualPerformance>,
     #[allow(dead_code)]
-    pub predicted_performance: Option<PredictedPerformance>,
+    predicted_performance: Option<PredictedPerformance>,
 }
 
 /// Query characteristics for performance prediction
@@ -698,7 +698,7 @@ impl PerformanceTracker {
         }
     }
 
-    pub(crate) fn estimate_selectivity(&self, characteristics: &QueryCharacteristics) -> f32 {
+    fn estimate_selectivity(&self, characteristics: &QueryCharacteristics) -> f32 {
         // Use historical data to estimate selectivity
         // For now, use simple heuristics
         match characteristics.query_sparsity {
@@ -708,7 +708,7 @@ impl PerformanceTracker {
         }
     }
 
-    pub(crate) fn record_query_execution(
+    fn record_query_execution(
         &mut self,
         query_id: &str,
         characteristics: &QueryCharacteristics,

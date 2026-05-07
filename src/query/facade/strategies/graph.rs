@@ -1,12 +1,12 @@
 //! # Graph Strategy
 //!
-//! Real implementation of `QueryStrategy` for graph queries and traversals.
-//! Wraps the existing `GraphOperationsService` infrastructure.
+//! Real implementation of `QueryStrategy` for graph queries.
+//! Reuses the shared graph query subset on top of `GraphOperationsService`.
 //!
 //! ## Features
 //!
-//! - Converts facade `QueryRequest` to graph operations
-//! - Supports simple traversal patterns via GraphOperationsService
+//! - Converts facade `QueryRequest` to shared graph subset execution
+//! - Reuses the same supported read-only graph subset as federated SQL
 //! - Returns results in unified `QueryResult` format
 //!
 //! ## Architecture
@@ -18,10 +18,7 @@
 //! GraphStrategy
 //!       │
 //!       ▼
-//! GraphOperationsService.traverse()
-//!       │
-//!       ▼
-//! TraversalResponse
+//! graph_subset::{parse, execute}
 //!       │
 //!       ▼
 //! QueryResult (facade)
@@ -35,18 +32,20 @@ use async_trait::async_trait;
 use tracing::{debug, info, instrument};
 
 use crate::graph::service::GraphOperationsService;
-use crate::proto::proximadb_v1::{TraversalAlgorithm, TraversalRequest};
 use crate::query::facade::{
     ExecutionMetrics, GraphQueryResult, QueryContent, QueryContext, QueryRequest, QueryResult,
     QueryResultData, QueryStrategy, QueryType,
 };
+use crate::query::graph_lowering::lower_supported_graph_query_expr;
+use crate::query::graph_runtime::execute_graph_query_expr;
+use crate::query::graph_subset::discover_default_graph_id;
 
 /// Graph Strategy - Real implementation wrapping GraphOperationsService
 ///
 /// This strategy handles `QueryType::Graph` requests by:
-/// 1. Parsing the Cypher-like query to determine execution path
-/// 2. Executing traversals via GraphOperationsService
-/// 3. Converting results back to facade format
+/// 1. Parsing the Cypher-like query through the shared supported subset
+/// 2. Executing against GraphOperationsService
+/// 3. Returning unified tabular rows plus graph metrics
 pub struct GraphStrategy {
     /// Graph operations service for direct graph access
     graph_ops: Arc<GraphOperationsService>,
@@ -77,32 +76,8 @@ impl GraphStrategy {
         }
     }
 
-    /// Parse a simple traversal pattern from Cypher-like query
-    /// Returns (graph_id, start_node, max_depth, edge_types) if parseable
-    fn parse_simple_traversal(&self, query: &str) -> Option<(String, String, u32, Vec<String>)> {
-        let upper = query.to_uppercase();
-
-        // Look for MATCH pattern: MATCH (n:Label)-[:REL]->...
-        if !upper.starts_with("MATCH") {
-            return None;
-        }
-
-        // Extract start node from pattern like (n:Person {id: "node1"}) or (n {id: "node1"})
-        let start_node = Self::extract_start_node(query)?;
-
-        // Extract graph name from FROM clause or use default
-        let graph_id = Self::extract_graph_name(query).unwrap_or_else(|| "default".to_string());
-
-        // Extract max depth from pattern (count arrow patterns)
-        let max_depth = query.matches("-->").count().max(1) as u32;
-
-        // Extract edge types from [:TYPE] patterns
-        let edge_types = Self::extract_edge_types(query);
-
-        Some((graph_id, start_node, max_depth, edge_types))
-    }
-
     /// Extract start node ID from Cypher query
+    #[cfg(test)]
     fn extract_start_node(query: &str) -> Option<String> {
         // Look for {id: "value"} or {id: 'value'} pattern
         if let Some(id_start) = query.find("id:") {
@@ -127,6 +102,7 @@ impl GraphStrategy {
     }
 
     /// Extract graph name from FROM clause
+    #[cfg(test)]
     fn extract_graph_name(query: &str) -> Option<String> {
         let upper = query.to_uppercase();
         if let Some(from_pos) = upper.find(" FROM ") {
@@ -142,6 +118,7 @@ impl GraphStrategy {
     }
 
     /// Extract edge types from Cypher pattern
+    #[cfg(test)]
     fn extract_edge_types(query: &str) -> Vec<String> {
         let mut types = Vec::new();
         let mut rest = query;
@@ -164,34 +141,8 @@ impl GraphStrategy {
         types
     }
 
-    /// Execute a simple traversal through GraphOperationsService
-    async fn execute_traversal(
-        &self,
-        graph_id: &str,
-        start_node: &str,
-        max_depth: u32,
-        edge_types: Vec<String>,
-    ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
-        let request = TraversalRequest {
-            graph_id: graph_id.to_string(),
-            start_node_id: start_node.to_string(),
-            max_depth,
-            edge_types,
-            node_labels: vec![],
-            filters: vec![],
-            algorithm: TraversalAlgorithm::Bfs as i32,
-            limit: None,
-            timeout_ms: Some(5000),
-            max_frontier: None,
-        };
-
-        self.graph_ops
-            .traverse(graph_id, request)
-            .await
-            .map_err(|e| anyhow!("Graph traversal failed: {}", e))
-    }
-
     /// Convert proto PropertyValue to JSON
+    #[cfg(test)]
     fn property_value_to_json(
         value: &crate::proto::proximadb_v1::PropertyValue,
     ) -> serde_json::Value {
@@ -228,101 +179,6 @@ impl GraphStrategy {
             None => serde_json::Value::Null,
         }
     }
-
-    /// Convert traversal response to facade QueryResult
-    fn to_facade_result(
-        &self,
-        response: crate::proto::proximadb_v1::TraversalResponse,
-        execution_time_ms: u64,
-    ) -> QueryResult {
-        let nodes_count = response.nodes.len();
-        let edges_count = response.edges.len();
-
-        // Convert nodes to JSON format
-        let nodes_json: Vec<serde_json::Value> = response
-            .nodes
-            .into_iter()
-            .map(|n| {
-                let props: serde_json::Map<String, serde_json::Value> = n
-                    .properties
-                    .iter()
-                    .map(|(k, v)| (k.clone(), Self::property_value_to_json(v)))
-                    .collect();
-                serde_json::json!({
-                    "id": n.id,
-                    "labels": n.labels,
-                    "properties": props,
-                })
-            })
-            .collect();
-
-        // Convert edges to JSON format
-        let edges_json: Vec<serde_json::Value> = response
-            .edges
-            .into_iter()
-            .map(|e| {
-                let props: serde_json::Map<String, serde_json::Value> = e
-                    .properties
-                    .iter()
-                    .map(|(k, v)| (k.clone(), Self::property_value_to_json(v)))
-                    .collect();
-                serde_json::json!({
-                    "id": e.id,
-                    "source": e.from_node_id,
-                    "target": e.to_node_id,
-                    "type": e.edge_type,
-                    "weight": e.weight,
-                    "properties": props,
-                })
-            })
-            .collect();
-
-        // Convert paths to JSON format
-        let paths_json: Vec<serde_json::Value> = response
-            .paths
-            .into_iter()
-            .map(|p| {
-                let entity_ids: Vec<&String> = p.entities.iter().map(|e| &e.id).collect();
-                let relations_json: Vec<serde_json::Value> = p
-                    .relations
-                    .iter()
-                    .map(|r| {
-                        serde_json::json!({
-                            "source": r.source_entity_id,
-                            "target": r.target_entity_id,
-                            "type": r.relation_type,
-                        })
-                    })
-                    .collect();
-                serde_json::json!({
-                    "entities": entity_ids,
-                    "relations": relations_json,
-                })
-            })
-            .collect();
-
-        QueryResult {
-            data: QueryResultData::Graph(GraphQueryResult {
-                nodes: nodes_json,
-                edges: edges_json,
-                paths: paths_json,
-            }),
-            metrics: Some(ExecutionMetrics {
-                execution_path: "graph".to_string(),
-                strategy_name: "graph".to_string(),
-                execution_time_ms,
-                planning_time_ms: 0,
-                results_scanned: nodes_count + edges_count,
-                results_returned: nodes_count + edges_count,
-                cache_hit: false,
-                extra: serde_json::json!({
-                    "engine": "GraphOperationsService",
-                    "nodes_returned": nodes_count,
-                    "edges_returned": edges_count,
-                }),
-            }),
-        }
-    }
 }
 
 #[async_trait]
@@ -351,52 +207,53 @@ impl QueryStrategy for GraphStrategy {
             "Executing graph query"
         );
 
-        // Try to parse as simple traversal
-        if let Some((graph_id, start_node, max_depth, edge_types)) =
-            self.parse_simple_traversal(&query)
-        {
-            debug!(
-                graph = %graph_id,
-                start_node = %start_node,
-                max_depth = max_depth,
-                edge_types = ?edge_types,
-                "Executing simple traversal"
-            );
+        let request_target = request.target.as_deref();
+        let default_graph = discover_default_graph_id(self.graph_ops.as_ref()).await;
+        let graph_query =
+            lower_supported_graph_query_expr(&query, request_target, default_graph.as_deref())?;
 
-            let response = self
-                .execute_traversal(&graph_id, &start_node, max_depth, edge_types)
-                .await?;
+        debug!(
+            graph = %graph_query.graph_name,
+            normalized_query = %graph_query.normalized_query,
+            "Executing graph query through shared subset"
+        );
 
-            let execution_time_ms = start.elapsed().as_millis() as u64;
-            let result = self.to_facade_result(response, execution_time_ms);
+        let executed = execute_graph_query_expr(self.graph_ops.as_ref(), &graph_query).await?;
+        let execution_time_ms = start.elapsed().as_millis() as u64;
 
-            info!(
-                nodes = result
-                    .metrics
-                    .as_ref()
-                    .and_then(|m| m.extra.get("nodes_returned"))
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-                edges = result
-                    .metrics
-                    .as_ref()
-                    .and_then(|m| m.extra.get("edges_returned"))
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0),
-                time_ms = execution_time_ms,
-                "Graph traversal completed"
-            );
+        info!(
+            graph = %graph_query.graph_name,
+            rows = executed.stats.rows_returned,
+            matched_nodes = executed.stats.matched_nodes,
+            matched_edges = executed.stats.matched_edges,
+            time_ms = execution_time_ms,
+            "Graph query completed"
+        );
 
-            return Ok(result);
-        }
-
-        // For complex Cypher queries, return an error suggesting to use federated query
-        // In a full implementation, this would delegate to FederatedQueryContext
-        Err(anyhow!(
-            "Complex Cypher query not supported in GraphStrategy. Use SQL federation: \
-             SELECT * FROM GRAPH_QUERY('{}')",
-            query.replace('\'', "\\'")
-        ))
+        Ok(QueryResult {
+            data: QueryResultData::Graph(GraphQueryResult {
+                nodes: executed.rows,
+                edges: Vec::new(),
+                paths: Vec::new(),
+            }),
+            metrics: Some(ExecutionMetrics {
+                execution_path: "graph".to_string(),
+                strategy_name: "graph".to_string(),
+                execution_time_ms,
+                planning_time_ms: 0,
+                results_scanned: executed.stats.matched_nodes + executed.stats.matched_edges,
+                results_returned: executed.stats.rows_returned,
+                cache_hit: false,
+                extra: serde_json::json!({
+                    "engine": "graph_subset",
+                    "graph_id": graph_query.graph_name,
+                    "normalized_query": graph_query.normalized_query,
+                    "output_columns": graph_query.output_columns,
+                    "matched_nodes": executed.stats.matched_nodes,
+                    "matched_edges": executed.stats.matched_edges,
+                }),
+            }),
+        })
     }
 }
 
@@ -407,6 +264,86 @@ impl QueryStrategy for GraphStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::HashMap;
+
+    use crate::graph::service::GraphOperationsService;
+    use crate::proto::proximadb_v1::{
+        CreateGraphRequest, Edge, Node as ProtoNode, PropertyValue, property_value,
+    };
+
+    fn pv_string(value: &str) -> PropertyValue {
+        PropertyValue {
+            value: Some(property_value::Value::StringValue(value.to_string())),
+        }
+    }
+
+    async fn seed_graph() -> Arc<GraphOperationsService> {
+        let service = Arc::new(GraphOperationsService::new());
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: "social".to_string(),
+                name: Some("social".to_string()),
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        for (id, label, name) in [
+            ("alice", "Person", "Alice"),
+            ("bob", "Person", "Bob"),
+            ("acme", "Company", "Acme"),
+        ] {
+            service
+                .create_node(
+                    "social",
+                    ProtoNode {
+                        id: id.to_string(),
+                        labels: vec![label.to_string()],
+                        properties: HashMap::from([("name".to_string(), pv_string(name))]),
+                        embedding: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    },
+                )
+                .await
+                .expect("create node");
+        }
+
+        for edge in [
+            Edge {
+                id: "edge_knows".to_string(),
+                from_node_id: "alice".to_string(),
+                to_node_id: "bob".to_string(),
+                edge_type: "KNOWS".to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+            Edge {
+                id: "edge_works_at".to_string(),
+                from_node_id: "bob".to_string(),
+                to_node_id: "acme".to_string(),
+                edge_type: "WORKS_AT".to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        ] {
+            service
+                .create_edge("social", edge)
+                .await
+                .expect("create edge");
+        }
+
+        service
+    }
 
     #[test]
     fn test_extract_start_node_double_quotes() {
@@ -527,5 +464,61 @@ mod tests {
         let value = PropertyValue { value: None };
         let result = GraphStrategy::property_value_to_json(&value);
         assert_eq!(result, serde_json::Value::Null);
+    }
+
+    #[tokio::test]
+    async fn test_graph_strategy_uses_shared_subset_and_request_target() {
+        let graph_ops = seed_graph().await;
+        let strategy = GraphStrategy::new(graph_ops);
+        let request = QueryRequest::graph(
+            "MATCH (a:Person {id: \"alice\"})-[:KNOWS]->(b)-[:WORKS_AT]->(c:Company) \
+             RETURN b.name AS colleague, c.name AS company",
+        )
+        .with_target("social");
+
+        let result = strategy
+            .execute(request, &QueryContext::new(5_000))
+            .await
+            .expect("graph query should succeed");
+
+        match result.data {
+            QueryResultData::Graph(graph) => {
+                assert_eq!(
+                    graph.nodes,
+                    vec![serde_json::json!({
+                        "colleague": "Bob",
+                        "company": "Acme"
+                    })]
+                );
+                assert!(graph.edges.is_empty());
+                assert!(graph.paths.is_empty());
+            }
+            other => panic!("expected graph results from graph subset, got {other:?}"),
+        }
+
+        let metrics = result.metrics.expect("metrics should be present");
+        assert_eq!(metrics.strategy_name, "graph");
+        assert_eq!(metrics.extra["engine"], "graph_subset");
+        assert_eq!(metrics.extra["graph_id"], "social");
+        assert_eq!(metrics.extra["matched_nodes"], 3);
+        assert_eq!(metrics.extra["matched_edges"], 2);
+    }
+
+    #[tokio::test]
+    async fn test_graph_strategy_rejects_conflicting_target_and_from_clause() {
+        let graph_ops = seed_graph().await;
+        let strategy = GraphStrategy::new(graph_ops);
+        let request =
+            QueryRequest::graph("MATCH (n:Person) FROM other RETURN n").with_target("social");
+
+        let error = strategy
+            .execute(request, &QueryContext::new(5_000))
+            .await
+            .expect_err("conflicting graph targets should fail");
+
+        assert!(
+            error.to_string().contains("Graph query target conflict"),
+            "unexpected error: {error}"
+        );
     }
 }

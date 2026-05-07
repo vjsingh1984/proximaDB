@@ -2097,10 +2097,14 @@ impl VectorOperationsService {
         // Get collection for distance metric
         let collection = self.get_or_load_collection(collection_id).await?;
         let distance_metric = match collection.config.as_ref() {
-            Some(cfg) => crate::proto::proximadb_v1::DistanceMetric::try_from(
-                cfg.distance_metric.unwrap_or(0),
-            )
-            .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine),
+            Some(cfg) => match cfg.distance_metric.and_then(|metric| {
+                crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
+            }) {
+                Some(crate::proto::proximadb_v1::DistanceMetric::Unspecified) | None => {
+                    crate::proto::proximadb_v1::DistanceMetric::Cosine
+                }
+                Some(metric) => metric,
+            },
             None => crate::proto::proximadb_v1::DistanceMetric::Cosine,
         };
 
@@ -2632,43 +2636,29 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
     ) -> Result<Vec<u8>> {
-        // Validate vectors before insertion
-        self.validate_vectors_for_insert(collection_id, &vectors)
+        let vector_ids: Vec<String> = vectors.iter().map(|v| v.id.clone()).collect();
+        let insert_result = self
+            .insert_vectors_via_batch_pipeline(collection_id, vectors)
             .await?;
-
-        // Convert to Arc for zero-copy sharing
-        let vectors_arc = Arc::new(vectors);
-
-        // Write vectors to WAL
-        let start = std::time::Instant::now();
-        let batch_result = self
-            .wal_manager
-            .write_vector_batch_native_arc(collection_id, vectors_arc.clone())
-            .await?;
-
-        let duration_micros = start.elapsed().as_micros() as i64;
-
-        // Collect vector IDs for response
-        let vector_ids: Vec<String> = vectors_arc.iter().map(|v| v.id.clone()).collect();
+        let duration_micros = insert_result.duration_micros;
+        let total = insert_result.entries_written.max(0) as usize;
 
         debug!(
             "✅ Wrote {} vectors to WAL for collection {} in {}μs",
-            vector_ids.len(),
-            collection_id,
-            duration_micros
+            total, collection_id, duration_micros
         );
 
         // Build response with complete metrics information
         let response = serde_json::json!({
             "success": true,
             "vector_ids": vector_ids.clone(),
-            "total": vector_ids.len(),
-            "message": format!("Successfully wrote {} vectors", vector_ids.len()),
+            "total": total,
+            "message": format!("Successfully wrote {} vectors", total),
             "duration_micros": duration_micros,
-            "batch_ids": batch_result,
+            "batch_ids": [],
             "metrics": {
-                "total_processed": vector_ids.len(),
-                "successful_count": vector_ids.len(),
+                "total_processed": total,
+                "successful_count": total,
                 "failed_count": 0,
                 "updated_count": 0,
                 "processing_time_us": duration_micros,
@@ -2680,11 +2670,41 @@ impl VectorOperationsService {
         debug!(
             "📊 Vector batch response: success={}, total={}, metrics={:?}",
             true,
-            vector_ids.len(),
+            total,
             response.get("metrics")
         );
 
         Ok(serde_json::to_vec(&response)?)
+    }
+
+    /// Insert a vector batch through the same WAL-first pipeline used by the server batch APIs.
+    ///
+    /// This preserves the production write behavior for embedded callers without forcing
+    /// synchronous per-vector AXIS indexing during the insert call.
+    pub async fn insert_vectors_via_batch_pipeline(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<crate::storage::engines::InsertResult> {
+        self.validate_vectors_for_insert(collection_id, &vectors)
+            .await?;
+
+        let start = std::time::Instant::now();
+        let entries_written = vectors.len() as i64;
+        let bytes_written = vectors
+            .iter()
+            .map(|v| v.vector.len() * 4 + v.id.len() + 32)
+            .sum::<usize>() as i64;
+
+        self.wal_manager
+            .write_vector_batch_native_arc(collection_id, Arc::new(vectors))
+            .await?;
+
+        Ok(crate::storage::engines::InsertResult {
+            entries_written,
+            duration_micros: start.elapsed().as_micros() as i64,
+            bytes_written,
+        })
     }
 
     /// Insert vectors directly into the storage engine without going through the batch pipeline.
@@ -3535,6 +3555,7 @@ mod index_first_search_tests {
     use tokio::sync::RwLock;
     use tracing::info;
 
+    #[allow(dead_code)]
     async fn create_test_service() -> Result<(Arc<VectorOperationsService>, TempDir)> {
         let temp_dir = TempDir::new()?;
 

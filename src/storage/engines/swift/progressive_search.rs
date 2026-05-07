@@ -84,8 +84,8 @@ pub(crate) struct BinarySketch {
 }
 
 impl BinarySketch {
-    /// Create a binary sketch from a floating-point vector
-    /// Each dimension is binarized to 0 or 1 based on sign
+    /// Create a binary sketch from a floating-point vector.
+    #[allow(dead_code)]
     pub(crate) fn from_vector(vector: &[f32]) -> Self {
         let bits = vector
             .iter()

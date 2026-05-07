@@ -186,7 +186,7 @@ mod tests {
         let chunker = SdpChunker::new(SdpConfig::default());
         let text = "Large chunk content that exceeds the threshold for merging...".repeat(10)
             + "\n\nSmall";
-        let chunks = chunker.process(&text).unwrap();
+        let _chunks = chunker.process(&text).unwrap();
 
         // The small chunk should have been merged into the previous one if it was small enough.
         // Wait, stage 4 merges CURRENT if CURRENT is small.

@@ -401,7 +401,7 @@ mod compression_tests {
             ("zstd", zstd::encode_all(&vector_data[..], 3).unwrap()),
         ];
 
-        for (name, compressed) in algorithms {
+        for (_name, compressed) in algorithms {
             let ratio = (1.0 - compressed.len() as f64 / vector_data.len() as f64) * 100.0;
 
             // Vector data should compress moderately (30-60%)

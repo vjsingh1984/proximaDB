@@ -13,7 +13,7 @@ use tracing::{debug, info, trace, warn};
 
 use super::UnifiedRecord;
 use super::ast::{
-    ComponentDependency, DataModel, DocumentQueryExpr, FilterOperator, FilterValue,
+    ComponentDependency, DataModel, DocumentQueryExpr, FilterOperator, FilterValue, GraphQueryExpr,
     GraphTraversalExpr, JoinType, LogQueryExpr, MetricQueryExpr, ModelOperation, MultiModelQuery,
     PathFilter, QueryComponent, StartNodeSpec, TraversalDirection, VectorSearchExpr,
 };
@@ -24,6 +24,7 @@ use crate::proto::proximadb_v1::{
     DocFilterCondition, DocFilterOperator, DocumentFilter, Severity, SqlValue,
     sql_value::Value as SqlValueVariant,
 };
+use crate::query::graph_runtime::{execute_graph_query_expr, graph_query_row_id};
 use crate::security::unified_rbac::{
     ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
 };
@@ -95,6 +96,20 @@ impl ParallelExecutor {
                     return Err(anyhow!(
                         "Permission denied: Vector search on collection '{}'",
                         vector_expr.collection
+                    ));
+                }
+            }
+            ModelOperation::GraphQuery(graph_expr) => {
+                let permission = UnifiedPermission::GraphTraverse(graph_expr.graph_name.clone());
+                let allowed = rbac_manager
+                    .check_permission_cached(&user_ctx.user_id, &permission)
+                    .await
+                    .map_err(|e| anyhow!("Failed to check graph permission: {}", e))?;
+
+                if !allowed {
+                    return Err(anyhow!(
+                        "Permission denied: Graph query on '{}'",
+                        graph_expr.graph_name
                     ));
                 }
             }
@@ -409,13 +424,14 @@ async fn execute_component_full(
     document_service: Arc<DocumentService>,
     graph_service: Option<Arc<GraphOperationsService>>,
     observability_service: Option<Arc<ObservabilityService>>,
-    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+    _llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> Result<SubQueryResult> {
     let start = Instant::now();
 
     let result = match &component.operation {
         ModelOperation::VectorSearch(expr) => execute_vector_search(expr, vector_ops).await,
         ModelOperation::DocumentQuery(expr) => execute_document_query(expr, document_service).await,
+        ModelOperation::GraphQuery(expr) => execute_graph_query(expr, graph_service).await,
         ModelOperation::GraphTraversal(expr) => {
             execute_graph_traversal_full(expr, graph_service).await
         }
@@ -478,6 +494,7 @@ async fn execute_component_with_context_full(
     let raw_result = match &component.operation {
         ModelOperation::VectorSearch(expr) => execute_vector_search(expr, vector_ops).await,
         ModelOperation::DocumentQuery(expr) => execute_document_query(expr, document_service).await,
+        ModelOperation::GraphQuery(expr) => execute_graph_query(expr, graph_service).await,
         ModelOperation::GraphTraversal(expr) => {
             // Use execute_graph_traversal_with_context to properly resolve StartNodeSpec
             // This handles StartNodeSpec::FromComponent by looking up prior results
@@ -766,6 +783,44 @@ fn convert_filter_value_to_sql(value: &FilterValue) -> SqlValue {
 #[allow(dead_code)]
 async fn execute_graph_traversal(expr: &GraphTraversalExpr) -> Result<SubQueryResult> {
     execute_graph_traversal_full(expr, None).await
+}
+
+/// Execute a declarative graph query through the shared supported subset.
+async fn execute_graph_query(
+    expr: &GraphQueryExpr,
+    graph_service: Option<Arc<GraphOperationsService>>,
+) -> Result<SubQueryResult> {
+    let Some(graph_svc) = graph_service else {
+        debug!(
+            "Graph query on {} skipped - no GraphOperationsService",
+            expr.graph_name
+        );
+        return Ok(SubQueryResult::empty(DataModel::Graph));
+    };
+
+    let executed = execute_graph_query_expr(graph_svc.as_ref(), expr).await?;
+    let records = executed
+        .rows
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| UnifiedRecord {
+            id: graph_query_row_id(&row, index),
+            source_model: DataModel::Graph,
+            data: row,
+            score: None,
+            metadata: HashMap::new(),
+        })
+        .collect::<Vec<_>>();
+    let count = records.len() as u64;
+
+    Ok(SubQueryResult {
+        source_model: DataModel::Graph,
+        records_returned: count,
+        records,
+        total_count: Some(count),
+        execution_time_us: 0,
+        records_scanned: (executed.stats.matched_nodes + executed.stats.matched_edges) as u64,
+    })
 }
 
 /// Resolve StartNodeSpec to actual node IDs
@@ -1697,7 +1752,7 @@ async fn dispatch_semantic_join(
 async fn execute_block_batch_semantic_join(
     left: &[UnifiedRecord],
     right: &[UnifiedRecord],
-    join_field: &str,
+    _join_field: &str,
     _top_k: u32,
     config: &crate::query::unified::ast::BlockBatchConfig,
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
@@ -1914,7 +1969,9 @@ fn execute_semantic_join(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::unified::ast::{DistanceMetric, VectorSearchParams};
+    use crate::graph::GraphOperationsService;
+    use crate::proto::proximadb_v1::{CreateGraphRequest, Node as ProtoNode, property_value};
+    use crate::query::unified::ast::{DistanceMetric, GraphQueryExpr, VectorSearchParams};
 
     #[test]
     fn test_executor_creation() {
@@ -1984,6 +2041,111 @@ mod tests {
             sql_value_to_json(&str_val),
             serde_json::Value::String("hello".to_string())
         );
+    }
+
+    async fn seed_graph_service() -> Arc<GraphOperationsService> {
+        let service = Arc::new(GraphOperationsService::new());
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: "social".to_string(),
+                name: Some("social".to_string()),
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("graph should be created");
+
+        for (id, name) in [("alice", "Alice"), ("bob", "Bob")] {
+            service
+                .create_node(
+                    "social",
+                    ProtoNode {
+                        id: id.to_string(),
+                        labels: vec!["Person".to_string()],
+                        properties: HashMap::from([(
+                            "name".to_string(),
+                            crate::proto::proximadb_v1::PropertyValue {
+                                value: Some(property_value::Value::StringValue(name.to_string())),
+                            },
+                        )]),
+                        embedding: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    },
+                )
+                .await
+                .expect("node should be created");
+        }
+
+        service
+    }
+
+    #[tokio::test]
+    async fn test_execute_graph_query_materializes_legacy_node_rows() {
+        let service = seed_graph_service().await;
+        let expr = GraphQueryExpr {
+            graph_name: "social".to_string(),
+            normalized_query: "MATCH (n:Person) RETURN n".to_string(),
+            output_columns: vec![
+                "node_id".to_string(),
+                "label".to_string(),
+                "properties".to_string(),
+            ],
+            uses_legacy_node_rows: true,
+            max_depth: 0,
+        };
+
+        let result = execute_graph_query(&expr, Some(service))
+            .await
+            .expect("graph query should execute");
+
+        assert_eq!(result.records_returned, 2);
+        let ids: std::collections::HashSet<String> = result
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
+        assert!(ids.contains("alice"));
+        assert!(ids.contains("bob"));
+        for record in &result.records {
+            assert!(record.data.get("node_id").is_some());
+            assert!(record.data.get("label").is_some());
+            assert!(record.data.get("properties").is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_graph_query_preserves_projected_columns() {
+        let service = seed_graph_service().await;
+        let expr = GraphQueryExpr {
+            graph_name: "social".to_string(),
+            normalized_query: "MATCH (n:Person) RETURN n.name AS person_name".to_string(),
+            output_columns: vec!["person_name".to_string()],
+            uses_legacy_node_rows: false,
+            max_depth: 0,
+        };
+
+        let result = execute_graph_query(&expr, Some(service))
+            .await
+            .expect("graph query should execute");
+
+        let names: std::collections::HashSet<String> = result
+            .records
+            .iter()
+            .filter_map(|record| {
+                record
+                    .data
+                    .get("person_name")
+                    .and_then(|value| value.as_str())
+                    .map(ToString::to_string)
+            })
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains("Alice"));
+        assert!(names.contains("Bob"));
     }
 
     // =========================================================================

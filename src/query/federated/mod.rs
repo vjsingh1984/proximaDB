@@ -165,6 +165,30 @@ impl FederatedQueryContext {
         self
     }
 
+    /// Reuse the live collection metadata service so federated vector queries
+    /// inherit storage assignments, engines, and canonical collection IDs.
+    pub fn with_collection_service(
+        mut self,
+        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+    ) -> Self {
+        self.executor = self.executor.with_collection_service(collection_service);
+        self
+    }
+
+    /// Reuse the existing vector operations service so federated vector SQL
+    /// follows the same search path as REST/gRPC/embedded direct search.
+    pub fn with_vector_operations(
+        mut self,
+        vector_operations_service: Arc<
+            crate::services::operations::vectors::VectorOperationsService,
+        >,
+    ) -> Self {
+        self.executor = self
+            .executor
+            .with_vector_operations(vector_operations_service);
+        self
+    }
+
     /// Create a new federated query context
     pub fn new(storage: Arc<MultiModelStorageFacade>) -> Self {
         Self {
@@ -380,6 +404,7 @@ mod tests {
         filesystem_factory: FilesystemFactory,
         results: Vec<OptimizedSearchRecord>,
         query_vectors: Mutex<Vec<Vec<f32>>>,
+        storage_urls: Mutex<Vec<String>>,
     }
 
     impl MockVectorEngine {
@@ -391,6 +416,7 @@ mod tests {
                 filesystem_factory,
                 results,
                 query_vectors: Mutex::new(Vec::new()),
+                storage_urls: Mutex::new(Vec::new()),
             }
         }
 
@@ -398,6 +424,13 @@ mod tests {
             self.query_vectors
                 .lock()
                 .expect("mock vector engine query tracking lock should not be poisoned")
+                .clone()
+        }
+
+        fn recorded_storage_urls(&self) -> Vec<String> {
+            self.storage_urls
+                .lock()
+                .expect("mock vector engine storage tracking lock should not be poisoned")
                 .clone()
         }
     }
@@ -452,6 +485,12 @@ mod tests {
                     .lock()
                     .expect("mock vector engine query tracking lock should not be poisoned")
                     .push(vector.to_vec());
+            }
+            if let Some(storage_url) = ctx.storage_url() {
+                self.storage_urls
+                    .lock()
+                    .expect("mock vector engine storage tracking lock should not be poisoned")
+                    .push(storage_url.to_string());
             }
             Ok(self.results.clone())
         }
@@ -733,6 +772,166 @@ mod tests {
         assert!(ctx.invalidator.is_some());
         assert!(ctx.get_cache().is_some());
         assert!(ctx.get_invalidator().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_uses_collection_service_storage_assignment() {
+        use crate::core::config::{StorageConfig, StorageLocation};
+        use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine};
+        use crate::services::collection::manager::CollectionService;
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("temp dir should be created");
+        let base_url = format!("file://{}", temp_dir.path().display());
+
+        let metadata_backend = Arc::new(
+            UniversalMetadataBackend::new(
+                UniversalMetadataConfig {
+                    storage_url: format!("{}/metadata", base_url),
+                    compression: false,
+                    enable_snapshots: false,
+                    snapshot_threshold: 1000,
+                    keep_snapshots: 2,
+                    backup_url: None,
+                    temp_dir: None,
+                },
+                Arc::new(
+                    FilesystemFactory::create(FilesystemConfig::default())
+                        .await
+                        .expect("filesystem factory should be created"),
+                ),
+            )
+            .await
+            .expect("metadata backend should be created"),
+        );
+
+        let mut storage_config = StorageConfig::default();
+        storage_config.storage_locations = vec![StorageLocation {
+            url: base_url.clone(),
+            weight: 1,
+            tags: vec!["local".to_string()],
+        }];
+        storage_config.metadata_url = format!("{}/metadata", base_url);
+
+        let collection_service = Arc::new(
+            CollectionService::new(metadata_backend, storage_config)
+                .await
+                .expect("collection service should be created"),
+        );
+
+        let create_result = collection_service
+            .create_collection(&CollectionConfig {
+                name: "productsaa".to_string(),
+                dimension: 2,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            })
+            .await
+            .expect("collection creation should succeed");
+
+        assert!(create_result.success, "collection creation should succeed");
+
+        let collection = create_result
+            .collection
+            .expect("created collection should be returned");
+        let expected_storage = collection
+            .storage_assignment
+            .as_ref()
+            .map(|assignment| assignment.base_location.clone())
+            .expect("created collection should have storage assignment");
+
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.99)])
+                .await,
+        );
+        let vector_store = Arc::new(VectorStore::with_engine(vector_engine.clone()));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx =
+            FederatedQueryContext::new(storage).with_collection_service(collection_service.clone());
+
+        let result = ctx
+            .execute_uncached("SELECT id, score FROM VECTOR_SEARCH('productsaa', '[0.1, 0.2]', 1)")
+            .await
+            .expect("vector search should execute");
+
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(
+            vector_engine.recorded_storage_urls(),
+            vec![expected_storage],
+            "federated vector search should reuse the collection storage assignment",
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_uses_normalized_similarity_for_score_column() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord {
+                    id: "doc-1".to_string(),
+                    vector_id: Some("doc-1".to_string()),
+                    score: 2.0,
+                    similarity: Some(1.0),
+                    vector: None,
+                    metadata: HashMap::new(),
+                    debug_info: None,
+                    version: None,
+                    timestamp: None,
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: Vec::new(),
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                },
+                OptimizedSearchRecord {
+                    id: "doc-2".to_string(),
+                    vector_id: Some("doc-2".to_string()),
+                    score: 1.0,
+                    similarity: Some(0.8535534),
+                    vector: None,
+                    metadata: HashMap::new(),
+                    debug_info: None,
+                    version: None,
+                    timestamp: None,
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: Vec::new(),
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                },
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageEngine>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT id, score FROM VECTOR_SEARCH('products', '[0.1]', 2)")
+            .await
+            .expect("vector search should execute");
+
+        let batch = result
+            .batches
+            .first()
+            .expect("result should contain a batch");
+        let scores = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("score column should be Float32");
+
+        assert!((scores.value(0) - 1.0).abs() < f32::EPSILON);
+        assert!((scores.value(1) - 0.8535534).abs() < 1e-6);
     }
 
     #[test]

@@ -39,9 +39,15 @@ Example:
 from ._proximadb_embedded import (
     CollectionInfo,
     DiskConfig,
+    GraphEdge,
+    GraphNode,
+    GraphStats,
     ProximaDB,
     SearchResult,
+    SearchStreamIterator,
+    StreamingSearchResult,
     StorageStats,
+    init_logging,
 )
 
 __version__ = "0.2.0"
@@ -49,8 +55,14 @@ __all__ = [
     "ProximaDB",
     "DiskConfig",
     "SearchResult",
+    "StreamingSearchResult",
+    "SearchStreamIterator",
     "CollectionInfo",
     "StorageStats",
+    "GraphNode",
+    "GraphEdge",
+    "GraphStats",
+    "init_logging",
     "__version__",
 ]
 

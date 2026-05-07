@@ -3,7 +3,7 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "proximadb-embedded"
+name = "proximadb_embedded"
 version = "0.2.0"
 description = "ProximaDB Embedded - In-process vector database for Python with zero network overhead"
 authors = [
@@ -54,8 +54,11 @@ Issues = "https://github.com/vjsingh1984/proximadb/issues"
 
 [tool.maturin]
 # Build settings
-features = ["python"]
-python-source = "src"
+features = ["python", "pylib"]
+# Builds are invoked against the repo-root Cargo manifest (`-m ../../Cargo.toml`),
+# so this path must remain rooted from the manifest directory to keep the
+# canonical `proximadb_embedded` package name stable across wheels.
+python-source = "clients/python-embedded/src"
 module-name = "proximadb_embedded._proximadb_embedded"
 bindings = "pyo3"
 

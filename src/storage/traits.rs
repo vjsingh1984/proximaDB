@@ -2040,15 +2040,56 @@ impl StorageQueryContext {
                 .unwrap_or(false),
             has_quantization: config.and_then(|c| c.quantization.as_ref()).is_some(),
             dimension: config.map_or(0, |c| c.dimension as usize),
-            distance_metric: config.map_or(
-                crate::compute::distance_computation::DistanceMetric::Cosine,
-                |c| match c.distance_metric {
-                    Some(0) => crate::compute::distance_computation::DistanceMetric::Euclidean,
-                    Some(1) => crate::compute::distance_computation::DistanceMetric::Cosine,
-                    Some(2) => crate::compute::distance_computation::DistanceMetric::DotProduct,
-                    _ => crate::compute::distance_computation::DistanceMetric::Cosine,
-                },
-            ),
+            distance_metric: config
+                .and_then(|c| c.distance_metric)
+                .and_then(|metric| {
+                    crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok()
+                })
+                .map_or(
+                    crate::compute::distance_computation::DistanceMetric::Cosine,
+                    |metric| match metric {
+                        crate::proto::proximadb_v1::DistanceMetric::Unspecified
+                        | crate::proto::proximadb_v1::DistanceMetric::Cosine => {
+                            crate::compute::distance_computation::DistanceMetric::Cosine
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Euclidean => {
+                            crate::compute::distance_computation::DistanceMetric::Euclidean
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::DotProduct => {
+                            crate::compute::distance_computation::DistanceMetric::DotProduct
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Hamming => {
+                            crate::compute::distance_computation::DistanceMetric::Hamming
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Manhattan => {
+                            crate::compute::distance_computation::DistanceMetric::Manhattan
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Jaccard => {
+                            crate::compute::distance_computation::DistanceMetric::Jaccard
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Angular => {
+                            crate::compute::distance_computation::DistanceMetric::Angular
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Chebyshev => {
+                            crate::compute::distance_computation::DistanceMetric::Chebyshev
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Canberra => {
+                            crate::compute::distance_computation::DistanceMetric::Canberra
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Minkowski => {
+                            crate::compute::distance_computation::DistanceMetric::Minkowski
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::BrayCurtis => {
+                            crate::compute::distance_computation::DistanceMetric::BrayCurtis
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Hellinger => {
+                            crate::compute::distance_computation::DistanceMetric::Hellinger
+                        }
+                        crate::proto::proximadb_v1::DistanceMetric::Custom => {
+                            crate::compute::distance_computation::DistanceMetric::Custom
+                        }
+                    },
+                ),
             storage_strategy,
             storage_path: storage_assignment
                 .map_or_else(|| "./data".to_string(), |sa| sa.base_location.clone()),

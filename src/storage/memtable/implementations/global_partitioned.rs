@@ -1597,7 +1597,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_partitioned_clear_operations() {
-        use crate::proto::proximadb_v1::VectorRecord;
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
         use crate::storage::persistence::write_ahead_log::BatchId;
         use std::sync::Arc;

@@ -309,7 +309,7 @@ pub fn example_full_pipeline(
 
     // 3. Memory pool creation
     let encode_pool = GpuBufferPoolFactory::create_f32_pool(&backend, batch_size);
-    let decode_pool = GpuBufferPoolFactory::create_u8_pool(&backend, batch_size * 8);
+    let _decode_pool = GpuBufferPoolFactory::create_u8_pool(&backend, batch_size * 8);
     info!("✅ Memory pools created");
 
     // 4. Encoding
@@ -317,7 +317,7 @@ pub fn example_full_pipeline(
     let scheme = ProximaScheme::Delta { base: 0 };
 
     let mut encoded_batches = Vec::new();
-    let batcher = GpuBatchSizer::new(backend.clone());
+    let _batcher = GpuBatchSizer::new(backend.clone());
     let iter = GpuBatchIterator::new(&input_vectors, batch_size, backend.clone());
 
     for (batch_idx, batch) in iter {
@@ -370,6 +370,7 @@ fn detect_backend() -> HardwareBackend {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "gpu")]
     use super::*;
 
     #[test]

@@ -305,12 +305,9 @@ pub struct UnifiedCacheCoordinator {
 
 /// Internal trait for coordinator operations
 #[async_trait]
-trait UnifiedCacheCoordinatorInternal: Send + Sync {
+pub(crate) trait UnifiedCacheCoordinatorInternal: Send + Sync {
     /// Invalidate entry in this cache
     async fn invalidate_entry(&self, key: &str) -> Result<(), VectorDBError>;
-
-    /// Get cache identifier
-    fn cache_id(&self) -> CacheId;
 }
 
 /// Dependency graph for cascade invalidation
@@ -336,8 +333,12 @@ impl UnifiedCacheCoordinator {
     /// # Arguments
     ///
     /// * `cache` - Cache instance implementing internal interface
-    pub fn register_cache(&mut self, cache: Arc<dyn UnifiedCacheCoordinatorInternal>) {
-        let cache_id = cache.cache_id();
+    #[allow(dead_code)]
+    pub(crate) fn register_cache(
+        &mut self,
+        cache_id: CacheId,
+        cache: Arc<dyn UnifiedCacheCoordinatorInternal>,
+    ) {
         self.caches.insert(cache_id, cache);
     }
 

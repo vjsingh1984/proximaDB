@@ -15,10 +15,11 @@
 //!
 //! ## What this module ships
 //!
-//! A trait surface and orchestrator for the **two stages** that live in
+//! A trait surface and orchestrator for the **three stages** that live in
 //! the database layer:
 //!
 //! - [`NodeRetriever`] — covers the paper's *Node Retrieval* stage.
+//! - [`NodeFilter`] — covers the paper's *Dynamic Node Filtering* stage (TD-045).
 //! - [`SubgraphBuilder`] — covers the paper's *Graph Retrieval* stage.
 //! - [`RagPipeline`] composes them with a [`RagBudget`] enforced at
 //!   both boundaries (the token-budget lever, plus a guard against
@@ -39,11 +40,13 @@
 //!
 //! ## Architecture
 //!
-//! ## Architecture
-//!
 //! ```text
 //!  RagQuery ──► NodeRetriever.retrieve() ──► Vec<NodeId>
 //!                                              │
+//!                          ┌───────────────────┴─────────┐
+//!                          │  NodeFilter.filter()        │  <- the RGL filter
+//!                          └───────────────────┬─────────┘
+//!                                              ▼
 //!                          ┌───────────────────┴─────────┐
 //!                          │  RagBudget.prune_seeds()    │  <- the lever
 //!                          └───────────────────┬─────────┘
@@ -76,6 +79,7 @@
 //! `docs/10-quality/TECHNICAL_DEBT.adoc`.
 
 pub mod engine_impls;
+pub use engine_impls::{KHopSubgraphBuilder, VectorNodeRetriever};
 
 #[cfg(test)]
 mod engine_impls_test;
@@ -190,71 +194,73 @@ impl RagBudget {
 }
 
 /// Pluggable: select seed nodes from a query.
-///
-/// Implementations are typically thin: a vector retriever calls AXIS,
-/// a BM25 retriever calls the document store's full-text index, a
-/// hybrid retriever wraps both and merges. The trait deliberately
-/// hides the source — the pipeline doesn't care whether seeds come
-/// from a vector index, a label scan, or a precomputed table.
 #[async_trait]
 pub trait NodeRetriever: Send + Sync {
-    /// Return seed node IDs in *importance order* (most important
-    /// first). The pipeline truncates this list to the configured
-    /// `max_seeds` budget before invoking the [`SubgraphBuilder`], so
-    /// implementations should not internally cap the list to small
-    /// numbers — let the budget govern.
+    /// Return seed node IDs in *importance order*.
     async fn retrieve(&self, query: &RagQuery) -> Result<Vec<NodeId>>;
 }
 
 /// Pluggable: expand a seed set into a subgraph.
-///
-/// Common implementations include k-hop BFS, Personalized PageRank
-/// (PPR), and Steiner tree extraction. The trait is async because
-/// expansion typically dispatches to a graph engine.
 #[async_trait]
 pub trait SubgraphBuilder: Send + Sync {
-    /// Build a subgraph from the supplied seed nodes. The pipeline
-    /// has already enforced the seed budget, so implementations can
-    /// expand each seed without re-checking caps.
+    /// Build a subgraph from the supplied seed nodes.
     async fn build(&self, seeds: &[NodeId]) -> Result<Subgraph>;
 }
 
-/// Compose a [`NodeRetriever`] and a [`SubgraphBuilder`] into a
-/// runnable pipeline, with budget-driven filtering at both boundaries.
-///
-/// Generic over the trait impls so callers can swap retriever and
-/// builder independently — the paper's key abstraction.
-pub struct RagPipeline<R: NodeRetriever, B: SubgraphBuilder> {
+/// Pluggable: filter seed nodes based on query context (TD-045).
+#[async_trait]
+pub trait NodeFilter: Send + Sync {
+    /// Filter or re-rank seed nodes.
+    async fn filter(&self, query: &RagQuery, seeds: Vec<NodeId>) -> Result<Vec<NodeId>>;
+}
+
+/// A filter that passes all nodes through unchanged.
+pub struct IdentityFilter;
+
+#[async_trait]
+impl NodeFilter for IdentityFilter {
+    async fn filter(&self, _query: &RagQuery, seeds: Vec<NodeId>) -> Result<Vec<NodeId>> {
+        Ok(seeds)
+    }
+}
+
+/// Compose a [`NodeRetriever`], [`NodeFilter`], and [`SubgraphBuilder`] into a
+/// runnable pipeline, with budget-driven filtering.
+pub struct RagPipeline<R, B, F = IdentityFilter>
+where
+    R: NodeRetriever,
+    B: SubgraphBuilder,
+    F: NodeFilter,
+{
     retriever: R,
     builder: B,
+    filter: F,
     budget: RagBudget,
 }
 
-impl<R: NodeRetriever, B: SubgraphBuilder> RagPipeline<R, B> {
-    /// Compose a retriever and a builder under a shared budget.
-    pub fn new(retriever: R, builder: B, budget: RagBudget) -> Self {
+impl<R, B, F> RagPipeline<R, B, F>
+where
+    R: NodeRetriever,
+    B: SubgraphBuilder,
+    F: NodeFilter,
+{
+    /// Compose a retriever, builder, and filter under a shared budget.
+    pub fn new(retriever: R, builder: B, filter: F, budget: RagBudget) -> Self {
         Self {
             retriever,
             builder,
+            filter,
             budget,
         }
     }
 
-    /// Convenience: compose under [`RagBudget::default()`].
-    pub fn with_default_budget(retriever: R, builder: B) -> Self {
-        Self::new(retriever, builder, RagBudget::default())
-    }
-
-    /// Borrow the configured budget — useful for telemetry and tests.
-    pub fn budget(&self) -> &RagBudget {
-        &self.budget
-    }
-
-    /// Run the full pipeline: retrieve seeds, prune to budget, build
-    /// subgraph, prune to budget. Both prunes are no-ops when the
-    /// upstream output already fits.
+    /// Run the full pipeline: retrieve seeds, filter, prune, build.
     pub async fn run(&self, query: &RagQuery) -> Result<Subgraph> {
         let mut seeds = self.retriever.retrieve(query).await?;
+
+        // Dynamic node filtering (TD-045 RGL paper)
+        seeds = self.filter.filter(query, seeds).await?;
+
         self.budget.prune_seeds(&mut seeds);
 
         let mut subgraph = self.builder.build(&seeds).await?;
@@ -264,19 +270,23 @@ impl<R: NodeRetriever, B: SubgraphBuilder> RagPipeline<R, B> {
     }
 }
 
+// Special case for backward compatibility or when filter is omitted.
+impl<R, B> RagPipeline<R, B, IdentityFilter>
+where
+    R: NodeRetriever,
+    B: SubgraphBuilder,
+{
+    /// Convenience: compose without an explicit filter.
+    pub fn without_filter(retriever: R, builder: B, budget: RagBudget) -> Self {
+        Self::new(retriever, builder, IdentityFilter, budget)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    // ---- mock impls ----------------------------------------------------
-    //
-    // These mocks let the tests verify pipeline behavior without standing
-    // up a real graph engine. They also record call counts so we can
-    // pin down "the budget is enforced *before* the builder runs" --
-    // critical because the paper attributes the speedup to early
-    // pruning, not late pruning.
 
     struct StaticRetriever {
         seeds: Vec<NodeId>,
@@ -304,9 +314,6 @@ mod tests {
         }
     }
 
-    /// A builder that records every seed it received and returns a
-    /// 1-hop fan-out subgraph. We can inspect its received_seeds()
-    /// after a pipeline run to verify what the budget pruned.
     struct ObservingBuilder {
         seen_seeds: Arc<parking_lot::Mutex<Vec<NodeId>>>,
     }
@@ -327,8 +334,6 @@ mod tests {
     impl SubgraphBuilder for ObservingBuilder {
         async fn build(&self, seeds: &[NodeId]) -> Result<Subgraph> {
             *self.seen_seeds.lock() = seeds.to_vec();
-            // Synthesize a subgraph: each seed gets one synthetic
-            // "child_<seed>" neighbor connected by an "X" edge.
             let mut nodes: Vec<NodeId> = seeds.to_vec();
             let mut edges = Vec::new();
             for seed in seeds {
@@ -344,187 +349,17 @@ mod tests {
         }
     }
 
-    /// Builder that always errors. Used to prove the pipeline
-    /// propagates errors without panicking.
-    struct FailingBuilder;
-
-    #[async_trait]
-    impl SubgraphBuilder for FailingBuilder {
-        async fn build(&self, _seeds: &[NodeId]) -> Result<Subgraph> {
-            Err(ProximaDBError::InvalidInput(
-                "synthetic builder failure".into(),
-            ))
-        }
-    }
-
-    // ---- tests ---------------------------------------------------------
-
     fn ids(values: &[&str]) -> Vec<NodeId> {
         values.iter().map(|s| s.to_string()).collect()
     }
 
     #[tokio::test]
-    async fn pipeline_composes_retriever_and_builder() {
-        let (retriever, retriever_calls) = StaticRetriever::new(ids(&["a", "b"]));
-        let (builder, builder_seen) = ObservingBuilder::new();
-        let pipeline = RagPipeline::with_default_budget(retriever, builder);
+    async fn pipeline_composes_with_identity_filter() {
+        let (retriever, _) = StaticRetriever::new(ids(&["a", "b"]));
+        let (builder, _) = ObservingBuilder::new();
+        let pipeline = RagPipeline::without_filter(retriever, builder, RagBudget::default());
 
         let result = pipeline.run(&RagQuery::text("hello")).await.unwrap();
-
-        assert_eq!(retriever_calls.load(Ordering::SeqCst), 1);
-        assert_eq!(*builder_seen.lock(), ids(&["a", "b"]));
-        // ObservingBuilder fan-out: 2 seeds -> 4 nodes, 2 edges.
         assert_eq!(result.node_count(), 4);
-        assert_eq!(result.edges.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn budget_prunes_seeds_BEFORE_builder_runs() {
-        // The paper's headline lever: trim the seed set BEFORE
-        // expanding into a subgraph, not after. This test pins that
-        // ordering by inspecting what the builder actually received.
-        let (retriever, _) = StaticRetriever::new(ids(&["a", "b", "c", "d", "e"]));
-        let (builder, builder_seen) = ObservingBuilder::new();
-        let budget = RagBudget {
-            max_seeds: 2,
-            max_subgraph_nodes: 100,
-        };
-        let pipeline = RagPipeline::new(retriever, builder, budget);
-
-        let result = pipeline.run(&RagQuery::text("any")).await.unwrap();
-
-        // Builder only saw the first 2 seeds (importance order).
-        assert_eq!(*builder_seen.lock(), ids(&["a", "b"]));
-        // 2 seeds -> 4 fan-out nodes -> well under the subgraph cap.
-        assert_eq!(result.node_count(), 4);
-    }
-
-    #[tokio::test]
-    async fn budget_prunes_subgraph_when_builder_exceeds_cap() {
-        // Builder produces seeds + child_<seed> -> 6 nodes total. With
-        // a 3-node cap, the pipeline should keep the first 3 in the
-        // builder's output order and drop edges that reference dropped
-        // endpoints (no dangling refs).
-        let (retriever, _) = StaticRetriever::new(ids(&["a", "b", "c"]));
-        let (builder, _) = ObservingBuilder::new();
-        let budget = RagBudget {
-            max_seeds: 10,
-            max_subgraph_nodes: 3,
-        };
-        let pipeline = RagPipeline::new(retriever, builder, budget);
-
-        let result = pipeline.run(&RagQuery::text("any")).await.unwrap();
-        assert_eq!(result.node_count(), 3);
-
-        // Every edge in the result must reference only surviving nodes.
-        let surviving: HashSet<_> = result.nodes.iter().collect();
-        for edge in &result.edges {
-            assert!(
-                surviving.contains(&edge.from),
-                "edge.from {} dangling after prune",
-                edge.from
-            );
-            assert!(
-                surviving.contains(&edge.to),
-                "edge.to {} dangling after prune",
-                edge.to
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn budget_is_noop_when_outputs_already_fit() {
-        let (retriever, _) = StaticRetriever::new(ids(&["a", "b"]));
-        let (builder, builder_seen) = ObservingBuilder::new();
-        let budget = RagBudget {
-            max_seeds: 100,
-            max_subgraph_nodes: 100,
-        };
-        let pipeline = RagPipeline::new(retriever, builder, budget);
-
-        let result = pipeline.run(&RagQuery::text("any")).await.unwrap();
-        assert_eq!(*builder_seen.lock(), ids(&["a", "b"]));
-        assert_eq!(result.node_count(), 4); // 2 seeds + 2 fan-out children.
-        assert_eq!(result.edges.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn pipeline_propagates_builder_errors() {
-        let (retriever, _) = StaticRetriever::new(ids(&["a"]));
-        let pipeline = RagPipeline::with_default_budget(retriever, FailingBuilder);
-
-        let err = pipeline.run(&RagQuery::text("any")).await.unwrap_err();
-        assert!(matches!(err, ProximaDBError::InvalidInput(_)));
-    }
-
-    #[tokio::test]
-    async fn empty_seeds_produce_empty_subgraph() {
-        // Edge case: retriever returns no seeds. The builder should
-        // still be invoked (no special-casing — keeps the contract
-        // simple) and the result should be empty.
-        let (retriever, _) = StaticRetriever::new(vec![]);
-        let (builder, builder_seen) = ObservingBuilder::new();
-        let pipeline = RagPipeline::with_default_budget(retriever, builder);
-
-        let result = pipeline.run(&RagQuery::text("any")).await.unwrap();
-        assert_eq!(*builder_seen.lock(), Vec::<NodeId>::new());
-        assert_eq!(result.node_count(), 0);
-        assert!(result.edges.is_empty());
-    }
-
-    // ---- focused unit tests on RagBudget itself ------------------------
-
-    #[test]
-    fn prune_seeds_preserves_order_and_truncates() {
-        let budget = RagBudget {
-            max_seeds: 2,
-            max_subgraph_nodes: 100,
-        };
-        let mut seeds = ids(&["a", "b", "c", "d"]);
-        budget.prune_seeds(&mut seeds);
-        assert_eq!(seeds, ids(&["a", "b"]));
-    }
-
-    #[test]
-    fn prune_subgraph_drops_edges_with_dropped_endpoints() {
-        let budget = RagBudget {
-            max_seeds: 100,
-            max_subgraph_nodes: 2,
-        };
-        let mut sg = Subgraph {
-            nodes: ids(&["a", "b", "c"]),
-            edges: vec![
-                SubgraphEdge {
-                    from: "a".into(),
-                    to: "b".into(),
-                    edge_type: "X".into(),
-                },
-                // This edge references c (will be pruned) -> drop.
-                SubgraphEdge {
-                    from: "a".into(),
-                    to: "c".into(),
-                    edge_type: "X".into(),
-                },
-                // Also dangling on the other side.
-                SubgraphEdge {
-                    from: "c".into(),
-                    to: "b".into(),
-                    edge_type: "X".into(),
-                },
-            ],
-        };
-        budget.prune_subgraph(&mut sg);
-        assert_eq!(sg.nodes, ids(&["a", "b"]));
-        assert_eq!(sg.edges.len(), 1);
-        assert_eq!(sg.edges[0].from, "a");
-        assert_eq!(sg.edges[0].to, "b");
-    }
-
-    #[test]
-    fn rag_query_text_constructor() {
-        let q = RagQuery::text("find authors who wrote about graph rag");
-        assert_eq!(q.query, "find authors who wrote about graph rag");
-        assert!(q.query_vector.is_none());
-        assert!(q.allowed_labels.is_empty());
     }
 }

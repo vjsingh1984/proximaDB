@@ -30,6 +30,7 @@ class Protocol(str, Enum):
     AUTO = "auto"  # Auto-select best available
     GRPC = "grpc"  # gRPC (high performance, binary protocol)
     REST = "rest"  # REST (web compatibility)
+    EMBEDDED = "embedded"  # In-process Python embedded engine
     ARROW_FLIGHT = "arrow_flight"  # Apache Arrow Flight (bulk data transfer)
 
 
@@ -161,8 +162,8 @@ class ClientConfig(BaseModel):
             v = f"https://{v}"
             parsed = urlparse(v)
 
-        if parsed.scheme and parsed.scheme not in ("http", "https", "grpc"):
-            raise ValueError("URL must use http, https, or grpc scheme")
+        if parsed.scheme and parsed.scheme not in ("http", "https", "grpc", "embedded"):
+            raise ValueError("URL must use http, https, grpc, or embedded scheme")
 
         if parsed.scheme and not parsed.netloc:
             raise ValueError("URL must include hostname")
@@ -318,6 +319,8 @@ class ClientConfig(BaseModel):
         """Determine if gRPC should be used"""
         if self.protocol == Protocol.GRPC:
             return True
+        elif self.protocol == Protocol.EMBEDDED:
+            return False
         elif self.protocol == Protocol.REST:
             return False
         else:  # AUTO
@@ -333,6 +336,9 @@ class ClientConfig(BaseModel):
         parsed = urlparse(self.url)
         host = parsed.hostname or "localhost"
         scheme = parsed.scheme or "http"
+
+        if target_protocol == Protocol.EMBEDDED:
+            return self.url
 
         # Unified mode: all protocols share the same port
         if self.port_mode == PortMode.UNIFIED:

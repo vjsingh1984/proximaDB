@@ -1,8 +1,8 @@
 //! Engine-backed implementations for Modular Graph RAG (TD-045).
 //!
-//! This module provides the glue between the abstract RAG traits
-//! ([`NodeRetriever`], [`SubgraphBuilder`]) and ProximaDB's core
-//! services.
+//! These types adapt existing ProximaDB services into the modular
+//! Graph RAG traits instead of introducing duplicate retrieval or
+//! traversal stacks.
 
 use super::{NodeRetriever, RagQuery, Result, Subgraph, SubgraphBuilder, SubgraphEdge};
 use crate::core::error::{ProximaDBError, StorageError};
@@ -10,6 +10,7 @@ use crate::graph::NodeId;
 use crate::graph::engines::GraphEngine;
 use crate::services::VectorOperationsService;
 use async_trait::async_trait;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
 /// A retriever that uses vector similarity to find seed nodes.
@@ -93,8 +94,8 @@ impl SubgraphBuilder for KHopSubgraphBuilder {
     async fn build(&self, seeds: &[NodeId]) -> Result<Subgraph> {
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
-        let mut visited = std::collections::HashSet::new();
-        let mut queue = std::collections::VecDeque::new();
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
 
         // Initialize with seeds
         for seed in seeds {

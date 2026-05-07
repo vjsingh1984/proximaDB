@@ -45,6 +45,7 @@ pub struct GpuDecoder;
 
 impl GpuDecoder {
     /// Dispatch Delta decoding to appropriate GPU backend
+    #[allow(dead_code)]
     fn gpu_delta_decode(
         &self,
         deltas: &[i64],

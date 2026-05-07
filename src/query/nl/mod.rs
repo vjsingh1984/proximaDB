@@ -96,6 +96,12 @@ pub struct LlmRewriter {
     llm: Arc<LLMIntegrationEngine>,
 }
 
+impl LlmRewriter {
+    pub fn new(llm: Arc<LLMIntegrationEngine>) -> Self {
+        Self { llm }
+    }
+}
+
 #[async_trait]
 impl AgentRewriter for LlmRewriter {
     async fn rewrite(&self, query: &str) -> Result<String> {
@@ -116,6 +122,12 @@ pub struct LlmViewGenerator {
     llm: Arc<LLMIntegrationEngine>,
 }
 
+impl LlmViewGenerator {
+    pub fn new(llm: Arc<LLMIntegrationEngine>) -> Self {
+        Self { llm }
+    }
+}
+
 #[async_trait]
 impl AgentViewGenerator for LlmViewGenerator {
     async fn generate_views(&self, query: &str) -> Result<Vec<String>> {
@@ -134,6 +146,12 @@ impl AgentViewGenerator for LlmViewGenerator {
 
 pub struct LlmComposer {
     llm: Arc<LLMIntegrationEngine>,
+}
+
+impl LlmComposer {
+    pub fn new(llm: Arc<LLMIntegrationEngine>) -> Self {
+        Self { llm }
+    }
 }
 
 #[async_trait]

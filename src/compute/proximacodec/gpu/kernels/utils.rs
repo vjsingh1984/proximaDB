@@ -66,7 +66,7 @@ impl GpuBatchConfig {
     /// CUDA-specific configuration (NVIDIA GPUs)
     fn cuda_config(total_vectors: usize, _dimension: usize) -> Self {
         // CUDA: Warp size = 32, optimal block size = 256-512 threads
-        const WARP_SIZE: usize = 32;
+        const _WARP_SIZE: usize = 32;
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 48 * 1024; // 48 KB per SM
 
@@ -90,7 +90,7 @@ impl GpuBatchConfig {
     /// ROCm-specific configuration (AMD GPUs)
     fn rocm_config(total_vectors: usize, _dimension: usize) -> Self {
         // ROCm: Wavefront size = 64, optimal workgroup size = 256
-        const WAVEFRONT_SIZE: usize = 64;
+        const _WAVEFRONT_SIZE: usize = 64;
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 64 * 1024; // 64 KB LDS per CU
 
@@ -114,7 +114,7 @@ impl GpuBatchConfig {
     /// Metal/MPS-specific configuration (Apple Silicon)
     fn mps_config(total_vectors: usize, _dimension: usize) -> Self {
         // Metal: SIMD group size = 32, optimal threadgroup size = 256
-        const SIMD_GROUP_SIZE: usize = 32;
+        const _SIMD_GROUP_SIZE: usize = 32;
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 32 * 1024; // 32 KB threadgroup memory
 
@@ -370,6 +370,7 @@ impl GpuBufferPoolFactory {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "gpu")]
     use super::*;
 
     #[test]

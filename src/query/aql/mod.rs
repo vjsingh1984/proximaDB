@@ -9,6 +9,7 @@
 //! for every cross-model operation.
 
 use crate::core::error::ProximaDBError;
+use crate::query::unified::ast::{JoinType as UnifiedJoinType, MultiModelQuery, QueryComponent};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -20,6 +21,7 @@ pub mod sources;
 mod executor_test;
 
 pub type Result<T> = std::result::Result<T, ProximaDBError>;
+pub type DataModel = crate::query::unified::ast::DataModel;
 
 // ---------------------------------------------------------------------------
 // AQL AST
@@ -45,7 +47,7 @@ pub struct AqlProjection {
     pub alias: Option<String>,
 }
 
-/// Data source definition, supporting single sources and joins.
+/// Data source definition, supporting single sources, joins, and multi-model lists.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AqlFrom {
     /// A single named source (e.g., a collection or graph).
@@ -57,16 +59,35 @@ pub enum AqlFrom {
         on: AqlPredicate,
         join_type: JoinType,
     },
+    /// A list of independent or chained sources (maps to MultiModelQuery).
+    MultiSource { sources: Vec<AqlSourceSpec> },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AqlSourceSpec {
+    pub name: String,
+    pub model: DataModel,
+    pub alias: Option<String>,
+    pub dependencies: Vec<AqlDependency>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AqlDependency {
+    pub source_index: usize,
+    pub on_field: String,
+    pub join_type: JoinType,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum JoinType {
     Inner,
     Left,
     Right,
     Full,
+    Semi,
+    Anti,
+    Semantic,
 }
-
 /// The filter part of an AQL query.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AqlWhere {
@@ -153,16 +174,6 @@ pub struct AuditFrame {
     pub redaction_count: u32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum DataModel {
-    Vector,
-    Graph,
-    Document,
-    Observability,
-    Relational,
-    Event,
-}
-
 /// Operations captured in the audit trail.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AuditOp {
@@ -233,6 +244,67 @@ pub trait AqlSource: Send + Sync {
 
     /// Execute the wrapped operation and emit an audit frame.
     async fn execute(&self, query: &AqlQuery, ctx: &mut AuditContext) -> Result<AqlResult>;
+}
+
+// ---------------------------------------------------------------------------
+// Conversion from MultiModelQuery (TD-050 Phase 3)
+// ---------------------------------------------------------------------------
+
+impl AqlQuery {
+    pub fn from_multi_model(q: &MultiModelQuery) -> Self {
+        let sources = q
+            .components
+            .iter()
+            .map(AqlSourceSpec::from_component)
+            .collect();
+
+        Self {
+            find: AqlFind {
+                projections: vec![AqlProjection {
+                    field: "*".to_string(),
+                    alias: None,
+                }],
+            },
+            from: AqlFrom::MultiSource { sources },
+            where_clause: AqlWhere { predicate: None },
+        }
+    }
+}
+
+impl AqlSourceSpec {
+    pub fn from_component(c: &QueryComponent) -> Self {
+        let name = c.target_collection().unwrap_or("default").to_string();
+        let model = c.model;
+
+        let dependencies = c
+            .dependencies
+            .iter()
+            .map(|d| AqlDependency {
+                source_index: d.component_index,
+                on_field: d.join_field.clone(),
+                join_type: JoinType::from_unified(&d.join_type),
+            })
+            .collect();
+
+        Self {
+            name,
+            model,
+            alias: None,
+            dependencies,
+        }
+    }
+}
+
+impl JoinType {
+    pub fn from_unified(jt: &UnifiedJoinType) -> Self {
+        match jt {
+            UnifiedJoinType::Inner => JoinType::Inner,
+            UnifiedJoinType::LeftOuter => JoinType::Left,
+            UnifiedJoinType::Semi => JoinType::Semi,
+            UnifiedJoinType::Anti => JoinType::Anti,
+            UnifiedJoinType::Semantic { .. } => JoinType::Semantic,
+        }
+    }
 }
 
 /// Result from an AQL source execution.

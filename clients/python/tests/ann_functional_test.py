@@ -34,7 +34,7 @@ try:
 except ImportError:
     EMBEDDED_AVAILABLE = False
     print(
-        "Warning: proximadb embedded module not available. Run: maturin develop --features python --release"
+        "Warning: proximadb embedded module not available. Run: maturin develop --release --features python,pylib"
     )
 
 
@@ -363,7 +363,7 @@ class ANNFunctionalTest:
         """Run all test configurations"""
         if not EMBEDDED_AVAILABLE:
             print(
-                "ERROR: Embedded mode not available. Run: maturin develop --features python --release"
+                "ERROR: Embedded mode not available. Run: maturin develop --release --features python,pylib"
             )
             return
 

@@ -27,8 +27,14 @@ impl EvolutionaryOptimizer {
         }
     }
 
+    /// Attach an LLM engine for mutation operators (DBPlanBench-style)
+    pub fn with_llm(mut self, engine: Arc<LLMIntegrationEngine>) -> Self {
+        self.llm_engine = Some(engine);
+        self
+    }
+
     /// Optimize query component order
-    pub fn optimize<F>(
+    pub async fn optimize<F>(
         &self,
         components: &[QueryComponent],
         selectivity: &[SelectivityEstimate],
@@ -97,11 +103,15 @@ impl EvolutionaryOptimizer {
                     self.mutate(&mut child, &dependents, &in_degrees, &mut rng);
                 }
 
-                // TODO: LLM-assisted mutation (arXiv:2602.10387)
-                // if self.llm_engine.is_some() && rng.gen_bool(0.05) {
-                //    let llm_child = self.llm_mutate(&child, components, selectivity).await;
-                //    if let Some(c) = llm_child { child = c; }
-                // }
+                // LLM-assisted mutation (arXiv:2602.10387)
+                if self.llm_engine.is_some() && rng.gen_bool(0.05) {
+                    if let Some(llm_child) = self.llm_mutate(&child, components, selectivity).await
+                    {
+                        if self.is_valid(&llm_child, &in_degrees, &dependents) {
+                            child = llm_child;
+                        }
+                    }
+                }
 
                 new_population.push(child);
             }
@@ -209,12 +219,6 @@ impl EvolutionaryOptimizer {
         } else {
             p2.to_vec()
         }
-    }
-
-    /// Attach an LLM engine for mutation operators (DBPlanBench-style)
-    pub fn with_llm(mut self, engine: Arc<LLMIntegrationEngine>) -> Self {
-        self.llm_engine = Some(engine);
-        self
     }
 
     /// LLM-based mutation operator (arXiv:2602.10387)
@@ -332,8 +336,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_evolutionary_optimizer_convergence() {
+    #[tokio::test]
+    async fn test_evolutionary_optimizer_convergence() {
         let c0 = mock_component(0, vec![]); // Vector
         let c1 = QueryComponent {
             model: DataModel::Document,
@@ -368,16 +372,18 @@ mod tests {
         ];
 
         let optimizer = EvolutionaryOptimizer::new(20, 10);
-        let best_order = optimizer.optimize(&components, &selectivity, |sel, order| {
-            let mut total_cost = 0.0;
-            let mut intermediate_size = 1.0;
-            for &idx in order {
-                let base_cost = if idx == 0 { 2.0 } else { 1.0 };
-                total_cost += base_cost * intermediate_size;
-                intermediate_size *= sel[idx].selectivity;
-            }
-            total_cost
-        });
+        let best_order = optimizer
+            .optimize(&components, &selectivity, |sel, order| {
+                let mut total_cost = 0.0;
+                let mut intermediate_size = 1.0;
+                for &idx in order {
+                    let base_cost = if idx == 0 { 2.0 } else { 1.0 };
+                    total_cost += base_cost * intermediate_size;
+                    intermediate_size *= sel[idx].selectivity;
+                }
+                total_cost
+            })
+            .await;
 
         assert_eq!(best_order, vec![1, 0]); // Should pick the lower base cost first
     }

@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_fusion_engine_creation() {
-        let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+        let _engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
 
         // Engine created successfully - private fields can't be accessed directly
         assert!(true);

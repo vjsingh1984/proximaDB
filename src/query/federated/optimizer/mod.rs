@@ -17,6 +17,7 @@ use super::parser::{
 };
 use crate::core::error::VectorDBError;
 use crate::query::capability::{Capability, CapabilitySet};
+use crate::query::graph_subset::describe_supported_graph_query;
 use crate::storage::multimodel::ModelType;
 
 /// Physical plan node types
@@ -774,6 +775,30 @@ enum QuerySourceRef<'a> {
         ordinal: usize,
     },
     Target(&'a QueryTarget),
+}
+
+struct GraphQueryPlanShape {
+    graph_name: String,
+    output_columns: Vec<String>,
+}
+
+impl GraphQueryPlanShape {
+    fn from_cypher(cypher: &str) -> Self {
+        match describe_supported_graph_query(cypher, None, Some("default")) {
+            Ok(descriptor) => Self {
+                graph_name: descriptor.graph_id().to_string(),
+                output_columns: descriptor.output_columns().to_vec(),
+            },
+            Err(_) => Self {
+                graph_name: "default".to_string(),
+                output_columns: vec![
+                    "node_id".to_string(),
+                    "label".to_string(),
+                    "properties".to_string(),
+                ],
+            },
+        }
+    }
 }
 
 /// Cost model for different data models
@@ -2582,10 +2607,11 @@ impl CrossModelOptimizer {
                 }
             })
             .unwrap_or_default();
+        let graph_shape = GraphQueryPlanShape::from_cypher(&cypher);
 
         // Estimate max depth from cypher (simple heuristic)
         let max_depth = cypher.matches("->").count().max(1);
-        let graph_name = "default"; // Would need to parse from cypher
+        let graph_name = graph_shape.graph_name.as_str();
 
         // Get statistics
         let (cost, rows) = if let Some(ModelStatistics::Graph(graph_stats)) = stats.get(graph_name)
@@ -2621,11 +2647,7 @@ impl CrossModelOptimizer {
             },
             estimated_cost: cost,
             estimated_rows: rows,
-            output_columns: vec![
-                "node_id".to_string(),
-                "label".to_string(),
-                "properties".to_string(),
-            ],
+            output_columns: graph_shape.output_columns,
             required_capabilities: CapabilitySet::new(),
         })
     }
@@ -2740,6 +2762,7 @@ impl CrossModelOptimizer {
                     extension: SqlExtension::GraphQuery { cypher },
                     ordinal,
                 } => {
+                    let graph_shape = GraphQueryPlanShape::from_cypher(cypher);
                     let max_depth = cypher.matches("->").count().max(1);
                     // Use default stats for graph
                     let default_stats = GraphStats::default();
@@ -2756,11 +2779,7 @@ impl CrossModelOptimizer {
                         },
                         estimated_cost: cost,
                         estimated_rows: 100,
-                        output_columns: vec![
-                            "node_id".to_string(),
-                            "label".to_string(),
-                            "properties".to_string(),
-                        ],
+                        output_columns: graph_shape.output_columns,
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
@@ -3664,6 +3683,7 @@ impl CrossModelOptimizer {
                 _ => None,
             })
             .unwrap_or_default();
+        let graph_shape = GraphQueryPlanShape::from_cypher(&cypher);
 
         Ok(PlanNode {
             id: self.next_id(),
@@ -3674,11 +3694,7 @@ impl CrossModelOptimizer {
             },
             estimated_cost: 50.0,
             estimated_rows: 100,
-            output_columns: vec![
-                "node_id".to_string(),
-                "label".to_string(),
-                "properties".to_string(),
-            ],
+            output_columns: graph_shape.output_columns,
             required_capabilities: CapabilitySet::new(),
         })
     }
@@ -3788,22 +3804,21 @@ impl CrossModelOptimizer {
                 QuerySourceRef::Extension {
                     extension: SqlExtension::GraphQuery { cypher },
                     ordinal,
-                } => PlanNode {
-                    id: self.next_id(),
-                    node_type: PlanNodeType::GraphTraversal {
-                        cypher: cypher.clone(),
-                        start_nodes: None,
-                        source_alias: Self::extension_alias(query, ordinal),
-                    },
-                    estimated_cost: 50.0,
-                    estimated_rows: 100,
-                    output_columns: vec![
-                        "node_id".to_string(),
-                        "label".to_string(),
-                        "properties".to_string(),
-                    ],
-                    required_capabilities: CapabilitySet::new(),
-                },
+                } => {
+                    let graph_shape = GraphQueryPlanShape::from_cypher(cypher);
+                    PlanNode {
+                        id: self.next_id(),
+                        node_type: PlanNodeType::GraphTraversal {
+                            cypher: cypher.clone(),
+                            start_nodes: None,
+                            source_alias: Self::extension_alias(query, ordinal),
+                        },
+                        estimated_cost: 50.0,
+                        estimated_rows: 100,
+                        output_columns: graph_shape.output_columns,
+                        required_capabilities: CapabilitySet::new(),
+                    }
+                }
                 QuerySourceRef::Extension {
                     extension: SqlExtension::DocumentQuery { collection, filter },
                     ordinal,
@@ -5573,6 +5588,43 @@ mod tests {
             .expect("optimize should succeed for valid query");
         assert!(plan.total_cost > 0.0);
         assert!(!plan.metadata.is_cross_model);
+    }
+
+    #[test]
+    fn test_graph_query_plan_uses_projected_output_columns_for_scalar_subset_queries() {
+        let optimizer = CrossModelOptimizer::new();
+        let query = super::super::parser::FederatedParser::new()
+            .parse(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n.name AS person_name')",
+            )
+            .expect("graph query should parse");
+
+        let plan = optimizer
+            .optimize(&query)
+            .expect("graph query plan should build");
+
+        assert_eq!(plan.root.output_columns, vec!["person_name"]);
+    }
+
+    #[test]
+    fn test_graph_query_plan_preserves_legacy_output_columns_for_node_projection() {
+        let optimizer = CrossModelOptimizer::new();
+        let query = super::super::parser::FederatedParser::new()
+            .parse("SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n')")
+            .expect("graph query should parse");
+
+        let plan = optimizer
+            .optimize(&query)
+            .expect("graph query plan should build");
+
+        assert_eq!(
+            plan.root.output_columns,
+            vec![
+                "node_id".to_string(),
+                "label".to_string(),
+                "properties".to_string()
+            ]
+        );
     }
 
     #[test]

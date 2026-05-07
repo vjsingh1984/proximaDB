@@ -53,7 +53,7 @@ pub enum EmbeddingProvider {
     /// Air-gapped compatible, no API costs
     #[serde(rename = "sentence-transformers")]
     SentenceTransformers {
-        /// Model name (e.g., "all-MiniLM-L12-v2", "BAAI/bge-small-en-v1.5")
+        /// Model name (e.g., "BAAI/bge-small-en-v1.5", "all-MiniLM-L12-v2")
         model_name: String,
         /// Embedding dimension (auto-detected if not specified)
         #[serde(default)]
@@ -110,7 +110,7 @@ fn default_ollama_url() -> String {
 impl Default for EmbeddingProvider {
     fn default() -> Self {
         Self::SentenceTransformers {
-            model_name: "all-MiniLM-L12-v2".to_string(),
+            model_name: "BAAI/bge-small-en-v1.5".to_string(),
             dimension: Some(384),
             batch_size: 32,
         }

@@ -252,6 +252,7 @@ impl RestServer {
             metrics_collector,
             security_coordinator,
             RestServerSecurityConfig::default(),
+            None,
         )
     }
 
@@ -275,6 +276,7 @@ impl RestServer {
             metrics_collector,
             security_coordinator,
             RestServerSecurityConfig::development(),
+            None,
         )
     }
 
@@ -287,6 +289,7 @@ impl RestServer {
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         security_config: RestServerSecurityConfig,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
         Self::with_security_and_config(
             bind_addr,
@@ -298,6 +301,7 @@ impl RestServer {
             security_config,
             std::path::PathBuf::from("/tmp/proximadb/data"), // Default fallback
             None, // No query adapter for legacy constructor
+            llm_engine,
         )
     }
 
@@ -312,6 +316,7 @@ impl RestServer {
         security_config: RestServerSecurityConfig,
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
         // Create catalog manager for external catalog integration
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
@@ -325,6 +330,7 @@ impl RestServer {
                 std::collections::HashMap::new(),
             ))),
             catalog_manager,
+            llm_engine,
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -521,6 +527,7 @@ impl RestServer {
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Router {
         // Create catalog manager for external catalog integration
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
@@ -534,6 +541,7 @@ impl RestServer {
                 std::collections::HashMap::new(),
             ))),
             catalog_manager,
+            llm_engine,
         };
 
         // Create metrics router if metrics collector is available

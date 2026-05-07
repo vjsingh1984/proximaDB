@@ -17,7 +17,7 @@ Usage:
     rag = RAGPipeline(
         client=proximadb_client,
         embedding_provider="sentence-transformers",
-        embedding_model="all-MiniLM-L12-v2",
+        embedding_model="BAAI/bge-small-en-v1.5",
     )
 
     # Index documents

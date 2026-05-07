@@ -2,16 +2,16 @@
 
 use axum::{
     Router,
-    extract::{Json, State},
+    extract::{Json, Path, State},
     response::Json as JsonResponse,
-    routing::post,
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::errors::{ApiError, ApiResult};
-use crate::query::aql::{AqlQuery, AqlResult, AuditTrail, executor::AqlExecutor};
+use crate::query::aql::{AqlQuery, AuditTrail, executor::AqlExecutor};
 
 /// State for the AQL router.
 #[derive(Clone)]
@@ -29,7 +29,9 @@ impl AqlApiState {
 
 /// Wire the AQL endpoints under a parent router.
 pub fn create_router() -> Router<AqlApiState> {
-    Router::new().route("/execute", post(execute_aql))
+    Router::new()
+        .route("/execute", post(execute_aql))
+        .route("/audit/:query_id", get(get_audit_trail))
 }
 
 /// Request for AQL execution.
@@ -66,6 +68,25 @@ async fn execute_aql(
         Err(e) => {
             error!("AQL execution failed: {}", e);
             Err(ApiError::Internal(e.to_string()))
+        }
+    }
+}
+
+/// Retrieve an audit trail for a specific query.
+async fn get_audit_trail(
+    State(state): State<AqlApiState>,
+    Path(query_id): Path<String>,
+) -> ApiResult<JsonResponse<AuditTrail>> {
+    info!("Retrieving audit trail for query: {}", query_id);
+
+    match state.executor.get_audit_trail(&query_id).await {
+        Ok(trail) => Ok(JsonResponse(trail)),
+        Err(e) => {
+            error!("Failed to retrieve audit trail for {}: {}", query_id, e);
+            Err(ApiError::NotFound(format!(
+                "Audit trail for query '{}' not found",
+                query_id
+            )))
         }
     }
 }

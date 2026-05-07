@@ -11,9 +11,7 @@ use axum::{
     response::{IntoResponse, Json as JsonResponse},
 };
 use std::sync::Arc;
-#[cfg(any(feature = "ai_endpoints", feature = "sales_endpoints"))]
-use tracing::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 use crate::api_handlers::UnifiedHandlers;
@@ -22,12 +20,15 @@ use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::health;
 use crate::network::rest::v1::analytics::{self, AnalyticsApiState};
 use crate::network::rest::v1::aql::{self, AqlApiState};
+use crate::network::rest::v1::nl::{self, NlApiState};
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
 use crate::query::QueryFacadeAdapter;
 use crate::query::aql::executor::AqlExecutor;
+use crate::query::aql::sources::document::DocumentAqlSource;
 use crate::query::aql::sources::graph::GraphAqlSource;
+use crate::query::aql::sources::observability::ObservabilityAqlSource;
 use crate::query::aql::sources::vector::VectorAqlSource;
 use crate::query::execution::QueryEngine;
 use crate::query::explain::ExplainPlan;
@@ -49,6 +50,8 @@ pub struct AppState {
     pub fulltext_indexes: Option<FullTextIndexMap>,
     /// Catalog manager for external catalog integration
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
+    /// LLM engine for semantic operations
+    pub llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 }
 
 /// Parse search request from JSON, supporting both proto and simple formats
@@ -1666,12 +1669,34 @@ pub fn create_router(state: AppState) -> axum::Router {
                 state.unified_handlers.graph_operations_service.clone(),
             )),
         );
+        executor.register_source(
+            "document".to_string(),
+            Arc::new(DocumentAqlSource::new(
+                state.unified_handlers.document_service.clone(),
+            )),
+        );
+        executor.register_source(
+            "observability".to_string(),
+            Arc::new(ObservabilityAqlSource::new(
+                state.unified_handlers.observability_service.clone(),
+            )),
+        );
 
         let aql_state = AqlApiState::new(executor);
         aql::create_router().with_state(aql_state)
     };
     router = router.nest("/api/v1/aql", aql_router);
     info!("✅ AQL (RUBICON) API endpoints enabled at /api/v1/aql");
+
+    // Natural Language Query Translation (AV-SQL) — TD-048
+    if let Some(llm) = &state.llm_engine {
+        let nl_state = NlApiState::new(llm.clone());
+        let nl_router = nl::create_router().with_state(nl_state);
+        router = router.nest("/api/v1/nl", nl_router);
+        info!("✅ Natural Language (AV-SQL) API endpoints enabled at /api/v1/nl");
+    } else {
+        warn!("⚠️ LLM engine not available; Natural Language (AV-SQL) endpoints disabled");
+    }
 
     // Convert to Router<()> by providing state, with default tenant context for all routes
     let default_tenant = TenantContext::new(
@@ -1811,6 +1836,7 @@ mod tests {
             query_adapter: None,
             fulltext_indexes: Some(Arc::new(RwLock::new(HashMap::new()))),
             catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
+            llm_engine: None,
         };
         (state, temp_dir)
     }

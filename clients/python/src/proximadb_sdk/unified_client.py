@@ -10,6 +10,7 @@ protocol-specific adapters, providing a consistent Pydantic-based API.
 """
 
 import logging
+import ast
 import math
 import re
 import sys
@@ -162,8 +163,16 @@ class ProximaDBClient:
         if isinstance(port_mode, str):
             port_mode = PortMode(port_mode.lower())
 
+        requested_protocol = (
+            Protocol(protocol.lower()) if isinstance(protocol, str) else protocol
+        )
+
         if config is None:
-            config = load_config(url=url, api_key=api_key, **kwargs)
+            load_kwargs = dict(kwargs)
+            if requested_protocol == Protocol.EMBEDDED and not url and "url" not in load_kwargs:
+                load_kwargs["url"] = "embedded://local"
+            resolved_url = load_kwargs.pop("url", url)
+            config = load_config(url=resolved_url, api_key=api_key, **load_kwargs)
             # Apply port_mode to config
             config.port_mode = port_mode
         elif port_mode != PortMode.UNIFIED:
@@ -193,12 +202,27 @@ class ProximaDBClient:
 
         self.config = config
         self._url = getattr(config, "url", None) or getattr(config, "base_url", None)
-        self.protocol = Protocol(protocol) if isinstance(protocol, str) else protocol
+        self.protocol = requested_protocol
         self.enable_intelligent_selection = enable_intelligent_selection
         self.selection_strategy = selection_strategy
         self.enable_operation_routing = enable_operation_routing
         self.routing_strategy = routing_strategy
         self._sks_warmup_collection = sks_warmup_collection
+        self._embedded_options = {
+            key: kwargs.get(key)
+            for key in (
+                "data_dir",
+                "data_dirs",
+                "metadata_dir",
+                "cache_size_mb",
+                "default_engine",
+                "enable_wal",
+                "prune_mode",
+                "mode",
+                "node_id",
+            )
+            if kwargs.get(key) is not None
+        }
 
         # Client state
         self._client = None
@@ -342,10 +366,16 @@ class ProximaDBClient:
                 except Exception as e:
                     logger.debug(f"SKS warmup skipped due to error: {e}")
 
+        elif self.protocol == Protocol.EMBEDDED:
+            self._adapter = self._create_adapter("embedded")
+            self._client = getattr(self._adapter, "_db", None)
+            self._active_protocol = Protocol.EMBEDDED
+            logger.info("Using embedded client (forced)")
+
         else:
             raise ValueError(f"Unknown protocol: {self.protocol}")
 
-    def _create_adapter(self, protocol: str) -> BaseProtocolAdapter:
+    def _create_adapter(self, protocol: str, **extra_kwargs) -> BaseProtocolAdapter:
         """Create protocol adapter with current configuration.
 
         Args:
@@ -363,12 +393,16 @@ class ProximaDBClient:
         if protocol == "grpc":
             grpc_target = base_url.replace("http://", "").replace("https://", "")
             adapter_kwargs["server_address"] = grpc_target
+        elif protocol == "embedded":
+            adapter_kwargs.update(self._embedded_options)
         else:
             adapter_kwargs["url"] = base_url
 
         # Add auth if available
         if self._auth:
             adapter_kwargs["auth"] = self._auth
+
+        adapter_kwargs.update(extra_kwargs)
 
         try:
             return create_adapter(protocol, **adapter_kwargs)
@@ -459,6 +493,76 @@ class ProximaDBClient:
                 stored.append(record)
         self._sync_local_collection_stats(collection_id)
 
+    def _store_local_vector_batch(
+        self,
+        collection_id: str,
+        ids: List[str],
+        vectors: Union[List[List[float]], np.ndarray],
+        metadata: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        if isinstance(vectors, np.ndarray):
+            vector_rows = vectors.tolist()
+        else:
+            vector_rows = [list(vector) for vector in vectors]
+
+        records = [
+            VectorRecord(
+                vector=vector_rows[index],
+                id=ids[index] if index < len(ids) else None,
+                metadata=metadata[index] if metadata and index < len(metadata) else {},
+            )
+            for index in range(len(vector_rows))
+        ]
+        self._store_local_vector_records(collection_id, records)
+
+    def _try_embedded_numpy_vector_batch(
+        self,
+        collection_id: str,
+        vectors: Union[List[List[float]], np.ndarray],
+        ids: Optional[List[str]],
+        metadata: Optional[List[Dict[str, Any]]],
+        *,
+        upsert: bool,
+    ) -> Optional[VectorOperationResponse]:
+        if self._active_protocol != Protocol.EMBEDDED or self._prefer_local_fallback:
+            return None
+        if not isinstance(vectors, np.ndarray) or self._adapter is None:
+            return None
+
+        method_name = "upsert_numpy" if upsert else "insert_numpy"
+        if not hasattr(self._adapter, method_name):
+            return None
+
+        ids_list = list(ids) if ids is not None else [f"vec_{i}" for i in range(len(vectors))]
+        metadata_list = metadata if metadata and any(item for item in metadata) else None
+
+        try:
+            result = getattr(self._adapter, method_name)(
+                collection_id,
+                ids_list,
+                vectors,
+                metadata_list,
+            )
+        except Exception as e:
+            self._activate_local_fallback(e)
+            logger.debug(
+                "Embedded NumPy %s failed for %s, falling back: %s",
+                method_name,
+                collection_id,
+                e,
+            )
+            return None
+
+        if getattr(result, "success", True):
+            self._store_local_vector_batch(
+                collection_id,
+                ids_list,
+                vectors,
+                metadata_list,
+            )
+
+        return result
+
     def _delete_local_vector_records(
         self, collection_id: str, vector_ids: List[str]
     ) -> int:
@@ -544,6 +648,62 @@ class ProximaDBClient:
         if "metadata." in lowered:
             raise ProximaDBError("SQL lowering failed: Unsupported expression type")
 
+        vector_search_match = re.search(
+            r"""from\s+vector_search\(\s*'([^']+)'\s*,\s*'(\[[^']*\])'\s*,\s*(\d+)\s*\)""",
+            normalized,
+            re.IGNORECASE,
+        )
+        if vector_search_match:
+            collection_name = collection or vector_search_match.group(1)
+            try:
+                query_vector = ast.literal_eval(vector_search_match.group(2))
+            except (SyntaxError, ValueError) as exc:
+                raise ProximaDBError(
+                    "SQL parse error: invalid VECTOR_SEARCH vector literal"
+                ) from exc
+            top_k = int(vector_search_match.group(3))
+            results = self._search_local_vectors(
+                collection_id=collection_name,
+                vector=query_vector,
+                top_k=top_k,
+                metadata_filter=None,
+                include_metadata=True,
+                include_vectors=True,
+            )
+
+            select_match = re.match(
+                r"select\s+(.+?)\s+from\s+", normalized, re.IGNORECASE
+            )
+            select_expr = select_match.group(1).strip() if select_match else "*"
+            columns = (
+                ["id", "score", "vector", "metadata", "rank"]
+                if select_expr == "*"
+                else [column.strip() for column in select_expr.split(",")]
+            )
+
+            rows: List[Dict[str, Any]] = []
+            for result in results:
+                row: Dict[str, Any] = {}
+                for column in columns:
+                    lowered_column = column.lower()
+                    if lowered_column == "id":
+                        row["id"] = result.id
+                    elif lowered_column == "score":
+                        row["score"] = result.score
+                    elif lowered_column == "vector":
+                        row["vector"] = result.vector
+                    elif lowered_column == "metadata":
+                        row["metadata"] = result.metadata
+                    elif lowered_column == "rank":
+                        row["rank"] = result.rank
+                    else:
+                        raise ProximaDBError(
+                            "SQL lowering failed: Unsupported expression type"
+                        )
+                rows.append(row)
+
+            return {"rows": rows, "columns": columns, "row_count": len(rows)}
+
         match = re.search(r"\bfrom\s+([a-zA-Z_][\w]*)", normalized, re.IGNORECASE)
         collection_name = collection or (match.group(1) if match else None)
         if not collection_name:
@@ -599,15 +759,49 @@ class ProximaDBClient:
             rows.append(row)
         return {"rows": rows, "columns": columns, "row_count": len(rows)}
 
+    @staticmethod
+    def _is_vector_search_sql(query: str) -> bool:
+        normalized = " ".join(query.strip().split()).lower()
+        return "from vector_search(" in normalized
+
+    def _local_sql_fallback_result(
+        self,
+        query: str,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            result = self._execute_sql_local(query, parameters, collection)
+        except Exception as e:
+            logger.debug("Local SQL fallback unavailable: %s", e)
+            return None
+
+        if result.get("row_count", 0) > 0:
+            return result
+        return None
+
+    @staticmethod
+    def _sql_rows_to_unified_records(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [
+            {
+                "id": row.get("id", f"row_{index}"),
+                "source_model": "vector",
+                "score": row.get("score"),
+                "data": row,
+                "metadata": {
+                    "models": "vector",
+                    "fusion_strategy": "local_fallback",
+                },
+            }
+            for index, row in enumerate(rows)
+        ]
+
     def _get_rest_adapter(self) -> Optional[BaseProtocolAdapter]:
         if self._rest_adapter is None:
             self._rest_adapter = self._create_adapter("rest")
         return self._rest_adapter
 
     def _call_document_adapter(self, method_name: str, *args, **kwargs):
-        if self._active_protocol != Protocol.REST:
-            return None
-
         candidates: List[BaseProtocolAdapter] = []
         if self._adapter:
             candidates.append(self._adapter)
@@ -634,9 +828,6 @@ class ProximaDBClient:
         return None
 
     def _call_timeseries_adapter(self, method_name: str, *args, **kwargs):
-        if self._active_protocol != Protocol.REST:
-            return None
-
         candidates: List[BaseProtocolAdapter] = []
         if self._adapter:
             candidates.append(self._adapter)
@@ -1971,9 +2162,12 @@ class ProximaDBClient:
         if self._adapter:
             if not self._prefer_local_fallback:
                 try:
-                    return self._adapter.insert_vectors(
+                    result = self._adapter.insert_vectors(
                         collection_id, records, **kwargs
                     )
+                    if self._active_protocol == Protocol.EMBEDDED:
+                        self._store_local_vector_records(collection_id, list(records))
+                    return result
                 except Exception as e:
                     self._activate_local_fallback(e)
                     logger.debug(
@@ -2338,7 +2532,10 @@ class ProximaDBClient:
         if self._adapter:
             if not self._prefer_local_fallback:
                 try:
-                    return self._adapter.upsert_vectors(collection_id, records)
+                    result = self._adapter.upsert_vectors(collection_id, records)
+                    if self._active_protocol == Protocol.EMBEDDED:
+                        self._store_local_vector_records(collection_id, list(records))
+                    return result
                 except Exception as e:
                     self._activate_local_fallback(e)
                     logger.debug(
@@ -2717,7 +2914,10 @@ class ProximaDBClient:
         if self._adapter:
             if not self._prefer_local_fallback:
                 try:
-                    return self._adapter.delete_vectors(collection_id, vector_ids)
+                    result = self._adapter.delete_vectors(collection_id, vector_ids)
+                    if self._active_protocol == Protocol.EMBEDDED:
+                        self._delete_local_vector_records(collection_id, vector_ids)
+                    return result
                 except Exception as e:
                     self._activate_local_fallback(e)
                     logger.debug(
@@ -2947,6 +3147,29 @@ class ProximaDBClient:
             >>> for row in result['rows']:
             ...     print(row['id'], row['metadata'])
         """
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                native_result = self._client.execute_sql(query, parameters, collection)
+                if self._is_vector_search_sql(query) and not native_result.get("rows"):
+                    local_result = self._local_sql_fallback_result(
+                        query, parameters, collection
+                    )
+                    if local_result is not None:
+                        return local_result
+                return native_result
+            except Exception as e:
+                logger.debug("Embedded SQL failed, using adapter/local fallback: %s", e)
+                if self._adapter and hasattr(self._adapter, "execute_sql"):
+                    try:
+                        return self._adapter.execute_sql(
+                            query, parameters=parameters, collection=collection
+                        )
+                    except Exception as adapter_error:
+                        logger.debug(
+                            "Embedded SQL adapter fallback failed, using local fallback: %s",
+                            adapter_error,
+                        )
+                return self._execute_sql_local(query, parameters, collection)
         if self._active_protocol == Protocol.GRPC:
             # Use gRPC SQL service
             try:
@@ -2960,6 +3183,287 @@ class ProximaDBClient:
             except Exception as e:
                 logger.debug("REST SQL failed, using local fallback: %s", e)
                 return self._execute_sql_local(query, parameters, collection)
+
+    def execute_unified_query(
+        self,
+        query: str,
+        query_vector: Optional[List[float]] = None,
+        fusion_strategy: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Execute a federated multi-model query.
+
+        This is currently implemented for embedded mode, where the native Rust
+        binding can delegate to the unified SQL/query planner directly.
+        """
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                native_result = list(
+                    self._client.execute_unified_query(
+                        query, query_vector, fusion_strategy
+                    )
+                    or []
+                )
+                if self._is_vector_search_sql(query) and not native_result:
+                    local_result = self._local_sql_fallback_result(query)
+                    if local_result is not None:
+                        return self._sql_rows_to_unified_records(
+                            local_result.get("rows", [])
+                        )
+                return native_result
+            except Exception as e:
+                logger.debug(
+                    "Embedded unified query failed, using adapter fallback: %s", e
+                )
+                if self._adapter and hasattr(self._adapter, "execute_unified_query"):
+                    try:
+                        return self._adapter.execute_unified_query(
+                            query,
+                            query_vector=query_vector,
+                            fusion_strategy=fusion_strategy,
+                        )
+                    except Exception as adapter_error:
+                        logger.debug(
+                            "Embedded unified adapter fallback failed, using local fallback: %s",
+                            adapter_error,
+                        )
+                return list(
+                    self._sql_rows_to_unified_records(
+                        self._execute_sql_local(query, collection=None).get("rows", [])
+                    )
+                )
+
+        if self._adapter and hasattr(self._adapter, "execute_unified_query"):
+            return self._adapter.execute_unified_query(
+                query,
+                query_vector=query_vector,
+                fusion_strategy=fusion_strategy,
+            )
+
+        raise NotImplementedError(
+            "execute_unified_query is currently supported in embedded mode only"
+        )
+
+    def create_observability_namespace(
+        self,
+        name: str,
+        retention_days: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Create a namespace for logs, metrics, and traces."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                result = self._client.create_observability_namespace(
+                    name, retention_days
+                )
+                return (
+                    result
+                    if isinstance(result, dict)
+                    else {"success": True, "namespace": name}
+                )
+            except Exception as e:
+                logger.debug(
+                    "Embedded create_observability_namespace failed: %s", e
+                )
+
+        if self._adapter and hasattr(self._adapter, "create_observability_namespace"):
+            return self._adapter.create_observability_namespace(
+                name, retention_days=retention_days
+            )
+
+        raise NotImplementedError(
+            "Observability namespaces are currently supported in embedded mode only"
+        )
+
+    def ingest_logs(self, namespace: str, logs: List[Dict[str, Any]]) -> int:
+        """Ingest structured log events into an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return int(self._client.ingest_logs(namespace, logs))
+            except Exception as e:
+                logger.debug("Embedded log ingest failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "ingest_logs"):
+            return int(self._adapter.ingest_logs(namespace, logs))
+
+        raise NotImplementedError("Log ingest is currently supported in embedded mode only")
+
+    def query_logs(
+        self,
+        namespace: str,
+        start_time_ns: int,
+        end_time_ns: int,
+        query: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Query log events from an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return list(
+                    self._client.query_logs(
+                        namespace, start_time_ns, end_time_ns, query, limit
+                    )
+                    or []
+                )
+            except Exception as e:
+                logger.debug("Embedded log query failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "query_logs"):
+            return list(
+                self._adapter.query_logs(
+                    namespace,
+                    start_time_ns=start_time_ns,
+                    end_time_ns=end_time_ns,
+                    query=query,
+                    limit=limit,
+                )
+                or []
+            )
+
+        raise NotImplementedError("Log query is currently supported in embedded mode only")
+
+    def ingest_metrics(self, namespace: str, samples: List[Dict[str, Any]]) -> int:
+        """Ingest metric samples into an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return int(self._client.ingest_metrics(namespace, samples))
+            except Exception as e:
+                logger.debug("Embedded metric ingest failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "ingest_metrics"):
+            return int(self._adapter.ingest_metrics(namespace, samples))
+
+        raise NotImplementedError(
+            "Metric ingest is currently supported in embedded mode only"
+        )
+
+    def aggregate_metrics(
+        self,
+        namespace: str,
+        metric_name: str,
+        aggregation: str = "avg",
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        step_seconds: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """Aggregate metrics from an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return list(
+                    self._client.aggregate_metrics(
+                        namespace,
+                        metric_name,
+                        aggregation,
+                        start_time,
+                        end_time,
+                        step_seconds,
+                    )
+                    or []
+                )
+            except Exception as e:
+                logger.debug("Embedded metric aggregation failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "aggregate_metrics"):
+            return list(
+                self._adapter.aggregate_metrics(
+                    namespace,
+                    metric_name=metric_name,
+                    aggregation=aggregation,
+                    start_time=start_time,
+                    end_time=end_time,
+                    step_seconds=step_seconds,
+                )
+                or []
+            )
+
+        raise NotImplementedError(
+            "Metric aggregation is currently supported in embedded mode only"
+        )
+
+    def ingest_traces(self, namespace: str, traces: List[Dict[str, Any]]) -> int:
+        """Ingest trace spans into an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return int(self._client.ingest_traces(namespace, traces))
+            except Exception as e:
+                logger.debug("Embedded trace ingest failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "ingest_traces"):
+            return int(self._adapter.ingest_traces(namespace, traces))
+
+        raise NotImplementedError(
+            "Trace ingest is currently supported in embedded mode only"
+        )
+
+    def query_traces(
+        self,
+        namespace: str,
+        start_time_ns: int,
+        end_time_ns: int,
+        trace_id: Optional[str] = None,
+        service: Optional[str] = None,
+        operation: Optional[str] = None,
+        min_duration_ns: Optional[int] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Query trace spans in an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return list(
+                    self._client.query_traces(
+                        namespace,
+                        start_time_ns,
+                        end_time_ns,
+                        trace_id,
+                        service,
+                        operation,
+                        min_duration_ns,
+                        status,
+                        limit,
+                    )
+                    or []
+                )
+            except Exception as e:
+                logger.debug("Embedded trace query failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "query_traces"):
+            return list(
+                self._adapter.query_traces(
+                    namespace,
+                    start_time_ns=start_time_ns,
+                    end_time_ns=end_time_ns,
+                    trace_id=trace_id,
+                    service=service,
+                    operation=operation,
+                    min_duration_ns=min_duration_ns,
+                    status=status,
+                    limit=limit,
+                )
+                or []
+            )
+
+        raise NotImplementedError(
+            "Trace query is currently supported in embedded mode only"
+        )
+
+    def get_trace(self, namespace: str, trace_id: str) -> Dict[str, Any]:
+        """Get all spans for a specific trace ID."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                result = self._client.get_trace(namespace, trace_id)
+                return (
+                    result
+                    if isinstance(result, dict)
+                    else {"spans": list(result or []), "complete": True}
+                )
+            except Exception as e:
+                logger.debug("Embedded get_trace failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "get_trace"):
+            return self._adapter.get_trace(namespace, trace_id=trace_id)
+
+        raise NotImplementedError(
+            "get_trace is currently supported in embedded mode only"
+        )
 
     def _execute_sql_rest(
         self,
@@ -3064,6 +3568,16 @@ class ProximaDBClient:
         metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> VectorOperationResponse:
         """Legacy insert method for backward compatibility"""
+        fast_result = self._try_embedded_numpy_vector_batch(
+            collection_id,
+            vectors,
+            ids,
+            metadata,
+            upsert=False,
+        )
+        if fast_result is not None:
+            return fast_result
+
         records = []
 
         # Convert vectors to list format
@@ -3089,6 +3603,16 @@ class ProximaDBClient:
         metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> VectorOperationResponse:
         """Legacy upsert method for backward compatibility"""
+        fast_result = self._try_embedded_numpy_vector_batch(
+            collection_id,
+            vectors,
+            ids,
+            metadata,
+            upsert=True,
+        )
+        if fast_result is not None:
+            return fast_result
+
         records = []
 
         # Convert vectors to list format
@@ -3110,6 +3634,21 @@ class ProximaDBClient:
         """Legacy delete method for backward compatibility"""
         return self.delete_vectors(collection_id, ids)
 
+    def _invoke_graph_method(
+        self,
+        method_name: str,
+        graph_id: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
+        method = getattr(self._client, method_name)
+        if graph_id is None:
+            return method(**kwargs)
+
+        try:
+            return method(graph_id=graph_id, **kwargs)
+        except TypeError:
+            return method(graph=graph_id, **kwargs)
+
     # ===========================
     # Graph API Methods
     # ===========================
@@ -3120,6 +3659,7 @@ class ProximaDBClient:
         labels: List[str],
         properties: Optional[Dict[str, Any]] = None,
         embedding: Optional[List[float]] = None,
+        graph_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a graph node.
@@ -3154,9 +3694,16 @@ class ProximaDBClient:
                 f"embedding must be list or None, got {type(embedding).__name__}"
             )
 
-        return self._client.create_node(
-            node_id=node_id, labels=labels, properties=properties, embedding=embedding
-        )
+        kwargs = {
+            "node_id": node_id,
+            "labels": labels,
+            "properties": properties,
+            "embedding": embedding,
+        }
+        result = self._invoke_graph_method("create_node", graph_id=graph_id, **kwargs)
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            return {"success": True, "node_id": node_id, "result": result}
+        return result
 
     def create_edge(
         self,
@@ -3166,6 +3713,7 @@ class ProximaDBClient:
         edge_type: str,
         properties: Optional[Dict[str, Any]] = None,
         weight: Optional[float] = None,
+        graph_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a graph edge between two nodes.
@@ -3211,14 +3759,18 @@ class ProximaDBClient:
                 f"weight must be number or None, got {type(weight).__name__}"
             )
 
-        return self._client.create_edge(
-            edge_id=edge_id,
-            from_node_id=from_node_id,
-            to_node_id=to_node_id,
-            edge_type=edge_type,
-            properties=properties,
-            weight=weight,
-        )
+        kwargs = {
+            "edge_id": edge_id,
+            "from_node_id": from_node_id,
+            "to_node_id": to_node_id,
+            "edge_type": edge_type,
+            "properties": properties,
+            "weight": weight,
+        }
+        result = self._invoke_graph_method("create_edge", graph_id=graph_id, **kwargs)
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            return {"success": True, "edge_id": edge_id, "result": result}
+        return result
 
     def traverse_graph(
         self,
@@ -3228,6 +3780,7 @@ class ProximaDBClient:
         node_labels: Optional[List[str]] = None,
         algorithm: str = "BFS",
         limit: Optional[int] = None,
+        graph_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Traverse the graph starting from a node.
@@ -3283,14 +3836,18 @@ class ProximaDBClient:
         if limit is not None and not isinstance(limit, int):
             raise TypeError(f"limit must be int or None, got {type(limit).__name__}")
 
-        return self._client.traverse_graph(
-            start_node_id=start_node_id,
-            max_depth=max_depth,
-            edge_types=edge_types,
-            node_labels=node_labels,
-            algorithm=algorithm,
-            limit=limit,
-        )
+        kwargs = {
+            "start_node_id": start_node_id,
+            "max_depth": max_depth,
+            "edge_types": edge_types,
+            "node_labels": node_labels,
+            "algorithm": algorithm,
+            "limit": limit,
+        }
+        result = self._invoke_graph_method("traverse_graph", graph_id=graph_id, **kwargs)
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            return {"nodes": list(result or []), "edges": [], "paths": [], "stats": {}}
+        return result
 
     def query_nodes(
         self,
@@ -3298,6 +3855,7 @@ class ProximaDBClient:
         properties: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
+        graph_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Query graph nodes by labels and properties.
@@ -3338,8 +3896,73 @@ class ProximaDBClient:
         if offset is not None and not isinstance(offset, int):
             raise TypeError(f"offset must be int or None, got {type(offset).__name__}")
 
-        return self._client.query_nodes(
-            labels=labels, properties=properties, limit=limit, offset=offset
+        kwargs = {
+            "labels": labels,
+            "properties": properties,
+            "limit": limit,
+            "offset": offset,
+        }
+        result = self._invoke_graph_method("query_nodes", graph_id=graph_id, **kwargs)
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            nodes = list(result or [])
+            return {"nodes": nodes, "total_count": len(nodes), "has_more": False}
+        return result
+
+    def get_node(
+        self,
+        node_id: str,
+        graph_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a graph node by ID."""
+        result = self._invoke_graph_method("get_node", graph_id=graph_id, node_id=node_id)
+        if result is None:
+            return None
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            return {
+                "id": getattr(result, "id", node_id),
+                "labels": list(getattr(result, "labels", []) or []),
+                "properties": dict(getattr(result, "properties", {}) or {}),
+            }
+        return result
+
+    def get_outgoing_edges(
+        self,
+        node_id: str,
+        edge_types: Optional[List[str]] = None,
+        graph_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get outgoing edges for a graph node."""
+        result = self._invoke_graph_method(
+            "get_outgoing_edges",
+            graph_id=graph_id,
+            node_id=node_id,
+            edge_types=edge_types,
+        )
+        return list(result or [])
+
+    def get_incoming_edges(
+        self,
+        node_id: str,
+        edge_types: Optional[List[str]] = None,
+        graph_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get incoming edges for a graph node."""
+        result = self._invoke_graph_method(
+            "get_incoming_edges",
+            graph_id=graph_id,
+            node_id=node_id,
+            edge_types=edge_types,
+        )
+        return list(result or [])
+
+    def delete_node(
+        self,
+        node_id: str,
+        graph_id: Optional[str] = None,
+    ) -> bool:
+        """Delete a graph node by ID."""
+        return bool(
+            self._invoke_graph_method("delete_node", graph_id=graph_id, node_id=node_id)
         )
 
     # ==================== Graph Collection Management ====================
@@ -3370,9 +3993,17 @@ class ProximaDBClient:
             ...     description="User relationships and interactions"
             ... )
         """
-        return self._client.create_graph(
-            graph_id=graph_id, name=name, description=description, schema=schema
-        )
+        try:
+            return self._client.create_graph(
+                graph_id=graph_id, name=name, description=description, schema=schema
+            )
+        except TypeError:
+            result = self._client.create_graph(graph_id, None)
+            return (
+                result
+                if isinstance(result, dict)
+                else {"success": True, "graph_id": graph_id}
+            )
 
     def delete_graph(self, graph_id: str) -> Dict[str, Any]:
         """
@@ -3433,7 +4064,7 @@ class ProximaDBClient:
             >>> stats = client.get_graph_stats("social_network")
             >>> print(f"Nodes: {stats['node_count']}, Edges: {stats['edge_count']}")
         """
-        return self._client.get_graph_stats(graph_id)
+        return self._invoke_graph_method("get_graph_stats", graph_id=graph_id)
 
     # ==================== End Graph Collection Management ====================
 

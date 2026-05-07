@@ -28,7 +28,7 @@ Usage:
     collection = await db.create_collection(
         "code_symbols",
         dimension=384,
-        embedding_model="all-MiniLM-L6-v2"  # or custom embedding function
+        embedding_model="BAAI/bge-small-en-v1.5"  # or custom embedding function
     )
 
     # Insert with auto-embedding (pass text, get embeddings automatically)
@@ -149,14 +149,14 @@ class SentenceTransformerModel(BaseEmbeddingModel):
     Supports all models from https://huggingface.co/sentence-transformers
 
     Popular models:
-    - all-MiniLM-L6-v2: Fast, 384-dim (80MB)
-    - all-MiniLM-L12-v2: Balanced, 384-dim (120MB)
-    - BAAI/bge-small-en-v1.5: Best for code, 384-dim (130MB)
+    - BAAI/bge-small-en-v1.5: Default benchmark model, 384-dim (130MB)
+    - all-MiniLM-L6-v2: Fast legacy option, 384-dim (80MB)
+    - all-MiniLM-L12-v2: Balanced legacy option, 384-dim (120MB)
     - all-mpnet-base-v2: High quality, 768-dim (420MB)
     """
 
     def __init__(
-        self, model_name: str = "all-MiniLM-L6-v2", device: Optional[str] = None
+        self, model_name: str = "BAAI/bge-small-en-v1.5", device: Optional[str] = None
     ):
         """Initialize sentence-transformer model.
 
@@ -427,7 +427,7 @@ def create_embedding_model(
 
     Example:
         # Sentence-transformers (default, local)
-        model = create_embedding_model("sentence-transformers", "all-MiniLM-L6-v2")
+        model = create_embedding_model("sentence-transformers", "BAAI/bge-small-en-v1.5")
 
         # Ollama (local, high quality)
         model = create_embedding_model("ollama", "nomic-embed-text")
@@ -437,7 +437,7 @@ def create_embedding_model(
     """
     if model_type == "sentence-transformers":
         return SentenceTransformerModel(
-            model_name=model_name or "all-MiniLM-L6-v2",
+            model_name=model_name or "BAAI/bge-small-en-v1.5",
             device=kwargs.get("device"),
         )
     elif model_type == "ollama":
@@ -887,7 +887,7 @@ prefetch_budget = 4
             # With embedding model (recommended)
             collection = await db.create_collection(
                 "code_symbols",
-                embedding_model="all-MiniLM-L6-v2"
+                embedding_model="BAAI/bge-small-en-v1.5"
             )
 
             # With custom embedding model

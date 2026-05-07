@@ -70,6 +70,17 @@ impl MultiModelQuery {
         self
     }
 
+    /// Add a declarative graph query component
+    pub fn with_graph_query(mut self, query: GraphQueryExpr) -> Self {
+        self.components.push(QueryComponent {
+            model: DataModel::Graph,
+            operation: ModelOperation::GraphQuery(query),
+            filters: Vec::new(),
+            dependencies: Vec::new(),
+        });
+        self
+    }
+
     /// Set the fusion strategy
     pub fn with_fusion(mut self, strategy: FusionStrategy) -> Self {
         self.fusion_strategy = strategy;
@@ -113,6 +124,7 @@ impl QueryComponent {
         match &self.operation {
             ModelOperation::VectorSearch(v) => Some(&v.collection),
             ModelOperation::DocumentQuery(d) => Some(&d.collection),
+            ModelOperation::GraphQuery(g) => Some(&g.graph_name),
             ModelOperation::GraphTraversal(g) => Some(&g.graph_name),
             ModelOperation::LogQuery(l) => Some(&l.namespace),
             ModelOperation::MetricQuery(m) => Some(&m.namespace),
@@ -263,6 +275,8 @@ pub enum ModelOperation {
     VectorSearch(VectorSearchExpr),
     /// Document query with JSON path filters
     DocumentQuery(DocumentQueryExpr),
+    /// Declarative graph query lowered from the supported graph subset
+    GraphQuery(GraphQueryExpr),
     /// Graph traversal
     GraphTraversal(GraphTraversalExpr),
     /// Log query
@@ -376,6 +390,22 @@ pub struct DocumentSort {
     pub path: String,
     /// Ascending or descending
     pub ascending: bool,
+}
+
+/// Declarative graph query expression backed by the shared graph subset
+#[derive(Debug, Clone)]
+pub struct GraphQueryExpr {
+    /// Graph name
+    pub graph_name: String,
+    /// Normalized query text without an inline FROM clause
+    pub normalized_query: String,
+    /// Projected output columns produced by the shared graph subset
+    pub output_columns: Vec<String>,
+    /// Whether whole-node projections should be materialized into legacy
+    /// `node_id` / `label` / `properties` row shape
+    pub uses_legacy_node_rows: bool,
+    /// Maximum traversal depth implied by the query pattern
+    pub max_depth: u32,
 }
 
 /// Graph traversal expression

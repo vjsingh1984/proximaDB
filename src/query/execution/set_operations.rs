@@ -128,7 +128,6 @@ impl SetOperationPlanner for crate::query::execution::planner::ExecutionPlanner 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::query::ast::*;
 
     #[test]

@@ -132,7 +132,7 @@ impl GraphArrowBridge {
         }
 
         // Determine schema from first result
-        let schema = Self::infer_schema(&results[0], include_edges)?;
+        let _schema = Self::infer_schema(&results[0], include_edges)?;
 
         // Build arrays column by column
         let mut arrays: Vec<(String, ArrayRef)> = Vec::new();

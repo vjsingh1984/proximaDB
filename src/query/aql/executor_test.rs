@@ -1,14 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::graph::service::GraphOperationsService;
     use crate::query::aql::executor::AqlExecutor;
-    use crate::query::aql::sources::graph::GraphAqlSource;
-    use crate::query::aql::sources::vector::VectorAqlSource;
     use crate::query::aql::{
         AqlFind, AqlFrom, AqlPredicate, AqlProjection, AqlQuery, AqlValue, AqlWhere, DataModel,
         JoinType,
     };
-    use crate::services::VectorOperationsService;
     use std::collections::HashMap;
     use std::sync::Arc;
 

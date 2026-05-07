@@ -1119,7 +1119,9 @@ impl AxisManager {
             && let Some(collection) = cache.get(collection_id)
             && let Some(config) = &collection.config
         {
-            let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
+            let metric_code = config
+                .distance_metric
+                .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32);
             return Some(proto_distance_to_internal(metric_code));
         }
 
@@ -1128,7 +1130,9 @@ impl AxisManager {
             && let Ok(Some(collection)) = collection_service.collection(collection_id).await
             && let Some(config) = &collection.config
         {
-            let metric_code = config.distance_metric.unwrap_or(3); // Default to DotProduct (3)
+            let metric_code = config
+                .distance_metric
+                .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32);
             return Some(proto_distance_to_internal(metric_code));
         }
 

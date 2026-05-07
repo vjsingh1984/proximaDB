@@ -32,7 +32,7 @@ class EmbeddingConfig:
 
     Attributes:
         provider: Embedding provider type
-        model_name: Model name (e.g., "all-MiniLM-L12-v2")
+        model_name: Model name (e.g., "BAAI/bge-small-en-v1.5")
         dimension: Embedding dimension (auto-detected if not specified)
         api_key: API key for cloud providers
         batch_size: Batch size for embedding generation
@@ -40,7 +40,7 @@ class EmbeddingConfig:
     """
 
     provider: EmbeddingProvider = EmbeddingProvider.SENTENCE_TRANSFORMERS
-    model_name: str = "all-MiniLM-L12-v2"
+    model_name: str = "BAAI/bge-small-en-v1.5"
     dimension: Optional[int] = None
     api_key: Optional[str] = None
     batch_size: int = 32

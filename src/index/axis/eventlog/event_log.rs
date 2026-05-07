@@ -263,6 +263,41 @@ impl EventLogQueue {
         });
     }
 
+    /// Acknowledge an event as fully processed by the active consumer.
+    ///
+    /// The current EventLog pipeline uses a single AXIS consumer that may build
+    /// multiple concrete index types for a flush event. Treating acknowledgment as
+    /// completion of all pending index work keeps queue state aligned with the
+    /// actual background processing model.
+    pub async fn acknowledge_event(&self, event_id: &str) {
+        let pending_indexes = if let Some(event) = self.find_event(event_id).await {
+            let mut pending_indexes = Vec::new();
+
+            for file_path in &event.file_paths {
+                if let Some(status) = self.file_status.get(file_path) {
+                    for index_name in &status.pending_indexes {
+                        if !pending_indexes.contains(index_name) {
+                            pending_indexes.push(index_name.clone());
+                        }
+                    }
+                }
+            }
+
+            pending_indexes
+        } else {
+            Vec::new()
+        };
+
+        if pending_indexes.is_empty() {
+            self.mark_processed(event_id, "axis_consumer").await;
+            return;
+        }
+
+        for index_name in pending_indexes {
+            self.mark_processed(event_id, &index_name).await;
+        }
+    }
+
     /// Get file status for a specific file
     pub fn get_file_status(&self, file_path: &str) -> Option<FileIndexingStatus> {
         self.file_status.get(file_path).map(|s| s.clone())
@@ -400,8 +435,11 @@ impl EventLogQueue {
 
     /// Get list of active indexes from collection config
     fn get_active_indexes(&self) -> Vec<String> {
-        // Deferred: Get from collection config
-        vec!["hnsw".to_string(), "ivf".to_string()]
+        // The current EventLog pipeline uses a single AXIS consumer task that
+        // owns end-to-end index hydration for a flush event. Model queue
+        // readiness in terms of that consumer so persisted state matches the
+        // actual work unit being executed.
+        vec!["axis_consumer".to_string()]
     }
 
     /// Find event by ID
@@ -592,12 +630,8 @@ mod tests {
         // Initially not ready for compaction
         assert!(!queue.can_compact("file1.sstable"));
 
-        // Mark as processed by indexes
-        queue.mark_processed(&event.event_id, "hnsw").await;
-        assert!(!queue.can_compact("file1.sstable")); // Still one pending
-
-        queue.mark_processed(&event.event_id, "ivf").await;
-        assert!(queue.can_compact("file1.sstable")); // Now ready
+        queue.mark_processed(&event.event_id, "axis_consumer").await;
+        assert!(queue.can_compact("file1.sstable"));
     }
 
     #[tokio::test]
@@ -669,7 +703,7 @@ mod tests {
             );
 
             queue.add_event(event.clone()).await;
-            queue.mark_processed(&event.event_id, "hnsw").await;
+            queue.mark_processed(&event.event_id, "axis_consumer").await;
 
             // Force persist
             queue.persist_state().await.unwrap();
@@ -687,8 +721,36 @@ mod tests {
             assert_eq!(events[0].vector_count, 1000);
 
             // Check processed offset was recovered
-            assert!(queue.processed_offsets.contains_key("hnsw"));
+            assert!(queue.processed_offsets.contains_key("axis_consumer"));
         }
+    }
+
+    #[tokio::test]
+    async fn test_acknowledge_event_marks_all_pending_indexes_complete() {
+        let (queue, _dir) = create_test_queue().await;
+
+        let event = IndexEventBuilder::flush_event(
+            "test_collection".to_string(),
+            vec!["file1.sstable".to_string()],
+            1000,
+            StorageEngineType::SST,
+            true,
+            true,
+        );
+
+        queue.add_event(event.clone()).await;
+        assert!(!queue.can_compact("file1.sstable"));
+
+        queue.acknowledge_event(&event.event_id).await;
+
+        let status = queue.get_file_status("file1.sstable").unwrap();
+        assert!(status.pending_indexes.is_empty());
+        assert!(
+            status
+                .completed_indexes
+                .contains(&"axis_consumer".to_string())
+        );
+        assert!(queue.can_compact("file1.sstable"));
     }
 
     #[tokio::test]
