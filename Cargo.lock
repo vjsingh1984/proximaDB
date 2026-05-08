@@ -5720,7 +5720,7 @@ dependencies = [
  "arrow",
  "async-trait",
  "futures",
- "proximadb-graph",
+ "proximadb-graph-query",
  "proximadb-kernel",
  "serde_json",
 ]

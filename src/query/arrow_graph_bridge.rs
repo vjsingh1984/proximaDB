@@ -15,7 +15,7 @@ use proximadb_graph::query::planner::QueryPlan;
 use proximadb_kernel::error::VectorDBError;
 
 #[async_trait]
-impl GraphArrowQueryExecutor for crate::graph::query::executor::QueryExecutor {
+impl GraphArrowQueryExecutor<QueryPlan> for crate::graph::query::executor::QueryExecutor {
     async fn execute_query_rows(
         &self,
         plan: &QueryPlan,

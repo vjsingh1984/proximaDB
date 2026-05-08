@@ -16,6 +16,6 @@ path = "src/lib.rs"
 arrow = { version = "57.1", features = ["prettyprint"] }
 async-trait.workspace = true
 futures = "0.3"
-proximadb-graph = { path = "../../modalities/proximadb-graph" }
+proximadb-graph-query = { path = "../proximadb-graph-query" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 serde_json.workspace = true

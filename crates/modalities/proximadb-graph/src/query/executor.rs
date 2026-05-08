@@ -34,8 +34,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-/// Canonical row shape produced by the extracted graph query executor.
-pub type QueryRow = HashMap<String, serde_json::Value>;
+pub use proximadb_graph_query::GraphQueryRow as QueryRow;
 
 /// Narrow async backend contract for graph query plan execution.
 #[async_trait]

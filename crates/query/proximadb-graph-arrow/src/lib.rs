@@ -7,11 +7,7 @@ use arrow::datatypes::*;
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use futures::Stream;
-use proximadb_graph::query::QueryContext as GraphQueryContext;
-use proximadb_graph::query::executor::{
-    QueryExecutor as ExtractedGraphQueryExecutor, QueryRow as GraphQueryRow,
-};
-use proximadb_graph::query::planner::QueryPlan;
+use proximadb_graph_query::{GraphQueryContext, GraphQueryRow};
 use proximadb_kernel::error::VectorDBError;
 use serde_json::Value as JsonValue;
 
@@ -51,23 +47,12 @@ pub struct GraphArrowBridge;
 
 /// Minimal graph-query executor surface needed by the Arrow bridge.
 #[async_trait]
-pub trait GraphArrowQueryExecutor: Send + Sync {
+pub trait GraphArrowQueryExecutor<Q: ?Sized>: Send + Sync {
     async fn execute_query_rows(
         &self,
-        plan: &QueryPlan,
+        plan: &Q,
         context: &GraphQueryContext,
     ) -> Result<Vec<GraphQueryRow>, VectorDBError>;
-}
-
-#[async_trait]
-impl GraphArrowQueryExecutor for ExtractedGraphQueryExecutor {
-    async fn execute_query_rows(
-        &self,
-        plan: &QueryPlan,
-        context: &GraphQueryContext,
-    ) -> Result<Vec<GraphQueryRow>, VectorDBError> {
-        self.execute(plan, context).await
-    }
 }
 
 impl GraphArrowBridge {
@@ -288,16 +273,17 @@ impl GraphArrowBridge {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn stream_graph_results<'a, E>(
+    pub async fn stream_graph_results<'a, E, Q>(
         executor: &'a E,
-        query: &'a QueryPlan,
+        query: &'a Q,
         batch_size: usize,
     ) -> Result<
         Pin<Box<dyn Stream<Item = Result<RecordBatch, VectorDBError>> + Send + 'a>>,
         VectorDBError,
     >
     where
-        E: GraphArrowQueryExecutor + ?Sized,
+        E: GraphArrowQueryExecutor<Q> + ?Sized,
+        Q: Sync + ?Sized,
     {
         use futures::stream::{self, StreamExt};
 
@@ -318,7 +304,35 @@ impl GraphArrowBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use serde_json::json;
+
+    struct TestPlan;
+
+    struct TestExecutor;
+
+    #[async_trait]
+    impl GraphArrowQueryExecutor<TestPlan> for TestExecutor {
+        async fn execute_query_rows(
+            &self,
+            _plan: &TestPlan,
+            context: &GraphQueryContext,
+        ) -> Result<Vec<GraphQueryRow>, VectorDBError> {
+            assert_eq!(context.graph_id, "default");
+            Ok(vec![
+                HashMap::from([
+                    ("node_id".to_string(), json!("node1")),
+                    ("label".to_string(), json!("Person")),
+                    ("depth".to_string(), json!(1)),
+                ]),
+                HashMap::from([
+                    ("node_id".to_string(), json!("node2")),
+                    ("label".to_string(), json!("Person")),
+                    ("depth".to_string(), json!(2)),
+                ]),
+            ])
+        }
+    }
 
     #[test]
     fn test_convert_simple_node_to_arrow() {
@@ -412,5 +426,25 @@ mod tests {
             GraphArrowBridge::json_type_to_arrow(&json!(true)),
             DataType::Boolean
         );
+    }
+
+    #[test]
+    fn test_stream_graph_results_uses_generic_plan_contract() {
+        futures::executor::block_on(async {
+            let executor = TestExecutor;
+            let plan = TestPlan;
+            let mut stream = GraphArrowBridge::stream_graph_results(&executor, &plan, 1)
+                .await
+                .unwrap();
+
+            let first_batch = stream.next().await.unwrap().unwrap();
+            assert_eq!(first_batch.num_rows(), 1);
+            assert_eq!(first_batch.num_columns(), 3);
+
+            let second_batch = stream.next().await.unwrap().unwrap();
+            assert_eq!(second_batch.num_rows(), 1);
+
+            assert!(stream.next().await.is_none());
+        });
     }
 }
