@@ -176,6 +176,16 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
                     )
                 )
 
+            if crate.layer == "query-runtime" and dep.layer == "modality":
+                findings.append(
+                    Finding(
+                        "error",
+                        crate.name,
+                        dep.name,
+                        "query runtime crates must depend on modality contracts/capabilities, not concrete modality runtimes",
+                    )
+                )
+
     return findings
 
 

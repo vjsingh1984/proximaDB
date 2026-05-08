@@ -368,8 +368,9 @@ fn resolve_nodes_from_component(
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use proximadb_graph::query::QueryResult;
-    use proximadb_graph_query::service::{GraphQueryReadService, GraphQueryTraversalService};
+    use proximadb_graph_query::service::{
+        GraphQueryReadService, GraphQueryResult, GraphQueryTraversalService,
+    };
     use proximadb_graph_query::traversal::PropertyFilter;
     use proximadb_proto::proximadb_v1::{
         Edge, EdgeQuery, Node, PropertyValue, TraversalResponse, TraversalStats, property_value,
@@ -477,11 +478,15 @@ mod tests {
 
     #[async_trait]
     impl GraphQueryReadService for StubGraphReadService {
-        async fn list_graphs(&self) -> QueryResult<Vec<String>> {
+        async fn list_graphs(&self) -> GraphQueryResult<Vec<String>> {
             Ok(vec!["social".to_string()])
         }
 
-        async fn get_node(&self, _graph_id: &str, node_id: &str) -> QueryResult<Option<Arc<Node>>> {
+        async fn get_node(
+            &self,
+            _graph_id: &str,
+            node_id: &str,
+        ) -> GraphQueryResult<Option<Arc<Node>>> {
             Ok(self.nodes.iter().find(|node| node.id == node_id).cloned())
         }
 
@@ -489,7 +494,7 @@ mod tests {
             &self,
             _graph_id: &str,
             query: NodeQuery,
-        ) -> QueryResult<Vec<Arc<Node>>> {
+        ) -> GraphQueryResult<Vec<Arc<Node>>> {
             let mut nodes = self.nodes.clone();
             if !query.labels.is_empty() {
                 nodes.retain(|node| query.labels.iter().all(|label| node.labels.contains(label)));
@@ -511,7 +516,7 @@ mod tests {
             &self,
             _graph_id: &str,
             _query: EdgeQuery,
-        ) -> QueryResult<Vec<Arc<Edge>>> {
+        ) -> GraphQueryResult<Vec<Arc<Edge>>> {
             Ok(Vec::new())
         }
     }
@@ -522,7 +527,7 @@ mod tests {
             &self,
             _graph_id: &str,
             request: TraversalRequest,
-        ) -> QueryResult<TraversalResponse> {
+        ) -> GraphQueryResult<TraversalResponse> {
             let nodes = if request.start_node_id == "seed-1" {
                 vec![stub_node("alice", "Person", "Alice")]
             } else {
@@ -549,7 +554,7 @@ mod tests {
             &self,
             _graph_id: &str,
             _node_id: &str,
-        ) -> QueryResult<Vec<Arc<Node>>> {
+        ) -> GraphQueryResult<Vec<Arc<Node>>> {
             Ok(Vec::new())
         }
     }
