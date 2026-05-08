@@ -8,6 +8,7 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
+use proximadb_graph::query::service::GraphExecutionService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -101,15 +102,21 @@ pub struct ReadinessResponse {
 pub struct HealthState {
     /// Shared unified handlers for checking service availability
     pub unified_handlers: Arc<UnifiedHandlers>,
+    /// Extracted graph execution capability for graph stats/health probes
+    pub graph_execution_service: Arc<dyn GraphExecutionService>,
     /// Server startup timestamp for uptime calculation
     pub startup_time: SystemTime,
 }
 
 impl HealthState {
     /// Create a new health state recording the current time as startup
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(
+        unified_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
+    ) -> Self {
         Self {
             unified_handlers,
+            graph_execution_service,
             startup_time: SystemTime::now(),
         }
     }
@@ -389,12 +396,7 @@ async fn check_graph_health(state: &HealthState, timeout: Duration) -> Component
 
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Try to get basic graph statistics
-        match state
-            .unified_handlers
-            .graph_operations_service
-            .get_stats("default")
-            .await
-        {
+        match state.graph_execution_service.get_stats("default").await {
             Ok(_stats) => (
                 HealthStatus::Healthy,
                 "Graph engine operational".to_string(),

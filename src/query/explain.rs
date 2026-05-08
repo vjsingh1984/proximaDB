@@ -25,6 +25,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use proximadb_graph::query::planner::{GraphStatistics, PlanStepType, QueryPlan as GraphQueryPlan};
+
 use crate::storage::multimodel::ModelType;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -318,16 +320,13 @@ pub struct ResourceUsage {
 
 impl GraphHints {
     /// Create GraphHints from a graph query plan
-    pub fn from_query_plan(
-        plan: &crate::graph::query::QueryPlan,
-        stats: Option<&crate::graph::query::planner::GraphStatistics>,
-    ) -> Self {
+    pub fn from_query_plan(plan: &GraphQueryPlan, stats: Option<&GraphStatistics>) -> Self {
         let mut hints = GraphHints::default();
 
         // Extract information from plan steps
         for step in &plan.steps {
             match &step.step_type {
-                crate::graph::query::planner::PlanStepType::IndexSeek { index_name, .. } => {
+                PlanStepType::IndexSeek { index_name, .. } => {
                     hints.index_usage.push(GraphIndexUsage {
                         index_name: index_name.clone(),
                         index_type: "label_index".to_string(),
@@ -336,7 +335,7 @@ impl GraphHints {
                         skip_reason: None,
                     });
                 }
-                crate::graph::query::planner::PlanStepType::Traverse {
+                PlanStepType::Traverse {
                     algorithm,
                     max_depth,
                     ..

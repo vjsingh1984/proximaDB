@@ -1,0 +1,26 @@
+[package]
+name = "proximadb-graph-subset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared ProximaDB graph query subset parsing and descriptor layer"
+
+[lib]
+name = "proximadb_graph_subset"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64 = "0.22"
+proximadb-graph = { path = "../../modalities/proximadb-graph" }
+proximadb-proto = { path = "../../foundation/proximadb-proto" }
+regex = "1.10"
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["macros", "rt-multi-thread"] }

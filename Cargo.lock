@@ -5601,6 +5601,25 @@ dependencies = [
  "proptest",
  "prost",
  "prost-types",
+ "proximadb-data-model",
+ "proximadb-document-query",
+ "proximadb-filter-expression",
+ "proximadb-graph",
+ "proximadb-graph-arrow",
+ "proximadb-graph-subset",
+ "proximadb-kernel",
+ "proximadb-multimodel-plan",
+ "proximadb-multimodel-query",
+ "proximadb-observability-query",
+ "proximadb-pipeline-operator",
+ "proximadb-proto",
+ "proximadb-query",
+ "proximadb-query-clauses",
+ "proximadb-query-filter",
+ "proximadb-query-fusion",
+ "proximadb-records",
+ "proximadb-uql",
+ "proximadb-vector-query",
  "pyo3",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -5649,6 +5668,198 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-data-model"
+version = "0.2.0"
+dependencies = [
+ "arrow-schema",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "proximadb-document-query"
+version = "0.2.0"
+dependencies = [
+ "proximadb-query-filter",
+]
+
+[[package]]
+name = "proximadb-filter-expression"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "proximadb-graph"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-recursion",
+ "async-trait",
+ "chrono",
+ "nom 7.1.3",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-query-filter",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "proximadb-graph-arrow"
+version = "0.2.0"
+dependencies = [
+ "arrow",
+ "async-trait",
+ "futures",
+ "proximadb-graph",
+ "proximadb-kernel",
+ "serde_json",
+]
+
+[[package]]
+name = "proximadb-graph-subset"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "proximadb-graph",
+ "proximadb-proto",
+ "regex",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "proximadb-kernel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-multimodel-plan"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "proximadb-data-model",
+ "proximadb-filter-expression",
+ "proximadb-pipeline-operator",
+ "serde",
+ "serde_json",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "proximadb-multimodel-query"
+version = "0.2.0"
+dependencies = [
+ "proximadb-data-model",
+ "proximadb-document-query",
+ "proximadb-graph",
+ "proximadb-graph-subset",
+ "proximadb-observability-query",
+ "proximadb-query-clauses",
+ "proximadb-query-filter",
+ "proximadb-query-fusion",
+ "proximadb-vector-query",
+]
+
+[[package]]
+name = "proximadb-observability-query"
+version = "0.2.0"
+
+[[package]]
+name = "proximadb-pipeline-operator"
+version = "0.2.0"
+dependencies = [
+ "proximadb-filter-expression",
+ "serde_json",
+]
+
+[[package]]
+name = "proximadb-proto"
+version = "0.2.0"
+dependencies = [
+ "prost",
+ "prost-types",
+ "serde",
+ "serde_json",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
+name = "proximadb-query"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "parking_lot",
+ "proximadb-data-model",
+ "proximadb-document-query",
+ "proximadb-filter-expression",
+ "proximadb-graph",
+ "proximadb-graph-subset",
+ "proximadb-multimodel-plan",
+ "proximadb-multimodel-query",
+ "proximadb-observability-query",
+ "proximadb-proto",
+ "proximadb-query-filter",
+ "proximadb-query-fusion",
+ "proximadb-uql",
+ "proximadb-vector-query",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-query-clauses"
+version = "0.2.0"
+dependencies = [
+ "proximadb-query-filter",
+]
+
+[[package]]
+name = "proximadb-query-filter"
+version = "0.2.0"
+
+[[package]]
+name = "proximadb-query-fusion"
+version = "0.2.0"
+dependencies = [
+ "proximadb-data-model",
+]
+
+[[package]]
+name = "proximadb-records"
+version = "0.2.0"
+dependencies = [
+ "proximadb-data-model",
+ "proximadb-proto",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "proximadb-sdk"
 version = "0.2.0"
 dependencies = [
@@ -5661,6 +5872,27 @@ dependencies = [
  "tokio",
  "url",
 ]
+
+[[package]]
+name = "proximadb-uql"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-document-query",
+ "proximadb-graph",
+ "proximadb-multimodel-query",
+ "proximadb-observability-query",
+ "proximadb-query-clauses",
+ "proximadb-query-filter",
+ "proximadb-query-fusion",
+ "proximadb-vector-query",
+ "regex",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-vector-query"
+version = "0.2.0"
 
 [[package]]
 name = "psm"

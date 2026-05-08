@@ -1,0 +1,17 @@
+[package]
+name = "proximadb-document-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared ProximaDB document query IR contracts"
+
+[lib]
+name = "proximadb_document_query"
+path = "src/lib.rs"
+
+[dependencies]
+proximadb-query-filter = { path = "../proximadb-query-filter" }

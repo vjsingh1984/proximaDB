@@ -7,7 +7,7 @@
 //!
 //! - `VectorSearchStrategy`: Wraps `VectorOpsService` for vector similarity search
 //! - `SqlStrategy`: Wraps `FederatedQueryContext` for SQL queries
-//! - `GraphStrategy`: Wraps `GraphOperationsService` for graph traversals
+//! - `GraphStrategy`: Wraps the extracted graph read/query contract for declarative graph queries
 //! - `ColumnarStrategy`: Uses `ColumnarReadProvider` for analytical queries
 //! - `DocumentStrategy`: Wraps `DocumentService` for JSON document queries
 //! - `ObservabilityStrategy`: Wraps `ObservabilityQueryEngine` for logs/metrics/traces

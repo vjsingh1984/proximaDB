@@ -28,6 +28,8 @@ mod optimization_tests;
 
 use std::collections::HashMap;
 
+pub use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+
 /// Custom recall rates for progressive search stages
 #[derive(Debug, Clone)]
 pub struct ProgressiveRecalls {
@@ -381,61 +383,6 @@ impl SearchParams {
 
         self
     }
-}
-
-/// Complex filter expression for advanced metadata filtering
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum FilterExpression {
-    /// Single comparison operation
-    Comparison {
-        /// Metadata field name to compare
-        field: String,
-        /// Comparison operator to apply
-        operator: ComparisonOperator,
-        /// Value to compare against
-        value: serde_json::Value,
-    },
-    /// Logical AND of multiple expressions
-    And(Vec<FilterExpression>),
-    /// Logical OR of multiple expressions
-    Or(Vec<FilterExpression>),
-    /// Logical NOT of an expression
-    Not(Box<FilterExpression>),
-}
-
-/// Comparison operators for metadata filtering
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ComparisonOperator {
-    /// Equal to
-    Equals,
-    /// Not equal to
-    NotEquals,
-    /// Greater than
-    GreaterThan,
-    /// Greater than or equal to
-    GreaterThanOrEqual,
-    /// Less than
-    LessThan,
-    /// Less than or equal to
-    LessThanOrEqual,
-    /// Value is in the provided list
-    In,
-    /// Value is not in the provided list
-    NotIn,
-    /// String contains substring
-    Contains,
-    /// String starts with prefix
-    StartsWith,
-    /// String ends with suffix
-    EndsWith,
-    /// Value is between two bounds (inclusive)
-    Between,
-    /// Value is null
-    IsNull,
-    /// Value is not null
-    IsNotNull,
-    /// SQL-style LIKE pattern matching (supports % and _ wildcards)
-    Like,
 }
 
 // Re-export main types

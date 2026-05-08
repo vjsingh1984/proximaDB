@@ -69,12 +69,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_graph::query::service::GraphQueryService;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 
 use crate::compute::plan::{ComputePlan, PlanHints, PlanNode};
 use crate::compute::scheduler::ComputeScheduler;
-use crate::graph::service::GraphOperationsService;
 use crate::proto::proximadb_v1;
 use crate::services::{CollectionService, VectorOperationsService};
 
@@ -941,8 +941,8 @@ pub struct UnifiedQueryHandler {
     vector_ops: Arc<VectorOperationsService>,
     /// Collection service
     collection_service: Arc<CollectionService>,
-    /// Graph operations service
-    graph_service: Option<Arc<GraphOperationsService>>,
+    /// Graph query/traversal service
+    graph_service: Option<Arc<dyn GraphQueryService>>,
 }
 
 impl UnifiedQueryHandler {
@@ -974,8 +974,11 @@ impl UnifiedQueryHandler {
     }
 
     /// Add graph service
-    pub fn with_graph_service(mut self, graph_service: Arc<GraphOperationsService>) -> Self {
-        self.graph_service = Some(graph_service);
+    pub fn with_graph_service<G>(mut self, graph_service: Arc<G>) -> Self
+    where
+        G: GraphQueryService + 'static,
+    {
+        self.graph_service = Some(graph_service as Arc<dyn GraphQueryService>);
         self
     }
 
@@ -1376,7 +1379,7 @@ impl UnifiedQueryHandler {
                     "Executing graph traversal"
                 );
 
-                // Graph traversal would go through GraphOperationsService
+                // Graph traversal would go through the configured graph query service
                 Ok(UnifiedQueryResponse {
                     success: true,
                     error: None,

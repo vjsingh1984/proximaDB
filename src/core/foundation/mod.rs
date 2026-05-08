@@ -1,16 +1,13 @@
-//! Foundation Types for ProximaDB Unified Schema
+//! Compatibility shim for the extracted foundation contracts.
 //!
-//! This module provides the base traits and generic implementations that serve as the
-//! foundation for all other schema modules. It has no dependencies on other modules.
+//! The shared generic foundation traits and helper types now live in the
+//! `proximadb-kernel` workspace crate. This module preserves existing imports
+//! like `crate::core::foundation::BaseConfig` during the workspace migration.
 
-pub mod base_traits;
-pub mod conversion;
-pub mod generic_types;
-
-// Re-export all foundation types
-pub use base_traits::*;
-pub use conversion::*;
-pub use generic_types::*;
+pub use proximadb_kernel::foundation::base_traits;
+pub use proximadb_kernel::foundation::conversion;
+pub use proximadb_kernel::foundation::generic_types;
+pub use proximadb_kernel::foundation::*;
 
 #[cfg(test)]
 include!("../foundation_tests.rs");

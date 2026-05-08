@@ -17,6 +17,7 @@
 //! REST server implementation using axum
 
 use axum::{Router, extract::DefaultBodyLimit, middleware};
+use proximadb_graph::query::service::GraphExecutionService;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -291,9 +292,11 @@ impl RestServer {
         security_config: RestServerSecurityConfig,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
+        let graph_execution_service = unified_handlers.graph_execution_service.clone();
         Self::with_security_and_config(
             bind_addr,
             unified_handlers,
+            graph_execution_service,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -309,6 +312,7 @@ impl RestServer {
     pub fn with_security_and_config(
         bind_addr: SocketAddr,
         unified_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -318,20 +322,14 @@ impl RestServer {
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
-        // Create catalog manager for external catalog integration
-        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
-
-        let state = AppState {
+        let state = AppState::new(
             unified_handlers,
-            security_coordinator: security_coordinator.clone(),
+            graph_execution_service,
+            security_coordinator.clone(),
             data_dir,
             query_adapter,
-            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            ))),
-            catalog_manager,
             llm_engine,
-        };
+        );
 
         // Calculate max request size in bytes (default to 64MB if not specified)
         let max_size_bytes = max_request_size_mb.unwrap_or(64) * 1024 * 1024;
@@ -523,26 +521,21 @@ impl RestServer {
     /// that can be passed to the protocol multiplexer.
     pub fn build_router_for_unified(
         unified_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Router {
-        // Create catalog manager for external catalog integration
-        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
-
-        let state = AppState {
+        let state = AppState::new(
             unified_handlers,
-            security_coordinator: security_coordinator.clone(),
+            graph_execution_service,
+            security_coordinator.clone(),
             data_dir,
             query_adapter,
-            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            ))),
-            catalog_manager,
             llm_engine,
-        };
+        );
 
         // Create metrics router if metrics collector is available
         let metrics_router = if let Some(collector) = metrics_collector {

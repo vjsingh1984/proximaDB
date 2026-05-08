@@ -321,6 +321,47 @@ During transition:
 
 == Recommended Migration Phases
 
+=== Phase 0-4 Criticality Order
+
+[cols="1,1,2,3,3",options="header"]
+|===
+|Priority
+|Phase
+|Boundary Area
+|Why It Comes First
+|Current Action
+
+|1
+|Phase 0
+|Workspace hygiene and dependency guardrails
+|Without automated boundary checks, every later crate move can silently reintroduce root or platform coupling.
+|Keep `scripts/check_workspace_boundaries.py` and `make workspace-boundaries-check` green before widening the split.
+
+|2
+|Phase 1
+|Foundation crates
+|Foundation crates anchor every later dependency direction and should stay transport/runtime-light where possible.
+|Continue purifying `proximadb-kernel`, `proximadb-proto`, `proximadb-data-model`, records, filters, and pipeline contracts before extracting config/telemetry.
+
+|3
+|Phase 2
+|Modality service contracts
+|Stable read/query/traversal/stat contracts prevent cycles when graph, vector, document, and observability runtimes move out.
+|Prefer narrow traits and shared request/result contracts over concrete root services in query/API callers.
+
+|4
+|Phase 3
+|Graph and vector modality runtimes
+|These are high-churn and high-rebuild modules with the clearest ownership boundaries.
+|Finish graph query/runtime isolation and then start vector runtime/service boundary extraction with the same contract-first approach.
+
+|5
+|Phase 4
+|Document, observability, and relational runtimes
+|These should move after graph/vector prove the pattern because they depend on query/runtime and storage contracts becoming stable.
+|Extract only after the common service and query adaptation layers are no longer root-owned.
+|===
+
 === Phase 0: Workspace Hygiene
 
 Do first:
@@ -477,6 +518,642 @@ Start with:
 
 This sequence gives the best signal on whether workspace modularization is improving rebuild scope without destabilizing the entire product.
 
+== Refined First Cut
+
+The initial implementation should be even narrower than the original phase list:
+
+1. extract `proximadb-proto` first
+2. keep the generated Rust sources as the temporary single source of truth
+3. re-export the new proto crate from `src/proto/mod.rs` so `crate::proto::...` keeps working
+4. add workspace-wide package/dependency metadata only for the crates that are actually extracted
+5. measure `cargo check -p proximadb-proto` and root-crate rebuild behavior before extracting the next foundation crate
+
+Why this order is better:
+
+* it creates a real workspace dependency edge immediately
+* it avoids a repo-wide import rewrite
+* it turns the proto surface into a reusable leaf crate for server, bindings, and clients
+* it gives us a repeatable extraction pattern for later crates
+
+== Implementation Status
+
+Current status after the first refinement:
+
+* `proximadb-proto` is the first extracted foundation crate
+* `proximadb-kernel` now owns the legacy shared error contract used across graph, query, storage, and transport layers
+* `proximadb-kernel` no longer depends on `tonic`; gRPC `ProtocolError -> tonic::Status` mapping now lives at the root protocol layer instead of in the foundation crate
+* `proximadb-kernel` now also owns the generic foundation traits/helpers previously under `src/core/foundation`
+* `proximadb-graph` now exists as the first modality crate and owns the engine-agnostic graph query execution contracts (`QueryValue`, `ResultTuple`, `PhysicalOperator`, `ExecutionStats`)
+* the graph query operator layer (`scan`, `expand`, `filter`, `project`, `limit`) now also lives under `proximadb-graph`, behind a narrow `GraphQueryStorage` trait instead of direct root-engine coupling
+* the graph query language layer (`ast`, `parser`, `cypher_ast`, `cypher_parser`, `unified_parser`) now also lives under `proximadb-graph`, with root modules reduced to compatibility reexports
+* the graph planner and Cypher function library now also live under `proximadb-graph`; the root planner module is reduced to a compatibility wrapper that only adapts `GraphMemoryPool` statistics into the extracted planner’s snapshot API
+* the canonical graph pattern-matching runtime now also lives under `proximadb-graph`; the root `pattern` module is reduced to a compatibility wrapper that adapts `GraphMemoryPool` into `GraphQueryStorage`
+* the canonical graph query executor runtime now also lives under `proximadb-graph`, behind a narrow async node/edge query contract; the root `executor` module is reduced to a compatibility wrapper that adapts `GraphOperationsService` and keeps Arrow conversion local to root query infrastructure
+* graph query context/result contracts (`QueryContext`, `QueryStats`, `QueryExecutionResult`) now also live under `proximadb-graph`, so graph-runtime work can validate inside the modality crate without recompiling root-only query scaffolding
+* a new leaf workspace crate, `proximadb-graph-subset`, now owns the supported graph-subset parse/validation/descriptor contract, the read-only subset execution helper, and the shared row-shaping/legacy-row conversion helpers reused by facade, federated, lowering, and runtime layers; this keeps cross-model graph query shape analysis/execution separate from both the heavier graph modality runtime and the root query orchestration crate
+* `proximadb-graph-subset` now also owns the canonical lowered declarative graph-query contract and its shaped execution wrapper, so root `graph_lowering` and `graph_runtime` are reduced to compatibility adapters from unified AST types into that extracted leaf contract
+* the root unified AST no longer defines its own duplicate lowered declarative graph-query struct; `GraphQueryExpr` now reuses the extracted `proximadb-graph-subset` lowered contract directly, which removes another root-owned graph IR seam before the larger `proximadb-query` split
+* the shared `FilterOperator`/`FilterValue` contract now lives in a new leaf crate, `proximadb-query-filter`, and the graph traversal IR (`GraphTraversalExpr`, `StartNodeSpec`, traversal/node/edge/property filters) now lives in `proximadb-graph`; the root unified AST re-exports both instead of owning another graph-specific IR island
+* the document query IR (`DocumentQueryExpr`, `PathFilter`, `DocumentSort`) now lives in a new leaf crate, `proximadb-document-query`, so the root unified AST no longer owns modality-specific document request shape either
+* the observability query IR (`LogQueryExpr`, `MetricQueryExpr`, `MetricAggregation`) now lives in a new leaf crate, `proximadb-observability-query`, so the root unified AST is continuing to shrink into a composition/re-export shell rather than a monolithic owner of every modality request shape
+* the vector query IR (`VectorSearchExpr`, `VectorSearchParams`, `DistanceMetric`) now also lives in a new leaf crate, `proximadb-vector-query`, so the root unified AST no longer owns vector request shape either and is getting closer to a pure cross-model composition layer
+* the generic cross-model clause IR (`Filter`, `OrderBy`) now also lives in a new leaf crate, `proximadb-query-clauses`, so the root unified AST is no longer the owner of generic reusable clause shape either
+* the canonical data-model discriminator (`StoreType`) now lives in a new foundation leaf crate, `proximadb-data-model`, so query, security, storage, and protocol layers no longer need the root multimodel router just to name a model kind
+* the shared search filter contract (`FilterExpression`, `ComparisonOperator`) now lives in a new foundation leaf crate, `proximadb-filter-expression`, so query planning/lowering, compute pipeline execution, storage filtering, and services can converge on one reusable contract instead of pulling those types through the root search module
+* the shared pipeline operator contract (`PipelineOperator`) now lives in a new foundation leaf crate, `proximadb-pipeline-operator`, so query planning, compute pipeline execution, and storage readers can share the same operator shape without depending on the root compute module
+* the unified multimodel `FusionStrategy` enum now also lives in a new leaf crate, `proximadb-query-fusion`, so the root unified fusion module retains execution logic while the reusable fusion-strategy contract becomes independently buildable
+* the remaining cross-model composition IR (`MultiModelQuery`, `QueryComponent`, `ModelOperation`, join/dependency contracts, semantic join config) now also lives in `proximadb-multimodel-query`, leaving the root `query::unified::ast` module as a compatibility and re-export shell instead of an owner of multimodel request shape
+* the UQL parser and regex-based query decomposition layer (`UQLParser`, `UQLStatement`, `QueryDecomposer`, and the UQL statement AST) now also live in a new leaf crate, `proximadb-uql`, so the root unified module no longer owns parsing and decomposition logic just to expose those public query surfaces
+* the multimodel logical plan contract (`MultiModelPlan`, `Operator`, `PlanContext`, join/aggregate operator IR, validation and optimization helpers) now also lives in a new leaf crate, `proximadb-multimodel-plan`, leaving the root `query::multimodal::plan` module as a compatibility shell and enabling the first real `proximadb-query` runtime cut without dragging the root query module with it
+* a first real cross-model query runtime crate, `proximadb-query`, now exists and owns UQL-to-plan lowering (`UQLLowerer`, `lower_uql_to_plan`, and related lowering helpers); the root `query::unified::lower` module is now reduced to a compatibility re-export instead of owning lowering behavior directly
+* `proximadb-query` now also owns the shared unified result/fusion runtime contracts (`QueryResult`, `UnifiedRecord`, `QueryMetrics`, `SubQueryResult`, `ResultFuser`, and fusion utilities); the root `query::unified::fusion` module and root unified result structs are reduced to compatibility re-exports instead of remaining another cross-model runtime ownership island
+* `proximadb-query` now also owns the cross-modal reranking behavior layer (`CrossModalReranker`, `RerankConfig`, `QueryContext`, `QueryIntent`, `TemporalPreference`, explanations, and reranked-result contracts); the root `query::unified::reranking` module is reduced to a compatibility re-export instead of owning another pure query-runtime behavior surface
+* `proximadb-query` now also owns the learned-fusion behavior layer (`LearnedFusion`, `LearnedFusionConfig`, model abstractions, feature extraction, training samples/feedback, and training metrics); the root `query::unified::learned_fusion` module is reduced to a compatibility re-export and no longer anchors that behavior to root-only error types
+* `proximadb-query` now also owns the measured-fitness plan execution cache (`PlanExecutionCache`, `shape_hash`, and shared cache helpers); the root `query::unified::plan_execution_cache` module is reduced to a compatibility re-export, leaving the heavier optimizer itself for a later pass because its remaining LLM/evolutionary seams are not yet query-runtime-pure
+* `proximadb-query` now also owns the optimizer support layer (`OptimizerConfig`, `SelectivityEstimate`, `EstimationMethod`, `OptimizedPlan`, `PushedFilter`, `QueryStatistics`, `OptimizerCollectionStats`, `PlanCache`, `PlanCacheStats`, `compute_query_hash`, and optimizer-local fusion-strategy selection); the root `query::unified::optimizer` module now keeps the actual optimization behavior and its remaining LLM/evolutionary seams, but no longer owns those query-runtime support structures directly
+* `proximadb-query` now also owns the evolutionary optimizer runtime behind a narrow advisor seam (`EvolutionaryMutationAdvisor`); the root `query::unified::evolutionary` module is reduced to a thin compatibility adapter that keeps `LLMIntegrationEngine` and prompt-shaping on the root side while the population search/mutation behavior becomes part of the extracted query-runtime layer
+* `proximadb-query` now also owns the core unified optimizer runtime (`QueryOptimizerRuntime`), including selectivity estimation, dependency-aware ordering, filter pushdown extraction, plan-cache/measured-fitness orchestration, and evolutionary-plan selection; the root `query::unified::optimizer` module is now a thin compatibility adapter that preserves the optional LLM optimization seam while delegating pure planning behavior to the extracted query-runtime crate
+* `proximadb-query` now also owns the optimizer-adjacent orchestration helpers (`QueryOptimizationService`, `reorder_components_with_optimizer`, `QueryPlan`, `ComponentPlan`, and shared explain-cost heuristics); the root `query::unified::mod` layer now delegates explain/reorder behavior to the extracted crate instead of owning a second copy of those runtime rules
+* `proximadb-query` now also owns the pure exact-join helper layer (`JoinResult`, `execute_exact_join`, `extract_join_values`, `merge_records`, `filter_by_ids`, and the supporting record-index/path-extraction helpers); the root unified executor keeps semantic join dispatch, LLM gating, and service-backed execution locally, but no longer owns a second copy of deterministic record-join behavior
+* `proximadb-query` now also owns the dependency-join orchestration seam (`JoinExecutionService`, `execute_multi_join_with`, and `resolve_component_record_ids`); the root unified executor now keeps only the actual join backend dispatch (semantic/LLM/exact) while delegating the deterministic prior-result chaining loop and component-result ID extraction to the extracted query-runtime crate
+* `proximadb-query` now also owns the deterministic vector-similarity semantic-join algorithm (`RecordSimilarityEngine`, `extract_record_vector`, and `execute_semantic_join_with`); the root unified executor keeps the concrete cosine distance engine and LLM/block-batch dispatch, but no longer owns the reusable record-level semantic join logic itself
+* `proximadb-query` now also owns the pure document-query adaptation helpers (`sql_object_to_json`, `sql_value_to_json`, `convert_path_filters_to_document_filter`, and `convert_filter_value_to_sql`); the root unified executor now delegates JSON/proto filter/value translation into the extracted crate and keeps only the actual document-service invocation locally
+* `proximadb-query` now also owns the pure graph-traversal adaptation helpers (`unified_property_filter_to_graph_property_filter`, `filter_value_to_graph_property_value`, `extract_node_labels`, and `build_traversal_request`); the root unified executor now delegates AST/proto traversal request shaping into the extracted crate and keeps only graph-service execution and result shaping locally
+* a second leaf query crate, `proximadb-graph-arrow`, now owns Arrow record-batch conversion and graph-row streaming helpers; this keeps graph modality runtime, cross-model query orchestration, and columnar presentation concerns on separate layers while preserving the root `query::arrow_graph_bridge` path as a compatibility shim
+* root graph-query consumers are starting to depend directly on canonical `proximadb-graph` AST/planner types (`graph_subset`, `explain`, root Cypher parser) instead of routing through `crate::graph::query::*` compatibility shims
+* the Arrow graph bridge now uses a tiny executor contract that works with both the extracted graph executor and the root compatibility wrapper, so its public API no longer hard-codes the root graph-query executor type
+* remaining internal graph-query consumers are being rewired the same way: the Pulsar query coordinator now depends directly on canonical extracted planner/execution types, and the root `planner`/Arrow bridge compatibility code now references canonical `proximadb-graph` query types wherever root-only adaptation is not required
+* cross-model graph subset/runtime code now depends on a narrow async `GraphQueryReadService` trait from `proximadb-graph` instead of concrete `GraphOperationsService`, with both the subset parse/descriptor layer and the read-only subset execution helper now moved into the `proximadb-graph-subset` leaf crate and the root graph service reduced to a compatibility adapter
+* the facade `GraphStrategy` now also depends on that same `GraphQueryReadService` contract, so declarative graph routing no longer holds a concrete `GraphOperationsService` where only read/query capability is required
+* unified-executor declarative graph helpers and traversal start-node resolution now also use `GraphQueryReadService` plus canonical `NodeQuery` construction for label/property lookup, avoiding root-only graph convenience methods in another query path
+* execution planning now depends on a separate narrow `GraphQueryStatsService` contract for graph metadata validation, so the planner no longer needs a concrete `GraphOperationsService` just to inspect graph stats
+* traversal-oriented query paths now depend on a separate narrow `GraphQueryTraversalService` contract, so unified graph traversal, AQL graph source execution, and the low-level query executor no longer need the full `GraphOperationsService` just to traverse or expand neighbors
+* the extracted graph crate now also defines named composite capability bundles (`GraphQueryService` for read+traversal and `GraphExecutionService` for stats+traversal), so root query orchestration can depend on stable graph capability sets without re-stating concrete `GraphOperationsService` or ad hoc paired bounds at every entrypoint
+* the `query/execution` `QueryEngine` wrapper now composes those extracted graph stats/traversal contracts directly and no longer keeps a concrete `GraphOperationsService` field just to pass capabilities through to planner/executor
+* the lower query-runtime constructors (`QueryEngine`, `ExecutionPlanner`, `QueryExecutor`, `GraphAqlSource`, and declarative graph execution helpers) now all accept `Arc<dyn ...>` extracted graph capability views directly, eliminating another class of hidden `Sized`/concrete-type coupling under the compatibility wrappers
+* distributed local query execution now stores and forwards the extracted `GraphQueryService` contract instead of a concrete `GraphOperationsService`, so the distributed facade/coordinator path no longer reintroduces the monolith graph service type after the unified executor boundary
+* network-level unified query wrappers now also store the extracted `GraphQueryService` contract where they only need to retain graph query/traversal capability for request routing, keeping concrete `GraphOperationsService` out of more protocol-facing state holders
+* the API-layer `UnifiedHandlers` holder now explicitly separates native graph operations from extracted graph execution capability: it keeps the concrete `GraphOperationsService` for graph-native REST/gRPC endpoints while also storing `GraphExecutionService` for query planning/execution, and the downstream `QueryEngine`/planner/executor/AQL graph source constructors accept extracted graph trait objects directly
+* `SharedServices::new` now derives explicit `GraphQueryService` and `GraphExecutionService` views from the concrete graph service once at the runtime-wiring boundary, and passes those extracted contracts into facade/distributed/API query consumers instead of implicitly threading the full graph service through every query path
+* thin REST API state now carries the extracted `GraphExecutionService` contract directly, so REST-side explain/AQL helpers no longer reach through `UnifiedHandlers` to recover graph execution capability that was already available from the composition root
+* REST server bootstrap now accepts the extracted `GraphExecutionService` explicitly on its main config path, so the standard and unified-port REST startup flows use the same composition-root capability view instead of reconstructing it from `UnifiedHandlers` during state assembly
+* REST health-state wiring now also carries `GraphExecutionService` directly, so graph health probes use the extracted graph stats capability instead of reaching back through `UnifiedHandlers` for native graph operations
+* REST app/health state construction is now centralized behind `AppState::new` and `AppState::health_state`, which keeps the explicit graph execution capability on one construction path and removes more ad hoc holder-to-capability reconstruction from REST bootstrap/tests
+* the root crate now uses a compatibility shim instead of compiling generated proto modules directly
+* `proximadb-proto` now owns local copies of the generated proto and protocol-serde helper sources
+* runtime-oriented proto defaults now live back in the root compatibility layer (`src/proto/defaults.rs`) instead of the extracted `proximadb-proto` crate, which removes `num_cpus`, `sysinfo`, and `tracing` from the protocol foundation crate
+* the root crate no longer carries a broad proto-tree rebuild trigger in `build.rs`
+* graph-query and shared graph-lowering/runtime modules are being switched to depend directly on `proximadb-kernel` and `proximadb-proto` instead of root `core::*` shims
+* duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
+
+Next implementation targets, in order:
+
+1. move regenerated proto artifacts under `crates/foundation/proximadb-proto/` so the crate fully owns them
+2. trim root-only bridge conversions out of compatibility shims until `proto` and `kernel` are fully leaf-like
+3. expand `proximadb-query` from lowering into the remaining query runtime behavior (`fusion`, result shaping, orchestration, and additional unified execution helpers) instead of creating more micro query crates
+4. push graph/vector/query/storage code to depend on `kernel` and `proto` surfaces instead of root-local modules
+5. avoid extracting `config` until it no longer depends on `ai`, `network`, and `security`
+6. expand `proximadb-graph` from execution contracts, operators, parser-language modules, planner, pattern runtime, and executor runtime into the remaining graph runtime helpers, then engine/service contracts
+7. only then start the larger `proximadb-vector` extraction
+
+== Boundary Validation And Course Correction
+
+The extraction work completed so far is directionally correct, but it needs a stricter boundary policy to achieve the original goals of lower rebuild cost, clearer ownership, and better runtime encapsulation.
+
+=== What Is Working
+
+* the root `query::unified::ast` surface is shrinking into compatibility glue instead of remaining the owner of every modality IR
+* the graph query/runtime path now has real non-root build units (`proximadb-graph`, `proximadb-graph-subset`, `proximadb-graph-arrow`)
+* shared contracts such as data-model, filter expression, pipeline operator, fusion strategy, and multimodel plan shape are now explicitly owned instead of being hidden in root modules
+
+=== Current Strategic Risks
+
+* too much of the recent extraction has focused on *lightweight IR crates* rather than the *heavy runtime/build boundaries* that dominate `cargo check --lib` and end-to-end server/embedded rebuild time
+* several "foundation" or "leaf" crates still carry dependencies that are too heavy or too transport-specific for their intended role
+* some cross-model crates still depend on heavier modality runtime crates instead of depending only on narrow contracts
+* the root `proximadb` crate is still the effective runtime/application monolith, so the build-time payoff is still capped until higher-level runtime and app crates move out
+
+=== Validated Boundary Findings
+
+==== 1. `proximadb-kernel` is not yet transport-pure
+
+The plan says `proximadb-kernel` must not contain transport code, but the crate still depends on `tonic`.
+
+Implication:
+
+* this weakens the foundation layer and makes gRPC/transport concerns harder to isolate from core error and contract code
+
+Correction:
+
+* move transport-specific conversions and status-mapping out of `proximadb-kernel`
+* keep `proximadb-kernel` limited to transport-agnostic errors, IDs, metadata, and stable traits
+
+==== 2. `proximadb-proto` currently owns more than proto/codegen concerns
+
+The proto crate still carries runtime/helper-oriented dependencies (`num_cpus`, `sysinfo`, `tracing`, `serde_json`) in addition to `prost`/`tonic`.
+
+Implication:
+
+* contract-only changes risk pulling in host/runtime concerns
+* the crate is drifting from "protocol DTO/codegen ownership" into a mixed support crate
+
+Correction:
+
+* keep generated protobuf types, serde/default shims, and protocol conversion helpers in `proximadb-proto`
+* move host/runtime/system helpers into future `proximadb-runtime`, `proximadb-telemetry`, or other higher-layer crates as appropriate
+
+==== 3. `proximadb-multimodel-query` still depends on the heavier graph modality crate
+
+The multimodel query IR crate depends on `proximadb-graph` and `proximadb-graph-subset`.
+
+Implication:
+
+* graph runtime or parser changes can still force recompilation of crates that should only need cross-model IR
+* this violates the original intent that cross-model/query layers depend on modality contracts rather than modality internals
+
+Correction:
+
+* move reusable graph request-shape contracts into a narrower graph-contract leaf
+* keep `proximadb-multimodel-query` depending on graph IR/contracts, not on the heavier graph runtime crate
+
+==== 4. `proximadb-graph-subset` mixes syntax/descriptor ownership with execution/runtime ownership
+
+The crate description says "parsing and descriptor layer", but it also owns read-only execution helpers and shaped runtime behavior.
+
+Implication:
+
+* syntax-only changes and runtime-only changes are coupled together
+* the crate is less cohesive than its name suggests
+
+Correction:
+
+* either split the crate into syntax/descriptor and runtime-adapter layers
+* or explicitly rename/reposition it as a graph-query adapter/runtime crate instead of presenting it as a pure descriptor leaf
+
+==== 5. `proximadb-multimodel-plan` currently mixes IR with validation/optimization behavior
+
+The logical plan crate owns not only plan/operator structures but also validation, optimization, and compute-operator conversion helpers.
+
+Implication:
+
+* a crate intended as a reusable contract layer is also becoming a planner/behavior layer
+* this will make later query-runtime extraction more coupled than necessary
+
+Correction:
+
+* keep the current shape temporarily if it accelerates migration
+* but plan a later split between pure logical-plan IR and planner/optimizer behavior once `unified/lower`, fusion, and runtime execution move out of root
+
+=== Revised Isolation Strategy
+
+From this point forward, the workspace refactor should prioritize *heavier architectural seams* over additional micro-crate extraction.
+
+==== Priority Order
+
+1. purify existing foundation crates (`kernel`, `proto`) so they match their intended architectural role
+2. finish the first real runtime cut for the unified query stack:
+   * lowering
+   * fusion/result-shaping
+   * cross-model execution orchestration
+3. extract higher-cost modality/runtime crates that materially reduce rebuild scope:
+   * `proximadb-vector`
+   * `proximadb-document`
+   * `proximadb-observability`
+   * `proximadb-storage-common` where truly shared
+4. extract platform/application crates:
+   * `proximadb-api`
+   * `proximadb-runtime`
+   * `apps/proximadb-server`
+   * embedded/binding-specific crates
+
+==== New Rule For Additional Crates
+
+Do *not* create another new crate unless it satisfies at least one of these:
+
+* it severs a heavy rebuild dependency edge
+* it removes concrete root runtime coupling from another layer
+* it creates a stable reusable contract that multiple heavier crates will actually consume
+
+If a candidate crate only moves a small IR type but does not materially improve rebuild scope or dependency direction, prefer keeping it in the next higher cohesive crate.
+
+==== Recommended Layering Model
+
+The dependency direction should converge to:
+
+* foundation:
+  `kernel`, `data-model`, `filter-expression`, `pipeline-operator`, `proto`
+* contracts/IR:
+  reusable modality and query-shape contracts
+* modality/runtime:
+  graph, vector, document, observability, relational
+* cross-model query:
+  parsing, lowering, planning, fusion, federated execution
+* platform/runtime:
+  API, server runtime, protocol surfaces, embedded wiring
+* apps/bindings:
+  server binaries, benchmark binaries, embedded/binding entrypoints
+
+And the following dependency directions should remain forbidden:
+
+* foundation -> platform/application
+* foundation -> transport/runtime-specific crates
+* contracts/IR -> concrete modality runtimes where a narrower contract can exist
+* modality runtime -> root compatibility shims
+* cross-model query -> protocol/server/bootstrap code
+
+=== Practical Next-Step Recommendation
+
+The next implementation work should *not* keep peeling tiny AST fragments.
+
+The best next sequence is:
+
+1. purify `proximadb-kernel` and `proximadb-proto`
+2. expand the new `proximadb-query` crate beyond lowering into the remaining query runtime behavior
+3. group remaining root query runtime behavior into `proximadb-query` instead of creating more micro query crates
+4. begin the first heavy modality extraction with `proximadb-vector`
+5. only introduce more leaf crates when they clearly support those heavier cuts
+
+== Skeleton-First Stabilization
+
+The refactor now needs a *stable high-level skeleton* more than additional low-level extraction. The main risk is no longer "not enough crates"; it is *surface churn* caused by moving small pieces without freezing the higher-level abstraction map.
+
+=== Stable Target Skeleton
+
+From this point forward, the target architecture should be treated as the following stable layers:
+
+1. *Foundation*
+   * transport-agnostic kernel contracts
+   * protocol/codegen contracts
+   * small shared value types and reusable expressions
+2. *Contracts*
+   * reusable modality request/IR contracts
+   * reusable logical-plan and query-shape contracts
+   * no concrete runtime behavior unless it is purely structural and serialization-safe
+3. *Modality Runtime*
+   * graph, vector, document, observability, relational runtime behavior
+   * storage/index/query execution internals for a single modality
+4. *Cross-Model Query Runtime*
+   * UQL/lowering/planning/fusion/federation/orchestration
+   * depends on modality contracts/capabilities, not concrete platform/runtime wiring
+5. *Platform Runtime*
+   * API handlers
+   * REST/gRPC/pgwire/Flight wiring
+   * server runtime bootstrap
+   * embedded/runtime composition
+6. *Apps And Bindings*
+   * server binary
+   * benchmark binaries
+   * embedded/binding entrypoints
+
+=== Full Product Coverage Under The Skeleton
+
+The layer model above must cover *all* major product areas, not just query IR and graph extraction. To avoid re-deciding the architecture each turn, every subsystem should map to one of the following ownership buckets.
+
+These are *stable ownership buckets first*, not immediate crate-creation commitments.
+
+==== Foundation Buckets
+
+* kernel:
+  transport-agnostic errors, IDs, metadata primitives, base traits
+* proto:
+  generated protocol types and protocol DTO helpers
+* config:
+  validated runtime configuration models and loaders
+* telemetry:
+  tracing, metrics, instrumentation contracts, health/reporting primitives
+* common value-contracts:
+  data-model, filter-expression, pipeline-operator, small reusable enums/value objects
+* common utilities:
+  tightly reusable pure helpers only, not runtime orchestration
+
+==== Horizontal Infrastructure Buckets
+
+These are shared runtime concerns that should become stable internal platforms rather than being scattered across modalities or handlers.
+
+* security:
+  authn, authz, RBAC/ABAC, tenant isolation, crypto/policy helpers, certificate/security primitives
+* networking:
+  protocol-neutral transport contracts, shared request/response middleware, connection/session abstractions, retries/backpressure policies
+* distributed/cluster/consensus:
+  node membership, consensus/coordination, shard placement, replication control, failover, recovery orchestration, leader/follower responsibilities
+* catalog/control-plane:
+  metadata registry, collection/catalog ownership, schema/state management, capability registry
+* runtime helpers:
+  task scheduling, pools, queues, caches, clock/time abstractions, resource guards, concurrency helpers
+* storage-common:
+  only truly shared IO/object-store/filesystem/WAL primitives, never modality-specific logic
+* compute-common:
+  shared vectorized/Arrow/pipeline execution helpers that are not modality-owned
+
+==== Modality Buckets
+
+* vector:
+  vector indexing, scoring, ANN, quantization, vector retrieval/storage services
+* graph:
+  graph storage, traversal, graph query runtime, graph-specific execution services
+* document:
+  document storage, text indexing/querying, document retrieval/runtime services
+* observability:
+  logs, metrics, traces, event-log style ingestion/query runtime
+* relational:
+  row/table/schema/tabular semantics that are truly relational in nature
+
+==== Cross-Model Query Buckets
+
+* query contracts:
+  reusable request/IR/logical-plan shapes
+* query runtime:
+  UQL parsing, lowering, planning, fusion, federated execution, multimodel orchestration
+
+==== Platform Runtime Buckets
+
+* API surfaces:
+  REST, gRPC, pgwire, Arrow Flight, streaming APIs
+* runtime composition:
+  service assembly, dependency injection/composition, background workers, lifecycle management
+* embedded runtime:
+  embedded composition, local adapters, language binding bridges
+
+==== External Integration Buckets
+
+* cloud/object-store integrations
+* CDC/connectors/ingest pipelines
+* model/provider integrations:
+  embeddings, rerankers, LLM/agent/provider adapters
+* partner/client integration shims:
+  SDK-facing adapter glue that is not core runtime behavior
+
+==== Apps And Delivery Buckets
+
+* server binary
+* benchmark/data-generation binaries
+* CLI/admin tools
+* bindings and packaging entrypoints
+
+=== Current Suboptimal Boundaries, Prioritized
+
+==== P0: Root `proximadb` is still the effective runtime monolith
+
+This is still the largest structural problem. Even with many extracted leaves, the main runtime, protocol wiring, query orchestration, storage ownership, and embedded/server composition still converge in the root crate.
+
+Why it matters:
+
+* rebuild scope is still dominated by the root crate
+* ownership remains fuzzy
+* compatibility shims remain too central instead of being transitional edges
+
+Required direction:
+
+* move toward explicit `proximadb-query`, `proximadb-api`, `proximadb-runtime`, and app crates
+
+==== P0: Foundation crates are not yet pure enough
+
+`proximadb-kernel` and `proximadb-proto` still violate the intended layering rules.
+
+Why it matters:
+
+* impure foundations contaminate every higher layer
+* they make future extraction harder because transport/runtime concerns leak downward
+
+Required direction:
+
+* keep `kernel` transport-agnostic
+* keep `proto` protocol/codegen focused
+* move runtime/host/system behavior upward
+
+==== P1: Query/runtime behavior is still too fragmented across root and micro-crates
+
+The current set of extracted query leaves was useful to break ownership out of root AST modules, but the long-term abstraction should not be "dozens of tiny query crates". The stable boundary should be one *contracts stratum* plus one *query runtime stratum*.
+
+Why it matters:
+
+* the current surface is easy to churn
+* runtime behavior is still split between root and multiple small crates
+* future turns risk optimizing crate count instead of runtime cohesion
+
+Required direction:
+
+* stop creating tiny query crates unless they sever a heavy edge
+* consolidate the behavior layer into a real `proximadb-query` runtime crate
+* treat the existing small query crates as contract leaves, not as the final runtime shape
+
+==== P1: Graph boundaries are improved, but not yet cleanly layered
+
+Graph has the strongest extraction progress so far, but the graph surface is still split across:
+
+* `proximadb-graph`
+* `proximadb-graph-subset`
+* `proximadb-graph-arrow`
+* root compatibility shims
+
+The suboptimal part is not the number of crates by itself; it is that syntax/descriptor, runtime adaptation, and presentation are not yet crisply separated.
+
+Required direction:
+
+* keep `proximadb-graph` as the canonical graph runtime/modality crate
+* keep `proximadb-graph-arrow` only if columnar presentation remains a reusable cross-layer seam
+* either narrow `proximadb-graph-subset` to pure subset analysis or reposition it explicitly as a graph-query adapter/runtime layer
+
+==== P1: Missing heavy modality crates still cap build-time payoff
+
+There is still no real extracted `vector`, `document`, or `observability` runtime crate.
+
+Why it matters:
+
+* graph extraction alone cannot deliver the intended workspace benefit
+* the heaviest storage/query/runtime code is still in root
+
+Required direction:
+
+* after foundation cleanup and query-runtime extraction, move to `proximadb-vector` first
+* then `proximadb-document` and `proximadb-observability`
+
+==== P2: Compatibility shims are still necessary, but must stop growing
+
+Compatibility shims are serving the migration correctly, but they must remain a transitional facade, not a second API layer.
+
+Required direction:
+
+* keep root re-export modules stable
+* do not add new public wrapper behavior to root unless it is purely transitional
+* move real behavior behind extracted crates, not into shims
+
+=== Skeleton Freeze Rules
+
+These rules should guide each subsequent turn:
+
+1. Do not change the high-level layer map above unless a boundary is clearly wrong.
+2. Do not create a new crate just to move a few structs unless it severs a heavy dependency edge or stabilizes a real shared contract.
+3. Prefer moving *behavior* behind an already-agreed layer over extracting another tiny IR surface.
+4. Keep root public compatibility modules stable:
+   * `src/query/unified/ast.rs`
+   * `src/query/unified/uql.rs`
+   * `src/query/multimodal/plan.rs`
+   * similar re-export shells
+5. New work should reduce one of these on each turn:
+   * root concrete runtime coupling
+   * foundation impurity
+   * modality-to-platform leakage
+   * rebuild scope for a heavy subsystem
+6. Avoid renaming crates or public surfaces casually during the transition. Move internals first; rename only when the boundary is already stable.
+
+=== Recommended Stable Abstraction Map
+
+This is the high-level target map to build toward incrementally:
+
+* `proximadb-kernel`
+  * errors, IDs, base traits, core metadata only
+* `proximadb-proto`
+  * generated types, serde/default shims, protocol DTO helpers only
+* `proximadb-config`
+  * runtime configuration models and loaders
+* `proximadb-telemetry`
+  * metrics/tracing/instrumentation contracts and helpers
+* small foundation/contracts leaves
+  * data-model
+  * filter-expression
+  * pipeline-operator
+  * other genuinely reusable value-contract crates
+* `proximadb-storage-common`
+  * only truly shared filesystem/object-store/WAL/IO primitives
+* `proximadb-security`
+  * shared authn/authz/policy/crypto runtime layer
+* `proximadb-network`
+  * protocol-neutral networking and shared middleware/runtime helpers
+* `proximadb-cluster`
+  * distributed membership/consensus/placement/replication control-plane runtime
+* `proximadb-catalog`
+  * metadata, registry, collection/schema/control-plane ownership
+* `proximadb-runtime-common`
+  * shared pools, schedulers, caches, concurrency/runtime helpers
+* `proximadb-graph`
+  * graph runtime and graph query runtime
+* `proximadb-vector`
+  * vector runtime, indexing, scoring, vector services
+* `proximadb-document`
+  * document runtime and text/document query execution
+* `proximadb-observability`
+  * logs/metrics/traces runtime
+* `proximadb-query`
+  * UQL lowering, planning, fusion, federated orchestration, multimodel execution runtime
+* `proximadb-api`
+  * REST/gRPC/pgwire/Flight handlers and request wiring
+* `proximadb-runtime`
+  * shared runtime composition/bootstrap
+* `proximadb-integrations`
+  * external providers, connectors, cloud/CDC/model integration adapters
+* `apps/proximadb-server`
+  * binary entrypoint only
+
+=== Boundary Rules For Horizontal Layers
+
+To keep the skeleton clean, the horizontal layers above must obey stricter rules than modality crates.
+
+* security is a shared policy/runtime concern, not a dumping ground for transport handlers
+* networking owns shared protocol/runtime mechanics, not business logic for graph/vector/document
+* cluster/consensus owns distributed coordination and placement, not query planning logic
+* catalog owns metadata/control-plane state, not modality execution behavior
+* storage-common must stay small and only hold truly shared primitives
+* runtime-common/helpers must not absorb domain behavior just because it is "used in many places"
+* integrations must adapt external systems to internal contracts; they should not become a second core runtime
+
+=== Dependency Direction For The Full Product
+
+The dependency trajectory should converge toward:
+
+* foundation -> nothing higher
+* horizontal infrastructure -> foundation
+* modality runtimes -> foundation + selected horizontal layers
+* cross-model query runtime -> foundation + modality contracts/capabilities + selected horizontal layers
+* platform runtime -> query runtime + modality runtimes + horizontal infrastructure
+* external integrations -> foundation + horizontal layers + modality/query contracts as needed
+* apps/bindings -> platform/runtime crates only
+
+And specifically:
+
+* networking should not depend on API business logic
+* security should not depend on REST/gRPC/pgwire handler code
+* cluster/consensus should not depend on query lowering or modality internals unless through narrow contracts
+* modality runtimes should not depend on app/bootstrap code
+* external integrations should terminate at stable internal contracts rather than reaching into root internals
+
+=== Trajectory For Subsequent Turns
+
+To avoid shifting the surface every turn, future work should follow this trajectory:
+
+1. purify the foundation layer
+2. stabilize one real query-runtime crate
+3. extract one heavy modality at a time
+4. extract platform/runtime crates only after query and modality seams are stable
+5. let root compatibility shrink naturally instead of redesigning it repeatedly
+
+This preserves a clear abstraction trajectory:
+
+* first stabilize the skeleton
+* then move internals behind it
+* then reduce the transitional root facade
+
+=== Recent Query-Runtime Boundary Refinement
+
+The pure observability adaptation layer now also lives in `proximadb-query`:
+
+* `observability_adapter` owns log severity normalization, metric aggregation/label/group-by
+  request shaping, and log/metric unified-record shaping
+* the root unified executor keeps only `ObservabilityService` invocation plus the final bridge
+  into the internal observability aggregation enum
+* this fixed a real root-path bug where metric execution had been hardcoding `Avg`, dropping
+  `label_filters`, and dropping `group_by` from the observability query IR
+
+The graph adapter boundary in `proximadb-query` is now broader and cleaner:
+
+* `graph_adapter` now owns declarative graph-row shaping, traversal-node shaping, and
+  start-node resolution against the narrow `GraphQueryReadService` contract
+* `graph_adapter` also now owns the deterministic multi-start traversal execution loop and the
+  explicit-input traversal shaping path against the narrow graph traversal contracts
+* the root unified executor keeps only actual graph-service traversal/query invocation, instead of
+  re-owning canonical node-query construction, traversal dedup orchestration, and record shaping
+* this further reduces root executor drift while keeping graph engine/runtime ownership in
+  `proximadb-graph` and query-runtime ownership in `proximadb-query`
+
+The vector/document adaptation layer in `proximadb-query` is also broader now:
+
+* `vector_adapter` owns unified vector-hit metadata formatting and vector search record shaping
+* `document_adapter` now owns document query record shaping in addition to SQL/document filter
+  and JSON adaptation
+* the root unified executor keeps only vector/document service invocation plus `SubQueryResult`
+  assembly, instead of re-owning modality-specific `UnifiedRecord` construction
+
+The root unified executor now also sits on an extracted component-execution seam:
+
+* `proximadb-query::execution` now owns cross-modal component dispatch, execution-time stamping,
+  and dependency-join application behind a narrow `QueryComponentExecutionService` contract
+* the root unified executor now adapts concrete vector/document/graph/observability services to
+  that contract instead of owning another copy of `ModelOperation` dispatch and dependency-aware
+  component orchestration
+* this keeps pure query-runtime component behavior in `proximadb-query` while leaving actual
+  service invocation and platform wiring in root where they still belong today
+
+That execution seam is now broader:
+
+* `proximadb-query::execution` now also owns the pure batch/runtime orchestration for
+  multimodel execution: partitioning parallelizable vs dependent components, bounded parallel
+  fan-out, prior-result context construction, and dependency-aware sequential follow-up
+* the root `ParallelExecutor` now keeps RBAC and concrete service/LLM wiring, but no longer owns
+  another copy of query-runtime scheduling logic or a root-local concurrency primitive
+* this is the right shape for the next steps because additional executor/runtime behavior can now
+  move behind the same `QueryComponentExecutionService` boundary instead of requiring new surfaces
+
+The join/runtime boundary is also cleaner now:
+
+* `proximadb-query::joins` now owns the semantic-join dispatch contract itself via a narrow
+  `BlockBatchSemanticJoinService` seam plus extracted `execute_join_with_services`
+* the root unified executor no longer owns the exact-vs-semantic join decision tree or the
+  cosine-vs-block-batch routing logic; it now only adapts the concrete root cosine distance
+  engine and the existing LLM-backed block-batch implementation to the extracted join-runtime
+  contract
+* this keeps reusable join behavior in `proximadb-query` while leaving only the platform-bound
+  LLM prompt path in root
+
 == Immediate Follow-Up Deliverables
 
 The next concrete follow-ups should be:
@@ -485,6 +1162,7 @@ The next concrete follow-ups should be:
 * “forbidden dependency edges” list
 * build/rebuild benchmark baseline before extraction
 * phase-1 implementation checklist for foundation crate extraction
+* operator/runtime migration checklist for `proximadb-graph`
 
 == Bottom Line
 

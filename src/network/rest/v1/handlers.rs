@@ -10,6 +10,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json as JsonResponse},
 };
+use proximadb_graph::query::service::GraphExecutionService;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -39,6 +40,8 @@ use serde::{Deserialize, Serialize};
 pub struct AppState {
     /// Shared unified handlers for business logic delegation
     pub unified_handlers: Arc<UnifiedHandlers>,
+    /// Extracted graph execution capability for query planning/execution helpers
+    pub graph_execution_service: Arc<dyn GraphExecutionService>,
     /// Optional security coordinator for authentication/authorization
     pub security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
     /// Data directory from config (e.g., server.data_dir from TOML)
@@ -52,6 +55,39 @@ pub struct AppState {
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
     /// LLM engine for semantic operations
     pub llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+}
+
+impl AppState {
+    /// Create REST app state with the standard shared runtime components.
+    pub fn new(
+        unified_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
+        security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
+        data_dir: std::path::PathBuf,
+        query_adapter: Option<Arc<QueryFacadeAdapter>>,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+    ) -> Self {
+        Self {
+            unified_handlers,
+            graph_execution_service,
+            security_coordinator,
+            data_dir,
+            query_adapter,
+            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            ))),
+            catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
+            llm_engine,
+        }
+    }
+
+    /// Create health-check state from the same explicit REST capability view.
+    pub fn health_state(&self) -> health::HealthState {
+        health::HealthState::new(
+            self.unified_handlers.clone(),
+            self.graph_execution_service.clone(),
+        )
+    }
 }
 
 /// Parse search request from JSON, supporting both proto and simple formats
@@ -996,7 +1032,7 @@ pub async fn explain_sql(
     // Build a lightweight QueryEngine with vector and graph services
     let qe = QueryEngine::new(
         state.unified_handlers.vector_operations_service.clone(),
-        state.unified_handlers.graph_operations_service.clone(),
+        state.graph_execution_service.clone(),
     );
     // Parse SQL and explain using frontend
     use crate::query::sql_frontend::parser::SqlFrontendParser;
@@ -1656,6 +1692,11 @@ pub fn create_router(state: AppState) -> axum::Router {
     let aql_router = {
         let mut executor = AqlExecutor::new();
 
+        // Attach event log for persistent audit trails (TD-050 Phase 5)
+        if let Some(log) = &state.unified_handlers.event_log {
+            executor = executor.with_event_log(log.clone());
+        }
+
         // Register sources
         executor.register_source(
             "vector".to_string(),
@@ -1665,9 +1706,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         );
         executor.register_source(
             "graph".to_string(),
-            Arc::new(GraphAqlSource::new(
-                state.unified_handlers.graph_operations_service.clone(),
-            )),
+            Arc::new(GraphAqlSource::new(state.graph_execution_service.clone())),
         );
         executor.register_source(
             "document".to_string(),
@@ -1760,7 +1799,7 @@ pub async fn comprehensive_health_check(
     State(state): State<AppState>,
     query: Query<health::HealthParams>,
 ) -> ApiResult<Json<health::HealthResponse>> {
-    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    let health_state = state.health_state();
     health::health_check(axum::extract::State(health_state), query).await
 }
 
@@ -1770,7 +1809,7 @@ pub async fn comprehensive_health_check(
 pub async fn liveness_check(
     State(state): State<AppState>,
 ) -> ApiResult<Json<health::LivenessResponse>> {
-    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    let health_state = state.health_state();
     health::liveness_check(axum::extract::State(health_state)).await
 }
 
@@ -1780,7 +1819,7 @@ pub async fn liveness_check(
 pub async fn readiness_check(
     State(state): State<AppState>,
 ) -> Result<Json<health::ReadinessResponse>, (StatusCode, Json<health::ReadinessResponse>)> {
-    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    let health_state = state.health_state();
     health::readiness_check(axum::extract::State(health_state)).await
 }
 
@@ -1792,7 +1831,6 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::RwLock;
     use tempfile::TempDir;
     use tower::ServiceExt;
 
@@ -1829,15 +1867,14 @@ mod tests {
         .await
         .expect("failed to initialize shared services for test app state");
 
-        let state = AppState {
-            unified_handlers: shared_services.unified_handlers,
-            security_coordinator: None,
+        let state = AppState::new(
+            shared_services.unified_handlers,
+            shared_services.graph_execution_service,
+            None,
             data_dir,
-            query_adapter: None,
-            fulltext_indexes: Some(Arc::new(RwLock::new(HashMap::new()))),
-            catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
-            llm_engine: None,
-        };
+            None,
+            None,
+        );
         (state, temp_dir)
     }
 

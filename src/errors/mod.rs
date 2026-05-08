@@ -118,6 +118,14 @@ impl From<ApiError> for tonic::Status {
     }
 }
 
+/// Convert ProtocolError to gRPC Status at the protocol layer rather than in
+/// the foundation kernel crate.
+impl From<crate::core::error::ProtocolError> for tonic::Status {
+    fn from(err: crate::core::error::ProtocolError) -> Self {
+        ApiError::from(err).into()
+    }
+}
+
 /// Convert ApiError to HTTP Response
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {

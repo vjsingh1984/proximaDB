@@ -5,10 +5,25 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use tokio::sync::Semaphore;
+use async_trait::async_trait;
+use proximadb_graph::query::service::{
+    GraphQueryReadService, GraphQueryService, GraphQueryTraversalService,
+};
+use proximadb_observability_query::MetricAggregation as QueryMetricAggregation;
+use proximadb_query::{
+    BlockBatchSemanticJoinService, JoinExecutionService, JoinResult,
+    QueryComponentExecutionService, RecordSimilarityEngine, build_document_query_record,
+    build_graph_query_record, build_graph_traversal_record, build_log_query_request,
+    build_log_record, build_metric_query_request, build_metric_record, build_traversal_request,
+    build_vector_metadata, build_vector_search_record, convert_path_filters_to_document_filter,
+    execute_component_with_context_and_join_service, execute_component_with_service,
+    execute_graph_traversal_with_input_service, execute_graph_traversal_with_service,
+    execute_join_with_services, execute_multi_join_with, execute_query_components_with_service,
+    extract_node_labels, resolve_start_nodes, unified_property_filter_to_graph_property_filter,
+};
+pub use proximadb_query::{extract_join_values, filter_by_ids, merge_records};
 use tracing::{debug, info, trace, warn};
 
 use super::UnifiedRecord;
@@ -18,13 +33,8 @@ use super::ast::{
     PathFilter, QueryComponent, StartNodeSpec, TraversalDirection, VectorSearchExpr,
 };
 use super::fusion::SubQueryResult;
-use crate::graph::service::GraphOperationsService;
 use crate::observability::{LogQueryParams, MetricAggParams, ObservabilityService};
-use crate::proto::proximadb_v1::{
-    DocFilterCondition, DocFilterOperator, DocumentFilter, Severity, SqlValue,
-    sql_value::Value as SqlValueVariant,
-};
-use crate::query::graph_runtime::{execute_graph_query_expr, graph_query_row_id};
+use crate::query::graph_runtime::execute_graph_query_expr;
 use crate::security::unified_rbac::{
     ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
 };
@@ -34,8 +44,6 @@ use crate::storage::document::{DocumentQueryParams, DocumentService};
 pub struct ParallelExecutor {
     /// Maximum concurrent queries
     max_parallel: usize,
-    /// Semaphore for concurrency control
-    semaphore: Arc<Semaphore>,
     /// RBAC manager for permission validation
     rbac_manager: Option<Arc<ConsolidatedRBACManager>>,
     /// LLM engine for semantic operations (TD-049)
@@ -47,7 +55,6 @@ impl ParallelExecutor {
     pub fn new(max_parallel: usize) -> Self {
         Self {
             max_parallel,
-            semaphore: Arc::new(Semaphore::new(max_parallel)),
             rbac_manager: None,
             llm_engine: None,
         }
@@ -66,7 +73,6 @@ impl ParallelExecutor {
     pub fn with_rbac(max_parallel: usize, rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
         Self {
             max_parallel,
-            semaphore: Arc::new(Semaphore::new(max_parallel)),
             rbac_manager: Some(rbac_manager),
             llm_engine: None,
         }
@@ -167,7 +173,7 @@ impl ParallelExecutor {
         user_ctx: &UnifiedUserContext,
         vector_ops: Option<Arc<VectorOperationsService>>,
         document_service: Arc<DocumentService>,
-        graph_service: Option<Arc<GraphOperationsService>>,
+        graph_service: Option<Arc<dyn GraphQueryService>>,
         observability_service: Option<Arc<ObservabilityService>>,
     ) -> Result<Vec<SubQueryResult>> {
         // Validate permissions for each component
@@ -213,14 +219,14 @@ impl ParallelExecutor {
     /// * `query` - The multi-model query to execute
     /// * `vector_ops` - Optional VectorOperationsService for vector searches
     /// * `document_service` - Document service for document queries
-    /// * `graph_service` - Optional GraphOperationsService for graph traversals
+    /// * `graph_service` - Optional graph traversal-capable service
     /// * `observability_service` - Optional ObservabilityService for log/metric queries
     pub async fn execute_parallel_with_all_services(
         &self,
         query: &MultiModelQuery,
         vector_ops: Option<Arc<VectorOperationsService>>,
         document_service: Arc<DocumentService>,
-        graph_service: Option<Arc<GraphOperationsService>>,
+        graph_service: Option<Arc<dyn GraphQueryService>>,
         observability_service: Option<Arc<ObservabilityService>>,
     ) -> Result<Vec<SubQueryResult>> {
         if query.components.is_empty() {
@@ -235,175 +241,84 @@ impl ParallelExecutor {
             graph_service.is_some(),
             observability_service.is_some()
         );
-
-        // Separate parallelizable and dependent components
-        let (parallel_components, dependent_components): (Vec<_>, Vec<_>) = query
-            .components
-            .iter()
-            .enumerate()
-            .partition(|(_, c)| c.is_parallelizable());
-
-        // Execute parallelizable components first
-        let mut results = Vec::with_capacity(query.components.len());
-
-        if !parallel_components.is_empty() {
-            let parallel_results = self
-                .execute_parallel_batch_full(
-                    parallel_components
-                        .iter()
-                        .map(|(i, c)| (*i, (*c).clone()))
-                        .collect(),
-                    vector_ops.clone(),
-                    document_service.clone(),
-                    graph_service.clone(),
-                    observability_service.clone(),
-                )
-                .await?;
-            results.extend(parallel_results);
-        }
-
-        // Execute dependent components sequentially with access to prior results
-        for (idx, component) in dependent_components {
-            let result = self
-                .execute_single_with_context_full(
-                    idx,
-                    component,
-                    vector_ops.clone(),
-                    document_service.clone(),
-                    graph_service.clone(),
-                    observability_service.clone(),
-                    &results,
-                )
-                .await?;
-            results.push((idx, result));
-        }
-
-        // Sort by original index and return just the results
-        results.sort_by_key(|(idx, _)| *idx);
-        Ok(results.into_iter().map(|(_, r)| r).collect())
-    }
-
-    /// Execute a batch of parallelizable components
-    #[allow(dead_code)]
-    async fn execute_parallel_batch(
-        &self,
-        components: Vec<(usize, QueryComponent)>,
-        vector_ops: Option<Arc<VectorOperationsService>>,
-        document_service: Arc<DocumentService>,
-    ) -> Result<Vec<(usize, SubQueryResult)>> {
-        self.execute_parallel_batch_full(components, vector_ops, document_service, None, None)
-            .await
-    }
-
-    /// Execute a batch of parallelizable components with all services
-    async fn execute_parallel_batch_full(
-        &self,
-        components: Vec<(usize, QueryComponent)>,
-        vector_ops: Option<Arc<VectorOperationsService>>,
-        document_service: Arc<DocumentService>,
-        graph_service: Option<Arc<GraphOperationsService>>,
-        observability_service: Option<Arc<ObservabilityService>>,
-    ) -> Result<Vec<(usize, SubQueryResult)>> {
-        let mut handles = Vec::with_capacity(components.len());
-
-        for (idx, component) in components {
-            let vec_ops = vector_ops.clone();
-            let doc_service = document_service.clone();
-            let graph_svc = graph_service.clone();
-            let obs_svc = observability_service.clone();
-            let llm_engine = self.llm_engine.clone();
-            let semaphore = self.semaphore.clone();
-
-            let handle = tokio::spawn(async move {
-                // Acquire semaphore permit
-                let _permit = semaphore
-                    .acquire()
-                    .await
-                    .map_err(|e| anyhow!("Semaphore error: {}", e))?;
-
-                let result = execute_component_full(
-                    &component,
-                    vec_ops,
-                    doc_service,
-                    graph_svc,
-                    obs_svc,
-                    llm_engine,
-                )
-                .await?;
-                Ok::<(usize, SubQueryResult), anyhow::Error>((idx, result))
+        let execution_service: Arc<dyn QueryComponentExecutionService> =
+            Arc::new(RootComponentExecutionService {
+                vector_ops,
+                document_service,
+                graph_service,
+                observability_service,
             });
+        let join_service: Arc<dyn JoinExecutionService> = Arc::new(RootJoinExecutor {
+            llm_engine: self.llm_engine.clone(),
+        });
 
-            handles.push(handle);
-        }
+        execute_query_components_with_service(
+            query,
+            execution_service,
+            join_service,
+            self.max_parallel,
+        )
+        .await
+    }
+}
 
-        // Collect results
-        let mut results = Vec::with_capacity(handles.len());
-        for handle in handles {
-            match handle.await {
-                Ok(Ok(result)) => results.push(result),
-                Ok(Err(e)) => {
-                    warn!("Component execution failed: {}", e);
-                    return Err(e);
-                }
-                Err(e) => {
-                    warn!("Task join error: {}", e);
-                    return Err(anyhow!("Task join error: {}", e));
-                }
-            }
-        }
+struct RootComponentExecutionService {
+    vector_ops: Option<Arc<VectorOperationsService>>,
+    document_service: Arc<DocumentService>,
+    graph_service: Option<Arc<dyn GraphQueryService>>,
+    observability_service: Option<Arc<ObservabilityService>>,
+}
 
-        Ok(results)
+#[async_trait]
+impl QueryComponentExecutionService for RootComponentExecutionService {
+    async fn execute_vector_search(&self, expr: &VectorSearchExpr) -> Result<SubQueryResult> {
+        execute_vector_search(expr, self.vector_ops.clone()).await
     }
 
-    /// Execute a single component with access to prior results (for dependencies)
-    #[allow(dead_code)]
-    async fn execute_single_with_context(
-        &self,
-        idx: usize,
-        component: &QueryComponent,
-        vector_ops: Option<Arc<VectorOperationsService>>,
-        document_service: Arc<DocumentService>,
-        prior_results: &[(usize, SubQueryResult)],
-    ) -> Result<SubQueryResult> {
-        self.execute_single_with_context_full(
-            idx,
-            component,
-            vector_ops,
-            document_service,
-            None,
-            None,
-            prior_results,
+    async fn execute_document_query(&self, expr: &DocumentQueryExpr) -> Result<SubQueryResult> {
+        execute_document_query(expr, self.document_service.clone()).await
+    }
+
+    async fn execute_graph_query(&self, expr: &GraphQueryExpr) -> Result<SubQueryResult> {
+        execute_graph_query(
+            expr,
+            self.graph_service
+                .as_deref()
+                .map(|svc| svc as &dyn GraphQueryReadService),
         )
         .await
     }
 
-    /// Execute a single component with access to prior results (full version)
-    async fn execute_single_with_context_full(
+    async fn execute_graph_traversal(
         &self,
-        _idx: usize,
-        component: &QueryComponent,
-        vector_ops: Option<Arc<VectorOperationsService>>,
-        document_service: Arc<DocumentService>,
-        graph_service: Option<Arc<GraphOperationsService>>,
-        observability_service: Option<Arc<ObservabilityService>>,
-        prior_results: &[(usize, SubQueryResult)],
+        expr: &GraphTraversalExpr,
+        context: Option<&HashMap<usize, &SubQueryResult>>,
     ) -> Result<SubQueryResult> {
-        // Build context from prior results for dependency resolution
-        let context: HashMap<usize, &SubQueryResult> = prior_results
-            .iter()
-            .map(|(idx, result)| (*idx, result))
-            .collect();
+        execute_graph_traversal_with_context(expr, self.graph_service.clone(), context).await
+    }
 
-        execute_component_with_context_full(
-            component,
-            vector_ops,
-            document_service,
-            graph_service,
-            observability_service,
-            &context,
-            self.llm_engine.clone(),
-        )
-        .await
+    async fn execute_log_query(&self, expr: &LogQueryExpr) -> Result<SubQueryResult> {
+        execute_log_query_full(expr, self.observability_service.clone()).await
+    }
+
+    async fn execute_metric_query(&self, expr: &MetricQueryExpr) -> Result<SubQueryResult> {
+        execute_metric_query_full(expr, self.observability_service.clone()).await
+    }
+}
+
+struct RootJoinExecutor {
+    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+}
+
+#[async_trait(?Send)]
+impl JoinExecutionService for RootJoinExecutor {
+    async fn execute_join(
+        &self,
+        left: &[UnifiedRecord],
+        right: &[UnifiedRecord],
+        dependency: &ComponentDependency,
+    ) -> JoinResult {
+        execute_join(left, right, dependency, self.llm_engine.clone()).await
     }
 }
 
@@ -422,34 +337,24 @@ async fn execute_component_full(
     component: &QueryComponent,
     vector_ops: Option<Arc<VectorOperationsService>>,
     document_service: Arc<DocumentService>,
-    graph_service: Option<Arc<GraphOperationsService>>,
+    graph_service: Option<Arc<dyn GraphQueryService>>,
     observability_service: Option<Arc<ObservabilityService>>,
     _llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> Result<SubQueryResult> {
-    let start = Instant::now();
-
-    let result = match &component.operation {
-        ModelOperation::VectorSearch(expr) => execute_vector_search(expr, vector_ops).await,
-        ModelOperation::DocumentQuery(expr) => execute_document_query(expr, document_service).await,
-        ModelOperation::GraphQuery(expr) => execute_graph_query(expr, graph_service).await,
-        ModelOperation::GraphTraversal(expr) => {
-            execute_graph_traversal_full(expr, graph_service).await
-        }
-        ModelOperation::LogQuery(expr) => {
-            execute_log_query_full(expr, observability_service.clone()).await
-        }
-        ModelOperation::MetricQuery(expr) => {
-            execute_metric_query_full(expr, observability_service).await
-        }
+    let service = RootComponentExecutionService {
+        vector_ops,
+        document_service,
+        graph_service,
+        observability_service,
     };
-
-    let elapsed = start.elapsed();
-    trace!("Component {:?} executed in {:?}", component.model, elapsed);
-
-    result.map(|mut r| {
-        r.execution_time_us = elapsed.as_micros() as u64;
-        r
-    })
+    let result = execute_component_with_service(component, &service).await;
+    if let Ok(ref subquery) = result {
+        trace!(
+            "Component {:?} executed in {}us",
+            component.model, subquery.execution_time_us
+        );
+    }
+    result
 }
 
 /// Execute a component with dependency context
@@ -482,54 +387,32 @@ async fn execute_component_with_context_full(
     component: &QueryComponent,
     vector_ops: Option<Arc<VectorOperationsService>>,
     document_service: Arc<DocumentService>,
-    graph_service: Option<Arc<GraphOperationsService>>,
+    graph_service: Option<Arc<dyn GraphQueryService>>,
     observability_service: Option<Arc<ObservabilityService>>,
     context: &HashMap<usize, &SubQueryResult>,
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> Result<SubQueryResult> {
-    let start = Instant::now();
-
-    // Execute the component's operation
-    // For graph traversals, pass context so StartNodeSpec::FromComponent can be resolved
-    let raw_result = match &component.operation {
-        ModelOperation::VectorSearch(expr) => execute_vector_search(expr, vector_ops).await,
-        ModelOperation::DocumentQuery(expr) => execute_document_query(expr, document_service).await,
-        ModelOperation::GraphQuery(expr) => execute_graph_query(expr, graph_service).await,
-        ModelOperation::GraphTraversal(expr) => {
-            // Use execute_graph_traversal_with_context to properly resolve StartNodeSpec
-            // This handles StartNodeSpec::FromComponent by looking up prior results
-            execute_graph_traversal_with_context(expr, graph_service, Some(context)).await
-        }
-        ModelOperation::LogQuery(expr) => {
-            execute_log_query_full(expr, observability_service.clone()).await
-        }
-        ModelOperation::MetricQuery(expr) => {
-            execute_metric_query_full(expr, observability_service).await
-        }
+    let service = RootComponentExecutionService {
+        vector_ops,
+        document_service,
+        graph_service,
+        observability_service,
     };
-
-    let elapsed = start.elapsed();
-
-    // Apply join predicates if dependencies exist
-
-    match raw_result {
-        Ok(mut r) => {
-            r.execution_time_us = elapsed.as_micros() as u64;
-
-            // If there are dependencies, apply join logic
-            if !component.dependencies.is_empty() {
-                debug!(
-                    "Applying {} join dependencies to {} records",
-                    component.dependencies.len(),
-                    r.records.len()
-                );
-                Ok(execute_multi_join(&r, &component.dependencies, context, llm_engine).await)
-            } else {
-                Ok(r)
-            }
-        }
-        Err(e) => Err(e),
+    let join_executor = RootJoinExecutor { llm_engine };
+    let result = execute_component_with_context_and_join_service(
+        component,
+        &service,
+        context,
+        &join_executor,
+    )
+    .await;
+    if let Ok(ref subquery) = result {
+        trace!(
+            "Component {:?} executed with context in {}us",
+            component.model, subquery.execution_time_us
+        );
     }
+    result
 }
 
 /// Execute a vector search query
@@ -568,24 +451,9 @@ async fn execute_vector_search(
         Ok(results) => {
             let records: Vec<UnifiedRecord> = results
                 .into_iter()
-                .map(|r| {
-                    // Build metadata from the search result
-                    let mut metadata = HashMap::new();
-                    // metadata is a HashMap<String, SqlValue>, iterate over it
-                    for (k, v) in &r.metadata {
-                        metadata.insert(k.clone(), format!("{:?}", v));
-                    }
-
-                    UnifiedRecord {
-                        id: r.id.clone(),
-                        source_model: DataModel::Vector,
-                        data: serde_json::json!({
-                            "id": r.id,
-                            "score": r.score,
-                        }),
-                        score: Some(r.score as f64),
-                        metadata,
-                    }
+                .map(|record| {
+                    let metadata = build_vector_metadata(&record.metadata);
+                    build_vector_search_record(&record.id, record.score, metadata)
                 })
                 .collect();
 
@@ -643,18 +511,7 @@ async fn execute_document_query(
             let records: Vec<UnifiedRecord> = query_result
                 .documents
                 .into_iter()
-                .map(|doc| {
-                    // Convert SqlObject to serde_json::Value
-                    let data = sql_object_to_json(&doc.document);
-
-                    UnifiedRecord {
-                        id: doc.id,
-                        source_model: DataModel::Document,
-                        data,
-                        score: None, // Documents don't have similarity scores
-                        metadata: HashMap::new(),
-                    }
-                })
+                .map(|doc| build_document_query_record(&doc.id, &doc.document))
                 .collect();
 
             let count = records.len() as u64;
@@ -674,111 +531,6 @@ async fn execute_document_query(
     }
 }
 
-/// Convert SqlObject to serde_json::Value
-fn sql_object_to_json(obj: &crate::proto::proximadb_v1::SqlObject) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    for (key, value) in &obj.fields {
-        map.insert(key.clone(), sql_value_to_json(value));
-    }
-    serde_json::Value::Object(map)
-}
-
-/// Convert SqlValue to serde_json::Value
-fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
-    use crate::proto::proximadb_v1::sql_value::Value;
-
-    match &value.value {
-        Some(Value::NullValue(_)) => serde_json::Value::Null,
-        Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-        Some(Value::Int64Value(i)) => serde_json::Value::Number((*i).into()),
-        Some(Value::NumberValue(f)) => serde_json::Number::from_f64(*f)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number),
-        Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-        Some(Value::BytesValue(b)) => {
-            // Encode bytes as hex string (simpler than base64)
-            let encoded: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
-            serde_json::Value::String(encoded)
-        }
-        Some(Value::ArrayValue(arr)) => {
-            let items: Vec<serde_json::Value> = arr.values.iter().map(sql_value_to_json).collect();
-            serde_json::Value::Array(items)
-        }
-        Some(Value::ObjectValue(obj)) => sql_object_to_json(obj),
-        None => serde_json::Value::Null,
-    }
-}
-
-/// Convert AST PathFilters to proto DocumentFilter
-fn convert_path_filters_to_document_filter(filters: &[PathFilter]) -> Option<DocumentFilter> {
-    if filters.is_empty() {
-        return None;
-    }
-
-    let conditions: Vec<DocFilterCondition> = filters
-        .iter()
-        .map(|pf| {
-            // Convert FilterOperator to DocFilterOperator
-            let operator = match pf.operator {
-                FilterOperator::Eq => DocFilterOperator::Eq,
-                FilterOperator::Ne => DocFilterOperator::Ne,
-                FilterOperator::Gt => DocFilterOperator::Gt,
-                FilterOperator::Gte => DocFilterOperator::Gte,
-                FilterOperator::Lt => DocFilterOperator::Lt,
-                FilterOperator::Lte => DocFilterOperator::Lte,
-                FilterOperator::In => DocFilterOperator::In,
-                FilterOperator::NotIn => DocFilterOperator::NotIn,
-                FilterOperator::Contains => DocFilterOperator::Contains,
-                FilterOperator::StartsWith => DocFilterOperator::Regex, // Approximate with regex
-                FilterOperator::EndsWith => DocFilterOperator::Regex,   // Approximate with regex
-                FilterOperator::Exists => DocFilterOperator::Exists,
-                FilterOperator::Type => DocFilterOperator::Type,
-            };
-
-            // Convert FilterValue to SqlValue
-            let value = convert_filter_value_to_sql(&pf.value);
-
-            DocFilterCondition {
-                path: pf.path.clone(),
-                operator: operator.into(),
-                value: Some(value),
-                values: vec![],
-            }
-        })
-        .collect();
-
-    Some(DocumentFilter {
-        conditions,
-        or_filters: vec![],
-        and_filters: vec![],
-    })
-}
-
-/// Convert AST FilterValue to proto SqlValue
-fn convert_filter_value_to_sql(value: &FilterValue) -> SqlValue {
-    match value {
-        FilterValue::String(s) => SqlValue {
-            value: Some(SqlValueVariant::StringValue(s.clone())),
-        },
-        FilterValue::Number(n) => SqlValue {
-            value: Some(SqlValueVariant::NumberValue(*n)),
-        },
-        FilterValue::Bool(b) => SqlValue {
-            value: Some(SqlValueVariant::BoolValue(*b)),
-        },
-        FilterValue::Null => SqlValue {
-            value: Some(SqlValueVariant::NullValue(0)),
-        },
-        FilterValue::Array(arr) => {
-            let sql_arr = crate::proto::proximadb_v1::SqlArray {
-                values: arr.iter().map(convert_filter_value_to_sql).collect(),
-            };
-            SqlValue {
-                value: Some(SqlValueVariant::ArrayValue(sql_arr)),
-            }
-        }
-    }
-}
-
 /// Execute a graph traversal query (legacy - calls full version)
 #[allow(dead_code)]
 async fn execute_graph_traversal(expr: &GraphTraversalExpr) -> Result<SubQueryResult> {
@@ -788,28 +540,22 @@ async fn execute_graph_traversal(expr: &GraphTraversalExpr) -> Result<SubQueryRe
 /// Execute a declarative graph query through the shared supported subset.
 async fn execute_graph_query(
     expr: &GraphQueryExpr,
-    graph_service: Option<Arc<GraphOperationsService>>,
+    graph_service: Option<&dyn GraphQueryReadService>,
 ) -> Result<SubQueryResult> {
     let Some(graph_svc) = graph_service else {
         debug!(
-            "Graph query on {} skipped - no GraphOperationsService",
+            "Graph query on {} skipped - no GraphQueryReadService",
             expr.graph_name
         );
         return Ok(SubQueryResult::empty(DataModel::Graph));
     };
 
-    let executed = execute_graph_query_expr(graph_svc.as_ref(), expr).await?;
+    let executed = execute_graph_query_expr(graph_svc, expr).await?;
     let records = executed
         .rows
         .into_iter()
         .enumerate()
-        .map(|(index, row)| UnifiedRecord {
-            id: graph_query_row_id(&row, index),
-            source_model: DataModel::Graph,
-            data: row,
-            score: None,
-            metadata: HashMap::new(),
-        })
+        .map(|(index, row)| build_graph_query_record(row, index))
         .collect::<Vec<_>>();
     let count = records.len() as u64;
 
@@ -823,262 +569,31 @@ async fn execute_graph_query(
     })
 }
 
-/// Resolve StartNodeSpec to actual node IDs
-///
-/// This function resolves various start node specifications:
-/// - `Ids`: Direct node IDs (pass through)
-/// - `Label`: Query graph for nodes with matching label
-/// - `Filter`: Query graph for nodes matching property filter
-/// - `FromComponent`: Use IDs from a prior query component (requires context)
-async fn resolve_start_nodes(
-    spec: &StartNodeSpec,
-    graph_name: &str,
-    graph_service: &Arc<GraphOperationsService>,
-    component_context: Option<&HashMap<usize, &SubQueryResult>>,
-) -> Result<Vec<String>> {
-    match spec {
-        StartNodeSpec::Ids(ids) => {
-            debug!("StartNodeSpec::Ids - using {} direct IDs", ids.len());
-            Ok(ids.clone())
-        }
-        StartNodeSpec::Label(label) => {
-            debug!(
-                "StartNodeSpec::Label - querying nodes with label '{}'",
-                label
-            );
-            resolve_nodes_by_label(graph_name, label, graph_service).await
-        }
-        StartNodeSpec::Filter(filter) => {
-            debug!("StartNodeSpec::Filter - querying nodes matching filter");
-            resolve_nodes_by_filter(graph_name, filter, graph_service).await
-        }
-        StartNodeSpec::FromComponent(component_idx) => {
-            debug!(
-                "StartNodeSpec::FromComponent - resolving from component {}",
-                component_idx
-            );
-            resolve_nodes_from_component(*component_idx, component_context)
-        }
-    }
-}
-
-/// Resolve nodes by label - query graph for all nodes with the specified label
-async fn resolve_nodes_by_label(
-    graph_name: &str,
-    label: &str,
-    graph_service: &Arc<GraphOperationsService>,
-) -> Result<Vec<String>> {
-    // Use graph service to query nodes by label
-    // This requires a method on GraphOperationsService to query by label
-    match graph_service.query_nodes_by_label(graph_name, label).await {
-        Ok(nodes) => {
-            let ids: Vec<String> = nodes.into_iter().map(|n| n.id.clone()).collect();
-            info!(
-                "Resolved {} nodes with label '{}' in graph '{}'",
-                ids.len(),
-                label,
-                graph_name
-            );
-            Ok(ids)
-        }
-        Err(e) => {
-            warn!("Failed to query nodes by label '{}': {}", label, e);
-            // Fall back to empty - could also propagate error
-            Ok(Vec::new())
-        }
-    }
-}
-
-/// Resolve nodes by property filter
-async fn resolve_nodes_by_filter(
-    graph_name: &str,
-    filter: &super::ast::NodeFilter,
-    graph_service: &Arc<GraphOperationsService>,
-) -> Result<Vec<String>> {
-    // Build property filters for graph query
-    let label = filter.label.clone();
-    let property_filters: Vec<(String, String)> = filter
-        .properties
-        .iter()
-        .filter_map(|pf| {
-            // Convert FilterValue to string for simple equality matching
-            let value_str = match &pf.value {
-                FilterValue::String(s) => Some(s.clone()),
-                FilterValue::Number(n) => Some(n.to_string()),
-                FilterValue::Bool(b) => Some(b.to_string()),
-                _ => None,
-            };
-            value_str.map(|v| (pf.name.clone(), v))
-        })
-        .collect();
-
-    match graph_service
-        .query_nodes_by_properties(graph_name, label.as_deref(), &property_filters)
-        .await
-    {
-        Ok(nodes) => {
-            let ids: Vec<String> = nodes.into_iter().map(|n| n.id.clone()).collect();
-            info!(
-                "Resolved {} nodes matching filter in graph '{}'",
-                ids.len(),
-                graph_name
-            );
-            Ok(ids)
-        }
-        Err(e) => {
-            warn!("Failed to query nodes by filter: {}", e);
-            Ok(Vec::new())
-        }
-    }
-}
-
-/// Resolve nodes from a prior query component's results
-fn resolve_nodes_from_component(
-    component_idx: usize,
-    context: Option<&HashMap<usize, &SubQueryResult>>,
-) -> Result<Vec<String>> {
-    let Some(ctx) = context else {
-        warn!(
-            "FromComponent({}) requires context, but none provided",
-            component_idx
-        );
-        return Ok(Vec::new());
-    };
-
-    let Some(prior_result) = ctx.get(&component_idx) else {
-        warn!(
-            "FromComponent({}) references non-existent component",
-            component_idx
-        );
-        return Ok(Vec::new());
-    };
-
-    // Extract IDs from the prior component's results
-    let ids: Vec<String> = prior_result.records.iter().map(|r| r.id.clone()).collect();
-
-    info!(
-        "Resolved {} node IDs from component {} (model: {:?})",
-        ids.len(),
-        component_idx,
-        prior_result.source_model
-    );
-
-    Ok(ids)
-}
-
-/// Execute a graph traversal query with graph service
+/// Execute a graph traversal query with a traversal-capable graph service.
 async fn execute_graph_traversal_full(
     expr: &GraphTraversalExpr,
-    graph_service: Option<Arc<GraphOperationsService>>,
+    graph_service: Option<Arc<dyn GraphQueryService>>,
 ) -> Result<SubQueryResult> {
     execute_graph_traversal_with_context(expr, graph_service, None).await
 }
 
-/// Execute a graph traversal query with graph service and component context
+/// Execute a graph traversal query with a traversal-capable graph service and component context.
 async fn execute_graph_traversal_with_context(
     expr: &GraphTraversalExpr,
-    graph_service: Option<Arc<GraphOperationsService>>,
+    graph_service: Option<Arc<dyn GraphQueryService>>,
     context: Option<&HashMap<usize, &SubQueryResult>>,
 ) -> Result<SubQueryResult> {
     debug!("Executing graph traversal on graph: {}", expr.graph_name);
 
     let Some(graph_svc) = graph_service else {
         debug!(
-            "Graph traversal on {} skipped - no GraphOperationsService",
+            "Graph traversal on {} skipped - no GraphQueryTraversalService",
             expr.graph_name
         );
         return Ok(SubQueryResult::empty(DataModel::Graph));
     };
 
-    // Resolve start nodes from the specification
-    let start_node_ids =
-        resolve_start_nodes(&expr.start_nodes, &expr.graph_name, &graph_svc, context).await?;
-
-    if start_node_ids.is_empty() {
-        debug!("No start nodes resolved for graph traversal");
-        return Ok(SubQueryResult::empty(DataModel::Graph));
-    }
-
-    info!(
-        "Graph traversal starting from {} nodes on graph '{}'",
-        start_node_ids.len(),
-        expr.graph_name
-    );
-
-    // Execute traversal from each start node
-    let mut all_records = Vec::new();
-    let mut seen_ids = std::collections::HashSet::new();
-
-    for start_id in start_node_ids {
-        let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
-            graph_id: expr.graph_name.clone(),
-            start_node_id: start_id.clone(),
-            max_depth: expr.max_depth,
-            edge_types: expr.edge_types.clone(),
-            node_labels: extract_node_labels(&expr.node_filters),
-            filters: Vec::new(), // Deferred: Convert property filters
-            algorithm: match expr.direction {
-                TraversalDirection::Outgoing => {
-                    crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32
-                }
-                TraversalDirection::Incoming => {
-                    crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32
-                }
-                TraversalDirection::Both => {
-                    crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32
-                }
-            },
-            limit: None,
-            timeout_ms: None,
-            max_frontier: None,
-        };
-
-        match graph_svc
-            .traverse(&expr.graph_name, traversal_request)
-            .await
-        {
-            Ok(response) => {
-                for node in response.nodes {
-                    // Deduplicate nodes across multiple traversals
-                    if seen_ids.insert(node.id.clone()) {
-                        all_records.push(UnifiedRecord {
-                            id: node.id.clone(),
-                            source_model: DataModel::Graph,
-                            data: serde_json::json!({
-                                "id": node.id,
-                                "labels": node.labels,
-                                "properties": format!("{:?}", node.properties),
-                                "start_node": start_id,
-                            }),
-                            score: None,
-                            metadata: HashMap::new(),
-                        });
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("Graph traversal from '{}' failed: {}", start_id, e);
-                // Continue with other start nodes
-            }
-        }
-    }
-
-    let count = all_records.len() as u64;
-    info!("Graph traversal returned {} unique nodes", count);
-
-    Ok(SubQueryResult {
-        source_model: DataModel::Graph,
-        records_returned: count,
-        records: all_records,
-        total_count: Some(count),
-        execution_time_us: 0,
-        records_scanned: count,
-    })
-}
-
-/// Extract node labels from node filters
-fn extract_node_labels(filters: &[super::ast::NodeFilter]) -> Vec<String> {
-    filters.iter().filter_map(|f| f.label.clone()).collect()
+    execute_graph_traversal_with_service(expr, graph_svc.as_ref(), context).await
 }
 
 /// Execute a graph traversal with input node IDs (legacy)
@@ -1090,12 +605,12 @@ async fn execute_graph_traversal_with_input(
     execute_graph_traversal_with_input_full(expr, input_ids, None).await
 }
 
-/// Execute a graph traversal with input node IDs and graph service
+/// Execute a graph traversal with input node IDs and a traversal-capable graph service.
 #[allow(dead_code)]
 async fn execute_graph_traversal_with_input_full(
     expr: &GraphTraversalExpr,
     input_ids: Option<Vec<String>>,
-    graph_service: Option<Arc<GraphOperationsService>>,
+    graph_service: Option<Arc<dyn GraphQueryTraversalService>>,
 ) -> Result<SubQueryResult> {
     debug!(
         "Executing graph traversal with input on graph: {}",
@@ -1104,68 +619,13 @@ async fn execute_graph_traversal_with_input_full(
 
     let Some(graph_svc) = graph_service else {
         debug!(
-            "Graph traversal with input on {} skipped - no GraphOperationsService",
+            "Graph traversal with input on {} skipped - no GraphQueryTraversalService",
             expr.graph_name
         );
         return Ok(SubQueryResult::empty(DataModel::Graph));
     };
 
-    // If we have input IDs, traverse from each of them
-    // Otherwise extract from StartNodeSpec
-    let start_nodes = input_ids.unwrap_or_else(|| match &expr.start_nodes {
-        StartNodeSpec::Ids(ids) => ids.clone(),
-        _ => Vec::new(),
-    });
-
-    if start_nodes.is_empty() {
-        return Ok(SubQueryResult::empty(DataModel::Graph));
-    }
-
-    let mut all_records = Vec::new();
-
-    for start_id in start_nodes {
-        let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
-            graph_id: expr.graph_name.clone(),
-            start_node_id: start_id,
-            max_depth: expr.max_depth,
-            edge_types: expr.edge_types.clone(),
-            node_labels: Vec::new(),
-            filters: Vec::new(),
-            algorithm: crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32,
-            limit: None,
-            timeout_ms: None,
-            max_frontier: None,
-        };
-
-        if let Ok(response) = graph_svc
-            .traverse(&expr.graph_name, traversal_request)
-            .await
-        {
-            for node in response.nodes {
-                all_records.push(UnifiedRecord {
-                    id: node.id.clone(),
-                    source_model: DataModel::Graph,
-                    data: serde_json::json!({
-                        "id": node.id,
-                        "labels": node.labels,
-                        "properties": format!("{:?}", node.properties),
-                    }),
-                    score: None,
-                    metadata: HashMap::new(),
-                });
-            }
-        }
-    }
-
-    let count = all_records.len() as u64;
-    Ok(SubQueryResult {
-        source_model: DataModel::Graph,
-        records_returned: count,
-        records: all_records,
-        total_count: Some(count),
-        execution_time_us: 0,
-        records_scanned: count,
-    })
+    execute_graph_traversal_with_input_service(expr, input_ids, graph_svc.as_ref()).await
 }
 
 /// Execute a log query (legacy)
@@ -1189,57 +649,25 @@ async fn execute_log_query_full(
         return Ok(SubQueryResult::empty(DataModel::Observability));
     };
 
-    // Convert severity strings to proto Severity enum
-    let severities: Vec<Severity> = expr
-        .severities
-        .iter()
-        .filter_map(|s| match s.to_lowercase().as_str() {
-            "trace" => Some(Severity::Trace),
-            "debug" => Some(Severity::Debug),
-            "info" => Some(Severity::Info),
-            "warn" | "warning" => Some(Severity::Warn),
-            "error" => Some(Severity::Error),
-            "fatal" | "critical" => Some(Severity::Fatal),
-            _ => None,
-        })
-        .collect();
-
-    // Build log query params
+    let query = build_log_query_request(expr);
     let params = LogQueryParams {
-        start_time_ns: expr.start_time_ns,
-        end_time_ns: expr.end_time_ns,
-        query: expr.query.clone(),
-        severities,
-        services: expr.services.clone(),
-        sources: Vec::new(),
-        limit: expr.limit,
-        cursor: None,
+        start_time_ns: query.start_time_ns,
+        end_time_ns: query.end_time_ns,
+        query: query.query.clone(),
+        severities: query.severities,
+        services: query.services,
+        sources: query.sources,
+        limit: query.limit,
+        cursor: query.cursor,
     };
 
-    match obs_svc.query_logs(&expr.namespace, params).await {
+    match obs_svc.query_logs(&query.namespace, params).await {
         Ok(result) => {
             let records: Vec<UnifiedRecord> = result
                 .logs
-                .into_iter()
+                .iter()
                 .enumerate()
-                .map(|(idx, log)| {
-                    // Generate ID from timestamp since LogEntry doesn't have an id field
-                    let log_id = format!("log_{}_{}", log.timestamp_ns, idx);
-                    UnifiedRecord {
-                        id: log_id.clone(),
-                        source_model: DataModel::Observability,
-                        data: serde_json::json!({
-                            "id": log_id,
-                            "timestamp_ns": log.timestamp_ns,
-                            "message": log.message,
-                            "service": log.service,
-                            "severity": log.severity,
-                            "source": log.source,
-                        }),
-                        score: None,
-                        metadata: HashMap::new(),
-                    }
-                })
+                .map(|(idx, log)| build_log_record(log, idx))
                 .collect();
 
             let count = records.len() as u64;
@@ -1283,35 +711,29 @@ async fn execute_metric_query_full(
         return Ok(SubQueryResult::empty(DataModel::Observability));
     };
 
-    // Build metric aggregation params
+    let query = build_metric_query_request(expr);
     let params = MetricAggParams {
-        metric_name: expr.metric_name.clone(),
-        start_time_ns: expr.start_time_ns,
-        end_time_ns: expr.end_time_ns,
-        aggregation: crate::observability::MetricAggregation::Avg, // Default aggregation
-        step_seconds: 60,
-        label_filters: HashMap::new(),
-        group_by: Vec::new(),
+        metric_name: query.metric_name.clone(),
+        start_time_ns: query.start_time_ns,
+        end_time_ns: query.end_time_ns,
+        aggregation: metric_aggregation_to_observability(&query.aggregation),
+        step_seconds: query.step_seconds,
+        label_filters: query.label_filters.clone(),
+        group_by: query.group_by.clone(),
     };
 
-    match obs_svc.aggregate_metrics(&expr.namespace, params).await {
+    match obs_svc.aggregate_metrics(&query.namespace, params).await {
         Ok(result) => {
             // Convert time series to unified records
             let mut records = Vec::new();
             for series in result.series {
                 for point in series.points {
-                    records.push(UnifiedRecord {
-                        id: format!("{}_{}", expr.metric_name, point.timestamp_ns),
-                        source_model: DataModel::Observability,
-                        data: serde_json::json!({
-                            "metric": expr.metric_name,
-                            "timestamp_ns": point.timestamp_ns,
-                            "value": point.value,
-                            "labels": series.labels,
-                        }),
-                        score: Some(point.value),
-                        metadata: series.labels.clone(),
-                    });
+                    records.push(build_metric_record(
+                        &query.metric_name,
+                        point.timestamp_ns,
+                        point.value,
+                        series.labels.clone(),
+                    ));
                 }
             }
 
@@ -1332,58 +754,26 @@ async fn execute_metric_query_full(
     }
 }
 
+fn metric_aggregation_to_observability(
+    aggregation: &QueryMetricAggregation,
+) -> crate::observability::MetricAggregation {
+    match aggregation {
+        QueryMetricAggregation::Sum => crate::observability::MetricAggregation::Sum,
+        QueryMetricAggregation::Avg => crate::observability::MetricAggregation::Avg,
+        QueryMetricAggregation::Min => crate::observability::MetricAggregation::Min,
+        QueryMetricAggregation::Max => crate::observability::MetricAggregation::Max,
+        QueryMetricAggregation::Count => crate::observability::MetricAggregation::Count,
+        QueryMetricAggregation::P50 => crate::observability::MetricAggregation::P50,
+        QueryMetricAggregation::P90 => crate::observability::MetricAggregation::P90,
+        QueryMetricAggregation::P95 => crate::observability::MetricAggregation::P95,
+        QueryMetricAggregation::P99 => crate::observability::MetricAggregation::P99,
+        QueryMetricAggregation::Rate => crate::observability::MetricAggregation::Rate,
+    }
+}
+
 // =============================================================================
 // Cross-Model Join Execution
 // =============================================================================
-
-/// Result of a join operation
-#[derive(Debug)]
-pub struct JoinResult {
-    /// Records that matched the join condition
-    pub matched: Vec<UnifiedRecord>,
-    /// Records from the left side that didn't match (for LEFT OUTER join)
-    pub unmatched_left: Vec<UnifiedRecord>,
-    /// Whether the join found any matches
-    pub has_matches: bool,
-}
-
-impl JoinResult {
-    /// Create an empty join result
-    pub fn empty() -> Self {
-        Self {
-            matched: Vec::new(),
-            unmatched_left: Vec::new(),
-            has_matches: false,
-        }
-    }
-
-    /// Convert to SubQueryResult based on join type
-    pub fn to_subquery_result(
-        self,
-        source_model: DataModel,
-        join_type: &JoinType,
-    ) -> SubQueryResult {
-        let records = match join_type {
-            JoinType::Inner | JoinType::Semi | JoinType::Semantic { .. } => self.matched,
-            JoinType::LeftOuter => {
-                let mut all = self.matched;
-                all.extend(self.unmatched_left);
-                all
-            }
-            JoinType::Anti => self.unmatched_left,
-        };
-
-        let count = records.len() as u64;
-        SubQueryResult {
-            source_model,
-            records_returned: count,
-            records,
-            total_count: Some(count),
-            execution_time_us: 0,
-            records_scanned: count,
-        }
-    }
-}
 
 /// Execute a join between two result sets
 ///
@@ -1400,258 +790,71 @@ pub async fn execute_join(
     dependency: &ComponentDependency,
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> JoinResult {
-    let join_field = &dependency.join_field;
-
     debug!(
         "Executing {:?} join on field '{}' ({} left x {} right records)",
         dependency.join_type,
-        join_field,
+        dependency.join_field,
         left.len(),
         right.len()
     );
 
-    if let JoinType::Semantic {
-        threshold,
-        top_k,
-        ref mode,
-    } = dependency.join_type
-    {
-        return dispatch_semantic_join(left, right, join_field, threshold, top_k, mode, llm_engine)
-            .await;
-    }
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 
-    // Build a hash map of right side values for efficient lookup
-    let right_index: HashMap<String, Vec<&UnifiedRecord>> = build_join_index(right, join_field);
+    struct CosineSimilarityAdapter(
+        crate::compute::distance_computation::engine::UnifiedDistanceCompute,
+    );
 
-    let mut matched = Vec::new();
-    let mut unmatched_left = Vec::new();
-
-    for left_record in left {
-        let left_values = extract_join_values(left_record, join_field);
-
-        let mut found_match = false;
-        for left_value in &left_values {
-            if let Some(right_records) = right_index.get(left_value) {
-                found_match = true;
-
-                match dependency.join_type {
-                    JoinType::Inner | JoinType::LeftOuter => {
-                        // For Inner and LeftOuter, combine with each matching right record
-                        for right_record in right_records {
-                            let combined = merge_records(left_record, right_record, join_field);
-                            matched.push(combined);
-                        }
-                    }
-                    JoinType::Semi => {
-                        // For Semi, just include the left record once if it matches
-                        matched.push(left_record.clone());
-                        break;
-                    }
-                    JoinType::Anti => {
-                        // For Anti, we'll handle in the loop (found_match = true means exclude)
-                    }
-                    JoinType::Semantic { .. } => {
-                        // Handled by early return above; unreachable here.
-                    }
-                }
-            }
-        }
-
-        if !found_match {
-            match dependency.join_type {
-                JoinType::LeftOuter => {
-                    // Include left record with null-padded right fields
-                    unmatched_left.push(left_record.clone());
-                }
-                JoinType::Anti => {
-                    // Anti join: include records that DON'T match
-                    matched.push(left_record.clone());
-                }
-                _ => {}
-            }
+    impl RecordSimilarityEngine for CosineSimilarityAdapter {
+        fn similarity(&self, left: &[f32], right: &[f32]) -> f32 {
+            let distance = self.0.distance(left, right);
+            (1.0 - distance) as f32
         }
     }
 
-    let has_matches = !matched.is_empty();
+    struct RootBlockBatchJoinService {
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+    }
+
+    #[async_trait(?Send)]
+    impl BlockBatchSemanticJoinService for RootBlockBatchJoinService {
+        async fn execute_block_batch_join(
+            &self,
+            left: &[UnifiedRecord],
+            right: &[UnifiedRecord],
+            join_field: &str,
+            top_k: u32,
+            config: &crate::query::unified::ast::BlockBatchConfig,
+        ) -> JoinResult {
+            execute_block_batch_semantic_join(
+                left,
+                right,
+                join_field,
+                top_k,
+                config,
+                self.llm_engine.clone(),
+            )
+            .await
+        }
+    }
+
+    let similarity_engine =
+        CosineSimilarityAdapter(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
+    let block_batch_service = RootBlockBatchJoinService { llm_engine };
+    let result = execute_join_with_services(
+        left,
+        right,
+        dependency,
+        &similarity_engine,
+        &block_batch_service,
+    )
+    .await;
     debug!(
         "Join result: {} matched, {} unmatched_left",
-        matched.len(),
-        unmatched_left.len()
+        result.matched.len(),
+        result.unmatched_left.len()
     );
-
-    JoinResult {
-        matched,
-        unmatched_left,
-        has_matches,
-    }
-}
-
-/// Extract a vector from a record for semantic join
-fn extract_vector(record: &UnifiedRecord, field: &str) -> Option<Vec<f32>> {
-    // 1. Try to extract from the data JSON
-    if let Some(val) = record.data.get(field) {
-        if let Some(arr) = val.as_array() {
-            let vec: Vec<f32> = arr
-                .iter()
-                .filter_map(|v| v.as_f64().map(|f| f as f32))
-                .collect();
-            if !vec.is_empty() {
-                return Some(vec);
-            }
-        }
-    }
-
-    // 2. Try to extract from metadata if stored as comma-separated string
-    if let Some(val) = record.metadata.get(field) {
-        let vec: Vec<f32> = val
-            .split(',')
-            .filter_map(|s| s.trim().parse::<f32>().ok())
-            .collect();
-        if !vec.is_empty() {
-            return Some(vec);
-        }
-    }
-
-    None
-}
-
-/// Build a hash index of records by join field value
-fn build_join_index<'a>(
-    records: &'a [UnifiedRecord],
-    join_field: &str,
-) -> HashMap<String, Vec<&'a UnifiedRecord>> {
-    let mut index: HashMap<String, Vec<&UnifiedRecord>> = HashMap::new();
-
-    for record in records {
-        let values = extract_join_values(record, join_field);
-        for value in values {
-            index.entry(value).or_default().push(record);
-        }
-    }
-
-    index
-}
-
-/// Extract join field value(s) from a record
-///
-/// The join field can be:
-/// - "id" - the record's ID
-/// - A path in the data JSON (e.g., "user_id", "metadata.customer_id")
-/// - A metadata key
-fn extract_join_values(record: &UnifiedRecord, join_field: &str) -> Vec<String> {
-    let mut values = Vec::new();
-
-    // Special case: "id" field
-    if join_field == "id" {
-        values.push(record.id.clone());
-        return values;
-    }
-
-    // Try to extract from the data JSON
-    if let Some(val) = extract_from_json(&record.data, join_field) {
-        values.push(val);
-        return values;
-    }
-
-    // Try to extract from metadata
-    if let Some(val) = record.metadata.get(join_field) {
-        values.push(val.clone());
-        return values;
-    }
-
-    // If field contains dots, try nested path extraction
-    if join_field.contains('.') {
-        let parts: Vec<&str> = join_field.split('.').collect();
-        if let Some(val) = extract_nested_json(&record.data, &parts) {
-            values.push(val);
-        }
-    }
-
-    values
-}
-
-/// Extract a value from JSON by field name
-fn extract_from_json(data: &serde_json::Value, field: &str) -> Option<String> {
-    match data.get(field) {
-        Some(serde_json::Value::String(s)) => Some(s.clone()),
-        Some(serde_json::Value::Number(n)) => Some(n.to_string()),
-        Some(serde_json::Value::Bool(b)) => Some(b.to_string()),
-        Some(serde_json::Value::Array(arr)) => {
-            // For arrays, we might want to match any element
-            // Return first element as string for now
-            arr.first().and_then(|v| match v {
-                serde_json::Value::String(s) => Some(s.clone()),
-                serde_json::Value::Number(n) => Some(n.to_string()),
-                _ => None,
-            })
-        }
-        _ => None,
-    }
-}
-
-/// Extract a value from nested JSON path
-fn extract_nested_json(data: &serde_json::Value, path_parts: &[&str]) -> Option<String> {
-    if path_parts.is_empty() {
-        return None;
-    }
-
-    let mut current = data;
-    for part in path_parts {
-        current = current.get(*part)?;
-    }
-
-    match current {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
-        _ => None,
-    }
-}
-
-/// Merge two records from different models into one
-fn merge_records(left: &UnifiedRecord, right: &UnifiedRecord, join_field: &str) -> UnifiedRecord {
-    // Create merged data object
-    let mut merged_data = serde_json::Map::new();
-
-    // Add left data under its model prefix
-    let left_key = format!("{}", left.source_model);
-    merged_data.insert(left_key, left.data.clone());
-
-    // Add right data under its model prefix
-    let right_key = format!("{}", right.source_model);
-    merged_data.insert(right_key, right.data.clone());
-
-    // Add the join field value for clarity
-    merged_data.insert(
-        "join_field".to_string(),
-        serde_json::Value::String(join_field.to_string()),
-    );
-
-    // Merge metadata
-    let mut merged_metadata = left.metadata.clone();
-    for (k, v) in &right.metadata {
-        merged_metadata
-            .entry(format!("{}_{}", right.source_model, k))
-            .or_insert_with(|| v.clone());
-    }
-
-    // Use left's ID as primary, with right's ID in metadata
-    merged_metadata.insert("right_id".to_string(), right.id.clone());
-
-    // Calculate merged score (average if both have scores)
-    let merged_score = match (left.score, right.score) {
-        (Some(l), Some(r)) => Some((l + r) / 2.0),
-        (Some(s), None) | (None, Some(s)) => Some(s),
-        (None, None) => None,
-    };
-
-    UnifiedRecord {
-        id: left.id.clone(),
-        source_model: left.source_model.clone(),
-        data: serde_json::Value::Object(merged_data),
-        score: merged_score,
-        metadata: merged_metadata,
-    }
+    result
 }
 
 /// Execute multiple joins in sequence for components with multiple dependencies
@@ -1661,78 +864,14 @@ pub async fn execute_multi_join(
     prior_results: &HashMap<usize, &SubQueryResult>,
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 ) -> SubQueryResult {
-    if dependencies.is_empty() {
-        return component_result.clone();
-    }
-
-    let mut current_records = component_result.records.clone();
-    let source_model = component_result.source_model.clone();
-
-    for dep in dependencies {
-        if let Some(prior) = prior_results.get(&dep.component_index) {
-            let join_result =
-                execute_join(&current_records, &prior.records, dep, llm_engine.clone()).await;
-            current_records = join_result
-                .to_subquery_result(source_model.clone(), &dep.join_type)
-                .records;
-        }
-    }
-
-    let count = current_records.len() as u64;
-    SubQueryResult {
-        source_model,
-        records_returned: count,
-        records: current_records,
-        total_count: Some(count),
-        execution_time_us: component_result.execution_time_us,
-        records_scanned: component_result.records_scanned,
-    }
-}
-
-/// Filter results by IDs from a prior component (legacy behavior)
-pub fn filter_by_ids(
-    records: &[UnifiedRecord],
-    prior_ids: &[String],
-    include: bool,
-) -> Vec<UnifiedRecord> {
-    let id_set: std::collections::HashSet<&str> = prior_ids.iter().map(|s| s.as_str()).collect();
-
-    records
-        .iter()
-        .filter(|r| {
-            let in_set = id_set.contains(r.id.as_str());
-            if include { in_set } else { !in_set }
-        })
-        .cloned()
-        .collect()
-}
-
-/// Dispatch a semantic join to the right backend based on the mode.
-///
-/// Cosine routes to [`execute_semantic_join`] (always available).
-/// LlmBlockBatch routes to [`execute_block_batch_semantic_join`],
-/// which is feature-gated behind `llm-joins`. When the feature is
-/// off, the LLM path returns a JoinResult with no matches and logs
-/// the misconfiguration so callers can see it in server logs.
-async fn dispatch_semantic_join(
-    left: &[UnifiedRecord],
-    right: &[UnifiedRecord],
-    join_field: &str,
-    threshold: f32,
-    top_k: u32,
-    mode: &crate::query::unified::ast::SemanticJoinMode,
-    llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
-) -> JoinResult {
-    use crate::query::unified::ast::SemanticJoinMode;
-    match mode {
-        SemanticJoinMode::Cosine => {
-            execute_semantic_join(left, right, join_field, threshold, top_k)
-        }
-        SemanticJoinMode::LlmBlockBatch(config) => {
-            execute_block_batch_semantic_join(left, right, join_field, top_k, config, llm_engine)
-                .await
-        }
-    }
+    let join_executor = RootJoinExecutor { llm_engine };
+    execute_multi_join_with(
+        component_result,
+        dependencies,
+        prior_results,
+        &join_executor,
+    )
+    .await
 }
 
 /// LLM block-batched semantic join (TD-049, arXiv:2510.08489).
@@ -1879,99 +1018,15 @@ async fn execute_block_batch_semantic_join(
     }
 }
 
-/// Execute a semantic join based on vector similarity
-fn execute_semantic_join(
-    left: &[UnifiedRecord],
-    right: &[UnifiedRecord],
-    join_field: &str,
-    threshold: f32,
-    top_k: u32,
-) -> JoinResult {
-    use crate::compute::distance_computation::DistanceMetric;
-    use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-
-    let mut matched = Vec::new();
-    let mut unmatched_left = Vec::new();
-    let mut has_matches = false;
-
-    // Use Cosine similarity for semantic matching by default
-    let engine = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
-
-    // Prepare right vectors for efficient comparison
-    let right_vectors: Vec<(usize, Vec<f32>)> = right
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| extract_vector(r, join_field).map(|v| (i, v)))
-        .collect();
-
-    if right_vectors.is_empty() {
-        return JoinResult {
-            matched: Vec::new(),
-            unmatched_left: left.to_vec(),
-            has_matches: false,
-        };
-    }
-
-    for left_record in left {
-        if let Some(left_vec) = extract_vector(left_record, join_field) {
-            let mut matches: Vec<(f32, &UnifiedRecord)> = Vec::new();
-
-            for (right_idx, right_vec) in &right_vectors {
-                // UnifiedDistanceCompute returns (1 - similarity) for Cosine
-                // So LOWER = MORE SIMILAR.
-                // We want similarity > threshold, which means distance < (1 - threshold)
-                let distance = engine.distance(&left_vec, right_vec);
-                let similarity = 1.0 - distance;
-
-                if similarity >= threshold {
-                    matches.push((similarity, &right[*right_idx]));
-                }
-            }
-
-            if !matches.is_empty() {
-                has_matches = true;
-                // Sort by similarity descending
-                matches.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-                // Take top_k
-                for (_, right_record) in matches.iter().take(top_k as usize) {
-                    let mut joined = left_record.clone();
-                    // Merge data from right record
-                    if let Some(obj) = joined.data.as_object_mut() {
-                        if let Some(right_obj) = right_record.data.as_object() {
-                            for (k, v) in right_obj {
-                                if !obj.contains_key(k) {
-                                    obj.insert(k.clone(), v.clone());
-                                } else {
-                                    // Prefix with right_ if collision
-                                    obj.insert(format!("right_{}", k), v.clone());
-                                }
-                            }
-                        }
-                    }
-                    matched.push(joined);
-                }
-            } else {
-                unmatched_left.push(left_record.clone());
-            }
-        } else {
-            unmatched_left.push(left_record.clone());
-        }
-    }
-
-    JoinResult {
-        matched,
-        unmatched_left,
-        has_matches,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::graph::GraphOperationsService;
     use crate::proto::proximadb_v1::{CreateGraphRequest, Node as ProtoNode, property_value};
-    use crate::query::unified::ast::{DistanceMetric, GraphQueryExpr, VectorSearchParams};
+    use crate::query::unified::ast::{
+        DistanceMetric, FilterOperator, FilterValue, GraphQueryExpr, NodeFilter,
+        PropertyFilter as UnifiedPropertyFilter, StartNodeSpec, VectorSearchParams,
+    };
 
     #[test]
     fn test_executor_creation() {
@@ -1980,10 +1035,9 @@ mod tests {
     }
 
     #[test]
-    fn test_semaphore_permits() {
+    fn test_executor_retains_parallelism_setting() {
         let executor = ParallelExecutor::new(2);
-        // Should have 2 permits available
-        assert_eq!(executor.semaphore.available_permits(), 2);
+        assert_eq!(executor.max_parallel, 2);
     }
 
     #[tokio::test]
@@ -2015,6 +1069,17 @@ mod tests {
     fn test_sql_value_to_json_primitives() {
         use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
 
+        fn sql_value_to_json(val: &SqlValue) -> serde_json::Value {
+            match &val.value {
+                Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+                Some(Value::NumberValue(n)) => serde_json::json!(n),
+                Some(Value::Int64Value(i)) => serde_json::json!(i),
+                Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+                Some(Value::NullValue(_)) => serde_json::Value::Null,
+                _ => serde_json::Value::Null,
+            }
+        }
+
         // Test null
         let null_val = SqlValue {
             value: Some(Value::NullValue(0)),
@@ -2041,6 +1106,18 @@ mod tests {
             sql_value_to_json(&str_val),
             serde_json::Value::String("hello".to_string())
         );
+    }
+
+    #[test]
+    fn test_metric_aggregation_to_observability_preserves_requested_mode() {
+        assert!(matches!(
+            metric_aggregation_to_observability(&QueryMetricAggregation::P95),
+            crate::observability::MetricAggregation::P95
+        ));
+        assert!(matches!(
+            metric_aggregation_to_observability(&QueryMetricAggregation::Rate),
+            crate::observability::MetricAggregation::Rate
+        ));
     }
 
     async fn seed_graph_service() -> Arc<GraphOperationsService> {
@@ -2098,7 +1175,7 @@ mod tests {
             max_depth: 0,
         };
 
-        let result = execute_graph_query(&expr, Some(service))
+        let result = execute_graph_query(&expr, Some(service.as_ref()))
             .await
             .expect("graph query should execute");
 
@@ -2128,7 +1205,7 @@ mod tests {
             max_depth: 0,
         };
 
-        let result = execute_graph_query(&expr, Some(service))
+        let result = execute_graph_query(&expr, Some(service.as_ref()))
             .await
             .expect("graph query should execute");
 
@@ -2146,6 +1223,48 @@ mod tests {
         assert_eq!(names.len(), 2);
         assert!(names.contains("Alice"));
         assert!(names.contains("Bob"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_start_nodes_by_label_uses_canonical_node_query() {
+        let service = seed_graph_service().await;
+
+        let ids = resolve_start_nodes(
+            &StartNodeSpec::Label("Person".to_string()),
+            "social",
+            service.as_ref(),
+            None,
+        )
+        .await
+        .expect("label-based start-node resolution should succeed");
+
+        let ids = ids.into_iter().collect::<std::collections::HashSet<_>>();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("alice"));
+        assert!(ids.contains("bob"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_start_nodes_by_filter_uses_canonical_node_query() {
+        let service = seed_graph_service().await;
+
+        let ids = resolve_start_nodes(
+            &StartNodeSpec::Filter(NodeFilter {
+                label: Some("Person".to_string()),
+                properties: vec![UnifiedPropertyFilter {
+                    name: "name".to_string(),
+                    operator: FilterOperator::Eq,
+                    value: FilterValue::String("Alice".to_string()),
+                }],
+            }),
+            "social",
+            service.as_ref(),
+            None,
+        )
+        .await
+        .expect("filter-based start-node resolution should succeed");
+
+        assert_eq!(ids, vec!["alice".to_string()]);
     }
 
     // =========================================================================

@@ -1,0 +1,20 @@
+[package]
+name = "proximadb-records"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "ProximaRecord unified record envelope (spec §3 — Phase B, TD-054)"
+
+[lib]
+name = "proximadb_records"
+path = "src/lib.rs"
+
+[dependencies]
+proximadb-data-model = { workspace = true }
+proximadb-proto = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true

@@ -67,6 +67,12 @@ mod service_engine_factory;
 mod service_helpers;
 #[path = "service_node_ops.rs"]
 mod service_node_ops;
+#[path = "service_query_read.rs"]
+mod service_query_read;
+#[path = "service_query_stats.rs"]
+mod service_query_stats;
+#[path = "service_query_traversal.rs"]
+mod service_query_traversal;
 #[path = "service_schema_validation.rs"]
 mod service_schema_validation;
 #[path = "service_transactions.rs"]

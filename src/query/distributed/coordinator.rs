@@ -23,12 +23,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use proximadb_graph::query::service::GraphQueryService;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::cluster::{ClusterManager, NodeInfo, RoutingService, ShardManager};
 use crate::core::error::ProximaDBError;
-use crate::graph::service::GraphOperationsService;
 use crate::observability::ObservabilityService;
 use crate::query::unified::ast::MultiModelQuery;
 use crate::query::unified::executor::ParallelExecutor;
@@ -136,7 +136,7 @@ pub struct DistributedQueryCoordinator {
     /// Document execution service for local subqueries
     document_service: Option<Arc<DocumentService>>,
     /// Graph execution service for local subqueries
-    graph_service: Option<Arc<GraphOperationsService>>,
+    graph_service: Option<Arc<dyn GraphQueryService>>,
     /// Observability execution service for local subqueries
     observability_service: Option<Arc<ObservabilityService>>,
     /// Execution statistics
@@ -212,9 +212,12 @@ impl DistributedQueryCoordinator {
         self
     }
 
-    /// Wire graph service into local subquery execution.
-    pub fn with_graph_service(mut self, graph_service: Arc<GraphOperationsService>) -> Self {
-        self.graph_service = Some(graph_service);
+    /// Wire graph query/traversal service into local subquery execution.
+    pub fn with_graph_service<G>(mut self, graph_service: Arc<G>) -> Self
+    where
+        G: GraphQueryService + 'static,
+    {
+        self.graph_service = Some(graph_service as Arc<dyn GraphQueryService>);
         self
     }
 

@@ -264,6 +264,49 @@ impl CatalogDataType {
     }
 }
 
+impl CatalogDataType {
+    /// Convert to the canonical [`proximadb_data_model::ProximaType`].
+    ///
+    /// This is the single bridge between the catalog layer and the wire type
+    /// system (spec §4). Call site example:
+    /// ```ignore
+    /// let pt = CatalogDataType::Decimal.to_proxima_type();
+    /// let oid = pt.pgwire_oid(); // 1700
+    /// ```
+    pub fn to_proxima_type(&self) -> proximadb_data_model::ProximaType {
+        use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+        match self {
+            CatalogDataType::Boolean => ProximaType::Boolean,
+            CatalogDataType::Int8 => ProximaType::Int8,
+            CatalogDataType::Int16 => ProximaType::Int16,
+            CatalogDataType::Int32 => ProximaType::Int32,
+            CatalogDataType::Int64 => ProximaType::Int64,
+            CatalogDataType::Float32 => ProximaType::Float32,
+            CatalogDataType::Float64 => ProximaType::Float64,
+            CatalogDataType::String => ProximaType::String,
+            CatalogDataType::Binary => ProximaType::Binary,
+            CatalogDataType::Date => ProximaType::Date,
+            CatalogDataType::Time => ProximaType::Time(TimeUnit::Nanosecond),
+            CatalogDataType::Timestamp => ProximaType::Timestamp(TimeUnit::Nanosecond),
+            CatalogDataType::TimestampTz => ProximaType::TimestampTz(TimeUnit::Nanosecond),
+            CatalogDataType::Decimal => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
+            CatalogDataType::Uuid => ProximaType::Uuid,
+            CatalogDataType::Json => ProximaType::Json,
+            CatalogDataType::Vector => ProximaType::DenseVector {
+                element: VectorElement::Float32,
+                dim: 0,
+            },
+            CatalogDataType::SparseVector => ProximaType::SparseVector {
+                element: VectorElement::Float32,
+            },
+            CatalogDataType::BinaryVector => ProximaType::BinaryVector { dim: 0 },
+        }
+    }
+}
+
 /// Table schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogTableSchema {
@@ -747,5 +790,64 @@ mod tests {
             let back = CatalogDataType::from_proto_i32(proto);
             assert_eq!(dt, back);
         }
+    }
+
+    // ----- Phase A: catalog → ProximaType bridge tests -----
+
+    #[test]
+    fn test_catalog_to_proxima_type_lossless() {
+        use proximadb_data_model::ProximaType;
+        let all = [
+            CatalogDataType::Boolean,
+            CatalogDataType::Int8,
+            CatalogDataType::Int16,
+            CatalogDataType::Int32,
+            CatalogDataType::Int64,
+            CatalogDataType::Float32,
+            CatalogDataType::Float64,
+            CatalogDataType::String,
+            CatalogDataType::Binary,
+            CatalogDataType::Date,
+            CatalogDataType::Time,
+            CatalogDataType::Timestamp,
+            CatalogDataType::TimestampTz,
+            CatalogDataType::Decimal,
+            CatalogDataType::Uuid,
+            CatalogDataType::Json,
+            CatalogDataType::Vector,
+            CatalogDataType::SparseVector,
+            CatalogDataType::BinaryVector,
+        ];
+        for dt in &all {
+            let pt = dt.to_proxima_type();
+            // Every variant must map — no panics, no unhandled cases
+            let _ = format!("{:?}", pt);
+        }
+    }
+
+    #[test]
+    fn test_catalog_decimal_maps_to_proxima_decimal() {
+        use proximadb_data_model::ProximaType;
+        let pt = CatalogDataType::Decimal.to_proxima_type();
+        assert!(matches!(
+            pt,
+            ProximaType::Decimal {
+                precision: 38,
+                scale: 10
+            }
+        ));
+    }
+
+    #[test]
+    fn test_catalog_timestamptz_pgwire_oid() {
+        // Through the bridge: CatalogDataType → ProximaType → pgwire OID
+        let oid = CatalogDataType::TimestampTz.to_proxima_type().pgwire_oid();
+        assert_eq!(oid, 1184, "TimestampTz OID must be 1184");
+    }
+
+    #[test]
+    fn test_catalog_uuid_pgwire_oid() {
+        let oid = CatalogDataType::Uuid.to_proxima_type().pgwire_oid();
+        assert_eq!(oid, 2950, "UUID OID must be 2950");
     }
 }

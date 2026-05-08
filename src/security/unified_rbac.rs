@@ -20,8 +20,8 @@ pub use crate::storage::tenant::rbac::{
     CollectionOperation as EnhancedCollectionOperation, Permission as EnhancedPermission,
 };
 
-/// Data model enum for cross-model permission validation — re-exported from canonical definition
-pub use crate::query::multimodel_router::StoreType as DataModel;
+/// Data model enum for cross-model permission validation — re-exported from canonical definition.
+pub use proximadb_data_model::StoreType as DataModel;
 
 /// Permission cache entry with TTL
 #[derive(Debug, Clone)]

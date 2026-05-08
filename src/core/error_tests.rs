@@ -116,8 +116,7 @@ mod tests {
 
     #[test]
     fn test_network_error_variants() {
-        let grpc_status = tonic::Status::unavailable("Service unavailable");
-        let grpc_err = NetworkError::Grpc(grpc_status);
+        let grpc_err = NetworkError::Grpc("Service unavailable".to_string());
         assert!(grpc_err.to_string().contains("gRPC error"));
 
         let http_err = NetworkError::Http("404 Not Found".to_string());

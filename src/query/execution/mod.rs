@@ -25,10 +25,10 @@ pub use plan_cache::{
 pub use set_operations::*;
 
 use crate::core::search::FilterExpression;
-use crate::graph::GraphOperationsService;
 use crate::query::ast::Query;
 use crate::services::operations::vectors::VectorOperationsService;
 use anyhow::{Result, anyhow};
+use proximadb_graph::query::service::GraphExecutionService;
 use std::sync::Arc;
 
 /// Unified query engine with AST-based execution
@@ -38,18 +38,16 @@ use std::sync::Arc;
 pub struct QueryEngine {
     #[allow(dead_code)]
     vector_service: Arc<VectorOperationsService>,
-    #[allow(dead_code)]
-    graph_service: Arc<GraphOperationsService>,
     planner: crate::query::execution::planner::ExecutionPlanner,
     executor: crate::query::execution::executor::QueryExecutor,
 }
 
 impl QueryEngine {
     /// Create new unified query engine
-    pub fn new(
-        vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphOperationsService>,
-    ) -> Self {
+    pub fn new<G>(vector_service: Arc<VectorOperationsService>, graph_service: Arc<G>) -> Self
+    where
+        G: GraphExecutionService + 'static + ?Sized,
+    {
         let planner = crate::query::execution::planner::ExecutionPlanner::new(
             vector_service.clone(),
             graph_service.clone(),
@@ -62,18 +60,20 @@ impl QueryEngine {
 
         Self {
             vector_service,
-            graph_service,
             planner,
             executor,
         }
     }
 
     /// Create query engine with planner parameters (e.g., bound SQL params)
-    pub fn new_with_params(
+    pub fn new_with_params<G>(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphOperationsService>,
+        graph_service: Arc<G>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
-    ) -> Self {
+    ) -> Self
+    where
+        G: GraphExecutionService + 'static + ?Sized,
+    {
         let planner = crate::query::execution::planner::ExecutionPlanner::with_params(
             vector_service.clone(),
             graph_service.clone(),
@@ -85,20 +85,22 @@ impl QueryEngine {
         );
         Self {
             vector_service,
-            graph_service,
             planner,
             executor,
         }
     }
 
     /// Create query engine with planner params and seeding strategy for hybrid queries
-    pub fn new_with_options(
+    pub fn new_with_options<G>(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphOperationsService>,
+        graph_service: Arc<G>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         seeding_strategy: SeedingStrategy,
         fusion_weights: Option<Vec<f64>>,
-    ) -> Self {
+    ) -> Self
+    where
+        G: GraphExecutionService + 'static + ?Sized,
+    {
         let mut planner = crate::query::execution::planner::ExecutionPlanner::with_params(
             vector_service.clone(),
             graph_service.clone(),
@@ -112,7 +114,6 @@ impl QueryEngine {
         );
         Self {
             vector_service,
-            graph_service,
             planner,
             executor,
         }

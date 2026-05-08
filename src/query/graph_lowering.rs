@@ -1,12 +1,11 @@
 //! Shared lowering helpers for declarative graph queries.
 //!
-//! This module bridges the supported graph query subset parser to the
-//! multi-model query IR so facade, federated, and unified surfaces can
-//! reuse the same graph target resolution and output-shape contract.
+//! This module now acts as a thin compatibility adapter from the extracted
+//! `proximadb-graph-subset` lowering contract into the root unified query IR.
 
 use anyhow::Result;
+use proximadb_graph_subset::lower_supported_graph_query;
 
-use crate::query::graph_subset::describe_supported_graph_query;
 use crate::query::unified::ast::{DataModel, GraphQueryExpr, ModelOperation, QueryComponent};
 
 /// Lower a supported declarative graph query into the unified query IR.
@@ -15,15 +14,7 @@ pub(crate) fn lower_supported_graph_query_expr(
     request_target: Option<&str>,
     default_graph: Option<&str>,
 ) -> Result<GraphQueryExpr> {
-    let descriptor = describe_supported_graph_query(query, request_target, default_graph)?;
-
-    Ok(GraphQueryExpr {
-        graph_name: descriptor.graph_id().to_string(),
-        normalized_query: descriptor.normalized_query().to_string(),
-        output_columns: descriptor.output_columns().to_vec(),
-        uses_legacy_node_rows: descriptor.uses_legacy_node_rows(),
-        max_depth: descriptor.max_depth(),
-    })
+    lower_supported_graph_query(query, request_target, default_graph)
 }
 
 /// Lower a supported declarative graph query into a graph query component.
@@ -82,5 +73,31 @@ mod tests {
         .expect_err("conflicting graph targets should fail");
 
         assert!(error.to_string().contains("target conflict"));
+    }
+
+    #[test]
+    fn lowering_uses_default_graph_and_legacy_shape_for_node_projection() {
+        let expr = lower_supported_graph_query_expr(
+            "MATCH (n:Person)-[:KNOWS]->(m:Person) RETURN m",
+            None,
+            Some("social"),
+        )
+        .expect("graph query should lower");
+
+        assert_eq!(expr.graph_name, "social");
+        assert_eq!(
+            expr.normalized_query,
+            "MATCH (n:Person)-[:KNOWS]->(m:Person) RETURN m"
+        );
+        assert_eq!(
+            expr.output_columns,
+            vec![
+                "node_id".to_string(),
+                "label".to_string(),
+                "properties".to_string()
+            ]
+        );
+        assert!(expr.uses_legacy_node_rows);
+        assert_eq!(expr.max_depth, 1);
     }
 }

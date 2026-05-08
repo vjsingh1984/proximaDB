@@ -1,0 +1,38 @@
+pub mod document_adapter;
+pub mod evolutionary;
+pub mod execution;
+pub mod fusion;
+pub mod graph_adapter;
+pub mod joins;
+pub mod learned_fusion;
+pub mod lowering;
+pub mod observability_adapter;
+pub mod optimizer;
+pub mod optimizer_support;
+pub mod orchestration;
+pub mod plan_execution_cache;
+pub mod reranking;
+pub mod results;
+pub mod vector_adapter;
+
+pub use document_adapter::*;
+pub use evolutionary::*;
+pub use execution::*;
+pub use fusion::*;
+pub use graph_adapter::*;
+pub use joins::*;
+pub use learned_fusion::*;
+pub use lowering::*;
+pub use observability_adapter::*;
+pub use optimizer::*;
+pub use optimizer_support::{
+    EstimationMethod, FusionStrategy as OptimizerFusionStrategy, OptimizedPlan,
+    OptimizerCollectionStats, OptimizerConfig, PlanCache, PlanCacheStats, PushedFilter,
+    QueryHistoryEntry, QueryStatistics, SelectivityEstimate, compute_query_hash,
+    select_fusion_strategy,
+};
+pub use orchestration::*;
+pub use plan_execution_cache::*;
+pub use reranking::*;
+pub use results::*;
+pub use vector_adapter::*;

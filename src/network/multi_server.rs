@@ -87,6 +87,7 @@ use crate::storage::document::DocumentService;
 use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::multimodel::MultiModelStorageFacade;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb_graph::query::service::{GraphExecutionService, GraphQueryService};
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 ///
@@ -709,8 +710,12 @@ pub struct SharedServices {
     pub collection_service: Arc<CollectionService>,
     /// Vector CRUD and search operations service
     pub vector_operations_service: Arc<VectorOperationsService>,
-    /// Graph database operations service
+    /// Concrete graph database operations service for native graph APIs and gRPC graph endpoints
     pub graph_service: Arc<crate::graph::GraphService>,
+    /// Extracted graph query/traversal capability for query-facing orchestration layers
+    pub graph_query_service: Arc<dyn GraphQueryService>,
+    /// Extracted graph execution capability for planners/executors and API state holders
+    pub graph_execution_service: Arc<dyn GraphExecutionService>,
     /// Document storage and retrieval service
     pub document_service: Arc<DocumentService>,
     /// Observability service for logs, metrics, and traces
@@ -1116,7 +1121,7 @@ impl SharedServices {
         //
         // Create a SINGLE GraphCollectionService instance here and pass it to BOTH:
         // - GraphOperationsService (via new_with_collection_service)
-        // - UnifiedHandlers (via with_shared_graph_services)
+        // - UnifiedHandlers and query orchestration layers (via extracted graph contracts)
         //
         // This ensures ALL graph endpoints and operations share the same state.
         // ==================================================================================
@@ -1177,8 +1182,11 @@ impl SharedServices {
             snapshot_interval_seconds: 300, // 5 minutes
         };
         let metrics_store = Arc::new(
-            crate::metrics::store::MetricsPersistenceLayer::new(filesystem_factory, metrics_config)
-                .await?,
+            crate::metrics::store::MetricsPersistenceLayer::new(
+                filesystem_factory.clone(),
+                metrics_config,
+            )
+            .await?,
         );
         let metrics_updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> = Arc::new(
             crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
@@ -1236,8 +1244,38 @@ impl SharedServices {
         let observability_query_engine =
             Arc::new(ObservabilityQueryEngine::new(observability_storage.clone()));
 
+        // Create EventLogEngine for persistent audit trails (TD-050 Phase 5)
+        debug!("🔧 SharedServices::new - Creating EventLogEngine for audit trails...");
+        let event_log_base_path = storage_config.metadata_url.replace("file://", "") + "/auditlog";
+        let event_log_config = crate::storage::engines::eventlog::EventLogConfig {
+            base_dir: std::path::PathBuf::from(event_log_base_path),
+            ..Default::default()
+        };
+        let event_log_filesystem = Arc::new(
+            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                filesystem_factory.get_filesystem(&storage_config.metadata_url)?,
+                "auditlog".to_string(),
+                "eventlog".to_string(),
+            ),
+        );
+        let event_log = match crate::storage::engines::eventlog::EventLogEngine::new(
+            event_log_config,
+            event_log_filesystem,
+        ) {
+            Ok(engine) => Some(Arc::new(engine)),
+            Err(e) => {
+                warn!("Failed to create EventLogEngine for audit trails: {}", e);
+                None
+            }
+        };
+
+        // Derive extracted graph capability views once here so query/orchestration
+        // layers depend on explicit contracts rather than the full concrete service.
+        let graph_query_service = graph_service.clone();
+        let graph_execution_service = graph_service.clone();
+
         // Create unified handlers with SHARED graph services
-        // IMPORTANT: Pass the pre-created GraphCollectionService and GraphOperationsService
+        // IMPORTANT: Pass the pre-created GraphCollectionService and graph execution service
         // to ensure ALL graph endpoints and operations share the same state
         debug!("🔧 SharedServices::new - Creating UnifiedHandlers with SHARED graph services...");
         let unified_handlers_instance = UnifiedHandlers::new(
@@ -1245,8 +1283,9 @@ impl SharedServices {
             vector_operations_service.clone(),
             document_service.clone(),
             observability_service.clone(),
+            event_log,
             graph_collection_service.clone(), // SHARED instance
-            graph_service.clone(),            // Uses the SHARED collection service
+            graph_service.clone(),            // Concrete native graph operations service
         );
 
         // Apply hybrid runtime config if provided
@@ -1271,9 +1310,9 @@ impl SharedServices {
                 collection_service.clone(),
             ));
 
-        // Create GraphStrategy wrapping GraphOperationsService
+        // Create GraphStrategy wrapping the extracted graph query contract
         let graph_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
-            Arc::new(GraphStrategy::new(graph_service.clone()));
+            Arc::new(GraphStrategy::new(graph_query_service.clone()));
 
         // Create DocumentStrategy wrapping DocumentService for JSON document queries
         // DocumentService provides MongoDB-like document operations (CRUD, indexing, queries)
@@ -1389,7 +1428,7 @@ impl SharedServices {
             )
             .with_vector_ops(vector_operations_service.clone())
             .with_document_service(document_service.clone())
-            .with_graph_service(graph_service.clone())
+            .with_graph_service(graph_query_service.clone())
             .with_observability_service(observability_service.clone()),
         );
         debug!(
@@ -1429,6 +1468,8 @@ impl SharedServices {
                 collection_service: collection_service.clone(),
                 vector_operations_service,
                 graph_service,
+                graph_query_service,
+                graph_execution_service,
                 document_service,
                 observability_service,
                 unified_handlers,
@@ -2001,6 +2042,7 @@ impl MultiServer {
             let rest_auth_enabled = self.rest_auth_enabled;
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
+            let graph_execution_service = services.graph_execution_service.clone();
 
             let api_config = self.config.api_config.clone();
             // Compression disabled by default (field doesn't exist in config)
@@ -2018,6 +2060,7 @@ impl MultiServer {
                 match RestServer::with_security_and_config(
                     rest_bind_addr,
                     unified_handlers,
+                    graph_execution_service,
                     max_request_size_mb,
                     enable_compression,
                     metrics_collector,
@@ -2670,6 +2713,7 @@ impl MultiServer {
             let rest_auth_enabled = self.rest_auth_enabled;
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
+            let graph_execution_service = services.graph_execution_service.clone();
             let api_config = self.config.api_config.clone();
 
             let rest_handle = tokio::spawn(async move {
@@ -2683,6 +2727,7 @@ impl MultiServer {
                 match RestServer::with_security_and_config(
                     rest_bind_addr,
                     unified_handlers,
+                    graph_execution_service,
                     max_request_size_mb,
                     false, // compression disabled
                     metrics_collector,
@@ -2690,6 +2735,7 @@ impl MultiServer {
                     rest_security,
                     data_dir,
                     query_adapter,
+                    None,
                 )
                 .start()
                 .await

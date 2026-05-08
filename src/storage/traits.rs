@@ -824,6 +824,16 @@ pub trait UnifiedStorageEngine: Send + Sync {
         true // All engines support background operations by default
     }
 
+    /// Return an engine-level RLS predicate to apply at scan time (spec §8).
+    ///
+    /// The default implementation returns `None` (no filtering), preserving
+    /// backward compatibility with all existing engines. Engines that store
+    /// `tenant_id`/`permitted_principals` as indexed record fields override
+    /// this to push tenant isolation into the scan iterator itself.
+    fn rls_record_filter(&self, _ctx: &StorageQueryContext) -> Option<RlsRecordPredicate> {
+        None
+    }
+
     /// Get comprehensive capability set for this engine
     ///
     /// Returns a CapabilitySet from the query capability registry that describes
@@ -1792,6 +1802,31 @@ pub enum OperationPriority {
 /// Used by: Storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR)
 /// Created by: VectorOperationsService.execute_search_internal()
 ///
+// ---------------------------------------------------------------------------
+// Engine-level RLS predicate (spec §8 — Phase E scaffold)
+// ---------------------------------------------------------------------------
+
+/// Predicate evaluated by the storage engine at scan time for row-level security.
+///
+/// Engines that implement `rls_record_filter()` apply this predicate inside their
+/// scan iterator — no application-layer tenant filtering required.
+/// See MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc §8.
+#[derive(Debug, Clone, Default)]
+pub struct RlsRecordPredicate {
+    /// If `Some`, only records whose `tenant_id` matches are returned.
+    pub required_tenant_id: Option<String>,
+    /// If `Some`, only records that contain this principal in `permitted_principals`
+    /// (or have an empty `permitted_principals` list) are returned.
+    pub required_principal: Option<String>,
+}
+
+impl RlsRecordPredicate {
+    /// Return `true` when no filtering is needed (both fields are `None`).
+    pub fn is_passthrough(&self) -> bool {
+        self.required_tenant_id.is_none() && self.required_principal.is_none()
+    }
+}
+
 /// Design principles:
 /// - Immutable: All references are read-only during search
 /// - Zero-copy: Uses Arc for shared ownership without cloning
@@ -2604,7 +2639,7 @@ pub trait MultiModelStorage:
 }
 
 /// Supported data models — re-exported from the canonical definition
-pub use crate::query::multimodel_router::StoreType as DataModel;
+pub use proximadb_data_model::StoreType as DataModel;
 
 /// Unified statistics across all data models
 #[derive(Debug, Clone, Default)]
@@ -2826,5 +2861,53 @@ impl Default for CompactionResult {
             completed_at: Utc::now(),
             engine_metrics: HashMap::new(),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase E RLS scaffold tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod rls_tests {
+    use super::RlsRecordPredicate;
+
+    #[test]
+    fn test_rls_predicate_default_is_passthrough() {
+        let pred = RlsRecordPredicate::default();
+        assert!(
+            pred.is_passthrough(),
+            "default predicate must not filter anything"
+        );
+    }
+
+    #[test]
+    fn test_rls_predicate_tenant_id_not_passthrough() {
+        let pred = RlsRecordPredicate {
+            required_tenant_id: Some("acme".to_string()),
+            required_principal: None,
+        };
+        assert!(!pred.is_passthrough());
+        assert_eq!(pred.required_tenant_id.as_deref(), Some("acme"));
+    }
+
+    #[test]
+    fn test_rls_predicate_principal_not_passthrough() {
+        let pred = RlsRecordPredicate {
+            required_tenant_id: None,
+            required_principal: Some("alice".to_string()),
+        };
+        assert!(!pred.is_passthrough());
+    }
+
+    #[test]
+    fn test_rls_predicate_both_set() {
+        let pred = RlsRecordPredicate {
+            required_tenant_id: Some("acme".to_string()),
+            required_principal: Some("alice".to_string()),
+        };
+        assert!(!pred.is_passthrough());
+        assert_eq!(pred.required_tenant_id.as_deref(), Some("acme"));
+        assert_eq!(pred.required_principal.as_deref(), Some("alice"));
     }
 }

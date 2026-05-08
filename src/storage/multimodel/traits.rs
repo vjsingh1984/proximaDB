@@ -12,8 +12,8 @@ use crate::storage::traits::{
     UnifiedStorageEngine,
 };
 
-/// Model type discriminator for routing operations — alias for the canonical StoreType
-pub type ModelType = crate::query::multimodel_router::StoreType;
+/// Model type discriminator for routing operations — alias for the canonical StoreType.
+pub type ModelType = proximadb_data_model::StoreType;
 
 /// Capabilities of a store
 #[derive(Debug, Clone)]

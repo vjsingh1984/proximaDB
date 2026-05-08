@@ -54,6 +54,7 @@
 //! - **Concurrency**: Lock-free operation with Arc-based sharing
 
 use anyhow::{Context, Result, anyhow};
+use proximadb_graph::query::service::GraphExecutionService;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -229,10 +230,14 @@ pub struct UnifiedHandlers {
     pub document_service: Arc<DocumentService>,
     /// Observability service for logs, metrics, and traces
     pub observability_service: Arc<ObservabilityService>,
+    /// Event log engine for persistent audit trails (TD-050)
+    pub event_log: Option<Arc<crate::storage::engines::eventlog::EventLogEngine>>,
     /// Graph collection service for metadata management
     pub graph_collection_service: Arc<crate::services::GraphCollectionService>,
-    /// Graph operations service for graph database operations
+    /// Concrete graph operations service for native graph API operations
     pub graph_operations_service: Arc<crate::graph::GraphOperationsService>,
+    /// Extracted graph execution capability for planners/executors
+    pub graph_execution_service: Arc<dyn GraphExecutionService>,
     /// Metrics query service for collection statistics and optimization hints
     pub metrics_query_service: Option<Arc<MetricsQueryService>>,
     /// Optional hybrid runtime configuration (weights, seeding). Thread-safe.
@@ -264,21 +269,29 @@ impl UnifiedHandlers {
     /// **Graph API Bug Fix:**
     /// - Ensures graph collections are visible to all operations
     /// - Single source of truth for graph metadata
+    ///
+    /// The extracted `GraphExecutionService` view is derived from that same shared
+    /// graph service for query planning/execution paths.
     pub fn new(
         collection_service: Arc<CollectionService>,
         vector_operations_service: Arc<VectorOperationsService>,
         document_service: Arc<DocumentService>,
         observability_service: Arc<ObservabilityService>,
+        event_log: Option<Arc<crate::storage::engines::eventlog::EventLogEngine>>,
         graph_collection_service: Arc<crate::services::GraphCollectionService>,
         graph_operations_service: Arc<crate::graph::GraphOperationsService>,
     ) -> Self {
+        let graph_execution_service: Arc<dyn GraphExecutionService> =
+            graph_operations_service.clone();
         Self {
             collection_service,
             vector_operations_service,
             document_service,
             observability_service,
+            event_log,
             graph_collection_service,
             graph_operations_service,
+            graph_execution_service,
             metrics_query_service: None,
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
             collection_id_cache: CollectionIdCache::new(),
@@ -292,17 +305,22 @@ impl UnifiedHandlers {
         vector_operations_service: Arc<VectorOperationsService>,
         document_service: Arc<DocumentService>,
         observability_service: Arc<ObservabilityService>,
+        event_log: Option<Arc<crate::storage::engines::eventlog::EventLogEngine>>,
         graph_collection_service: Arc<crate::services::GraphCollectionService>,
         graph_operations_service: Arc<crate::graph::GraphOperationsService>,
         metrics_query_service: Arc<MetricsQueryService>,
     ) -> Self {
+        let graph_execution_service: Arc<dyn GraphExecutionService> =
+            graph_operations_service.clone();
         Self {
             collection_service,
             vector_operations_service,
             document_service,
             observability_service,
+            event_log,
             graph_collection_service,
             graph_operations_service,
+            graph_execution_service,
             metrics_query_service: Some(metrics_query_service),
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
             collection_id_cache: CollectionIdCache::new(),
@@ -2025,8 +2043,8 @@ impl UnifiedHandlers {
             .await
             .map_err(|e| anyhow!("Semantic analysis failed: {}", e))?;
 
-        // 4. Create unified query engine with vector and graph services
-        let graph_service = self.graph_operations_service.clone();
+        // 4. Create unified query engine with vector and extracted graph execution services
+        let graph_service = self.graph_execution_service.clone();
         // Resolve runtime hybrid config overrides (seeding + weights)
         let runtime = self.hybrid_runtime.read().ok().and_then(|g| g.clone());
         let (seeding, fusion_weights) = Self::resolve_hybrid_static(runtime, &sql);

@@ -10,6 +10,7 @@
 //! - **Parallel execution planning**: Identify parallelizable operations
 
 use anyhow::{Result, anyhow};
+use proximadb_graph_subset::describe_supported_graph_query;
 use std::collections::HashMap;
 
 use super::parser::{
@@ -17,7 +18,6 @@ use super::parser::{
 };
 use crate::core::error::VectorDBError;
 use crate::query::capability::{Capability, CapabilitySet};
-use crate::query::graph_subset::describe_supported_graph_query;
 use crate::storage::multimodel::ModelType;
 
 /// Physical plan node types

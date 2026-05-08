@@ -1,7 +1,8 @@
 //! # Graph Strategy
 //!
 //! Real implementation of `QueryStrategy` for graph queries.
-//! Reuses the shared graph query subset on top of `GraphOperationsService`.
+//! Reuses the shared graph query subset on top of the extracted graph
+//! read/query contract.
 //!
 //! ## Features
 //!
@@ -29,33 +30,36 @@ use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use proximadb_graph::query::service::GraphQueryReadService;
+use proximadb_graph_subset::discover_default_graph_id;
 use tracing::{debug, info, instrument};
 
-use crate::graph::service::GraphOperationsService;
+#[cfg(test)]
+use proximadb_proto::proximadb_v1::{PropertyValue, property_value};
+
 use crate::query::facade::{
     ExecutionMetrics, GraphQueryResult, QueryContent, QueryContext, QueryRequest, QueryResult,
     QueryResultData, QueryStrategy, QueryType,
 };
 use crate::query::graph_lowering::lower_supported_graph_query_expr;
 use crate::query::graph_runtime::execute_graph_query_expr;
-use crate::query::graph_subset::discover_default_graph_id;
 
-/// Graph Strategy - Real implementation wrapping GraphOperationsService
+/// Graph Strategy - Real implementation wrapping a narrow graph read/query contract.
 ///
 /// This strategy handles `QueryType::Graph` requests by:
 /// 1. Parsing the Cypher-like query through the shared supported subset
-/// 2. Executing against GraphOperationsService
+/// 2. Executing against the extracted graph read/query service contract
 /// 3. Returning unified tabular rows plus graph metrics
 pub struct GraphStrategy {
-    /// Graph operations service for direct graph access
-    graph_ops: Arc<GraphOperationsService>,
+    /// Graph read/query service for direct graph access
+    graph_ops: Arc<dyn GraphQueryReadService>,
     /// Strategy priority (higher = preferred)
     priority: i32,
 }
 
 impl GraphStrategy {
     /// Create a new GraphStrategy
-    pub fn new(graph_ops: Arc<GraphOperationsService>) -> Self {
+    pub fn new(graph_ops: Arc<dyn GraphQueryReadService>) -> Self {
         Self {
             graph_ops,
             priority: 80, // Slightly lower than SQL and vector
@@ -143,10 +147,8 @@ impl GraphStrategy {
 
     /// Convert proto PropertyValue to JSON
     #[cfg(test)]
-    fn property_value_to_json(
-        value: &crate::proto::proximadb_v1::PropertyValue,
-    ) -> serde_json::Value {
-        use crate::proto::proximadb_v1::property_value::Value;
+    fn property_value_to_json(value: &PropertyValue) -> serde_json::Value {
+        use property_value::Value;
 
         match &value.value {
             Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),

@@ -67,13 +67,13 @@ use axum::{
     response::Json as JsonResponse,
     routing::{delete, post},
 };
+use proximadb_graph::query::service::GraphQueryService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::errors::{ApiError, ApiResult};
-use crate::graph::service::GraphOperationsService;
 use crate::observability::ObservabilityService;
 use crate::query::QueryFacadeAdapter;
 use crate::query::federated::{
@@ -145,8 +145,8 @@ pub struct UnifiedQueryApiState {
     pub storage_engine: Arc<dyn UnifiedStorageEngine>,
     /// Vector operations service for vector searches (legacy mode)
     pub vector_ops: Option<Arc<VectorOperationsService>>,
-    /// Graph operations service for graph traversals (legacy mode)
-    pub graph_service: Option<Arc<GraphOperationsService>>,
+    /// Graph query/traversal service for graph requests (legacy mode)
+    pub graph_service: Option<Arc<dyn GraphQueryService>>,
     /// Observability service for logs/metrics (legacy mode)
     pub observability_service: Option<Arc<ObservabilityService>>,
     /// Query decomposer (legacy mode)

@@ -21,6 +21,7 @@
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use proximadb_graph::query::service::GraphQueryService;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -28,7 +29,6 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::cluster::ClusterManager;
-use crate::graph::service::GraphOperationsService;
 use crate::observability::ObservabilityService;
 use crate::query::distributed::DistributedQueryConfig;
 use crate::query::distributed::DistributedQueryCoordinator;
@@ -134,8 +134,11 @@ impl DistributedQueryStrategy {
         self
     }
 
-    /// Wire graph operations into local distributed execution.
-    pub fn with_graph_service(mut self, graph_service: Arc<GraphOperationsService>) -> Self {
+    /// Wire graph query/traversal service into local distributed execution.
+    pub fn with_graph_service<G>(mut self, graph_service: Arc<G>) -> Self
+    where
+        G: GraphQueryService + 'static + ?Sized,
+    {
         self.coordinator = self.coordinator.with_graph_service(graph_service);
         self
     }

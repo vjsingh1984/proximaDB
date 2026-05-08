@@ -7,7 +7,8 @@
 # Usage:
 #   ./scripts/regenerate-proto.sh
 #
-# The regenerated code will be in src/proto/proximadb.v1.rs
+# The extracted proto crate currently owns the generated Rust outputs under:
+#   crates/foundation/proximadb-proto/src/proto/
 
 set -e
 
@@ -26,7 +27,7 @@ fi
 # Clean existing generated code
 echo "🧹 Cleaning existing generated code..."
 rm -rf target/proto/build
-rm -f src/proto/.proto_files
+rm -f crates/foundation/proximadb-proto/src/proto/.proto_files
 
 # Force rebuild by touching proto files
 echo "📝 Touching proto files to trigger rebuild..."
@@ -41,11 +42,11 @@ echo ""
 echo "✅ Proto regeneration complete!"
 echo ""
 echo "📁 Generated files:"
-echo "   - src/proto/proximadb.v1.rs (main proto definitions)"
-echo "   - src/proto/proximadb.*.v1.rs (module-specific definitions)"
+echo "   - crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs"
+echo "   - crates/foundation/proximadb-proto/src/proto/proximadb.*.rs"
 echo ""
 echo "🔍 To verify regeneration worked:"
-echo "   grep -c 'CreateGraphWithEngineRequest' src/proto/proximadb.v1.rs"
+echo "   grep -c 'CreateGraphWithEngineRequest' crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs"
 echo ""
 echo "💡 Next steps:"
 echo "   1. Check that the generated code compiles: cargo check"

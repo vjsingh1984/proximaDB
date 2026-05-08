@@ -1,0 +1,21 @@
+[package]
+name = "proximadb-graph-arrow"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "proximadb_graph_arrow"
+path = "src/lib.rs"
+
+[dependencies]
+arrow = { version = "57.1", features = ["prettyprint"] }
+async-trait.workspace = true
+futures = "0.3"
+proximadb-graph = { path = "../../modalities/proximadb-graph" }
+proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
+serde_json.workspace = true

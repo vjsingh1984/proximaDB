@@ -28,56 +28,7 @@
 //!     └── Relational   → RelationalService (SEQUOIA) → TypedRow
 //! ```
 
-use serde::{Deserialize, Serialize};
-
-/// Store type for multi-model routing.
-///
-/// Each variant maps to a dedicated service layer and storage engine
-/// with its own native result type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum StoreType {
-    /// Vector similarity search (SST/HELIX/VIPER/NOVA engines)
-    /// Returns: OptimizedSearchRecord
-    Vector,
-
-    /// JSON document store (CEDAR engine)
-    /// Returns: DocumentRecord
-    Document,
-
-    /// Property graph (ORION/PULSAR engines)
-    /// Returns: Node/Edge/Path
-    Graph,
-
-    /// Time-series observability: metrics, logs, traces (CHRONO engine)
-    /// Returns: MetricSample/LogEntry/TraceData
-    Observability,
-
-    /// Standard relational tables with typed columns (SEQUOIA engine)
-    /// Returns: TypedRow
-    Relational,
-
-    /// Financial time-series data: OHLC, tick data, IoT sensors (TST engine)
-    /// Returns: TimeSeriesRecord
-    TimeSeries,
-
-    /// Append-only event/audit log (EventLog engine)
-    /// Returns: EventRecord
-    Event,
-}
-
-impl std::fmt::Display for StoreType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StoreType::Vector => write!(f, "vector"),
-            StoreType::Document => write!(f, "document"),
-            StoreType::Graph => write!(f, "graph"),
-            StoreType::Observability => write!(f, "observability"),
-            StoreType::Relational => write!(f, "relational"),
-            StoreType::TimeSeries => write!(f, "timeseries"),
-            StoreType::Event => write!(f, "event"),
-        }
-    }
-}
+pub use proximadb_data_model::StoreType;
 
 /// Detect the store type from a SQL CREATE TABLE statement.
 ///

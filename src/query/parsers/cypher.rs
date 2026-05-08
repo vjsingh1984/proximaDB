@@ -75,12 +75,6 @@
 //! - Aggregations: `count()`, `sum()`, `avg()`, `collect()`
 
 use crate::core::error::ProximaDBError;
-use crate::graph::query::ast::{
-    CompiledPattern, CreateClause, CreateEdgeSpec, CreateNodeSpec, CypherQuery, DeleteClause,
-    EdgeDirection, EdgePattern, MatchPattern, MergeClause, NodePattern, PropertyConstraint,
-    PropertyProjection, ReadingClause, RemoveClause, RemoveItem, ReturnSpec, SetClause, SetItem,
-    UpdatingClause, WhereClause, WithClause,
-};
 use nom::{
     IResult,
     branch::alt,
@@ -90,6 +84,12 @@ use nom::{
     error::VerboseError,
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, tuple},
+};
+use proximadb_graph::query::ast::{
+    CompiledPattern, CreateClause, CreateEdgeSpec, CreateNodeSpec, CypherQuery, DeleteClause,
+    EdgeDirection, EdgePattern, MatchPattern, MergeClause, NodePattern, PropertyConstraint,
+    PropertyProjection, ReadingClause, RemoveClause, RemoveItem, ReturnSpec, SetClause, SetItem,
+    UpdatingClause, WhereClause, WithClause,
 };
 use std::collections::HashMap;
 

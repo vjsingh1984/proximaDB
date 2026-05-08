@@ -54,50 +54,15 @@ use arrow::compute::SortOptions;
 use arrow::compute::{sort_to_indices, take};
 use arrow::record_batch::RecordBatch;
 use futures::stream::{Stream, StreamExt};
+use proximadb_filter_expression::FilterExpression;
+pub use proximadb_pipeline_operator::PipelineOperator;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tracing::{debug, info, trace};
 
-use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::DataChunk;
-
-/// Pipeline operator types for query execution
-#[derive(Debug, Clone, PartialEq)]
-pub enum PipelineOperator {
-    /// Scan operator - reads data from source
-    Scan {
-        /// Source identifier (file path, collection ID, etc.)
-        source: String,
-    },
-    /// Filter operator - applies filter predicate
-    Filter {
-        /// Filter expression
-        expression: FilterExpression,
-    },
-    /// Project operator - projects specific columns
-    Project {
-        /// Column names to project
-        columns: Vec<String>,
-    },
-    /// Sort operator - sorts by specified column
-    Sort {
-        /// Sort column name
-        column: String,
-        /// Ascending or descending
-        ascending: bool,
-        /// Limit on number of results
-        limit: Option<usize>,
-    },
-    /// TopK operator - selects top K results
-    TopK {
-        /// K value
-        k: usize,
-        /// Sort column for ranking
-        sort_column: String,
-    },
-}
 
 /// Pipeline executor for pull-based query execution
 pub struct PipelineExecutor {

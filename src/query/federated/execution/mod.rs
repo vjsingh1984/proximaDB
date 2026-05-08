@@ -23,6 +23,7 @@ use arrow::array::{
 use arrow::compute::{concat, take};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow_buffer::NullBuffer;
+use proximadb_graph_subset::{discover_default_graph_id, legacy_graph_row_to_node};
 use serde_json::Value as JsonValue;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -37,10 +38,7 @@ use crate::proto::proximadb_v1::{
     SqlObject, SqlValue, property_value, sql_value,
 };
 use crate::query::graph_lowering::lower_supported_graph_query_expr;
-use crate::query::graph_runtime::{
-    execute_graph_query_expr_with_start_nodes, legacy_graph_row_to_node,
-};
-use crate::query::graph_subset::discover_default_graph_id;
+use crate::query::graph_runtime::execute_graph_query_expr_with_start_nodes;
 use crate::storage::multimodel::{ModelType, MultiModelStorageFacade};
 use crate::storage::traits::{
     DocumentRecord, DocumentStorageOperations, MetricAggregationParams,
@@ -696,12 +694,12 @@ impl FederatedExecutor {
             .ok_or_else(|| anyhow!("Graph store is not configured"))?;
 
         if let Some(graph_service) = graph_store.service() {
-            let default_graph = discover_default_graph_id(graph_service).await;
+            let default_graph = discover_default_graph_id(graph_service.as_ref()).await;
             if let Ok(graph_query) =
                 lower_supported_graph_query_expr(cypher, None, default_graph.as_deref())
             {
                 let executed = execute_graph_query_expr_with_start_nodes(
-                    graph_service,
+                    graph_service.as_ref(),
                     &graph_query,
                     start_nodes.map(Vec::as_slice),
                 )

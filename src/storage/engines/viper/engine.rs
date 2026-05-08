@@ -2953,6 +2953,33 @@ impl UnifiedStorageEngine for ViperEngine {
         // Use the existing do_compact implementation
         self.do_compact(&params).await
     }
+
+    /// Engine-level RLS predicate (spec §8 — Phase E proof-of-concept).
+    fn rls_record_filter(
+        &self,
+        ctx: &crate::storage::traits::StorageQueryContext,
+    ) -> Option<crate::storage::traits::RlsRecordPredicate> {
+        let tenant_id = ctx
+            .tenant_context
+            .as_ref()
+            .map(|tc| tc.tenant_id.as_str())
+            .or_else(|| {
+                ctx.user_context
+                    .as_ref()
+                    .and_then(|uc| uc.tenant_id.as_deref())
+            });
+
+        let principal = ctx.user_context.as_ref().map(|uc| uc.user_id.as_str());
+
+        if tenant_id.is_none() && principal.is_none() {
+            return None;
+        }
+
+        Some(crate::storage::traits::RlsRecordPredicate {
+            required_tenant_id: tenant_id.map(str::to_string),
+            required_principal: principal.map(str::to_string),
+        })
+    }
 } // End of impl UnifiedStorageEngine for ViperEngine
 
 /// Implementation of UniversallyOptimized trait for VIPER engine

@@ -1,0 +1,512 @@
+/*
+ * Copyright 2025 Vijaykumar Singh
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Bidirectional conversions between modality-specific proto records and
+//! [`ProximaRecord`] (spec §3 — Phase B).
+//!
+//! These `From` impls are the seam between the legacy per-modality proto
+//! types and the unified envelope. They live here (not in the root crate)
+//! to keep the dependency direction clean: `proximadb-records` → `proximadb-proto`.
+
+use std::collections::HashMap;
+
+use proximadb_data_model::ProximaValue;
+use proximadb_proto::proximadb_v1::{
+    Edge, EmbeddingVersion, Node, PropertyValue, SqlValue, VectorRecord, property_value, sql_value,
+};
+
+use crate::{
+    EdgeDirection, EdgeShape, EmbeddingCell, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode,
+    TypedRef,
+};
+
+// ---------------------------------------------------------------------------
+// Value conversion helpers
+// ---------------------------------------------------------------------------
+
+/// Convert a proto `SqlValue` to a `ProximaValue`.
+///
+/// Used for metadata fields in `VectorRecord`.
+pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
+    match &sql.value {
+        Some(sql_value::Value::StringValue(s)) => ProximaValue::String(s.clone()),
+        Some(sql_value::Value::NumberValue(f)) => ProximaValue::Float64(*f),
+        Some(sql_value::Value::BoolValue(b)) => ProximaValue::Boolean(*b),
+        Some(sql_value::Value::Int64Value(i)) => ProximaValue::Int64(*i),
+        Some(sql_value::Value::BytesValue(b)) => ProximaValue::Binary(b.clone()),
+        Some(sql_value::Value::NullValue(_)) => ProximaValue::Null,
+        Some(sql_value::Value::ArrayValue(arr)) => {
+            let items: Vec<ProximaValue> = arr.values.iter().map(sql_value_to_proxima).collect();
+            ProximaValue::Array(items)
+        }
+        Some(sql_value::Value::ObjectValue(obj)) => {
+            let map: HashMap<String, ProximaValue> = obj
+                .fields
+                .iter()
+                .map(|(k, v)| (k.clone(), sql_value_to_proxima(v)))
+                .collect();
+            ProximaValue::Map(map)
+        }
+        None => ProximaValue::Null,
+    }
+}
+
+/// Convert a proto `PropertyValue` to a `ProximaValue`.
+///
+/// Used for property maps in graph `Node` and `Edge`.
+pub fn property_value_to_proxima(pv: &PropertyValue) -> ProximaValue {
+    match &pv.value {
+        Some(property_value::Value::StringValue(s)) => ProximaValue::String(s.clone()),
+        Some(property_value::Value::IntValue(i)) => ProximaValue::Int64(*i),
+        Some(property_value::Value::DoubleValue(f)) => ProximaValue::Float64(*f),
+        Some(property_value::Value::BoolValue(b)) => ProximaValue::Boolean(*b),
+        Some(property_value::Value::BytesValue(b)) => ProximaValue::Binary(b.clone()),
+        Some(property_value::Value::ArrayValue(arr)) => {
+            let items: Vec<ProximaValue> =
+                arr.values.iter().map(property_value_to_proxima).collect();
+            ProximaValue::Array(items)
+        }
+        Some(property_value::Value::ObjectValue(obj)) => {
+            let map: HashMap<String, ProximaValue> = obj
+                .fields
+                .iter()
+                .map(|(k, v)| (k.clone(), property_value_to_proxima(v)))
+                .collect();
+            ProximaValue::Map(map)
+        }
+        Some(property_value::Value::VectorValue(vd)) => {
+            ProximaValue::DenseVector(vd.values.clone())
+        }
+        None => ProximaValue::Null,
+    }
+}
+
+/// Convert an `EmbeddingVersion` proto to an `EmbeddingCell`.
+pub fn embedding_version_to_cell(ev: &EmbeddingVersion) -> EmbeddingCell {
+    EmbeddingCell {
+        model_id: ev.model_id.clone(),
+        modality: format!("{}", ev.modality), // stored as i32 in proto
+        values: ev.vector.clone(),
+        dim: ev.dimension,
+    }
+}
+
+fn ms_to_ns(ms: i64) -> i64 {
+    ms.saturating_mul(1_000_000)
+}
+
+// ---------------------------------------------------------------------------
+// VectorRecord → ProximaRecord
+// ---------------------------------------------------------------------------
+
+impl From<&VectorRecord> for ProximaRecord {
+    fn from(v: &VectorRecord) -> Self {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as i64;
+
+        let created_at_ns = v.timestamp.map(ms_to_ns).unwrap_or(now_ns);
+        let updated_at_ns = v.updated_at.map(ms_to_ns).unwrap_or(created_at_ns);
+
+        // Convert metadata map to ProximaTree
+        let props: ProximaTree = v
+            .metadata
+            .iter()
+            .map(|(k, sv)| (k.clone(), ProximaTreeNode::Value(sql_value_to_proxima(sv))))
+            .collect();
+
+        // The vector becomes a default embedding cell
+        let embeddings = if !v.vector.is_empty() {
+            vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: v.vector.len() as u32,
+                values: v.vector.clone(),
+            }]
+        } else {
+            vec![]
+        };
+
+        ProximaRecord {
+            oid: v.id.clone(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: v.version.unwrap_or(0) as u64,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns,
+            updated_at_ns,
+            valid_from_ns: None,
+            valid_to_ns: v.expires_at.map(ms_to_ns),
+            origin: v.source.clone(),
+            actor: None,
+            method: Some("vector_insert".to_string()),
+            props,
+            refs: Vec::new(),
+            edge: None,
+            embeddings,
+            sequence: None,
+            labels: LabelSet::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Node → ProximaRecord
+// ---------------------------------------------------------------------------
+
+impl From<&Node> for ProximaRecord {
+    fn from(n: &Node) -> Self {
+        let created_at_ns = ms_to_ns(n.created_at_ms);
+        let updated_at_ns = ms_to_ns(n.updated_at_ms);
+
+        let props: ProximaTree = n
+            .properties
+            .iter()
+            .map(|(k, pv)| {
+                (
+                    k.clone(),
+                    ProximaTreeNode::Value(property_value_to_proxima(pv)),
+                )
+            })
+            .collect();
+
+        let labels = LabelSet::from(n.labels.clone());
+
+        let embeddings = if let Some(ev) = &n.embedding {
+            vec![embedding_version_to_cell(ev)]
+        } else {
+            vec![]
+        };
+
+        // Add a ref back to the graph node origin so cross-model queries can find it
+        let refs = vec![TypedRef::GraphEdge {
+            edge_id: n.id.clone(),
+            direction: EdgeDirection::Outgoing,
+        }];
+
+        ProximaRecord {
+            oid: n.id.clone(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: 0,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns,
+            updated_at_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: Some("graph_node".to_string()),
+            props,
+            refs,
+            edge: None,
+            embeddings,
+            sequence: None,
+            labels,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Edge → ProximaRecord
+// ---------------------------------------------------------------------------
+
+impl From<&Edge> for ProximaRecord {
+    fn from(e: &Edge) -> Self {
+        let created_at_ns = ms_to_ns(e.created_at_ms);
+        let updated_at_ns = ms_to_ns(e.updated_at_ms);
+
+        let props: ProximaTree = e
+            .properties
+            .iter()
+            .map(|(k, pv)| {
+                (
+                    k.clone(),
+                    ProximaTreeNode::Value(property_value_to_proxima(pv)),
+                )
+            })
+            .collect();
+
+        let edge = Some(EdgeShape {
+            source_id: e.from_node_id.clone(),
+            target_id: e.to_node_id.clone(),
+            edge_type: e.edge_type.clone(),
+            weight: e.weight,
+        });
+
+        ProximaRecord {
+            oid: e.id.clone(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: 0,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns,
+            updated_at_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: Some("graph_edge".to_string()),
+            props,
+            refs: Vec::new(),
+            edge,
+            embeddings: Vec::new(),
+            sequence: None,
+            labels: LabelSet::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests (TDD — written before impl)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_proto::proximadb_v1::{
+        PropertyValue, SqlValue, VectorRecord, property_value, sql_value,
+    };
+    use std::collections::HashMap;
+
+    fn make_sql_string(s: &str) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::StringValue(s.to_string())),
+        }
+    }
+
+    fn make_sql_int(i: i64) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::Int64Value(i)),
+        }
+    }
+
+    fn make_sql_float(f: f64) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::NumberValue(f)),
+        }
+    }
+
+    fn make_prop_string(s: &str) -> PropertyValue {
+        PropertyValue {
+            value: Some(property_value::Value::StringValue(s.to_string())),
+        }
+    }
+
+    fn make_prop_int(i: i64) -> PropertyValue {
+        PropertyValue {
+            value: Some(property_value::Value::IntValue(i)),
+        }
+    }
+
+    // --- SqlValue → ProximaValue ---
+
+    #[test]
+    fn test_sql_string_to_proxima() {
+        let sv = make_sql_string("hello");
+        assert!(matches!(sql_value_to_proxima(&sv), ProximaValue::String(s) if s == "hello"));
+    }
+
+    #[test]
+    fn test_sql_int_to_proxima() {
+        let sv = make_sql_int(42);
+        assert!(matches!(sql_value_to_proxima(&sv), ProximaValue::Int64(42)));
+    }
+
+    #[test]
+    fn test_sql_float_to_proxima() {
+        let sv = make_sql_float(3.14);
+        match sql_value_to_proxima(&sv) {
+            ProximaValue::Float64(f) => assert!((f - 3.14).abs() < 1e-9),
+            other => panic!("expected Float64, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_sql_null_to_proxima() {
+        let sv = SqlValue {
+            value: Some(sql_value::Value::NullValue(0)),
+        };
+        assert!(matches!(sql_value_to_proxima(&sv), ProximaValue::Null));
+    }
+
+    #[test]
+    fn test_sql_none_to_proxima_null() {
+        let sv = SqlValue { value: None };
+        assert!(matches!(sql_value_to_proxima(&sv), ProximaValue::Null));
+    }
+
+    // --- PropertyValue → ProximaValue ---
+
+    #[test]
+    fn test_property_string_to_proxima() {
+        let pv = make_prop_string("alice");
+        assert!(matches!(property_value_to_proxima(&pv), ProximaValue::String(s) if s == "alice"));
+    }
+
+    #[test]
+    fn test_property_int_to_proxima() {
+        let pv = make_prop_int(99);
+        assert!(matches!(
+            property_value_to_proxima(&pv),
+            ProximaValue::Int64(99)
+        ));
+    }
+
+    // --- VectorRecord → ProximaRecord ---
+
+    #[test]
+    fn test_vector_record_to_proxima() {
+        let mut meta = HashMap::new();
+        meta.insert("category".to_string(), make_sql_string("tech"));
+        meta.insert("score".to_string(), make_sql_float(0.95));
+
+        let vr = VectorRecord {
+            id: "vec_001".to_string(),
+            vector: vec![0.1, 0.2, 0.3],
+            metadata: meta,
+            timestamp: Some(1_704_067_200_000), // 2024-01-01 ms
+            updated_at: None,
+            expires_at: None,
+            version: Some(2),
+            source: Some("test_source".to_string()),
+        };
+
+        let pr = ProximaRecord::from(&vr);
+
+        assert_eq!(pr.oid, "vec_001");
+        assert_eq!(pr.record_version, 2);
+        assert_eq!(pr.origin.as_deref(), Some("test_source"));
+
+        // Embedding cell from vector
+        assert_eq!(pr.embeddings.len(), 1);
+        assert_eq!(pr.embeddings[0].dim, 3);
+        assert_eq!(pr.embeddings[0].modality, "dense_vector");
+
+        // Props from metadata
+        assert!(pr.props.contains_key("category"));
+        assert!(pr.props.contains_key("score"));
+
+        // Temporal
+        assert!(pr.created_at_ns > 0);
+        assert!(pr.valid_to_ns.is_none());
+    }
+
+    #[test]
+    fn test_vector_record_empty_vector() {
+        let vr = VectorRecord {
+            id: "empty_vec".to_string(),
+            vector: vec![],
+            metadata: HashMap::new(),
+            timestamp: None,
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            source: None,
+        };
+
+        let pr = ProximaRecord::from(&vr);
+        assert!(pr.embeddings.is_empty(), "empty vector → no embedding cell");
+    }
+
+    // --- Node → ProximaRecord ---
+
+    #[test]
+    fn test_node_to_proxima() {
+        use proximadb_proto::proximadb_v1::Node;
+        let mut props = HashMap::new();
+        props.insert("name".to_string(), make_prop_string("Alice"));
+        props.insert("age".to_string(), make_prop_int(30));
+
+        let node = Node {
+            id: "node_alice".to_string(),
+            labels: vec!["Person".to_string(), "Employee".to_string()],
+            properties: props,
+            embedding: None,
+            created_at_ms: 1_000_000,
+            updated_at_ms: 2_000_000,
+        };
+
+        let pr = ProximaRecord::from(&node);
+
+        assert_eq!(pr.oid, "node_alice");
+        assert!(pr.labels.contains("Person"));
+        assert!(pr.labels.contains("Employee"));
+        assert!(pr.props.contains_key("name"));
+        assert!(pr.props.contains_key("age"));
+        assert!(pr.edge.is_none(), "nodes have no edge topology");
+        assert_eq!(pr.created_at_ns, ms_to_ns(1_000_000));
+    }
+
+    // --- Edge → ProximaRecord ---
+
+    #[test]
+    fn test_edge_to_proxima() {
+        use proximadb_proto::proximadb_v1::Edge;
+        let edge = Edge {
+            id: "edge_001".to_string(),
+            from_node_id: "node_a".to_string(),
+            to_node_id: "node_b".to_string(),
+            edge_type: "KNOWS".to_string(),
+            properties: HashMap::new(),
+            weight: Some(0.75),
+            created_at_ms: 1_000_000,
+            updated_at_ms: 1_000_000,
+        };
+
+        let pr = ProximaRecord::from(&edge);
+
+        assert_eq!(pr.oid, "edge_001");
+
+        let es = pr.edge.as_ref().expect("edge record must have EdgeShape");
+        assert_eq!(es.source_id, "node_a");
+        assert_eq!(es.target_id, "node_b");
+        assert_eq!(es.edge_type, "KNOWS");
+        assert!((es.weight.unwrap() - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_edge_without_weight() {
+        use proximadb_proto::proximadb_v1::Edge;
+        let edge = Edge {
+            id: "edge_002".to_string(),
+            from_node_id: "a".to_string(),
+            to_node_id: "b".to_string(),
+            edge_type: "LINKED".to_string(),
+            properties: HashMap::new(),
+            weight: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+
+        let pr = ProximaRecord::from(&edge);
+        assert!(pr.edge.as_ref().unwrap().weight.is_none());
+    }
+}

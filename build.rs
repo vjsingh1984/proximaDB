@@ -1,9 +1,9 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Rebuild if proto files change
-    println!("cargo:rerun-if-changed=proto");
-
-    // Note: Proto files are currently pre-generated in src/proto/
-    // The build system that generated them is not currently active in build.rs
+    // Note: Proto files are currently pre-generated in the extracted
+    // `proximadb-proto` workspace crate. The root crate no longer rebuilds
+    // directly on proto-tree changes.
+    //
+    // The build system that generated them is not currently active in build.rs.
     // To regenerate proto files, use: ./scripts/regenerate-proto.sh
     //
     // TODO: Integrate tonic-build directly into build.rs for automatic regeneration
@@ -21,8 +21,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 // NOTE: Proto regeneration is currently manual. See docs/proto-regeneration-workflow.md
 // The previous attempt to use tonic_build::configure() failed due to API mismatch.
-// The pre-generated proto files in src/proto/ are functional and should be used as-is
-// until we can investigate the correct tonic-build 0.14 API or update to a newer version.
+// The pre-generated proto files now live in the extracted `proximadb-proto` crate
+// and should be used as-is until we can investigate the correct tonic-build 0.14
+// API or update to a newer version.
 
 // Legacy protobuf compilation function (feature-gated, no longer used)
 // Kept for reference but not called - tonic-build handles all proto compilation

@@ -1,30 +1,22 @@
 //! Shared runtime helpers for declarative graph queries.
 //!
-//! This module centralizes execution of the supported read-only graph subset
-//! once it has been lowered into [`GraphQueryExpr`]. It also owns the
-//! canonical row-shaping contract so facade, federated, and unified runtimes
-//! do not each materialize graph rows differently.
+//! This module now acts as a thin compatibility adapter from root
+//! `GraphQueryExpr` values to the extracted `proximadb-graph-subset` lowered
+//! runtime contract.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use anyhow::{Result, anyhow};
-use serde_json::Value;
-
-use crate::graph::Node;
-use crate::graph::service::GraphOperationsService;
-use crate::proto::proximadb_v1::{PropertyValue, property_value};
-use crate::query::graph_subset::{
-    GraphExecutionStats, execute_supported_graph_query,
-    execute_supported_graph_query_with_start_nodes, parse_supported_graph_query,
+use anyhow::Result;
+use proximadb_graph::query::service::GraphQueryReadService;
+use proximadb_graph_subset::{
+    LoweredGraphQueryResult, execute_lowered_graph_query,
+    execute_lowered_graph_query_with_start_nodes,
 };
+
+#[cfg(test)]
+use proximadb_graph_subset::{graph_query_row_id, legacy_graph_row_to_node, shape_graph_query_row};
+
 use crate::query::unified::ast::GraphQueryExpr;
 
-#[derive(Debug, Clone)]
-pub(crate) struct GraphQueryRuntimeResult {
-    pub(crate) rows: Vec<Value>,
-    pub(crate) stats: GraphExecutionStats,
-}
+pub(crate) type GraphQueryRuntimeResult = LoweredGraphQueryResult;
 
 /// Execute a lowered declarative graph query through the shared graph subset.
 ///
@@ -32,213 +24,20 @@ pub(crate) struct GraphQueryRuntimeResult {
 /// scalar projections preserve their declared columns, while whole-node
 /// projections use the legacy `node_id`/`label`/`properties` row envelope.
 pub(crate) async fn execute_graph_query_expr(
-    graph_ops: &GraphOperationsService,
+    graph_ops: &dyn GraphQueryReadService,
     expr: &GraphQueryExpr,
 ) -> Result<GraphQueryRuntimeResult> {
-    execute_graph_query_expr_with_start_nodes(graph_ops, expr, None).await
+    execute_lowered_graph_query(graph_ops, expr).await
 }
 
 /// Execute a lowered declarative graph query through the shared graph subset,
 /// optionally constraining the first bound node variable to explicit node IDs.
 pub(crate) async fn execute_graph_query_expr_with_start_nodes(
-    graph_ops: &GraphOperationsService,
+    graph_ops: &dyn GraphQueryReadService,
     expr: &GraphQueryExpr,
     start_node_ids: Option<&[String]>,
 ) -> Result<GraphQueryRuntimeResult> {
-    let parsed = parse_supported_graph_query(
-        &expr.normalized_query,
-        Some(&expr.graph_name),
-        Some(&expr.graph_name),
-    )?;
-    let executed = if let Some(start_node_ids) = start_node_ids {
-        execute_supported_graph_query_with_start_nodes(graph_ops, &parsed, Some(start_node_ids))
-            .await?
-    } else {
-        execute_supported_graph_query(graph_ops, &parsed).await?
-    };
-    let rows = executed
-        .rows
-        .into_iter()
-        .map(|row| shape_graph_query_row(row, expr.uses_legacy_node_rows, &expr.output_columns))
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok(GraphQueryRuntimeResult {
-        rows,
-        stats: executed.stats,
-    })
-}
-
-/// Shape a raw graph-subset row into the outward graph query contract.
-pub(crate) fn shape_graph_query_row(
-    row: Value,
-    uses_legacy_node_rows: bool,
-    output_columns: &[String],
-) -> Result<Value> {
-    if uses_legacy_node_rows {
-        materialize_legacy_graph_query_row(row)
-    } else {
-        retain_graph_query_output_columns(row, output_columns)
-    }
-}
-
-/// Build a stable record identifier for a shaped graph query row.
-pub(crate) fn graph_query_row_id(row: &Value, row_index: usize) -> String {
-    row.as_object()
-        .and_then(|object| object.get("node_id").and_then(|value| value.as_str()))
-        .map(ToString::to_string)
-        .or_else(|| {
-            row.as_object()
-                .and_then(|object| object.get("id").and_then(|value| value.as_str()))
-                .map(ToString::to_string)
-        })
-        .or_else(|| {
-            row.as_object().and_then(|object| {
-                object.values().find_map(|value| {
-                    value
-                        .as_object()
-                        .and_then(|nested| nested.get("id"))
-                        .and_then(|value| value.as_str())
-                        .map(ToString::to_string)
-                })
-            })
-        })
-        .unwrap_or_else(|| format!("graph_row_{}", row_index))
-}
-
-/// Convert a legacy-shaped graph row into a graph node for Arrow tabular paths.
-pub(crate) fn legacy_graph_row_to_node(row: &Value) -> Result<Arc<Node>> {
-    let Value::Object(columns) = row else {
-        return Err(anyhow!(
-            "Legacy graph row projection expected an object row"
-        ));
-    };
-
-    let id = columns
-        .get("node_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("Legacy graph row is missing 'node_id'"))?
-        .to_string();
-    let labels = columns
-        .get("label")
-        .and_then(Value::as_str)
-        .map(|label| vec![label.to_string()])
-        .unwrap_or_default();
-    let properties = columns
-        .get("properties")
-        .and_then(Value::as_object)
-        .map(|properties| {
-            properties
-                .iter()
-                .map(|(key, value)| (key.clone(), json_value_to_property_value(value)))
-                .collect::<HashMap<_, _>>()
-        })
-        .unwrap_or_default();
-
-    Ok(Arc::new(Node {
-        id,
-        labels,
-        properties,
-        embedding: None,
-        created_at_ms: 0,
-        updated_at_ms: 0,
-    }))
-}
-
-fn retain_graph_query_output_columns(row: Value, output_columns: &[String]) -> Result<Value> {
-    let Value::Object(object) = row else {
-        return Err(anyhow!("Graph query row projection expected an object row"));
-    };
-
-    if output_columns.is_empty() {
-        return Ok(Value::Object(object));
-    }
-
-    let projected = output_columns
-        .iter()
-        .filter_map(|column| {
-            object
-                .get(column)
-                .cloned()
-                .map(|value| (column.clone(), value))
-        })
-        .collect::<serde_json::Map<_, _>>();
-    Ok(Value::Object(projected))
-}
-
-fn materialize_legacy_graph_query_row(row: Value) -> Result<Value> {
-    let Value::Object(columns) = row else {
-        return Err(anyhow!(
-            "Legacy graph row materialization expected an object row"
-        ));
-    };
-    let Some(node_value) = columns.values().next() else {
-        return Err(anyhow!(
-            "Legacy graph row materialization expected a projected node value"
-        ));
-    };
-    let Value::Object(node) = node_value else {
-        return Err(anyhow!(
-            "Legacy graph row materialization expected a node object"
-        ));
-    };
-
-    let node_id = node.get("id").cloned().unwrap_or(Value::Null);
-    let label = node
-        .get("labels")
-        .and_then(|labels| labels.as_array())
-        .and_then(|labels| labels.first())
-        .cloned()
-        .unwrap_or(Value::Null);
-    let properties = node
-        .get("properties")
-        .cloned()
-        .unwrap_or_else(|| serde_json::json!({}));
-
-    Ok(serde_json::json!({
-        "node_id": node_id,
-        "label": label,
-        "properties": properties,
-    }))
-}
-
-fn json_value_to_property_value(value: &Value) -> PropertyValue {
-    let value = match value {
-        Value::Null => None,
-        Value::Bool(value) => Some(property_value::Value::BoolValue(*value)),
-        Value::Number(value) => value
-            .as_i64()
-            .map(property_value::Value::IntValue)
-            .or_else(|| value.as_f64().map(property_value::Value::DoubleValue)),
-        Value::String(value) => Some(property_value::Value::StringValue(value.clone())),
-        Value::Array(values) => {
-            if values.iter().all(Value::is_number) {
-                Some(property_value::Value::VectorValue(
-                    crate::proto::proximadb_v1::VectorData {
-                        values: values
-                            .iter()
-                            .filter_map(|value| value.as_f64().map(|value| value as f32))
-                            .collect(),
-                    },
-                ))
-            } else {
-                Some(property_value::Value::ArrayValue(
-                    crate::proto::proximadb_v1::PropertyArray {
-                        values: values.iter().map(json_value_to_property_value).collect(),
-                    },
-                ))
-            }
-        }
-        Value::Object(values) => Some(property_value::Value::ObjectValue(
-            crate::proto::proximadb_v1::PropertyObject {
-                fields: values
-                    .iter()
-                    .map(|(key, value)| (key.clone(), json_value_to_property_value(value)))
-                    .collect(),
-            },
-        )),
-    };
-
-    PropertyValue { value }
+    execute_lowered_graph_query_with_start_nodes(graph_ops, expr, start_node_ids).await
 }
 
 #[cfg(test)]
@@ -246,6 +45,8 @@ mod tests {
     use super::*;
     use crate::graph::GraphOperationsService;
     use crate::proto::proximadb_v1::{CreateGraphRequest, Node as ProtoNode, property_value};
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     async fn seed_graph_service() -> Arc<GraphOperationsService> {
         let service = Arc::new(GraphOperationsService::new());
@@ -395,5 +196,49 @@ mod tests {
         assert_eq!(node.labels, vec!["Person".to_string()]);
         assert!(node.properties.contains_key("name"));
         assert!(node.properties.contains_key("embedding"));
+    }
+
+    #[test]
+    fn shape_graph_query_row_retains_declared_columns_only() {
+        let row = serde_json::json!({
+            "neighbor": "Bob",
+            "company": "Acme"
+        });
+
+        let shaped = shape_graph_query_row(row, false, &["neighbor".to_string()])
+            .expect("row projection should succeed");
+
+        assert_eq!(shaped, serde_json::json!({ "neighbor": "Bob" }));
+    }
+
+    #[test]
+    fn graph_query_row_id_falls_back_across_supported_shapes() {
+        assert_eq!(
+            graph_query_row_id(&serde_json::json!({ "node_id": "alice" }), 0),
+            "alice"
+        );
+        assert_eq!(
+            graph_query_row_id(&serde_json::json!({ "id": "edge_1" }), 1),
+            "edge_1"
+        );
+        assert_eq!(
+            graph_query_row_id(&serde_json::json!({ "node": { "id": "nested" } }), 2),
+            "nested"
+        );
+        assert_eq!(
+            graph_query_row_id(&serde_json::json!({ "name": "anonymous" }), 3),
+            "graph_row_3"
+        );
+    }
+
+    #[test]
+    fn legacy_graph_row_to_node_requires_node_id() {
+        let error = legacy_graph_row_to_node(&serde_json::json!({
+            "label": "Person",
+            "properties": { "name": "Alice" }
+        }))
+        .expect_err("legacy row without node_id should fail");
+
+        assert!(error.to_string().contains("missing 'node_id'"));
     }
 }

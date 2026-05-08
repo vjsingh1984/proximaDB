@@ -350,14 +350,15 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
     }
 }
 
-impl From<Vec<crate::core::search::results::OptimizedSearchRecord>> for ProtoSearchResult {
-    fn from(results: Vec<crate::core::search::results::OptimizedSearchRecord>) -> Self {
-        let total_found = results.len() as i64;
-        ProtoSearchResult {
-            results: results.into_iter().map(SearchVectorRecord::from).collect(),
-            total_found,
-            collection_id: None,
-        }
+/// Convert optimized native search results into the proto search-result envelope.
+pub fn optimized_results_to_proto_search_result(
+    results: Vec<crate::core::search::results::OptimizedSearchRecord>,
+) -> ProtoSearchResult {
+    let total_found = results.len() as i64;
+    ProtoSearchResult {
+        results: results.into_iter().map(SearchVectorRecord::from).collect(),
+        total_found,
+        collection_id: None,
     }
 }
 

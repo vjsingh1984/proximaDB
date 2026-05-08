@@ -87,6 +87,10 @@ pub use learned_fusion::{
     FeedbackSignal, FusionFeatures, FusionModelType, LearnedFusion, LearnedFusionConfig,
     TrainingMetrics, TrainingSample,
 };
+pub use proximadb_query::{
+    ComponentPlan, QueryMetrics, QueryPlan, QueryResult, UnifiedRecord,
+    reorder_components_with_optimizer,
+};
 pub use reranking::{CrossModalReranker, QueryContext, QueryIntent, RerankConfig, RerankedResult};
 pub use uql::{UQLParser, UQLStatement};
 
@@ -277,7 +281,7 @@ impl UnifiedQueryEngine {
         &self,
         query: &mut MultiModelQuery,
     ) -> Result<Option<Vec<usize>>> {
-        reorder_components_with_optimizer(self.optimizer.as_ref(), query).await
+        proximadb_query::reorder_components_with_optimizer(self.optimizer.as_ref(), query).await
     }
 
     /// Run the parallel executor. When an optimizer is attached and an
@@ -312,23 +316,10 @@ impl UnifiedQueryEngine {
     /// Explain the query execution plan
     pub fn explain(&self, query: &str) -> Result<QueryPlan> {
         let multi_model_query = self.decomposer.decompose(query)?;
-
-        // Compute estimated cost before moving fusion_strategy
-        let estimated_total_cost = self.estimate_total_cost(&multi_model_query);
-
-        Ok(QueryPlan {
-            components: multi_model_query
-                .components
-                .iter()
-                .map(|c| ComponentPlan {
-                    model: c.model.clone(),
-                    estimated_cost: self.estimate_cost(c),
-                    parallelizable: c.is_parallelizable(),
-                })
-                .collect(),
-            fusion_strategy: multi_model_query.fusion_strategy,
-            estimated_total_cost,
-        })
+        Ok(proximadb_query::explain_query_plan(
+            &multi_model_query,
+            self.config.max_parallel_queries,
+        ))
     }
 
     /// Explain the query with an auditable AQL plan (TD-050 Phase 3).
@@ -387,7 +378,7 @@ impl UnifiedQueryEngine {
                 filters_post: Vec::new(),
                 records_scanned: 100, // Projected
                 records_returned: 10,
-                wall_time_us: (self.estimate_cost(component) * 1000.0) as u64,
+                wall_time_us: (proximadb_query::estimate_component_cost(component) * 1000.0) as u64,
                 error: None,
                 redaction_count: 0,
             });
@@ -404,137 +395,6 @@ impl UnifiedQueryEngine {
 
         Ok((aql_plan, trail))
     }
-
-    fn estimate_cost(&self, component: &QueryComponent) -> f64 {
-        // Simple cost estimation based on model type
-        match component.model {
-            DataModel::Vector => 1.0,   // Vector search is typically fast
-            DataModel::Document => 2.0, // Document queries vary
-            DataModel::Graph => 3.0,    // Graph traversal can be expensive
-            DataModel::Observability | DataModel::TimeSeries => 2.5,
-            DataModel::Relational => 1.5,
-            DataModel::Event => 2.0,
-        }
-    }
-
-    fn estimate_total_cost(&self, query: &MultiModelQuery) -> f64 {
-        // Parallel execution reduces total cost
-        let component_costs: Vec<f64> = query
-            .components
-            .iter()
-            .map(|c| self.estimate_cost(c))
-            .collect();
-
-        if query.components.len() <= self.config.max_parallel_queries {
-            // All can run in parallel - cost is the max
-            component_costs.iter().cloned().fold(0.0, f64::max)
-        } else {
-            // Some sequential execution needed
-            component_costs.iter().sum::<f64>() / self.config.max_parallel_queries as f64
-        }
-    }
-}
-
-/// Result of a unified query
-#[derive(Debug, Clone)]
-pub struct QueryResult {
-    /// Result records
-    pub records: Vec<UnifiedRecord>,
-    /// Total count (if available)
-    pub total_count: Option<u64>,
-    /// Execution metrics
-    pub metrics: QueryMetrics,
-}
-
-/// A unified record from any data model
-#[derive(Debug, Clone)]
-pub struct UnifiedRecord {
-    /// Record ID
-    pub id: String,
-    /// Source model
-    pub source_model: DataModel,
-    /// Record data as JSON
-    pub data: serde_json::Value,
-    /// Relevance score (if applicable)
-    pub score: Option<f64>,
-    /// Additional metadata
-    pub metadata: std::collections::HashMap<String, String>,
-}
-
-/// Query execution metrics
-#[derive(Debug, Clone, Default)]
-pub struct QueryMetrics {
-    /// Total execution time in microseconds
-    pub total_time_us: u64,
-    /// Time per sub-query
-    pub sub_query_times: Vec<(DataModel, u64)>,
-    /// Number of records scanned
-    pub records_scanned: u64,
-    /// Number of records returned
-    pub records_returned: u64,
-    /// Cache hit rate
-    pub cache_hit_rate: f64,
-}
-
-/// Query execution plan
-#[derive(Debug, Clone)]
-pub struct QueryPlan {
-    /// Component plans
-    pub components: Vec<ComponentPlan>,
-    /// Fusion strategy
-    pub fusion_strategy: FusionStrategy,
-    /// Estimated total cost
-    pub estimated_total_cost: f64,
-}
-
-/// Plan for a single query component
-#[derive(Debug, Clone)]
-pub struct ComponentPlan {
-    /// Data model
-    pub model: DataModel,
-    /// Estimated cost (relative units)
-    pub estimated_cost: f64,
-    /// Whether this can run in parallel
-    pub parallelizable: bool,
-}
-
-/// Reorder `query.components` according to a `QueryOptimizer`'s plan.
-///
-/// Returns `Ok(None)` when:
-/// - the optimizer is `None` (no behavioral change vs. pre-optimizer code),
-/// - the query has fewer than two components (nothing to reorder).
-///
-/// Returns `Ok(Some(order))` with the original-index execution order so
-/// callers can later record measured runtime against this exact plan shape
-/// in [`PlanExecutionCache`](plan_execution_cache::PlanExecutionCache).
-///
-/// The free-function shape is deliberate: it makes the reorder behavior
-/// testable without standing up a full `UnifiedQueryEngine` (storage
-/// engine + document service) — only a constructed optimizer is needed.
-pub async fn reorder_components_with_optimizer(
-    optimizer: Option<&Arc<optimizer::QueryOptimizer>>,
-    query: &mut MultiModelQuery,
-) -> Result<Option<Vec<usize>>> {
-    let Some(optimizer) = optimizer else {
-        return Ok(None);
-    };
-    if query.components.len() < 2 {
-        return Ok(None);
-    }
-
-    let plan = optimizer.optimize(query).await?;
-    let order = plan.execution_order;
-
-    // Reorder components so the executor processes them in the
-    // optimizer-chosen order. The order is already topologically valid
-    // (the optimizer respects component dependencies).
-    let mut reordered = Vec::with_capacity(query.components.len());
-    for &idx in &order {
-        reordered.push(query.components[idx].clone());
-    }
-    query.components = reordered;
-
-    Ok(Some(order))
 }
 
 #[cfg(test)]

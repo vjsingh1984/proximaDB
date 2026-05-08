@@ -1,22 +1,22 @@
 //! AQL Source implementation for Graph data model.
 
 use async_trait::async_trait;
+use proximadb_graph::query::service::GraphExecutionService;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::graph::service::GraphOperationsService;
 use crate::query::aql::{
     AqlFrom, AqlQuery, AqlResult, AqlSource, AqlValue, AuditContext, AuditFrame, AuditOp,
     DataModel, Result,
 };
 
 pub struct GraphAqlSource {
-    graph_svc: Arc<GraphOperationsService>,
+    graph_svc: Arc<dyn GraphExecutionService>,
 }
 
 impl GraphAqlSource {
-    pub fn new(graph_svc: Arc<GraphOperationsService>) -> Self {
+    pub fn new(graph_svc: Arc<dyn GraphExecutionService>) -> Self {
         Self { graph_svc }
     }
 

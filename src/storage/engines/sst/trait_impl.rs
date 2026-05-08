@@ -214,6 +214,37 @@ impl UnifiedStorageEngine for SstEngine {
 
         Ok(metrics)
     }
+
+    /// Engine-level RLS predicate (spec §8 — Phase E proof-of-concept).
+    ///
+    /// Extracts tenant_id from the query context so the scan iterator can
+    /// apply row-level isolation without referencing application-layer middleware.
+    fn rls_record_filter(
+        &self,
+        ctx: &crate::storage::traits::StorageQueryContext,
+    ) -> Option<crate::storage::traits::RlsRecordPredicate> {
+        // Prefer explicit tenant context (String); fall back to user context (Option<String>)
+        let tenant_id = ctx
+            .tenant_context
+            .as_ref()
+            .map(|tc| tc.tenant_id.as_str())
+            .or_else(|| {
+                ctx.user_context
+                    .as_ref()
+                    .and_then(|uc| uc.tenant_id.as_deref())
+            });
+
+        let principal = ctx.user_context.as_ref().map(|uc| uc.user_id.as_str());
+
+        if tenant_id.is_none() && principal.is_none() {
+            return None;
+        }
+
+        Some(crate::storage::traits::RlsRecordPredicate {
+            required_tenant_id: tenant_id.map(str::to_string),
+            required_principal: principal.map(str::to_string),
+        })
+    }
 }
 
 /// Additional trait implementations for SST engine optimization

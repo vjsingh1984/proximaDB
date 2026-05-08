@@ -1,0 +1,596 @@
+//! Shared support structures for the unified query optimizer.
+
+use parking_lot::RwLock;
+use proximadb_multimodel_query::{DataModel, ModelOperation, MultiModelQuery, QueryComponent};
+use proximadb_query_filter::FilterOperator;
+use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use tracing::info;
+
+/// Configuration for the query optimizer.
+#[derive(Debug, Clone)]
+pub struct OptimizerConfig {
+    /// Enable selectivity-based reordering.
+    pub enable_reordering: bool,
+    /// Enable filter pushdown.
+    pub enable_filter_pushdown: bool,
+    /// Minimum selectivity to consider reordering.
+    pub min_selectivity_threshold: f64,
+    /// Maximum number of components to reorder.
+    pub max_reorder_components: usize,
+    /// Enable query plan caching.
+    pub enable_plan_cache: bool,
+    /// Plan cache TTL in seconds.
+    pub plan_cache_ttl_secs: u64,
+    /// Enable evolutionary optimizer for complex queries.
+    pub enable_evolutionary_optimizer: bool,
+    /// Population size for evolutionary optimizer.
+    pub evolutionary_population_size: usize,
+    /// Number of generations for evolutionary optimizer.
+    pub evolutionary_generations: usize,
+    /// Use measured wall-clock time as evolutionary fitness when available.
+    pub enable_measured_fitness: bool,
+    /// Soft cap on measured-fitness cache entries.
+    pub measured_fitness_max_entries: usize,
+}
+
+impl Default for OptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enable_reordering: true,
+            enable_filter_pushdown: true,
+            min_selectivity_threshold: 0.1,
+            max_reorder_components: 10,
+            enable_plan_cache: true,
+            plan_cache_ttl_secs: 300,
+            enable_evolutionary_optimizer: false,
+            evolutionary_population_size: 20,
+            evolutionary_generations: 5,
+            enable_measured_fitness: false,
+            measured_fitness_max_entries: 1024,
+        }
+    }
+}
+
+/// Selectivity estimate for a query component.
+#[derive(Debug, Clone)]
+pub struct SelectivityEstimate {
+    /// Estimated selectivity (0.0 - 1.0).
+    pub selectivity: f64,
+    /// Confidence in the estimate (0.0 - 1.0).
+    pub confidence: f64,
+    /// Estimated result count.
+    pub estimated_rows: u64,
+    /// Estimation method used.
+    pub method: EstimationMethod,
+}
+
+/// Method used for selectivity estimation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EstimationMethod {
+    /// Based on collected statistics.
+    Statistics,
+    /// Based on filter predicates.
+    PredicateAnalysis,
+    /// Based on historical query results.
+    Historical,
+    /// Default heuristic estimate.
+    Heuristic,
+}
+
+/// Optimized query plan.
+#[derive(Debug, Clone)]
+pub struct OptimizedPlan {
+    /// Reordered components.
+    pub components: Vec<QueryComponent>,
+    /// Component execution order.
+    pub execution_order: Vec<usize>,
+    /// Selectivity estimates per component.
+    pub selectivity_estimates: Vec<SelectivityEstimate>,
+    /// Pushed down filters per component.
+    pub pushed_filters: Vec<Vec<PushedFilter>>,
+    /// Estimated total cost.
+    pub estimated_cost: f64,
+    /// Optimization notes.
+    pub notes: Vec<String>,
+}
+
+/// A filter that has been pushed down to an engine.
+#[derive(Debug, Clone)]
+pub struct PushedFilter {
+    /// Field/path the filter applies to.
+    pub field: String,
+    /// Filter operator.
+    pub operator: FilterOperator,
+    /// Filter value as string.
+    pub value: String,
+    /// Target engine.
+    pub target: DataModel,
+}
+
+/// Query statistics collector.
+pub struct QueryStatistics {
+    /// Collection statistics.
+    collection_stats: RwLock<HashMap<String, OptimizerCollectionStats>>,
+    /// Query execution history.
+    query_history: RwLock<Vec<QueryHistoryEntry>>,
+    /// Total queries executed.
+    total_queries: AtomicU64,
+    /// Total execution time.
+    total_execution_time_us: AtomicU64,
+}
+
+/// Optimizer-local collection statistics with column-level detail.
+#[derive(Debug, Clone)]
+pub struct OptimizerCollectionStats {
+    /// Collection name.
+    pub name: String,
+    /// Estimated row count.
+    pub row_count: u64,
+    /// Average row size in bytes.
+    pub avg_row_size: u64,
+    /// Distinct value counts for indexed columns.
+    pub distinct_counts: HashMap<String, u64>,
+    /// Last updated timestamp.
+    pub last_updated: u64,
+}
+
+/// Historical query execution entry.
+#[derive(Debug, Clone)]
+pub struct QueryHistoryEntry {
+    /// Query hash (for matching similar queries).
+    pub query_hash: u64,
+    /// Actual result count.
+    pub result_count: u64,
+    /// Execution time in microseconds.
+    pub execution_time_us: u64,
+    /// Timestamp.
+    pub timestamp: u64,
+}
+
+impl QueryStatistics {
+    /// Create new statistics collector.
+    pub fn new() -> Self {
+        Self {
+            collection_stats: RwLock::new(HashMap::new()),
+            query_history: RwLock::new(Vec::new()),
+            total_queries: AtomicU64::new(0),
+            total_execution_time_us: AtomicU64::new(0),
+        }
+    }
+
+    /// Get collection statistics.
+    pub fn get_collection_stats(&self, collection: &str) -> Option<OptimizerCollectionStats> {
+        self.collection_stats.read().get(collection).cloned()
+    }
+
+    /// Update collection statistics.
+    pub fn update_collection_stats(&self, stats: OptimizerCollectionStats) {
+        let name = stats.name.clone();
+        self.collection_stats.write().insert(name, stats);
+    }
+
+    /// Record query execution.
+    pub fn record_query(&self, hash: u64, result_count: u64, execution_time_us: u64) {
+        self.total_queries.fetch_add(1, Ordering::Relaxed);
+        self.total_execution_time_us
+            .fetch_add(execution_time_us, Ordering::Relaxed);
+
+        let entry = QueryHistoryEntry {
+            query_hash: hash,
+            result_count,
+            execution_time_us,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+
+        let mut history = self.query_history.write();
+        history.push(entry);
+        if history.len() > 10000 {
+            history.remove(0);
+        }
+    }
+
+    /// Get average execution time for similar queries.
+    pub fn get_avg_execution_time(&self, query_hash: u64) -> Option<u64> {
+        let history = self.query_history.read();
+        let matching: Vec<&QueryHistoryEntry> = history
+            .iter()
+            .filter(|e| e.query_hash == query_hash)
+            .collect();
+
+        if matching.is_empty() {
+            return None;
+        }
+
+        let total: u64 = matching.iter().map(|e| e.execution_time_us).sum();
+        Some(total / matching.len() as u64)
+    }
+
+    /// Get total query count.
+    pub fn total_queries(&self) -> u64 {
+        self.total_queries.load(Ordering::Relaxed)
+    }
+
+    /// Get average execution time across all queries.
+    pub fn avg_execution_time_us(&self) -> u64 {
+        let total = self.total_queries.load(Ordering::Relaxed);
+        if total == 0 {
+            return 0;
+        }
+        self.total_execution_time_us.load(Ordering::Relaxed) / total
+    }
+}
+
+impl Default for QueryStatistics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct CachedPlan {
+    plan: OptimizedPlan,
+    created_at: Instant,
+    last_accessed: Instant,
+    hit_count: u64,
+}
+
+/// LRU cache for query plans with TTL expiration.
+pub struct PlanCache {
+    /// Cached plans keyed by query hash.
+    cache: RwLock<HashMap<u64, CachedPlan>>,
+    /// Maximum number of cached plans.
+    max_entries: usize,
+    /// Time-to-live for cached plans.
+    ttl: Duration,
+    /// Cache hit counter.
+    hits: AtomicU64,
+    /// Cache miss counter.
+    misses: AtomicU64,
+    /// Eviction counter.
+    evictions: AtomicU64,
+}
+
+impl PlanCache {
+    /// Create a new plan cache.
+    pub fn new(max_entries: usize, ttl_secs: u64) -> Self {
+        Self {
+            cache: RwLock::new(HashMap::new()),
+            max_entries,
+            ttl: Duration::from_secs(ttl_secs),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            evictions: AtomicU64::new(0),
+        }
+    }
+
+    /// Get a cached plan if it exists and hasn't expired.
+    pub fn get(&self, query_hash: u64) -> Option<OptimizedPlan> {
+        let now = Instant::now();
+
+        {
+            let cache = self.cache.read();
+            if let Some(entry) = cache.get(&query_hash) {
+                if now.duration_since(entry.created_at) < self.ttl {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    let plan = entry.plan.clone();
+                    drop(cache);
+
+                    if let Some(entry) = self.cache.write().get_mut(&query_hash) {
+                        entry.last_accessed = now;
+                        entry.hit_count += 1;
+                    }
+
+                    return Some(plan);
+                }
+            }
+        }
+
+        self.misses.fetch_add(1, Ordering::Relaxed);
+        None
+    }
+
+    /// Insert a plan into the cache.
+    pub fn insert(&self, query_hash: u64, plan: OptimizedPlan) {
+        let now = Instant::now();
+        let mut cache = self.cache.write();
+
+        let expired: Vec<u64> = cache
+            .iter()
+            .filter(|(_, entry)| now.duration_since(entry.created_at) >= self.ttl)
+            .map(|(k, _)| *k)
+            .collect();
+
+        for key in expired {
+            cache.remove(&key);
+            self.evictions.fetch_add(1, Ordering::Relaxed);
+        }
+
+        while cache.len() >= self.max_entries {
+            if let Some(lru_key) = cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_accessed)
+                .map(|(k, _)| *k)
+            {
+                cache.remove(&lru_key);
+                self.evictions.fetch_add(1, Ordering::Relaxed);
+            } else {
+                break;
+            }
+        }
+
+        cache.insert(
+            query_hash,
+            CachedPlan {
+                plan,
+                created_at: now,
+                last_accessed: now,
+                hit_count: 0,
+            },
+        );
+    }
+
+    /// Invalidate all cached plans.
+    pub fn invalidate_all(&self) {
+        let mut cache = self.cache.write();
+        let count = cache.len();
+        cache.clear();
+        self.evictions.fetch_add(count as u64, Ordering::Relaxed);
+        info!("Invalidated {} cached query plans", count);
+    }
+
+    /// Invalidate cached plans for a specific collection.
+    pub fn invalidate_collection(&self, _collection: &str) {
+        self.invalidate_all();
+    }
+
+    /// Get cache statistics.
+    pub fn stats(&self) -> PlanCacheStats {
+        let cache = self.cache.read();
+        PlanCacheStats {
+            size: cache.len(),
+            max_entries: self.max_entries,
+            hits: self.hits.load(Ordering::Relaxed),
+            misses: self.misses.load(Ordering::Relaxed),
+            evictions: self.evictions.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Statistics for the plan cache.
+#[derive(Debug, Clone)]
+pub struct PlanCacheStats {
+    /// Current number of cached plans.
+    pub size: usize,
+    /// Maximum cache capacity.
+    pub max_entries: usize,
+    /// Number of cache hits.
+    pub hits: u64,
+    /// Number of cache misses.
+    pub misses: u64,
+    /// Number of evictions.
+    pub evictions: u64,
+}
+
+impl PlanCacheStats {
+    /// Calculate cache hit rate (0.0 - 1.0).
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.hits + self.misses;
+        if total == 0 {
+            return 0.0;
+        }
+        self.hits as f64 / total as f64
+    }
+}
+
+/// Compute a hash for a query to use as a cache key.
+pub fn compute_query_hash(query: &MultiModelQuery) -> u64 {
+    let mut hasher = DefaultHasher::new();
+
+    query.components.len().hash(&mut hasher);
+
+    for component in &query.components {
+        std::mem::discriminant(&component.model).hash(&mut hasher);
+
+        match &component.operation {
+            ModelOperation::VectorSearch(expr) => {
+                "VectorSearch".hash(&mut hasher);
+                expr.collection.hash(&mut hasher);
+                expr.top_k.hash(&mut hasher);
+                if let Some(t) = expr.threshold {
+                    t.to_bits().hash(&mut hasher);
+                }
+                std::mem::discriminant(&expr.metric).hash(&mut hasher);
+            }
+            ModelOperation::DocumentQuery(expr) => {
+                "DocumentQuery".hash(&mut hasher);
+                expr.collection.hash(&mut hasher);
+                expr.path_filters.len().hash(&mut hasher);
+                for filter in &expr.path_filters {
+                    filter.path.hash(&mut hasher);
+                    std::mem::discriminant(&filter.operator).hash(&mut hasher);
+                }
+            }
+            ModelOperation::GraphQuery(expr) => {
+                "GraphQuery".hash(&mut hasher);
+                expr.graph_name.hash(&mut hasher);
+                expr.normalized_query.hash(&mut hasher);
+                expr.max_depth.hash(&mut hasher);
+                expr.uses_legacy_node_rows.hash(&mut hasher);
+                expr.output_columns.len().hash(&mut hasher);
+                for column in &expr.output_columns {
+                    column.hash(&mut hasher);
+                }
+            }
+            ModelOperation::GraphTraversal(expr) => {
+                "GraphTraversal".hash(&mut hasher);
+                expr.graph_name.hash(&mut hasher);
+                expr.max_depth.hash(&mut hasher);
+                expr.edge_types.len().hash(&mut hasher);
+                for edge_type in &expr.edge_types {
+                    edge_type.hash(&mut hasher);
+                }
+            }
+            ModelOperation::LogQuery(expr) => {
+                "LogQuery".hash(&mut hasher);
+                expr.namespace.hash(&mut hasher);
+                expr.start_time_ns.hash(&mut hasher);
+                expr.end_time_ns.hash(&mut hasher);
+                expr.services.len().hash(&mut hasher);
+            }
+            ModelOperation::MetricQuery(expr) => {
+                "MetricQuery".hash(&mut hasher);
+                expr.namespace.hash(&mut hasher);
+                expr.metric_name.hash(&mut hasher);
+                expr.start_time_ns.hash(&mut hasher);
+                expr.end_time_ns.hash(&mut hasher);
+            }
+        }
+
+        component.dependencies.len().hash(&mut hasher);
+        for dep in &component.dependencies {
+            dep.component_index.hash(&mut hasher);
+            dep.join_field.hash(&mut hasher);
+        }
+    }
+
+    std::mem::discriminant(&query.fusion_strategy).hash(&mut hasher);
+    query.limit.hash(&mut hasher);
+    query.offset.hash(&mut hasher);
+
+    hasher.finish()
+}
+
+/// Fusion strategy for combining results from multi-model sub-queries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FusionStrategy {
+    /// Reciprocal Rank Fusion.
+    Rrf,
+    /// Intersection.
+    Intersection,
+    /// Union.
+    Union,
+    /// Weighted sum.
+    WeightedSum,
+}
+
+/// Select the optimal fusion strategy based on query characteristics.
+pub fn select_fusion_strategy(
+    has_vector_component: bool,
+    has_graph_component: bool,
+    filter_selectivity: f64,
+) -> FusionStrategy {
+    if has_vector_component && has_graph_component {
+        FusionStrategy::Rrf
+    } else if filter_selectivity < 0.1 {
+        FusionStrategy::Intersection
+    } else {
+        FusionStrategy::Union
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proximadb_document_query::PathFilter;
+    use proximadb_multimodel_query::{ComponentDependency, JoinType, QueryComponent};
+    use proximadb_query_filter::{FilterOperator, FilterValue};
+    use proximadb_vector_query::{DistanceMetric, VectorSearchExpr, VectorSearchParams};
+
+    fn make_vector_search_component(threshold: Option<f32>, top_k: u32) -> QueryComponent {
+        QueryComponent {
+            model: DataModel::Vector,
+            operation: ModelOperation::VectorSearch(VectorSearchExpr {
+                collection: "embeddings".to_string(),
+                query_vector: vec![0.1, 0.2, 0.3],
+                top_k,
+                threshold,
+                metric: DistanceMetric::Cosine,
+                params: VectorSearchParams::default(),
+            }),
+            filters: vec![],
+            dependencies: vec![],
+        }
+    }
+
+    #[test]
+    fn query_statistics_records_history() {
+        let stats = QueryStatistics::new();
+        stats.record_query(42, 10, 1_000);
+        stats.record_query(42, 20, 3_000);
+        assert_eq!(stats.total_queries(), 2);
+        assert_eq!(stats.avg_execution_time_us(), 2_000);
+        assert_eq!(stats.get_avg_execution_time(42), Some(2_000));
+    }
+
+    #[test]
+    fn plan_cache_stores_and_reports_stats() {
+        let cache = PlanCache::new(100, 300);
+        let plan = OptimizedPlan {
+            components: vec![make_vector_search_component(None, 10)],
+            execution_order: vec![0],
+            selectivity_estimates: vec![SelectivityEstimate {
+                selectivity: 0.1,
+                confidence: 0.5,
+                estimated_rows: 100,
+                method: EstimationMethod::PredicateAnalysis,
+            }],
+            pushed_filters: vec![vec![]],
+            estimated_cost: 1.0,
+            notes: vec!["test".to_string()],
+        };
+
+        cache.insert(123, plan.clone());
+        assert!(cache.get(123).is_some());
+        let stats = cache.stats();
+        assert_eq!(stats.size, 1);
+        assert_eq!(stats.hits, 1);
+    }
+
+    #[test]
+    fn compute_query_hash_is_stable_for_same_query_shape() {
+        let query = MultiModelQuery {
+            components: vec![make_vector_search_component(Some(0.7), 5)],
+            fusion_strategy: proximadb_query_fusion::FusionStrategy::Intersection,
+            limit: Some(10),
+            offset: None,
+            projection: vec![],
+            order_by: None,
+        };
+
+        assert_eq!(compute_query_hash(&query), compute_query_hash(&query));
+    }
+
+    #[test]
+    fn select_fusion_strategy_prefers_rrf_for_vector_and_graph() {
+        assert_eq!(select_fusion_strategy(true, true, 0.5), FusionStrategy::Rrf);
+        assert_eq!(
+            select_fusion_strategy(true, false, 0.05),
+            FusionStrategy::Intersection
+        );
+        assert_eq!(
+            select_fusion_strategy(false, false, 0.5),
+            FusionStrategy::Union
+        );
+    }
+
+    #[test]
+    fn path_filter_hashing_inputs_compile() {
+        let _filter = PathFilter {
+            path: "category".to_string(),
+            operator: FilterOperator::Eq,
+            value: FilterValue::String("electronics".to_string()),
+        };
+        let _dep = ComponentDependency {
+            component_index: 0,
+            join_field: "id".to_string(),
+            join_type: JoinType::Inner,
+        };
+    }
+}

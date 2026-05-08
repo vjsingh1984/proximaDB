@@ -1,0 +1,14 @@
+[package]
+name = "proximadb-vector-query"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared ProximaDB vector query IR contracts"
+
+[lib]
+name = "proximadb_vector_query"
+path = "src/lib.rs"
