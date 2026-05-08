@@ -5,8 +5,8 @@ use std::time::Instant;
 use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_document_query::DocumentQueryExpr;
+use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;
 use proximadb_graph_query::traversal::GraphTraversalExpr;
-use proximadb_graph_subset::LoweredGraphQuery as GraphQueryExpr;
 use proximadb_multimodel_query::{
     ComponentDependency, ModelOperation, MultiModelQuery, QueryComponent,
 };
@@ -206,8 +206,8 @@ mod tests {
     use async_trait::async_trait;
     use proximadb_data_model::DataModel;
     use proximadb_document_query::DocumentQueryExpr;
+    use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;
     use proximadb_graph_query::traversal::GraphTraversalExpr;
-    use proximadb_graph_subset::LoweredGraphQuery as GraphQueryExpr;
     use proximadb_multimodel_query::{
         ComponentDependency, JoinType, ModelOperation, MultiModelQuery, QueryComponent,
     };

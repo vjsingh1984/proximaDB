@@ -5786,7 +5786,6 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-document-query",
  "proximadb-graph-query",
- "proximadb-graph-subset",
  "proximadb-observability-query",
  "proximadb-query-clauses",
  "proximadb-query-filter",

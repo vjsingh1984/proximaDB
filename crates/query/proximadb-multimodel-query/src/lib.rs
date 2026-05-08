@@ -1,6 +1,6 @@
 use proximadb_document_query::DocumentQueryExpr;
+use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;
 use proximadb_graph_query::traversal::GraphTraversalExpr;
-use proximadb_graph_subset::LoweredGraphQuery as GraphQueryExpr;
 use proximadb_observability_query::{LogQueryExpr, MetricQueryExpr};
 use proximadb_query_clauses::{Filter, OrderBy};
 use proximadb_query_fusion::FusionStrategy;

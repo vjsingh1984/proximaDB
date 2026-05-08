@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use proximadb_graph_query::ast::{
     CompiledPattern, PropertyConstraint, PropertyProjection, WhereClause,
 };
+pub use proximadb_graph_query::declarative::{LoweredGraphQuery, SupportedGraphQueryDescriptor};
 use proximadb_graph_query::parser::QueryParser;
 use std::collections::HashSet;
 
@@ -54,55 +55,6 @@ impl ParsedGraphQuery {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-pub struct SupportedGraphQueryDescriptor {
-    pub graph_name: String,
-    pub normalized_query: String,
-    pub output_columns: Vec<String>,
-    pub uses_legacy_node_rows: bool,
-    pub max_depth: u32,
-}
-
-impl SupportedGraphQueryDescriptor {
-    pub fn new(
-        graph_name: String,
-        normalized_query: String,
-        output_columns: Vec<String>,
-        uses_legacy_node_rows: bool,
-        max_depth: u32,
-    ) -> Self {
-        Self {
-            graph_name,
-            normalized_query,
-            output_columns,
-            uses_legacy_node_rows,
-            max_depth,
-        }
-    }
-
-    pub fn graph_id(&self) -> &str {
-        &self.graph_name
-    }
-
-    pub fn normalized_query(&self) -> &str {
-        &self.normalized_query
-    }
-
-    pub fn output_columns(&self) -> &[String] {
-        &self.output_columns
-    }
-
-    pub fn uses_legacy_node_rows(&self) -> bool {
-        self.uses_legacy_node_rows
-    }
-
-    pub fn max_depth(&self) -> u32 {
-        self.max_depth
-    }
-}
-
-pub type LoweredGraphQuery = SupportedGraphQueryDescriptor;
 
 pub fn lower_supported_graph_query(
     query: &str,

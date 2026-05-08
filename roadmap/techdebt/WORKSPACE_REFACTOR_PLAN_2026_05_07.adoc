@@ -551,9 +551,9 @@ Current status after the first refinement:
 * the canonical graph query executor runtime now also lives under `proximadb-graph`, behind a narrow async node/edge query contract; the root `executor` module is reduced to a compatibility wrapper that adapts `GraphOperationsService` and keeps Arrow conversion local to root query infrastructure
 * `proximadb-kernel` now also owns a small modality-neutral `ExecutionContext`/`ExecutionLimits` contract for request metadata, tenant/principal scope, parameters, and resource limits; modality crates must embed or adapt this instead of inventing parallel timeout/parameter context structs when the semantics are shared
 * graph query context/result contracts now live under the lower `proximadb-graph-query` contract crate as graph-specific names (`GraphQueryContext`, `GraphQueryStats`, `GraphQueryExecutionResult`, `GraphQueryRow`), while `proximadb-graph` keeps the historical `QueryContext`/`QueryStats`/`QueryExecutionResult`/`QueryRow` aliases for compatibility
-* a new leaf workspace crate, `proximadb-graph-subset`, now owns the supported graph-subset parse/validation/descriptor contract, the read-only subset execution helper, and the shared row-shaping/legacy-row conversion helpers reused by facade, federated, lowering, and runtime layers; this keeps cross-model graph query shape analysis/execution separate from both the heavier graph modality runtime and the root query orchestration crate
-* `proximadb-graph-subset` now also owns the canonical lowered declarative graph-query contract and its shaped execution wrapper, so root `graph_lowering` and `graph_runtime` are reduced to compatibility adapters from unified AST types into that extracted leaf contract
-* the root unified AST no longer defines its own duplicate lowered declarative graph-query struct; `GraphQueryExpr` now reuses the extracted `proximadb-graph-subset` lowered contract directly, which removes another root-owned graph IR seam before the larger `proximadb-query` split
+* a new leaf workspace crate, `proximadb-graph-subset`, owns the supported graph-subset parse/validation layer, read-only subset execution helper, and shared row-shaping/legacy-row conversion helpers reused by facade, federated, lowering, and runtime layers; this keeps graph subset behavior separate from both the heavier graph modality runtime and the root query orchestration crate
+* `proximadb-graph-query` now owns the canonical lowered declarative graph-query descriptor (`LoweredGraphQuery` / `SupportedGraphQueryDescriptor`), while `proximadb-graph-subset` keeps parsing/execution behavior and reexports the descriptor for compatibility
+* the root unified AST no longer defines its own duplicate lowered declarative graph-query struct; `GraphQueryExpr` now reuses the `proximadb-graph-query` lowered contract directly, which removes another root-owned graph IR seam before the larger `proximadb-query` split
 * the shared `FilterOperator`/`FilterValue` contract now lives in a new leaf crate, `proximadb-query-filter`, and the graph traversal IR (`GraphTraversalExpr`, `StartNodeSpec`, traversal/node/edge/property filters) now lives in `proximadb-graph`; the root unified AST re-exports both instead of owning another graph-specific IR island
 * the document query IR (`DocumentQueryExpr`, `PathFilter`, `DocumentSort`) now lives in a new leaf crate, `proximadb-document-query`, so the root unified AST no longer owns modality-specific document request shape either
 * the observability query IR (`LogQueryExpr`, `MetricQueryExpr`, `MetricAggregation`) now lives in a new leaf crate, `proximadb-observability-query`, so the root unified AST is continuing to shrink into a composition/re-export shell rather than a monolithic owner of every modality request shape
@@ -580,7 +580,7 @@ Current status after the first refinement:
 * `proximadb-query` now also owns the deterministic vector-similarity semantic-join algorithm (`RecordSimilarityEngine`, `extract_record_vector`, and `execute_semantic_join_with`); the root unified executor keeps the concrete cosine distance engine and LLM/block-batch dispatch, but no longer owns the reusable record-level semantic join logic itself
 * `proximadb-query` now also owns the pure document-query adaptation helpers (`sql_object_to_json`, `sql_value_to_json`, `convert_path_filters_to_document_filter`, and `convert_filter_value_to_sql`); the root unified executor now delegates JSON/proto filter/value translation into the extracted crate and keeps only the actual document-service invocation locally
 * `proximadb-query` now also owns the pure graph-traversal adaptation helpers (`unified_property_filter_to_graph_property_filter`, `filter_value_to_graph_property_value`, `extract_node_labels`, and `build_traversal_request`); the root unified executor now delegates AST/proto traversal request shaping into the extracted crate and keeps only graph-service execution and result shaping locally
-* `proximadb-query` no longer depends on the concrete `proximadb-graph` modality runtime; graph query-runtime helpers now depend on `proximadb-graph-query` contracts and `proximadb-graph-subset` adapter contracts only, keeping graph runtime recompiles out of the extracted cross-model query runtime
+* `proximadb-query` no longer depends on the concrete `proximadb-graph` modality runtime; graph query-runtime helpers now depend on `proximadb-graph-query` contracts and, only where execution/row-shaping helpers are required, `proximadb-graph-subset` adapter behavior
 * a second leaf query crate, `proximadb-graph-arrow`, now owns Arrow record-batch conversion and graph-row streaming helpers; this keeps graph modality runtime, cross-model query orchestration, and columnar presentation concerns on separate layers while preserving the root `query::arrow_graph_bridge` path as a compatibility shim
 * root graph-query consumers are starting to depend directly on canonical `proximadb-graph` AST/planner types (`graph_subset`, `explain`, root Cypher parser) instead of routing through `crate::graph::query::*` compatibility shims
 * the Arrow graph bridge now uses a tiny executor contract parameterized by the caller's plan type and backed by `proximadb-graph-query` context/row contracts, so `proximadb-graph-arrow` no longer depends on the heavier graph runtime crate just to stream graph rows as Arrow batches
@@ -664,19 +664,23 @@ Correction:
 * keep generated protobuf types, serde/default shims, and protocol conversion helpers in `proximadb-proto`
 * move host/runtime/system helpers into future `proximadb-runtime`, `proximadb-telemetry`, or other higher-layer crates as appropriate
 
-==== 3. `proximadb-multimodel-query` still depends on the heavier graph modality crate
+==== 3. `proximadb-multimodel-query` graph dependency has been narrowed
 
-The multimodel query IR crate depends on `proximadb-graph` and `proximadb-graph-subset`.
+The multimodel query IR crate previously depended on heavier graph crates for declarative graph
+query shape.
 
 Implication:
 
-* graph runtime or parser changes can still force recompilation of crates that should only need cross-model IR
-* this violates the original intent that cross-model/query layers depend on modality contracts rather than modality internals
+* graph runtime, parser, or subset execution changes could force recompilation of crates that only
+  need cross-model IR
+* this violated the intent that cross-model/query layers depend on modality contracts rather than
+  modality internals
 
 Correction:
 
-* move reusable graph request-shape contracts into a narrower graph-contract leaf
-* keep `proximadb-multimodel-query` depending on graph IR/contracts, not on the heavier graph runtime crate
+* reusable graph request-shape contracts now live in `proximadb-graph-query`
+* `proximadb-multimodel-query` now depends on graph IR/contracts only, not on
+  `proximadb-graph` or `proximadb-graph-subset`
 
 ==== 4. `proximadb-graph-subset` mixes syntax/descriptor ownership with execution/runtime ownership
 
@@ -1168,6 +1172,9 @@ The graph query contract layer is now lower than the graph runtime:
 * `proximadb-graph-query` also now owns the Cypher subset AST/parser contracts reused by
   `proximadb-graph-subset`, while `proximadb-graph` keeps compatibility re-exports for existing
   graph runtime callers
+* `proximadb-graph-query` now owns the lowered declarative graph-query descriptor used by
+  `proximadb-multimodel-query`, `proximadb-query`, and root compatibility AST exports; the subset
+  crate reexports it but no longer owns the contract
 * `proximadb-graph-query` now also owns `GraphQueryContext`, `GraphQueryStats`,
   `GraphQueryExecutionResult`, and `GraphQueryRow`; these are deliberately graph-query contracts,
   not generic foundation row abstractions, until the row projection path is migrated onto

@@ -6,8 +6,8 @@ use std::time::Instant;
 
 use anyhow::Result;
 use proximadb_document_query::{DocumentQueryExpr, PathFilter};
+use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;
 use proximadb_graph_query::traversal::{GraphTraversalExpr, StartNodeSpec};
-use proximadb_graph_subset::LoweredGraphQuery as GraphQueryExpr;
 use proximadb_multimodel_query::{DataModel, ModelOperation, MultiModelQuery, QueryComponent};
 use proximadb_observability_query::{LogQueryExpr, MetricQueryExpr};
 use proximadb_query_filter::FilterOperator;
