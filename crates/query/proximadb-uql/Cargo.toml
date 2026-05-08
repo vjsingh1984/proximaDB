@@ -18,7 +18,7 @@ anyhow.workspace = true
 regex = "1.11"
 tracing = "0.1"
 proximadb-document-query = { path = "../proximadb-document-query" }
-proximadb-graph = { path = "../../modalities/proximadb-graph" }
+proximadb-graph-query = { path = "../proximadb-graph-query" }
 proximadb-multimodel-query = { path = "../proximadb-multimodel-query" }
 proximadb-observability-query = { path = "../proximadb-observability-query" }
 proximadb-query-clauses = { path = "../proximadb-query-clauses" }

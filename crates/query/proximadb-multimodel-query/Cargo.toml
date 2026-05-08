@@ -16,7 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-document-query = { path = "../proximadb-document-query" }
-proximadb-graph = { path = "../../modalities/proximadb-graph" }
+proximadb-graph-query = { path = "../proximadb-graph-query" }
 proximadb-graph-subset = { path = "../proximadb-graph-subset" }
 proximadb-observability-query = { path = "../proximadb-observability-query" }
 proximadb-query-clauses = { path = "../proximadb-query-clauses" }

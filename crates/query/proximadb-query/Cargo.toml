@@ -27,6 +27,7 @@ proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-document-query = { path = "../proximadb-document-query" }
 proximadb-filter-expression = { path = "../../foundation/proximadb-filter-expression" }
 proximadb-graph = { path = "../../modalities/proximadb-graph" }
+proximadb-graph-query = { path = "../proximadb-graph-query" }
 proximadb-graph-subset = { path = "../proximadb-graph-subset" }
 proximadb-multimodel-plan = { path = "../proximadb-multimodel-plan" }
 proximadb-multimodel-query = { path = "../proximadb-multimodel-query" }

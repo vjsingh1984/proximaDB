@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use proximadb_document_query::{DocumentQueryExpr, PathFilter};
-use proximadb_graph::query::traversal::{GraphTraversalExpr, StartNodeSpec};
+use proximadb_graph_query::traversal::{GraphTraversalExpr, StartNodeSpec};
 use proximadb_graph_subset::LoweredGraphQuery as GraphQueryExpr;
 use proximadb_multimodel_query::{DataModel, ModelOperation, MultiModelQuery, QueryComponent};
 use proximadb_observability_query::{LogQueryExpr, MetricQueryExpr};
@@ -539,7 +539,7 @@ impl QueryOptimizerRuntime {
             graph_name: expr.graph_name.clone(),
             start_nodes: StartNodeSpec::Label("*".to_string()),
             edge_types: Vec::new(),
-            direction: proximadb_graph::query::traversal::TraversalDirection::Outgoing,
+            direction: proximadb_graph_query::traversal::TraversalDirection::Outgoing,
             max_depth: expr.max_depth,
             min_depth: 0,
             node_filters: Vec::new(),
@@ -660,7 +660,7 @@ mod tests {
                 graph_name: "knowledge".to_string(),
                 start_nodes: StartNodeSpec::Ids(vec!["node1".to_string()]),
                 edge_types,
-                direction: proximadb_graph::query::traversal::TraversalDirection::Outgoing,
+                direction: proximadb_graph_query::traversal::TraversalDirection::Outgoing,
                 max_depth: depth,
                 min_depth: 1,
                 node_filters: vec![],

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 FOUNDATION_ALLOWED_TRANSPORT = {"proximadb-proto"}
-MODALITY_ALLOWED_QUERY_CONTRACTS = {"proximadb-query-filter"}
+MODALITY_ALLOWED_QUERY_CONTRACTS = {"proximadb-graph-query", "proximadb-query-filter"}
 QUERY_RUNTIME_CRATES = {"proximadb-query"}
 
 

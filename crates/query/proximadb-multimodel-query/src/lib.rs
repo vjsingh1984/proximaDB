@@ -1,5 +1,5 @@
 use proximadb_document_query::DocumentQueryExpr;
-use proximadb_graph::query::traversal::GraphTraversalExpr;
+use proximadb_graph_query::traversal::GraphTraversalExpr;
 use proximadb_graph_subset::LoweredGraphQuery as GraphQueryExpr;
 use proximadb_observability_query::{LogQueryExpr, MetricQueryExpr};
 use proximadb_query_clauses::{Filter, OrderBy};
@@ -244,7 +244,7 @@ pub enum ModelOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_graph::query::traversal::{
+    use proximadb_graph_query::traversal::{
         EdgeFilter, GraphTraversalExpr, NodeFilter, PropertyFilter, StartNodeSpec,
         TraversalDirection,
     };

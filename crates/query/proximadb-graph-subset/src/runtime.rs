@@ -3,7 +3,7 @@ use proximadb_graph::query::ast::{
     CompiledPattern, EdgeDirection, EdgePattern, NodePattern, PropertyConstraint,
     PropertyProjection, WhereClause,
 };
-use proximadb_graph::query::service::GraphQueryReadService;
+use proximadb_graph_query::service::GraphQueryReadService;
 use proximadb_proto::proximadb_v1::{
     Edge, EdgeQuery, Node, NodeQuery, PropertyArray, PropertyFilter, PropertyFilterOperator,
     PropertyObject, PropertyValue, VectorData, property_value,

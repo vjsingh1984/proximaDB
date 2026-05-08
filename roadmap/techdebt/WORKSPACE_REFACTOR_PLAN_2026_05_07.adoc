@@ -1154,6 +1154,22 @@ The join/runtime boundary is also cleaner now:
 * this keeps reusable join behavior in `proximadb-query` while leaving only the platform-bound
   LLM prompt path in root
 
+=== Recent Graph Contract Boundary Refinement
+
+The graph query contract layer is now lower than the graph runtime:
+
+* `proximadb-graph-query` now owns traversal IR and the graph read/stats/traversal service
+  contracts used by cross-model query crates
+* `proximadb-graph` re-exports those contracts for compatibility, but the lower query contracts
+  no longer need to depend on the graph runtime crate when they only need traversal shape or graph
+  service traits
+* this removes the former transitional dependency warnings for `proximadb-multimodel-query` and
+  `proximadb-uql`
+* the remaining `workspace-boundaries-check` warnings are now narrower and more meaningful:
+  `proximadb-graph-arrow` and `proximadb-graph-subset` still depend on `proximadb-graph` because
+  they use graph parser/planner/executor/runtime types that have not yet been split into contracts
+  or moved behind narrower traits
+
 == Immediate Follow-Up Deliverables
 
 The next concrete follow-ups should be:

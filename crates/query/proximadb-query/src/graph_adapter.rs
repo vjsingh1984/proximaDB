@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use proximadb_data_model::DataModel;
-use proximadb_graph::query::service::{
+use proximadb_graph_query::service::{
     GraphQueryReadService, GraphQueryService, GraphQueryTraversalService,
 };
-use proximadb_graph::query::traversal::{
+use proximadb_graph_query::traversal::{
     GraphTraversalExpr, NodeFilter, PropertyFilter as UnifiedPropertyFilter, StartNodeSpec,
     TraversalDirection,
 };
@@ -369,8 +369,8 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use proximadb_graph::query::QueryResult;
-    use proximadb_graph::query::service::{GraphQueryReadService, GraphQueryTraversalService};
-    use proximadb_graph::query::traversal::PropertyFilter;
+    use proximadb_graph_query::service::{GraphQueryReadService, GraphQueryTraversalService};
+    use proximadb_graph_query::traversal::PropertyFilter;
     use proximadb_proto::proximadb_v1::{
         Edge, EdgeQuery, Node, PropertyValue, TraversalResponse, TraversalStats, property_value,
     };
@@ -421,7 +421,7 @@ mod tests {
             max_depth: 3,
             min_depth: 1,
             node_filters: vec![],
-            edge_filters: vec![proximadb_graph::query::traversal::EdgeFilter {
+            edge_filters: vec![proximadb_graph_query::traversal::EdgeFilter {
                 edge_type: None,
                 properties: vec![PropertyFilter {
                     name: "weight".to_string(),

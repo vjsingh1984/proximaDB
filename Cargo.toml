@@ -26,6 +26,7 @@ members = [
     "crates/modalities/proximadb-graph",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
+    "crates/query/proximadb-graph-query",
     "crates/query/proximadb-graph-subset",
     "crates/query/proximadb-multimodel-query",
     "crates/query/proximadb-multimodel-plan",
@@ -115,6 +116,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
+proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }
 proximadb-graph-subset = { path = "crates/query/proximadb-graph-subset" }
 proximadb-multimodel-query = { path = "crates/query/proximadb-multimodel-query" }
 proximadb-multimodel-plan = { path = "crates/query/proximadb-multimodel-plan" }

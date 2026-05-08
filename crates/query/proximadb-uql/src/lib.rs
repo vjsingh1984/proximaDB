@@ -1,6 +1,6 @@
 pub mod ast {
     pub use proximadb_document_query::{DocumentQueryExpr, DocumentSort, PathFilter};
-    pub use proximadb_graph::query::traversal::{
+    pub use proximadb_graph_query::traversal::{
         EdgeFilter, GraphTraversalExpr, NodeFilter, PropertyFilter, StartNodeSpec,
         TraversalDirection,
     };

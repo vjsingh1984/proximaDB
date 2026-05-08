@@ -20,6 +20,7 @@ chrono.workspace = true
 nom = "7"
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
+proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
 regex = "1.10"
 serde.workspace = true
