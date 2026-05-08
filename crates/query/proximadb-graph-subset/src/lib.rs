@@ -1,8 +1,8 @@
 use anyhow::{Result, anyhow};
-use proximadb_graph::query::ast::{
+use proximadb_graph_query::ast::{
     CompiledPattern, PropertyConstraint, PropertyProjection, WhereClause,
 };
-use proximadb_graph::query::parser::QueryParser;
+use proximadb_graph_query::parser::QueryParser;
 use std::collections::HashSet;
 
 pub mod runtime;

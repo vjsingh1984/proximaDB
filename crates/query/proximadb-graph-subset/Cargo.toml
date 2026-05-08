@@ -17,7 +17,6 @@ path = "src/lib.rs"
 anyhow.workspace = true
 async-trait.workspace = true
 base64 = "0.22"
-proximadb-graph = { path = "../../modalities/proximadb-graph" }
 proximadb-graph-query = { path = "../proximadb-graph-query" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
 regex = "1.10"

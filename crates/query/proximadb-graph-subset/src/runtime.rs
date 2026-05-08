@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use proximadb_graph::query::ast::{
+use proximadb_graph_query::ast::{
     CompiledPattern, EdgeDirection, EdgePattern, NodePattern, PropertyConstraint,
     PropertyProjection, WhereClause,
 };
@@ -1012,7 +1012,7 @@ fn edge_to_json(edge: &Edge) -> Value {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use proximadb_graph::query::QueryResult;
+    use proximadb_graph_query::service::GraphQueryResult as QueryResult;
 
     #[derive(Default)]
     struct MockGraphReadService {
