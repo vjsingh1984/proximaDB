@@ -669,9 +669,8 @@ Near-term hold decisions:
 * do not move root request tracing into `proximadb-runtime-common`; tracing, request correlation,
   metric names, and instrumentation helpers belong in the planned `proximadb-telemetry` crate so
   the generic runtime-helper crate does not absorb observability dependencies
-* do not promote `utils::skiplist_mutex` as a separate abstraction; it overlaps the extracted
-  `proximadb-runtime-common::skiplist::SkipList` concept and should be removed or reduced to an
-  alias only if a real compatibility caller appears
+* `utils::skiplist_mutex` was removed instead of promoted; it had no callers and overlapped the
+  extracted `proximadb-runtime-common::skiplist::SkipList` concept
 
 == Boundary Validation And Course Correction
 
