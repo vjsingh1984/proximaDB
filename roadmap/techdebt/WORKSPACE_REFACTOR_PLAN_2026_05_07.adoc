@@ -633,6 +633,9 @@ Current status after the first refinement:
 * `proximadb-runtime-common` now exists as the first horizontal runtime-helper crate and owns the
   generic LRU cache implementation; root `utils::cache` remains a compatibility re-export while
   storage, query, modality, and platform crates converge on the shared horizontal helper
+* the generic concurrent ordered-map helper historically exposed as `utils::skiplist::SkipList`
+  now also lives in `proximadb-runtime-common`; root `utils::skiplist` remains a compatibility
+  re-export while future storage/query runtime consumers can depend on the horizontal crate directly
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-runtime-common` and
   `proximadb-storage-common` in the default rebuild baseline package list, so horizontal and
   storage-common changes are measured alongside foundation, graph, query, and root checks
