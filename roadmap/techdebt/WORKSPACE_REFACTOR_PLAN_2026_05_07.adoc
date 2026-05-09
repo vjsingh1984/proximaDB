@@ -725,6 +725,8 @@ Correction:
   into `proximadb-proto`
 * `proximadb-runtime` now owns the runtime proto defaulting helper, including host CPU/memory inspection
   and tracing diagnostics; the root proto module remains a facade for packaging/runtime compatibility
+* the source migration map now has a file-level override for `src/proto/defaults.rs`, so future agents
+  do not misclassify the compatibility shim as protocol-foundation ownership
 
 ==== 3. `proximadb-multimodel-query` graph dependency has been narrowed
 

@@ -428,6 +428,15 @@ SRC_MODULE_TARGETS: dict[str, SourceModuleTarget] = {
     ),
 }
 
+SRC_FILE_TARGETS: dict[Path, SourceModuleTarget] = {
+    Path("proto/defaults.rs"): SourceModuleTarget(
+        "platform",
+        "proximadb-runtime",
+        "runtime defaults inspect host capacity and emit diagnostics; "
+        "src/proto keeps only a compatibility re-export",
+    ),
+}
+
 
 def load_toml(path: Path) -> dict:
     with path.open("rb") as handle:
@@ -667,6 +676,16 @@ def print_source_module_map() -> int:
         for module in unmapped:
             print(f"src/{module}")
         return 1
+
+    if SRC_FILE_TARGETS:
+        print()
+        print("File-level ownership overrides:")
+        for path, target in sorted(
+            SRC_FILE_TARGETS.items(),
+            key=lambda item: item[0].as_posix(),
+        ):
+            print(f"src/{path.as_posix()} -> {target.target} [{target.layer}]")
+            print(f"  {target.rationale}")
     return 0
 
 
