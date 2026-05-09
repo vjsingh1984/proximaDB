@@ -118,12 +118,12 @@ impl From<ApiError> for tonic::Status {
     }
 }
 
-/// Convert ProtocolError to gRPC Status at the protocol layer rather than in
-/// the foundation kernel crate.
-impl From<crate::core::error::ProtocolError> for tonic::Status {
-    fn from(err: crate::core::error::ProtocolError) -> Self {
-        ApiError::from(err).into()
-    }
+/// Convert ProtocolError to gRPC Status via ApiError.
+///
+/// This stays as a named adapter to avoid implementing a foreign trait for a
+/// foundation error type at the API boundary.
+pub fn protocol_error_to_grpc_status(err: crate::core::error::ProtocolError) -> tonic::Status {
+    ApiError::from(err).into()
 }
 
 /// Convert ApiError to HTTP Response
@@ -358,5 +358,15 @@ mod tests {
         let err = ApiError::InvalidArgument("bad input".to_string());
         let _response = err.into_response();
         // Response will have status 400 and JSON body
+    }
+
+    #[test]
+    fn test_protocol_error_to_grpc_status() {
+        let err = crate::core::error::ProtocolError::not_found("collection", "c1");
+
+        let status = protocol_error_to_grpc_status(err);
+
+        assert_eq!(status.code(), tonic::Code::NotFound);
+        assert!(status.message().contains("c1"));
     }
 }
