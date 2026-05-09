@@ -118,10 +118,10 @@ because `FilterableDataType` (proto) does not match `CatalogDataType` (catalog) 
 
 Each modality has a distinct record type:
 
-* `EmbeddingVersion` + `VectorRecord` (vector) -- `src/proto/proximadb.v1.rs:112-129`
-* `Node` / `Edge` (graph) -- `src/proto/proximadb.v1.rs:3521-3572`
+* `EmbeddingVersion` + `VectorRecord` (vector) -- `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs:112-129`
+* `Node` / `Edge` (graph) -- `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs:3521-3572`
 * `SqlValue`-shaped JSONB blob (document) -- shared with relational
-* `SqlRow` (relational/pgwire) -- `src/proto/proximadb.v1.rs:52-58`
+* `SqlRow` (relational/pgwire) -- `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs:52-58`
 * OTLP-shaped span / metric / log (observability) -- separate trace/metric/log records, no unified type
 * Append-only opaque entry (event log) -- per `src/storage/engines/eventlog/`
 
@@ -202,9 +202,9 @@ with explicit relations.
 |===
 | Concern | Source File or Doc
 
-| Vector record type | `src/proto/proximadb.v1.rs:112-129`; `proto/proximadb/v1/vector_types.proto:107`
-| Graph record type | `src/proto/proximadb.v1.rs:3521-3572`; `proto/proximadb/v1/graph.proto`
-| SQL row type | `src/proto/proximadb.v1.rs:41-58`; `proto/proximadb/v1/types.proto`
+| Vector record type | `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs:112-129`; `proto/proximadb/v1/vector_types.proto:107`
+| Graph record type | `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs:3521-3572`; `proto/proximadb/v1/graph.proto`
+| SQL row type | `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs:41-58`; `proto/proximadb/v1/types.proto`
 | Catalog type tree | `src/catalog/types.rs:121-162`
 | Engine trait | `src/storage/traits.rs:661-850`
 | Engine factory | `src/storage/engines/factory.rs`

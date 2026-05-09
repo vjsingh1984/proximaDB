@@ -644,7 +644,10 @@ Current status after the first refinement:
   `proximadb-runtime-common`, and `proximadb-storage-common` in the default rebuild baseline
   package list, so telemetry, horizontal, and storage-common changes are measured alongside
   foundation, graph, query, and root checks
-* duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
+* duplicate generated Rust proto sources have been removed from the root `src/proto` tree; generated
+  Rust artifacts now live under `crates/foundation/proximadb-proto/src/proto/`, while root
+  `src/proto/mod.rs` remains a compatibility re-export shim and descriptor binaries stay in place
+  for existing packaging/runtime compatibility
 
 Next implementation targets, in order:
 

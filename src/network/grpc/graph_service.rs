@@ -1263,10 +1263,10 @@ impl GraphService for GraphServiceImpl {
     //
     // NOTE: The following 7 methods are temporarily disabled due to proto regeneration workflow.
     // The proto definitions exist in proto/proximadb/v1/graph.proto but the generated
-    // Rust code (src/proto/proximadb.v1.rs) hasn't been regenerated to include the new types.
+    // Rust code (crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs) hasn't been regenerated to include the new types.
     // This is a known issue tracked separately. To enable these methods:
     // 1. Set up automated proto regeneration workflow
-    // 2. Run cargo build to regenerate src/proto/proximadb.v1.rs
+    // 2. Run ./scripts/regenerate-proto.sh to regenerate crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
     // 3. Uncomment these methods
     //
     // See plan: /Users/vijaysingh/.claude/plans/squishy-juggling-hickey.md

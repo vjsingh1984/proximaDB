@@ -12,9 +12,9 @@ ProximaDB uses Protocol Buffers (protobuf) for defining API contracts between se
 ```text
 proto/proximadb/v1/*.proto
           ↓
-   tonic-build (prost-build)
+./scripts/regenerate-proto.sh
           ↓
-src/proto/proximadb.v1.rs
+crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
 ```
 
 ## When to Regenerate Proto Files
@@ -26,16 +26,17 @@ Regenerate Rust code from proto files when:
 4. ✅ You modify existing service methods
 5. ✅ You see compilation errors about missing proto types
 
-## Automatic Regeneration
+## Regeneration Model
 
-Proto files are **automatically regenerated** during normal build:
+Proto files are currently **pre-generated** into the `proximadb-proto` workspace crate. The root
+crate no longer owns generated `.rs` artifacts and `src/proto/mod.rs` is only a compatibility
+re-export shim.
 
-```bash
-# Just build normally - proto files regenerate automatically
-cargo build
+Normal builds consume the checked-in generated files under:
+
+```text
+crates/foundation/proximadb-proto/src/proto/
 ```
-
-The `build.rs` file uses `tonic-build` to compile proto files on every build when they change.
 
 ## Manual Regeneration
 
@@ -50,21 +51,8 @@ If you need to force regeneration (e.g., after git conflicts or stale build arti
 This script:
 1. Cleans existing generated code
 2. Touches proto files to trigger rebuild
-3. Runs cargo build to regenerate
+3. Runs the pinned regeneration path for the proto workspace crate
 4. Verifies regeneration succeeded
-
-### Option 2: Manual regeneration
-
-```bash
-# Clean build artifacts
-cargo clean
-
-# Force rebuild by touching proto files
-find proto -name "*.proto" -exec touch {} \;
-
-# Rebuild (regenerates proto files)
-cargo build
-```
 
 ## Verifying Regeneration
 
@@ -72,9 +60,9 @@ After regeneration, verify that new types are available:
 
 ```bash
 # Check for specific proto types
-grep -c "CreateGraphWithEngineRequest" src/proto/proximadb.v1.rs
-grep -c "PulsarGraphStats" src/proto/proximadb.v1.rs
-grep -c "CrossShardQueryRequest" src/proto/proximadb.v1.rs
+grep -c "CreateGraphWithEngineRequest" crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
+grep -c "PulsarGraphStats" crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
+grep -c "CrossShardQueryRequest" crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs
 ```
 
 Expected output: Count should be > 0 for each type.
@@ -94,10 +82,11 @@ Expected output: Count should be > 0 for each type.
 - `proto/proximadb/explain.proto` - Query explanation definitions
 
 ### Output Files (Generated)
-- `src/proto/proximadb.v1.rs` - Main proto definitions (748KB)
-- `src/proto/proximadb.cluster.v1.rs` - Cluster-specific definitions
-- `src/proto/proximadb.explain.v1.rs` - Explanation-specific definitions
-- `src/proto/proximadb.streaming.v1.rs` - Streaming-specific definitions
+- `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs` - Main proto definitions
+- `crates/foundation/proximadb-proto/src/proto/proximadb.v2.rs` - v2 proto definitions
+- `crates/foundation/proximadb-proto/src/proto/proximadb.cluster.v1.rs` - Cluster-specific definitions
+- `crates/foundation/proximadb-proto/src/proto/proximadb.explain.v1.rs` - Explanation-specific definitions
+- `crates/foundation/proximadb-proto/src/proto/proximadb.streaming.v1.rs` - Streaming-specific definitions
 
 ## Build Configuration
 
@@ -111,10 +100,8 @@ tonic-prost-build = "0.14"
 
 ### Build Script (build.rs)
 
-The `build.rs` file uses `tonic-build::configure()` to:
-- Build gRPC server code (`build_server(true)`)
-- Build gRPC client code (`build_client(true)`)
-- Generate Rust code from all `.proto` files
+The root `build.rs` does not regenerate protobuf Rust sources. It documents the current manual
+workflow and keeps root builds from rebuilding the protocol surface unnecessarily.
 
 ## Troubleshooting
 
@@ -130,8 +117,8 @@ The `build.rs` file uses `tonic-build::configure()` to:
 **Cause**: Generated code not in correct location or not compiled
 
 **Solution**:
-1. Check `src/proto/proximadb.v1.rs` exists
-2. Verify `src/proto/mod.rs` exports the module
+1. Check `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs` exists
+2. Verify `crates/foundation/proximadb-proto/src/lib.rs` exports the module
 3. Run `cargo clean && cargo build`
 
 ### Problem: Regeneration takes too long
@@ -152,13 +139,13 @@ cargo build
 **Solution**:
 ```bash
 # 1. Discard local changes to generated files
-git checkout src/proto/*.rs
+git checkout crates/foundation/proximadb-proto/src/proto/*.rs
 
 # 2. Regenerate from clean state
 ./scripts/regenerate-proto.sh
 
 # 3. Commit regenerated code
-git add src/proto/*.rs
+git add crates/foundation/proximadb-proto/src/proto/*.rs
 git commit -m "chore: regenerate proto files"
 ```
 
@@ -197,12 +184,9 @@ When adding a new `.proto` file:
 
 ## CI/CD Integration
 
-Proto files are automatically regenerated in CI:
-- Any change to `proto/` directory triggers rebuild
-- `build.rs` reruns and regenerates code
-- Generated code is committed back to repository
-
-**Note**: We commit generated code to ensure reproducible builds and avoid requiring protoc in CI.
+Generated code is checked in under the `proximadb-proto` crate for reproducible builds. CI should
+validate that generated artifacts are current, but root crate builds should not regenerate them
+implicitly.
 
 ## Best Practices
 
@@ -261,10 +245,9 @@ Proto files are automatically regenerated in CI:
 
 ## Summary
 
-- ✅ Proto files regenerate automatically during build
 - ✅ Manual regeneration script available for forced updates
-- ✅ Generated code is committed to repository
-- ✅ tonics-build handles all compilation
-- ✅ No protoc installation required for development
+- ✅ Generated code is committed under `crates/foundation/proximadb-proto/src/proto/`
+- ✅ Root `src/proto/mod.rs` remains a compatibility re-export shim
+- ✅ No protoc installation required for normal development builds
 
-**Status**: ✅ Proto regeneration workflow fully operational (2026-05-01)
+**Status**: Proto ownership moved to `proximadb-proto`; automatic regeneration remains a future build-system improvement.

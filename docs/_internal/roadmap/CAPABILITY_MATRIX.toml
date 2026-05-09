@@ -39,7 +39,7 @@ notes = "Engines exist, but public proto/embedded mappings are incomplete."
 evidence = [
   "src/storage/engines/impls/tst/mod.rs:567",
   "src/storage/engines/impls/eventlog/mod.rs:161",
-  "src/proto/proximadb.v1.rs:2556",
+  "crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs:2556",
   "src/embedded/mod.rs:1095",
 ]
 
