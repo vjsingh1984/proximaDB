@@ -624,6 +624,9 @@ Current status after the first refinement:
   engine/service callers
 * the shared glob matcher used by columnar storage file filtering now lives in
   `proximadb-storage-common`; root `utils::glob` remains a compatibility re-export
+* `scripts/measure_workspace_rebuild.py` now includes `proximadb-storage-common` in the default
+  rebuild baseline package list, so storage-common changes are measured alongside foundation, graph,
+  query, and root checks
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:

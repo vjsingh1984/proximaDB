@@ -28,6 +28,7 @@ DEFAULT_PACKAGES = (
     "proximadb-proto",
     "proximadb-data-model",
     "proximadb-records",
+    "proximadb-storage-common",
     "proximadb-graph-query",
     "proximadb-graph",
     "proximadb-multimodel-plan",
