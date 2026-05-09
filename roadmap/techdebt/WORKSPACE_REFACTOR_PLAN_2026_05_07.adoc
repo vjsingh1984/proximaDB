@@ -622,6 +622,8 @@ Current status after the first refinement:
 * the shared tenant-aware `StoragePath` helper now also lives in `proximadb-storage-common`; root
   `utils::storage_path` and `utils::StoragePath` remain compatibility re-exports for existing
   engine/service callers
+* the shared glob matcher used by columnar storage file filtering now lives in
+  `proximadb-storage-common`; root `utils::glob` remains a compatibility re-export
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:
