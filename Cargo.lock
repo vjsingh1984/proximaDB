@@ -5911,6 +5911,8 @@ dependencies = [
 name = "proximadb-security"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
+ "async-trait",
  "chrono",
  "proximadb-kernel",
  "serde",
