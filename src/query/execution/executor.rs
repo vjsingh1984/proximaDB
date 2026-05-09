@@ -10,7 +10,7 @@ use crate::query::execution::{
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use anyhow::{Result, anyhow};
-use proximadb_graph::query::service::GraphQueryTraversalService;
+use proximadb_graph::query::service::GraphExecutionService;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -96,23 +96,20 @@ impl Default for VectorPool {
 /// High-performance query executor with multi-modal support
 pub struct QueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
-    graph_service: Arc<dyn GraphQueryTraversalService>,
+    graph_service: Arc<dyn GraphExecutionService>,
     #[allow(dead_code)]
     memory_pool: VectorPool,
 }
 
 impl QueryExecutor {
     /// Create new query executor with memory pool optimization
-    pub fn new<G>(
+    pub fn new(
         vector_service: Option<Arc<VectorOperationsService>>,
-        graph_service: Arc<G>,
-    ) -> Self
-    where
-        G: GraphQueryTraversalService + 'static + ?Sized,
-    {
+        graph_service: Arc<dyn GraphExecutionService>,
+    ) -> Self {
         Self {
             vector_service,
-            graph_service: graph_service as Arc<dyn GraphQueryTraversalService>,
+            graph_service,
             memory_pool: VectorPool::new(),
         }
     }
@@ -175,28 +172,22 @@ impl QueryExecutor {
         }
     }
     /// Create new query executor with service integrations (non-optional vector service)
-    pub fn with_services<G>(
+    pub fn with_services(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<G>,
-    ) -> Self
-    where
-        G: GraphQueryTraversalService + 'static + ?Sized,
-    {
+        graph_service: Arc<dyn GraphExecutionService>,
+    ) -> Self {
         Self {
             vector_service: Some(vector_service),
-            graph_service: graph_service as Arc<dyn GraphQueryTraversalService>,
+            graph_service,
             memory_pool: VectorPool::new(),
         }
     }
 
     #[cfg(test)]
-    pub fn new_for_tests<G>(graph_service: Arc<G>) -> Self
-    where
-        G: GraphQueryTraversalService + 'static + ?Sized,
-    {
+    pub fn new_for_tests(graph_service: Arc<dyn GraphExecutionService>) -> Self {
         Self {
             vector_service: None,
-            graph_service: graph_service as Arc<dyn GraphQueryTraversalService>,
+            graph_service,
             memory_pool: VectorPool::new(),
         }
     }

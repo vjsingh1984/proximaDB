@@ -20,40 +20,39 @@
 //! appropriate execution strategies (VectorOnly, GraphOnly, Hybrid).
 
 use super::{
-    AggregateSpec, ExecutionOperation, ExecutionPlan, ExecutionStrategy, FusionStrategy,
-    ProjectionTransform, SeedingStrategy,
+    ExecutionOperation, ExecutionPlan, ExecutionStrategy, FusionStrategy, ProjectionTransform,
+    SeedingStrategy,
 };
-use crate::core::search::FilterExpression;
 use crate::query::ast::{Expr, Query};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use anyhow::{Result, anyhow};
-use proximadb_graph::query::service::GraphQueryStatsService;
-use std::collections::HashMap;
+use proximadb_graph::query::service::GraphExecutionService;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Execution planner that transforms AST into ExecutionPlan
 pub struct ExecutionPlanner {
     #[allow(dead_code)]
     vector_service: Arc<VectorOperationsService>,
-    graph_service: Arc<dyn GraphQueryStatsService>,
+    #[allow(dead_code)]
+    graph_service: Arc<dyn GraphExecutionService>,
     cost_model: CostModel,
     params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
     seeding_strategy: SeedingStrategy,
     fusion_weights: Option<Vec<f64>>,
+    #[allow(dead_code)]
     cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
 }
 
 impl ExecutionPlanner {
     /// Create new execution planner with service integrations
-    pub fn new<G>(vector_service: Arc<VectorOperationsService>, graph_service: Arc<G>) -> Self
-    where
-        G: GraphQueryStatsService + 'static + ?Sized,
-    {
+    pub fn new(
+        vector_service: Arc<VectorOperationsService>,
+        graph_service: Arc<dyn GraphExecutionService>,
+    ) -> Self {
         Self {
             vector_service,
-            graph_service: graph_service as Arc<dyn GraphQueryStatsService>,
+            graph_service,
             cost_model: CostModel::new(),
             params: None,
             seeding_strategy: SeedingStrategy::Average,
@@ -63,17 +62,14 @@ impl ExecutionPlanner {
     }
 
     /// Create with cache orchestrator for intelligent caching
-    pub fn with_cache<G>(
+    pub fn with_cache(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<G>,
+        graph_service: Arc<dyn GraphExecutionService>,
         cache_orchestrator: Arc<CrossCacheOrchestrator>,
-    ) -> Self
-    where
-        G: GraphQueryStatsService + 'static + ?Sized,
-    {
+    ) -> Self {
         Self {
             vector_service,
-            graph_service: graph_service as Arc<dyn GraphQueryStatsService>,
+            graph_service,
             cost_model: CostModel::new(),
             params: None,
             seeding_strategy: SeedingStrategy::Average,
@@ -83,14 +79,11 @@ impl ExecutionPlanner {
     }
 
     /// Create with bound parameters
-    pub fn with_params<G>(
+    pub fn with_params(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<G>,
+        graph_service: Arc<dyn GraphExecutionService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
-    ) -> Self
-    where
-        G: GraphQueryStatsService + 'static + ?Sized,
-    {
+    ) -> Self {
         let mut p = Self::new(vector_service, graph_service);
         p.params = params;
         p
@@ -108,7 +101,9 @@ impl ExecutionPlanner {
     pub fn create_plan(&self, query: &Query) -> Result<ExecutionPlan> {
         match query {
             Query::Select(select) => self.plan_select(select),
-            Query::Union { left, right, all } => self.plan_union(left, right, *all),
+            Query::Set {
+                left, right, all, ..
+            } => self.plan_union(left, right, *all),
             _ => Err(anyhow!("Unsupported query type for execution planning")),
         }
     }
@@ -156,8 +151,8 @@ impl ExecutionPlanner {
             optimizations: self.identify_optimizations(select),
             performance_hints: self.generate_hints(select),
             seeding_strategy: self.seeding_strategy.clone(),
-            limit: select.limit,
-            offset: select.offset,
+            limit: select.limit.map(|l| l as usize),
+            offset: select.offset.map(|o| o as usize),
         })
     }
 
@@ -165,8 +160,14 @@ impl ExecutionPlanner {
         // TableRef no longer carries an explicit model discriminator. Until that
         // annotation is reintroduced through lowering, use the canonical
         // expression capabilities to detect modality-specific execution.
-        let has_vector = select.projection.iter().any(|p| p.expr.is_vector_op());
-        let has_graph = select.projection.iter().any(|p| p.expr.is_graph_op());
+        let has_vector = select
+            .projection
+            .iter()
+            .any(|p| matches!(p.expr, Expr::SksSimilar { .. }));
+        let has_graph = select
+            .projection
+            .iter()
+            .any(|p| matches!(p.expr, Expr::SksFollow { .. } | Expr::SksAssemble { .. }));
 
         if has_vector && has_graph {
             ExecutionStrategy::Hybrid
@@ -189,25 +190,16 @@ impl ExecutionPlanner {
 
         // Extract query vector and parameters from SksSimilar expr
         let mut query_vector = None;
-        let mut top_k = select.limit.unwrap_or(10);
+        let top_k = select.limit.unwrap_or(10) as usize;
         let mut distance_metric = "cosine".to_string();
 
         for p in &select.projection {
-            if let Expr::SksSimilar {
-                query,
-                metric,
-                top_k: tk,
-                ..
-            } = &p.expr
-            {
+            if let Expr::SksSimilar { query, metric, .. } = &p.expr {
                 if let Expr::Literal(crate::query::ast::Literal::String(vec_str)) = query.as_ref() {
                     query_vector = Some(self.parse_vector_literal(vec_str)?);
                 }
                 if let Some(m) = metric {
                     distance_metric = m.clone();
-                }
-                if let Some(k) = tk {
-                    top_k = *k as usize;
                 }
             }
         }
@@ -215,7 +207,7 @@ impl ExecutionPlanner {
         Ok(ExecutionOperation::VectorSearch {
             collection_id,
             query_vector,
-            filters: select.selection.clone(),
+            filters: None, // AST Expr → FilterExpression conversion deferred (TD-048)
             top_k,
             distance_metric,
         })
@@ -236,7 +228,7 @@ impl ExecutionPlanner {
             start_nodes: vec![], // To be resolved from filters or parameters
             edge_types: vec![],
             max_depth: 3,
-            filters: select.selection.clone(),
+            filters: None, // AST Expr → FilterExpression conversion deferred (TD-048)
             vector_target_collection: None,
         })
     }
@@ -274,7 +266,7 @@ impl ExecutionPlanner {
             columns.push(col_name);
 
             match &p.expr {
-                Expr::Column(name) => {
+                Expr::Identifier(name) => {
                     transformations.push(ProjectionTransform::ExtractMetadata {
                         field: name.clone(),
                     });
@@ -296,7 +288,7 @@ impl ExecutionPlanner {
         Ok(ExecutionOperation::Aggregate {
             group_keys: select.group_by.iter().map(|e| format!("{:?}", e)).collect(),
             aggs: vec![], // To be extracted from projection
-            having: select.having.clone(),
+            having: None, // AST Expr → FilterExpression conversion deferred (TD-048)
         })
     }
 

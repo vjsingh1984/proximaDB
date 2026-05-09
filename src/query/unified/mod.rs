@@ -476,7 +476,8 @@ mod tests {
         let mut q = empty_query(vec![vector_component(), document_component()]);
         let original_models: Vec<_> = q.components.iter().map(|c| c.model.clone()).collect();
 
-        let result = reorder_components_with_optimizer(None, &mut q)
+        let none_opt: Option<&std::sync::Arc<dyn proximadb_query::QueryOptimizationService>> = None;
+        let result = reorder_components_with_optimizer(none_opt, &mut q)
             .await
             .unwrap();
         assert!(result.is_none());

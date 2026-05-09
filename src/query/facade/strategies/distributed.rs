@@ -137,7 +137,7 @@ impl DistributedQueryStrategy {
     /// Wire graph query/traversal service into local distributed execution.
     pub fn with_graph_service<G>(mut self, graph_service: Arc<G>) -> Self
     where
-        G: GraphQueryService + 'static + ?Sized,
+        G: GraphQueryService + 'static,
     {
         self.coordinator = self.coordinator.with_graph_service(graph_service);
         self

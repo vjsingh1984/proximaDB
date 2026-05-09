@@ -44,10 +44,10 @@ pub struct QueryEngine {
 
 impl QueryEngine {
     /// Create new unified query engine
-    pub fn new<G>(vector_service: Arc<VectorOperationsService>, graph_service: Arc<G>) -> Self
-    where
-        G: GraphExecutionService + 'static + ?Sized,
-    {
+    pub fn new(
+        vector_service: Arc<VectorOperationsService>,
+        graph_service: Arc<dyn GraphExecutionService>,
+    ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::new(
             vector_service.clone(),
             graph_service.clone(),
@@ -55,7 +55,7 @@ impl QueryEngine {
 
         let executor = crate::query::execution::executor::QueryExecutor::new(
             Some(vector_service.clone()),
-            graph_service.clone(),
+            graph_service,
         );
 
         Self {
@@ -66,14 +66,11 @@ impl QueryEngine {
     }
 
     /// Create query engine with planner parameters (e.g., bound SQL params)
-    pub fn new_with_params<G>(
+    pub fn new_with_params(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<G>,
+        graph_service: Arc<dyn GraphExecutionService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
-    ) -> Self
-    where
-        G: GraphExecutionService + 'static + ?Sized,
-    {
+    ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::with_params(
             vector_service.clone(),
             graph_service.clone(),
@@ -81,7 +78,7 @@ impl QueryEngine {
         );
         let executor = crate::query::execution::executor::QueryExecutor::new(
             Some(vector_service.clone()),
-            graph_service.clone(),
+            graph_service,
         );
         Self {
             vector_service,
@@ -91,16 +88,13 @@ impl QueryEngine {
     }
 
     /// Create query engine with planner params and seeding strategy for hybrid queries
-    pub fn new_with_options<G>(
+    pub fn new_with_options(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<G>,
+        graph_service: Arc<dyn GraphExecutionService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         seeding_strategy: SeedingStrategy,
         fusion_weights: Option<Vec<f64>>,
-    ) -> Self
-    where
-        G: GraphExecutionService + 'static + ?Sized,
-    {
+    ) -> Self {
         let mut planner = crate::query::execution::planner::ExecutionPlanner::with_params(
             vector_service.clone(),
             graph_service.clone(),
@@ -110,7 +104,7 @@ impl QueryEngine {
         planner.set_fusion_weights(fusion_weights);
         let executor = crate::query::execution::executor::QueryExecutor::new(
             Some(vector_service.clone()),
-            graph_service.clone(),
+            graph_service,
         );
         Self {
             vector_service,
@@ -558,10 +552,10 @@ mod execution_tests {
         // Vector-only query
         let vector_query = create_test_vector_query();
         let vector_plan = engine.planner.create_plan(&vector_query).unwrap();
-        // The query has SksSimilar, which should trigger Hybrid strategy
+        // The query has only SksSimilar (no graph ops), so strategy is VectorOnly
         assert!(matches!(
             vector_plan.execution_strategy,
-            ExecutionStrategy::Hybrid
+            ExecutionStrategy::VectorOnly
         ));
 
         // Deferred: Test graph-only and hybrid strategies

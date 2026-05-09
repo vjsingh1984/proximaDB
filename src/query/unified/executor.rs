@@ -15,22 +15,21 @@ use proximadb_observability_query::MetricAggregation as QueryMetricAggregation;
 use proximadb_query::{
     BlockBatchSemanticJoinService, JoinExecutionService, JoinResult,
     QueryComponentExecutionService, RecordSimilarityEngine, build_document_query_record,
-    build_graph_query_record, build_graph_traversal_record, build_log_query_request,
-    build_log_record, build_metric_query_request, build_metric_record, build_traversal_request,
-    build_vector_metadata, build_vector_search_record, convert_path_filters_to_document_filter,
+    build_graph_query_record, build_log_query_request, build_log_record,
+    build_metric_query_request, build_metric_record, build_vector_metadata,
+    build_vector_search_record, convert_path_filters_to_document_filter,
     execute_component_with_context_and_join_service, execute_component_with_service,
     execute_graph_traversal_with_input_service, execute_graph_traversal_with_service,
     execute_join_with_services, execute_multi_join_with, execute_query_components_with_service,
-    extract_node_labels, resolve_start_nodes, unified_property_filter_to_graph_property_filter,
 };
 pub use proximadb_query::{extract_join_values, filter_by_ids, merge_records};
 use tracing::{debug, info, trace, warn};
 
 use super::UnifiedRecord;
 use super::ast::{
-    ComponentDependency, DataModel, DocumentQueryExpr, FilterOperator, FilterValue, GraphQueryExpr,
-    GraphTraversalExpr, JoinType, LogQueryExpr, MetricQueryExpr, ModelOperation, MultiModelQuery,
-    PathFilter, QueryComponent, StartNodeSpec, TraversalDirection, VectorSearchExpr,
+    ComponentDependency, DataModel, DocumentQueryExpr, GraphQueryExpr, GraphTraversalExpr,
+    LogQueryExpr, MetricQueryExpr, ModelOperation, MultiModelQuery, QueryComponent,
+    VectorSearchExpr,
 };
 use super::fusion::SubQueryResult;
 use crate::observability::{LogQueryParams, MetricAggParams, ObservabilityService};
@@ -310,7 +309,7 @@ struct RootJoinExecutor {
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl JoinExecutionService for RootJoinExecutor {
     async fn execute_join(
         &self,
@@ -816,7 +815,7 @@ pub async fn execute_join(
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     }
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl BlockBatchSemanticJoinService for RootBlockBatchJoinService {
         async fn execute_block_batch_join(
             &self,
@@ -1024,9 +1023,10 @@ mod tests {
     use crate::graph::GraphOperationsService;
     use crate::proto::proximadb_v1::{CreateGraphRequest, Node as ProtoNode, property_value};
     use crate::query::unified::ast::{
-        DistanceMetric, FilterOperator, FilterValue, GraphQueryExpr, NodeFilter,
+        DistanceMetric, FilterOperator, FilterValue, GraphQueryExpr, JoinType, NodeFilter,
         PropertyFilter as UnifiedPropertyFilter, StartNodeSpec, VectorSearchParams,
     };
+    use proximadb_query::resolve_start_nodes;
 
     #[test]
     fn test_executor_creation() {
@@ -1700,17 +1700,15 @@ mod tests {
 
     #[test]
     fn test_resolve_nodes_from_component_empty_context() {
-        let result = resolve_nodes_from_component(0, None);
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+        let result = proximadb_query::resolve_nodes_from_component(0, None);
+        assert!(result.is_empty());
     }
 
     #[test]
     fn test_resolve_nodes_from_component_missing_component() {
         let context: HashMap<usize, &SubQueryResult> = HashMap::new();
-        let result = resolve_nodes_from_component(0, Some(&context));
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+        let result = proximadb_query::resolve_nodes_from_component(0, Some(&context));
+        assert!(result.is_empty());
     }
 
     #[test]
@@ -1744,10 +1742,7 @@ mod tests {
         let mut context: HashMap<usize, &SubQueryResult> = HashMap::new();
         context.insert(0, &vector_result);
 
-        let result = resolve_nodes_from_component(0, Some(&context));
-        assert!(result.is_ok());
-
-        let ids = result.unwrap();
+        let ids = proximadb_query::resolve_nodes_from_component(0, Some(&context));
         assert_eq!(ids.len(), 3);
         assert!(ids.contains(&"node_alpha".to_string()));
         assert!(ids.contains(&"node_beta".to_string()));
@@ -2022,7 +2017,7 @@ mod tests {
         context.insert(0, &graph_result);
 
         // Resolve nodes from the graph component
-        let resolved = resolve_nodes_from_component(0, Some(&context)).unwrap();
+        let resolved = proximadb_query::resolve_nodes_from_component(0, Some(&context));
 
         assert_eq!(resolved.len(), 3);
         assert!(resolved.contains(&"user_alice".to_string()));
