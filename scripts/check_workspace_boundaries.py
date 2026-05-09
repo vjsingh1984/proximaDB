@@ -74,6 +74,13 @@ class LayerRule:
         )
 
 
+@dataclass(frozen=True)
+class SourceModuleTarget:
+    layer: str
+    target: str
+    rationale: str
+
+
 LAYER_RULES = (
     LayerRule(
         frozenset({"foundation"}),
@@ -130,6 +137,234 @@ LAYER_RULES = (
         "query runtime crates must depend on modality contracts/capabilities, not concrete modality runtimes",
     ),
 )
+
+SRC_MODULE_TARGETS: dict[str, SourceModuleTarget] = {
+    "ai": SourceModuleTarget(
+        "integration",
+        "proximadb-integrations",
+        "provider/model adapters should terminate at stable query/runtime contracts",
+    ),
+    "analytics": SourceModuleTarget(
+        "application",
+        "apps/proximadb-bench or future analytics app crate",
+        "product analytics should not become shared runtime infrastructure",
+    ),
+    "api_handlers": SourceModuleTarget(
+        "platform",
+        "proximadb-api",
+        "REST/gRPC/Arrow/pgwire request handling belongs above query/runtime contracts",
+    ),
+    "audit": SourceModuleTarget(
+        "horizontal",
+        "proximadb-security or proximadb-telemetry",
+        "audit is shared policy/observability infrastructure, not modality logic",
+    ),
+    "auth": SourceModuleTarget(
+        "horizontal",
+        "proximadb-security",
+        "authentication is shared runtime policy infrastructure",
+    ),
+    "automl": SourceModuleTarget(
+        "integration",
+        "proximadb-integrations",
+        "AutoML/provider integration should adapt to stable query/vector contracts",
+    ),
+    "bench": SourceModuleTarget(
+        "application",
+        "apps/proximadb-bench",
+        "benchmarks should depend on public runtime surfaces, not internal modules",
+    ),
+    "bin": SourceModuleTarget(
+        "application",
+        "apps/proximadb-server and apps/proximadb-bench",
+        "binaries should become thin composition entrypoints",
+    ),
+    "catalog": SourceModuleTarget(
+        "platform",
+        "proximadb-runtime or future proximadb-catalog",
+        "catalog/control-plane ownership sits above modality storage contracts",
+    ),
+    "cdc": SourceModuleTarget(
+        "integration",
+        "proximadb-integrations",
+        "CDC connectors adapt external streams to stable internal contracts",
+    ),
+    "cluster": SourceModuleTarget(
+        "horizontal",
+        "proximadb-distributed",
+        "cluster membership, placement, and consensus are shared distributed infrastructure",
+    ),
+    "compute": SourceModuleTarget(
+        "horizontal",
+        "proximadb-runtime-common or proximadb-vector",
+        "shared execution helpers stay horizontal; vector-specific kernels move to vector",
+    ),
+    "config": SourceModuleTarget(
+        "foundation",
+        "proximadb-config",
+        "validated configuration models should not live in the root runtime monolith",
+    ),
+    "connectors": SourceModuleTarget(
+        "integration",
+        "proximadb-integrations",
+        "external connectors adapt outside systems to internal contracts",
+    ),
+    "core": SourceModuleTarget(
+        "foundation",
+        "proximadb-kernel, proximadb-data-model, proximadb-records",
+        "core primitives should be split into narrow foundation crates",
+    ),
+    "datafusion": SourceModuleTarget(
+        "integration",
+        "proximadb-integrations or proximadb-query adapter",
+        "DataFusion integration is an adapter over query/runtime contracts",
+    ),
+    "deployment": SourceModuleTarget(
+        "application",
+        "deploy/packaging or apps support crates",
+        "deployment automation should stay outside core product runtime",
+    ),
+    "embedded": SourceModuleTarget(
+        "platform",
+        "proximadb-runtime or language embedded binding crates",
+        "embedded composition belongs at runtime/binding boundaries",
+    ),
+    "errors": SourceModuleTarget(
+        "foundation",
+        "proximadb-kernel",
+        "shared error/result contracts belong in the kernel foundation crate",
+    ),
+    "executive": SourceModuleTarget(
+        "application",
+        "future enterprise/application crate",
+        "executive/business workflows should not become shared infrastructure",
+    ),
+    "graph": SourceModuleTarget(
+        "modality",
+        "proximadb-graph",
+        "graph engines, traversal, and graph query runtime belong to the graph modality",
+    ),
+    "index": SourceModuleTarget(
+        "modality",
+        "proximadb-vector or proximadb-storage-common",
+        "vector indexes move to vector; truly shared index abstractions move lower",
+    ),
+    "infrastructure": SourceModuleTarget(
+        "horizontal",
+        "proximadb-runtime-common",
+        "shared pools, schedulers, and runtime helpers should be explicit horizontal infrastructure",
+    ),
+    "licensing": SourceModuleTarget(
+        "platform",
+        "proximadb-runtime",
+        "license enforcement composes with runtime policy, not foundation contracts",
+    ),
+    "llm": SourceModuleTarget(
+        "integration",
+        "proximadb-integrations",
+        "LLM/provider adapters should remain outside core query/runtime behavior",
+    ),
+    "metrics": SourceModuleTarget(
+        "horizontal",
+        "proximadb-telemetry",
+        "metrics contracts and helpers are shared telemetry infrastructure",
+    ),
+    "monitoring": SourceModuleTarget(
+        "horizontal",
+        "proximadb-telemetry",
+        "monitoring/reporting belongs with telemetry/runtime observability infrastructure",
+    ),
+    "network": SourceModuleTarget(
+        "horizontal",
+        "proximadb-network",
+        "protocol-neutral networking, sessions, middleware, and transport helpers are horizontal",
+    ),
+    "observability": SourceModuleTarget(
+        "modality",
+        "proximadb-observability",
+        "logs, metrics, traces, and event-query runtime form an observability modality",
+    ),
+    "operations": SourceModuleTarget(
+        "platform",
+        "proximadb-runtime",
+        "backup/restore/admin operations compose runtime services",
+    ),
+    "prompts": SourceModuleTarget(
+        "integration",
+        "proximadb-integrations",
+        "prompt templates support LLM/provider adapters, not core runtime contracts",
+    ),
+    "proto": SourceModuleTarget(
+        "foundation",
+        "proximadb-proto",
+        "generated protocol contracts stay in the protocol foundation crate",
+    ),
+    "query": SourceModuleTarget(
+        "query",
+        "proximadb-query plus query contract/adapter crates",
+        "cross-model planning, lowering, routing, and fusion belong to query strata",
+    ),
+    "revenue": SourceModuleTarget(
+        "application",
+        "future business/application crate",
+        "revenue workflows should remain outside core database runtime layers",
+    ),
+    "sales_enablement": SourceModuleTarget(
+        "application",
+        "future demo/application crate",
+        "demo/sales workflows should depend on product APIs, not internal modules",
+    ),
+    "schema": SourceModuleTarget(
+        "foundation",
+        "proximadb-data-model or modality-specific schema crates",
+        "common schema/value contracts move lower; modality-only schema stays with modality",
+    ),
+    "search": SourceModuleTarget(
+        "modality",
+        "proximadb-vector or proximadb-query",
+        "vector search runtime belongs to vector; cross-model search orchestration belongs to query",
+    ),
+    "security": SourceModuleTarget(
+        "horizontal",
+        "proximadb-security",
+        "authorization, policy, crypto, and RLS are shared security infrastructure",
+    ),
+    "server": SourceModuleTarget(
+        "application",
+        "apps/proximadb-server",
+        "server startup should be a thin runtime composition entrypoint",
+    ),
+    "services": SourceModuleTarget(
+        "platform",
+        "proximadb-runtime or modality crates",
+        "service wiring moves to runtime; domain services move to their owning modality",
+    ),
+    "storage": SourceModuleTarget(
+        "storage",
+        "proximadb-storage-common plus modality crates",
+        "common storage primitives move lower; modality storage stays with owning modality",
+    ),
+    "streaming": SourceModuleTarget(
+        "integration",
+        "proximadb-integrations",
+        "streaming adapters connect external systems to internal ingestion/query contracts",
+    ),
+    "transaction": SourceModuleTarget(
+        "horizontal",
+        "proximadb-runtime-common or future proximadb-transaction",
+        "transaction coordination is shared runtime infrastructure",
+    ),
+    "utils": SourceModuleTarget(
+        "foundation",
+        "specific foundation or runtime-common crates",
+        "generic utilities must be assigned to the narrowest owning layer",
+    ),
+    "vector": SourceModuleTarget(
+        "modality",
+        "proximadb-vector",
+        "vector-specific runtime, scoring, and indexing belong to the vector modality",
+    ),
+}
 
 
 def load_toml(path: Path) -> dict:
@@ -330,6 +565,39 @@ def print_dependency_map(crates: dict[str, Crate]) -> None:
         print(f"{crate.name} [{crate.layer}] -> {rendered}")
 
 
+def source_modules() -> tuple[str, ...]:
+    src_dir = ROOT / "src"
+    return tuple(
+        sorted(path.name for path in src_dir.iterdir() if path.is_dir() and path.name != "tests")
+    )
+
+
+def print_source_module_map() -> int:
+    print("Root source module migration map")
+    modules = source_modules()
+    print(f"top-level src modules: {len(modules)}")
+    print()
+
+    unmapped: list[str] = []
+    for module in modules:
+        target = SRC_MODULE_TARGETS.get(module)
+        if target is None:
+            unmapped.append(module)
+            print(f"src/{module} -> UNMAPPED [classify before extracting]")
+            continue
+
+        print(f"src/{module} -> {target.target} [{target.layer}]")
+        print(f"  {target.rationale}")
+
+    if unmapped:
+        print()
+        print("Unmapped modules:")
+        for module in unmapped:
+            print(f"src/{module}")
+        return 1
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -347,11 +615,19 @@ def main() -> int:
         action="store_true",
         help="print the workspace crate dependency map and exit",
     )
+    parser.add_argument(
+        "--src-map",
+        action="store_true",
+        help="print the root src module migration map and exit",
+    )
     args = parser.parse_args()
 
     if args.rules:
         print_rules()
         return 0
+
+    if args.src_map:
+        return print_source_module_map()
 
     crates = workspace_crates()
     if args.deps:

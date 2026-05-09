@@ -1220,8 +1220,10 @@ The graph query contract layer is now lower than the graph runtime:
 The next concrete follow-ups should be:
 
 * crate dependency map of current workspace crates (now generated from Cargo manifests and layer
-  classification with `python3 scripts/check_workspace_boundaries.py --deps`; extend this toward
-  root `src/**` module-to-target-crate mapping as extraction continues)
+  classification with `python3 scripts/check_workspace_boundaries.py --deps`)
+* root `src/**` module-to-target-crate migration map (now generated from the stable workspace
+  skeleton with `python3 scripts/check_workspace_boundaries.py --src-map`; keep new top-level
+  modules classified there before extraction)
 * “forbidden dependency edges” list (now generated from the enforced policy table with
   `python3 scripts/check_workspace_boundaries.py --rules`)
 * build/rebuild benchmark baseline before extraction
