@@ -516,6 +516,21 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | Published benchmarks (TD-015)
 | Complete benchmark infrastructure with ANN-benchmarks adapter, VectorDBBench comparison, comprehensive public documentation
 | P4
+
+| TD-R25
+| Type system unification — Phase A (TD-054)
+| `ProximaType`/`ProximaValue` extended with `to_arrow()`, `pgwire_oid()`, `type_of()`, `is_compatible_with()`; `CatalogDataType::to_proxima_type()` bridge added. 17 TDD tests in `proximadb-data-model`. Resolves the three-parallel-value-system problem (spec §4).
+| Phase A
+
+| TD-R26
+| Unified record envelope — Phase B (TD-054)
+| `proximadb_records::ProximaRecord` spec §3 envelope implemented with NF² props tree, RLS fields, per-modality embeddings, temporal ns fields, `LabelSet`. `From<&VectorRecord>`, `From<&Node>`, `From<&Edge>` conversions in `conversions.rs`. `RecordConverter::vector_to_envelope()` bridge added. 26 TDD tests.
+| Phase B
+
+| TD-R27
+| Engine-level RLS scaffold — Phase E (TD-054)
+| `RlsRecordPredicate` + optional `rls_record_filter()` hook added to `UnifiedStorageEngine` trait. SST and VIPER engines implement the override (extract `tenant_id`/principal from `StorageQueryContext`). Default returns `None` (no-op). Spec §8 proof-of-concept.
+| Phase E
 |===
 
 == New Gaps Identified (March 2026 Codebase Audit)
@@ -870,4 +885,6 @@ See `PROXIMADB_RECOMMENDATIONS.md` §7 for the verification table and §6 for se
 
 '''
 
-_Last Updated_: April 25, 2026
+* TD-R25..TD-R27 added May 8, 2026. Phase A/B/E foundation work completed via TDD: type system unification (`ProximaType` Arrow+pgwire), `ProximaRecord` spec §3 envelope (`proximadb-records` crate), and engine-level RLS scaffold (`rls_record_filter()` hook in `UnifiedStorageEngine`, overridden in SST + VIPER). All three items resolve the core of TD-054 as defined in `MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`. Remaining multi-model phases (C query algebra, D three-layer storage, F workspace skeleton) are in-progress.
+
+_Last Updated_: May 8, 2026

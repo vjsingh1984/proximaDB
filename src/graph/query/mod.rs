@@ -107,14 +107,18 @@ mod tests {
             .with_memory_limit(4096)
             .with_stats();
         context
+            .execution
             .parameters
             .insert("tenant".to_string(), json!("acme"));
 
         assert_eq!(context.graph_id, "tenant-graph");
-        assert_eq!(context.timeout_ms, Some(500));
-        assert_eq!(context.memory_limit, Some(4096));
-        assert!(context.collect_stats);
-        assert_eq!(context.parameters.get("tenant"), Some(&json!("acme")));
+        assert_eq!(context.execution.limits.timeout_ms, Some(500));
+        assert_eq!(context.execution.limits.memory_limit_bytes, Some(4096));
+        assert!(context.execution.collect_stats);
+        assert_eq!(
+            context.execution.parameters.get("tenant"),
+            Some(&json!("acme"))
+        );
     }
 
     #[test]

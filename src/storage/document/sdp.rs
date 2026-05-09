@@ -173,8 +173,13 @@ mod tests {
     #[test]
     fn test_sdp_pipeline_basic() {
         let chunker = SdpChunker::new(SdpConfig::default());
-        let text = "Title: ProximaDB\n\nProximaDB is a vector database.\n\nIt is built in Rust.";
-        let chunks = chunker.process(text).unwrap();
+        // First chunk must be > 100 chars so Stage 4 doesn't merge it with chunk 1.
+        let title_section = "Title: ProximaDB - a unified multi-model vector database built in Rust for high-performance similarity search and graph traversal.";
+        let text = format!(
+            "{}\n\nProximaDB is a vector database optimized for dense and sparse vector retrieval.\n\nIt is built in Rust with SIMD-accelerated distance kernels.",
+            title_section
+        );
+        let chunks = chunker.process(&text).unwrap();
 
         assert_eq!(chunks.len(), 3);
         assert!(chunks[1].content.contains("Context: Title: ProximaDB"));
