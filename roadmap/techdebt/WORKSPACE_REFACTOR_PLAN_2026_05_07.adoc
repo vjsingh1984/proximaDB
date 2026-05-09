@@ -648,6 +648,9 @@ Current status after the first refinement:
 * `workspace-boundaries-check` now blocks `proximadb-security` from taking REST/gRPC/client
   transport dependencies, preserving it as a shared policy/contract layer rather than another
   handler bucket
+* `workspace-boundaries-check` also blocks `proximadb-security` from taking concrete Tokio runtime
+  dependencies, so async storage contracts can be shared without pulling runtime implementations into
+  the horizontal security layer
 * the source migration map now has a file-level override for `src/audit/types.rs`, so future agents
   treat the root module as a compatibility shim over `proximadb-security`
 * `proximadb-security` now also owns the reusable audit storage contract and `AuditStatistics`
