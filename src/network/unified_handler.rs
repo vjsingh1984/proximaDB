@@ -69,7 +69,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use proximadb_graph::query::service::GraphQueryService;
+use proximadb_graph_query::service::GraphQueryService;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 

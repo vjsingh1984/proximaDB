@@ -54,7 +54,7 @@
 //! - **Concurrency**: Lock-free operation with Arc-based sharing
 
 use anyhow::{Context, Result, anyhow};
-use proximadb_graph::query::service::GraphExecutionService;
+use proximadb_graph_query::service::GraphExecutionService;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1299,12 +1299,13 @@ impl UnifiedHandlers {
                 if response.success {
                     // DEBUG: Log the collection config being returned
                     if let Some(ref collection) = response.collection
-                        && let Some(ref config) = collection.config {
-                            info!(
-                                "🔍 DEBUG Returning collection: name={}, distance_metric={:?}, storage_engine={:?}",
-                                config.name, config.distance_metric, config.storage_engine
-                            );
-                        }
+                        && let Some(ref config) = collection.config
+                    {
+                        info!(
+                            "🔍 DEBUG Returning collection: name={}, distance_metric={:?}, storage_engine={:?}",
+                            config.name, config.distance_metric, config.storage_engine
+                        );
+                    }
                     Ok((true, response.collection, None, 1, None, None))
                 } else {
                     Ok((

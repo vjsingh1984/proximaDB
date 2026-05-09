@@ -17,7 +17,7 @@
 //! REST server implementation using axum
 
 use axum::{Router, extract::DefaultBodyLimit, middleware};
-use proximadb_graph::query::service::GraphExecutionService;
+use proximadb_graph_query::service::GraphExecutionService;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;

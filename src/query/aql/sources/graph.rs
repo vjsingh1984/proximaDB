@@ -1,7 +1,7 @@
 //! AQL Source implementation for Graph data model.
 
 use async_trait::async_trait;
-use proximadb_graph::query::service::GraphExecutionService;
+use proximadb_graph_query::service::GraphExecutionService;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;

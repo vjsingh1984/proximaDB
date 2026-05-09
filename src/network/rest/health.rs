@@ -8,7 +8,7 @@ use axum::{
     http::StatusCode,
     response::Json,
 };
-use proximadb_graph::query::service::GraphExecutionService;
+use proximadb_graph_query::service::GraphExecutionService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use proximadb_graph::query::service::GraphQueryService;
+use proximadb_graph_query::service::GraphQueryService;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 

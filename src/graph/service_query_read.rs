@@ -1,7 +1,7 @@
 use super::GraphOperationsService;
 use async_trait::async_trait;
 use proximadb_graph::query::QueryResult;
-use proximadb_graph::query::service::GraphQueryReadService;
+use proximadb_graph_query::service::GraphQueryReadService;
 use proximadb_proto::proximadb_v1::{Edge, EdgeQuery, Node, NodeQuery};
 use std::sync::Arc;
 

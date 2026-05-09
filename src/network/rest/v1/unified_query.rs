@@ -67,7 +67,7 @@ use axum::{
     response::Json as JsonResponse,
     routing::{delete, post},
 };
-use proximadb_graph::query::service::GraphQueryService;
+use proximadb_graph_query::service::GraphQueryService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

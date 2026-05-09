@@ -5,7 +5,7 @@
 //! runtime contract.
 
 use anyhow::Result;
-use proximadb_graph::query::service::GraphQueryReadService;
+use proximadb_graph_query::service::GraphQueryReadService;
 use proximadb_graph_subset::{
     LoweredGraphQueryResult, execute_lowered_graph_query,
     execute_lowered_graph_query_with_start_nodes,

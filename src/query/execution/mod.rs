@@ -28,7 +28,7 @@ use crate::core::search::FilterExpression;
 use crate::query::ast::Query;
 use crate::services::operations::vectors::VectorOperationsService;
 use anyhow::{Result, anyhow};
-use proximadb_graph::query::service::GraphExecutionService;
+use proximadb_graph_query::service::GraphExecutionService;
 use std::sync::Arc;
 
 /// Unified query engine with AST-based execution

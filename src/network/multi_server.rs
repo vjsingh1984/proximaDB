@@ -87,7 +87,7 @@ use crate::storage::document::DocumentService;
 use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::multimodel::MultiModelStorageFacade;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use proximadb_graph::query::service::{GraphExecutionService, GraphQueryService};
+use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 ///

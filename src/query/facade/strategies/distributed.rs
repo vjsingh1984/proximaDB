@@ -21,7 +21,7 @@
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use proximadb_graph::query::service::GraphQueryService;
+use proximadb_graph_query::service::GraphQueryService;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

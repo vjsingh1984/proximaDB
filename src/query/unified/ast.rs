@@ -3,10 +3,10 @@
 //! Root compatibility re-exports for the unified multimodel query IR.
 
 pub use proximadb_document_query::{DocumentQueryExpr, DocumentSort, PathFilter};
-pub use proximadb_graph::query::traversal::{
+pub use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;
+pub use proximadb_graph_query::traversal::{
     EdgeFilter, GraphTraversalExpr, NodeFilter, PropertyFilter, StartNodeSpec, TraversalDirection,
 };
-pub use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;
 pub use proximadb_multimodel_query::{
     BlockBatchConfig, ComponentDependency, DataModel, JoinType, ModelOperation, MultiModelQuery,
     QueryComponent, SemanticJoinMode,

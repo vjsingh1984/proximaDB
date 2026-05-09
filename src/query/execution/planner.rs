@@ -27,7 +27,7 @@ use crate::query::ast::{Expr, Query};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use anyhow::{Result, anyhow};
-use proximadb_graph::query::service::GraphExecutionService;
+use proximadb_graph_query::service::GraphExecutionService;
 use std::sync::Arc;
 
 /// Execution planner that transforms AST into ExecutionPlan

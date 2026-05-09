@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Json as JsonResponse},
 };
-use proximadb_graph::query::service::GraphExecutionService;
+use proximadb_graph_query::service::GraphExecutionService;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;

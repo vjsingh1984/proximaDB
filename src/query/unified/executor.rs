@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use proximadb_graph::query::service::{
+use proximadb_graph_query::service::{
     GraphQueryReadService, GraphQueryService, GraphQueryTraversalService,
 };
 use proximadb_observability_query::MetricAggregation as QueryMetricAggregation;

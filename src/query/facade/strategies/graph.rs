@@ -30,7 +30,7 @@ use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use proximadb_graph::query::service::GraphQueryReadService;
+use proximadb_graph_query::service::GraphQueryReadService;
 use proximadb_graph_subset::discover_default_graph_id;
 use tracing::{debug, info, instrument};
 
