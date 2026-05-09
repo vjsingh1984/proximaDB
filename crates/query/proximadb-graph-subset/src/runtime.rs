@@ -3,6 +3,7 @@ use proximadb_graph_query::ast::{
     CompiledPattern, EdgeDirection, EdgePattern, NodePattern, PropertyConstraint,
     PropertyProjection, WhereClause,
 };
+pub use proximadb_graph_query::declarative::graph_query_row_id;
 use proximadb_graph_query::service::GraphQueryReadService;
 use proximadb_proto::proximadb_v1::{
     Edge, EdgeQuery, Node, NodeQuery, PropertyArray, PropertyFilter, PropertyFilterOperator,
@@ -253,29 +254,6 @@ pub fn shape_graph_query_row(
     } else {
         retain_graph_query_output_columns(row, output_columns)
     }
-}
-
-pub fn graph_query_row_id(row: &Value, row_index: usize) -> String {
-    row.as_object()
-        .and_then(|object| object.get("node_id").and_then(Value::as_str))
-        .map(ToString::to_string)
-        .or_else(|| {
-            row.as_object()
-                .and_then(|object| object.get("id").and_then(Value::as_str))
-                .map(ToString::to_string)
-        })
-        .or_else(|| {
-            row.as_object().and_then(|object| {
-                object.values().find_map(|value| {
-                    value
-                        .as_object()
-                        .and_then(|nested| nested.get("id"))
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string)
-                })
-            })
-        })
-        .unwrap_or_else(|| format!("graph_row_{}", row_index))
 }
 
 pub fn legacy_graph_row_to_node(row: &Value) -> Result<Arc<Node>> {

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use proximadb_data_model::DataModel;
+use proximadb_graph_query::declarative::graph_query_row_id;
 use proximadb_graph_query::service::{
     GraphQueryReadService, GraphQueryService, GraphQueryTraversalService,
 };
@@ -11,7 +12,6 @@ use proximadb_graph_query::traversal::{
     GraphTraversalExpr, NodeFilter, PropertyFilter as UnifiedPropertyFilter, StartNodeSpec,
     TraversalDirection,
 };
-use proximadb_graph_subset::graph_query_row_id;
 use proximadb_proto::proximadb_v1::{
     Node, NodeQuery, PropertyFilter, PropertyFilterOperator, PropertyValue, TraversalAlgorithm,
     TraversalRequest, property_value,

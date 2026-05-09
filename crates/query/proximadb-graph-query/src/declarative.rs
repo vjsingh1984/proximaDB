@@ -52,6 +52,33 @@ impl SupportedGraphQueryDescriptor {
 
 pub type LoweredGraphQuery = SupportedGraphQueryDescriptor;
 
+/// Derive a stable row identifier for declarative graph-query results.
+///
+/// Query-runtime result shaping uses this contract helper without depending on
+/// the graph subset parser/runtime crate.
+pub fn graph_query_row_id(row: &serde_json::Value, row_index: usize) -> String {
+    row.as_object()
+        .and_then(|object| object.get("node_id").and_then(serde_json::Value::as_str))
+        .map(ToString::to_string)
+        .or_else(|| {
+            row.as_object()
+                .and_then(|object| object.get("id").and_then(serde_json::Value::as_str))
+                .map(ToString::to_string)
+        })
+        .or_else(|| {
+            row.as_object().and_then(|object| {
+                object.values().find_map(|value| {
+                    value
+                        .as_object()
+                        .and_then(|nested| nested.get("id"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(ToString::to_string)
+                })
+            })
+        })
+        .unwrap_or_else(|| format!("graph_row_{}", row_index))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +98,25 @@ mod tests {
         assert_eq!(descriptor.output_columns(), &["node_id".to_string()]);
         assert!(descriptor.uses_legacy_node_rows());
         assert_eq!(descriptor.max_depth(), 2);
+    }
+
+    #[test]
+    fn graph_query_row_id_falls_back_across_supported_shapes() {
+        assert_eq!(
+            graph_query_row_id(&serde_json::json!({ "node_id": "alice" }), 0),
+            "alice"
+        );
+        assert_eq!(
+            graph_query_row_id(&serde_json::json!({ "id": "edge_1" }), 1),
+            "edge_1"
+        );
+        assert_eq!(
+            graph_query_row_id(&serde_json::json!({ "node": { "id": "nested" } }), 2),
+            "nested"
+        );
+        assert_eq!(
+            graph_query_row_id(&serde_json::json!({ "name": "anonymous" }), 3),
+            "graph_row_3"
+        );
     }
 }
