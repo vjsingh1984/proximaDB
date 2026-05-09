@@ -1350,6 +1350,7 @@ impl InterCentroidMatrix {
         // Diagonal elements remain 0.0 (already initialized)
 
         // Reconstruct from upper triangle storage
+        #[allow(clippy::needless_range_loop)]
         for i in 0..k {
             for j in (i + 1)..k {
                 // Only upper triangle j > i

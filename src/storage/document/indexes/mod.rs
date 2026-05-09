@@ -25,6 +25,7 @@ use self::path_index::PathIndex;
 use super::DocumentRecord;
 
 /// Index type wrapper for different index implementations
+#[allow(clippy::large_enum_variant)]
 enum IndexType {
     Path(PathIndex),
     Array(ArrayIndex),

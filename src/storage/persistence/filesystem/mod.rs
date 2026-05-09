@@ -878,6 +878,7 @@ impl FilesystemFactory {
         since = "0.1.5",
         note = "Use `create_default()` instead - this creates a broken factory"
     )]
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
         Self {
             config: FilesystemConfig::default(),
@@ -1282,13 +1283,13 @@ impl FilesystemFactory {
         info!("    normalized_url: {}", normalized_url);
 
         // Handle file:// URLs specially to avoid URL parsing issues
-        if normalized_url.starts_with("file://") {
+        if let Some(after_file) = normalized_url.strip_prefix("file://") {
             let path = if let Some(after_slashes) = normalized_url.strip_prefix("file:///") {
                 // Absolute path
                 format!("/{}", after_slashes)
             } else {
-                // Relative or other path — strip_prefix is guaranteed to succeed here
-                normalized_url["file://".len()..].to_string()
+                // Relative or other path
+                after_file.to_string()
             };
             info!("    scheme: file, returning path: {}", path);
             return Ok(path);
@@ -1378,12 +1379,12 @@ impl FilesystemFactory {
         }
 
         // Case 2: Handle file:// URLs specially to avoid URL parsing issues
-        if url.starts_with("file://") {
+        if let Some(after_file) = url.strip_prefix("file://") {
             // CRITICAL: Avoid URL parsing for file:// to prevent international domain name errors
             // The URL parser can fail on paths that look like domain names
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
-                let relative_path = &url["file://".len()..]; // Keep the "./"
+                let relative_path = after_file; // Keep the "./"
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Explicit relative path: '{}'",
                     relative_path
@@ -1399,12 +1400,11 @@ impl FilesystemFactory {
                 Ok(format!("/{}", absolute_path))
             } else {
                 // Implicit relative path: file://relative/path (treat as relative)
-                let relative_path = url.strip_prefix("file://").unwrap_or(url); // Remove "file://" prefix
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Implicit relative path: '{}'",
-                    relative_path
+                    after_file
                 );
-                Ok(relative_path.to_string())
+                Ok(after_file.to_string())
             }
         } else {
             // Case 3: Non-file schemes still need URL parsing (s3://, azure://, etc.)

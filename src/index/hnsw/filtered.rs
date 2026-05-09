@@ -42,7 +42,7 @@ use tracing::debug;
 use crate::core::search::filter_contract::{FilterContract, MetadataLookup};
 
 /// Local SearchResult type for HNSW filtered search
-#[derive(Debug, Clone, Default, PartialOrd)]
+#[derive(Debug, Clone, Default)]
 pub struct SearchResult {
     pub id: String,
     pub score: f32,
@@ -57,7 +57,13 @@ impl PartialEq for SearchResult {
 
 impl Eq for SearchResult {}
 
-// Manual implementation of Ord for consistent ordering
+impl PartialOrd for SearchResult {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+// Manual implementation of Ord for consistent ordering (handles NaN)
 impl Ord for SearchResult {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self.score.partial_cmp(&other.score) {

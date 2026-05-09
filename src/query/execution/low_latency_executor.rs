@@ -222,7 +222,7 @@ impl LowLatencyExecutor {
 }
 
 /// Stream-based query result for progressive return
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct StreamedQueryResult {
     /// Results received so far
     pub received_rows: Vec<QueryRow>,
@@ -230,16 +230,6 @@ pub struct StreamedQueryResult {
     pub is_complete: bool,
     /// Query execution metrics
     pub metrics: QueryPerformanceMetrics,
-}
-
-impl Default for StreamedQueryResult {
-    fn default() -> Self {
-        Self {
-            received_rows: Vec::new(),
-            is_complete: false,
-            metrics: QueryPerformanceMetrics::default(),
-        }
-    }
 }
 
 impl StreamedQueryResult {

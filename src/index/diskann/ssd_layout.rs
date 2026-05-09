@@ -353,10 +353,10 @@ impl SsdLayoutOptimizer {
         let num_nodes = graph.len();
         let mut reordered = vec![Vec::new(); num_nodes];
 
-        for old_id in 0..num_nodes {
+        for (old_id, neighbors) in graph.iter().enumerate() {
             if let Some(new_id) = ordering.get_new_position(old_id) {
                 // Reorder neighbors
-                let reordered_neighbors: Vec<usize> = graph[old_id]
+                let reordered_neighbors: Vec<usize> = neighbors
                     .iter()
                     .filter_map(|&old_neighbor| ordering.get_new_position(old_neighbor))
                     .collect();

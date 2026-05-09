@@ -621,9 +621,8 @@ impl SwiftFile {
 
         // Group records into blocks (~2000 vectors per block)
         let records_per_block = self.header.records_per_block as usize;
-        let mut block_id = 0;
 
-        for chunk in records.chunks(records_per_block) {
+        for (block_id, chunk) in records.chunks(records_per_block).enumerate() {
             // ✅ Proxima automatically provides:
             // - 🔍 Automatic Bloom Filter Generation
             // - 📊 Automatic Metadata Statistics
@@ -736,8 +735,6 @@ impl SwiftFile {
 
             // ✅ Use the new add_block method that leverages Proxima metadata
             self.superblocks[superblock_id].add_block(block);
-
-            block_id += 1;
         }
 
         // Update header statistics
@@ -867,11 +864,13 @@ impl SwiftFile {
         // Reinitialize superblocks for this build
         self.superblocks.clear();
 
-        let mut block_id = 0u32;
         let mut superblock_codes: std::collections::HashMap<usize, Vec<u64>> =
             std::collections::HashMap::new();
 
-        for (mut block, _, adacurve_code) in blocks_with_score.into_iter() {
+        for (block_id, (mut block, _, adacurve_code)) in
+            blocks_with_score.into_iter().enumerate()
+        {
+            let block_id = block_id as u32;
             // Assign deterministic block_id (preserves ID ordering inside blocks)
             block.block_id = block_id;
 
@@ -900,7 +899,6 @@ impl SwiftFile {
                 .push(adacurve_code);
 
             self.superblocks[superblock_id].add_block(block);
-            block_id += 1;
         }
 
         // Populate superblock AdaCurve codes (use average of block codes)

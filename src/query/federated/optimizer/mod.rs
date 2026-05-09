@@ -2967,6 +2967,7 @@ impl CrossModelOptimizer {
         self.apply_sql_clauses(plan, query)
     }
 
+    #[allow(clippy::nonminimal_bool)]
     fn apply_sql_clauses(&self, mut plan: PlanNode, query: &FederatedQuery) -> Result<PlanNode> {
         let has_distinct = Self::select_has_distinct(&query.sql);
         if Self::find_top_level_keyword(&query.sql, "UNION").is_some() {

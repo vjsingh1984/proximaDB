@@ -5214,9 +5214,9 @@ impl UnifiedSstableReader {
         // Group records into blocks (temporary conversion for compatibility)
         let block_size = 1000; // Default block size
         let mut blocks = Vec::new();
-        let mut block_id = 0u32;
 
-        for chunk in records.chunks(block_size) {
+        for (block_id, chunk) in records.chunks(block_size).enumerate() {
+            let block_id = block_id as u32;
             use crate::storage::engines::core::formats::proximablocks::block_structures::{
                 BlockCompressionConfig, BlockStatistics,
             };
@@ -5252,7 +5252,6 @@ impl UnifiedSstableReader {
                 metadata_stats: None,
                 has_deletes: false,
             });
-            block_id += 1;
         }
 
         Ok(blocks)

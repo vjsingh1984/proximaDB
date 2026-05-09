@@ -92,7 +92,7 @@ impl CedarEngine {
     ) -> dashmap::mapref::one::RefMut<'_, String, DashMap<String, DocumentRecord>> {
         self.collections
             .entry(collection.to_string())
-            .or_insert_with(DashMap::new)
+            .or_default()
     }
 }
 
