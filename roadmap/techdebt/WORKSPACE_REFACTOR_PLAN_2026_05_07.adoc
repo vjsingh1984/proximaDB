@@ -1220,7 +1220,8 @@ The graph query contract layer is now lower than the graph runtime:
 The next concrete follow-ups should be:
 
 * crate dependency map of current `src/**` modules to proposed target crates
-* “forbidden dependency edges” list
+* “forbidden dependency edges” list (now generated from the enforced policy table with
+  `python3 scripts/check_workspace_boundaries.py --rules`)
 * build/rebuild benchmark baseline before extraction
 * phase-1 implementation checklist for foundation crate extraction
 * operator/runtime migration checklist for `proximadb-graph`

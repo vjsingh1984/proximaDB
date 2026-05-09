@@ -282,6 +282,37 @@ def print_report(crates: dict[str, Crate], findings: list[Finding]) -> None:
         print("No boundary findings.")
 
 
+def print_rules() -> None:
+    print("Workspace boundary rules")
+    print()
+    print("Layer rules:")
+    for rule in LAYER_RULES:
+        sources = ", ".join(sorted(rule.source_layers))
+        dependencies = ", ".join(sorted(rule.dependency_layers))
+        print(f"{rule.severity.upper()}: {sources} -> {dependencies}: {rule.message}")
+
+    print()
+    print("Crate-specific rules:")
+    for crate, dependency_names in sorted(FOUNDATION_DISALLOWED_DEPS.items()):
+        dependencies = ", ".join(sorted(dependency_names))
+        print(
+            f"ERROR: {crate} must not depend on {dependencies}: "
+            "foundation crate carries a disallowed transport/runtime helper dependency"
+        )
+
+    contracts = ", ".join(sorted(MODALITY_ALLOWED_QUERY_CONTRACTS))
+    print(
+        "ERROR: modality -> query-* is forbidden except "
+        f"{contracts}: modality crates may only depend on approved query contract crates"
+    )
+
+    adapters = ", ".join(sorted(QUERY_RUNTIME_DISALLOWED_ADAPTERS))
+    print(
+        f"ERROR: query-runtime -> {adapters} is forbidden: "
+        "query runtime crates must not depend on adapter/runtime-flavored query contract crates"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -289,7 +320,16 @@ def main() -> int:
         action="store_true",
         help="treat transitional warnings as failures",
     )
+    parser.add_argument(
+        "--rules",
+        action="store_true",
+        help="print the enforced boundary policy and exit",
+    )
     args = parser.parse_args()
+
+    if args.rules:
+        print_rules()
+        return 0
 
     crates = workspace_crates()
     findings = check_boundaries(crates)
