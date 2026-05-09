@@ -656,6 +656,9 @@ Current status after the first refinement:
 * `proximadb-security` now also owns the reusable audit storage contract and `AuditStatistics`
   reporting DTO while root `audit::storage` continues to own concrete file/database/cloud storage
   implementations
+* `proximadb-security` now also owns serializable audit configuration contracts (`AuditConfig`,
+  `AuditStorageBackend`, `EncryptionAlgorithm`, and `EmailConfig`) while root `audit::logger`
+  continues to own logger construction, encryption behavior, webhook dispatch, and backend wiring
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside

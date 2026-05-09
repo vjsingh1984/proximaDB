@@ -10,6 +10,9 @@ use super::types::{
 };
 use anyhow::{Result, anyhow};
 use chrono::{Duration, Timelike, Utc};
+pub use proximadb_security::audit_config::{
+    AuditConfig, AuditStorageBackend, EmailConfig, EncryptionAlgorithm,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,73 +32,6 @@ pub struct AuditLogger {
     alert_sender: Option<Arc<AlertSender>>,
 }
 
-/// Configuration for audit logging
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditConfig {
-    /// Master switch to enable or disable all audit logging
-    pub enable_audit_logging: bool,
-    /// Backend storage target for persisting audit events
-    pub storage_backend: AuditStorageBackend,
-    /// When true, sensitive fields (IP, user agent, secrets) are encrypted before storage
-    pub encryption_enabled: bool,
-    /// Optional HTTP endpoint to which audit events are forwarded in real time
-    pub external_audit_endpoint: Option<String>,
-    /// Number of days to retain audit log files before automatic deletion
-    pub retention_days: u32,
-    /// When true, security alerts are dispatched in real time via webhook or email
-    pub enable_real_time_alerts: bool,
-    /// Optional webhook URL for delivering real-time security alert payloads
-    pub alert_webhook_url: Option<String>,
-    /// Compliance frameworks to tag against audit events (e.g., "SOC2", "GDPR", "HIPAA")
-    pub compliance_frameworks: Vec<String>,
-}
-
-impl Default for AuditConfig {
-    fn default() -> Self {
-        Self {
-            enable_audit_logging: true,
-            storage_backend: AuditStorageBackend::File {
-                directory: "/tmp/proximadb/audit".to_string(),
-            },
-            encryption_enabled: false,
-            external_audit_endpoint: None,
-            retention_days: 30,
-            enable_real_time_alerts: false,
-            alert_webhook_url: None,
-            compliance_frameworks: vec![],
-        }
-    }
-}
-
-/// Audit storage backend options
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum AuditStorageBackend {
-    /// Store audit logs as JSONL files in the specified local directory
-    File {
-        /// Absolute path to the directory where audit log files are written
-        directory: String,
-    },
-    /// Store audit events in a relational database
-    Database {
-        /// Database connection string (e.g., "postgres://user:pass@host/db")
-        connection_string: String,
-    },
-    /// Store audit logs in an Amazon S3 bucket
-    S3 {
-        /// S3 bucket name
-        bucket: String,
-        /// AWS region where the bucket resides (e.g., "us-east-1")
-        region: String,
-    },
-    /// Write to a primary backend and mirror to a secondary backend
-    Combined {
-        /// Primary storage backend that receives all writes first
-        primary: Box<AuditStorageBackend>,
-        /// Secondary (mirror) storage backend for redundancy
-        secondary: Box<AuditStorageBackend>,
-    },
-}
-
 /// Encryption key for sensitive audit data
 #[derive(Debug)]
 pub struct EncryptionKey {
@@ -107,15 +43,6 @@ pub struct EncryptionKey {
     algorithm: EncryptionAlgorithm,
 }
 
-/// Supported encryption algorithms
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum EncryptionAlgorithm {
-    /// AES-256 in Galois/Counter Mode (authenticated encryption)
-    AES256GCM,
-    /// ChaCha20 stream cipher combined with Poly1305 MAC (authenticated encryption)
-    ChaCha20Poly1305,
-}
-
 /// Alert sender for real-time security notifications
 #[derive(Debug)]
 pub struct AlertSender {
@@ -124,23 +51,6 @@ pub struct AlertSender {
     /// Optional email configuration for alert delivery
     #[allow(dead_code)]
     email_config: Option<EmailConfig>,
-}
-
-/// Email configuration for alerts
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmailConfig {
-    /// Hostname or IP address of the SMTP relay server
-    pub smtp_server: String,
-    /// TCP port of the SMTP relay server (typically 25, 465, or 587)
-    pub smtp_port: u16,
-    /// SMTP authentication username
-    pub username: String,
-    /// SMTP authentication password (stored in plaintext; prefer injecting via secrets manager)
-    pub password: String,
-    /// Email address that appears in the "From" header of alert messages
-    pub from_address: String,
-    /// List of email addresses that receive alert notifications
-    pub to_addresses: Vec<String>,
 }
 
 impl std::fmt::Debug for AuditLogger {

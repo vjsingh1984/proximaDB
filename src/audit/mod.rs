@@ -12,7 +12,7 @@ pub use correlation::{
     // EventChain, // Deferred: Not yet implemented
 };
 
-pub use logger::AuditLogger;
+pub use logger::{AuditConfig, AuditLogger, AuditStorageBackend};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
