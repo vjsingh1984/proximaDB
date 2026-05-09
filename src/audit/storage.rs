@@ -3,11 +3,11 @@
 //! Multiple storage backend implementations for audit logs
 //! including file-based, database, and cloud storage options.
 
-use super::types::{AuditEvent, AuditEventType};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-pub use proximadb_security::audit_storage::{AuditStatistics, AuditStorage};
+use proximadb_security::{AuditEvent, AuditEventType, AuditResult};
+pub use proximadb_security::{AuditStatistics, AuditStorage};
 use std::path::Path;
 use tracing::{debug, info, warn};
 
@@ -152,7 +152,7 @@ impl AuditStorage for FileAuditStorage {
             }
 
             // Count successes
-            if matches!(event.result, super::types::AuditResult::Success) {
+            if matches!(event.result, AuditResult::Success) {
                 success_count += 1;
             }
         }
@@ -346,7 +346,7 @@ impl AuditStorage for DatabaseAuditStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
+    use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
     use tempfile::TempDir;
     use uuid::Uuid;
 

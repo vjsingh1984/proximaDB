@@ -662,6 +662,9 @@ Current status after the first refinement:
 * security and secure collection/service callers now import audit configuration contracts from
   `proximadb-security` directly while continuing to receive concrete audit logging behavior from the
   root runtime logger
+* root audit/security/service runtime code now consumes audit event/resource/result contracts from
+  `proximadb-security` directly; `src/audit/types.rs` remains a public compatibility shim rather
+  than an internal dependency path
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside

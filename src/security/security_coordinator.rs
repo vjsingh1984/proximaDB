@@ -526,8 +526,8 @@ fn create_authorization_failure_event(
     user_context: &UnifiedUserContext,
     requested_permission: &UnifiedPermission,
     _start_time: chrono::DateTime<Utc>,
-) -> crate::audit::types::AuditEvent {
-    use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
+) -> proximadb_security::AuditEvent {
+    use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
     use std::collections::HashMap;
 
     AuditEvent {

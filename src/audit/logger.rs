@@ -4,14 +4,12 @@
 //! encryption, and compliance reporting capabilities.
 
 use super::storage::AuditStorage;
-use super::types::{
-    AuditEvent, AuditEventType, AuditResource, AuditResult, SecurityAlert, SecurityAlertSeverity,
-    SecurityAlertType,
-};
 use anyhow::{Result, anyhow};
 use chrono::{Duration, Timelike, Utc};
-pub use proximadb_security::audit_config::{
-    AuditConfig, AuditStorageBackend, EmailConfig, EncryptionAlgorithm,
+pub use proximadb_security::{AuditConfig, AuditStorageBackend, EmailConfig, EncryptionAlgorithm};
+pub use proximadb_security::{
+    AuditEvent, AuditEventType, AuditResource, AuditResult, SecurityAlert, SecurityAlertSeverity,
+    SecurityAlertType,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

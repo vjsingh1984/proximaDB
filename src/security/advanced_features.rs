@@ -679,8 +679,8 @@ fn create_mfa_audit_event(
     user_context: &UnifiedUserContext,
     session_id: Option<&str>,
     success: bool,
-) -> crate::audit::types::AuditEvent {
-    use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
+) -> proximadb_security::AuditEvent {
+    use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
     AuditEvent {
         event_id: uuid::Uuid::new_v4().to_string(),

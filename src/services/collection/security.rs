@@ -15,7 +15,6 @@ use anyhow::{Result, anyhow};
 use tracing::{debug, info};
 
 use crate::audit::logger::AuditLogger;
-use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 use crate::core::search::FilterExpression;
 use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
 use crate::proto::proximadb_v1::VectorRecord;
@@ -23,7 +22,7 @@ use crate::security::encryption::{EncryptionConfig, FieldEncryption, KeyStore, K
 use crate::security::rls::{CollectionRLS, RLSConfig};
 use crate::security::unified_rbac::UnifiedUserContext;
 use crate::services::operations::{SecureVectorOperations, combine_filters};
-use proximadb_security::AuditConfig;
+use proximadb_security::{AuditConfig, AuditEvent, AuditEventType, AuditResource, AuditResult};
 
 /// Security-enabled collection service extension
 ///

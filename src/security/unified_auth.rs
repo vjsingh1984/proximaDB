@@ -7,13 +7,13 @@
 
 use super::unified_rbac::{AuthMethod, UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
-use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 use crate::auth::{EnterpriseAuthManager, EnterpriseUserContext, SSOToken};
 use crate::network::auth::{JwtService, TokenPair};
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
