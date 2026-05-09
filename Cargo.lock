@@ -5811,6 +5811,7 @@ version = "0.2.0"
 dependencies = [
  "prost",
  "prost-types",
+ "proximadb-kernel",
  "serde",
  "serde_json",
  "tonic",

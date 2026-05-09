@@ -7,11 +7,8 @@
 
 #![allow(missing_docs)]
 
-#[path = "utils/encoding.rs"]
-pub mod encoding_impl;
-
 pub mod utils {
-    pub use super::encoding_impl as encoding;
+    pub use proximadb_kernel::encoding;
 }
 
 /// Generated v1 protobuf and gRPC definitions.

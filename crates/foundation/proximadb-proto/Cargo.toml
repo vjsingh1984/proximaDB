@@ -14,6 +14,7 @@ name = "proximadb_proto"
 path = "src/lib.rs"
 
 [dependencies]
+proximadb-kernel = { path = "../proximadb-kernel" }
 prost.workspace = true
 prost-types.workspace = true
 serde.workspace = true

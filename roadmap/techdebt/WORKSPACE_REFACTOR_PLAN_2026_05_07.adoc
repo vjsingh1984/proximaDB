@@ -607,6 +607,9 @@ Current status after the first refinement:
 * runtime-oriented proto defaults now live back in the root compatibility layer (`src/proto/defaults.rs`) instead of the extracted `proximadb-proto` crate, which removes `num_cpus`, `sysinfo`, and `tracing` from the protocol foundation crate
 * the root crate no longer carries a broad proto-tree rebuild trigger in `build.rs`
 * graph-query and shared graph-lowering/runtime modules are being switched to depend directly on `proximadb-kernel` and `proximadb-proto` instead of root `core::*` shims
+* the shared Base64 codec now lives in `proximadb-kernel`; root `utils::encoding` and
+  `proximadb-proto::utils::encoding` are compatibility re-exports, removing a duplicated
+  foundation helper implementation from the protocol crate
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:
