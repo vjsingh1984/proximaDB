@@ -79,9 +79,9 @@ crates/
     proximadb-kernel/
     proximadb-config/
     proximadb-proto/
-    proximadb-telemetry/
   horizontal/
     proximadb-runtime-common/
+    proximadb-telemetry/
   storage/
     proximadb-storage-common/
   modalities/
@@ -636,7 +636,7 @@ Current status after the first refinement:
 * the generic concurrent ordered-map helper historically exposed as `utils::skiplist::SkipList`
   now also lives in `proximadb-runtime-common`; root `utils::skiplist` remains a compatibility
   re-export while future storage/query runtime consumers can depend on the horizontal crate directly
-* `proximadb-telemetry` now exists as the planned foundation observability crate and owns the
+* `proximadb-telemetry` now exists as the planned horizontal observability crate and owns the
   request-context/request-id/span helper previously under root `utils::tracing`; root
   `utils::tracing` remains a compatibility re-export while future tracing/metrics work converges
   on the telemetry crate instead of `runtime-common`

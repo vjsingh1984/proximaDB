@@ -23,8 +23,8 @@ members = [
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-records",
-    "crates/foundation/proximadb-telemetry",
     "crates/horizontal/proximadb-runtime-common",
+    "crates/horizontal/proximadb-telemetry",
     "crates/platform/proximadb-runtime",
     "crates/modalities/proximadb-graph",
     "crates/storage/proximadb-storage-common",
@@ -121,7 +121,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
-proximadb-telemetry = { path = "crates/foundation/proximadb-telemetry" }
+proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }

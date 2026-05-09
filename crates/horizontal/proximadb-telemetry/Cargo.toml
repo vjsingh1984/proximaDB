@@ -14,5 +14,5 @@ name = "proximadb_telemetry"
 path = "src/lib.rs"
 
 [dependencies]
-proximadb-kernel = { path = "../proximadb-kernel" }
+proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 tracing = "0.1"
