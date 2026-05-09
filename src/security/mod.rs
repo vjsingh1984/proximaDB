@@ -55,8 +55,9 @@ pub use monitoring::{
 };
 
 /// Re-export common types for convenience
-pub use crate::audit::logger::{AuditConfig, AuditLogger, AuditStorageBackend};
+pub use crate::audit::logger::AuditLogger;
 pub use crate::network::auth::{AuthError, JwtConfig};
+pub use proximadb_security::{AuditConfig, AuditStorageBackend};
 
 use anyhow::Result;
 
@@ -77,7 +78,7 @@ pub async fn initialize_security(config: SecurityConfig) -> Result<SecurityCoord
     // Create unified auth service
     let auth_service = UnifiedAuthService::new(config.authentication.clone())?;
 
-    // Create audit logger - config.audit is now directly AuditConfig from audit::logger
+    // Create audit logger from the shared audit configuration contract.
     let audit_logger = AuditLogger::new(config.audit.clone()).await?;
 
     // Create security coordinator

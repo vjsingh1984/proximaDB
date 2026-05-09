@@ -13,7 +13,8 @@ use super::unified_auth::{AuthenticationConfig, AuthenticationData, UnifiedAuthS
 use super::unified_rbac::{
     ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
 };
-use crate::audit::logger::{AuditConfig, AuditLogger};
+use crate::audit::logger::AuditLogger;
+use proximadb_security::AuditConfig;
 use std::collections::HashMap;
 
 use anyhow::{Result, anyhow};

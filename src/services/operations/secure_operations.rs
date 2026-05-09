@@ -445,11 +445,11 @@ pub fn combine_filters(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::logger::AuditConfig;
     use crate::core::search::ComparisonOperator;
     use crate::security::rls::RLSConfig;
     use crate::security::unified_rbac::AuthMethod;
     use chrono::Utc;
+    use proximadb_security::AuditConfig;
     use std::collections::HashSet;
 
     fn create_test_user_context() -> UnifiedUserContext {

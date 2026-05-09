@@ -14,7 +14,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use tracing::{debug, info};
 
-use crate::audit::logger::{AuditConfig, AuditLogger};
+use crate::audit::logger::AuditLogger;
 use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 use crate::core::search::FilterExpression;
 use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
@@ -23,6 +23,7 @@ use crate::security::encryption::{EncryptionConfig, FieldEncryption, KeyStore, K
 use crate::security::rls::{CollectionRLS, RLSConfig};
 use crate::security::unified_rbac::UnifiedUserContext;
 use crate::services::operations::{SecureVectorOperations, combine_filters};
+use proximadb_security::AuditConfig;
 
 /// Security-enabled collection service extension
 ///
