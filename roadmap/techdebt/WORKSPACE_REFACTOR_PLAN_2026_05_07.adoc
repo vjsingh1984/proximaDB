@@ -727,6 +727,8 @@ Correction:
   and tracing diagnostics; the root proto module remains a facade for packaging/runtime compatibility
 * the source migration map now has a file-level override for `src/proto/defaults.rs`, so future agents
   do not misclassify the compatibility shim as protocol-foundation ownership
+* `workspace-boundaries-check` now also applies crate-specific disallowed dependency rules beyond
+  foundation crates, so horizontal telemetry cannot quietly absorb REST/gRPC/client transport helpers
 
 ==== 3. `proximadb-multimodel-query` graph dependency has been narrowed
 

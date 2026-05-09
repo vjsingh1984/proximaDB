@@ -18,10 +18,17 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 
 
-FOUNDATION_ALLOWED_TRANSPORT = {"proximadb-proto"}
-FOUNDATION_DISALLOWED_DEPS: dict[str, set[str]] = {
+CRATE_DISALLOWED_DEPS: dict[str, set[str]] = {
     "proximadb-kernel": {"tonic", "tonic-prost"},
     "proximadb-proto": {"num_cpus", "sysinfo", "tracing"},
+    "proximadb-telemetry": {
+        "axum",
+        "hyper",
+        "reqwest",
+        "tonic",
+        "tonic-prost",
+        "tower",
+    },
 }
 MODALITY_ALLOWED_QUERY_CONTRACTS = {"proximadb-graph-query", "proximadb-query-filter"}
 QUERY_RUNTIME_CRATES = {"proximadb-query"}
@@ -520,14 +527,14 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
     findings: list[Finding] = []
 
     for crate in crates.values():
-        for dep_name in FOUNDATION_DISALLOWED_DEPS.get(crate.name, set()):
+        for dep_name in CRATE_DISALLOWED_DEPS.get(crate.name, set()):
             if dep_name in crate.deps:
                 findings.append(
                     Finding(
                         "error",
                         crate.name,
                         dep_name,
-                        "foundation crate carries a disallowed transport/runtime helper dependency",
+                        "crate carries a disallowed layer-specific dependency",
                     )
                 )
 
@@ -609,11 +616,11 @@ def print_rules() -> None:
 
     print()
     print("Crate-specific rules:")
-    for crate, dependency_names in sorted(FOUNDATION_DISALLOWED_DEPS.items()):
+    for crate, dependency_names in sorted(CRATE_DISALLOWED_DEPS.items()):
         dependencies = ", ".join(sorted(dependency_names))
         print(
             f"ERROR: {crate} must not depend on {dependencies}: "
-            "foundation crate carries a disallowed transport/runtime helper dependency"
+            "crate carries a disallowed layer-specific dependency"
         )
 
     contracts = ", ".join(sorted(MODALITY_ALLOWED_QUERY_CONTRACTS))
