@@ -610,6 +610,9 @@ Current status after the first refinement:
 * the shared Base64 codec now lives in `proximadb-kernel`; root `utils::encoding` and
   `proximadb-proto::utils::encoding` are compatibility re-exports, removing a duplicated
   foundation helper implementation from the protocol crate
+* the shared CRC32/CRC32C checksum helper now lives in `proximadb-kernel`; root
+  `utils::checksum` is a compatibility re-export, and the implementation uses `std::sync::OnceLock`
+  so no new foundation dependency is introduced
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:
