@@ -313,6 +313,23 @@ def print_rules() -> None:
     )
 
 
+def print_dependency_map(crates: dict[str, Crate]) -> None:
+    print("Workspace dependency map")
+    print(f"workspace crates: {len(crates)}")
+    print()
+
+    for crate in sorted(crates.values(), key=lambda item: (item.layer, item.name)):
+        dependencies = sorted(internal_deps(crate, crates), key=lambda item: item.name)
+        if dependencies:
+            rendered = ", ".join(
+                f"{dependency.name} [{dependency.layer}]"
+                for dependency in dependencies
+            )
+        else:
+            rendered = "(no internal workspace dependencies)"
+        print(f"{crate.name} [{crate.layer}] -> {rendered}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -325,6 +342,11 @@ def main() -> int:
         action="store_true",
         help="print the enforced boundary policy and exit",
     )
+    parser.add_argument(
+        "--deps",
+        action="store_true",
+        help="print the workspace crate dependency map and exit",
+    )
     args = parser.parse_args()
 
     if args.rules:
@@ -332,6 +354,10 @@ def main() -> int:
         return 0
 
     crates = workspace_crates()
+    if args.deps:
+        print_dependency_map(crates)
+        return 0
+
     findings = check_boundaries(crates)
     print_report(crates, findings)
 
