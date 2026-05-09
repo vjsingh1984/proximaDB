@@ -8,8 +8,10 @@ pub mod checksum;
 pub mod encoding;
 pub mod error;
 pub mod foundation;
+pub mod hash;
 
 pub use checksum::*;
 pub use encoding::*;
 pub use error::*;
 pub use foundation::*;
+pub use hash::*;

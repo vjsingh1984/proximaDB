@@ -613,6 +613,9 @@ Current status after the first refinement:
 * the shared CRC32/CRC32C checksum helper now lives in `proximadb-kernel`; root
   `utils::checksum` is a compatibility re-export, and the implementation uses `std::sync::OnceLock`
   so no new foundation dependency is introduced
+* the shared non-cryptographic hash helpers (`XxHash64`, `Fnv1a64`, `FastHash`, `HashBuilder`) now
+  live in `proximadb-kernel`; root `utils::hash` is a compatibility re-export for existing
+  compute/storage callers
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:
