@@ -1204,9 +1204,9 @@ The graph query contract layer is now lower than the graph runtime:
   `proximadb-graph-query` contracts and leave parser/execution adapters at root/facade/runtime
   boundaries
 * `workspace-boundaries-check` now reports query-adapter crates separately from query-contract
-  crates, starting with `proximadb-graph-subset` and `proximadb-graph-arrow`, so contract leaves
-  cannot accidentally depend on adapter/runtime/presentation behavior while adapters remain reusable
-  by root/facade integration paths
+  crates, starting with `proximadb-graph-subset`, `proximadb-graph-arrow`, and `proximadb-uql`, so
+  contract leaves cannot accidentally depend on adapter/runtime/presentation/parser behavior while
+  adapters remain reusable by root/facade/query-runtime integration paths
 
 == Immediate Follow-Up Deliverables
 

@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Shared ProximaDB unified query parsing and decomposition layer"
+description = "Shared ProximaDB unified query parser and decomposition adapter"
 
 [lib]
 name = "proximadb_uql"

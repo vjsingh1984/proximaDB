@@ -28,8 +28,12 @@ QUERY_RUNTIME_CRATES = {"proximadb-query"}
 QUERY_ADAPTER_CRATES = {
     "proximadb-graph-arrow",
     "proximadb-graph-subset",
+    "proximadb-uql",
 }
-QUERY_RUNTIME_DISALLOWED_CONTRACTS = QUERY_ADAPTER_CRATES
+QUERY_RUNTIME_DISALLOWED_ADAPTERS = {
+    "proximadb-graph-arrow",
+    "proximadb-graph-subset",
+}
 
 
 @dataclass(frozen=True)
@@ -220,7 +224,7 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
 
             if (
                 crate.layer == "query-runtime"
-                and dep.name in QUERY_RUNTIME_DISALLOWED_CONTRACTS
+                and dep.name in QUERY_RUNTIME_DISALLOWED_ADAPTERS
             ):
                 findings.append(
                     Finding(
