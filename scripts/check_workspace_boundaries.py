@@ -444,6 +444,12 @@ SRC_MODULE_TARGETS: dict[str, SourceModuleTarget] = {
 }
 
 SRC_FILE_TARGETS: dict[Path, SourceModuleTarget] = {
+    Path("audit/types.rs"): SourceModuleTarget(
+        "horizontal",
+        "proximadb-security",
+        "audit and security alert value contracts live in proximadb-security; "
+        "src/audit keeps only a compatibility re-export",
+    ),
     Path("proto/defaults.rs"): SourceModuleTarget(
         "platform",
         "proximadb-runtime",

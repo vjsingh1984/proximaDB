@@ -648,6 +648,8 @@ Current status after the first refinement:
 * `workspace-boundaries-check` now blocks `proximadb-security` from taking REST/gRPC/client
   transport dependencies, preserving it as a shared policy/contract layer rather than another
   handler bucket
+* the source migration map now has a file-level override for `src/audit/types.rs`, so future agents
+  treat the root module as a compatibility shim over `proximadb-security`
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside
