@@ -19,6 +19,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 FOUNDATION_ALLOWED_TRANSPORT = {"proximadb-proto"}
+FOUNDATION_DISALLOWED_DEPS: dict[str, set[str]] = {
+    "proximadb-kernel": {"tonic", "tonic-prost"},
+    "proximadb-proto": {"num_cpus", "sysinfo", "tracing"},
+}
 MODALITY_ALLOWED_QUERY_CONTRACTS = {"proximadb-graph-query", "proximadb-query-filter"}
 QUERY_RUNTIME_CRATES = {"proximadb-query"}
 QUERY_ADAPTER_CRATES = {
@@ -113,6 +117,17 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
     findings: list[Finding] = []
 
     for crate in crates.values():
+        for dep_name in FOUNDATION_DISALLOWED_DEPS.get(crate.name, set()):
+            if dep_name in crate.deps:
+                findings.append(
+                    Finding(
+                        "error",
+                        crate.name,
+                        dep_name,
+                        "foundation crate carries a disallowed transport/runtime helper dependency",
+                    )
+                )
+
         for dep in internal_deps(crate, crates):
             if crate.layer == "foundation" and dep.layer != "foundation":
                 findings.append(

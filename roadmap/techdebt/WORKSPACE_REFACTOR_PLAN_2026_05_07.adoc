@@ -638,32 +638,38 @@ The extraction work completed so far is directionally correct, but it needs a st
 
 === Validated Boundary Findings
 
-==== 1. `proximadb-kernel` is not yet transport-pure
+==== 1. `proximadb-kernel` transport purity is now guarded
 
-The plan says `proximadb-kernel` must not contain transport code, but the crate still depends on `tonic`.
+The plan says `proximadb-kernel` must not contain transport code. That cleanup has landed:
+`proximadb-kernel` no longer depends on `tonic` or `tonic-prost`.
 
 Implication:
 
-* this weakens the foundation layer and makes gRPC/transport concerns harder to isolate from core error and contract code
+* this keeps gRPC/transport concerns isolated from core error and contract code
 
 Correction:
 
-* move transport-specific conversions and status-mapping out of `proximadb-kernel`
 * keep `proximadb-kernel` limited to transport-agnostic errors, IDs, metadata, and stable traits
+* `workspace-boundaries-check` now guards against reintroducing `tonic`/`tonic-prost` into
+  `proximadb-kernel`
 
-==== 2. `proximadb-proto` currently owns more than proto/codegen concerns
+==== 2. `proximadb-proto` host-runtime helper drift is now guarded
 
-The proto crate still carries runtime/helper-oriented dependencies (`num_cpus`, `sysinfo`, `tracing`, `serde_json`) in addition to `prost`/`tonic`.
+The proto crate should own generated protobuf/gRPC DTOs, serde shims, and protocol conversion
+helpers. It no longer carries host/runtime helper dependencies such as `num_cpus`, `sysinfo`, or
+`tracing`. `serde_json` remains because `serde_impls.rs` owns JSON-compatible serde conversion
+helpers for protocol DTOs.
 
 Implication:
 
-* contract-only changes risk pulling in host/runtime concerns
-* the crate is drifting from "protocol DTO/codegen ownership" into a mixed support crate
+* protocol DTO/codegen changes should not pull host/runtime concerns into foundation builds
 
 Correction:
 
 * keep generated protobuf types, serde/default shims, and protocol conversion helpers in `proximadb-proto`
 * move host/runtime/system helpers into future `proximadb-runtime`, `proximadb-telemetry`, or other higher-layer crates as appropriate
+* `workspace-boundaries-check` now guards against reintroducing `num_cpus`, `sysinfo`, or `tracing`
+  into `proximadb-proto`
 
 ==== 3. `proximadb-multimodel-query` graph dependency has been narrowed
 
