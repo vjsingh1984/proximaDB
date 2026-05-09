@@ -221,6 +221,8 @@ fn bench_hnsw_index(c: &mut Criterion) {
                                 ef: 128,
                                 max_layers: 16,
                                 distance_metric: DistanceMetric::Cosine,
+                                gamma: 1.0,
+                                selectivity_min: 0.001,
                             };
 
                             let index = create_hnsw_index(config, *dim).unwrap();
@@ -242,6 +244,8 @@ fn bench_hnsw_index(c: &mut Criterion) {
                 ef: 128,
                 max_layers: 16,
                 distance_metric: DistanceMetric::Cosine,
+                gamma: 1.0,
+                selectivity_min: 0.001,
             };
 
             let index = runtime.block_on(async {

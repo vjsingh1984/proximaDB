@@ -106,8 +106,9 @@ impl IndexFactory {
                     m: *m as usize,
                     ef_construction: *ef_construction as usize,
                     ef: *ef_search as usize,
-                    max_layers: 16, // Reasonable default
+                    max_layers: 16,
                     distance_metric,
+                    ..AxisHnswConfig::default()
                 };
 
                 let index = AxisHnswIndex::new(config, dimension)?;

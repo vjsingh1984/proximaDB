@@ -487,6 +487,7 @@ async fn benchmark_hnsw(dimension: usize, vectors: &[Vec<f32>]) -> Result<()> {
         ef: 100,
         max_layers: 16,
         distance_metric: DistanceMetric::Cosine,
+        ..AxisHnswConfig::default()
     };
 
     let index = create_hnsw_index(config, dimension)?;
@@ -2106,6 +2107,7 @@ async fn benchmark_hnsw_statistical(sample_size: usize) -> Result<()> {
             ef: 100,
             max_layers: 16,
             distance_metric: DistanceMetric::Cosine,
+            ..AxisHnswConfig::default()
         };
 
         let index = create_hnsw_index(config, dimension)?;

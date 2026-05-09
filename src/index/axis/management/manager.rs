@@ -1678,6 +1678,14 @@ impl AxisManager {
     }
 
     /// Get all indexes for a collection (required for compaction integration)
+    /// Return the live HNSW index for a collection if one exists (Phase C).
+    pub async fn get_hnsw_index(
+        &self,
+        collection_id: &str,
+    ) -> Option<Arc<crate::index::axis::indexes::hnsw_index::AxisHnswIndex>> {
+        self.hnsw_indexes.read().await.get(collection_id).cloned()
+    }
+
     pub async fn get_collection_indexes(
         &self,
         collection_id: &str,

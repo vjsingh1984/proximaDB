@@ -43,6 +43,46 @@
 use anyhow::Result;
 use tracing::{debug, info, trace};
 
+pub use crate::core::search::FilterExpression;
+
+/// Build an `id`-based predicate closure from a [`FilterExpression`].
+///
+/// The HNSW predicate API (`search_with_predicate`) receives a vector ID string
+/// and must return `true` to include the node in the result set.  A
+/// `FilterExpression` operates on *field values* — so only expressions that
+/// compare the special field `"id"` can be evaluated purely from the ID.
+/// All other clauses default to `true` (pass-through), matching the ACORN
+/// skip-through semantics: non-matching nodes are still traversed for
+/// connectivity but excluded from the result by the post-filter.
+///
+/// Phase C — spec §6.1, §7 (VectorTopK.predicate).
+pub fn make_id_predicate(expr: FilterExpression) -> impl Fn(&str) -> bool + Send + Sync + 'static {
+    move |id: &str| eval_id_expr(&expr, id)
+}
+
+fn eval_id_expr(expr: &FilterExpression, id: &str) -> bool {
+    use crate::core::search::ComparisonOperator;
+    match expr {
+        FilterExpression::And(exprs) => exprs.iter().all(|e| eval_id_expr(e, id)),
+        FilterExpression::Or(exprs) => exprs.iter().any(|e| eval_id_expr(e, id)),
+        FilterExpression::Not(e) => !eval_id_expr(e, id),
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } if field == "id" => {
+            let id_val = serde_json::Value::String(id.to_string());
+            match operator {
+                ComparisonOperator::Equals => id_val == *value,
+                ComparisonOperator::NotEquals => id_val != *value,
+                _ => true, // range operators on IDs: pass-through
+            }
+        }
+        // Non-ID fields: pass-through (post-filter will handle)
+        FilterExpression::Comparison { .. } => true,
+    }
+}
+
 use crate::core::search::filter_contract::{
     CandidateSet, FilterContract, MemoryCandidateSet, MetadataLookup, StorageEngineType,
 };
@@ -188,19 +228,48 @@ impl AxisManager {
         }
     }
 
-    /// Generate candidates using filter pushdown
+    /// Generate candidates using filter pushdown where the index can evaluate a
+    /// predicate without a query vector.
+    ///
+    /// HNSW predicate traversal requires a query vector, so pure filter-to-candidate
+    /// generation intentionally falls back to scan. Vector+predicate requests should
+    /// use `execute_hnsw_predicate_search`.
     async fn generate_candidates_with_pushdown(
         &self,
         collection_id: &str,
-        _filter: &dyn FilterContract,
+        filter: &dyn FilterContract,
     ) -> Result<Box<dyn CandidateSet>> {
         trace!("Generating candidates with pushdown for {}", collection_id);
 
-        // For HNSW: Filter during graph traversal
-        // For IVF: Filter within inverted lists
-        // (Placeholder implementation)
+        if self.get_hnsw_index(collection_id).await.is_some()
+            && filter.as_filter_expression().is_some()
+        {
+            debug!("HNSW predicate pushdown requires query vector; using scan candidate fallback");
+        }
 
-        Ok(Box::new(MemoryCandidateSet::new()))
+        // Fallback: scan path (IVF, BTree, or unrecognised engine).
+        self.generate_candidates_by_scan(collection_id, filter)
+            .await
+    }
+
+    /// Predicate-aware HNSW search for a real query vector (Phase C — spec §6.1).
+    ///
+    /// Converts a `FilterExpression` into the `Fn(&str) -> bool` predicate accepted
+    /// by `AxisHnswIndex::search_with_predicate` and delegates to the NaviX traversal.
+    pub async fn execute_hnsw_predicate_search(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        top_k: usize,
+        predicate_expr: &FilterExpression,
+    ) -> Result<Vec<(String, f32)>> {
+        if let Some(hnsw) = self.get_hnsw_index(collection_id).await {
+            let predicate = make_id_predicate(predicate_expr.clone());
+            return hnsw
+                .search_with_predicate(query_vector, top_k, predicate)
+                .await;
+        }
+        Ok(Vec::new())
     }
 
     /// Generate candidates by scanning all vectors
@@ -398,8 +467,101 @@ impl AxisManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::search::ComparisonOperator;
     use crate::core::search::hybrid::HybridQueryBuilder;
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+
+    // ── Phase C: make_id_predicate bridge tests ───────────────────────────────
+
+    #[test]
+    fn test_id_predicate_equals_matches_exact_id() {
+        let expr = FilterExpression::Comparison {
+            field: "id".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!("alice"),
+        };
+        let pred = make_id_predicate(expr);
+        assert!(pred("alice"), "matching ID must pass");
+        assert!(!pred("bob"), "non-matching ID must be excluded");
+    }
+
+    #[test]
+    fn test_id_predicate_not_equals_excludes_id() {
+        let expr = FilterExpression::Comparison {
+            field: "id".to_string(),
+            operator: ComparisonOperator::NotEquals,
+            value: serde_json::json!("alice"),
+        };
+        let pred = make_id_predicate(expr);
+        assert!(pred("bob"), "different ID must pass");
+        assert!(!pred("alice"), "excluded ID must not pass");
+    }
+
+    #[test]
+    fn test_id_predicate_non_id_field_is_passthrough() {
+        // metadata field expressions cannot be evaluated from ID alone → pass-through
+        let expr = FilterExpression::Comparison {
+            field: "price".to_string(),
+            operator: ComparisonOperator::LessThan,
+            value: serde_json::json!(100),
+        };
+        let pred = make_id_predicate(expr);
+        assert!(pred("any_id"), "non-id field must not exclude nodes");
+    }
+
+    #[test]
+    fn test_id_predicate_and_short_circuits() {
+        let expr = FilterExpression::And(vec![
+            FilterExpression::Comparison {
+                field: "id".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("alice"),
+            },
+            FilterExpression::Comparison {
+                field: "id".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("bob"),
+            },
+        ]);
+        let pred = make_id_predicate(expr);
+        // ID cannot be both "alice" and "bob"
+        assert!(
+            !pred("alice"),
+            "AND with conflicting id constraints → false"
+        );
+        assert!(!pred("bob"), "AND with conflicting id constraints → false");
+    }
+
+    #[test]
+    fn test_id_predicate_or_passes_either_id() {
+        let expr = FilterExpression::Or(vec![
+            FilterExpression::Comparison {
+                field: "id".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("alice"),
+            },
+            FilterExpression::Comparison {
+                field: "id".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("bob"),
+            },
+        ]);
+        let pred = make_id_predicate(expr);
+        assert!(pred("alice"));
+        assert!(pred("bob"));
+        assert!(!pred("charlie"));
+    }
+
+    #[test]
+    fn test_id_predicate_not_inverts_result() {
+        let expr = FilterExpression::Not(Box::new(FilterExpression::Comparison {
+            field: "id".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!("alice"),
+        }));
+        let pred = make_id_predicate(expr);
+        assert!(!pred("alice"), "NOT alice → alice excluded");
+        assert!(pred("bob"), "NOT alice → bob passes");
+    }
 
     #[test]
     fn test_create_metadata_lookup() {

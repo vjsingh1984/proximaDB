@@ -475,7 +475,9 @@ mod tests {
 
     #[test]
     fn test_strategy_builder_prefers_ivf_once_collection_exits_bruteforce_range() {
-        let stats = CollectionStatistics {
+        // 10_000 vectors is at the HNSW/IVF boundary (n < 10_000 → HNSW; n >= 10_000 → IVF).
+        // Use the real super:: types so the builder's match arms are exercised.
+        let stats = super::CollectionStatistics {
             total_vectors: 10_000,
             vector_dimension: 128,
             avg_vector_sparsity: 0.1,
@@ -485,7 +487,7 @@ mod tests {
             update_frequency: 1.0,
         };
 
-        let patterns = QueryPatterns {
+        let patterns = super::QueryPatterns {
             avg_queries_per_second: 100.0,
             filter_usage_ratio: 0.0,
             text_search_ratio: 0.0,
@@ -493,7 +495,9 @@ mod tests {
             recall_requirement: 0.95,
         };
 
-        let strategy = IndexStrategyBuilder::new(stats, patterns).build().unwrap();
+        let strategy = super::IndexStrategyBuilder::new(stats, patterns)
+            .build()
+            .unwrap();
         let vector_index = strategy
             .indexes
             .iter()

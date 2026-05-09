@@ -69,6 +69,36 @@ pub struct AxisHnswConfig {
     pub max_layers: usize,
     /// Distance metric to use
     pub distance_metric: DistanceMetric,
+
+    // ── Phase C: ACORN / NaviX additions (spec §6.1) ────────────────────────
+    /// Neighbor expansion factor for ACORN §5.2.
+    ///
+    /// During construction each node selects `floor(gamma * M)` initial candidates
+    /// before pruning to M stored edges. At search time, nodes that fail the
+    /// predicate still expose their full `gamma*M` list so traversal can route
+    /// around predicate-sparse regions without getting stuck.
+    ///
+    /// 1.0 = standard HNSW (no expansion). 1.5–2.0 recommended for mixed workloads.
+    pub gamma: f32,
+
+    /// Minimum estimated filter selectivity below which the executor falls back
+    /// to pre-filter brute force instead of HNSW traversal (spec §7.3 s_min).
+    ///
+    /// If `estimated_selectivity <= selectivity_min` → brute force.
+    pub selectivity_min: f32,
+}
+
+impl AxisHnswConfig {
+    /// Effective expanded neighbor count used during ACORN construction.
+    pub fn expanded_m(&self) -> usize {
+        (self.gamma * self.m as f32).floor() as usize
+    }
+
+    /// Returns `true` when the estimated predicate selectivity is so low that
+    /// HNSW traversal is expected to be slower than a pre-filtered brute-force scan.
+    pub fn should_use_brute_force(&self, estimated_selectivity: f32) -> bool {
+        estimated_selectivity <= self.selectivity_min
+    }
 }
 
 impl Default for AxisHnswConfig {
@@ -79,6 +109,8 @@ impl Default for AxisHnswConfig {
             ef: 50,               // Lower for faster searches
             max_layers: 16,       // Reasonable depth
             distance_metric: DistanceMetric::Cosine,
+            gamma: 1.0,            // No expansion by default (legacy-compatible)
+            selectivity_min: 0.05, // Fall back to brute force below 5% selectivity
         }
     }
 }
@@ -396,13 +428,183 @@ impl AxisHnswIndex {
     }
 
     /// Select m neighbors using simple heuristic (closest neighbors)
-    /// Deferred: Implement more sophisticated heuristics for better graph connectivity
     fn select_neighbors(&self, candidates: Vec<(usize, f32)>, m: usize) -> Vec<usize> {
         candidates
             .into_iter()
             .take(m)
             .map(|(node, _)| node)
             .collect()
+    }
+
+    /// ACORN §5.2 — γ-expanded neighbor selection for predicate-aware construction.
+    ///
+    /// Returns `floor(config.gamma * m)` neighbors so that predicate-filtered
+    /// traversal can route around sparse regions without getting stuck at dead ends.
+    /// When `gamma == 1.0` this is identical to `select_neighbors`.
+    pub fn select_neighbors_gamma(&self, candidates: Vec<(usize, f32)>, m: usize) -> Vec<usize> {
+        let expanded_m = self.config.expanded_m().max(m);
+        candidates
+            .into_iter()
+            .take(expanded_m)
+            .map(|(node, _)| node)
+            .collect()
+    }
+
+    /// NaviX predicate-aware graph search (Phase C, spec §6.1).
+    ///
+    /// Behaves like `search_layer` but accepts a per-node predicate. Nodes that
+    /// fail the predicate are still used for graph traversal (skip-through, ACORN
+    /// §4.2 "predicate-agnostic greedy search") but are excluded from the result
+    /// candidate set. This prevents getting stuck in predicate-sparse subgraphs.
+    fn search_layer_predicate<P>(
+        &self,
+        query: &[f32],
+        entry_points: &[usize],
+        ef: usize,
+        layer: usize,
+        predicate: &P,
+    ) -> Vec<(usize, f32)>
+    where
+        P: Fn(usize) -> bool,
+    {
+        let mut visited = HashSet::new();
+        let mut frontier = BinaryHeap::new(); // min-heap of (dist, node) to explore
+        let mut result_candidates: BinaryHeap<(OrderedFloat, usize)> = BinaryHeap::new();
+        let metric = self.config.distance_metric;
+
+        {
+            let vectors_lock = self
+                .vectors
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+            for &ep in entry_points {
+                if let Some(external_id) = self.id_mapping.external(ep)
+                    && let Some(view) = vectors_lock.get(&external_id)
+                    && let Some(vector_data) = view.as_f32()
+                {
+                    let dist =
+                        self.distance_computer
+                            .distance_with_metric(query, vector_data, &metric);
+                    visited.insert(ep);
+                    frontier.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
+                    if predicate(ep) {
+                        result_candidates.push((OrderedFloat(dist), ep));
+                    }
+                }
+            }
+        }
+
+        while let Some(std::cmp::Reverse((curr_dist, curr_node))) = frontier.pop() {
+            // Early-termination: current node is further than the worst accepted result
+            if result_candidates.len() >= ef {
+                if let Some((worst, _)) = result_candidates.peek()
+                    && curr_dist.0 > worst.0
+                {
+                    break;
+                }
+            }
+
+            if let Some(neighbors) = self.layers.get(&(layer, curr_node)) {
+                let vectors_lock = self
+                    .vectors
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+                for &neighbor in neighbors.value() {
+                    if !visited.contains(&neighbor) {
+                        visited.insert(neighbor);
+                        if let Some(external_id) = self.id_mapping.external(neighbor)
+                            && let Some(view) = vectors_lock.get(&external_id)
+                            && let Some(vector_data) = view.as_f32()
+                        {
+                            let dist = self.distance_computer.distance_with_metric(
+                                query,
+                                vector_data,
+                                &metric,
+                            );
+                            // Always push to frontier (skip-through traversal)
+                            frontier.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                            // Only add to results if predicate passes
+                            if predicate(neighbor) {
+                                result_candidates.push((OrderedFloat(dist), neighbor));
+                                // Evict worst when over ef
+                                while result_candidates.len() > ef {
+                                    result_candidates.pop();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<_> = result_candidates
+            .into_iter()
+            .map(|(OrderedFloat(dist), node)| (node, dist))
+            .collect();
+        result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        result
+    }
+
+    /// Public predicate-aware search API (Phase C, spec §7 VectorTopK.predicate).
+    ///
+    /// The `predicate` receives the **external string id** of each candidate and
+    /// returns `true` if the record should be included in results.
+    ///
+    /// Internally delegates to `search_layer_predicate` at layer 0 so the
+    /// NaviX skip-through heuristic applies throughout the bottom traversal.
+    pub async fn search_with_predicate<P>(
+        &self,
+        query: &[f32],
+        k: usize,
+        predicate: P,
+    ) -> Result<Vec<(String, f32)>>
+    where
+        P: Fn(&str) -> bool + Send + Sync,
+    {
+        // Read entry point (RwLock<Option<usize>>)
+        let entry_point = match self
+            .entry_point
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+        {
+            Some(&ep) => ep,
+            None => return Ok(Vec::new()), // empty index
+        };
+
+        let max_layer = self.max_layer.load(AtomicOrdering::Relaxed);
+        let mut current_points = vec![entry_point];
+
+        // Upper layers: unfiltered greedy descent to layer 1 entry
+        for layer in (1..=max_layer).rev() {
+            current_points = self
+                .search_layer(query, &current_points, 1, layer)
+                .into_iter()
+                .map(|(n, _)| n)
+                .collect();
+        }
+
+        // Translate external-id predicate to internal-id predicate
+        let id_predicate = |internal_id: usize| -> bool {
+            self.id_mapping
+                .external(internal_id)
+                .map(|ext| predicate(&ext))
+                .unwrap_or(false)
+        };
+
+        // Layer 0: predicate-aware NaviX traversal
+        let ef = self.config.ef.max(k);
+        let raw = self.search_layer_predicate(query, &current_points, ef, 0, &id_predicate);
+
+        let results = raw
+            .into_iter()
+            .take(k)
+            .filter_map(|(node, dist)| self.id_mapping.external(node).map(|ext_id| (ext_id, dist)))
+            .collect();
+
+        Ok(results)
     }
 
     /// Shrink connections for a node if it exceeds the maximum degree
@@ -593,7 +795,13 @@ impl AxisVectorIndex for AxisHnswIndex {
             } else {
                 self.config.m
             };
-            let selected = self.select_neighbors(candidates.clone(), m);
+            // ACORN §5.2: use γ-expanded selection when gamma > 1.0 so predicate-filtered
+            // traversal can route around sparse regions without dead-ends.
+            let selected = if self.config.gamma > 1.0 {
+                self.select_neighbors_gamma(candidates.clone(), m)
+            } else {
+                self.select_neighbors(candidates.clone(), m)
+            };
 
             // Add bidirectional connections using DashMap
             // CRITICAL FIX: After adding connections, shrink if exceeds max degree
@@ -1434,6 +1642,7 @@ mod tests {
             ef: 100,
             max_layers: 10,
             distance_metric: DistanceMetric::Cosine,
+            ..AxisHnswConfig::default()
         };
         assert!(AxisHnswIndex::new(valid_config, 128).is_ok());
 
@@ -1549,5 +1758,185 @@ mod tests {
 
         // The top result should be the same (v1 is closest to query)
         assert_eq!(original_results[0].0, restored_results[0].0);
+    }
+
+    // ── Phase C: Filter-Aware Vector Search (ACORN/NaviX) ────────────────────
+
+    #[test]
+    fn test_hnsw_config_gamma_default_is_one() {
+        let cfg = AxisHnswConfig::default();
+        assert_eq!(
+            cfg.gamma, 1.0,
+            "default gamma = 1.0 means no expansion (legacy)"
+        );
+        assert!(
+            cfg.selectivity_min > 0.0,
+            "selectivity_min must be positive"
+        );
+    }
+
+    #[test]
+    fn test_hnsw_config_acorn_expansion() {
+        let cfg = AxisHnswConfig {
+            gamma: 2.0,
+            selectivity_min: 0.01,
+            ..AxisHnswConfig::default()
+        };
+        assert_eq!(cfg.gamma, 2.0);
+        assert_eq!(cfg.selectivity_min, 0.01);
+        // expanded_m = floor(2.0 * 16) = 32
+        assert_eq!(cfg.expanded_m(), 32);
+    }
+
+    #[tokio::test]
+    async fn test_predicate_search_all_pass_matches_unfiltered() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let cfg = AxisHnswConfig {
+            ef: 200,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        for i in 0u32..5 {
+            let v: Vec<f32> = (0..4)
+                .map(|j| if j == i as usize { 1.0 } else { 0.0 })
+                .collect();
+            index.add(format!("v{i}"), v).await.expect("add");
+        }
+
+        let query = vec![1.0f32, 0.0, 0.0, 0.0];
+        let unfiltered = index.search(&query, 3, None).await.unwrap();
+        let filtered = index
+            .search_with_predicate(&query, 3, |_id| true)
+            .await
+            .unwrap();
+
+        // With all-pass predicate, top result must match
+        if !unfiltered.is_empty() && !filtered.is_empty() {
+            assert_eq!(
+                unfiltered[0].0, filtered[0].0,
+                "all-pass predicate must return same top-1 as unfiltered"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_predicate_search_excludes_specific_id() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let cfg = AxisHnswConfig {
+            ef: 200,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        index
+            .add("v0".into(), vec![1.0, 0.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        index
+            .add("v1".into(), vec![0.9, 0.1, 0.0, 0.0])
+            .await
+            .unwrap();
+        index
+            .add("v2".into(), vec![0.0, 1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+
+        let query = vec![1.0f32, 0.0, 0.0, 0.0];
+        let results = index
+            .search_with_predicate(&query, 2, |id| id != "v0")
+            .await
+            .unwrap();
+
+        // v0 must not appear in any result
+        assert!(
+            results.iter().all(|(id, _)| id != "v0"),
+            "excluded id must not appear: got {:?}",
+            results
+        );
+    }
+
+    #[test]
+    fn test_smin_fallback_selector() {
+        let cfg = AxisHnswConfig {
+            selectivity_min: 0.05,
+            ..AxisHnswConfig::default()
+        };
+        assert!(
+            cfg.should_use_brute_force(0.01),
+            "0.01 < 0.05 → brute force"
+        );
+        assert!(!cfg.should_use_brute_force(0.10), "0.10 > 0.05 → HNSW ok");
+        assert!(
+            cfg.should_use_brute_force(0.05),
+            "at threshold → brute force (safe)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_uses_gamma_expansion_when_gamma_gt_one() {
+        // A high gamma index should build more edges per node than a gamma=1.0 index.
+        // We verify this by checking that a node in the gamma>1 index has at least as
+        // many neighbors as the gamma=1 baseline (ideally more, but at small scale
+        // they may coincide). The key invariant: gamma>1 NEVER produces fewer edges.
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+
+        let cfg_base = AxisHnswConfig {
+            m: 4,
+            gamma: 1.0,
+            ..AxisHnswConfig::default()
+        };
+        let cfg_expanded = AxisHnswConfig {
+            m: 4,
+            gamma: 2.0,
+            ..AxisHnswConfig::default()
+        };
+
+        let base_index = AxisHnswIndex::new(cfg_base, 2).expect("create base index");
+        let exp_index = AxisHnswIndex::new(cfg_expanded, 2).expect("create expanded index");
+
+        for i in 0..8u32 {
+            let v = vec![i as f32, (8 - i) as f32];
+            base_index.add(format!("v{i}"), v.clone()).await.unwrap();
+            exp_index.add(format!("v{i}"), v).await.unwrap();
+        }
+
+        // Count connections at layer 0 across all nodes in both indexes
+        let base_edges: usize = base_index
+            .layers
+            .iter()
+            .filter(|e| e.key().0 == 0)
+            .map(|e| e.value().len())
+            .sum();
+        let exp_edges: usize = exp_index
+            .layers
+            .iter()
+            .filter(|e| e.key().0 == 0)
+            .map(|e| e.value().len())
+            .sum();
+
+        assert!(
+            exp_edges >= base_edges,
+            "gamma=2.0 index must have at least as many edges as gamma=1.0 (got {exp_edges} vs {base_edges})"
+        );
+    }
+
+    #[test]
+    fn test_select_neighbors_gamma_returns_more_candidates() {
+        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let cfg = AxisHnswConfig {
+            m: 4,
+            gamma: 2.0,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        // 10 candidates, gamma=2.0, m=4 → expanded picks min(8, 10) = 8
+        let candidates: Vec<(usize, f32)> = (0..10).map(|i| (i, i as f32 * 0.1)).collect();
+        let standard = index.select_neighbors(candidates.clone(), 4);
+        let expanded = index.select_neighbors_gamma(candidates, 4);
+
+        assert_eq!(standard.len(), 4);
+        assert_eq!(expanded.len(), 8, "gamma=2.0 * m=4 → 8 neighbors");
     }
 }

@@ -96,6 +96,15 @@ pub trait FilterContract: Send + Sync + Debug {
 
     /// Get a string representation of this filter
     fn as_string(&self) -> String;
+
+    /// Return the underlying `FilterExpression` if available.
+    ///
+    /// Used by HNSW predicate-aware search (Phase C) to convert this filter
+    /// into the `Fn(&str) -> bool` callback accepted by `search_with_predicate`.
+    /// Default implementation returns `None` (no pushdown possible).
+    fn as_filter_expression(&self) -> Option<&FilterExpression> {
+        None
+    }
 }
 
 impl Clone for Box<dyn FilterContract> {
@@ -417,6 +426,10 @@ impl FilterContract for NormalizedFilter {
 
     fn as_string(&self) -> String {
         format!("{:?}", self.expression)
+    }
+
+    fn as_filter_expression(&self) -> Option<&FilterExpression> {
+        Some(&self.expression)
     }
 }
 
@@ -755,5 +768,63 @@ mod tests {
     fn test_create_candidate_set_convenience() {
         let candidates = create_candidate_set();
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn test_normalized_filter_exposes_expression() {
+        let expr = FilterExpression::Comparison {
+            field: "id".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!("abc"),
+        };
+        let filter = NormalizedFilter::new(expr.clone());
+        let retrieved = filter.as_filter_expression();
+        assert!(
+            retrieved.is_some(),
+            "NormalizedFilter must expose its expression"
+        );
+        assert_eq!(*retrieved.unwrap(), expr);
+    }
+
+    #[test]
+    fn test_default_filter_contract_returns_none_expression() {
+        // Ensure the default impl returns None for impls that don't override it.
+        struct Stub;
+        impl std::fmt::Debug for Stub {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "Stub")
+            }
+        }
+        impl FilterContract for Stub {
+            fn estimated_selectivity(&self) -> f64 {
+                0.5
+            }
+            fn can_pushdown(&self, _: StorageEngineType) -> bool {
+                false
+            }
+            fn evaluate_row(&self, _: &serde_json::Value) -> Result<bool> {
+                Ok(true)
+            }
+            fn evaluate_batch(
+                &self,
+                batch: &[serde_json::Value],
+            ) -> Result<arrow_array::BooleanArray> {
+                Ok(arrow_array::BooleanArray::from(vec![true; batch.len()]))
+            }
+            fn required_fields(&self) -> Vec<String> {
+                vec![]
+            }
+            fn is_compatible_with(&self, _: &dyn FilterContract) -> bool {
+                true
+            }
+            fn clone_box(&self) -> Box<dyn FilterContract> {
+                Box::new(Stub)
+            }
+            fn as_string(&self) -> String {
+                "stub".to_string()
+            }
+        }
+        let stub = Stub;
+        assert!(stub.as_filter_expression().is_none());
     }
 }
