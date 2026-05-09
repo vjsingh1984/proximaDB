@@ -60,6 +60,7 @@ proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 prost = "0.14"
 prost-types = "0.14"
+rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
@@ -221,7 +222,7 @@ num_cpus = "1.16"
 raw-cpuid = "11.0"  # CPU feature detection for x86_64
 
 # Random number generation
-rand = { version = "0.8", features = ["small_rng"] }
+rand.workspace = true
 rand_chacha = "0.3"
 rand_distr = "0.4"  # For generating realistic probability distributions
 
