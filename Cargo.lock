@@ -5619,6 +5619,7 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-query-fusion",
  "proximadb-records",
+ "proximadb-storage-common",
  "proximadb-uql",
  "proximadb-vector-query",
  "pyo3",
@@ -5886,6 +5887,10 @@ dependencies = [
  "tokio",
  "url",
 ]
+
+[[package]]
+name = "proximadb-storage-common"
+version = "0.2.0"
 
 [[package]]
 name = "proximadb-uql"

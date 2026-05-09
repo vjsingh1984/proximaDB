@@ -616,6 +616,9 @@ Current status after the first refinement:
 * the shared non-cryptographic hash helpers (`XxHash64`, `Fnv1a64`, `FastHash`, `HashBuilder`) now
   live in `proximadb-kernel`; root `utils::hash` is a compatibility re-export for existing
   compute/storage callers
+* `proximadb-storage-common` now exists as the first storage-common crate and owns the shared
+  Roaring bitmap helper; root `utils::bitmap` and `storage::common::bitmap` remain compatibility
+  re-exports while future storage primitives are evaluated against the storage-common acceptance gate
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:
