@@ -651,6 +651,18 @@ Next implementation targets, in order:
 6. expand `proximadb-graph` from execution contracts, operators, parser-language modules, planner, pattern runtime, and executor runtime into the remaining graph runtime helpers, then engine/service contracts
 7. only then start the larger `proximadb-vector` extraction
 
+Near-term hold decisions:
+
+* do not move the root `utils::btree` B+ tree just because it is a utility; it currently has no
+  concrete non-root consumers, carries serde/serialization semantics, and should move only when a
+  storage/index modality boundary is ready to consume it directly
+* do not move root request tracing into `proximadb-runtime-common`; tracing, request correlation,
+  metric names, and instrumentation helpers belong in the planned `proximadb-telemetry` crate so
+  the generic runtime-helper crate does not absorb observability dependencies
+* do not promote `utils::skiplist_mutex` as a separate abstraction; it overlaps the extracted
+  `proximadb-runtime-common::skiplist::SkipList` concept and should be removed or reduced to an
+  alias only if a real compatibility caller appears
+
 == Boundary Validation And Course Correction
 
 The extraction work completed so far is directionally correct, but it needs a stricter boundary policy to achieve the original goals of lower rebuild cost, clearer ownership, and better runtime encapsulation.
