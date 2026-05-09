@@ -37,6 +37,11 @@ QUERY_RUNTIME_DISALLOWED_ADAPTERS = {
     "proximadb-graph-arrow",
     "proximadb-graph-subset",
 }
+PLATFORM_LAYERS = frozenset({"root", "application", "binding"})
+QUERY_LAYERS = frozenset(
+    {"query-contract", "query-planner", "query-adapter", "query-runtime"}
+)
+NON_FOUNDATION_LAYERS = frozenset({"modality", *QUERY_LAYERS, *PLATFORM_LAYERS})
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,78 @@ class Finding:
     crate: str
     dependency: str
     message: str
+
+
+@dataclass(frozen=True)
+class LayerRule:
+    source_layers: frozenset[str]
+    dependency_layers: frozenset[str]
+    severity: str
+    message: str
+
+    def applies_to(self, crate: Crate, dependency: Crate) -> bool:
+        return (
+            crate.layer in self.source_layers
+            and dependency.layer in self.dependency_layers
+        )
+
+
+LAYER_RULES = (
+    LayerRule(
+        frozenset({"foundation"}),
+        NON_FOUNDATION_LAYERS,
+        "error",
+        "foundation crates may only depend on other foundation crates",
+    ),
+    LayerRule(
+        frozenset({"modality"}),
+        PLATFORM_LAYERS,
+        "error",
+        "modality crates must not depend on root/application/binding crates",
+    ),
+    LayerRule(
+        frozenset({"query-contract"}),
+        frozenset({"query-runtime"}),
+        "error",
+        "query contract crates must not depend on query runtime crates",
+    ),
+    LayerRule(
+        frozenset({"query-contract"}),
+        frozenset({"query-adapter"}),
+        "error",
+        "query contract crates must not depend on query adapter/runtime crates",
+    ),
+    LayerRule(
+        frozenset({"query-contract"}),
+        frozenset({"query-planner"}),
+        "error",
+        "query contract crates must not depend on planner/optimizer behavior crates",
+    ),
+    LayerRule(
+        QUERY_LAYERS,
+        PLATFORM_LAYERS,
+        "error",
+        "query crates must not depend on root/application/binding crates",
+    ),
+    LayerRule(
+        frozenset({"query-contract", "query-adapter"}),
+        frozenset({"modality"}),
+        "warning",
+        "query contract/adapter crates still depend on modality runtime; migrate to narrower contracts",
+    ),
+    LayerRule(
+        frozenset({"query-planner"}),
+        frozenset({"query-runtime", "query-adapter", "modality"}),
+        "error",
+        "query planner crates must depend on contracts/foundation, not runtime, adapter, or modality crates",
+    ),
+    LayerRule(
+        frozenset({"query-runtime"}),
+        frozenset({"modality"}),
+        "error",
+        "query runtime crates must depend on modality contracts/capabilities, not concrete modality runtimes",
+    ),
+)
 
 
 def load_toml(path: Path) -> dict:
@@ -139,26 +216,6 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
                 )
 
         for dep in internal_deps(crate, crates):
-            if crate.layer == "foundation" and dep.layer != "foundation":
-                findings.append(
-                    Finding(
-                        "error",
-                        crate.name,
-                        dep.name,
-                        "foundation crates may only depend on other foundation crates",
-                    )
-                )
-
-            if crate.layer == "modality" and dep.layer in {"root", "application", "binding"}:
-                findings.append(
-                    Finding(
-                        "error",
-                        crate.name,
-                        dep.name,
-                        "modality crates must not depend on root/application/binding crates",
-                    )
-                )
-
             if (
                 crate.layer == "modality"
                 and dep.layer.startswith("query")
@@ -173,83 +230,16 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
                     )
                 )
 
-            if crate.layer == "query-contract" and dep.layer == "query-runtime":
-                findings.append(
-                    Finding(
-                        "error",
-                        crate.name,
-                        dep.name,
-                        "query contract crates must not depend on query runtime crates",
+            for rule in LAYER_RULES:
+                if rule.applies_to(crate, dep):
+                    findings.append(
+                        Finding(
+                            rule.severity,
+                            crate.name,
+                            dep.name,
+                            rule.message,
+                        )
                     )
-                )
-
-            if crate.layer == "query-contract" and dep.layer == "query-adapter":
-                findings.append(
-                    Finding(
-                        "error",
-                        crate.name,
-                        dep.name,
-                        "query contract crates must not depend on query adapter/runtime crates",
-                    )
-                )
-
-            if crate.layer == "query-contract" and dep.layer == "query-planner":
-                findings.append(
-                    Finding(
-                        "error",
-                        crate.name,
-                        dep.name,
-                        "query contract crates must not depend on planner/optimizer behavior crates",
-                    )
-                )
-
-            if crate.layer.startswith("query") and dep.layer in {
-                "root",
-                "application",
-                "binding",
-            }:
-                findings.append(
-                    Finding(
-                        "error",
-                        crate.name,
-                        dep.name,
-                        "query crates must not depend on root/application/binding crates",
-                    )
-                )
-
-            if crate.layer in {"query-contract", "query-adapter"} and dep.layer == "modality":
-                findings.append(
-                    Finding(
-                        "warning",
-                        crate.name,
-                        dep.name,
-                        "query contract/adapter crates still depend on modality runtime; migrate to narrower contracts",
-                    )
-                )
-
-            if crate.layer == "query-planner" and dep.layer in {
-                "query-runtime",
-                "query-adapter",
-                "modality",
-            }:
-                findings.append(
-                    Finding(
-                        "error",
-                        crate.name,
-                        dep.name,
-                        "query planner crates must depend on contracts/foundation, not runtime, adapter, or modality crates",
-                    )
-                )
-
-            if crate.layer == "query-runtime" and dep.layer == "modality":
-                findings.append(
-                    Finding(
-                        "error",
-                        crate.name,
-                        dep.name,
-                        "query runtime crates must depend on modality contracts/capabilities, not concrete modality runtimes",
-                    )
-                )
 
             if (
                 crate.layer == "query-runtime"

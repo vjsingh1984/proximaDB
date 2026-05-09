@@ -1210,6 +1210,10 @@ The graph query contract layer is now lower than the graph runtime:
   crates, starting with `proximadb-graph-subset`, `proximadb-graph-arrow`, and `proximadb-uql`, so
   contract leaves cannot accidentally depend on adapter/runtime/presentation/parser behavior while
   adapters remain reusable by root/facade/query-runtime integration paths
+* `workspace-boundaries-check` now expresses layer restrictions through a centralized policy table,
+  so future foundation, modality, query, platform, runtime, integration, networking, security, and
+  distributed-system layers should be added by extending the layer taxonomy and policy rules rather
+  than appending one-off dependency branches
 
 == Immediate Follow-Up Deliverables
 
