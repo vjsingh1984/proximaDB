@@ -5621,6 +5621,7 @@ dependencies = [
  "proximadb-records",
  "proximadb-runtime-common",
  "proximadb-storage-common",
+ "proximadb-telemetry",
  "proximadb-uql",
  "proximadb-vector-query",
  "pyo3",
@@ -5897,6 +5898,14 @@ dependencies = [
 [[package]]
 name = "proximadb-storage-common"
 version = "0.2.0"
+
+[[package]]
+name = "proximadb-telemetry"
+version = "0.2.0"
+dependencies = [
+ "proximadb-kernel",
+ "tracing",
+]
 
 [[package]]
 name = "proximadb-uql"

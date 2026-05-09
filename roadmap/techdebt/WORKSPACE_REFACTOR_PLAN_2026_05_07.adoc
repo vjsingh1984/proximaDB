@@ -636,9 +636,14 @@ Current status after the first refinement:
 * the generic concurrent ordered-map helper historically exposed as `utils::skiplist::SkipList`
   now also lives in `proximadb-runtime-common`; root `utils::skiplist` remains a compatibility
   re-export while future storage/query runtime consumers can depend on the horizontal crate directly
-* `scripts/measure_workspace_rebuild.py` now includes `proximadb-runtime-common` and
-  `proximadb-storage-common` in the default rebuild baseline package list, so horizontal and
-  storage-common changes are measured alongside foundation, graph, query, and root checks
+* `proximadb-telemetry` now exists as the planned foundation observability crate and owns the
+  request-context/request-id/span helper previously under root `utils::tracing`; root
+  `utils::tracing` remains a compatibility re-export while future tracing/metrics work converges
+  on the telemetry crate instead of `runtime-common`
+* `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
+  `proximadb-runtime-common`, and `proximadb-storage-common` in the default rebuild baseline
+  package list, so telemetry, horizontal, and storage-common changes are measured alongside
+  foundation, graph, query, and root checks
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:
