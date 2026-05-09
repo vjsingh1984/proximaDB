@@ -59,7 +59,7 @@ impl JoinResult {
 }
 
 /// Narrow join-execution seam for orchestration helpers.
-#[async_trait(?Send)]
+#[async_trait]
 pub trait JoinExecutionService: Send + Sync {
     /// Execute a join for one dependency edge.
     async fn execute_join(
@@ -77,7 +77,7 @@ pub trait RecordSimilarityEngine {
 }
 
 /// Narrow seam for the platform-bound block-batch semantic join path.
-#[async_trait(?Send)]
+#[async_trait]
 pub trait BlockBatchSemanticJoinService: Send + Sync {
     /// Execute the block-batch semantic join path for an already-selected mode.
     async fn execute_block_batch_join(
@@ -590,7 +590,7 @@ mod tests {
 
     struct ExactJoinExecutor;
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl JoinExecutionService for ExactJoinExecutor {
         async fn execute_join(
             &self,
@@ -624,7 +624,7 @@ mod tests {
 
     struct MockBlockBatchService;
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl BlockBatchSemanticJoinService for MockBlockBatchService {
         async fn execute_block_batch_join(
             &self,

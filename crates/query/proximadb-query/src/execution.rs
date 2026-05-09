@@ -331,7 +331,7 @@ mod tests {
 
     struct MockJoinService;
 
-    #[async_trait(?Send)]
+    #[async_trait]
     impl JoinExecutionService for MockJoinService {
         async fn execute_join(
             &self,

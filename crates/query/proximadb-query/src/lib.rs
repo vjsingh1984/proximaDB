@@ -7,6 +7,7 @@ pub mod joins;
 pub mod learned_fusion;
 pub mod lowering;
 pub mod observability_adapter;
+pub mod operators;
 pub mod optimizer;
 pub mod optimizer_support;
 pub mod orchestration;
@@ -36,3 +37,8 @@ pub use plan_execution_cache::*;
 pub use reranking::*;
 pub use results::*;
 pub use vector_adapter::*;
+
+pub use operators::hybrid_traverse::{
+    AnnSeedProvider, GraphNeighbourProvider, HybridTraverseExecutor, TraversalNode, TraversalStats,
+};
+pub use operators::mshj::{MshjExecutor, MshjRow, MshjStats};

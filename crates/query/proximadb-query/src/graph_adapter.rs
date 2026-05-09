@@ -334,7 +334,7 @@ where
     }
 }
 
-fn resolve_nodes_from_component(
+pub fn resolve_nodes_from_component(
     component_idx: usize,
     context: Option<&HashMap<usize, &SubQueryResult>>,
 ) -> Vec<String> {

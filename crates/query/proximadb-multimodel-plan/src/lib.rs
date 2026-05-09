@@ -118,8 +118,19 @@ impl MultiModelPlan {
                 Operator::Join { .. } => stats.join_count += 1,
                 Operator::Aggregate { .. } => stats.aggregate_count += 1,
                 Operator::Sort { .. } => stats.sort_count += 1,
-                Operator::TopK { .. } => stats.topk_count += 1,
+                Operator::TopK { .. } | Operator::VectorTopK { .. } => stats.topk_count += 1,
                 Operator::Union { .. } => stats.union_count += 1,
+                // Spec §7 extended operators counted generically
+                Operator::Limit { .. }
+                | Operator::HybridTraverse { .. }
+                | Operator::PatternMatch { .. }
+                | Operator::CrossModelJoin { .. }
+                | Operator::ModulationOp { .. }
+                | Operator::MatrixOp { .. }
+                | Operator::SemanticJoin { .. }
+                | Operator::ModelConvert { .. } => {
+                    stats.operator_count += 0; // counted via len() below
+                }
             }
         }
 
@@ -364,8 +375,19 @@ impl MultiModelPlan {
                 k: *k,
                 sort_column: sort_column.clone(),
             }),
-            // Federated operators don't map to compute operators
-            Operator::Join { .. } | Operator::Aggregate { .. } | Operator::Union { .. } => None,
+            // Federated and spec §7 operators don't map to low-level compute operators
+            Operator::Join { .. }
+            | Operator::Aggregate { .. }
+            | Operator::Union { .. }
+            | Operator::Limit { .. }
+            | Operator::VectorTopK { .. }
+            | Operator::HybridTraverse { .. }
+            | Operator::PatternMatch { .. }
+            | Operator::CrossModelJoin { .. }
+            | Operator::ModulationOp { .. }
+            | Operator::MatrixOp { .. }
+            | Operator::SemanticJoin { .. }
+            | Operator::ModelConvert { .. } => None,
         }
     }
 }
@@ -454,6 +476,118 @@ pub enum Operator {
         /// Remove duplicates
         distinct: bool,
     },
+
+    // ── Spec §7 extended operators ──────────────────────────────────────────
+    /// Limit operator (spec §7 — Limit).
+    Limit { n: usize, offset: usize },
+
+    /// Filter-aware vector similarity search (spec §7 — VectorTopK, ACORN/NaviX).
+    ///
+    /// Distinct from the generic `TopK` because it carries an explicit query
+    /// vector and distance metric so the executor can route to HNSW indexes.
+    VectorTopK {
+        query_vector: Vec<f32>,
+        k: usize,
+        metric: VectorMetric,
+        /// Optional predicate pushed into the HNSW navigator (Phase C).
+        predicate: Option<FilterExpression>,
+    },
+
+    /// Combined graph + vector traversal (spec §7 — HybridTraverse, GredoDB Alg.1).
+    HybridTraverse { edge_pattern: EdgePattern },
+
+    /// Cypher-style path pattern match (spec §7 — PatternMatch).
+    PatternMatch {
+        /// Serialized Cypher path pattern, e.g. `(a)-[:KNOWS]->(b)`.
+        pattern: String,
+    },
+
+    /// Cross-modality Multi-Stage Hash Join (spec §7 — CrossModelJoin, M2 MSHJ).
+    CrossModelJoin {
+        left_modality: DataModel,
+        right_modality: DataModel,
+        condition: JoinCondition,
+    },
+
+    /// Flexvec modulation operations (spec §7 — ModulationOp).
+    ModulationOp { ops: Vec<String> },
+
+    /// PreVision matrix operation (spec §7 — MatrixOp).
+    MatrixOp { op: MatrixOpKind },
+
+    /// NLP-predicate semantic join (spec §7 — SemanticJoin, arXiv:2510.08489).
+    SemanticJoin {
+        /// Natural language join condition evaluated by the semantic layer.
+        nl_predicate: String,
+    },
+
+    /// Cross-modality record conversion (spec §7 — ModelConvert).
+    ModelConvert {
+        source_modality: DataModel,
+        target_modality: DataModel,
+    },
+}
+
+// ── Supporting types for spec §7 operators ──────────────────────────────────
+
+/// Distance metric for vector search.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VectorMetric {
+    Cosine,
+    L2,
+    DotProduct,
+    Manhattan,
+}
+
+impl Default for VectorMetric {
+    fn default() -> Self {
+        Self::Cosine
+    }
+}
+
+/// Edge pattern for graph traversal (HybridTraverse spec §7).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct EdgePattern {
+    /// Optional edge type label constraint (e.g. "KNOWS").
+    pub edge_type: Option<String>,
+    /// Minimum hop count. `0` includes ANN seed nodes in traversal output.
+    pub min_hops: u32,
+    /// Maximum hop count. `None` = unbounded.
+    pub max_hops: Option<u32>,
+    /// Direction constraint.
+    pub direction: TraversalDirection,
+}
+
+impl Default for EdgePattern {
+    fn default() -> Self {
+        Self {
+            edge_type: None,
+            min_hops: 1,
+            max_hops: Some(1),
+            direction: TraversalDirection::Outgoing,
+        }
+    }
+}
+
+/// Graph traversal direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TraversalDirection {
+    Outgoing,
+    Incoming,
+    Both,
+}
+
+/// Matrix operation kind for PreVision integration (spec §7 — MatrixOp).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MatrixOpKind {
+    /// Element-wise multiply (Hadamard).
+    Hadamard,
+    /// Matrix-vector product.
+    MatVec,
+    /// Outer product.
+    Outer,
+    /// Cosine similarity matrix.
+    CosineSimilarityMatrix,
 }
 
 /// Join type specification
@@ -736,6 +870,76 @@ impl OperatorContract for Operator {
                 debug!("Validated Union operator: {} plans", plans.len());
                 Ok(())
             }
+            // ── Spec §7 extended operators ──────────────────────────────────
+            Operator::Limit { n, .. } => {
+                if *n == 0 {
+                    return Err(anyhow::anyhow!("Limit n must be > 0"));
+                }
+                Ok(())
+            }
+            Operator::VectorTopK {
+                k, query_vector, ..
+            } => {
+                if *k == 0 {
+                    return Err(anyhow::anyhow!("VectorTopK k must be > 0"));
+                }
+                if query_vector.is_empty() {
+                    return Err(anyhow::anyhow!("VectorTopK query_vector is empty"));
+                }
+                Ok(())
+            }
+            Operator::HybridTraverse { edge_pattern } => {
+                if let Some(max_hops) = edge_pattern.max_hops
+                    && max_hops < edge_pattern.min_hops
+                {
+                    return Err(anyhow::anyhow!(
+                        "HybridTraverse max_hops must be >= min_hops"
+                    ));
+                }
+                Ok(())
+            }
+            Operator::PatternMatch { pattern } => {
+                if pattern.is_empty() {
+                    return Err(anyhow::anyhow!("PatternMatch pattern is empty"));
+                }
+                Ok(())
+            }
+            Operator::CrossModelJoin {
+                left_modality,
+                right_modality,
+                ..
+            } => {
+                if left_modality == right_modality {
+                    return Err(anyhow::anyhow!(
+                        "CrossModelJoin requires distinct modalities"
+                    ));
+                }
+                Ok(())
+            }
+            Operator::ModulationOp { ops } => {
+                if ops.is_empty() {
+                    return Err(anyhow::anyhow!("ModulationOp has no ops"));
+                }
+                Ok(())
+            }
+            Operator::MatrixOp { .. } => Ok(()),
+            Operator::SemanticJoin { nl_predicate } => {
+                if nl_predicate.is_empty() {
+                    return Err(anyhow::anyhow!("SemanticJoin nl_predicate is empty"));
+                }
+                Ok(())
+            }
+            Operator::ModelConvert {
+                source_modality,
+                target_modality,
+            } => {
+                if source_modality == target_modality {
+                    return Err(anyhow::anyhow!(
+                        "ModelConvert source and target modalities are the same"
+                    ));
+                }
+                Ok(())
+            }
         }
     }
 
@@ -763,7 +967,27 @@ impl OperatorContract for Operator {
                 cols.extend(aggregates.iter().map(|a| a.column.clone()));
                 cols
             }
-            Operator::Union { .. } => vec![], // Union doesn't require specific columns
+            Operator::Union { .. } => vec![],
+            // Spec §7 extended operators
+            Operator::Limit { .. } => vec![],
+            Operator::VectorTopK { predicate, .. } => predicate
+                .as_ref()
+                .map(extract_columns_from_filter)
+                .unwrap_or_default(),
+            Operator::HybridTraverse { .. } => vec![],
+            Operator::PatternMatch { .. } => vec![],
+            Operator::CrossModelJoin { condition, .. } => match condition {
+                JoinCondition::On(l, r) => vec![l.clone(), r.clone()],
+                JoinCondition::OnMultiple(pairs) => pairs
+                    .iter()
+                    .flat_map(|(l, r)| vec![l.clone(), r.clone()])
+                    .collect(),
+                JoinCondition::Expression(expr) => extract_columns_from_filter(expr),
+            },
+            Operator::ModulationOp { .. } => vec![],
+            Operator::MatrixOp { .. } => vec![],
+            Operator::SemanticJoin { .. } => vec![],
+            Operator::ModelConvert { .. } => vec![],
         }
     }
 
@@ -788,21 +1012,50 @@ impl OperatorContract for Operator {
                 cols
             }
             Operator::Union { .. } => vec![], // Union output depends on unioned schemas
+            // Spec §7 extended operators
+            Operator::Limit { .. } => vec![],
+            Operator::VectorTopK { .. } => vec!["id".to_string(), "score".to_string()],
+            Operator::HybridTraverse { .. } => {
+                vec![
+                    "id".to_string(),
+                    "score".to_string(),
+                    "hop_depth".to_string(),
+                ]
+            }
+            Operator::PatternMatch { .. } => vec![],
+            Operator::CrossModelJoin { .. } => vec![],
+            Operator::ModulationOp { .. } => vec![],
+            Operator::MatrixOp { .. } => vec![],
+            Operator::SemanticJoin { .. } => vec![],
+            Operator::ModelConvert { .. } => vec![],
         }
     }
 
     fn estimate_cost(&self, input_rows: usize) -> f64 {
         match self {
-            Operator::Scan { .. } => input_rows as f64, // Linear scan
-            Operator::Filter { .. } => input_rows as f64 * 0.5, // Assume 50% selectivity
-            Operator::Project { .. } => input_rows as f64 * 0.1, // Cheap - just column selection
-            Operator::Sort { .. } => input_rows as f64 * (input_rows as f64).log2(), // O(n log n)
+            Operator::Scan { .. } => input_rows as f64,
+            Operator::Filter { .. } => input_rows as f64 * 0.5,
+            Operator::Project { .. } => input_rows as f64 * 0.1,
+            Operator::Sort { .. } => input_rows as f64 * (input_rows as f64).log2(),
             Operator::TopK { k, .. } => {
                 input_rows as f64 + (*k as f64 * (input_rows as f64).log2())
-            } // n + k log n
-            Operator::Join { .. } => input_rows as f64 * input_rows as f64, // O(n*m) worst case
-            Operator::Aggregate { .. } => input_rows as f64 * 1.5, // Grouping overhead
-            Operator::Union { .. } => input_rows as f64, // Just concatenation
+            }
+            Operator::Join { .. } => input_rows as f64 * input_rows as f64,
+            Operator::Aggregate { .. } => input_rows as f64 * 1.5,
+            Operator::Union { .. } => input_rows as f64,
+            // Spec §7 extended operators
+            Operator::Limit { n, .. } => (*n).min(input_rows) as f64,
+            // HNSW is O(log n * ef) ≈ O(log² n) with predicate overhead
+            Operator::VectorTopK { k, .. } => (input_rows as f64).log2().powi(2) * *k as f64,
+            // Graph traversal is O(V + E) in the worst case
+            Operator::HybridTraverse { .. } => input_rows as f64 * 2.0,
+            Operator::PatternMatch { .. } => input_rows as f64 * 3.0,
+            // MSHJ: O(n + m) with hash table
+            Operator::CrossModelJoin { .. } => input_rows as f64 * 1.8,
+            Operator::ModulationOp { ops, .. } => input_rows as f64 * ops.len() as f64 * 0.1,
+            Operator::MatrixOp { .. } => input_rows as f64 * input_rows as f64 * 0.001,
+            Operator::SemanticJoin { .. } => input_rows as f64 * input_rows as f64 * 0.5,
+            Operator::ModelConvert { .. } => input_rows as f64 * 0.2,
         }
     }
 }
@@ -1038,5 +1291,194 @@ mod tests {
 
         let sort_cost = sort_op.estimate_cost(1000);
         assert!(sort_cost > 1000.0); // Sort is more expensive than scan
+    }
+
+    // ── Spec §7 extended operator TDD tests ──────────────────────────────────
+
+    #[test]
+    fn test_limit_operator_validates() {
+        let op = Operator::Limit { n: 10, offset: 0 };
+        assert!(op.validate().is_ok());
+
+        let zero = Operator::Limit { n: 0, offset: 0 };
+        assert!(zero.validate().is_err(), "n=0 must fail");
+    }
+
+    #[test]
+    fn test_vector_topk_operator_validates() {
+        let op = Operator::VectorTopK {
+            query_vector: vec![0.1, 0.2, 0.3],
+            k: 10,
+            metric: VectorMetric::Cosine,
+            predicate: None,
+        };
+        assert!(op.validate().is_ok());
+
+        let zero_k = Operator::VectorTopK {
+            query_vector: vec![0.1],
+            k: 0,
+            metric: VectorMetric::L2,
+            predicate: None,
+        };
+        assert!(zero_k.validate().is_err(), "k=0 must fail");
+
+        let empty_vec = Operator::VectorTopK {
+            query_vector: vec![],
+            k: 5,
+            metric: VectorMetric::Cosine,
+            predicate: None,
+        };
+        assert!(
+            empty_vec.validate().is_err(),
+            "empty query_vector must fail"
+        );
+    }
+
+    #[test]
+    fn test_vector_topk_cost_is_sublinear_in_input() {
+        let op = Operator::VectorTopK {
+            query_vector: vec![0.1, 0.2],
+            k: 10,
+            metric: VectorMetric::Cosine,
+            predicate: None,
+        };
+        // HNSW cost is O(log² n * k), not O(n)
+        let cost_1000 = op.estimate_cost(1000);
+        let cost_1_000_000 = op.estimate_cost(1_000_000);
+        assert!(
+            cost_1_000_000 < 1000.0 * cost_1000,
+            "VectorTopK should be sublinear vs linear scan"
+        );
+    }
+
+    #[test]
+    fn test_hybrid_traverse_validates() {
+        let op = Operator::HybridTraverse {
+            edge_pattern: EdgePattern::default(),
+        };
+        assert!(op.validate().is_ok());
+
+        let bad = Operator::HybridTraverse {
+            edge_pattern: EdgePattern {
+                min_hops: 2,
+                max_hops: Some(1),
+                ..EdgePattern::default()
+            },
+        };
+        assert!(bad.validate().is_err(), "max_hops < min_hops must fail");
+
+        let seed_inclusive = Operator::HybridTraverse {
+            edge_pattern: EdgePattern {
+                min_hops: 0,
+                max_hops: Some(0),
+                ..EdgePattern::default()
+            },
+        };
+        assert!(
+            seed_inclusive.validate().is_ok(),
+            "min_hops=0 is valid for ANN seed output"
+        );
+    }
+
+    #[test]
+    fn test_pattern_match_validates() {
+        let op = Operator::PatternMatch {
+            pattern: "(a)-[:KNOWS]->(b)".to_string(),
+        };
+        assert!(op.validate().is_ok());
+
+        let empty = Operator::PatternMatch {
+            pattern: "".to_string(),
+        };
+        assert!(empty.validate().is_err());
+    }
+
+    #[test]
+    fn test_cross_model_join_requires_distinct_modalities() {
+        let ok = Operator::CrossModelJoin {
+            left_modality: DataModel::Vector,
+            right_modality: DataModel::Graph,
+            condition: JoinCondition::On("id".to_string(), "entity_id".to_string()),
+        };
+        assert!(ok.validate().is_ok());
+
+        let same = Operator::CrossModelJoin {
+            left_modality: DataModel::Vector,
+            right_modality: DataModel::Vector,
+            condition: JoinCondition::On("id".to_string(), "id".to_string()),
+        };
+        assert!(same.validate().is_err(), "same modality must fail");
+    }
+
+    #[test]
+    fn test_modulation_op_validates() {
+        let op = Operator::ModulationOp {
+            ops: vec!["scale".to_string()],
+        };
+        assert!(op.validate().is_ok());
+
+        let empty = Operator::ModulationOp { ops: vec![] };
+        assert!(empty.validate().is_err());
+    }
+
+    #[test]
+    fn test_matrix_op_always_valid() {
+        let op = Operator::MatrixOp {
+            op: MatrixOpKind::Hadamard,
+        };
+        assert!(op.validate().is_ok());
+    }
+
+    #[test]
+    fn test_semantic_join_validates() {
+        let op = Operator::SemanticJoin {
+            nl_predicate: "items semantically related to user interests".to_string(),
+        };
+        assert!(op.validate().is_ok());
+
+        let empty = Operator::SemanticJoin {
+            nl_predicate: "".to_string(),
+        };
+        assert!(empty.validate().is_err());
+    }
+
+    #[test]
+    fn test_model_convert_requires_distinct_modalities() {
+        let ok = Operator::ModelConvert {
+            source_modality: DataModel::Vector,
+            target_modality: DataModel::Document,
+        };
+        assert!(ok.validate().is_ok());
+
+        let same = Operator::ModelConvert {
+            source_modality: DataModel::Graph,
+            target_modality: DataModel::Graph,
+        };
+        assert!(same.validate().is_err(), "same modality must fail");
+    }
+
+    #[test]
+    fn test_vector_topk_with_predicate_in_plan() {
+        let ops = vec![
+            Operator::Scan {
+                data_model: DataModel::Vector,
+                source: "embeddings".to_string(),
+                columns: None,
+                filter: None,
+            },
+            Operator::VectorTopK {
+                query_vector: vec![0.1, 0.2, 0.3, 0.4],
+                k: 20,
+                metric: VectorMetric::Cosine,
+                predicate: Some(FilterExpression::Comparison {
+                    field: "tenant_id".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: serde_json::json!("acme"),
+                }),
+            },
+        ];
+        let plan = MultiModelPlan::new(ops, PlanContext::default());
+        assert_eq!(plan.len(), 2);
+        assert!(plan.validate().unwrap().is_valid);
     }
 }
