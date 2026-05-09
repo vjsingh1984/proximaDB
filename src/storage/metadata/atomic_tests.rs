@@ -289,7 +289,6 @@ mod tests {
                         enable_proxima_record: None,
                         text_columns: vec![],
                         text_storage_configs: vec![],
-                        enable_dual_use_embeddings: None,
                     }),
                     stats: Some(proximadb_v1::CollectionStats {
                         vector_count: versioned.vector_count as i64,
@@ -354,7 +353,6 @@ mod tests {
                         enable_proxima_record: None,
                         text_columns: vec![],
                         text_storage_configs: vec![],
-                        enable_dual_use_embeddings: None,
                     }),
                     stats: Some(proximadb_v1::CollectionStats {
                         vector_count: versioned.vector_count as i64,

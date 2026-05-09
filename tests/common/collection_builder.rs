@@ -173,7 +173,6 @@ impl TestCollectionBuilder {
                 filterable_columns: self.filterable_columns,
                 index_configs: vec![],
                 quantization: None,
-                enable_dual_use_embeddings: None,
                 storage_config: Some(StorageConfig {
                     storage_path: None,
                     data_paths: vec![],
@@ -228,7 +227,6 @@ impl TestCollectionBuilder {
                 filterable_columns: self.filterable_columns,
                 index_configs: vec![],
                 quantization: None,
-                enable_dual_use_embeddings: None,
                 storage_config: Some(StorageConfig {
                     storage_path: None,
                     data_paths: vec![],

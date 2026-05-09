@@ -411,6 +411,21 @@ impl RecordConverter {
     pub fn batch_proxima_to_vector(records: &[ProximaRecord]) -> Vec<VectorRecord> {
         records.iter().map(Self::proxima_to_vector).collect()
     }
+
+    /// Convert a `VectorRecord` to the spec §3 unified envelope (Phase B, TD-054).
+    ///
+    /// Delegates to `proximadb_records::conversions` so the mapping logic is
+    /// maintained in one canonical place.
+    pub fn vector_to_envelope(v: &VectorRecord) -> proximadb_records::ProximaRecord {
+        proximadb_records::ProximaRecord::from(v)
+    }
+
+    /// Batch-convert VectorRecords to spec §3 envelopes.
+    pub fn batch_vector_to_envelope(
+        records: &[VectorRecord],
+    ) -> Vec<proximadb_records::ProximaRecord> {
+        records.iter().map(Self::vector_to_envelope).collect()
+    }
 }
 
 #[cfg(test)]
@@ -593,6 +608,33 @@ mod tests {
 
         let vector_records = RecordConverter::batch_proxima_to_vector(&proxima_records);
         assert_eq!(vector_records.len(), 5);
+    }
+
+    #[test]
+    fn test_vector_to_envelope_delegates_to_canonical_record_mapping() {
+        let vector_record = create_test_vector_record();
+
+        let envelope = RecordConverter::vector_to_envelope(&vector_record);
+
+        assert_eq!(envelope.oid, "doc_1");
+        assert_eq!(envelope.record_version, 1);
+        assert_eq!(envelope.origin.as_deref(), Some("test_source"));
+        assert_eq!(envelope.method.as_deref(), Some("vector_insert"));
+        assert_eq!(envelope.created_at_ns, 1_704_067_200_000_000_000);
+        assert_eq!(envelope.updated_at_ns, 1_704_067_200_000_000_000);
+        assert_eq!(envelope.embeddings.len(), 1);
+        assert_eq!(envelope.embeddings[0].model_id, "default");
+        assert_eq!(envelope.embeddings[0].modality, "dense_vector");
+        assert_eq!(envelope.embeddings[0].dim, 4);
+        assert_eq!(envelope.embeddings[0].values, vector_record.vector);
+
+        let category = proximadb_records::tree_get(&envelope.props, "category");
+        assert_eq!(
+            category,
+            Some(&proximadb_data_model::ProximaValue::String(
+                "technology".to_string()
+            ))
+        );
     }
 
     #[test]
