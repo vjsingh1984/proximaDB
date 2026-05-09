@@ -56,7 +56,7 @@ impl GpuBatchConfig {
                 Self {
                     batch_size: 1024,
                     threads_per_block: 256,
-                    num_blocks: (total_vectors + 255) / 256,
+                    num_blocks: total_vectors.div_ceil(256),
                     shared_mem_bytes: 48 * 1024, // 48 KB
                 }
             }
@@ -71,8 +71,8 @@ impl GpuBatchConfig {
         const SHARED_MEM: usize = 48 * 1024; // 48 KB per SM
 
         let batch_size =
-            ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
-        let num_blocks = (total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let num_blocks = total_vectors.div_ceil(THREADS_PER_BLOCK);
 
         debug!(
             "🔧 [CUDA] Config: batch_size={}, threads_per_block={}, num_blocks={}",
@@ -95,8 +95,8 @@ impl GpuBatchConfig {
         const SHARED_MEM: usize = 64 * 1024; // 64 KB LDS per CU
 
         let batch_size =
-            ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
-        let num_blocks = (total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let num_blocks = total_vectors.div_ceil(THREADS_PER_BLOCK);
 
         debug!(
             "🔧 [ROCm] Config: batch_size={}, threads_per_block={}, num_blocks={}",
@@ -119,8 +119,8 @@ impl GpuBatchConfig {
         const SHARED_MEM: usize = 32 * 1024; // 32 KB threadgroup memory
 
         let batch_size =
-            ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
-        let num_blocks = (total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let num_blocks = total_vectors.div_ceil(THREADS_PER_BLOCK);
 
         debug!(
             "🔧 [MPS] Config: batch_size={}, threads_per_block={}, num_blocks={}",
@@ -142,8 +142,8 @@ impl GpuBatchConfig {
         const SHARED_MEM: usize = 16 * 1024; // 16 KB local memory (conservative)
 
         let batch_size =
-            ((total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
-        let num_blocks = (total_vectors + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+            total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let num_blocks = total_vectors.div_ceil(THREADS_PER_BLOCK);
 
         debug!(
             "🔧 [OpenCL] Config: batch_size={}, threads_per_block={}, num_blocks={}",
@@ -269,7 +269,7 @@ impl<T> Drop for GpuBuffer<T> {
 /// # Returns
 /// (num_blocks, threads_per_block)
 pub fn calculate_grid_dims(total_work: usize, threads_per_block: usize) -> (usize, usize) {
-    let num_blocks = (total_work + threads_per_block - 1) / threads_per_block;
+    let num_blocks = total_work.div_ceil(threads_per_block);
     (num_blocks, threads_per_block)
 }
 
@@ -351,7 +351,7 @@ impl GpuBufferPoolFactory {
             "🏭 [GPU Pool Factory] Creating buffer pool for {:?}, capacity={}",
             backend, capacity
         );
-        GpuBufferPool::new(backend.clone(), capacity)
+        GpuBufferPool::new(*backend, capacity)
     }
 
     /// Create GPU buffer pools for common data types

@@ -204,7 +204,7 @@ impl MetadataWriteAheadLog {
 
         // Create write buffer manager using modern batch factory pattern
         let write_buffer_manager = crate::storage::persistence::write_ahead_log::WriteAheadLogManager::create_with_batch_factory(
-            config.base_config.strategy_type.clone(),
+            config.base_config.strategy_type,
             config.base_config.clone(),
             filesystem,
         )

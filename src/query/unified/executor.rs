@@ -807,7 +807,7 @@ pub async fn execute_join(
     impl RecordSimilarityEngine for CosineSimilarityAdapter {
         fn similarity(&self, left: &[f32], right: &[f32]) -> f32 {
             let distance = self.0.distance(left, right);
-            (1.0 - distance) as f32
+            1.0 - distance
         }
     }
 

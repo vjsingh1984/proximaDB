@@ -266,7 +266,7 @@ impl WALBehaviorWrapper {
 
     /// Get the wrapped implementation
     pub fn inner(&self) -> &GlobalPartitionedMemtable {
-        &*self.inner
+        &self.inner
     }
 
     /// Get next sequence number for WAL ordering
@@ -572,7 +572,7 @@ impl WALBehaviorWrapper {
 
         // Convert (SimilarityResult, VectorRecord) to SearchVectorRecord objects
         let mut search_results = Vec::new();
-        for (_rank, (similarity, vector_record)) in raw_results.into_iter().enumerate() {
+        for (similarity, vector_record) in raw_results.into_iter() {
             let search_result = crate::proto::proximadb_v1::SearchVectorRecord {
                 id: vector_record.id.clone(),
                 score: similarity.raw_value as f64,
@@ -822,8 +822,12 @@ impl WALBehaviorWrapper {
 
     /// Get current entry count
     pub async fn len(&self) -> usize {
-        // Direct access to GlobalPartitionedMemtable
         self.inner.len().await
+    }
+
+    /// Check if the memtable has no entries
+    pub async fn is_empty(&self) -> bool {
+        self.inner.len().await == 0
     }
 
     /// Distributed: register idempotency token; returns false if duplicate

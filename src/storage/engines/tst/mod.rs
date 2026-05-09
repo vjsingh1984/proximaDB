@@ -1650,10 +1650,11 @@ impl Clone for TimeSeriesEngine {
                     .unwrap_or_else(|_| {
                         // Fallback: create a factory with default config
                         let fallback_config = FilesystemConfig::default();
-                        futures::executor::block_on(async {
+                        #[expect(clippy::expect_used, reason = "default config creation failure is unrecoverable in Clone impl")]
+                        { futures::executor::block_on(async {
                             FilesystemFactory::create(fallback_config).await
                         })
-                        .expect("Failed to create fallback FilesystemFactory")
+                        .expect("Failed to create fallback FilesystemFactory") }
                     })
             },
             wal_writer: None, // WAL writer is not cloned; clones are for scan iterators only

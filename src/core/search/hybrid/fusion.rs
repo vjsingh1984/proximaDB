@@ -140,7 +140,7 @@ impl HybridFusionEngine {
         vector_results: Vec<VectorResult>,
         alpha: f64,
     ) -> Result<Vec<FusedSearchResult>, FusionError> {
-        if alpha < 0.0 || alpha > 1.0 {
+        if !(0.0..=1.0).contains(&alpha) {
             return Err(FusionError::InvalidParameters(
                 "Alpha must be between 0.0 and 1.0".to_string(),
             ));

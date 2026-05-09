@@ -310,7 +310,7 @@ impl FilteredIVFIndex {
             .collect();
 
         // Sort by distance and take top nprobe
-        probe_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        probe_distances.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
         Ok(probe_distances
             .into_iter()
@@ -376,7 +376,6 @@ impl FilteredIVFIndex {
             ranked.push(SearchResult {
                 id: candidate.id.clone(),
                 score: similarity,
-                ..Default::default()
             });
         }
 

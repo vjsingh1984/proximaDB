@@ -779,7 +779,7 @@ impl MetadataStoreInterface for MetadataStore {
         let backup_id = format!(
             "backup-{}-{}",
             Utc::now().timestamp(),
-            Uuid::new_v4().to_string()[..8].to_string()
+            &Uuid::new_v4().to_string()[..8]
         );
 
         tracing::info!(

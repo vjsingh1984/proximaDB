@@ -113,7 +113,7 @@ pub fn example_encode_large_dataset(
     info!("   Backend: {:?}", backend);
 
     // Step 2: Create batch sizer
-    let batcher = GpuBatchSizer::new(backend.clone());
+    let batcher = GpuBatchSizer::new(backend);
     let batch_size = batcher.optimal_encode_batch_size(vector_count, dimension);
     info!("   Batch size: {}", batch_size);
 
@@ -167,7 +167,7 @@ pub fn example_decode_with_performance_monitoring(
 
     // Step 1: Detect backend and estimate performance
     let backend = detect_backend();
-    let estimator = BatchPerformanceEstimator::new(backend.clone());
+    let estimator = BatchPerformanceEstimator::new(backend);
 
     // Step 2: Calculate optimal batch size for 10ms target latency
     let target_latency_ms = 10.0;
@@ -202,7 +202,7 @@ pub fn example_compare_batching_strategies(vector_count: usize, dimension: usize
     info!("🔬 Comparing batching strategies");
 
     let backend = HardwareBackend::CUDA;
-    let estimator = BatchPerformanceEstimator::new(backend.clone());
+    let estimator = BatchPerformanceEstimator::new(backend);
 
     let strategies = vec![
         ("Single Batch", BatchingStrategy::Single),
@@ -227,7 +227,7 @@ pub fn example_compare_batching_strategies(vector_count: usize, dimension: usize
     info!("   ------------------------------------------------------------------");
 
     for (name, strategy) in strategies {
-        let sizer = GpuBatchSizer::with_strategy(backend.clone(), strategy);
+        let sizer = GpuBatchSizer::with_strategy(backend, strategy);
         let batch_size = sizer.optimal_encode_batch_size(vector_count, dimension);
 
         let throughput = estimator.estimate_throughput(batch_size, dimension);
@@ -303,7 +303,7 @@ pub fn example_full_pipeline(
     info!("✅ Backend detected: {:?}", backend);
 
     // 2. Performance estimation
-    let estimator = BatchPerformanceEstimator::new(backend.clone());
+    let estimator = BatchPerformanceEstimator::new(backend);
     let batch_size = estimator.recommend_batch_size_for_latency(10.0, dimension);
     info!("✅ Optimal batch size: {} (10ms latency)", batch_size);
 
@@ -317,8 +317,8 @@ pub fn example_full_pipeline(
     let scheme = ProximaScheme::Delta { base: 0 };
 
     let mut encoded_batches = Vec::new();
-    let _batcher = GpuBatchSizer::new(backend.clone());
-    let iter = GpuBatchIterator::new(&input_vectors, batch_size, backend.clone());
+    let _batcher = GpuBatchSizer::new(backend);
+    let iter = GpuBatchIterator::new(&input_vectors, batch_size, backend);
 
     for (batch_idx, batch) in iter {
         let _buffer = encode_pool.acquire(); // Acquire from pool

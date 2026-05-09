@@ -601,7 +601,7 @@ impl ProtoSerializationStrategy {
 
         let mut affected_collections = Vec::new();
         for collection_id in collections {
-            if let Ok(_) = self.flush_collection(&collection_id).await {
+            if self.flush_collection(&collection_id).await.is_ok() {
                 affected_collections.push(collection_id);
             }
         }

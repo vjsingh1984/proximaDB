@@ -237,21 +237,14 @@ impl ExecutionPlanner {
         &self,
         select: &crate::query::ast::Select,
     ) -> Result<Vec<ExecutionOperation>> {
-        let mut ops = Vec::new();
-
-        // 1. Vector Search
-        ops.push(self.plan_vector_search(select)?);
-
-        // 2. Graph Traversal
-        ops.push(self.plan_graph_traversal(select)?);
-
-        // 3. Fusion
-        ops.push(ExecutionOperation::Fusion {
-            strategy: FusionStrategy::ReciprocalRankFusion { k: 60.0 },
-            weights: self.fusion_weights.clone().unwrap_or(vec![0.5, 0.5]),
-        });
-
-        Ok(ops)
+        Ok(vec![
+            self.plan_vector_search(select)?,
+            self.plan_graph_traversal(select)?,
+            ExecutionOperation::Fusion {
+                strategy: FusionStrategy::ReciprocalRankFusion { k: 60.0 },
+                weights: self.fusion_weights.clone().unwrap_or(vec![0.5, 0.5]),
+            },
+        ])
     }
 
     fn plan_projection(&self, select: &crate::query::ast::Select) -> Result<ExecutionOperation> {
@@ -315,9 +308,7 @@ impl ExecutionPlanner {
     }
 
     fn identify_optimizations(&self, _select: &crate::query::ast::Select) -> Vec<String> {
-        let mut opts = Vec::new();
-        opts.push("HashMap Metadata Filtering (O(1))".to_string());
-        opts
+        vec!["HashMap Metadata Filtering (O(1))".to_string()]
     }
 
     fn generate_hints(&self, _select: &crate::query::ast::Select) -> Vec<String> {

@@ -525,12 +525,14 @@ impl WalSubscriberBuilder {
     }
 
     /// Start from beginning
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_beginning(mut self) -> Self {
         self.config.start_position = StartPosition::Beginning;
         self
     }
 
     /// Start from specific LSN
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_lsn(mut self, lsn: u64) -> Self {
         self.config.start_position = StartPosition::Lsn(lsn);
         self

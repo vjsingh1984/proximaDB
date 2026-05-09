@@ -143,7 +143,6 @@ impl FlushManager {
 /// Engine-specific flush coordinators with active operation tracking.
 /// Each coordinator delegates to the engine's native flush path while
 /// tracking concurrency and metrics.
-
 /// SST flush coordinator
 struct SstFlushCoordinator {
     active_count: AtomicUsize,

@@ -89,12 +89,10 @@ impl CedarEngine {
     fn get_collection(
         &self,
         collection: &str,
-    ) -> dashmap::mapref::one::Ref<'_, String, DashMap<String, DocumentRecord>> {
-        if !self.collections.contains_key(collection) {
-            self.collections
-                .insert(collection.to_string(), DashMap::new());
-        }
-        self.collections.get(collection).unwrap()
+    ) -> dashmap::mapref::one::RefMut<'_, String, DashMap<String, DocumentRecord>> {
+        self.collections
+            .entry(collection.to_string())
+            .or_insert_with(DashMap::new)
     }
 }
 
@@ -146,12 +144,11 @@ impl DocumentStorageEngine for CedarEngine {
     }
 
     async fn delete_document(&self, collection: &str, id: &str) -> Result<bool> {
-        if let Some(col) = self.collections.get(collection) {
-            if col.remove(id).is_some() {
+        if let Some(col) = self.collections.get(collection)
+            && col.remove(id).is_some() {
                 self.doc_count.fetch_sub(1, Ordering::Relaxed);
                 return Ok(true);
             }
-        }
         Ok(false)
     }
 

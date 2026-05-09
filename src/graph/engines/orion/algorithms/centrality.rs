@@ -616,7 +616,7 @@ impl ParallelAlgorithm for BetweennessCentrality {
                     .engine
                     .csr_outgoing
                     .read()
-                    .expect("RwLock read lock poisoned - CSR data unavailable");
+                    .unwrap_or_else(|e| e.into_inner());
                 let n = csr.node_count();
                 let mut local_b = vec![0.0f64; n];
                 let mut stack = Vec::new();

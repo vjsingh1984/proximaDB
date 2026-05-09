@@ -1298,14 +1298,13 @@ impl UnifiedHandlers {
             Ok(response) => {
                 if response.success {
                     // DEBUG: Log the collection config being returned
-                    if let Some(ref collection) = response.collection {
-                        if let Some(ref config) = collection.config {
+                    if let Some(ref collection) = response.collection
+                        && let Some(ref config) = collection.config {
                             info!(
                                 "🔍 DEBUG Returning collection: name={}, distance_metric={:?}, storage_engine={:?}",
                                 config.name, config.distance_metric, config.storage_engine
                             );
                         }
-                    }
                     Ok((true, response.collection, None, 1, None, None))
                 } else {
                     Ok((

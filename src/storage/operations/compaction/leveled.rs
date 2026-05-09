@@ -128,7 +128,7 @@ impl LeveledCompactionStrategy {
             }
             _ => {
                 // No key info, include all target files (conservative)
-                target_level_files.iter().copied().collect()
+                target_level_files.to_vec()
             }
         }
     }

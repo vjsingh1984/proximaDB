@@ -771,21 +771,18 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         // Convert filter to write buffer manager format
         let write_buffer_filter = filter.map(|f| {
             Box::new(move |versioned: &VersionedCollectionMetadata| -> bool {
-                if let Some(ref owner) = f.owner {
-                    if versioned.owner.as_deref() != Some(owner.as_str()) {
+                if let Some(ref owner) = f.owner
+                    && versioned.owner.as_deref() != Some(owner.as_str()) {
                         return false;
                     }
-                }
-                if let Some(min_count) = f.min_vector_count {
-                    if versioned.vector_count < min_count {
+                if let Some(min_count) = f.min_vector_count
+                    && versioned.vector_count < min_count {
                         return false;
                     }
-                }
-                if !f.tags.is_empty() {
-                    if !f.tags.iter().all(|tag| versioned.tags.contains(tag)) {
+                if !f.tags.is_empty()
+                    && !f.tags.iter().all(|tag| versioned.tags.contains(tag)) {
                         return false;
                     }
-                }
                 true
             }) as Box<dyn Fn(&VersionedCollectionMetadata) -> bool + Send>
         });

@@ -131,7 +131,7 @@ pub mod graph_subset; // Shared graph query subset for facade and federated SQL 
 pub mod materialized_view; // A1: Materialized views for complex dashboard queries
 pub mod multimodal; // MultiModelPlan v1 - Unified cross-model query execution
 pub mod multimodel_executor; // Multi-model SQL executor - SqlPlan lowering + dispatch
-pub mod multimodel_router; // Multi-model SQL router - StoreType detection + result envelope
+pub mod multimodel_router; // Multi-model SQL router - DataModel detection + result envelope
 pub mod nl; // AV-SQL (TD-048) — 3-Agent Decomposition
 pub mod parsers; // Query language parsers (MongoDB, etc.)
 pub mod prepared; // Prepared statements for parse-once-execute-many pattern

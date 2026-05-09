@@ -676,6 +676,12 @@ pub struct ExecutionPlan {
     pub row_group_order: Vec<u32>,
 }
 
+impl Default for ExecutionPlan {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExecutionPlan {
     pub fn new() -> Self {
         Self {

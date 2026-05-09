@@ -90,7 +90,7 @@ impl SdpChunker {
             .collect()
     }
 
-    fn stage2_enrich(&self, chunks: &mut Vec<SdpChunk>) {
+    fn stage2_enrich(&self, chunks: &mut [SdpChunk]) {
         // Prefix chunks with a summary or title if available.
         // For this implementation, we take the first chunk's first line as a "context title".
         if chunks.len() <= 1 {

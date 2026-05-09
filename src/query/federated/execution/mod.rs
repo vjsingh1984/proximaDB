@@ -3711,7 +3711,7 @@ impl FederatedExecutor {
                 if field.name() == requested_name {
                     field.as_ref().clone()
                 } else {
-                    Self::clone_field_with_name(field.as_ref(), requested_name)
+                    Self::clone_field_with_name(field, requested_name)
                 }
             })
             .collect::<Vec<_>>();
@@ -3791,7 +3791,7 @@ impl FederatedExecutor {
                 if field.name() == requested_name {
                     field.as_ref().clone()
                 } else {
-                    Self::clone_field_with_name(field.as_ref(), requested_name)
+                    Self::clone_field_with_name(field, requested_name)
                 }
             })
             .collect::<Vec<_>>();

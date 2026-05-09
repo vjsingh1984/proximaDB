@@ -277,7 +277,7 @@ impl NormalizedFilter {
                 // AND filters are more selective (multiply selectivities)
                 let selectivities: Vec<_> = exprs
                     .iter()
-                    .filter_map(|e| Self::estimate_selectivity(e))
+                    .filter_map(Self::estimate_selectivity)
                     .collect();
 
                 if selectivities.is_empty() {
@@ -290,7 +290,7 @@ impl NormalizedFilter {
                 // OR filters are less selective (combine with inclusion-exclusion)
                 let selectivities: Vec<_> = exprs
                     .iter()
-                    .filter_map(|e| Self::estimate_selectivity(e))
+                    .filter_map(Self::estimate_selectivity)
                     .collect();
 
                 if selectivities.is_empty() {
@@ -527,7 +527,7 @@ impl CandidateSet for MemoryCandidateSet {
 
         // Convert Vec<Option<Value>> to Vec<Value> for batch evaluation
         let metadata_values: Vec<serde_json::Value> =
-            metadata_batch.into_iter().filter_map(|v| v).collect();
+            metadata_batch.into_iter().flatten().collect();
 
         // Evaluate filter for each candidate
         let filter_results = contract.evaluate_batch(&metadata_values)?;

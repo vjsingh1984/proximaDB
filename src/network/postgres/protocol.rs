@@ -25,7 +25,7 @@ use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::observability::ObservabilityService;
-use crate::query::multimodel_router::{self, StoreType};
+use crate::query::multimodel_router::{self, DataModel};
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
@@ -100,7 +100,7 @@ struct Portal {
     max_rows: i32,
 }
 
-// StoreType imported from crate::query::multimodel_router (canonical definition)
+// DataModel imported from crate::query::multimodel_router (canonical definition)
 
 /// COPY format type for bulk data transfer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -406,13 +406,13 @@ impl PostgresProtocol {
                 // Detect store type from table name or query content
                 let store_type = self.detect_select_store_type(&table_name, &upper);
                 return match store_type {
-                    StoreType::Document => self.execute_document_query(&table_name, query).await,
-                    StoreType::Observability | StoreType::TimeSeries => {
+                    DataModel::Document => self.execute_document_query(&table_name, query).await,
+                    DataModel::Observability | DataModel::TimeSeries => {
                         self.execute_observability_query(&table_name, query).await
                     }
-                    StoreType::Graph => self.execute_graph_query(&table_name, query).await,
-                    StoreType::Vector => self.execute_collection_query(&table_name, query).await,
-                    StoreType::Relational | StoreType::Event => {
+                    DataModel::Graph => self.execute_graph_query(&table_name, query).await,
+                    DataModel::Vector => self.execute_collection_query(&table_name, query).await,
+                    DataModel::Relational | DataModel::Event => {
                         self.execute_relational_query(query, &table_name).await
                     }
                 };
@@ -576,7 +576,7 @@ impl PostgresProtocol {
     }
 
     /// Detect store type for SELECT queries
-    fn detect_select_store_type(&self, table_name: &str, query: &str) -> StoreType {
+    fn detect_select_store_type(&self, table_name: &str, query: &str) -> DataModel {
         multimodel_router::detect_store_type_from_query(query, table_name, None)
     }
 
@@ -1287,14 +1287,14 @@ impl PostgresProtocol {
         let store_type = self.detect_store_type(&upper);
 
         match store_type {
-            StoreType::Vector => self.create_vector_collection(&table_name, &upper).await,
-            StoreType::Document => self.create_document_collection(&table_name, &upper).await,
-            StoreType::Graph => self.create_graph_collection(&table_name, &upper).await,
-            StoreType::Observability | StoreType::TimeSeries => {
+            DataModel::Vector => self.create_vector_collection(&table_name, &upper).await,
+            DataModel::Document => self.create_document_collection(&table_name, &upper).await,
+            DataModel::Graph => self.create_graph_collection(&table_name, &upper).await,
+            DataModel::Observability | DataModel::TimeSeries => {
                 self.create_observability_namespace(&table_name, &upper)
                     .await
             }
-            StoreType::Relational | StoreType::Event => {
+            DataModel::Relational | DataModel::Event => {
                 info!("Created relational table '{}' via PostgreSQL", table_name);
                 self.send_command_complete("CREATE TABLE").await
             }
@@ -1302,7 +1302,7 @@ impl PostgresProtocol {
     }
 
     /// Detect store type from USING clause or column definitions
-    fn detect_store_type(&self, query: &str) -> StoreType {
+    fn detect_store_type(&self, query: &str) -> DataModel {
         multimodel_router::detect_store_type_from_create(query)
     }
 
@@ -1537,7 +1537,7 @@ impl PostgresProtocol {
         let store_type = self.detect_insert_store_type(&table_name, &upper);
 
         match store_type {
-            StoreType::Vector => {
+            DataModel::Vector => {
                 // Use DmlService for proper SQL DML execution if available
                 if let Some(dml_service) = self.dml_service.clone() {
                     return self
@@ -1547,12 +1547,12 @@ impl PostgresProtocol {
                 // Fall back to string parsing
                 self.insert_vector(&table_name, query).await
             }
-            StoreType::Document => self.insert_document(&table_name, query).await,
-            StoreType::Graph => self.insert_graph_data(&table_name, query).await,
-            StoreType::Observability | StoreType::TimeSeries => {
+            DataModel::Document => self.insert_document(&table_name, query).await,
+            DataModel::Graph => self.insert_graph_data(&table_name, query).await,
+            DataModel::Observability | DataModel::TimeSeries => {
                 self.insert_log(&table_name, query).await
             }
-            StoreType::Relational | StoreType::Event => {
+            DataModel::Relational | DataModel::Event => {
                 self.send_command_complete("INSERT 0 1").await
             }
         }
@@ -1596,7 +1596,7 @@ impl PostgresProtocol {
     }
 
     /// Detect store type for INSERT from table name or query content
-    fn detect_insert_store_type(&self, table_name: &str, query: &str) -> StoreType {
+    fn detect_insert_store_type(&self, table_name: &str, query: &str) -> DataModel {
         multimodel_router::detect_store_type_from_query(query, table_name, None)
     }
 
@@ -2208,7 +2208,7 @@ impl PostgresProtocol {
     async fn receive_copy_data(
         &mut self,
         table_name: &str,
-        store_type: StoreType,
+        store_type: DataModel,
         format: &CopyFormat,
     ) -> Result<usize> {
         let mut all_data = Vec::new();
@@ -2279,7 +2279,7 @@ impl PostgresProtocol {
     async fn process_arrow_copy_data(
         &mut self,
         table_name: &str,
-        _store_type: StoreType,
+        _store_type: DataModel,
         data: &[u8],
     ) -> Result<usize> {
         if data.is_empty() {
@@ -2341,7 +2341,7 @@ impl PostgresProtocol {
     async fn process_csv_copy_data(
         &mut self,
         table_name: &str,
-        _store_type: StoreType,
+        _store_type: DataModel,
         data: &[u8],
     ) -> Result<usize> {
         let text = String::from_utf8_lossy(data);
@@ -2405,7 +2405,7 @@ impl PostgresProtocol {
     async fn process_text_copy_data(
         &mut self,
         table_name: &str,
-        _store_type: StoreType,
+        _store_type: DataModel,
         data: &[u8],
     ) -> Result<usize> {
         let text = String::from_utf8_lossy(data);
@@ -2455,7 +2455,7 @@ impl PostgresProtocol {
     async fn process_binary_copy_data(
         &mut self,
         table_name: &str,
-        _store_type: StoreType,
+        _store_type: DataModel,
         data: &[u8],
     ) -> Result<usize> {
         if data.len() < 11 {
@@ -3017,7 +3017,7 @@ mod tests {
                 "embeddings",
                 None,
             ),
-            StoreType::Vector
+            DataModel::Vector
         );
         assert_eq!(
             multimodel_router::detect_store_type_from_query(
@@ -3025,7 +3025,7 @@ mod tests {
                 "items",
                 None,
             ),
-            StoreType::Vector
+            DataModel::Vector
         );
         assert_eq!(
             multimodel_router::detect_store_type_from_query(
@@ -3033,7 +3033,7 @@ mod tests {
                 "products",
                 None,
             ),
-            StoreType::Vector
+            DataModel::Vector
         );
 
         // CREATE TABLE with VECTOR column type
@@ -3041,7 +3041,7 @@ mod tests {
             multimodel_router::detect_store_type_from_create(
                 "CREATE TABLE items (id TEXT, embedding VECTOR(384))",
             ),
-            StoreType::Vector
+            DataModel::Vector
         );
 
         // Explicit USING VECTOR clause
@@ -3049,7 +3049,7 @@ mod tests {
             multimodel_router::detect_store_type_from_create(
                 "CREATE TABLE vecs (id TEXT, data FLOAT[]) USING VECTOR",
             ),
-            StoreType::Vector
+            DataModel::Vector
         );
     }
 
@@ -3062,7 +3062,7 @@ mod tests {
                 "products",
                 None,
             ),
-            StoreType::Document
+            DataModel::Document
         );
 
         // Document tables detected by doc_ prefix
@@ -3072,7 +3072,7 @@ mod tests {
                 "doc_users",
                 None,
             ),
-            StoreType::Document
+            DataModel::Document
         );
 
         // document_ prefix also works
@@ -3082,7 +3082,7 @@ mod tests {
                 "document_orders",
                 None,
             ),
-            StoreType::Document
+            DataModel::Document
         );
 
         // CREATE with JSONB column
@@ -3090,7 +3090,7 @@ mod tests {
             multimodel_router::detect_store_type_from_create(
                 "CREATE TABLE docs (id TEXT PRIMARY KEY, data JSONB)",
             ),
-            StoreType::Document
+            DataModel::Document
         );
 
         // CREATE with explicit USING DOCUMENT
@@ -3098,7 +3098,7 @@ mod tests {
             multimodel_router::detect_store_type_from_create(
                 "CREATE TABLE catalog (id TEXT, payload JSON) USING DOCUMENT",
             ),
-            StoreType::Document
+            DataModel::Document
         );
     }
 
@@ -3111,7 +3111,7 @@ mod tests {
                 "graph_social",
                 None,
             ),
-            StoreType::Graph
+            DataModel::Graph
         );
 
         // node_ prefix
@@ -3121,7 +3121,7 @@ mod tests {
                 "node_users",
                 None,
             ),
-            StoreType::Graph
+            DataModel::Graph
         );
 
         // edge_ prefix
@@ -3131,7 +3131,7 @@ mod tests {
                 "edge_follows",
                 None,
             ),
-            StoreType::Graph
+            DataModel::Graph
         );
 
         // CREATE with explicit USING GRAPH
@@ -3139,7 +3139,7 @@ mod tests {
             multimodel_router::detect_store_type_from_create(
                 "CREATE TABLE social_network (id TEXT) USING GRAPH",
             ),
-            StoreType::Graph
+            DataModel::Graph
         );
     }
 
@@ -3152,7 +3152,7 @@ mod tests {
                 "log_application",
                 None,
             ),
-            StoreType::Observability
+            DataModel::Observability
         );
 
         // metric_ prefix -> Observability
@@ -3162,7 +3162,7 @@ mod tests {
                 "metric_http_requests",
                 None,
             ),
-            StoreType::Observability
+            DataModel::Observability
         );
 
         // trace_ prefix -> Observability
@@ -3172,7 +3172,7 @@ mod tests {
                 "trace_spans",
                 None,
             ),
-            StoreType::Observability
+            DataModel::Observability
         );
 
         // CREATE with USING OBSERVABILITY
@@ -3180,7 +3180,7 @@ mod tests {
             multimodel_router::detect_store_type_from_create(
                 "CREATE TABLE system_logs (ts TIMESTAMP, msg TEXT) USING OBSERVABILITY",
             ),
-            StoreType::Observability
+            DataModel::Observability
         );
 
         // CREATE with USING TIMESERIES (also maps to Observability)
@@ -3188,7 +3188,7 @@ mod tests {
             multimodel_router::detect_store_type_from_create(
                 "CREATE TABLE sensor_data (ts TIMESTAMP, value FLOAT) USING TIMESERIES",
             ),
-            StoreType::Observability
+            DataModel::Observability
         );
     }
 
@@ -3201,7 +3201,7 @@ mod tests {
                 "users",
                 None,
             ),
-            StoreType::Relational
+            DataModel::Relational
         );
 
         // CREATE TABLE without USING clause or special column types
@@ -3209,7 +3209,7 @@ mod tests {
             multimodel_router::detect_store_type_from_create(
                 "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255), email TEXT)",
             ),
-            StoreType::Relational
+            DataModel::Relational
         );
 
         // Verify priority: vector operators override table name prefix
@@ -3220,7 +3220,7 @@ mod tests {
                 "graph_nodes",
                 None,
             ),
-            StoreType::Vector
+            DataModel::Vector
         );
     }
 

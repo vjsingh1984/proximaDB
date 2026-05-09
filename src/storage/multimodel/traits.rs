@@ -12,8 +12,8 @@ use crate::storage::traits::{
     UnifiedStorageEngine,
 };
 
-/// Model type discriminator for routing operations — alias for the canonical StoreType.
-pub type ModelType = proximadb_data_model::StoreType;
+/// Model type discriminator for routing operations — alias for DataModel.
+pub type ModelType = proximadb_data_model::DataModel;
 
 /// Capabilities of a store
 #[derive(Debug, Clone)]
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_model_type_is_data_model() {
-        // ModelType and DataModel are now both aliases for StoreType
+        // ModelType and DataModel share the canonical data-model enum.
         let mt: ModelType = ModelType::Vector;
         let dm: DataModel = mt; // zero-cost: same type
         assert_eq!(dm, DataModel::Vector);

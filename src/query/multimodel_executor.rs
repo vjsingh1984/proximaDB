@@ -10,7 +10,7 @@
 //! SQL text → SqlFrontendParser → Query AST
 //!     │
 //!     ▼
-//! detect_store_type() → StoreType
+//! detect_store_type() → DataModel
 //!     │
 //!     ├── Vector       → VectorOperationsService.search()
 //!     ├── Document     → DocumentService.query_documents()
@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 
-use crate::query::multimodel_router::{MultiModelResult, StoreType};
+use crate::query::multimodel_router::{DataModel, MultiModelResult};
 use anyhow::Result;
 
 /// Multi-model SQL execution context.
@@ -39,7 +39,7 @@ pub struct MultiModelExecutor {
 /// Trait for looking up store type from the catalog.
 pub trait CatalogLookup: Send + Sync {
     /// Look up the store type for a table/collection name.
-    fn lookup_store_type(&self, table_name: &str) -> Option<StoreType>;
+    fn lookup_store_type(&self, table_name: &str) -> Option<DataModel>;
 }
 
 /// Result of executing a SQL statement across any data model.
@@ -50,7 +50,7 @@ pub struct SqlExecutionResult {
     /// Execution time in milliseconds
     pub execution_time_ms: u64,
     /// Store type that was used
-    pub store_type: StoreType,
+    pub store_type: DataModel,
 }
 
 /// Describes how a SQL statement was lowered for execution.
@@ -61,7 +61,7 @@ pub struct SqlExecutionResult {
 pub enum SqlPlan {
     // -- DDL --
     CreateTable {
-        store_type: StoreType,
+        store_type: DataModel,
         table_name: String,
         columns: Vec<(String, String)>, // (name, type)
     },
@@ -182,7 +182,7 @@ pub enum SqlPlan {
 
     // -- Aggregation (cross-model) --
     Aggregate {
-        store_type: StoreType,
+        store_type: DataModel,
         table: String,
         group_by: Vec<String>,
         aggregations: Vec<(String, String, String)>, // (function, column, alias)
@@ -193,8 +193,8 @@ pub enum SqlPlan {
 /// Lower a SQL statement to a model-specific execution plan.
 ///
 /// This is the central dispatch point that bridges SQL parsing to service layer execution.
-/// It uses `StoreType` detection to determine which service layer should handle the query.
-pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> Result<SqlPlan> {
+/// It uses `DataModel` detection to determine which service layer should handle the query.
+pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: DataModel) -> Result<SqlPlan> {
     let upper = sql.trim().to_uppercase();
 
     // DDL
@@ -213,7 +213,7 @@ pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> 
 
     // Route by store type
     match store_type {
-        StoreType::Vector => {
+        DataModel::Vector => {
             if upper.starts_with("SELECT") {
                 Ok(SqlPlan::VectorSearch {
                     collection: table_name.to_string(),
@@ -228,7 +228,7 @@ pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> 
                 ))
             }
         }
-        StoreType::Document => {
+        DataModel::Document => {
             if upper.starts_with("SELECT") {
                 Ok(SqlPlan::DocumentQuery {
                     collection: table_name.to_string(),
@@ -254,7 +254,7 @@ pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> 
                 ))
             }
         }
-        StoreType::Graph => {
+        DataModel::Graph => {
             if upper.starts_with("SELECT") {
                 let is_edge = table_name.starts_with("edge_");
                 if is_edge {
@@ -303,7 +303,7 @@ pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> 
                 ))
             }
         }
-        StoreType::Observability => {
+        DataModel::Observability => {
             let namespace = table_name
                 .trim_start_matches("log_")
                 .trim_start_matches("metric_")
@@ -354,7 +354,7 @@ pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> 
                 })
             }
         }
-        StoreType::Relational => {
+        DataModel::Relational => {
             if upper.starts_with("SELECT") {
                 // Check for aggregation
                 if upper.contains("AVG(")
@@ -364,7 +364,7 @@ pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> 
                     || upper.contains("MAX(")
                 {
                     Ok(SqlPlan::Aggregate {
-                        store_type: StoreType::Relational,
+                        store_type: DataModel::Relational,
                         table: table_name.to_string(),
                         group_by: vec![],
                         aggregations: vec![],
@@ -404,7 +404,7 @@ pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> 
                 ))
             }
         }
-        StoreType::TimeSeries => {
+        DataModel::TimeSeries => {
             // TST engine handles financial time-series via the vector path
             Ok(SqlPlan::VectorSearch {
                 collection: table_name.to_string(),
@@ -413,7 +413,7 @@ pub fn lower_sql_to_plan(sql: &str, table_name: &str, store_type: StoreType) -> 
                 filters: None,
             })
         }
-        StoreType::Event => {
+        DataModel::Event => {
             // EventLog engine handles append-only audit logs
             Ok(SqlPlan::RelationalQuery {
                 table: table_name.to_string(),
@@ -436,13 +436,13 @@ mod tests {
         let plan = lower_sql_to_plan(
             "CREATE TABLE users (id INT, name VARCHAR(255))",
             "users",
-            StoreType::Relational,
+            DataModel::Relational,
         )
         .unwrap();
         assert!(matches!(
             plan,
             SqlPlan::CreateTable {
-                store_type: StoreType::Relational,
+                store_type: DataModel::Relational,
                 ..
             }
         ));
@@ -453,7 +453,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT * FROM users WHERE id > 5",
             "users",
-            StoreType::Relational,
+            DataModel::Relational,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::RelationalQuery { .. }));
@@ -464,7 +464,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "INSERT INTO users (id, name) VALUES (1, 'Alice')",
             "users",
-            StoreType::Relational,
+            DataModel::Relational,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::RelationalInsert { .. }));
@@ -475,7 +475,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT * FROM doc_users WHERE $.age > 25",
             "doc_users",
-            StoreType::Document,
+            DataModel::Document,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::DocumentQuery { .. }));
@@ -486,7 +486,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT * FROM graph_social WHERE label = 'Person'",
             "graph_social",
-            StoreType::Graph,
+            DataModel::Graph,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::GraphNodeQuery { .. }));
@@ -497,7 +497,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT * FROM edge_social WHERE edge_type = 'KNOWS'",
             "edge_social",
-            StoreType::Graph,
+            DataModel::Graph,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::GraphEdgeQuery { .. }));
@@ -508,7 +508,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT * FROM log_app WHERE severity >= 4",
             "log_app",
-            StoreType::Observability,
+            DataModel::Observability,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::LogQuery { .. }));
@@ -519,7 +519,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT * FROM metric_cpu WHERE name = 'cpu_usage'",
             "metric_cpu",
-            StoreType::Observability,
+            DataModel::Observability,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::MetricQuery { .. }));
@@ -530,7 +530,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT * FROM trace_app WHERE service = 'api'",
             "trace_app",
-            StoreType::Observability,
+            DataModel::Observability,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::TraceQuery { .. }));
@@ -541,7 +541,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT AVG(value) FROM metric_cpu WHERE name = 'cpu'",
             "metric_cpu",
-            StoreType::Observability,
+            DataModel::Observability,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::MetricAggregate { .. }));
@@ -549,12 +549,12 @@ mod tests {
 
     #[test]
     fn test_lower_select_relational_aggregate() {
-        let plan = lower_sql_to_plan("SELECT COUNT(*) FROM users", "users", StoreType::Relational)
+        let plan = lower_sql_to_plan("SELECT COUNT(*) FROM users", "users", DataModel::Relational)
             .unwrap();
         assert!(matches!(
             plan,
             SqlPlan::Aggregate {
-                store_type: StoreType::Relational,
+                store_type: DataModel::Relational,
                 ..
             }
         ));
@@ -565,7 +565,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "SELECT * FROM embeddings ORDER BY vec <-> '[0.1, 0.2]' LIMIT 10",
             "embeddings",
-            StoreType::Vector,
+            DataModel::Vector,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::VectorSearch { .. }));
@@ -576,7 +576,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "INSERT INTO graph_social (id, label, name) VALUES ('n1', 'Person', 'Alice')",
             "graph_social",
-            StoreType::Graph,
+            DataModel::Graph,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::GraphInsertNode { .. }));
@@ -587,7 +587,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "INSERT INTO edge_social (from_id, to_id, edge_type) VALUES ('n1', 'n2', 'KNOWS')",
             "edge_social",
-            StoreType::Graph,
+            DataModel::Graph,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::GraphInsertEdge { .. }));
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_lower_drop_table() {
-        let plan = lower_sql_to_plan("DROP TABLE users", "users", StoreType::Relational).unwrap();
+        let plan = lower_sql_to_plan("DROP TABLE users", "users", DataModel::Relational).unwrap();
         assert!(matches!(plan, SqlPlan::DropTable { .. }));
     }
 
@@ -604,7 +604,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "DELETE FROM users WHERE id = 5",
             "users",
-            StoreType::Relational,
+            DataModel::Relational,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::RelationalDelete { .. }));
@@ -615,7 +615,7 @@ mod tests {
         let plan = lower_sql_to_plan(
             "UPDATE users SET name = 'Bob' WHERE id = 1",
             "users",
-            StoreType::Relational,
+            DataModel::Relational,
         )
         .unwrap();
         assert!(matches!(plan, SqlPlan::RelationalUpdate { .. }));

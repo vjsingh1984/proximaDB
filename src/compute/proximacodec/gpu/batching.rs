@@ -115,7 +115,7 @@ impl GpuBatchSizer {
 
     /// Calculate number of batches needed
     pub fn calculate_batch_count(&self, total_vectors: usize, batch_size: usize) -> usize {
-        (total_vectors + batch_size - 1) / batch_size
+        total_vectors.div_ceil(batch_size)
     }
 
     /// Create batch configuration for the backend
@@ -235,7 +235,7 @@ impl<'a, T> GpuBatchIterator<'a, T> {
 
     /// Get total number of batches
     pub fn batch_count(&self) -> usize {
-        (self.data.len() + self.batch_size - 1) / self.batch_size
+        self.data.len().div_ceil(self.batch_size)
     }
 
     /// Get current batch index
@@ -277,14 +277,14 @@ impl<'a, T> Iterator for GpuBatchIterator<'a, T> {
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         let remaining =
-            (self.data.len() - self.current_offset + self.batch_size - 1) / self.batch_size;
+            (self.data.len() - self.current_offset).div_ceil(self.batch_size);
         (remaining, Some(remaining))
     }
 }
 
 impl<'a, T> ExactSizeIterator for GpuBatchIterator<'a, T> {
     fn len(&self) -> usize {
-        (self.data.len() - self.current_offset + self.batch_size - 1) / self.batch_size
+        (self.data.len() - self.current_offset).div_ceil(self.batch_size)
     }
 }
 

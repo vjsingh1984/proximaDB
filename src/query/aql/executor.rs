@@ -19,6 +19,12 @@ pub struct AqlExecutor {
     event_log: Option<Arc<EventLogEngine>>,
 }
 
+impl Default for AqlExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AqlExecutor {
     pub fn new() -> Self {
         Self {
@@ -43,7 +49,7 @@ impl AqlExecutor {
         let mut ctx = AuditContext::new();
         let started_at_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
 
         let result = self.execute_internal(&query, &query.from, &mut ctx).await;
@@ -79,10 +85,10 @@ impl AqlExecutor {
         };
 
         // Persist the audit trail if event log is available (TD-050 Phase 5)
-        if let Some(log) = &self.event_log {
-            if let Err(e) = self.persist_audit_trail(log.as_ref(), &trail).await {
-                tracing::warn!("Failed to persist audit trail: {}", e);
-            }
+        if let Some(log) = &self.event_log
+            && let Err(e) = self.persist_audit_trail(log.as_ref(), &trail).await
+        {
+            tracing::warn!("Failed to persist audit trail: {}", e);
         }
 
         Ok((aql_result, trail))

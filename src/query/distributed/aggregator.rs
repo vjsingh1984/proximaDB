@@ -102,7 +102,7 @@ impl ResultAggregator {
         // Group by data model
         let mut by_model: HashMap<DataModel, Vec<SubQueryResult>> = HashMap::new();
         for result in all_results {
-            let model = result.source_model.clone();
+            let model = result.source_model;
             by_model.entry(model).or_default().push(result);
         }
 
@@ -134,13 +134,11 @@ impl ResultAggregator {
         }
 
         match &self.strategy {
-            AggregationStrategy::Merge(config) => {
-                self.merge_results(model.clone(), results, config)
-            }
-            AggregationStrategy::Sum => self.sum_results(model.clone(), results),
-            AggregationStrategy::Average => self.average_results(model.clone(), results),
-            AggregationStrategy::TopK(k) => self.topk_results(model.clone(), results, *k),
-            AggregationStrategy::UnionDedup => self.union_dedup_results(model.clone(), results),
+            AggregationStrategy::Merge(config) => self.merge_results(model, results, config),
+            AggregationStrategy::Sum => self.sum_results(model, results),
+            AggregationStrategy::Average => self.average_results(model, results),
+            AggregationStrategy::TopK(k) => self.topk_results(model, results, *k),
+            AggregationStrategy::UnionDedup => self.union_dedup_results(model, results),
             AggregationStrategy::Intersection => self.intersection_results(model, results),
         }
     }
@@ -212,7 +210,7 @@ impl ResultAggregator {
         // For sum, we create a single record with the total
         let sum_record = UnifiedRecord {
             id: "sum_result".to_string(),
-            source_model: model.clone(),
+            source_model: model,
             data: serde_json::json!({
                 "total_count": total_count,
                 "total_scanned": total_scanned,
@@ -252,7 +250,7 @@ impl ResultAggregator {
 
         let avg_record = UnifiedRecord {
             id: "avg_result".to_string(),
-            source_model: model.clone(),
+            source_model: model,
             data: serde_json::json!({
                 "average": average,
                 "count": total_records,

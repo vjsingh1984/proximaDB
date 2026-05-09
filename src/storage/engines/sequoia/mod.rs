@@ -206,14 +206,20 @@ pub struct SequoiaEngine {
     row_count_metric: AtomicU64,
 }
 
-impl SequoiaEngine {
-    /// Create a new `SequoiaEngine`.
-    pub fn new() -> Self {
+impl Default for SequoiaEngine {
+    fn default() -> Self {
         Self {
             schemas: DashMap::new(),
             tables: DashMap::new(),
             row_count_metric: AtomicU64::new(0),
         }
+    }
+}
+
+impl SequoiaEngine {
+    /// Create a new `SequoiaEngine`.
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -226,14 +232,14 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
     match filter {
         RowFilter::Eq(col, val) => {
             if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
-                row.values.get(idx).map_or(false, |v| v == val)
+                row.values.get(idx) == Some(val)
             } else {
                 false
             }
         }
         RowFilter::Ne(col, val) => {
             if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
-                row.values.get(idx).map_or(false, |v| v != val)
+                row.values.get(idx).is_some_and(|v| v != val)
             } else {
                 false
             }
@@ -242,8 +248,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
             if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
                 row.values
                     .get(idx)
-                    .and_then(|v| v.partial_cmp_typed(val))
-                    .map_or(false, |ord| ord == std::cmp::Ordering::Greater)
+                    .and_then(|v| v.partial_cmp_typed(val)) == Some(std::cmp::Ordering::Greater)
             } else {
                 false
             }
@@ -252,8 +257,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
             if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
                 row.values
                     .get(idx)
-                    .and_then(|v| v.partial_cmp_typed(val))
-                    .map_or(false, |ord| ord == std::cmp::Ordering::Less)
+                    .and_then(|v| v.partial_cmp_typed(val)) == Some(std::cmp::Ordering::Less)
             } else {
                 false
             }
@@ -263,7 +267,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
                 row.values
                     .get(idx)
                     .and_then(|v| v.partial_cmp_typed(val))
-                    .map_or(false, |ord| {
+                    .is_some_and(|ord| {
                         ord == std::cmp::Ordering::Greater || ord == std::cmp::Ordering::Equal
                     })
             } else {
@@ -275,7 +279,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
                 row.values
                     .get(idx)
                     .and_then(|v| v.partial_cmp_typed(val))
-                    .map_or(false, |ord| {
+                    .is_some_and(|ord| {
                         ord == std::cmp::Ordering::Less || ord == std::cmp::Ordering::Equal
                     })
             } else {
@@ -288,7 +292,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
             if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
                 row.values
                     .get(idx)
-                    .map_or(true, |v| matches!(v, TypedValue::Null))
+                    .is_none_or(|v| matches!(v, TypedValue::Null))
             } else {
                 false
             }
@@ -297,7 +301,7 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
             if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
                 row.values
                     .get(idx)
-                    .map_or(false, |v| !matches!(v, TypedValue::Null))
+                    .is_some_and(|v| !matches!(v, TypedValue::Null))
             } else {
                 false
             }
@@ -425,14 +429,13 @@ impl RelationalStorageEngine for SequoiaEngine {
                     if let Some(idx) = columns.iter().position(|(n, _)| n == col_name) {
                         let va = a.values.get(idx);
                         let vb = b.values.get(idx);
-                        if let (Some(va), Some(vb)) = (va, vb) {
-                            if let Some(ord) = va.partial_cmp_typed(vb) {
+                        if let (Some(va), Some(vb)) = (va, vb)
+                            && let Some(ord) = va.partial_cmp_typed(vb) {
                                 let ord = if *ascending { ord } else { ord.reverse() };
                                 if ord != std::cmp::Ordering::Equal {
                                     return ord;
                                 }
                             }
-                        }
                     }
                 }
                 std::cmp::Ordering::Equal

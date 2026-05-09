@@ -100,7 +100,7 @@ impl ParallelWALSearch {
         // Convert to SearchResults and set ranks
         let results = sorted_candidates
             .into_iter()
-            .map(|candidate| candidate.to_search_result())
+            .map(|candidate| candidate.into_search_result())
             .collect();
 
         let elapsed = start.elapsed();
@@ -458,7 +458,7 @@ pub struct SearchCandidate {
 
 impl SearchCandidate {
     /// Convert to OptimizedSearchRecord - preserves all source information
-    fn to_search_result(self) -> OptimizedSearchRecord {
+    fn into_search_result(self) -> OptimizedSearchRecord {
         // Convert metadata from proto to TypedMetadata
         let _metadata = if self.include_metadata {
             let mut metadata_map = std::collections::HashMap::new();

@@ -633,7 +633,7 @@ pub fn apply_evolution(
                 let keys_to_remove: Vec<String> = new_schema
                     .properties
                     .keys()
-                    .filter(|k| k.starts_with("constraint:") && k.contains(&*constraint_name))
+                    .filter(|k| k.starts_with("constraint:") && k.contains(constraint_name))
                     .cloned()
                     .collect();
 

@@ -1657,14 +1657,13 @@ impl UnifiedSstableReader {
                     let mut results = Vec::new();
                     for record in morsel_records {
                         // Apply filter if present
-                        if let Some(filter_expr) = &filter_clone {
-                            if !crate::core::search::sql_value_filter::evaluate_filter(
+                        if let Some(filter_expr) = &filter_clone
+                            && !crate::core::search::sql_value_filter::evaluate_filter(
                                 filter_expr,
                                 &record.metadata,
                             ) {
                                 continue; // Skip filtered records
                             }
-                        }
 
                         // Compute distance
                         let distance =

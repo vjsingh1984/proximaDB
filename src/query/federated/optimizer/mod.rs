@@ -1774,7 +1774,7 @@ impl JoinOrderOptimizer {
                     let join_keys = self.find_join_keys(&left_set, &right_set, join_predicates);
 
                     // Calculate join cost and cardinality
-                    let join_selectivity = join_keys.is_empty().then(|| 1.0).unwrap_or(0.1);
+                    let join_selectivity = if join_keys.is_empty() { 1.0 } else { 0.1 };
                     let join_cardinality = self.cardinality_estimator.estimate_join_cardinality(
                         left_entry.cardinality,
                         right_entry.cardinality,
@@ -3065,7 +3065,8 @@ impl CrossModelOptimizer {
                     .unwrap_or_else(|| item.expression.clone())
             })
             .collect::<Vec<_>>();
-        if (!has_aggregate_projection && !has_group_by)
+        if !has_aggregate_projection
+            && !has_group_by
             && !projection_sources.is_empty()
             && !(projection_sources.len() == 1 && projection_sources[0] == "*")
             && !projection_sources

@@ -323,13 +323,13 @@ fn format_explain_plan_text(plan: &ExplainPlan) -> String {
     }
 
     if let Some(ref metadata) = plan.metadata {
-        output.push_str(&format!("\nMetadata:\n"));
+        output.push_str("\nMetadata:\n");
         output.push_str(&format!("  Optimizer: {}\n", metadata.optimizer_version));
         output.push_str(&format!("  Engine: {}\n", metadata.execution_engine));
     }
 
     if !plan.warnings.is_empty() {
-        output.push_str(&format!("\nWarnings:\n"));
+        output.push_str("\nWarnings:\n");
         for warning in &plan.warnings {
             output.push_str(&format!("  [{}] {}\n", warning.severity, warning.message));
         }
@@ -344,7 +344,7 @@ fn format_explain_plan_graphviz(plan: &ExplainPlan) -> String {
     output.push_str("  rankdir=TB;\n");
     output.push_str("  node [shape=box, style=rounded];\n");
     output.push_str(&format!("  label=\"Plan: {}\";\n", plan.plan_id));
-    output.push_str("\n");
+    output.push('\n');
 
     for node in &plan.plan_nodes {
         let label = format!(
@@ -354,7 +354,7 @@ fn format_explain_plan_graphviz(plan: &ExplainPlan) -> String {
         output.push_str(&format!("  \"{}\" [label=\"{}\"];\n", node.node_id, label));
     }
 
-    output.push_str("\n");
+    output.push('\n');
 
     for node in &plan.plan_nodes {
         for child_id in &node.child_ids {

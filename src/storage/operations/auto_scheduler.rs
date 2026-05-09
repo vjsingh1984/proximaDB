@@ -617,7 +617,7 @@ impl AutoScheduler {
                 queue
                     .iter()
                     .position(|op| op.run_after <= now)
-                    .map(|_| {
+                    .and_then(|_| {
                         // Remove and return the operation
                         // Note: This is inefficient, but BinaryHeap doesn't support removal by index
                         let mut temp = BinaryHeap::new();
@@ -634,7 +634,6 @@ impl AutoScheduler {
                         *queue = temp;
                         found
                     })
-                    .flatten()
             };
 
             if let Some(mut op) = operation {

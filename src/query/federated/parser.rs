@@ -405,7 +405,7 @@ impl FederatedParser {
                 let parts: Vec<&str> = table_ref.split_whitespace().collect();
                 if !parts.is_empty() {
                     let name = parts[0].to_string();
-                    let alias = if parts.len() > 1 && parts[1].to_ascii_uppercase() != "AS" {
+                    let alias = if parts.len() > 1 && !parts[1].eq_ignore_ascii_case("AS") {
                         Some(parts[1].to_string())
                     } else if parts.len() > 2 {
                         Some(parts[2].to_string())

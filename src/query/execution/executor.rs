@@ -1139,7 +1139,6 @@ impl QueryExecutor {
         parts.join("\u{1F}")
     }
 
-    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     pub fn apply_limit_offset(
         rows: &mut Vec<QueryRow>,
         offset: Option<usize>,

@@ -169,6 +169,7 @@ pub fn entanglement_index(
     let mut skipped_singletons = 0_usize;
 
     for (i, c) in chunks.iter().enumerate() {
+        #[expect(clippy::expect_used, reason = "topic_members built from same chunks, key always present")]
         let same_topic_indices = topic_members.get(c.topic.as_str()).expect("topic in map");
 
         // A topic with only this chunk produces no intra-similarity

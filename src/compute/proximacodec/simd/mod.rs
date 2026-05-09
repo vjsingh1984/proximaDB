@@ -48,6 +48,7 @@
 pub mod backend;
 
 // SIMD implementation file (contains all the actual SIMD functions)
+#[allow(clippy::module_inception)]
 pub mod simd;
 
 // Organized re-exports for better API navigation

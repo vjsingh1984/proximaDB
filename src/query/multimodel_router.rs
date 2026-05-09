@@ -28,7 +28,7 @@
 //!     └── Relational   → RelationalService (SEQUOIA) → TypedRow
 //! ```
 
-pub use proximadb_data_model::StoreType;
+pub use proximadb_data_model::DataModel;
 
 /// Detect the store type from a SQL CREATE TABLE statement.
 ///
@@ -36,36 +36,36 @@ pub use proximadb_data_model::StoreType;
 /// 1. Explicit USING clause
 /// 2. Column type inference
 /// 3. Default to Relational
-pub fn detect_store_type_from_create(sql: &str) -> StoreType {
+pub fn detect_store_type_from_create(sql: &str) -> DataModel {
     let upper = sql.to_uppercase();
 
     // 1. Explicit USING clause
     if upper.contains("USING DOCUMENT") {
-        return StoreType::Document;
+        return DataModel::Document;
     }
     if upper.contains("USING GRAPH") {
-        return StoreType::Graph;
+        return DataModel::Graph;
     }
     if upper.contains("USING OBSERVABILITY") || upper.contains("USING TIMESERIES") {
-        return StoreType::Observability;
+        return DataModel::Observability;
     }
     if upper.contains("USING VECTOR") {
-        return StoreType::Vector;
+        return DataModel::Vector;
     }
 
     // 2. Column type inference
     if upper.contains("VECTOR(") || upper.contains("EMBEDDING(") {
-        return StoreType::Vector;
+        return DataModel::Vector;
     }
     if upper.contains("JSONB") || upper.contains("JSON") {
-        return StoreType::Document;
+        return DataModel::Document;
     }
     if upper.contains("SEVERITY") && upper.contains("MESSAGE") {
-        return StoreType::Observability;
+        return DataModel::Observability;
     }
 
     // 3. Default: standard relational table
-    StoreType::Relational
+    DataModel::Relational
 }
 
 /// Detect the store type from a SQL SELECT/INSERT/UPDATE/DELETE statement.
@@ -79,18 +79,18 @@ pub fn detect_store_type_from_create(sql: &str) -> StoreType {
 pub fn detect_store_type_from_query(
     sql: &str,
     table_name: &str,
-    catalog_lookup: Option<&dyn Fn(&str) -> Option<StoreType>>,
-) -> StoreType {
+    catalog_lookup: Option<&dyn Fn(&str) -> Option<DataModel>>,
+) -> DataModel {
     let upper = sql.to_uppercase();
 
     // 1. Vector operators
     if upper.contains("<->") || upper.contains("<=>") || upper.contains("<#>") {
-        return StoreType::Vector;
+        return DataModel::Vector;
     }
 
     // 2. JSON path expressions
     if sql.contains("$.") {
-        return StoreType::Document;
+        return DataModel::Document;
     }
 
     // 3. Table name prefix
@@ -99,27 +99,27 @@ pub fn detect_store_type_from_query(
         || lower_table.starts_with("node_")
         || lower_table.starts_with("edge_")
     {
-        return StoreType::Graph;
+        return DataModel::Graph;
     }
     if lower_table.starts_with("doc_") || lower_table.starts_with("document_") {
-        return StoreType::Document;
+        return DataModel::Document;
     }
     if lower_table.starts_with("log_")
         || lower_table.starts_with("metric_")
         || lower_table.starts_with("trace_")
     {
-        return StoreType::Observability;
+        return DataModel::Observability;
     }
 
     // 4. Catalog lookup
-    if let Some(lookup) = catalog_lookup {
-        if let Some(store_type) = lookup(table_name) {
-            return store_type;
-        }
+    if let Some(lookup) = catalog_lookup
+        && let Some(store_type) = lookup(table_name)
+    {
+        return store_type;
     }
 
     // 5. Default to Relational
-    StoreType::Relational
+    DataModel::Relational
 }
 
 /// Result type envelope for multi-model query results.
@@ -174,7 +174,7 @@ mod tests {
     fn test_detect_create_relational() {
         assert_eq!(
             detect_store_type_from_create("CREATE TABLE users (id INT, name VARCHAR(255))"),
-            StoreType::Relational
+            DataModel::Relational
         );
     }
 
@@ -182,7 +182,7 @@ mod tests {
     fn test_detect_create_document() {
         assert_eq!(
             detect_store_type_from_create("CREATE TABLE docs (id TEXT, data JSONB) USING DOCUMENT"),
-            StoreType::Document
+            DataModel::Document
         );
     }
 
@@ -190,7 +190,7 @@ mod tests {
     fn test_detect_create_vector() {
         assert_eq!(
             detect_store_type_from_create("CREATE TABLE vecs (id TEXT, embedding VECTOR(384))"),
-            StoreType::Vector
+            DataModel::Vector
         );
     }
 
@@ -198,7 +198,7 @@ mod tests {
     fn test_detect_create_graph() {
         assert_eq!(
             detect_store_type_from_create("CREATE TABLE social (id TEXT) USING GRAPH"),
-            StoreType::Graph
+            DataModel::Graph
         );
     }
 
@@ -208,7 +208,7 @@ mod tests {
             detect_store_type_from_create(
                 "CREATE TABLE app_logs (ts TIMESTAMP, severity TEXT) USING OBSERVABILITY"
             ),
-            StoreType::Observability
+            DataModel::Observability
         );
     }
 
@@ -220,7 +220,7 @@ mod tests {
                 "vecs",
                 None
             ),
-            StoreType::Vector
+            DataModel::Vector
         );
     }
 
@@ -228,7 +228,7 @@ mod tests {
     fn test_detect_query_json_path() {
         assert_eq!(
             detect_store_type_from_query("SELECT * FROM docs WHERE $.name = 'Alice'", "docs", None),
-            StoreType::Document
+            DataModel::Document
         );
     }
 
@@ -240,7 +240,7 @@ mod tests {
                 "graph_social",
                 None
             ),
-            StoreType::Graph
+            DataModel::Graph
         );
     }
 
@@ -252,7 +252,7 @@ mod tests {
                 "log_app",
                 None
             ),
-            StoreType::Observability
+            DataModel::Observability
         );
     }
 
@@ -260,15 +260,15 @@ mod tests {
     fn test_detect_query_relational_default() {
         assert_eq!(
             detect_store_type_from_query("SELECT * FROM users WHERE id > 5", "users", None),
-            StoreType::Relational
+            DataModel::Relational
         );
     }
 
     #[test]
     fn test_detect_query_catalog_override() {
-        let catalog = |table: &str| -> Option<StoreType> {
+        let catalog = |table: &str| -> Option<DataModel> {
             if table == "my_custom_docs" {
-                Some(StoreType::Document)
+                Some(DataModel::Document)
             } else {
                 None
             }
@@ -279,16 +279,16 @@ mod tests {
                 "my_custom_docs",
                 Some(&catalog)
             ),
-            StoreType::Document
+            DataModel::Document
         );
     }
 
     #[test]
     fn test_store_type_display() {
-        assert_eq!(StoreType::Vector.to_string(), "vector");
-        assert_eq!(StoreType::Document.to_string(), "document");
-        assert_eq!(StoreType::Graph.to_string(), "graph");
-        assert_eq!(StoreType::Observability.to_string(), "observability");
-        assert_eq!(StoreType::Relational.to_string(), "relational");
+        assert_eq!(DataModel::Vector.to_string(), "vector");
+        assert_eq!(DataModel::Document.to_string(), "document");
+        assert_eq!(DataModel::Graph.to_string(), "graph");
+        assert_eq!(DataModel::Observability.to_string(), "observability");
+        assert_eq!(DataModel::Relational.to_string(), "relational");
     }
 }

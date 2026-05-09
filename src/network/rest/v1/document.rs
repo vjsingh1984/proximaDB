@@ -468,7 +468,7 @@ async fn update_document(
                 .unwrap_or("")
                 .to_string();
 
-            let value = v.get("value").map(|val| json_to_sql_value(val));
+            let value = v.get("value").map(json_to_sql_value);
 
             DocumentUpdate {
                 operation,

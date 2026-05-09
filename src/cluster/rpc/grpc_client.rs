@@ -639,7 +639,7 @@ impl SearchFanout for GrpcSearchFanout {
                 .map(|r| ShardSearchResult {
                     id: r.id,
                     score: r.score,
-                    vector: r.vector.is_empty().not().then(|| r.vector),
+                    vector: r.vector.is_empty().not().then_some(r.vector),
                     metadata: r.metadata,
                 })
                 .collect(),

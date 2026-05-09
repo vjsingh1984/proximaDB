@@ -313,7 +313,6 @@ impl FilteredHNSWIndex {
                 candidates.push(SearchResult {
                     id: entry_node.id.clone(),
                     score: similarity,
-                    ..Default::default()
                 });
                 visited.insert(entry_point.to_string());
                 nodes_visited += 1;
@@ -382,7 +381,6 @@ impl FilteredHNSWIndex {
                     candidates.push(SearchResult {
                         id: neighbor_node.id.clone(),
                         score: similarity,
-                        ..Default::default()
                     });
                     *nodes_visited += 1;
                 } else {

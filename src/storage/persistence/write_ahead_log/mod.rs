@@ -722,7 +722,7 @@ impl WriteAheadLogManagerRegistry {
             let manager_id = format!("write_buffer_manager_pool_{}", i + 1);
 
             let strategy = WALBatchFactory::create_batch_serialization_strategy(
-                strategy_type.clone(),
+                strategy_type,
                 config,
                 filesystem.clone(),
             )
@@ -1290,7 +1290,7 @@ impl WriteAheadLogManager {
         );
 
         // Extract strategy type for routing
-        let strategy_type = config.strategy_type.clone();
+        let strategy_type = config.strategy_type;
 
         // Create filesystem factory for per-collection disk managers
         // Disk managers will be created at write time using collection's base_location from assigned_collections
@@ -1385,7 +1385,7 @@ impl WriteAheadLogManager {
         );
 
         // Extract strategy type for routing
-        let strategy_type = config.strategy_type.clone();
+        let strategy_type = config.strategy_type;
 
         // Create filesystem factory for per-collection disk managers
         let _filesystem_factory = Arc::new(
@@ -1457,7 +1457,7 @@ impl WriteAheadLogManager {
         );
 
         // Extract strategy type for routing
-        let strategy_type = config.strategy_type.clone();
+        let strategy_type = config.strategy_type;
 
         // Create filesystem factory for per-collection disk managers
         // Disk managers will be created at write time using collection's base_location from assigned_collections

@@ -615,7 +615,7 @@ impl StorageSystemBuilder {
         );
 
         let write_buffer_manager = WriteAheadLogManager::create_with_batch_factory(
-            self.config.wal_system.strategy_type.clone(),
+            self.config.wal_system.strategy_type,
             self.config.wal_system.clone(),
             filesystem.clone(),
         )

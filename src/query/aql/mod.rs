@@ -214,6 +214,12 @@ pub struct AuditContext {
     pub next_frame_id: u64,
 }
 
+impl Default for AuditContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AuditContext {
     pub fn new() -> Self {
         Self {

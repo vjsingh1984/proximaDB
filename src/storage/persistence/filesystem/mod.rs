@@ -878,8 +878,6 @@ impl FilesystemFactory {
         since = "0.1.5",
         note = "Use `create_default()` instead - this creates a broken factory"
     )]
-    #[expect(clippy::default_trait_access)] // Kept for backward compatibility despite creating broken factory
-    #[expect(clippy::should_implement_trait)] // Method is deprecated, trait implementation not appropriate
     pub fn default() -> Self {
         Self {
             config: FilesystemConfig::default(),
@@ -1289,8 +1287,8 @@ impl FilesystemFactory {
                 // Absolute path
                 format!("/{}", after_slashes)
             } else {
-                // Relative or other path
-                normalized_url.strip_prefix("file://").unwrap().to_string()
+                // Relative or other path — strip_prefix is guaranteed to succeed here
+                normalized_url["file://".len()..].to_string()
             };
             info!("    scheme: file, returning path: {}", path);
             return Ok(path);
@@ -1385,7 +1383,7 @@ impl FilesystemFactory {
             // The URL parser can fail on paths that look like domain names
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
-                let relative_path = url.strip_prefix("file://").unwrap(); // Keep the "./"
+                let relative_path = &url["file://".len()..]; // Keep the "./"
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Explicit relative path: '{}'",
                     relative_path

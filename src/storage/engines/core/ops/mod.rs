@@ -91,7 +91,7 @@ pub use crate::compute::proximacodec;
 /// - unified_proxima_simd.obsolete/
 // pub mod proximaencoder;  // OBSOLETE - use proximacodec instead
 // pub mod unified_proxima_simd;  // OBSOLETE - use proximacodec instead
-/// SIMD configuration system for fine-tuning optimization behavior
+// SIMD configuration system for fine-tuning optimization behavior
 pub mod simd_config;
 
 /// SIMD-accelerated decode pipeline for the Native Compute Engine

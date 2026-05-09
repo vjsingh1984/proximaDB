@@ -2,6 +2,7 @@
 //!
 //! Provides real performance measurements for cost estimation across all storage engines.
 //! This module runs actual benchmarks to populate the SearchCostEstimator with real data.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use anyhow::Result;
 use std::collections::HashMap;

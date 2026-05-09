@@ -54,7 +54,7 @@ impl WALBatchFactory {
         config: &WALConfig,
         filesystem: Arc<FilesystemFactory>,
     ) -> Result<Box<dyn WALBatchStrategy>> {
-        Self::create_batch_serialization_strategy(config.strategy_type.clone(), config, filesystem)
+        Self::create_batch_serialization_strategy(config.strategy_type, config, filesystem)
             .await
     }
 

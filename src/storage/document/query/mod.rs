@@ -226,7 +226,7 @@ impl QueryExecutor {
     /// Sort documents by the given fields
     fn sort_documents(
         &self,
-        documents: &mut Vec<DocumentRecord>,
+        documents: &mut [DocumentRecord],
         sort_fields: &[SortField],
     ) -> Result<()> {
         documents.sort_by(|a, b| {

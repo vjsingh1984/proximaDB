@@ -71,11 +71,11 @@ impl LowLatencyExecutor {
         let start_time = Instant::now();
 
         // Check cache first if enabled
-        if self.config.enable_adaptive_cache {
-            if let Some(cached_result) = self.get_cached_result(plan) {
-                info!("Cache hit for query, returning cached result");
-                return Ok(cached_result);
-            }
+        if self.config.enable_adaptive_cache
+            && let Some(cached_result) = self.get_cached_result(plan)
+        {
+            info!("Cache hit for query, returning cached result");
+            return Ok(cached_result);
         }
 
         // Execute with optimizations
@@ -111,11 +111,11 @@ impl LowLatencyExecutor {
                 Ok(batch) => {
                     result.rows.extend(batch);
                     // Early termination if limit reached
-                    if let Some(limit) = plan.limit {
-                        if result.rows.len() >= limit {
-                            debug!("Early termination: reached limit {}", limit);
-                            break;
-                        }
+                    if let Some(limit) = plan.limit
+                        && result.rows.len() >= limit
+                    {
+                        debug!("Early termination: reached limit {}", limit);
+                        break;
                     }
                 }
                 Err(e) => {
@@ -232,14 +232,20 @@ pub struct StreamedQueryResult {
     pub metrics: QueryPerformanceMetrics,
 }
 
-impl StreamedQueryResult {
-    /// Create a new streamed result
-    pub fn new() -> Self {
+impl Default for StreamedQueryResult {
+    fn default() -> Self {
         Self {
             received_rows: Vec::new(),
             is_complete: false,
             metrics: QueryPerformanceMetrics::default(),
         }
+    }
+}
+
+impl StreamedQueryResult {
+    /// Create a new streamed result
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Add a batch of results
@@ -255,6 +261,11 @@ impl StreamedQueryResult {
     /// Get the current result count
     pub fn len(&self) -> usize {
         self.received_rows.len()
+    }
+
+    /// Check if no results have been received yet
+    pub fn is_empty(&self) -> bool {
+        self.received_rows.is_empty()
     }
 
     /// Check if any results are available yet

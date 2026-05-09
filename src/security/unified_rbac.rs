@@ -21,7 +21,7 @@ pub use crate::storage::tenant::rbac::{
 };
 
 /// Data model enum for cross-model permission validation — re-exported from canonical definition.
-pub use proximadb_data_model::StoreType as DataModel;
+pub use proximadb_data_model::DataModel;
 
 /// Permission cache entry with TTL
 #[derive(Debug, Clone)]
@@ -353,7 +353,7 @@ impl ConsolidatedRBACManager {
         operation: EnhancedCollectionOperation,
         data_model: DataModel,
     ) -> Result<AuthorizationResult> {
-        let permission = match (data_model.clone(), &operation) {
+        let permission = match (data_model, &operation) {
             (DataModel::Vector, EnhancedCollectionOperation::Read) => {
                 UnifiedPermission::CollectionRead(collection_id.to_string())
             }
@@ -1066,8 +1066,8 @@ mod tests {
 
     #[test]
     fn test_data_model_alias() {
-        // DataModel is re-exported as StoreType. Verify the alias works and
-        // key variants are accessible.
+        // DataModel is the canonical cross-model discriminator. Verify key
+        // variants are accessible through the RBAC re-export.
         let vector = DataModel::Vector;
         let document = DataModel::Document;
         let graph = DataModel::Graph;
@@ -1076,7 +1076,7 @@ mod tests {
         assert_ne!(document, graph);
         assert_eq!(vector, DataModel::Vector);
 
-        // Verify all variants listed in StoreType are reachable through the alias
+        // Verify all variants listed in the canonical DataModel are reachable.
         let _observability = DataModel::Observability;
         let _relational = DataModel::Relational;
         let _time_series = DataModel::TimeSeries;

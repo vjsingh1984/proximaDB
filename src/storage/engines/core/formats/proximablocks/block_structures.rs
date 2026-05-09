@@ -2244,7 +2244,7 @@ impl ProximaDataBlock {
             trace!(
                 "[ENCODE] Source dict[{}]: '{}'",
                 i,
-                source.is_empty().then(|| "NULL").unwrap_or(source)
+                if source.is_empty() { "NULL" } else { source }
             );
         }
 
@@ -2766,7 +2766,7 @@ impl ProximaDataBlock {
                 trace!("[DECODE] Decompressed size: {} bytes", decompressed.len());
 
                 // The decompressed data starts with encoding marker
-                let actual_marker = if decompressed.len() > 0 {
+                let actual_marker = if !decompressed.is_empty() {
                     decompressed[0]
                 } else {
                     0x00
@@ -2816,7 +2816,7 @@ impl ProximaDataBlock {
             trace!("[DECODE] Decompressed size: {} bytes", decompressed.len());
 
             // The decompressed data starts with encoding marker
-            let actual_marker = if decompressed.len() > 0 {
+            let actual_marker = if !decompressed.is_empty() {
                 decompressed[0]
             } else {
                 0x00

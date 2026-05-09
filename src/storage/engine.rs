@@ -107,7 +107,7 @@ impl StorageEngine {
         // Create WAL manager using modern batch factory pattern
         let write_ahead_log_manager = Arc::new(
             WriteAheadLogManager::create_with_batch_factory(
-                wal_config.strategy_type.clone(),
+                wal_config.strategy_type,
                 wal_config,
                 filesystem.clone(),
             )

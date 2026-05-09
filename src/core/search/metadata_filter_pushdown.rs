@@ -231,15 +231,15 @@ impl MetadataFilterPushdown {
     ) -> Vec<VectorRecord> {
         records
             .into_iter()
-            .filter(|record| {
+            .filter(|_record| {
                 // Check if record might match based on bloom filters
-                self.check_bloom_filters(record, filter)
+                self.check_bloom_filters(filter)
             })
             .collect()
     }
 
-    /// Check bloom filters for a record
-    fn check_bloom_filters(&self, record: &VectorRecord, filter: &FilterExpression) -> bool {
+    /// Check bloom filters for a filter expression
+    fn check_bloom_filters(&self, filter: &FilterExpression) -> bool {
         match filter {
             FilterExpression::Comparison {
                 field,
@@ -263,11 +263,11 @@ impl MetadataFilterPushdown {
             }
             FilterExpression::And(exprs) => exprs
                 .iter()
-                .all(|expr| self.check_bloom_filters(record, expr)),
+                .all(|expr| self.check_bloom_filters(expr)),
             FilterExpression::Or(exprs) => exprs
                 .iter()
-                .any(|expr| self.check_bloom_filters(record, expr)),
-            FilterExpression::Not(expr) => !self.check_bloom_filters(record, expr),
+                .any(|expr| self.check_bloom_filters(expr)),
+            FilterExpression::Not(expr) => !self.check_bloom_filters(expr),
         }
     }
 

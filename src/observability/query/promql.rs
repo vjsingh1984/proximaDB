@@ -23,8 +23,7 @@ impl PromQLParser {
         let query = query.trim();
 
         // Check for unary negation first
-        if query.starts_with('-') {
-            let rest = &query[1..];
+        if let Some(rest) = query.strip_prefix('-') {
             let expr = Self::parse(rest)?;
             return Ok(PromQLExpr::Unary {
                 op: UnaryOp::Neg,
@@ -41,8 +40,8 @@ impl PromQLParser {
                 let after_paren = &query[inner.len() + 2..];
                 if !after_paren.is_empty() {
                     // Handle offset @ modifier
-                    if let Some(offset_duration) = Self::parse_offset_modifier(after_paren)? {
-                        if let PromQLExpr::VectorSelector {
+                    if let Some(offset_duration) = Self::parse_offset_modifier(after_paren)?
+                        && let PromQLExpr::VectorSelector {
                             name,
                             matchers,
                             range,
@@ -56,7 +55,6 @@ impl PromQLParser {
                                 offset: Some(offset_duration),
                             });
                         }
-                    }
                 }
                 return Ok(PromQLExpr::Paren(Box::new(expr)));
             }
@@ -84,8 +82,8 @@ impl PromQLParser {
 
         // Check for offset modifier @
         let remaining = &query[Self::get_selector_length_in(query, &selector)..];
-        if let Some(offset_duration) = Self::parse_offset_modifier(remaining)? {
-            if let PromQLExpr::VectorSelector {
+        if let Some(offset_duration) = Self::parse_offset_modifier(remaining)?
+            && let PromQLExpr::VectorSelector {
                 name,
                 matchers,
                 range,
@@ -99,7 +97,6 @@ impl PromQLParser {
                     offset: Some(offset_duration),
                 };
             }
-        }
 
         Ok(selector)
     }
@@ -517,13 +514,11 @@ impl PromQLParser {
                 };
 
                 // If there's a range, find the closing bracket after the braces
-                if range.is_some() {
-                    if let Some(bracket_pos) = query[after_braces..].find('[') {
-                        if let Some(close_pos) = query[after_braces + bracket_pos..].find(']') {
+                if range.is_some()
+                    && let Some(bracket_pos) = query[after_braces..].find('[')
+                        && let Some(close_pos) = query[after_braces + bracket_pos..].find(']') {
                             return after_braces + bracket_pos + close_pos + 1;
                         }
-                    }
-                }
 
                 after_braces
             }

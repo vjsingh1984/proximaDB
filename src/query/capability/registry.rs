@@ -339,6 +339,10 @@ impl CapabilityRegistry {
     }
 
     /// Register capabilities for an engine or provider.
+    #[expect(
+        clippy::expect_used,
+        reason = "RwLock poisoning is unrecoverable; propagating would hide the root cause"
+    )]
     pub fn register_capabilities(&self, name: &str, capabilities: CapabilitySet) {
         let mut caps = self
             .capabilities
@@ -348,6 +352,10 @@ impl CapabilityRegistry {
     }
 
     /// Get capabilities for an engine or provider.
+    #[expect(
+        clippy::expect_used,
+        reason = "RwLock poisoning is unrecoverable; propagating would hide the root cause"
+    )]
     pub fn get_capabilities(&self, name: &str) -> Option<CapabilitySet> {
         let caps = self
             .capabilities
@@ -391,6 +399,10 @@ impl CapabilityRegistry {
     }
 
     /// Get all registered engine names.
+    #[expect(
+        clippy::expect_used,
+        reason = "RwLock poisoning is unrecoverable; propagating would hide the root cause"
+    )]
     pub fn registered_engines(&self) -> Vec<String> {
         let caps = self
             .capabilities
@@ -407,6 +419,10 @@ impl CapabilityRegistry {
     /// Find engines that support all the given capabilities.
     ///
     /// Returns a list of engine names that have all the specified capabilities.
+    #[expect(
+        clippy::expect_used,
+        reason = "RwLock poisoning is unrecoverable; propagating would hide the root cause"
+    )]
     pub fn find_engines_with_capabilities(&self, required: &CapabilitySet) -> Vec<String> {
         let caps = self
             .capabilities

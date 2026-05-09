@@ -270,7 +270,7 @@ impl SparseHNSWIndex {
             for candidate_id in &candidates {
                 node.connections
                     .entry(level)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(candidate_id.clone());
 
                 // Add reverse connection
@@ -297,9 +297,7 @@ impl SparseHNSWIndex {
             .map(|n| n.max_level)
             .unwrap_or(0);
 
-        if max_level > entry_level {
-            self.entry_point = Some(vector_id.clone());
-        } else if self.entry_point.is_none() {
+        if max_level > entry_level || self.entry_point.is_none() {
             self.entry_point = Some(vector_id.clone());
         }
 
@@ -376,7 +374,6 @@ impl SparseHNSWIndex {
             .map(|(similarity, id)| SearchResult {
                 id,
                 score: similarity,
-                ..Default::default()
             })
             .collect();
 

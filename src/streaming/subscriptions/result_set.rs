@@ -320,7 +320,7 @@ impl ResultSet {
     }
 
     /// Update positions for all results and changes
-    fn update_positions(&mut self, changes: &mut Vec<ResultChange>) {
+    fn update_positions(&mut self, changes: &mut [ResultChange]) {
         // Update positions in the result set
         for (idx, (_, result)) in self.results.iter_mut().enumerate() {
             result.position = idx as u32;

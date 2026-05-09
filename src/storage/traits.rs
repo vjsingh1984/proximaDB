@@ -1792,16 +1792,15 @@ pub enum OperationPriority {
     Critical = 3,
 }
 
-/// Search context for STORAGE ENGINES - bundles immutable references to search parameters
-/// and collection configuration for zero-copy access during search operations.
-///
-/// **IMPORTANT**: This is the STORAGE LAYER context. Do not confuse with:
-/// - `core::search::SearchPlan` - Used for search planning/optimization  
-/// - `core::service_types::SearchRequest` - Used for API request representation
-///
-/// Used by: Storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR)
-/// Created by: VectorOperationsService.execute_search_internal()
-///
+// Search context for STORAGE ENGINES - bundles immutable references to search parameters
+// and collection configuration for zero-copy access during search operations.
+//
+// IMPORTANT: This is the STORAGE LAYER context. Do not confuse with:
+// - `core::search::SearchPlan` - Used for search planning/optimization
+// - `core::service_types::SearchRequest` - Used for API request representation
+//
+// Used by: Storage engines (SST, VIPER, NOVA, SWIFT, RAPTOR)
+// Created by: VectorOperationsService.execute_search_internal()
 // ---------------------------------------------------------------------------
 // Engine-level RLS predicate (spec §8 — Phase E scaffold)
 // ---------------------------------------------------------------------------
@@ -2639,7 +2638,7 @@ pub trait MultiModelStorage:
 }
 
 /// Supported data models — re-exported from the canonical definition
-pub use proximadb_data_model::StoreType as DataModel;
+pub use proximadb_data_model::DataModel;
 
 /// Unified statistics across all data models
 #[derive(Debug, Clone, Default)]

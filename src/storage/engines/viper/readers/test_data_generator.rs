@@ -1,6 +1,7 @@
 //! Test Data Generator for Parquet Reader Tests
 //!
 //! Generates various types of Parquet files for testing different reader scenarios
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use anyhow::Result;
 use arrow_array::{

@@ -166,7 +166,7 @@ impl EdrIndex {
         let vector_count = self.document_store.count().await;
         let memory_usage = self.document_store.estimate_memory_usage().await;
 
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self.stats.write().unwrap_or_else(|e| e.into_inner());
         stats.vector_count = vector_count;
         stats.memory_usage_bytes = memory_usage;
     }
@@ -208,7 +208,7 @@ impl AxisVectorIndex for EdrIndex {
 
     fn stats(&self) -> IndexStats {
         // Use blocking read for synchronous method
-        let stats = self.stats.read().unwrap();
+        let stats = self.stats.read().unwrap_or_else(|e| e.into_inner());
         stats.clone()
     }
 }

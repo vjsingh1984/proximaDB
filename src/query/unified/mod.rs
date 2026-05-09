@@ -332,7 +332,7 @@ impl UnifiedQueryEngine {
 
         let started_at_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
 
         // Generate simulated audit frames for the project plan

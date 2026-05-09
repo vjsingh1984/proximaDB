@@ -347,18 +347,16 @@ impl UnifiedWALWriter {
         if let Ok(files) = fs.list(&base_url).await {
             for file_info in &files {
                 // WAL filenames: wal_YYYYMMDD_HHMMSS_{min_seq}_{max_seq}_{uuid}.{ext}
-                if let Some(name) = file_info.name.split('/').last() {
-                    if name.starts_with("wal_") {
+                if let Some(name) = file_info.name.split('/').next_back()
+                    && name.starts_with("wal_") {
                         segment_count += 1;
                         // Extract max sequence from filename (field 3, 0-indexed)
                         let parts: Vec<&str> = name.split('_').collect();
-                        if parts.len() >= 4 {
-                            if let Ok(seq) = parts[3].parse::<u64>() {
+                        if parts.len() >= 4
+                            && let Ok(seq) = parts[3].parse::<u64>() {
                                 max_seq = max_seq.max(seq);
                             }
-                        }
                     }
-                }
             }
         }
 

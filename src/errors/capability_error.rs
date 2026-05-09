@@ -155,7 +155,7 @@ impl CapabilityError {
         if !self.available_alternatives.is_empty() {
             response["error"]["available_alternatives"] =
                 serde_json::to_value(&self.available_alternatives)
-                    .expect("Failed to serialize available alternatives");
+                    .unwrap_or(serde_json::Value::Null);
         }
 
         response

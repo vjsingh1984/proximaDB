@@ -162,7 +162,7 @@ impl ObservabilityStorageEngine for ChronoEngine {
                     && s.timestamp_ns <= end_ns
                     && label_matchers
                         .iter()
-                        .all(|(k, v)| s.labels.get(k).map_or(false, |sv| sv == v))
+                        .all(|(k, v)| s.labels.get(k) == Some(v))
             })
             .cloned()
             .collect();
@@ -198,10 +198,10 @@ impl ObservabilityStorageEngine for ChronoEngine {
             .filter(|log| {
                 log.timestamp_ns >= start_ns
                     && log.timestamp_ns <= end_ns
-                    && severity.map_or(true, |s| log.severity >= s)
+                    && severity.is_none_or(|s| log.severity >= s)
                     && text_filter
                         .as_ref()
-                        .map_or(true, |t| log.message.contains(t.as_str()))
+                        .is_none_or(|t| log.message.contains(t.as_str()))
             })
             .cloned()
             .collect();
