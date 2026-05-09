@@ -1233,8 +1233,123 @@ The next concrete follow-ups should be:
 * build/rebuild benchmark baseline before extraction (now supported by
   `python3 scripts/measure_workspace_rebuild.py --keep-going` and
   `make workspace-rebuild-baseline`; use a shared target dir to compare future extraction steps)
-* phase-1 implementation checklist for foundation crate extraction
-* operator/runtime migration checklist for `proximadb-graph`
+* phase-1 implementation checklist for foundation crate extraction (captured below)
+* operator/runtime migration checklist for `proximadb-graph` (captured below)
+
+=== Phase-1 Foundation Extraction Checklist
+
+Use this checklist before moving another root foundation/helper module. The purpose is to prevent a
+new low-level monolith while still reducing rebuild scope.
+
+[cols="1,2,2,2", options="header"]
+|===
+|Priority
+|Candidate
+|Target
+|Acceptance gate
+
+|P0
+|shared error/result contracts
+|`proximadb-kernel`
+|no transport/runtime dependencies; `python3 scripts/check_workspace_boundaries.py --strict`
+
+|P0
+|generated protocol contracts and DTO conversion helpers
+|`proximadb-proto`
+|no host/runtime helpers such as `num_cpus`, `sysinfo`, or tracing initialization
+
+|P1
+|validated configuration models and loaders
+|`proximadb-config`
+|config crates expose typed config only; service bootstrap stays in platform/runtime
+
+|P1
+|telemetry contracts, metric names, tracing facades, health primitives
+|`proximadb-telemetry`
+|telemetry contracts do not depend on modality runtimes or protocol handlers
+
+|P1
+|common value/schema/record primitives
+|`proximadb-data-model` and `proximadb-records`
+|types are serialization-safe and reused by at least two heavier layers
+
+|P2
+|generic filter and pipeline operator contracts
+|`proximadb-filter-expression` and `proximadb-pipeline-operator`
+|query, compute, and storage callers consume the same contract without root shims
+
+|P2
+|truly shared storage IO/WAL/object-store abstractions
+|future `proximadb-storage-common`
+|used by multiple modalities; no modality/query/platform dependency edge
+|===
+
+Foundation extraction rule:
+
+* move a helper downward only when it is transport-neutral, modality-neutral, and consumed by more
+  than one heavier layer
+* keep runtime composition, caches with service ownership, host inspection, and protocol handler
+  behavior out of foundation crates
+* validate every step with `python3 scripts/check_workspace_boundaries.py --strict`, the relevant
+  `cargo check -p ... --lib`, and the rebuild baseline harness when the move is expected to reduce
+  rebuild scope
+
+=== `proximadb-graph` Operator/Runtime Migration Checklist
+
+The graph modality should absorb cohesive graph runtime behavior while leaving cross-model query,
+presentation adapters, and platform composition outside the modality crate.
+
+[cols="1,2,2,2", options="header"]
+|===
+|Priority
+|Current gravity
+|Target
+|Acceptance gate
+
+|P0
+|graph engine/runtime internals under `src/graph/**`
+|`proximadb-graph`
+|root graph modules become compatibility re-exports/adapters only
+
+|P0
+|graph execution contracts and context/result rows
+|`proximadb-graph-query` for contracts, `proximadb-graph` for runtime aliases
+|query-runtime and adapters consume lower contracts without depending on graph runtime
+
+|P1
+|declarative graph subset parsing and read-only subset execution
+|`proximadb-graph-subset` as query-adapter until split is justified
+|contract crates do not depend on subset parser/runtime adapter behavior
+
+|P1
+|Arrow graph row/batch conversion
+|`proximadb-graph-arrow`
+|no dependency on concrete graph runtime; executor contract stays caller-supplied
+
+|P1
+|graph storage adapters and graph-specific persistence helpers
+|`proximadb-graph` or future graph storage submodule
+|shared storage primitives move to storage-common only if reused by another modality
+
+|P2
+|graph facade/API wiring
+|`proximadb-query` for cross-model orchestration, future `proximadb-api` for transport
+|facade/runtime layers depend on graph capability traits, not concrete root services
+
+|P2
+|graph observability and metrics emission
+|`proximadb-telemetry` contracts plus graph-owned instrumentation sites
+|telemetry contracts stay horizontal; graph runtime owns graph-specific metric emission
+|===
+
+Graph migration rule:
+
+* prefer capability traits and compatibility adapters over passing concrete root graph services
+* do not move Arrow, REST, gRPC, or facade presentation logic into `proximadb-graph`
+* keep `proximadb-graph-query` lower than graph runtime and use it for reusable graph query shape,
+  context, row, and parser contracts
+* before a physical move, run `python3 scripts/check_workspace_boundaries.py --src-map` to confirm
+  the target stratum and `python3 scripts/check_workspace_boundaries.py --strict` after the move
 
 == Bottom Line
 
