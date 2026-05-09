@@ -26,6 +26,7 @@ FOUNDATION_DISALLOWED_DEPS: dict[str, set[str]] = {
 MODALITY_ALLOWED_QUERY_CONTRACTS = {"proximadb-graph-query", "proximadb-query-filter"}
 QUERY_RUNTIME_CRATES = {"proximadb-query"}
 QUERY_ADAPTER_CRATES = {
+    "proximadb-graph-arrow",
     "proximadb-graph-subset",
 }
 QUERY_RUNTIME_DISALLOWED_CONTRACTS = QUERY_ADAPTER_CRATES
