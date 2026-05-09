@@ -1226,7 +1226,9 @@ The next concrete follow-ups should be:
   modules classified there before extraction)
 * “forbidden dependency edges” list (now generated from the enforced policy table with
   `python3 scripts/check_workspace_boundaries.py --rules`)
-* build/rebuild benchmark baseline before extraction
+* build/rebuild benchmark baseline before extraction (now supported by
+  `python3 scripts/measure_workspace_rebuild.py --keep-going` and
+  `make workspace-rebuild-baseline`; use a shared target dir to compare future extraction steps)
 * phase-1 implementation checklist for foundation crate extraction
 * operator/runtime migration checklist for `proximadb-graph`
 

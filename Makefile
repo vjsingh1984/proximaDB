@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline
+.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline
 
 # Default target
 all: build test
@@ -74,6 +74,10 @@ capability-matrix-check:
 workspace-boundaries-check:
 	@echo "🧱 Validating workspace dependency boundaries..."
 	python3 scripts/check_workspace_boundaries.py
+
+workspace-rebuild-baseline:
+	@echo "⏱️ Measuring targeted workspace rebuild baseline..."
+	python3 scripts/measure_workspace_rebuild.py --keep-going
 
 panic-policy-report:
 	@echo "🧯 WS-2 panic policy report (non-blocking)..."
