@@ -5619,6 +5619,7 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-query-fusion",
  "proximadb-records",
+ "proximadb-runtime-common",
  "proximadb-storage-common",
  "proximadb-uql",
  "proximadb-vector-query",
@@ -5873,6 +5874,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "proximadb-runtime-common"
+version = "0.2.0"
 
 [[package]]
 name = "proximadb-sdk"

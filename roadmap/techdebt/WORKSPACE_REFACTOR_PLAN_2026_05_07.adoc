@@ -80,6 +80,8 @@ crates/
     proximadb-config/
     proximadb-proto/
     proximadb-telemetry/
+  horizontal/
+    proximadb-runtime-common/
   storage/
     proximadb-storage-common/
   modalities/
@@ -624,9 +626,12 @@ Current status after the first refinement:
   engine/service callers
 * the shared glob matcher used by columnar storage file filtering now lives in
   `proximadb-storage-common`; root `utils::glob` remains a compatibility re-export
-* `scripts/measure_workspace_rebuild.py` now includes `proximadb-storage-common` in the default
-  rebuild baseline package list, so storage-common changes are measured alongside foundation, graph,
-  query, and root checks
+* `proximadb-runtime-common` now exists as the first horizontal runtime-helper crate and owns the
+  generic LRU cache implementation; root `utils::cache` remains a compatibility re-export while
+  storage, query, modality, and platform crates converge on the shared horizontal helper
+* `scripts/measure_workspace_rebuild.py` now includes `proximadb-runtime-common` and
+  `proximadb-storage-common` in the default rebuild baseline package list, so horizontal and
+  storage-common changes are measured alongside foundation, graph, query, and root checks
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:
