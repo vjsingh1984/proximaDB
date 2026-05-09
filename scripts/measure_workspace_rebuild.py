@@ -30,6 +30,7 @@ DEFAULT_PACKAGES = (
     "proximadb-records",
     "proximadb-telemetry",
     "proximadb-runtime-common",
+    "proximadb-security",
     "proximadb-runtime",
     "proximadb-storage-common",
     "proximadb-graph-query",

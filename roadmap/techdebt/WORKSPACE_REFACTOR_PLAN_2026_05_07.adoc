@@ -81,6 +81,7 @@ crates/
     proximadb-proto/
   horizontal/
     proximadb-runtime-common/
+    proximadb-security/
     proximadb-telemetry/
   storage/
     proximadb-storage-common/
@@ -640,9 +641,16 @@ Current status after the first refinement:
   request-context/request-id/span helper previously under root `utils::tracing`; root
   `utils::tracing` remains a compatibility re-export while future tracing/metrics work converges
   on the telemetry crate instead of `runtime-common`
+* `proximadb-security` now exists as the planned horizontal security/policy crate and owns the
+  reusable audit event, audit resource, audit result, and security-alert value contracts; root
+  `audit::types` remains a compatibility re-export while logger/storage runtime behavior stays in
+  root until the broader security/runtime extraction is ready
+* `workspace-boundaries-check` now blocks `proximadb-security` from taking REST/gRPC/client
+  transport dependencies, preserving it as a shared policy/contract layer rather than another
+  handler bucket
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
-  `proximadb-runtime-common`, and `proximadb-storage-common` in the default rebuild baseline
-  package list, so telemetry, horizontal, and storage-common changes are measured alongside
+  `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
+  rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside
   foundation, graph, query, and root checks
 * duplicate generated Rust proto sources have been removed from the root `src/proto` tree; generated
   Rust artifacts now live under `crates/foundation/proximadb-proto/src/proto/`, while root
@@ -1092,7 +1100,7 @@ This is the high-level target map to build toward incrementally:
 * `proximadb-storage-common`
   * only truly shared filesystem/object-store/WAL/IO primitives
 * `proximadb-security`
-  * shared authn/authz/policy/crypto runtime layer
+  * shared authn/authz/policy/crypto contracts and runtime layer
 * `proximadb-network`
   * protocol-neutral networking and shared middleware/runtime helpers
 * `proximadb-cluster`

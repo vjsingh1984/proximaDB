@@ -21,6 +21,14 @@ ROOT = Path(__file__).resolve().parents[1]
 CRATE_DISALLOWED_DEPS: dict[str, set[str]] = {
     "proximadb-kernel": {"tonic", "tonic-prost"},
     "proximadb-proto": {"num_cpus", "sysinfo", "tracing"},
+    "proximadb-security": {
+        "axum",
+        "hyper",
+        "reqwest",
+        "tonic",
+        "tonic-prost",
+        "tower",
+    },
     "proximadb-telemetry": {
         "axum",
         "hyper",

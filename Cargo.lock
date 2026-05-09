@@ -5621,6 +5621,7 @@ dependencies = [
  "proximadb-records",
  "proximadb-runtime",
  "proximadb-runtime-common",
+ "proximadb-security",
  "proximadb-storage-common",
  "proximadb-telemetry",
  "proximadb-uql",
@@ -5904,6 +5905,16 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "proximadb-security"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "proximadb-kernel",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
