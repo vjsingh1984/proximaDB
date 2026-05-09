@@ -1,0 +1,20 @@
+[package]
+name = "proximadb-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Platform runtime composition helpers for ProximaDB"
+
+[lib]
+name = "proximadb_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+proximadb-proto.workspace = true
+num_cpus = "1.16"
+sysinfo = "0.30"
+tracing = "0.1"

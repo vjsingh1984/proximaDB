@@ -5619,6 +5619,7 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-query-fusion",
  "proximadb-records",
+ "proximadb-runtime",
  "proximadb-runtime-common",
  "proximadb-storage-common",
  "proximadb-telemetry",
@@ -5875,6 +5876,16 @@ dependencies = [
  "proximadb-proto",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-runtime"
+version = "0.2.0"
+dependencies = [
+ "num_cpus",
+ "proximadb-proto",
+ "sysinfo",
+ "tracing",
 ]
 
 [[package]]

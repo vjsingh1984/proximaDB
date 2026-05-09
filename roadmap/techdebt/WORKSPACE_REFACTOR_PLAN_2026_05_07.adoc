@@ -606,7 +606,7 @@ Current status after the first refinement:
 * REST app/health state construction is now centralized behind `AppState::new` and `AppState::health_state`, which keeps the explicit graph execution capability on one construction path and removes more ad hoc holder-to-capability reconstruction from REST bootstrap/tests
 * the root crate now uses a compatibility shim instead of compiling generated proto modules directly
 * `proximadb-proto` now owns local copies of the generated proto and protocol-serde helper sources
-* runtime-oriented proto defaults now live back in the root compatibility layer (`src/proto/defaults.rs`) instead of the extracted `proximadb-proto` crate, which removes `num_cpus`, `sysinfo`, and `tracing` from the protocol foundation crate
+* runtime-oriented proto defaults now live in the platform `proximadb-runtime` crate; the root `src/proto/defaults.rs` module is only a compatibility re-export, and `proximadb-proto` remains limited to generated protocol contracts plus protocol-local serde/default shims
 * the root crate no longer carries a broad proto-tree rebuild trigger in `build.rs`
 * graph-query and shared graph-lowering/runtime modules are being switched to depend directly on `proximadb-kernel` and `proximadb-proto` instead of root `core::*` shims
 * the shared Base64 codec now lives in `proximadb-kernel`; root `utils::encoding` and
@@ -720,9 +720,11 @@ Implication:
 Correction:
 
 * keep generated protobuf types, serde/default shims, and protocol conversion helpers in `proximadb-proto`
-* move host/runtime/system helpers into future `proximadb-runtime`, `proximadb-telemetry`, or other higher-layer crates as appropriate
+* keep host/runtime/system helpers in `proximadb-runtime`, `proximadb-telemetry`, or other higher-layer crates as appropriate
 * `workspace-boundaries-check` now guards against reintroducing `num_cpus`, `sysinfo`, or `tracing`
   into `proximadb-proto`
+* `proximadb-runtime` now owns the runtime proto defaulting helper, including host CPU/memory inspection
+  and tracing diagnostics; the root proto module remains a facade for packaging/runtime compatibility
 
 ==== 3. `proximadb-multimodel-query` graph dependency has been narrowed
 
