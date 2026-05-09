@@ -1214,6 +1214,10 @@ The graph query contract layer is now lower than the graph runtime:
   so future foundation, modality, query, platform, runtime, integration, networking, security, and
   distributed-system layers should be added by extending the layer taxonomy and policy rules rather
   than appending one-off dependency branches
+* the boundary checker now recognizes planned future crate directories for `crates/storage`,
+  `crates/horizontal`, `crates/platform`, `crates/integrations`, `apps`, and `bindings` before those
+  physical moves exist, so new crates are classified into the intended skeleton instead of falling
+  into the generic application bucket
 
 == Immediate Follow-Up Deliverables
 

@@ -37,11 +37,23 @@ QUERY_RUNTIME_DISALLOWED_ADAPTERS = {
     "proximadb-graph-arrow",
     "proximadb-graph-subset",
 }
-PLATFORM_LAYERS = frozenset({"root", "application", "binding"})
 QUERY_LAYERS = frozenset(
     {"query-contract", "query-planner", "query-adapter", "query-runtime"}
 )
-NON_FOUNDATION_LAYERS = frozenset({"modality", *QUERY_LAYERS, *PLATFORM_LAYERS})
+APPLICATION_LAYERS = frozenset({"root", "application", "binding"})
+ALL_LAYERS = frozenset(
+    {
+        "foundation",
+        "storage",
+        "horizontal",
+        "modality",
+        "platform",
+        "integration",
+        *QUERY_LAYERS,
+        *APPLICATION_LAYERS,
+    }
+)
+NON_FOUNDATION_LAYERS = ALL_LAYERS - {"foundation"}
 
 
 @dataclass(frozen=True)
@@ -89,10 +101,39 @@ LAYER_RULES = (
         "foundation crates may only depend on other foundation crates",
     ),
     LayerRule(
-        frozenset({"modality"}),
-        PLATFORM_LAYERS,
+        frozenset({"storage"}),
+        frozenset(
+            {
+                "modality",
+                "platform",
+                "integration",
+                *QUERY_LAYERS,
+                *APPLICATION_LAYERS,
+            }
+        ),
         "error",
-        "modality crates must not depend on root/application/binding crates",
+        "storage-common crates must not depend upward into modality, query, platform, integration, or app layers",
+    ),
+    LayerRule(
+        frozenset({"horizontal"}),
+        frozenset(
+            {
+                "storage",
+                "modality",
+                "platform",
+                "integration",
+                *QUERY_LAYERS,
+                *APPLICATION_LAYERS,
+            }
+        ),
+        "error",
+        "horizontal infrastructure crates must stay reusable and not depend on domain, platform, integration, or app layers",
+    ),
+    LayerRule(
+        frozenset({"modality"}),
+        frozenset({"platform", "integration", *APPLICATION_LAYERS}),
+        "error",
+        "modality crates must not depend on platform/integration/root/application/binding crates",
     ),
     LayerRule(
         frozenset({"query-contract"}),
@@ -114,9 +155,9 @@ LAYER_RULES = (
     ),
     LayerRule(
         QUERY_LAYERS,
-        PLATFORM_LAYERS,
+        frozenset({"platform", "integration", *APPLICATION_LAYERS}),
         "error",
-        "query crates must not depend on root/application/binding crates",
+        "query crates must not depend on platform/integration/root/application/binding crates",
     ),
     LayerRule(
         frozenset({"query-contract", "query-adapter"}),
@@ -135,6 +176,27 @@ LAYER_RULES = (
         frozenset({"modality"}),
         "error",
         "query runtime crates must depend on modality contracts/capabilities, not concrete modality runtimes",
+    ),
+    LayerRule(
+        frozenset({"integration"}),
+        frozenset(
+            {
+                "modality",
+                "platform",
+                "query-adapter",
+                "query-planner",
+                "query-runtime",
+                *APPLICATION_LAYERS,
+            }
+        ),
+        "error",
+        "integration crates must terminate at foundation, horizontal, and stable contract layers",
+    ),
+    LayerRule(
+        frozenset({"platform"}),
+        APPLICATION_LAYERS,
+        "error",
+        "platform/runtime crates must not depend on root/application/binding crates",
     ),
 )
 
@@ -392,6 +454,10 @@ def crate_layer(member_path: Path, name: str) -> str:
         return "root"
     if parts[:2] == ("crates", "foundation"):
         return "foundation"
+    if parts[:2] == ("crates", "storage"):
+        return "storage"
+    if parts[:2] == ("crates", "horizontal"):
+        return "horizontal"
     if parts[:2] == ("crates", "modalities"):
         return "modality"
     if parts[:2] == ("crates", "query"):
@@ -400,7 +466,13 @@ def crate_layer(member_path: Path, name: str) -> str:
         if name in QUERY_PLANNER_CRATES:
             return "query-planner"
         return "query-runtime" if name in QUERY_RUNTIME_CRATES else "query-contract"
-    if parts and parts[0] == "clients":
+    if parts[:2] == ("crates", "platform"):
+        return "platform"
+    if parts[:2] == ("crates", "integrations"):
+        return "integration"
+    if parts and parts[0] == "apps":
+        return "application"
+    if parts and parts[0] in {"bindings", "clients"}:
         return "binding"
     return "application"
 
