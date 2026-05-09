@@ -648,6 +648,8 @@ Current status after the first refinement:
   Rust artifacts now live under `crates/foundation/proximadb-proto/src/proto/`, while root
   `src/proto/mod.rs` remains a compatibility re-export shim and descriptor binaries stay in place
   for existing packaging/runtime compatibility
+* orphaned root copies of the generic foundation implementation files were removed from
+  `src/core/foundation`; the root module remains a compatibility shim over `proximadb-kernel`
 
 Next implementation targets, in order:
 
