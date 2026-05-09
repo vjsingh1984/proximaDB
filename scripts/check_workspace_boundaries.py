@@ -30,6 +30,9 @@ QUERY_ADAPTER_CRATES = {
     "proximadb-graph-subset",
     "proximadb-uql",
 }
+QUERY_PLANNER_CRATES = {
+    "proximadb-multimodel-plan",
+}
 QUERY_RUNTIME_DISALLOWED_ADAPTERS = {
     "proximadb-graph-arrow",
     "proximadb-graph-subset",
@@ -82,6 +85,8 @@ def crate_layer(member_path: Path, name: str) -> str:
     if parts[:2] == ("crates", "query"):
         if name in QUERY_ADAPTER_CRATES:
             return "query-adapter"
+        if name in QUERY_PLANNER_CRATES:
+            return "query-planner"
         return "query-runtime" if name in QUERY_RUNTIME_CRATES else "query-contract"
     if parts and parts[0] == "clients":
         return "binding"
@@ -188,6 +193,16 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
                     )
                 )
 
+            if crate.layer == "query-contract" and dep.layer == "query-planner":
+                findings.append(
+                    Finding(
+                        "error",
+                        crate.name,
+                        dep.name,
+                        "query contract crates must not depend on planner/optimizer behavior crates",
+                    )
+                )
+
             if crate.layer.startswith("query") and dep.layer in {
                 "root",
                 "application",
@@ -208,7 +223,21 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
                         "warning",
                         crate.name,
                         dep.name,
-                        "query contracts still depend on modality runtime; migrate to narrower contracts",
+                        "query contract/adapter crates still depend on modality runtime; migrate to narrower contracts",
+                    )
+                )
+
+            if crate.layer == "query-planner" and dep.layer in {
+                "query-runtime",
+                "query-adapter",
+                "modality",
+            }:
+                findings.append(
+                    Finding(
+                        "error",
+                        crate.name,
+                        dep.name,
+                        "query planner crates must depend on contracts/foundation, not runtime, adapter, or modality crates",
                     )
                 )
 

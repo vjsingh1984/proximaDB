@@ -566,7 +566,7 @@ Current status after the first refinement:
 * the unified multimodel `FusionStrategy` enum now also lives in a new leaf crate, `proximadb-query-fusion`, so the root unified fusion module retains execution logic while the reusable fusion-strategy contract becomes independently buildable
 * the remaining cross-model composition IR (`MultiModelQuery`, `QueryComponent`, `ModelOperation`, join/dependency contracts, semantic join config) now also lives in `proximadb-multimodel-query`, leaving the root `query::unified::ast` module as a compatibility and re-export shell instead of an owner of multimodel request shape
 * the UQL parser and regex-based query decomposition layer (`UQLParser`, `UQLStatement`, `QueryDecomposer`, and the UQL statement AST) now also live in a new leaf crate, `proximadb-uql`, so the root unified module no longer owns parsing and decomposition logic just to expose those public query surfaces
-* the multimodel logical plan contract (`MultiModelPlan`, `Operator`, `PlanContext`, join/aggregate operator IR, validation and optimization helpers) now also lives in a new leaf crate, `proximadb-multimodel-plan`, leaving the root `query::multimodal::plan` module as a compatibility shell and enabling the first real `proximadb-query` runtime cut without dragging the root query module with it
+* `proximadb-multimodel-plan` is now explicitly treated as query-planner support rather than a pure query-contract crate: it owns `MultiModelPlan`, `Operator`, `PlanContext`, join/aggregate operator IR, validation, and optimization helpers while root `query::multimodal::plan` remains a compatibility shell
 * a first real cross-model query runtime crate, `proximadb-query`, now exists and owns UQL-to-plan lowering (`UQLLowerer`, `lower_uql_to_plan`, and related lowering helpers); the root `query::unified::lower` module is now reduced to a compatibility re-export instead of owning lowering behavior directly
 * `proximadb-query` now also owns the shared unified result/fusion runtime contracts (`QueryResult`, `UnifiedRecord`, `QueryMetrics`, `SubQueryResult`, `ResultFuser`, and fusion utilities); the root `query::unified::fusion` module and root unified result structs are reduced to compatibility re-exports instead of remaining another cross-model runtime ownership island
 * `proximadb-query` now also owns the cross-modal reranking behavior layer (`CrossModalReranker`, `RerankConfig`, `QueryContext`, `QueryIntent`, `TemporalPreference`, explanations, and reranked-result contracts); the root `query::unified::reranking` module is reduced to a compatibility re-export instead of owning another pure query-runtime behavior surface
@@ -703,7 +703,7 @@ Correction:
 * either split the crate into syntax/descriptor and runtime-adapter layers
 * or explicitly rename/reposition it as a graph-query adapter/runtime crate instead of presenting it as a pure descriptor leaf
 
-==== 5. `proximadb-multimodel-plan` currently mixes IR with validation/optimization behavior
+==== 5. `proximadb-multimodel-plan` planner behavior is now classified
 
 The logical plan crate owns not only plan/operator structures but also validation, optimization, and compute-operator conversion helpers.
 
@@ -716,6 +716,9 @@ Correction:
 
 * keep the current shape temporarily if it accelerates migration
 * but plan a later split between pure logical-plan IR and planner/optimizer behavior once `unified/lower`, fusion, and runtime execution move out of root
+* `workspace-boundaries-check` now classifies `proximadb-multimodel-plan` as `query-planner`,
+  prevents pure query-contract crates from depending on planner/optimizer behavior crates, and
+  prevents planner crates from depending upward into runtime, adapter, or concrete modality crates
 
 === Revised Isolation Strategy
 

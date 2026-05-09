@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Shared ProximaDB multimodel logical plan contracts"
+description = "Shared ProximaDB multimodel logical plan and planner support"
 
 [lib]
 name = "proximadb_multimodel_plan"
