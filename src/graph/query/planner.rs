@@ -6,8 +6,8 @@
 //! snapshot-based API.
 
 use crate::graph::GraphMemoryPool;
-use proximadb_graph::query::QueryResult;
 use proximadb_graph::query::ast::CompiledPattern;
+use proximadb_graph_query::GraphQueryResult as QueryResult;
 use std::sync::Arc;
 
 pub use proximadb_graph::query::planner::{

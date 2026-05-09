@@ -1,7 +1,6 @@
 use super::GraphOperationsService;
 use async_trait::async_trait;
-use proximadb_graph::query::QueryResult;
-use proximadb_graph_query::service::GraphQueryStatsService;
+use proximadb_graph_query::service::{GraphQueryResult as QueryResult, GraphQueryStatsService};
 use proximadb_proto::proximadb_v1::GraphStats;
 
 #[async_trait]

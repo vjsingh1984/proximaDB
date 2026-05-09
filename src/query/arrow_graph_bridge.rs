@@ -9,9 +9,8 @@ pub use proximadb_graph_arrow::{
 };
 
 use async_trait::async_trait;
-use proximadb_graph::query::QueryContext as GraphQueryContext;
-use proximadb_graph::query::executor::QueryRow as GraphQueryRow;
 use proximadb_graph::query::planner::QueryPlan;
+use proximadb_graph_query::{GraphQueryContext, GraphQueryRow};
 use proximadb_kernel::error::VectorDBError;
 
 #[async_trait]

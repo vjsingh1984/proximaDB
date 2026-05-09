@@ -73,11 +73,14 @@ pub use execution_traits::{
 };
 pub use pattern::PatternMatcher;
 pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
-pub use proximadb_graph::query::{QueryContext, QueryExecutionResult, QueryStats};
+pub use proximadb_graph_query::{
+    GraphQueryContext as QueryContext, GraphQueryExecutionResult as QueryExecutionResult,
+    GraphQueryStats as QueryStats,
+};
 pub use unified_parser::{parse_cypher, parse_cypher_with_context};
 
 /// Result type for query operations
-pub type QueryResult<T> = proximadb_graph::query::QueryResult<T>;
+pub type QueryResult<T> = proximadb_graph_query::GraphQueryResult<T>;
 
 #[cfg(test)]
 mod tests {
