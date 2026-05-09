@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Shared ProximaDB graph query subset parsing and descriptor layer"
+description = "Shared ProximaDB graph query subset parser, adapter, and execution helpers"
 
 [lib]
 name = "proximadb_graph_subset"

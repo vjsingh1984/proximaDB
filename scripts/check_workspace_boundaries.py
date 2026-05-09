@@ -21,9 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 FOUNDATION_ALLOWED_TRANSPORT = {"proximadb-proto"}
 MODALITY_ALLOWED_QUERY_CONTRACTS = {"proximadb-graph-query", "proximadb-query-filter"}
 QUERY_RUNTIME_CRATES = {"proximadb-query"}
-QUERY_RUNTIME_DISALLOWED_CONTRACTS = {
+QUERY_ADAPTER_CRATES = {
     "proximadb-graph-subset",
 }
+QUERY_RUNTIME_DISALLOWED_CONTRACTS = QUERY_ADAPTER_CRATES
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,8 @@ def crate_layer(member_path: Path, name: str) -> str:
     if parts[:2] == ("crates", "modalities"):
         return "modality"
     if parts[:2] == ("crates", "query"):
+        if name in QUERY_ADAPTER_CRATES:
+            return "query-adapter"
         return "query-runtime" if name in QUERY_RUNTIME_CRATES else "query-contract"
     if parts and parts[0] == "clients":
         return "binding"
@@ -155,6 +158,16 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
                     )
                 )
 
+            if crate.layer == "query-contract" and dep.layer == "query-adapter":
+                findings.append(
+                    Finding(
+                        "error",
+                        crate.name,
+                        dep.name,
+                        "query contract crates must not depend on query adapter/runtime crates",
+                    )
+                )
+
             if crate.layer.startswith("query") and dep.layer in {
                 "root",
                 "application",
@@ -169,7 +182,7 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
                     )
                 )
 
-            if crate.layer == "query-contract" and dep.layer == "modality":
+            if crate.layer in {"query-contract", "query-adapter"} and dep.layer == "modality":
                 findings.append(
                     Finding(
                         "warning",
