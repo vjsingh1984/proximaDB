@@ -796,7 +796,6 @@ mod tests {
 
     #[test]
     fn test_catalog_to_proxima_type_lossless() {
-        use proximadb_data_model::ProximaType;
         let all = [
             CatalogDataType::Boolean,
             CatalogDataType::Int8,
