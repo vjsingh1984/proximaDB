@@ -1193,6 +1193,10 @@ The graph query contract layer is now lower than the graph runtime:
 * `workspace-boundaries-check` now treats query-runtime -> modality-runtime edges as errors, so
   reusable query runtime code must consume contract/capability crates instead of concrete graph,
   vector, document, observability, or relational runtimes
+* `workspace-boundaries-check` also blocks `proximadb-query` from depending on
+  adapter/runtime-flavored graph subset crates; query runtime must consume the lower
+  `proximadb-graph-query` contracts and leave parser/execution adapters at root/facade/runtime
+  boundaries
 
 == Immediate Follow-Up Deliverables
 

@@ -21,6 +21,9 @@ ROOT = Path(__file__).resolve().parents[1]
 FOUNDATION_ALLOWED_TRANSPORT = {"proximadb-proto"}
 MODALITY_ALLOWED_QUERY_CONTRACTS = {"proximadb-graph-query", "proximadb-query-filter"}
 QUERY_RUNTIME_CRATES = {"proximadb-query"}
+QUERY_RUNTIME_DISALLOWED_CONTRACTS = {
+    "proximadb-graph-subset",
+}
 
 
 @dataclass(frozen=True)
@@ -183,6 +186,19 @@ def check_boundaries(crates: dict[str, Crate]) -> list[Finding]:
                         crate.name,
                         dep.name,
                         "query runtime crates must depend on modality contracts/capabilities, not concrete modality runtimes",
+                    )
+                )
+
+            if (
+                crate.layer == "query-runtime"
+                and dep.name in QUERY_RUNTIME_DISALLOWED_CONTRACTS
+            ):
+                findings.append(
+                    Finding(
+                        "error",
+                        crate.name,
+                        dep.name,
+                        "query runtime crates must not depend on adapter/runtime-flavored query contract crates",
                     )
                 )
 
