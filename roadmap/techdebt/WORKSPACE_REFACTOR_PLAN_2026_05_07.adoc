@@ -619,6 +619,9 @@ Current status after the first refinement:
 * `proximadb-storage-common` now exists as the first storage-common crate and owns the shared
   Roaring bitmap helper; root `utils::bitmap` and `storage::common::bitmap` remain compatibility
   re-exports while future storage primitives are evaluated against the storage-common acceptance gate
+* the shared tenant-aware `StoragePath` helper now also lives in `proximadb-storage-common`; root
+  `utils::storage_path` and `utils::StoragePath` remain compatibility re-exports for existing
+  engine/service callers
 * duplicate generated proto sources still remain in the root tree temporarily to minimize migration risk during the transition
 
 Next implementation targets, in order:
