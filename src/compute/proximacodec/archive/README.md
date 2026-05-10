@@ -1,6 +1,7 @@
 Archived SIMD prototype
 =======================
 
-- This directory holds the unused `simd.rs.bak2` prototype. It is not compiled by default.
-- To experiment with it, enable the `simd-experimental` feature and move or `include!` the module into an active path under `proximacodec/` (e.g., `mod simd_experimental;`).
-- Keep the archive copy unchanged so it remains a reference; create new working copies when reviving.
+- This directory is reserved for experimental SIMD-related work-in-progress assets.
+- The `simd-experimental` feature now forwards to the active `proximacodec::simd` module through
+  `simd_experimental.rs`, so there is no longer an `include!` dependency on archived prototype files.
+- Keep working copies only when actively reviving experiments.
