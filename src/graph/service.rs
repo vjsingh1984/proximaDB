@@ -19,6 +19,15 @@
 //! This module provides the operations service layer for ProximaDB's native graph database,
 //! implementing CRUD operations, queries, and traversals following the vector services pattern.
 //!
+//! **TD-GOD-FILE**: This file (~2800 lines) handles graph CRUD, traversals, analytics,
+//! pattern matching, and batch operations. It should be split into:
+//! - `graph/service/mod.rs` — Service struct + orchestration
+//! - `graph/service/crud.rs` — Node/edge create/read/update/delete
+//! - `graph/service/traversal.rs` — BFS/DFS/traversal operations
+//! - `graph/service/analytics.rs` — Analytics and aggregation
+//! - `graph/service/batch.rs` — Batch operations
+//! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
+//!
 //! ## Architecture Overview
 //!
 //! ```text

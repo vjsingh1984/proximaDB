@@ -1,4 +1,14 @@
 //! Enhanced authentication and authorization for multi-tenant enterprise
+//
+//! **DEPRECATION NOTICE (TD-AUTH-CONSOLIDATION)**:
+//! This module is being consolidated into `crate::security`.
+//! - SSO/OIDC/SAML → `crate::security::auth` + `crate::security::unified_auth`
+//! - RBAC → `crate::security::unified_rbac`
+//! - Network-layer auth (JWT, middleware) → `crate::network::auth`
+//!
+//! New code should import from `crate::security` directly.
+//! This module will become a thin re-export shim and be removed in a future release.
+//! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
 
 pub mod federated_delegation_complete;
 pub mod rbac;

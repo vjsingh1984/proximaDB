@@ -9,6 +9,7 @@ pub mod constants; // Centralized constants for all storage engines
 pub mod filter_evaluator; // Unified filter evaluation for all engines
 pub mod formats; // Storage formats: row-based, columnar
 pub mod io; // I/O operations: zero-copy, filesystem abstractions
+pub mod metadata_serializer; // Shared metadata serializer helpers (DRY across engines)
 pub mod ops; // Common operations: compression, encoding, optimization
 pub mod pca; // PCA model management for spatial clustering
 pub mod progressive; // ISP-compliant progressive search stages

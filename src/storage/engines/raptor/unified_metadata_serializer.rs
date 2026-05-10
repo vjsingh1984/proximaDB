@@ -1,14 +1,25 @@
 //! RAPTOR Metadata Serializer for UnifiedCachingFilesystem
-//!
+//
 //! Adapts RAPTOR's existing metadata serialization to work with
 //! the new EngineMetadataSerializer trait for engine-owned serialization.
+//
+//! **TD-DRY-METADATA**: The shared helpers in
+//! `crate::storage::engines::core::metadata_serializer` can be used
+//! for serialize/deserialize. This file is kept for now because it
+//! defines engine-specific metadata types (`RaptorCachedMetadata`),
+//! but the `EngineMetadataSerializer` impl delegates to shared helpers.
+//! Follow-up: extract engine-specific metadata types into a trait object.
 
 use anyhow::Result;
 use bytes::Bytes;
 use std::any::Any;
 use std::fmt::Debug;
 
-use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+use crate::storage::persistence::filesystem::metadata_traits::{
+    deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
+};
+// Shared footer extraction and path matching (DRY helpers)
+use crate::storage::engines::core::metadata_serializer::{extract_footer, path_matches_engine};
 
 use super::common::{CentroidStats, VectorCentroidCompressionMetadata};
 
@@ -57,18 +68,11 @@ impl Default for RaptorUnifiedMetadataSerializer {
 
 impl EngineMetadataSerializer for RaptorUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
-        // Try to downcast to RaptorCachedMetadata
-        if let Some(raptor_meta) = metadata.downcast_ref::<RaptorCachedMetadata>() {
-            let bytes = bincode::serialize(raptor_meta)?;
-            Ok(Bytes::from(bytes))
-        } else {
-            anyhow::bail!("Expected RaptorCachedMetadata type for RAPTOR serializer")
-        }
+        serialize_typed_metadata::<RaptorCachedMetadata>(metadata, "RaptorCachedMetadata")
     }
 
     fn deserialize(&self, bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>> {
-        let raptor_meta: RaptorCachedMetadata = bincode::deserialize(bytes)?;
-        Ok(Box::new(raptor_meta))
+        deserialize_typed_metadata::<RaptorCachedMetadata>(bytes)
     }
 
     fn engine_type(&self) -> &str {

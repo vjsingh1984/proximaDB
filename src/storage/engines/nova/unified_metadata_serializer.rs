@@ -1,8 +1,10 @@
 //! NOVA Metadata Serializer for UnifiedCachingFilesystem
-//!
+//
 //! Adapts NOVA's existing metadata serialization to work with
 //! the new EngineMetadataSerializer trait for engine-owned serialization.
 //! NOVA uses Parquet format with hierarchical statistics for advanced analytics.
+//
+//! **TD-DRY-METADATA**: Shared helpers in `core::metadata_serializer` available.
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -10,7 +12,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+use crate::storage::persistence::filesystem::metadata_traits::{
+    deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
+};
+use crate::storage::engines::core::metadata_serializer::{extract_footer, path_matches_engine};
 use serde::{Deserialize, Serialize};
 
 /// NOVA cached metadata structure
@@ -110,18 +115,11 @@ impl Default for NovaUnifiedMetadataSerializer {
 
 impl EngineMetadataSerializer for NovaUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
-        // Try to downcast to NovaCachedMetadata
-        if let Some(nova_meta) = metadata.downcast_ref::<NovaCachedMetadata>() {
-            let bytes = bincode::serialize(nova_meta)?;
-            Ok(Bytes::from(bytes))
-        } else {
-            anyhow::bail!("Expected NovaCachedMetadata type for NOVA serializer")
-        }
+        serialize_typed_metadata::<NovaCachedMetadata>(metadata, "NovaCachedMetadata")
     }
 
     fn deserialize(&self, bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>> {
-        let nova_meta: NovaCachedMetadata = bincode::deserialize(bytes)?;
-        Ok(Box::new(nova_meta))
+        deserialize_typed_metadata::<NovaCachedMetadata>(bytes)
     }
 
     fn engine_type(&self) -> &str {

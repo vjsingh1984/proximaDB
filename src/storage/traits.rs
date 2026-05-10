@@ -63,7 +63,11 @@ pub use crate::storage::trait_components::{
 // Import capabilities for OCP-compliant delegation
 use crate::storage::trait_components::capabilities::CapabilityFactory;
 
-// Import StorageEngineType for OCP-compliant engine type dispatch
+// ARCHITECTURE NOTE (TD-CROSS-LAYER): StorageEngineType is imported from the index
+// layer for engine type dispatch. This creates a storage→index dependency that
+// should be inverted: StorageEngineType should live in a shared types module
+// (e.g., core::types) consumed by both storage and index layers. See
+// docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
 use crate::index::axis::eventlog::StorageEngineType;
 
 /// Performance tier hint for storage engines

@@ -1,8 +1,10 @@
 //! SWIFT Metadata Serializer for UnifiedCachingFilesystem
-//!
+//
 //! Adapts SWIFT's existing metadata serialization to work with
 //! the new EngineMetadataSerializer trait for engine-owned serialization.
 //! SWIFT uses hierarchical blocks with Proxima encoding for instant traversal.
+//
+//! **TD-DRY-METADATA**: Shared helpers in `core::metadata_serializer` available.
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -10,7 +12,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+use crate::storage::persistence::filesystem::metadata_traits::{
+    deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
+};
+use crate::storage::engines::core::metadata_serializer::{extract_footer, path_matches_engine};
 use serde::{Deserialize, Serialize};
 
 /// SWIFT cached metadata structure
@@ -107,18 +112,11 @@ impl Default for SwiftUnifiedMetadataSerializer {
 
 impl EngineMetadataSerializer for SwiftUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
-        // Try to downcast to SwiftCachedMetadata
-        if let Some(swift_meta) = metadata.downcast_ref::<SwiftCachedMetadata>() {
-            let bytes = bincode::serialize(swift_meta)?;
-            Ok(Bytes::from(bytes))
-        } else {
-            anyhow::bail!("Expected SwiftCachedMetadata type for SWIFT serializer")
-        }
+        serialize_typed_metadata::<SwiftCachedMetadata>(metadata, "SwiftCachedMetadata")
     }
 
     fn deserialize(&self, bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>> {
-        let swift_meta: SwiftCachedMetadata = bincode::deserialize(bytes)?;
-        Ok(Box::new(swift_meta))
+        deserialize_typed_metadata::<SwiftCachedMetadata>(bytes)
     }
 
     fn engine_type(&self) -> &str {

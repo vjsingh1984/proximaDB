@@ -5,6 +5,16 @@
 
 //! Multi-server architecture with dedicated HTTP and gRPC servers
 //!
+//! **TD-GOD-FILE**: This file (~3000 lines) handles REST, gRPC, Arrow Flight,
+//! PostgreSQL wire protocol, TLS, and lifecycle. It should be split into:
+//! - `network/server/mod.rs` — MultiServer struct + lifecycle orchestration
+//! - `network/server/rest.rs` — REST/Axum server setup and routes
+//! - `network/server/grpc.rs` — gRPC/Tonic server setup
+//! - `network/server/pgwire.rs` — PostgreSQL wire protocol server
+//! - `network/server/flight.rs` — Arrow Flight server
+//! - `network/server/tls.rs` — TLS configuration for all protocols
+//! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
+//!
 //! ## Architecture Overview:
 //!
 //! ProximaDB runs two independent servers for optimal protocol handling:

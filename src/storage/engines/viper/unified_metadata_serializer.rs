@@ -1,11 +1,13 @@
 //! VIPER Engine Metadata Serializer
-//!
+//
 //! Provides metadata serialization for VIPER's Parquet-based storage format.
 //! This serializer handles:
 //! - Parquet file metadata and footer caching
 //! - Row group information
 //! - Cluster metadata for vector search
 //! - Column statistics for query optimization
+//
+//! **TD-DRY-METADATA**: Shared helpers in `core::metadata_serializer` available.
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -14,7 +16,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+use crate::storage::persistence::filesystem::metadata_traits::{
+    deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
+};
+use crate::storage::engines::core::metadata_serializer::{extract_footer, path_matches_engine};
 
 /// VIPER-specific metadata for caching
 ///
@@ -101,18 +106,11 @@ impl Default for ViperMetadataSerializer {
 
 impl EngineMetadataSerializer for ViperMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
-        // Try to downcast to ViperCachedMetadata
-        if let Some(viper_meta) = metadata.downcast_ref::<ViperCachedMetadata>() {
-            let bytes = bincode::serialize(viper_meta)?;
-            Ok(Bytes::from(bytes))
-        } else {
-            anyhow::bail!("Expected ViperCachedMetadata type for VIPER serializer")
-        }
+        serialize_typed_metadata::<ViperCachedMetadata>(metadata, "ViperCachedMetadata")
     }
 
     fn deserialize(&self, bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>> {
-        let viper_meta: ViperCachedMetadata = bincode::deserialize(bytes)?;
-        Ok(Box::new(viper_meta))
+        deserialize_typed_metadata::<ViperCachedMetadata>(bytes)
     }
 
     fn engine_type(&self) -> &str {

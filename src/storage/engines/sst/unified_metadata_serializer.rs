@@ -1,7 +1,9 @@
 //! SST Metadata Serializer for UnifiedCachingFilesystem
-//!
+//
 //! Adapts SST's existing metadata serialization to work with
 //! the new EngineMetadataSerializer trait for engine-owned serialization.
+//
+//! **TD-DRY-METADATA**: Shared helpers in `core::metadata_serializer` available.
 
 use anyhow::Result;
 use bytes::Bytes;
@@ -9,7 +11,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+use crate::storage::persistence::filesystem::metadata_traits::{
+    deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
+};
+use crate::storage::engines::core::metadata_serializer::{extract_footer, path_matches_engine};
 use serde::{Deserialize, Serialize};
 
 /// SST cached metadata structure
@@ -77,18 +82,11 @@ impl Default for SstUnifiedMetadataSerializer {
 
 impl EngineMetadataSerializer for SstUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
-        // Try to downcast to SstCachedMetadata
-        if let Some(sst_meta) = metadata.downcast_ref::<SstCachedMetadata>() {
-            let bytes = bincode::serialize(sst_meta)?;
-            Ok(Bytes::from(bytes))
-        } else {
-            anyhow::bail!("Expected SstCachedMetadata type for SST serializer")
-        }
+        serialize_typed_metadata::<SstCachedMetadata>(metadata, "SstCachedMetadata")
     }
 
     fn deserialize(&self, bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>> {
-        let sst_meta: SstCachedMetadata = bincode::deserialize(bytes)?;
-        Ok(Box::new(sst_meta))
+        deserialize_typed_metadata::<SstCachedMetadata>(bytes)
     }
 
     fn engine_type(&self) -> &str {

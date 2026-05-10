@@ -2,13 +2,21 @@
 //!
 //! This module contains the main ProximaDB database instance implementation,
 //! including initialization, lifecycle management, and core database operations.
+//!
+//! **TD-GOD-FILE**: This file (~870 lines) handles initialization, lifecycle,
+//! server orchestration, and maintenance scheduling. It should be split into:
+//! - `database/instance.rs` — ProximaDB struct + constructor
+//! - `database/lifecycle.rs` — start/shutdown/health
+//! - `database/maintenance.rs` — background tasks, RL checkpointing
+//! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-/// Convenience result type using a boxed dynamic error for cross-layer propagation.
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+// Re-use the canonical Result type from the crate root
+// (defined once in lib.rs to avoid duplication)
+use crate::Result;
 
 // RL Planner checkpoint interval (5 minutes default)
 const RL_CHECKPOINT_INTERVAL_SECS: u64 = 300;

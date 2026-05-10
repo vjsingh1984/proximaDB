@@ -1,15 +1,25 @@
 //! HELIX Metadata Serializer for UnifiedCachingFilesystem
-//!
+//
 //! Adapts HELIX's existing metadata serialization to work with
 //! the new EngineMetadataSerializer trait for engine-owned serialization.
 //! HELIX uses Hilbert curve ordering with PCA for time-series and spatial data.
+//
+//! **TD-DRY-METADATA**: The shared helpers in
+//! `crate::storage::engines::core::metadata_serializer` can be used
+//! for serialize/deserialize. This file is kept for now because it
+//! defines engine-specific metadata types (`HelixCachedMetadata`),
+//! but the `EngineMetadataSerializer` impl delegates to shared helpers.
 
 use anyhow::Result;
 use bytes::Bytes;
 use std::any::Any;
 use std::fmt::Debug;
 
-use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
+use crate::storage::persistence::filesystem::metadata_traits::{
+    deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
+};
+// Shared footer extraction and path matching (DRY helpers)
+use crate::storage::engines::core::metadata_serializer::{extract_footer, path_matches_engine};
 use serde::{Deserialize, Serialize};
 
 /// HELIX cached metadata structure
@@ -145,18 +155,11 @@ impl Default for HelixUnifiedMetadataSerializer {
 
 impl EngineMetadataSerializer for HelixUnifiedMetadataSerializer {
     fn serialize(&self, metadata: &dyn Any) -> Result<Bytes> {
-        // Try to downcast to HelixCachedMetadata
-        if let Some(helix_meta) = metadata.downcast_ref::<HelixCachedMetadata>() {
-            let bytes = bincode::serialize(helix_meta)?;
-            Ok(Bytes::from(bytes))
-        } else {
-            anyhow::bail!("Expected HelixCachedMetadata type for HELIX serializer")
-        }
+        serialize_typed_metadata::<HelixCachedMetadata>(metadata, "HelixCachedMetadata")
     }
 
     fn deserialize(&self, bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>> {
-        let helix_meta: HelixCachedMetadata = bincode::deserialize(bytes)?;
-        Ok(Box::new(helix_meta))
+        deserialize_typed_metadata::<HelixCachedMetadata>(bytes)
     }
 
     fn engine_type(&self) -> &str {

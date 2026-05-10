@@ -128,6 +128,7 @@ pub mod graph;
 pub mod api_handlers;
 
 /// Enhanced authentication and authorization for multi-tenant enterprise
+/// **DEPRECATED**: Being consolidated into `security` module. See `src/auth/mod.rs`.
 #[allow(missing_docs)]
 pub mod auth;
 
@@ -147,15 +148,18 @@ pub mod ai;
 #[allow(missing_docs)]
 pub mod deployment;
 
-/// Enterprise revenue engine for billing and customer success
+/// Enterprise revenue engine for billing and customer success (opt-in via feature `revenue_surface`)
+#[cfg(feature = "revenue_surface")]
 #[allow(missing_docs)]
 pub mod revenue;
 
-/// Sales enablement platform for customer-facing sales automation
+/// Sales enablement platform for customer-facing sales automation (opt-in via feature `sales_endpoints`)
+#[cfg(feature = "sales_endpoints")]
 #[allow(missing_docs)]
 pub mod sales_enablement;
 
-/// License management and tier enforcement for all deployment models
+/// License management and tier enforcement for all deployment models (opt-in via feature `licensing_surface`)
+#[cfg(feature = "licensing_surface")]
 #[allow(missing_docs)]
 pub mod licensing;
 
