@@ -21,16 +21,8 @@
 //!
 //! ## Migration Status (TD-DRY-METADATA)
 //!
-//! Duplicated files (all ~8-10KB with identical structure):
-//! - `src/storage/engines/raptor/unified_metadata_serializer.rs`
-//! - `src/storage/engines/nova/unified_metadata_serializer.rs`
-//! - `src/storage/engines/sst/unified_metadata_serializer.rs`
-//! - `src/storage/engines/swift/unified_metadata_serializer.rs`
-//! - `src/storage/engines/viper/unified_metadata_serializer.rs`
-//! - `src/storage/engines/helix/unified_metadata_serializer.rs`
-//!
-//! **Quick-win PR**: Import from `crate::storage::engines::core::metadata_serializer`
-//! instead of maintaining per-engine copies. Delete the 6 duplicate files.
+//! All previously duplicated per-engine `unified_metadata_serializer.rs` files have
+//! been migrated to shared implementations under `src/storage/engines/core`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
