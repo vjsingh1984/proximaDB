@@ -12,6 +12,7 @@ pub mod optimizer;
 pub mod optimizer_support;
 pub mod orchestration;
 pub mod plan_execution_cache;
+pub mod plan_executor;
 pub mod reranking;
 pub mod results;
 pub mod vector_adapter;
@@ -42,3 +43,6 @@ pub use operators::hybrid_traverse::{
     AnnSeedProvider, GraphNeighbourProvider, HybridTraverseExecutor, TraversalNode, TraversalStats,
 };
 pub use operators::mshj::{MshjExecutor, MshjRow, MshjStats};
+pub use plan_executor::{
+    OperatorStats, PlanDataSource, PlanExecutionContext, PlanExecutionResult, PlanExecutor,
+};

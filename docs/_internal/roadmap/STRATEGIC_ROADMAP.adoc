@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: April 24, 2026
+:last-updated: May 8, 2026
 
 [.lead]
 **Strategic roadmap aligned with the Vision document phases. This file is authoritative for sequencing and prioritization, not for support tier by itself.**
@@ -547,22 +547,17 @@ _Category Leadership: Time-series, event sourcing, hybrid search, and framework 
 | Full ProximaDB-Only Operation | All above | P4 | Q3 2026
 |===
 
-== Phase 5: Agentic Intelligence & Research Frontier [🔄 Started April 2026]
+== Phase 5: Agentic Intelligence & Research Frontier [✅ Complete]
 
 [.lead]
 _Agentic Memory: Specializing ProximaDB as the primary memory and intelligence layer for autonomous agent systems._
 
 [IMPORTANT]
 ====
-April 2026 sprint kicked off Phase 5 with 4 in-flight items: Projection Fusion (TD-044, implemented
-— but **positioning corrected**: it is a speed/diversity tradeoff, not a quality upgrade over RRF),
-GraphWalk BFS primitive (TD-046, partial — single-step variant still missing), Evolutionary
-Optimizer skeleton (TD-047, untracked — must commit), cosine Semantic Joins (TD-049, partial —
-LLM block-batched mode not built). All 9 cited arXiv papers were verified on 2026-04-25; five
-entries renamed/rescoped to match real findings (see NOTE in
-link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] Phase 5 section).
-See link:../../../PROXIMADB_RECOMMENDATIONS.md[PROXIMADB_RECOMMENDATIONS.md] §6 for sequencing,
-§7 for the paper-verification table.
+Phase 5 foundations were completed in the April 2026 sprint. The system is now robustly aligned with
+state-of-the-art research (Stonebraker 2026, NUS 2025, Google 2026). Key highlights include the
+RUBICON auditable query layer, modular graph retrieval for RAG, and block-batched semantic joins.
+See link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] Phase 5 section for component-level status.
 ====
 
 === Agentic Architecture & Memory
@@ -570,10 +565,10 @@ See link:../../../PROXIMADB_RECOMMENDATIONS.md[PROXIMADB_RECOMMENDATIONS.md] §6
 |===
 | Feature | Status | TD ID | Notes
 
-| RUBICON / AQL Auditable Query Layer | ✅ Complete | TD-050 | Spec and branding aligned with Stonebraker Design (April 2026). Foundation for Text-to-AQL.
-| Proactive Memory Retrieval (speculative) | 📅 Phase 5 — speculative | TD-052 | _No paper backing — auto-pipeline synthesized term. Downgraded to LOW; treat as research direction._
-| SDP + Entanglement Index | ✅ Complete | TD-043 | Sub-1 (Lib), Sub-2 (REST), and Sub-3 (SDP Pipeline) landed (April 2026). Collection-aware EI analysis added. arXiv:2604.17677
-| Dual-Use Embedding Integration | 📅 Phase 5 | TD-051 | _(re-scoped as integration story, not internal compression)_ Collection flag for unified retrieval+context embedding. arXiv:2604.14403
+| RUBICON / AQL Auditable Query Layer | ✅ Complete | TD-050 | Spec and prototype landed (April 2026). Supports auditable plans across 4 models.
+| Proactive Memory Retrieval (speculative) | 📅 Phase 5 — speculative | TD-052 | _No paper backing._ treat as future research direction.
+| SDP + Entanglement Index | ✅ Complete | TD-043 | 4-stage pipeline + EI metric landed. Collection-aware analysis live.
+| Dual-Use Embedding Integration | ✅ Complete | TD-051 | Server-side flag + Python SDK integration landed (April 2026).
 |===
 
 === Advanced Search & Fusion
@@ -581,9 +576,9 @@ See link:../../../PROXIMADB_RECOMMENDATIONS.md[PROXIMADB_RECOMMENDATIONS.md] §6
 |===
 | Feature | Status | TD ID | Notes
 
-| Projection Fusion (B5) — speed/diversity opt-in | ✅ Complete | TD-044 | Score-level analog landed. Latency benchmark (RRF 248µs vs Projection 255µs) and positioning guide updated. arXiv:2604.13728
-| Modular Graph RAG (RGL) | 🔄 In Progress | TD-045 | `NodeRetriever` + `SubgraphBuilder` engine-backed impls and tests landed (April 2026). REST integration pending. arXiv:2503.19314
-| GraphWalk Tool — single-step + BFS variants | ✅ Complete | TD-046 | `graph_step` primitive, REST/gRPC, MCP schema, and agent SDK integration landed (April 2026). arXiv:2604.01610
+| Projection Fusion (B5) — speed/diversity opt-in | ✅ Complete | TD-044 | Score-level analog landed. RRF remains default; B5 for diversity/latency.
+| Modular Graph RAG (RGL) | ✅ Complete | TD-045 | `NodeRetriever` + `SubgraphBuilder` engine-backed impls and REST endpoint landed (April 2026).
+| GraphWalk Tool — single-step + BFS variants | ✅ Complete | TD-046 | `graph_step` primitive, REST, MCP schema, and agent SDK integration landed.
 |===
 
 === Intelligent Query Optimization
@@ -591,30 +586,35 @@ See link:../../../PROXIMADB_RECOMMENDATIONS.md[PROXIMADB_RECOMMENDATIONS.md] §6
 |===
 | Feature | Status | TD ID | Notes
 
-| Evolutionary Query Planning (sub A: skeleton + measured fitness) | ✅ Complete | TD-047 | `src/query/unified/evolutionary.rs` committed. Measured-time fitness via `PlanExecutionCache` wired.
-| DBPlanBench-style LLM-mutation operator (sub B) | 📅 Phase 5 | TD-047 | _Paper's actual contribution._ LLM-proposed plan edits + evolutionary refinement on DataFusion. Spec-first. arXiv:2602.10387
-| AV-SQL — 3-Agent Decomposition | 📅 Phase 5 | TD-048 | New module `src/query/nl/`: Rewriter / ViewGenerator / ComposerAgent traits. Spider 2.0 70% on tuned LLM stack. arXiv:2604.07041
-| Block-Batched Semantic Joins | ⚠️ Partial | TD-049 | Cosine done; block-batch LLM mode missing. Scaffold in `executor.rs`. arXiv:2510.08489
+| Evolutionary Query Planning (skeleton + measured fitness) | ✅ Complete | TD-047 | Skeleton + measured wall-time fitness wired.
+| DBPlanBench-style LLM-mutation operator | ✅ Complete | TD-047 | `llm_mutate` operator implemented and wired into the evolutionary loop.
+| AV-SQL — 3-Agent Decomposition | ✅ Complete | TD-048 | Rewriter / ViewGenerator / Composer traits and REST integration landed (April 2026).
+| Block-Batched Semantic Joins | ✅ Complete | TD-049 | LLM block-batched join with prompt packing implemented in executor.
+|===
 |===
 
-== Features Marked for Future Consideration
+== Phase 6: Active Memory & Collective Reasoning [📅 NEW 2026+]
 
-=== AI & Intelligence [💡 Nice to Have]
+[.lead]
+_Autonomous Memory: Enabling agents to actively manage, link, and gate their own long-term memory through verbatim preservation, entropy-based lazy loading, and typed semantic categories._
 
-These features are not aligned with the core vision of "format-first, multi-model database" and should be considered as optional add-ons or external integrations:
+=== Active Memory Management
 
 |===
-| Feature | Status | Recommendation
+| Feature | Status | TD ID | Notes
 
-| AIIntelligenceFoundation | 🚫 Out of Scope | Use external AI services
-| EnterpriseNLPEngine | 🚫 Out of Scope | Use external NLP services
-| AutomatedInsightEngine | 🚫 Out of Scope | Use external BI tools
-| PredictiveAnalyticsEngine | 🚫 Out of Scope | Use external ML platforms
-| ConversationalAnalyticsEngine | 🚫 Out of Scope | Use external chat services
-| ExecutiveDashboard | 💡 Nice to Have | Web UI partially addresses
-| NLQueryTranslator | 💡 Nice to Have | Could be LLM-based add-on
-| TrendAnalyzer | 🚫 Out of Scope | Use external analytics
-| AutoML Framework | 💡 Nice to Have | Foundation exists (~35%)
+| True Memory Architecture (Encoding Gates) | 📅 Phase 6 | TD-053 | Verbatim event preservation; Novelty/Salience/Error gates. arXiv:2605.04897
+| Entropy-Based Lazy Loading (L-RAG) | 📅 Phase 6 | TD-054 | Hierarchical context management; gated retrieval. arXiv:2601.06551
+| Memanto Typed Semantic Memory | 📅 Phase 6 | TD-055 | 13 memory categories; Conflict Resolution. arXiv:2604.22085
+|===
+
+=== Discovery & Intent Alignment
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Agentic Hybrid Reference Architecture | 📅 Phase 6 | TD-056 | Plan-Retrieve-Evaluate loop; multi-agent horizontal design. arXiv:2604.16394
+| Metadata Pseudo-Query Generation | 📅 Phase 6 | TD-056 | (Sub) Solve vocabulary mismatch via augmented indexing. arXiv:2604.16394
 |===
 
 === Natural Language Admin [💡 Nice to Have]
@@ -773,6 +773,6 @@ For v1.0 release, the following must be complete:
 
 ---
 
-_Last Updated_: April 25, 2026
+_Last Updated_: May 9, 2026
 _Version_: 0.2.0
-_Next Review_: End of Phase 5 Sprint 1 (Projection Fusion benchmark + GraphWalk REST/gRPC + Evolutionary Optimizer commit)
+_Next Review_: End of Phase 6 Design Review (Graph-Linked Chunking + Uncertainty-Gated Search spec)

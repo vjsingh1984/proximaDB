@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
 use super::{AuthCredentials, IdentityProvider};
-use crate::security::unified_rbac::{AuthMethod, UnifiedUserContext};
+use crate::security::unified_rbac::{UnifiedAuthMethod, UnifiedUserContext};
 
 /// LDAP Identity Provider
 ///
@@ -168,7 +168,7 @@ impl IdentityProvider for LdapProvider {
                         tenant_id: None,
                         roles,
                         effective_permissions: HashSet::new(),
-                        auth_method: AuthMethod::SSO {
+                        auth_method: UnifiedAuthMethod::SSO {
                             provider: "ldap".to_string(),
                         },
                         session_id: uuid::Uuid::new_v4().to_string(),

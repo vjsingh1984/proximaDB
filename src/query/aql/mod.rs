@@ -10,6 +10,7 @@
 
 use crate::core::error::ProximaDBError;
 use crate::query::unified::ast::{JoinType as UnifiedJoinType, MultiModelQuery, QueryComponent};
+use proximadb_data_model::MemoryType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -131,6 +132,10 @@ pub enum AqlPredicate {
         threshold: f32,
         top_k: u32,
     },
+    /// High-fidelity memory type filter (Memanto — TD-055).
+    TypeMatch {
+        memory_type: MemoryType,
+    },
 }
 
 /// Literal values in AQL predicates.
@@ -141,6 +146,14 @@ pub enum AqlValue {
     Float(f64),
     Bool(bool),
     Vector(Vec<f32>),
+    /// ISO-8601 date string or days since epoch.
+    Date(String),
+    /// ISO-8601 timestamp string with offset.
+    TimestampTz(String),
+    /// Structured JSON data.
+    Json(serde_json::Value),
+    /// Binary JSON data for faster access.
+    Jsonb(serde_json::Value),
     Null,
 }
 
@@ -197,6 +210,10 @@ pub enum AuditOp {
     },
     Scan {
         source: String,
+    },
+    /// Type-filtered retrieval step.
+    TypeMatch {
+        memory_type: MemoryType,
     },
 }
 

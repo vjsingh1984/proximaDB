@@ -15,7 +15,7 @@ pub mod validation;
 
 pub use unified_rbac::{
     AuthMethod, AuthorizationResult, CollectionPermissionType, ConsolidatedRBACManager, RBACConfig,
-    TenantContext, UnifiedPermission, UnifiedRole, UnifiedUserContext,
+    TenantContext, UnifiedAuthMethod, UnifiedPermission, UnifiedRole, UnifiedUserContext,
 };
 
 pub use unified_auth::{

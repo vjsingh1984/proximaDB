@@ -19,7 +19,7 @@ use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::security::encryption::{EncryptedField, FieldEncryption};
 use crate::security::rls::{CollectionRLS, Operation as RLSOperation, RLSFilterResult};
-use crate::security::unified_rbac::UnifiedUserContext;
+use crate::security::unified_rbac::{UnifiedAuthMethod, UnifiedUserContext};
 use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
 /// Helper to create a SqlValue from a string
@@ -447,7 +447,7 @@ mod tests {
     use super::*;
     use crate::core::search::ComparisonOperator;
     use crate::security::rls::RLSConfig;
-    use crate::security::unified_rbac::AuthMethod;
+    use crate::security::unified_rbac::UnifiedAuthMethod;
     use chrono::Utc;
     use proximadb_security::AuditConfig;
     use std::collections::HashSet;
@@ -458,7 +458,7 @@ mod tests {
             tenant_id: None,
             roles: vec!["user".to_string()],
             effective_permissions: HashSet::new(),
-            auth_method: AuthMethod::Internal,
+            auth_method: UnifiedAuthMethod::Internal,
             session_id: "test_session".to_string(),
             expires_at: None,
             created_at: Utc::now(),

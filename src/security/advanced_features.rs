@@ -7,7 +7,7 @@
 //! - Advanced session management
 //! - Security monitoring and alerting
 
-use super::unified_rbac::{UnifiedPermission, UnifiedUserContext};
+use super::unified_rbac::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
 
 use anyhow::{Result, anyhow};
@@ -239,7 +239,7 @@ impl MFAService {
                     tenant_id: session.tenant_id.clone(),
                     roles: vec![],
                     effective_permissions: HashSet::new(),
-                    auth_method: super::unified_rbac::AuthMethod::Internal,
+                    auth_method: UnifiedAuthMethod::Internal,
                     session_id: session_id.to_string(),
                     expires_at: None,
                     created_at: Utc::now(),
@@ -271,7 +271,7 @@ impl MFAService {
                     tenant_id: session.tenant_id.clone(),
                     roles: vec![],
                     effective_permissions: HashSet::new(),
-                    auth_method: super::unified_rbac::AuthMethod::Internal,
+                    auth_method: UnifiedAuthMethod::Internal,
                     session_id: session_id.to_string(),
                     expires_at: None,
                     created_at: Utc::now(),

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::query::aql::{
-    AqlFrom, AqlQuery, AqlResult, AqlSource, AqlValue, AuditContext, AuditFrame, AuditOp,
-    AuditOutcome, AuditTrail, JoinType, Result,
+    AqlFrom, AqlPredicate, AqlQuery, AqlResult, AqlSource, AqlValue, AuditContext, AuditFrame,
+    AuditOp, AuditOutcome, AuditTrail, JoinType, Result,
 };
 
 use crate::storage::engines::eventlog::{Event, EventLogEngine};
@@ -154,7 +154,34 @@ impl AqlExecutor {
                         name
                     ))
                 })?;
-                source.execute(full_query, ctx).await
+                let mut res = source.execute(full_query, ctx).await?;
+
+                // Apply post-retrieval filtering if WHERE clause is present
+                if let Some(predicate) = &full_query.where_clause.predicate {
+                    let start = Instant::now();
+                    let initial_count = res.rows.len();
+                    res.rows
+                        .retain(|row| self.evaluate_predicate(row, predicate));
+
+                    if initial_count != res.rows.len() {
+                        let wall_time_us = start.elapsed().as_micros() as u64;
+                        let frame = AuditFrame {
+                            frame_id: 0,
+                            source: source.model(),
+                            op: audit_op_for_post_filter(predicate, name),
+                            filters_pushed: Vec::new(),
+                            filters_post: vec![format!("{:?}", predicate)],
+                            records_scanned: initial_count as u64,
+                            records_returned: res.rows.len() as u64,
+                            wall_time_us,
+                            error: None,
+                            redaction_count: 0,
+                        };
+                        ctx.push_frame(frame);
+                    }
+                }
+
+                Ok(res)
             }
             AqlFrom::Join {
                 left,
@@ -173,6 +200,38 @@ impl AqlExecutor {
             AqlFrom::MultiSource { sources } => {
                 Box::pin(self.execute_multi_source(full_query, sources, ctx)).await
             }
+        }
+    }
+
+    fn evaluate_predicate(&self, row: &HashMap<String, AqlValue>, pred: &AqlPredicate) -> bool {
+        match pred {
+            AqlPredicate::Equals { field, value } => row.get(field).map_or(false, |v| v == value),
+            AqlPredicate::GreaterThan { field, value } => {
+                row.get(field).map_or(false, |v| v > value)
+            }
+            AqlPredicate::LessThan { field, value } => row.get(field).map_or(false, |v| v < value),
+            AqlPredicate::Contains { field, value } => {
+                if let (Some(AqlValue::String(s)), AqlValue::String(v)) = (row.get(field), value) {
+                    s.contains(v)
+                } else {
+                    false
+                }
+            }
+            AqlPredicate::And { lhs, rhs } => {
+                self.evaluate_predicate(row, lhs) && self.evaluate_predicate(row, rhs)
+            }
+            AqlPredicate::Or { lhs, rhs } => {
+                self.evaluate_predicate(row, lhs) || self.evaluate_predicate(row, rhs)
+            }
+            AqlPredicate::Not { inner } => !self.evaluate_predicate(row, inner),
+            AqlPredicate::SemanticMatch { .. } => true, // Handled by source if possible, else skip
+            AqlPredicate::TypeMatch { memory_type } => row
+                .get("memory_type")
+                .or_else(|| row.get("type"))
+                .is_some_and(|value| match value {
+                    AqlValue::String(s) => s.parse() == Ok(*memory_type),
+                    _ => false,
+                }),
         }
     }
 
@@ -286,5 +345,47 @@ impl AqlExecutor {
             }
         }
         Ok(result)
+    }
+}
+
+fn audit_op_for_post_filter(predicate: &AqlPredicate, source: &str) -> AuditOp {
+    match predicate {
+        AqlPredicate::TypeMatch { memory_type } => AuditOp::TypeMatch {
+            memory_type: *memory_type,
+        },
+        _ => AuditOp::Scan {
+            source: source.to_string(),
+        },
+    }
+}
+
+impl PartialOrd for AqlValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (AqlValue::Int(a), AqlValue::Int(b)) => a.partial_cmp(b),
+            (AqlValue::Float(a), AqlValue::Float(b)) => a.partial_cmp(b),
+            (AqlValue::String(a), AqlValue::String(b)) => a.partial_cmp(b),
+            (AqlValue::Bool(a), AqlValue::Bool(b)) => a.partial_cmp(b),
+            (AqlValue::Date(a), AqlValue::Date(b)) => a.partial_cmp(b),
+            (AqlValue::TimestampTz(a), AqlValue::TimestampTz(b)) => a.partial_cmp(b),
+            _ => None,
+        }
+    }
+}
+
+impl PartialEq for AqlValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (AqlValue::Int(a), AqlValue::Int(b)) => a == b,
+            (AqlValue::Float(a), AqlValue::Float(b)) => a == b,
+            (AqlValue::String(a), AqlValue::String(b)) => a == b,
+            (AqlValue::Bool(a), AqlValue::Bool(b)) => a == b,
+            (AqlValue::Date(a), AqlValue::Date(b)) => a == b,
+            (AqlValue::TimestampTz(a), AqlValue::TimestampTz(b)) => a == b,
+            (AqlValue::Json(a), AqlValue::Json(b)) => a == b,
+            (AqlValue::Jsonb(a), AqlValue::Jsonb(b)) => a == b,
+            (AqlValue::Null, AqlValue::Null) => true,
+            _ => false,
+        }
     }
 }

@@ -35,7 +35,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use std::collections::HashMap;
 
 
 /// Common metadata header shared across all storage engines.

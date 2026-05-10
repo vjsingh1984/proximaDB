@@ -557,7 +557,7 @@ mod tests {
             tenant_id: tenant_id.map(|s| s.to_string()),
             roles: roles.into_iter().map(|s| s.to_string()).collect(),
             effective_permissions: HashSet::new(),
-            auth_method: crate::security::unified_rbac::AuthMethod::Internal,
+            auth_method: crate::security::unified_rbac::UnifiedAuthMethod::Internal,
             session_id: "test_session".to_string(),
             expires_at: None,
             created_at: Utc::now(),

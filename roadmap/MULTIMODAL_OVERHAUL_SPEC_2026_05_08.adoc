@@ -1600,7 +1600,7 @@ Each ADR is a sticky decision; new turns should not relitigate without explicit 
 
 * The legacy proto types stay alive through compatibility shims (the existing pattern
   used for `proximadb-graph` extraction). No public API breaks within v0.2.x.
-* `ProximaRecord` and `ProximaValue` ship in v0.2.5 as the recommended types. Legacy
+* `ProximaRecord` and `ProximaValue` ship in v0.2.0 as the recommended types. Legacy
   wire types still work; converters live in the `proximadb-records` crate.
 * v0.3.0 removes legacy proto types in one major version bump. Migration script
   (`scripts/migrate_v02_v03.py`) re-flushes existing data to the new layout.

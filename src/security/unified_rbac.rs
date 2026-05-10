@@ -120,22 +120,28 @@ pub struct UnifiedUserContext {
     pub tenant_id: Option<String>,
     pub roles: Vec<String>,
     pub effective_permissions: HashSet<UnifiedPermission>,
-    pub auth_method: AuthMethod,
+    pub auth_method: UnifiedAuthMethod,
     pub session_id: String,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub metadata: HashMap<String, String>,
 }
 
-/// Authentication method enum
+/// Authentication method enum for the unified security surface.
+/// This lives in the security/rbac boundary and intentionally differs from
+/// `crate::network::auth::AuthMethod`, which models inbound transport/auth-provider
+/// style handling at the network edge.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum AuthMethod {
+pub enum UnifiedAuthMethod {
     SSO { provider: String },
     JWT,
     ApiKey,
     ClientCertificate,
     Internal,
 }
+
+/// Compatibility alias preserved for existing call sites in the security crate.
+pub type AuthMethod = UnifiedAuthMethod;
 
 /// Consolidated RBAC Manager
 pub struct ConsolidatedRBACManager {
@@ -442,7 +448,7 @@ impl ConsolidatedRBACManager {
             tenant_id: Some(user_context.tenant_id.clone()),
             roles: user_context.roles.clone(),
             effective_permissions: HashSet::new(),
-            auth_method: AuthMethod::Internal,
+            auth_method: UnifiedAuthMethod::Internal,
             session_id: uuid::Uuid::new_v4().to_string(),
             expires_at: None,
             created_at: Utc::now(),
@@ -939,7 +945,7 @@ mod tests {
             ]
             .into_iter()
             .collect(),
-            auth_method: AuthMethod::JWT,
+            auth_method: UnifiedAuthMethod::JWT,
             session_id: "session_123".to_string(),
             expires_at: None,
             created_at: Utc::now(),
@@ -1178,7 +1184,7 @@ mod tests {
             tenant_id: Some("tenant_x".into()),
             roles: vec![],
             effective_permissions: HashSet::new(),
-            auth_method: AuthMethod::ApiKey,
+            auth_method: UnifiedAuthMethod::ApiKey,
             session_id: "sess_cross".into(),
             expires_at: None,
             created_at: Utc::now(),

@@ -51,6 +51,113 @@ use crate::query::unified_query_optimizer::{
     UnifiedQueryContext, UnifiedQueryOptimizer,
 };
 
+pub(crate) const PROXIMADB_PSEUDO_QUERY_FIELD: &str = "proximadb.pseudo_query";
+pub(crate) const PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD: &str = "proximadb.pseudo_query_source_fields";
+
+/// Generate derived metadata entries for bounded, auditable dataset lookup.
+pub trait PseudoQueryGenerator: Send + Sync {
+    /// Build additional metadata entries from source metadata.
+    fn generate_metadata(
+        &self,
+        metadata: &HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    ) -> HashMap<String, crate::proto::proximadb_v1::SqlValue>;
+}
+
+#[derive(Debug, Default)]
+pub struct DefaultPseudoQueryGenerator;
+
+impl DefaultPseudoQueryGenerator {
+    fn extract_text(value: &crate::proto::proximadb_v1::SqlValue) -> Option<String> {
+        use crate::proto::proximadb_v1::sql_value::Value as SqlValueVariant;
+
+        match value.value.as_ref()? {
+            SqlValueVariant::StringValue(v) => Some(v.clone()),
+            SqlValueVariant::Int64Value(v) => Some(v.to_string()),
+            SqlValueVariant::NumberValue(v) => Some(v.to_string()),
+            SqlValueVariant::BoolValue(v) => Some(v.to_string()),
+            _ => None,
+        }
+    }
+
+    fn sanitize_terms(input: &str) -> String {
+        input
+            .split_whitespace()
+            .map(|token| token.trim().to_lowercase())
+            .filter(|token| !token.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+impl PseudoQueryGenerator for DefaultPseudoQueryGenerator {
+    fn generate_metadata(
+        &self,
+        metadata: &HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    ) -> HashMap<String, crate::proto::proximadb_v1::SqlValue> {
+        use crate::proto::proximadb_v1::sql_value::Value as SqlValueVariant;
+
+        let candidate_fields = [
+            "title",
+            "content",
+            "description",
+            "summary",
+            "body",
+            "category",
+            "tags",
+        ];
+
+        let mut source_fields = Vec::new();
+        let mut terms = Vec::new();
+
+        for field in candidate_fields {
+            if let Some(value) = metadata.get(field).and_then(Self::extract_text) {
+                let normalized = Self::sanitize_terms(&value);
+                if !normalized.is_empty() {
+                    source_fields.push(field.to_string());
+                    terms.push(normalized);
+                }
+            }
+        }
+
+        if terms.is_empty() {
+            return HashMap::new();
+        }
+
+        let mut pseudo_query = terms.join(" ");
+        if pseudo_query.len() > 512 {
+            pseudo_query.truncate(512);
+        }
+
+        let mut generated = HashMap::new();
+        generated.insert(
+            PROXIMADB_PSEUDO_QUERY_FIELD.to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(SqlValueVariant::StringValue(pseudo_query)),
+            },
+        );
+        generated.insert(
+            PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD.to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(SqlValueVariant::StringValue(source_fields.join(","))),
+            },
+        );
+
+        generated
+    }
+}
+
+fn apply_pseudo_query_metadata(
+    vectors: &mut [VectorRecord],
+    pseudo_query_generator: &dyn PseudoQueryGenerator,
+) {
+    for vector in vectors.iter_mut() {
+        let generated = pseudo_query_generator.generate_metadata(&vector.metadata);
+        for (key, value) in generated {
+            vector.metadata.entry(key).or_insert(value);
+        }
+    }
+}
+
 pub(crate) fn build_axis_hybrid_query(
     collection_id: &str,
     search_params: &crate::core::search::SearchParams,
@@ -306,6 +413,9 @@ pub struct VectorOperationsService {
 
     /// Collection name validator for security
     collection_name_validator: CollectionNameValidator,
+
+    /// Ingestion-time pseudo-query enrichment for auditable retrieval.
+    pseudo_query_generator: Arc<dyn PseudoQueryGenerator>,
 }
 
 impl VectorOperationsService {
@@ -751,6 +861,7 @@ impl VectorOperationsService {
             // Security validation for metadata fields
             metadata_validator: MetadataValidator::default(),
             collection_name_validator: CollectionNameValidator::default(),
+            pseudo_query_generator: Arc::new(DefaultPseudoQueryGenerator::default()),
         }
     }
 
@@ -800,6 +911,15 @@ impl VectorOperationsService {
     /// - Strict mode for enhanced security
     pub fn with_metadata_validation_config(mut self, config: MetadataValidationConfig) -> Self {
         self.metadata_validator = MetadataValidator::new(config);
+        self
+    }
+
+    /// Configure the pseudo-query generator used for ingestion metadata enrichment.
+    pub fn with_pseudo_query_generator<G>(mut self, generator: G) -> Self
+    where
+        G: PseudoQueryGenerator + 'static,
+    {
+        self.pseudo_query_generator = Arc::new(generator);
         self
     }
 
@@ -917,6 +1037,9 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
     ) -> Result<BatchOperationResult> {
+        let mut vectors = vectors;
+        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
+
         let start_time = std::time::Instant::now();
         let vector_count = vectors.len();
         let vector_ids: Vec<String> = vectors.iter().map(|v| v.id.clone()).collect();
@@ -1011,6 +1134,9 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
     ) -> Result<BatchOperationResult> {
+        let mut vectors = vectors;
+        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
+
         let decision = self.bulk_write_router.should_use_direct_write(&vectors);
 
         debug!(
@@ -2686,6 +2812,9 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
     ) -> Result<crate::storage::engines::InsertResult> {
+        let mut vectors = vectors;
+        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
+
         self.validate_vectors_for_insert(collection_id, &vectors)
             .await?;
 
@@ -2715,6 +2844,9 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Arc<Vec<VectorRecord>>,
     ) -> Result<crate::storage::engines::InsertResult> {
+        let mut vectors: Vec<VectorRecord> = (*vectors).clone();
+        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
+
         // Validate vectors before insertion
         self.validate_vectors_for_insert(collection_id, &vectors)
             .await?;
@@ -2723,7 +2855,7 @@ impl VectorOperationsService {
         let start = std::time::Instant::now();
         let _batch_result = self
             .wal_manager
-            .write_vector_batch_native_arc(collection_id, vectors.clone())
+            .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
             .await?;
 
         // Index vectors in AXIS for fast in-memory search (HNSW/IVF)
@@ -3472,6 +3604,116 @@ mod tenant_tests {
             err.to_string()
                 .contains("request is scoped to tenant 'tenant_a'")
         );
+    }
+}
+
+#[cfg(test)]
+mod pseudo_query_tests {
+    use super::*;
+
+    fn make_vector(id: &str, metadata: Vec<(&str, &str)>) -> VectorRecord {
+        let mut vector_metadata = HashMap::new();
+        for (key, value) in metadata {
+            vector_metadata.insert(
+                key.to_string(),
+                crate::proto::proximadb_v1::SqlValue {
+                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        value.to_string(),
+                    )),
+                },
+            );
+        }
+
+        VectorRecord {
+            id: id.to_string(),
+            vector: vec![1.0, 2.0, 3.0],
+            metadata: vector_metadata,
+            timestamp: None,
+            updated_at: None,
+            expires_at: None,
+            version: None,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn test_default_pseudo_query_generator_appends_metadata() {
+        let mut vectors = vec![make_vector(
+            "vec-1",
+            vec![
+                ("title", "Rust Vector Search"),
+                ("content", "Plan-Retrieve-Evaluate loop for dataset recall."),
+                ("category", "retrieval"),
+            ],
+        )];
+
+        let generator = DefaultPseudoQueryGenerator;
+        apply_pseudo_query_metadata(&mut vectors, &generator);
+
+        let pseudo_query = vectors[0]
+            .metadata
+            .get(PROXIMADB_PSEUDO_QUERY_FIELD)
+            .and_then(|value| value.value.as_ref());
+        let source_fields = vectors[0]
+            .metadata
+            .get(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD)
+            .and_then(|value| value.value.as_ref());
+
+        assert!(matches!(
+            pseudo_query,
+            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(_))
+        ));
+        assert!(matches!(
+            source_fields,
+            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(fields))
+            if fields.contains("title") && fields.contains("content") && fields.contains("category")
+        ));
+    }
+
+    #[test]
+    fn test_default_pseudo_query_generator_no_candidate_fields() {
+        let mut vectors = vec![make_vector("vec-2", vec![("noisy", "value"), ("count", "1")])];
+        let generator = DefaultPseudoQueryGenerator;
+
+        apply_pseudo_query_metadata(&mut vectors, &generator);
+
+        assert!(!vectors[0].metadata.contains_key(PROXIMADB_PSEUDO_QUERY_FIELD));
+        assert!(!vectors[0]
+            .metadata
+            .contains_key(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD));
+    }
+
+    #[test]
+    fn test_default_pseudo_query_generator_preserves_existing_pseudo_query() {
+        let mut vectors = make_vector("vec-3", vec![("title", "Original Title")]);
+        vectors.metadata.insert(
+            PROXIMADB_PSEUDO_QUERY_FIELD.to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(
+                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                        "custom pseudo".to_string(),
+                    ),
+                ),
+            },
+        );
+
+        let existing = vectors
+            .metadata
+            .get(PROXIMADB_PSEUDO_QUERY_FIELD)
+            .and_then(|value| value.value.as_ref())
+            .cloned();
+
+        let mut vectors = vec![vectors];
+        let generator = DefaultPseudoQueryGenerator;
+        apply_pseudo_query_metadata(&mut vectors, &generator);
+
+        let after = vectors[0]
+            .metadata
+            .get(PROXIMADB_PSEUDO_QUERY_FIELD)
+            .and_then(|value| value.value.as_ref())
+            .cloned();
+
+        assert_eq!(existing, after);
     }
 }
 

@@ -1,6 +1,7 @@
 //! SQL frontend parser: wraps sqlparser-rs and produces the internal AST.
 
 use anyhow::{Result, anyhow};
+use std::collections::HashMap;
 use sqlparser::ast::{
     BinaryOperator, Cte as SqlCte, Expr as SqlExpr, FunctionArg, FunctionArgExpr, Join as SqlJoin,
     JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr, Query as SqlQuery,
@@ -9,6 +10,7 @@ use sqlparser::ast::{
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+use sqlparser::ast::{CreateIndex, IndexOption};
 
 // DML types for INSERT/UPDATE/DELETE
 use crate::services::dml::{
@@ -1416,12 +1418,236 @@ impl Default for SqlFrontendParser {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_ddl_alter_table_set_data_type_supports_jsonb() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("ALTER TABLE demo ALTER COLUMN payload SET DATA TYPE JSONB;")
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        if let DdlStatement::AlterTable {
+            table_name,
+            changes,
+            ..
+        } = statement
+        {
+            assert_eq!(table_name, "demo");
+            assert_eq!(changes.len(), 1);
+
+            match &changes[0] {
+                AlterTableChange::ChangeType {
+                    column_name,
+                    new_type,
+                } => {
+                    assert_eq!(column_name, "payload");
+                    assert!(matches!(new_type, SqlDataType::Jsonb));
+                }
+                _ => panic!("expected change type for JSONB"),
+            }
+        } else {
+            panic!("expected alter table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_table_supports_jsonb() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("CREATE TABLE demo (payload JSONB);")
+            .expect("expected ddl parse to succeed")
+            .expect("expected create table ddl");
+
+        if let DdlStatement::CreateTable {
+            table_name,
+            columns,
+            ..
+        } = statement
+        {
+            assert_eq!(table_name, "demo");
+            assert_eq!(columns.len(), 1);
+            assert_eq!(columns[0].name, "payload");
+            assert!(matches!(columns[0].data_type, SqlDataType::Jsonb));
+        } else {
+            panic!("expected create table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_table_supports_jsonb_with_additional_columns() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("CREATE TABLE demo (id INT, payload JSONB);")
+            .expect("expected ddl parse to succeed")
+            .expect("expected create table ddl");
+
+        if let DdlStatement::CreateTable {
+            table_name,
+            columns,
+            ..
+        } = statement
+        {
+            assert_eq!(table_name, "demo");
+            assert_eq!(columns.len(), 2);
+            assert_eq!(columns[0].name, "id");
+            assert_eq!(columns[1].name, "payload");
+            assert!(matches!(columns[1].data_type, SqlDataType::Jsonb));
+        } else {
+            panic!("expected create table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_index_supports_default_btree() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("CREATE INDEX demo_payload_idx ON demo (payload);")
+            .expect("expected ddl parse to succeed")
+            .expect("expected create index ddl");
+
+        if let DdlStatement::CreateIndex {
+            index_name,
+            table_name,
+            columns,
+            index_type,
+            if_not_exists,
+            ..
+        } = statement
+        {
+            assert_eq!(index_name, "demo_payload_idx");
+            assert_eq!(table_name, "demo");
+            assert_eq!(columns, vec!["payload".to_string()]);
+            assert!(matches!(index_type, IndexType::BTree));
+            assert!(!if_not_exists);
+        } else {
+            panic!("expected create index statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_drop_table_supports_table_name() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("DROP TABLE demo;")
+            .expect("expected ddl parse to succeed")
+            .expect("expected drop table ddl");
+
+        if let DdlStatement::DropTable {
+            table_name,
+            if_exists,
+            purge,
+        } = statement
+        {
+            assert_eq!(table_name, "demo");
+            assert!(!if_exists);
+            assert!(!purge);
+        } else {
+            panic!("expected drop table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_drop_index_supports_drop_index() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("DROP INDEX demo_payload_idx ON demo;")
+            .expect("expected ddl parse to succeed")
+            .expect("expected drop index ddl");
+
+        if let DdlStatement::DropIndex {
+            index_name,
+            table_name,
+            if_exists,
+        } = statement
+        {
+            assert_eq!(index_name, "demo_payload_idx");
+            assert_eq!(table_name, "demo");
+            assert!(!if_exists);
+        } else {
+            panic!("expected drop index statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_unsupported_statements_still_fail_fast() {
+        let parser = SqlFrontendParser::new();
+        let unsupported = [
+            (
+                "CREATE TABLE demo AS SELECT * FROM events;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            ("DROP TABLE;", "sql parser error", false),
+            (
+                "CREATE TABLE demo LIKE users;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            (
+                "CREATE TABLE demo CLONE users;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            ("DROP TABLESPACE sample_space;", "sql parser error", false),
+            ("DROP VIEW demo;", "Unsupported DROP object type", false),
+            (
+                "CREATE INDEX demo_payload_idx ON demo USING GIN (payload);",
+                "Unsupported CREATE INDEX USING",
+                false,
+            ),
+            (
+                "DROP INDEX demo_payload_idx;",
+                "DROP INDEX requires a table name",
+                true,
+            ),
+        ];
+
+        for (sql, expected, exact) in unsupported {
+            let err = parser
+                .parse_ddl(sql)
+                .expect_err("expected unsupported ddl to be rejected");
+            let err_msg = err.to_string();
+            if exact {
+                assert_eq!(err_msg, expected, "unexpected parse error for `{sql}`");
+            } else {
+                assert!(
+                    err_msg.contains(expected),
+                    "unexpected parse error for `{sql}`: {err_msg}"
+                );
+            }
+        }
+
+        let non_ddl = [
+            "INSERT INTO users (id) VALUES (1);",
+            "SELECT * FROM users;",
+        ];
+
+        for sql in non_ddl {
+            assert!(
+                parser.parse_ddl(sql).is_ok_and(|s| s.is_none()),
+                "expected `{sql}` to parse as non-DDL (`None`)"
+            );
+        }
+    }
+}
+
 // ========================
 // DDL Statement Parsing
 // ========================
 
 use crate::services::ddl::{
     AlterTableChange, ColumnDefinition, ColumnPosition, DdlStatement, SqlDataType, TableConstraint,
+    IndexType,
 };
 
 impl SqlFrontendParser {
@@ -1447,7 +1673,9 @@ impl SqlFrontendParser {
 
     /// Try to convert a statement to DDL, returning None for non-DDL statements
     fn try_convert_ddl(&self, statement: &Statement) -> Result<Option<DdlStatement>> {
-        use sqlparser::ast::{AlterTableOperation, ColumnOption};
+        use sqlparser::ast::{
+            AlterTableOperation, ColumnOption, ObjectType as SqlObjectType,
+        };
 
         match statement {
             Statement::AlterTable {
@@ -1616,16 +1844,126 @@ impl SqlFrontendParser {
                     changes,
                 }))
             }
-            Statement::CreateTable(_) | Statement::CreateIndex(_) | Statement::Drop { .. } => {
-                // These can be added later if needed
-                Err(anyhow!(
-                    "CREATE/DROP DDL statements should use the DDL service directly"
-                ))
+            Statement::CreateTable(create_table) => {
+                if create_table.query.is_some()
+                    || create_table.like.is_some()
+                    || create_table.clone.is_some()
+                {
+                    return Err(anyhow!(
+                        "CREATE TABLE with query/LIKE/CLONE clauses is not supported"
+                    ));
+                }
+
+                let table_name = create_table.name.to_string();
+                let if_not_exists = create_table.if_not_exists;
+                let columns = create_table
+                    .columns
+                    .iter()
+                    .map(|col| self.convert_column_def(col))
+                    .collect::<Result<Vec<_>>>()?;
+
+                Ok(Some(DdlStatement::CreateTable {
+                    table_name,
+                    columns,
+                    if_not_exists,
+                    properties: HashMap::new(),
+                }))
             }
+            Statement::CreateIndex(create_index) => {
+                let index_name = create_index
+                    .name
+                    .as_ref()
+                    .map(|name| name.to_string())
+                    .ok_or_else(|| anyhow!("CREATE INDEX requires an index name"))?;
+                let table_name = create_index.table_name.to_string();
+                let columns = create_index
+                    .columns
+                    .iter()
+                    .map(|col| col.column.to_string())
+                    .collect::<Vec<_>>();
+                let index_type = self.parse_index_type(create_index)?;
+                let if_not_exists = create_index.if_not_exists;
+
+                Ok(Some(DdlStatement::CreateIndex {
+                    index_name,
+                    table_name,
+                    columns,
+                    index_type,
+                    if_not_exists,
+                }))
+            }
+            Statement::Drop {
+                object_type,
+                if_exists,
+                names,
+                purge,
+                table,
+                ..
+            } => match object_type {
+                SqlObjectType::Table => {
+                    let table_name = names
+                        .first()
+                        .ok_or_else(|| anyhow!("DROP TABLE requires a table name"))?
+                        .to_string();
+                    Ok(Some(DdlStatement::DropTable {
+                        table_name,
+                        if_exists: *if_exists,
+                        purge: *purge,
+                    }))
+                }
+                SqlObjectType::Index => {
+                    let index_name = names
+                        .first()
+                        .ok_or_else(|| anyhow!("DROP INDEX requires an index name"))?
+                        .to_string();
+                    let table_name = table
+                        .as_ref()
+                        .map(|table_name| table_name.to_string())
+                        .ok_or_else(|| anyhow!("DROP INDEX requires a table name"))?;
+
+                    Ok(Some(DdlStatement::DropIndex {
+                        index_name,
+                        table_name,
+                        if_exists: *if_exists,
+                    }))
+                }
+                _ => Err(anyhow!("Unsupported DROP object type: {:?}", object_type)),
+            },
             Statement::Query(_) => Ok(None), // SELECT query, not DDL
             Statement::Insert(_) | Statement::Update { .. } | Statement::Delete(_) => Ok(None), // DML
             _ => Ok(None),
         }
+    }
+
+    fn parse_index_type(&self, create_index: &CreateIndex) -> Result<IndexType> {
+        let explicit_using = create_index
+            .using
+            .as_ref()
+            .cloned()
+            .or_else(|| {
+            create_index.index_options.iter().find_map(|opt| {
+                if let IndexOption::Using(index_type) = opt {
+                    Some(index_type.clone())
+                } else {
+                    None
+                }
+            })
+        });
+
+        let index_type = explicit_using.unwrap_or(sqlparser::ast::IndexType::BTree);
+        let index_type = match index_type {
+            sqlparser::ast::IndexType::BTree => IndexType::BTree,
+            sqlparser::ast::IndexType::Hash => IndexType::Hash,
+            sqlparser::ast::IndexType::Custom(name) if name.value.eq_ignore_ascii_case("fulltext") => {
+                IndexType::FullText
+            }
+            sqlparser::ast::IndexType::Custom(name) => {
+                return Err(anyhow!("Unsupported CREATE INDEX USING {}", name.value));
+            }
+            other => return Err(anyhow!("Unsupported CREATE INDEX USING {}", other)),
+        };
+
+        Ok(index_type)
     }
 
     /// Convert sqlparser column definition to DDL ColumnDefinition
@@ -1723,7 +2061,8 @@ impl SqlFrontendParser {
                 }
             }
             SqlDt::Uuid => Ok(SqlDataType::Uuid),
-            SqlDt::JSON | SqlDt::JSONB => Ok(SqlDataType::Json),
+            SqlDt::JSON => Ok(SqlDataType::Json),
+            SqlDt::JSONB => Ok(SqlDataType::Jsonb),
             SqlDt::Custom(name, modifiers) => {
                 let type_name = name.to_string().to_uppercase();
                 match type_name.as_str() {

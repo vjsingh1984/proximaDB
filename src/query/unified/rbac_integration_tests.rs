@@ -22,7 +22,7 @@ use crate::query::unified::{
     executor::ParallelExecutor,
 };
 use crate::security::unified_rbac::{
-    ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
+    ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
 use crate::storage::document::DocumentService;
 
@@ -40,7 +40,7 @@ fn create_test_user(user_id: &str, tenant_id: Option<&str>) -> UnifiedUserContex
         tenant_id: tenant_id.map(|s| s.to_string()),
         roles: Vec::new(),
         effective_permissions: HashSet::new(),
-        auth_method: crate::security::unified_rbac::AuthMethod::Internal,
+        auth_method: UnifiedAuthMethod::Internal,
         session_id: uuid::Uuid::new_v4().to_string(),
         expires_at: None,
         created_at: Utc::now(),

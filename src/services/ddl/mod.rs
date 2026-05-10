@@ -168,6 +168,8 @@ pub enum SqlDataType {
     Uuid,
     /// JSON document.
     Json,
+    /// Binary JSON document.
+    Jsonb,
     /// Dense vector type: VECTOR(dimension)
     Vector {
         /// Number of dimensions in the vector.
@@ -851,7 +853,7 @@ impl DdlService {
             SqlDataType::Timestamp => CatalogDataType::Timestamp,
             SqlDataType::TimestampTz => CatalogDataType::TimestampTz,
             SqlDataType::Uuid => CatalogDataType::Uuid,
-            SqlDataType::Json => CatalogDataType::Json,
+            SqlDataType::Json | SqlDataType::Jsonb => CatalogDataType::Json,
             SqlDataType::Vector { dimension } => {
                 properties.insert("dimension".to_string(), dimension.to_string());
                 CatalogDataType::Vector
@@ -1068,6 +1070,24 @@ mod tests {
         match vector_type {
             SqlDataType::Vector { dimension } => assert_eq!(dimension, 768),
             _ => panic!("Expected Vector type"),
+        }
+    }
+
+    #[test]
+    fn test_sql_to_catalog_type_maps_json_and_jsonb_to_json_catalog_type() {
+        let service = DdlService::new(Arc::new(CatalogManager::new()));
+
+        let mapping_inputs = [SqlDataType::Json, SqlDataType::Jsonb];
+
+        for sql_type in mapping_inputs {
+            let (catalog_type, props) = service
+                .sql_to_catalog_type(&sql_type)
+                .expect("mapping json/jsonb should succeed");
+            assert_eq!(catalog_type, CatalogDataType::Json);
+            assert!(
+                props.is_empty(),
+                "json/jsonb mapping should not emit extra properties"
+            );
         }
     }
 }

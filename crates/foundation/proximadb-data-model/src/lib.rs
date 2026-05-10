@@ -65,10 +65,99 @@ impl std::fmt::Display for DataModel {
 
 /// Legacy alias for [`DataModel`]. Use `DataModel` in new code.
 #[deprecated(
-    since = "0.2.5",
+    since = "0.2.0",
     note = "Renamed to DataModel per Overhaul Spec Section 3.3"
 )]
 pub type StoreType = DataModel;
+
+// ---------------------------------------------------------------------------
+// Typed Semantic Memory (Memanto — TD-055)
+// ---------------------------------------------------------------------------
+
+/// Standardized memory categories for agentic memory systems.
+///
+/// The 13 categories are intentionally flat so records can be filtered by
+/// memory intent without inventing source-specific metadata conventions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryType {
+    /// Objective, verifiable information.
+    Fact,
+    /// User or system preference.
+    Preference,
+    /// Choice made that affects future behavior.
+    Decision,
+    /// Promise, obligation, or scheduled responsibility.
+    Commitment,
+    /// Objective to achieve.
+    Goal,
+    /// Historical occurrence.
+    Event,
+    /// Rule or guideline.
+    Instruction,
+    /// Entity connection.
+    Relationship,
+    /// Situational information.
+    Context,
+    /// Lesson learned from experience.
+    Learning,
+    /// Pattern or signal noticed.
+    Observation,
+    /// Mistake, failure, or constraint to avoid.
+    Error,
+    /// Document, code, or external reference.
+    Artifact,
+}
+
+impl MemoryType {
+    /// Stable lowercase name used in metadata, JSON, and AQL type filters.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MemoryType::Fact => "fact",
+            MemoryType::Preference => "preference",
+            MemoryType::Decision => "decision",
+            MemoryType::Commitment => "commitment",
+            MemoryType::Goal => "goal",
+            MemoryType::Event => "event",
+            MemoryType::Instruction => "instruction",
+            MemoryType::Relationship => "relationship",
+            MemoryType::Context => "context",
+            MemoryType::Learning => "learning",
+            MemoryType::Observation => "observation",
+            MemoryType::Error => "error",
+            MemoryType::Artifact => "artifact",
+        }
+    }
+}
+
+impl std::fmt::Display for MemoryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for MemoryType {
+    type Err = ();
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "fact" => Ok(MemoryType::Fact),
+            "preference" => Ok(MemoryType::Preference),
+            "decision" => Ok(MemoryType::Decision),
+            "commitment" => Ok(MemoryType::Commitment),
+            "goal" => Ok(MemoryType::Goal),
+            "event" => Ok(MemoryType::Event),
+            "instruction" => Ok(MemoryType::Instruction),
+            "relationship" => Ok(MemoryType::Relationship),
+            "context" => Ok(MemoryType::Context),
+            "learning" => Ok(MemoryType::Learning),
+            "observation" => Ok(MemoryType::Observation),
+            "error" => Ok(MemoryType::Error),
+            "artifact" => Ok(MemoryType::Artifact),
+            _ => Err(()),
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Canonical Type System (ProximaType)
@@ -99,7 +188,7 @@ pub enum ProximaType {
     },
     // Text
     String,
-    Symbol, // Dictionary-encoded
+    Symbol,
     // Binary
     Binary,
     // Temporal
@@ -114,6 +203,7 @@ pub enum ProximaType {
     ULID,
     // Structured
     Json,
+    Jsonb,
     Array(Box<ProximaType>),
     Map {
         key: Box<ProximaType>,
@@ -136,6 +226,8 @@ pub enum ProximaType {
     // Geo
     Point,
     GeographyPoint,
+    // Special
+    Null,
 }
 
 /// Time units for temporal types.
@@ -195,6 +287,7 @@ pub enum ProximaValue {
     ULID([u8; 16]),
     // Structured
     Json(serde_json::Value),
+    Jsonb(serde_json::Value),
     Array(Vec<ProximaValue>),
     Map(std::collections::HashMap<String, ProximaValue>),
     Struct(std::collections::HashMap<String, ProximaValue>),
@@ -230,7 +323,7 @@ impl ProximaType {
             ProximaType::Float32 => ArrowDataType::Float32,
             ProximaType::Float64 => ArrowDataType::Float64,
             ProximaType::Decimal { precision, scale } => {
-                ArrowDataType::Decimal128(*precision as u8, *scale as i8)
+                ArrowDataType::Decimal128(*precision, *scale as i8)
             }
             ProximaType::String => ArrowDataType::Utf8,
             ProximaType::Symbol => ArrowDataType::Dictionary(
@@ -250,7 +343,7 @@ impl ProximaType {
             ProximaType::Duration(unit) => ArrowDataType::Duration(arrow_time_unit(unit)),
             ProximaType::Uuid => ArrowDataType::FixedSizeBinary(16),
             ProximaType::ULID => ArrowDataType::FixedSizeBinary(16),
-            ProximaType::Json => ArrowDataType::LargeUtf8,
+            ProximaType::Json | ProximaType::Jsonb => ArrowDataType::LargeUtf8,
             ProximaType::Array(inner) => {
                 let field = Field::new("item", inner.to_arrow(), true);
                 ArrowDataType::List(Arc::new(field))
@@ -323,6 +416,7 @@ impl ProximaType {
                 ]
                 .into(),
             ),
+            ProximaType::Null => ArrowDataType::Null,
         }
     }
 
@@ -356,15 +450,17 @@ impl ProximaType {
             ProximaType::Duration(_) => 1186,
             ProximaType::Uuid => 2950,
             ProximaType::ULID => 2950,
-            ProximaType::Json => 114,       // json
-            ProximaType::Array(_) => 2277,  // anyarray
-            ProximaType::Map { .. } => 114, // json (no native map)
-            ProximaType::Struct { .. } => 114,
+            ProximaType::Json => 114,        // json
+            ProximaType::Jsonb => 3802,      // jsonb
+            ProximaType::Array(_) => 2277,   // anyarray
+            ProximaType::Map { .. } => 3802, // jsonb (no native map)
+            ProximaType::Struct { .. } => 3802,
             ProximaType::DenseVector { .. } => 17, // bytea (pgvector uses custom OID when registered)
             ProximaType::SparseVector { .. } => 17,
             ProximaType::BinaryVector { .. } => 17,
             ProximaType::Point => 600, // pg point
             ProximaType::GeographyPoint => 600,
+            ProximaType::Null => 705, // unknown
         }
     }
 }
@@ -412,6 +508,7 @@ impl ProximaValue {
             ProximaValue::Uuid(_) => ProximaType::Uuid,
             ProximaValue::ULID(_) => ProximaType::ULID,
             ProximaValue::Json(_) => ProximaType::Json,
+            ProximaValue::Jsonb(_) => ProximaType::Jsonb,
             ProximaValue::Array(items) => {
                 let inner = items
                     .first()
@@ -421,7 +518,7 @@ impl ProximaValue {
             }
             ProximaValue::Map(_) => ProximaType::Map {
                 key: Box::new(ProximaType::String),
-                value: Box::new(ProximaType::Json),
+                value: Box::new(ProximaType::Jsonb),
             },
             ProximaValue::Struct(_) => ProximaType::Struct { fields: vec![] },
             ProximaValue::DenseVector(v) => ProximaType::DenseVector {
@@ -432,13 +529,15 @@ impl ProximaValue {
                 element: VectorElement::Float32,
             },
             ProximaValue::BinaryVector(v) => ProximaType::BinaryVector { dim: v.len() * 8 },
-            ProximaValue::Null => ProximaType::Boolean, // sentinel; use is_compatible_with for Null
+            ProximaValue::Null => ProximaType::Null,
         }
     }
 
     /// Return `true` if this value is assignment-compatible with the given type.
     ///
-    /// `Null` is compatible with any type. Otherwise the value and type variant must match.
+    /// `Null` is compatible with any type. JSON and JSONB are mutually
+    /// assignable at this layer because both carry `serde_json::Value`; pgwire
+    /// presentation decides whether the column OID is JSON or JSONB.
     pub fn is_compatible_with(&self, ty: &ProximaType) -> bool {
         if matches!(self, ProximaValue::Null) {
             return true;
@@ -459,7 +558,6 @@ impl ProximaValue {
             (ProximaValue::Decimal(_), ProximaType::Decimal { .. }) => true,
             (ProximaValue::String(_), ProximaType::String) => true,
             (ProximaValue::Symbol(_), ProximaType::Symbol) => true,
-            // Allow widening: String also fits Symbol in storage
             (ProximaValue::String(_), ProximaType::Symbol) => true,
             (ProximaValue::Binary(_), ProximaType::Binary) => true,
             (ProximaValue::Date(_), ProximaType::Date) => true,
@@ -468,10 +566,11 @@ impl ProximaValue {
             (ProximaValue::TimestampTz(_, _), ProximaType::TimestampTz(_)) => true,
             (ProximaValue::Uuid(_), ProximaType::Uuid) => true,
             (ProximaValue::ULID(_), ProximaType::ULID) => true,
-            (ProximaValue::Json(_), ProximaType::Json) => true,
+            (ProximaValue::Json(_), ProximaType::Json | ProximaType::Jsonb) => true,
+            (ProximaValue::Jsonb(_), ProximaType::Json | ProximaType::Jsonb) => true,
             (ProximaValue::Array(_), ProximaType::Array(_)) => true,
-            (ProximaValue::Map(_), ProximaType::Map { .. }) => true,
-            (ProximaValue::Struct(_), ProximaType::Struct { .. }) => true,
+            (ProximaValue::Map(_), ProximaType::Map { .. } | ProximaType::Jsonb) => true,
+            (ProximaValue::Struct(_), ProximaType::Struct { .. } | ProximaType::Jsonb) => true,
             (ProximaValue::DenseVector(_), ProximaType::DenseVector { .. }) => true,
             (ProximaValue::SparseVector { .. }, ProximaType::SparseVector { .. }) => true,
             (ProximaValue::BinaryVector(_), ProximaType::BinaryVector { .. }) => true,
@@ -499,11 +598,20 @@ mod tests {
         }
     }
 
-    // ----- Phase A: Arrow mapping tests -----
+    #[test]
+    fn memory_type_serialization() {
+        let mt = MemoryType::Preference;
+        let json = serde_json::to_string(&mt).unwrap();
+        assert_eq!(json, "\"preference\"");
+        assert_eq!(mt.to_string(), "preference");
+        assert_eq!(
+            "preference".parse::<MemoryType>(),
+            Ok(MemoryType::Preference)
+        );
+    }
 
     #[test]
     fn test_arrow_roundtrip_all_scalars() {
-        // Every scalar ProximaType produces a valid ArrowDataType without panic
         let types = vec![
             ProximaType::Boolean,
             ProximaType::Int8,
@@ -524,12 +632,30 @@ mod tests {
             ProximaType::Uuid,
             ProximaType::ULID,
             ProximaType::Json,
+            ProximaType::Jsonb,
             ProximaType::Point,
             ProximaType::GeographyPoint,
+            ProximaType::Null,
         ];
         for ty in &types {
-            let _ = ty.to_arrow(); // must not panic
+            let _ = ty.to_arrow();
         }
+    }
+
+    #[test]
+    fn test_jsonb_arrow_and_pgwire_oid() {
+        assert_eq!(ProximaType::Json.to_arrow(), ArrowDataType::LargeUtf8);
+        assert_eq!(ProximaType::Jsonb.to_arrow(), ArrowDataType::LargeUtf8);
+        assert_eq!(ProximaType::Json.pgwire_oid(), 114);
+        assert_eq!(ProximaType::Jsonb.pgwire_oid(), 3802);
+        assert_eq!(
+            ProximaType::Map {
+                key: Box::new(ProximaType::String),
+                value: Box::new(ProximaType::Jsonb),
+            }
+            .pgwire_oid(),
+            3802
+        );
     }
 
     #[test]
@@ -577,8 +703,6 @@ mod tests {
         }
     }
 
-    // ----- Phase A: pgwire OID tests -----
-
     #[test]
     fn test_pgwire_decimal_oid() {
         assert_eq!(
@@ -606,7 +730,6 @@ mod tests {
 
     #[test]
     fn test_pgwire_vector_oid() {
-        // DenseVector maps to bytea OID (17) until pgvector registers a custom OID
         assert_eq!(
             ProximaType::DenseVector {
                 element: VectorElement::Float32,
@@ -616,8 +739,6 @@ mod tests {
             17
         );
     }
-
-    // ----- Phase A: ProximaValue type introspection tests -----
 
     #[test]
     fn test_proxima_value_type_of_decimal() {
@@ -638,6 +759,13 @@ mod tests {
     }
 
     #[test]
+    fn test_proxima_value_type_of_jsonb_and_null() {
+        let val = ProximaValue::Jsonb(serde_json::json!({"a": 1}));
+        assert!(matches!(val.type_of(), ProximaType::Jsonb));
+        assert!(matches!(ProximaValue::Null.type_of(), ProximaType::Null));
+    }
+
+    #[test]
     fn test_value_compatible_with_exact() {
         assert!(ProximaValue::Int64(5).is_compatible_with(&ProximaType::Int64));
         assert!(ProximaValue::Float32(1.0).is_compatible_with(&ProximaType::Float32));
@@ -648,6 +776,15 @@ mod tests {
             }
         ));
         assert!(ProximaValue::Uuid([0u8; 16]).is_compatible_with(&ProximaType::Uuid));
+    }
+
+    #[test]
+    fn test_json_and_jsonb_are_assignment_compatible() {
+        let json = ProximaValue::Json(serde_json::json!({"a": 1}));
+        let jsonb = ProximaValue::Jsonb(serde_json::json!({"a": 1}));
+        assert!(json.is_compatible_with(&ProximaType::Jsonb));
+        assert!(jsonb.is_compatible_with(&ProximaType::Json));
+        assert!(jsonb.is_compatible_with(&ProximaType::Jsonb));
     }
 
     #[test]

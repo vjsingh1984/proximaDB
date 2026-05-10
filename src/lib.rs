@@ -128,7 +128,6 @@ pub mod graph;
 pub mod api_handlers;
 
 /// Enhanced authentication and authorization for multi-tenant enterprise
-/// **DEPRECATED**: Being consolidated into `security` module. See `src/auth/mod.rs`.
 #[allow(missing_docs)]
 pub mod auth;
 

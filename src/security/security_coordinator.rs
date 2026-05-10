@@ -11,7 +11,7 @@ use super::encryption::{
 use super::rls::{CollectionRLS, Operation as RLSOperation, RLSConfig, RLSFilterResult, RLSPolicy};
 use super::unified_auth::{AuthenticationConfig, AuthenticationData, UnifiedAuthService};
 use super::unified_rbac::{
-    ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
+    ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
 use crate::audit::logger::AuditLogger;
 use proximadb_security::AuditConfig;
@@ -440,7 +440,7 @@ pub struct AuthorizedContext {
 #[derive(Debug, Clone)]
 pub struct SessionMetadata {
     pub authenticated_at: chrono::DateTime<Utc>,
-    pub auth_method: super::unified_rbac::AuthMethod,
+    pub auth_method: UnifiedAuthMethod,
     pub requires_mfa: bool,
 }
 

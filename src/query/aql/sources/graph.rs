@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::proto::proximadb_v1::property_value::Value as PropValueData;
 use crate::query::aql::{
     AqlFrom, AqlQuery, AqlResult, AqlSource, AqlValue, AuditContext, AuditFrame, AuditOp,
     DataModel, Result,
@@ -28,10 +29,60 @@ impl GraphAqlSource {
             graph_id = name.clone();
         }
 
-        // Predicates could specify traversal depth or starting nodes
+        // Predicates could specify traversal depth or starting nodes.
         // For this skeleton, we use defaults.
-
         (graph_id, max_depth)
+    }
+
+    fn prop_data_to_aql(val: &PropValueData) -> AqlValue {
+        match val {
+            PropValueData::StringValue(s) => AqlValue::String(s.clone()),
+            PropValueData::IntValue(i) => AqlValue::Int(*i),
+            PropValueData::DoubleValue(f) => AqlValue::Float(*f),
+            PropValueData::BoolValue(b) => AqlValue::Bool(*b),
+            PropValueData::BytesValue(b) => serde_json::from_slice(b)
+                .map(AqlValue::Jsonb)
+                .unwrap_or(AqlValue::Null),
+            PropValueData::ObjectValue(obj) => {
+                let mut map = serde_json::Map::new();
+                for (key, value) in &obj.fields {
+                    if let Some(inner) = &value.value {
+                        map.insert(
+                            key.clone(),
+                            Self::aql_to_json_value(&Self::prop_data_to_aql(inner)),
+                        );
+                    }
+                }
+                AqlValue::Jsonb(serde_json::Value::Object(map))
+            }
+            PropValueData::ArrayValue(arr) => {
+                let values = arr
+                    .values
+                    .iter()
+                    .map(|value| {
+                        value
+                            .value
+                            .as_ref()
+                            .map(Self::prop_data_to_aql)
+                            .map(|value| Self::aql_to_json_value(&value))
+                            .unwrap_or(serde_json::Value::Null)
+                    })
+                    .collect();
+                AqlValue::Jsonb(serde_json::Value::Array(values))
+            }
+            _ => AqlValue::Null,
+        }
+    }
+
+    fn aql_to_json_value(value: &AqlValue) -> serde_json::Value {
+        match value {
+            AqlValue::String(s) => serde_json::Value::String(s.clone()),
+            AqlValue::Int(i) => serde_json::json!(i),
+            AqlValue::Float(f) => serde_json::json!(f),
+            AqlValue::Bool(b) => serde_json::Value::Bool(*b),
+            AqlValue::Json(j) | AqlValue::Jsonb(j) => j.clone(),
+            _ => serde_json::Value::Null,
+        }
     }
 }
 
@@ -46,13 +97,11 @@ impl AqlSource for GraphAqlSource {
         let start = Instant::now();
 
         // In a real implementation, we'd use the AQL WHERE clause to find
-        // starting nodes and then perform a traversal.
-        // For this skeleton, we'll perform a generic traversal from a placeholder ID
-        // if no specific start nodes are identified.
-
+        // starting nodes and then perform a traversal. For this skeleton, use a
+        // generic traversal from a placeholder ID when no start node is derived.
         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
             graph_id: graph_id.clone(),
-            start_node_id: "root".to_string(), // Placeholder
+            start_node_id: "root".to_string(),
             max_depth: depth,
             edge_types: Vec::new(),
             node_labels: Vec::new(),
@@ -75,7 +124,6 @@ impl AqlSource for GraphAqlSource {
 
         let wall_time_us = start.elapsed().as_micros() as u64;
 
-        // Convert to AQL rows
         let mut rows = Vec::new();
         for node in traversal_result.nodes {
             let mut row = HashMap::new();
@@ -85,11 +133,15 @@ impl AqlSource for GraphAqlSource {
                 AqlValue::String(node.labels.join(",")),
             );
 
-            // In a real system, we'd expand properties here
+            for (key, property) in node.properties {
+                if let Some(value) = property.value {
+                    row.insert(key, Self::prop_data_to_aql(&value));
+                }
+            }
+
             rows.push(row);
         }
 
-        // Emit audit frame
         let frame = AuditFrame {
             frame_id: 0,
             source: self.model(),
@@ -100,7 +152,7 @@ impl AqlSource for GraphAqlSource {
             },
             filters_pushed: Vec::new(),
             filters_post: Vec::new(),
-            records_scanned: rows.len() as u64, // Approximated
+            records_scanned: rows.len() as u64,
             records_returned: rows.len() as u64,
             wall_time_us,
             error: None,

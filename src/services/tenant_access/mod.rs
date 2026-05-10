@@ -30,18 +30,22 @@ pub struct CollectionOwnership {
     pub owner_tenant_id: String,
 }
 
+/// Tenant access permissions for collection-level sharing decisions.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Permission {
+pub enum TenantAccessPermission {
     Read,
     Write,
     Admin,
 }
 
+/// Backward-compatible local alias used by existing signatures/tests.
+pub type Permission = TenantAccessPermission;
+
 #[derive(Debug, Clone)]
 pub struct CollectionSharing {
     pub collection_id: String,
     pub shared_with_tenant_id: String,
-    pub permissions: Vec<Permission>,
+    pub permissions: Vec<TenantAccessPermission>,
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +106,7 @@ pub trait TenantAccessService: Send + Sync {
         &self,
         tenant_id: &str,
         collection_id: &str,
-        required_permission: Permission,
+        required_permission: TenantAccessPermission,
     ) -> Result<bool>;
     async fn get_owned_collections(&self, tenant_id: &str) -> Result<Vec<String>>;
     async fn get_shared_collections(&self, tenant_id: &str) -> Result<Vec<String>>;
@@ -115,7 +119,7 @@ pub trait TenantAccessService: Send + Sync {
         &self,
         collection_id: &str,
         shared_with_tenant_id: &str,
-        permissions: Vec<Permission>,
+        permissions: Vec<TenantAccessPermission>,
     ) -> Result<()>;
     async fn revoke_collection_access(
         &self,
@@ -231,7 +235,7 @@ impl TenantAccessService for InMemoryTenantAccessService {
         &self,
         tenant_id: &str,
         collection_id: &str,
-        required_permission: Permission,
+        required_permission: TenantAccessPermission,
     ) -> Result<bool> {
         let ownership = self.collection_ownership.read().await;
         let sharing = self.collection_sharing.read().await;
@@ -321,7 +325,7 @@ impl TenantAccessService for InMemoryTenantAccessService {
         &self,
         collection_id: &str,
         shared_with_tenant_id: &str,
-        permissions: Vec<Permission>,
+        permissions: Vec<TenantAccessPermission>,
     ) -> Result<()> {
         let mut sharing = self.collection_sharing.write().await;
         let shares_for_col = sharing.entry(collection_id.to_string()).or_default();

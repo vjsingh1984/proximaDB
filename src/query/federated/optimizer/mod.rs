@@ -20,6 +20,9 @@ use crate::core::error::VectorDBError;
 use crate::query::capability::{Capability, CapabilitySet};
 use crate::storage::multimodel::ModelType;
 
+mod sql_parsing;
+mod vector_query_parsing;
+
 /// Physical plan node types
 #[derive(Debug, Clone)]
 pub enum PlanNodeType {
@@ -2551,7 +2554,7 @@ impl CrossModelOptimizer {
                 {
                     Some((
                         collection.clone(),
-                        Self::vector_source_from_query(query_vector),
+                        vector_query_parsing::vector_source_from_query(query_vector),
                         *top_k,
                     ))
                 } else {
@@ -2750,7 +2753,7 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: collection.clone(),
                             top_k: *top_k,
-                            query_vector_source: Self::vector_source_from_query(query_vector),
+                            query_vector_source: vector_query_parsing::vector_source_from_query(query_vector),
                         },
                         estimated_cost: cost,
                         estimated_rows: rows,
@@ -2871,7 +2874,7 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: target,
                             top_k: 10,
-                            query_vector_source: Self::vector_source_from_literal(right_literal),
+                            query_vector_source: vector_query_parsing::vector_source_from_literal(right_literal),
                         },
                         estimated_cost: 10.0,
                         estimated_rows: 10,
@@ -2969,19 +2972,19 @@ impl CrossModelOptimizer {
 
     #[allow(clippy::nonminimal_bool)]
     fn apply_sql_clauses(&self, mut plan: PlanNode, query: &FederatedQuery) -> Result<PlanNode> {
-        let has_distinct = Self::select_has_distinct(&query.sql);
-        if Self::find_top_level_keyword(&query.sql, "UNION").is_some() {
+        let has_distinct = sql_parsing::select_has_distinct(&query.sql);
+        if sql_parsing::find_top_level_keyword(&query.sql, "UNION").is_some() {
             return Err(anyhow!(
                 "UNION queries are not yet supported in federated SQL execution"
             ));
         }
-        if Self::find_top_level_keyword(&query.sql, "HAVING").is_some() {
+        if sql_parsing::find_top_level_keyword(&query.sql, "HAVING").is_some() {
             return Err(anyhow!(
                 "HAVING is not yet supported in federated SQL execution"
             ));
         }
 
-        if let Some(predicate) = Self::extract_where_predicate(&query.sql) {
+        if let Some(predicate) = sql_parsing::extract_where_predicate(&query.sql) {
             let output_columns = plan.output_columns.clone();
             let estimated_cost = plan.estimated_cost * 1.05;
             let estimated_rows = plan.estimated_rows;
@@ -2998,18 +3001,18 @@ impl CrossModelOptimizer {
             };
         }
 
-        let select_items = Self::extract_select_items(&query.sql);
-        let group_by = Self::extract_group_by_columns(&query.sql);
+        let select_items = sql_parsing::extract_select_items(&query.sql);
+        let group_by = sql_parsing::extract_group_by_columns(&query.sql);
         let aggregates = select_items
             .iter()
-            .filter_map(Self::parse_aggregate_expr)
+            .filter_map(sql_parsing::parse_aggregate_expr)
             .collect::<Vec<_>>();
         let has_group_by = !group_by.is_empty();
         let has_aggregate_projection = !aggregates.is_empty();
         if has_group_by {
             let invalid_group_projection = select_items
                 .iter()
-                .filter(|item| Self::parse_aggregate_expr(item).is_none())
+                .filter(|item| sql_parsing::parse_aggregate_expr(item).is_none())
                 .any(|item| !group_by.contains(&item.expression));
 
             if invalid_group_projection {
@@ -3054,7 +3057,7 @@ impl CrossModelOptimizer {
         let projection_sources = select_items
             .iter()
             .map(|item| {
-                Self::parse_aggregate_expr(item)
+                sql_parsing::parse_aggregate_expr(item)
                     .map_or_else(|| item.expression.clone(), |aggregate| aggregate.alias)
             })
             .collect::<Vec<_>>();
@@ -3129,7 +3132,7 @@ impl CrossModelOptimizer {
             };
         }
 
-        let order_by = Self::extract_order_by(&query.sql);
+        let order_by = sql_parsing::extract_order_by(&query.sql);
         if !order_by.is_empty() {
             let output_columns = plan.output_columns.clone();
             let estimated_cost = plan.estimated_cost * 1.1;
@@ -3147,7 +3150,7 @@ impl CrossModelOptimizer {
             };
         }
 
-        let (limit, offset) = Self::extract_limit_offset(&query.sql);
+        let (limit, offset) = sql_parsing::extract_limit_offset(&query.sql);
         if let Some(limit) = limit {
             let output_columns = plan.output_columns.clone();
             let estimated_cost = plan.estimated_cost;
@@ -3167,448 +3170,6 @@ impl CrossModelOptimizer {
         }
 
         Ok(plan)
-    }
-
-    fn find_top_level_keyword(sql: &str, keyword: &str) -> Option<usize> {
-        Self::find_top_level_keyword_from(sql, keyword, 0)
-    }
-
-    fn find_top_level_keyword_from(sql: &str, keyword: &str, start_at: usize) -> Option<usize> {
-        let sql_upper = sql.to_uppercase();
-        let keyword_upper = keyword.to_uppercase();
-        let bytes = sql_upper.as_bytes();
-        let keyword_len = keyword_upper.len();
-        let mut depth = 0usize;
-        let mut in_quote = None;
-        let mut escaped = false;
-
-        for (index, ch) in sql.char_indices() {
-            if let Some(quote) = in_quote {
-                if ch == quote && !escaped {
-                    in_quote = None;
-                }
-                escaped = ch == '\\' && !escaped;
-                continue;
-            }
-
-            match ch {
-                '\'' | '"' => {
-                    in_quote = Some(ch);
-                    escaped = false;
-                    continue;
-                }
-                '(' => depth += 1,
-                ')' => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-
-            if index < start_at || depth != 0 || index + keyword_len > sql_upper.len() {
-                escaped = false;
-                continue;
-            }
-
-            if &sql_upper[index..index + keyword_len] == keyword_upper.as_str() {
-                let before_ok = index == 0
-                    || (!bytes[index - 1].is_ascii_alphanumeric() && bytes[index - 1] != b'_');
-                let after_index = index + keyword_len;
-                let after_ok = after_index == bytes.len()
-                    || (!bytes[after_index].is_ascii_alphanumeric() && bytes[after_index] != b'_');
-                if before_ok && after_ok {
-                    return Some(index);
-                }
-            }
-
-            escaped = false;
-        }
-
-        None
-    }
-
-    fn find_clause_end(sql: &str, start_at: usize, keywords: &[&str]) -> usize {
-        keywords
-            .iter()
-            .filter_map(|keyword| Self::find_top_level_keyword_from(sql, keyword, start_at))
-            .min()
-            .unwrap_or(sql.len())
-    }
-
-    fn split_top_level_list(input: &str) -> Vec<String> {
-        let mut items = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0usize;
-        let mut in_quote = None;
-        let mut escaped = false;
-
-        for ch in input.chars() {
-            if let Some(quote) = in_quote {
-                current.push(ch);
-                if ch == quote && !escaped {
-                    in_quote = None;
-                }
-                escaped = ch == '\\' && !escaped;
-                continue;
-            }
-
-            match ch {
-                '\'' | '"' => {
-                    in_quote = Some(ch);
-                    current.push(ch);
-                }
-                '(' | '[' => {
-                    depth += 1;
-                    current.push(ch);
-                }
-                ')' | ']' => {
-                    depth = depth.saturating_sub(1);
-                    current.push(ch);
-                }
-                ',' if depth == 0 => {
-                    if !current.trim().is_empty() {
-                        items.push(current.trim().to_string());
-                    }
-                    current.clear();
-                }
-                _ => current.push(ch),
-            }
-
-            escaped = false;
-        }
-
-        if !current.trim().is_empty() {
-            items.push(current.trim().to_string());
-        }
-
-        items
-    }
-
-    fn select_has_distinct(sql: &str) -> bool {
-        let Some(select_pos) = Self::find_top_level_keyword(sql, "SELECT") else {
-            return false;
-        };
-        let Some(from_pos) = Self::find_top_level_keyword_from(sql, "FROM", select_pos + 6) else {
-            return false;
-        };
-
-        sql[select_pos + 6..from_pos]
-            .trim_start()
-            .to_uppercase()
-            .starts_with("DISTINCT ")
-    }
-
-    fn extract_select_items(sql: &str) -> Vec<SelectItem> {
-        let Some(select_pos) = Self::find_top_level_keyword(sql, "SELECT") else {
-            return vec![];
-        };
-        let Some(from_pos) = Self::find_top_level_keyword_from(sql, "FROM", select_pos + 6) else {
-            return vec![];
-        };
-
-        let clause = sql[select_pos + 6..from_pos].trim();
-        let clause = clause
-            .strip_prefix("DISTINCT ")
-            .or_else(|| clause.strip_prefix("distinct "))
-            .unwrap_or(clause);
-
-        Self::split_top_level_list(clause)
-            .into_iter()
-            .map(|item| {
-                let upper = item.to_uppercase();
-                if let Some(as_pos) = upper.rfind(" AS ") {
-                    SelectItem {
-                        expression: item[..as_pos].trim().to_string(),
-                        alias: Some(item[as_pos + 4..].trim().to_string()),
-                    }
-                } else {
-                    SelectItem {
-                        expression: item.trim().to_string(),
-                        alias: None,
-                    }
-                }
-            })
-            .collect()
-    }
-
-    #[allow(dead_code)]
-    fn extract_select_columns(sql: &str) -> Vec<String> {
-        Self::extract_select_items(sql)
-            .into_iter()
-            .map(|item| item.expression)
-            .collect()
-    }
-
-    fn extract_group_by_columns(sql: &str) -> Vec<String> {
-        let Some(group_by_pos) = Self::find_top_level_keyword(sql, "GROUP BY") else {
-            return vec![];
-        };
-        let end = Self::find_clause_end(
-            sql,
-            group_by_pos + 8,
-            &["ORDER BY", "LIMIT", "OFFSET", "HAVING", ";"],
-        );
-
-        Self::split_top_level_list(sql[group_by_pos + 8..end].trim())
-    }
-
-    fn parse_aggregate_expr(item: &SelectItem) -> Option<AggregateExpr> {
-        let expression = item.expression.trim();
-        let open_paren = expression.find('(')?;
-        if !expression.ends_with(')') {
-            return None;
-        }
-
-        let function_name = expression[..open_paren].trim().to_uppercase();
-        let inner = expression[open_paren + 1..expression.len() - 1].trim();
-        let alias = item.alias.clone().unwrap_or_else(|| expression.to_string());
-
-        match function_name.as_str() {
-            "COUNT" => {
-                if inner == "*" {
-                    Some(AggregateExpr {
-                        function: AggregateFunction::Count,
-                        column: None,
-                        alias,
-                    })
-                } else if let Some(distinct_column) = inner
-                    .strip_prefix("DISTINCT ")
-                    .or_else(|| inner.strip_prefix("distinct "))
-                {
-                    Some(AggregateExpr {
-                        function: AggregateFunction::CountDistinct,
-                        column: Some(distinct_column.trim().to_string()),
-                        alias,
-                    })
-                } else {
-                    Some(AggregateExpr {
-                        function: AggregateFunction::Count,
-                        column: Some(inner.to_string()),
-                        alias,
-                    })
-                }
-            }
-            "SUM" => Some(AggregateExpr {
-                function: AggregateFunction::Sum,
-                column: Some(inner.to_string()),
-                alias,
-            }),
-            "AVG" => Some(AggregateExpr {
-                function: AggregateFunction::Avg,
-                column: Some(inner.to_string()),
-                alias,
-            }),
-            "MIN" => Some(AggregateExpr {
-                function: AggregateFunction::Min,
-                column: Some(inner.to_string()),
-                alias,
-            }),
-            "MAX" => Some(AggregateExpr {
-                function: AggregateFunction::Max,
-                column: Some(inner.to_string()),
-                alias,
-            }),
-            _ => None,
-        }
-    }
-
-    fn extract_limit_offset(sql: &str) -> (Option<usize>, usize) {
-        let limit = Self::find_top_level_keyword(sql, "LIMIT").and_then(|limit_pos| {
-            let end = Self::find_clause_end(sql, limit_pos + 5, &["OFFSET", ";"]);
-            sql[limit_pos + 5..end]
-                .split_whitespace()
-                .next()
-                .and_then(|value| value.parse::<usize>().ok())
-        });
-
-        let offset = Self::find_top_level_keyword(sql, "OFFSET")
-            .and_then(|offset_pos| {
-                let end = Self::find_clause_end(sql, offset_pos + 6, &["LIMIT", ";"]);
-                sql[offset_pos + 6..end]
-                    .split_whitespace()
-                    .next()
-                    .and_then(|value| value.parse::<usize>().ok())
-            })
-            .unwrap_or(0);
-
-        (limit, offset)
-    }
-
-    fn extract_order_by(sql: &str) -> Vec<OrderByClause> {
-        let Some(order_pos) = Self::find_top_level_keyword(sql, "ORDER BY") else {
-            return vec![];
-        };
-        let end = Self::find_clause_end(sql, order_pos + 8, &["LIMIT", "OFFSET", ";"]);
-        let clause = sql[order_pos + 8..end].trim();
-
-        Self::split_top_level_list(clause)
-            .into_iter()
-            .filter_map(|entry| {
-                let upper = entry.to_uppercase();
-                let nulls_first = upper.ends_with(" NULLS FIRST");
-                let nulls_last = upper.ends_with(" NULLS LAST");
-                let trimmed = if nulls_first {
-                    entry[..entry.len() - "NULLS FIRST".len()].trim()
-                } else if nulls_last {
-                    entry[..entry.len() - "NULLS LAST".len()].trim()
-                } else {
-                    entry.trim()
-                };
-
-                let upper_trimmed = trimmed.to_uppercase();
-                let ascending = !upper_trimmed.ends_with(" DESC");
-                let column = if upper_trimmed.ends_with(" ASC") || upper_trimmed.ends_with(" DESC")
-                {
-                    trimmed[..trimmed.rfind(' ').unwrap_or(trimmed.len())]
-                        .trim()
-                        .to_string()
-                } else {
-                    trimmed.to_string()
-                };
-
-                if column.is_empty() {
-                    None
-                } else {
-                    Some(OrderByClause {
-                        column,
-                        ascending,
-                        nulls_first: if nulls_first {
-                            true
-                        } else if nulls_last {
-                            false
-                        } else {
-                            !ascending
-                        },
-                    })
-                }
-            })
-            .collect()
-    }
-
-    fn find_top_level_operator(input: &str, operator: &str) -> Option<usize> {
-        let upper = input.to_uppercase();
-        let operator_upper = operator.to_uppercase();
-        let mut depth = 0usize;
-        let mut in_quote = None;
-        let mut escaped = false;
-
-        for (index, ch) in input.char_indices() {
-            if let Some(quote) = in_quote {
-                if ch == quote && !escaped {
-                    in_quote = None;
-                }
-                escaped = ch == '\\' && !escaped;
-                continue;
-            }
-
-            match ch {
-                '\'' | '"' => {
-                    in_quote = Some(ch);
-                    escaped = false;
-                    continue;
-                }
-                '(' => depth += 1,
-                ')' => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-
-            if depth == 0
-                && index + operator_upper.len() <= upper.len()
-                && &upper[index..index + operator_upper.len()] == operator_upper.as_str()
-            {
-                return Some(index);
-            }
-
-            escaped = false;
-        }
-
-        None
-    }
-
-    fn parse_predicate_value(raw: &str) -> Option<PredicateValue> {
-        let trimmed = raw.trim();
-        if trimmed.eq_ignore_ascii_case("NULL") {
-            return Some(PredicateValue::Null);
-        }
-        if trimmed.eq_ignore_ascii_case("TRUE") {
-            return Some(PredicateValue::Bool(true));
-        }
-        if trimmed.eq_ignore_ascii_case("FALSE") {
-            return Some(PredicateValue::Bool(false));
-        }
-        if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-            || (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        {
-            return Some(PredicateValue::String(
-                trimmed[1..trimmed.len() - 1].to_string(),
-            ));
-        }
-        if let Ok(value) = trimmed.parse::<i64>() {
-            return Some(PredicateValue::Int(value));
-        }
-        if let Ok(value) = trimmed.parse::<f64>() {
-            return Some(PredicateValue::Float(value));
-        }
-        None
-    }
-
-    fn extract_where_predicate(sql: &str) -> Option<Predicate> {
-        let where_pos = Self::find_top_level_keyword(sql, "WHERE")?;
-        let end = Self::find_clause_end(
-            sql,
-            where_pos + 5,
-            &["ORDER BY", "GROUP BY", "LIMIT", "OFFSET", "HAVING", ";"],
-        );
-        let clause = sql[where_pos + 5..end].trim();
-        if clause.is_empty()
-            || Self::find_top_level_keyword(clause, "AND").is_some()
-            || Self::find_top_level_keyword(clause, "OR").is_some()
-        {
-            return None;
-        }
-
-        let upper = clause.to_uppercase();
-        if upper.ends_with(" IS NOT NULL") {
-            return Some(Predicate {
-                column: clause[..clause.len() - "IS NOT NULL".len()]
-                    .trim()
-                    .to_string(),
-                op: PredicateOp::IsNotNull,
-                value: PredicateValue::Null,
-            });
-        }
-        if upper.ends_with(" IS NULL") {
-            return Some(Predicate {
-                column: clause[..clause.len() - "IS NULL".len()].trim().to_string(),
-                op: PredicateOp::IsNull,
-                value: PredicateValue::Null,
-            });
-        }
-
-        if let Some(index) = Self::find_top_level_keyword(clause, "LIKE") {
-            return Some(Predicate {
-                column: clause[..index].trim().to_string(),
-                op: PredicateOp::Like,
-                value: Self::parse_predicate_value(clause[index + 4..].trim())?,
-            });
-        }
-
-        for (operator, predicate_op) in [
-            ("!=", PredicateOp::Ne),
-            ("<>", PredicateOp::Ne),
-            (">=", PredicateOp::Ge),
-            ("<=", PredicateOp::Le),
-            ("=", PredicateOp::Eq),
-            (">", PredicateOp::Gt),
-            ("<", PredicateOp::Lt),
-        ] {
-            if let Some(index) = Self::find_top_level_operator(clause, operator) {
-                return Some(Predicate {
-                    column: clause[..index].trim().to_string(),
-                    op: predicate_op,
-                    value: Self::parse_predicate_value(clause[index + operator.len()..].trim())?,
-                });
-            }
-        }
-
-        None
     }
 
     /// Plan a simple SQL query
@@ -3644,7 +3205,7 @@ impl CrossModelOptimizer {
                     top_k,
                 } => Some((
                     collection.clone(),
-                    Self::vector_source_from_query(query_vector),
+                    vector_query_parsing::vector_source_from_query(query_vector),
                     *top_k,
                 )),
                 SqlExtension::VectorDistance { right_literal, .. } => {
@@ -3652,7 +3213,7 @@ impl CrossModelOptimizer {
                     query.targets.first().map(|t| {
                         (
                             t.name.clone(),
-                            Self::vector_source_from_literal(right_literal),
+                            vector_query_parsing::vector_source_from_literal(right_literal),
                             10,
                         )
                     })
@@ -3796,7 +3357,7 @@ impl CrossModelOptimizer {
                     node_type: PlanNodeType::VectorSearch {
                         collection: collection.clone(),
                         top_k: *top_k,
-                        query_vector_source: Self::vector_source_from_query(query_vector),
+                        query_vector_source: vector_query_parsing::vector_source_from_query(query_vector),
                     },
                     estimated_cost: 10.0,
                     estimated_rows: *top_k as u64,
@@ -3891,7 +3452,7 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: target,
                             top_k: 10,
-                            query_vector_source: Self::vector_source_from_literal(right_literal),
+                            query_vector_source: vector_query_parsing::vector_source_from_literal(right_literal),
                         },
                         estimated_cost: 10.0,
                         estimated_rows: 10,
@@ -3948,77 +3509,6 @@ impl CrossModelOptimizer {
         } else {
             Err(anyhow!("No valid plan nodes generated"))
         }
-    }
-
-    fn vector_source_from_query(query: &VectorQuery) -> VectorSource {
-        match query {
-            VectorQuery::Literal(vector) => VectorSource::Literal(vector.clone()),
-            VectorQuery::Expression(expr) => Self::vector_source_from_expression(expr),
-        }
-    }
-
-    fn vector_source_from_literal(raw: &str) -> VectorSource {
-        Self::parse_vector_literal(raw).map_or_else(
-            || Self::vector_source_from_expression(raw),
-            VectorSource::Literal,
-        )
-    }
-
-    fn vector_source_from_expression(expr: &str) -> VectorSource {
-        let trimmed = expr.trim();
-        if let Some((table, column)) = Self::split_qualified_reference(trimmed) {
-            VectorSource::ColumnRef {
-                table: table.trim().to_string(),
-                column: column.trim().to_string(),
-            }
-        } else {
-            VectorSource::Expression(trimmed.to_string())
-        }
-    }
-
-    fn split_qualified_reference(expr: &str) -> Option<(&str, &str)> {
-        let mut in_quotes = false;
-        let mut chars = expr.char_indices().peekable();
-
-        while let Some((idx, ch)) = chars.next() {
-            match ch {
-                '"' => {
-                    if in_quotes && matches!(chars.peek(), Some((_, '"'))) {
-                        chars.next();
-                        continue;
-                    }
-                    in_quotes = !in_quotes;
-                }
-                '.' if !in_quotes => return Some((&expr[..idx], &expr[idx + ch.len_utf8()..])),
-                _ => {}
-            }
-        }
-
-        None
-    }
-
-    fn parse_vector_literal(raw: &str) -> Option<Vec<f32>> {
-        let trimmed = raw.trim();
-        let without_cast = trimmed
-            .strip_suffix("::vector")
-            .or_else(|| trimmed.strip_suffix("::VECTOR"))
-            .unwrap_or(trimmed)
-            .trim();
-        let unquoted = without_cast.trim_matches('\'').trim_matches('"').trim();
-
-        if !(unquoted.starts_with('[') && unquoted.ends_with(']')) {
-            return None;
-        }
-
-        let inner = &unquoted[1..unquoted.len() - 1];
-        if inner.trim().is_empty() {
-            return Some(Vec::new());
-        }
-
-        inner
-            .split(',')
-            .map(|value| value.trim().parse::<f32>().ok())
-            .collect()
     }
 
     /// Apply optimization rules in order:

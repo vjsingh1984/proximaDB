@@ -5,7 +5,7 @@
 //! - Network Auth Service (src/network/auth/mod.rs)
 //! - Auth Middleware (src/network/middleware/auth.rs)
 
-use super::unified_rbac::{AuthMethod, UnifiedPermission, UnifiedUserContext};
+use super::unified_rbac::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
 use crate::auth::{EnterpriseAuthManager, EnterpriseUserContext, SSOToken};
 use crate::network::auth::{JwtService, TokenPair};
@@ -130,7 +130,7 @@ pub struct ClientIdentity {
 #[derive(Debug, Clone)]
 pub struct AuthenticationResult {
     pub user_context: UnifiedUserContext,
-    pub auth_method: AuthMethod,
+    pub auth_method: UnifiedAuthMethod,
     pub success: bool,
     pub error_message: Option<String>,
     pub requires_mfa: bool,
@@ -248,7 +248,7 @@ impl UnifiedAuthService {
                     // Create failed auth event
                     let failed_result = AuthenticationResult {
                         user_context: UnifiedUserContext::anonymous(),
-                        auth_method: AuthMethod::Internal,
+                        auth_method: UnifiedAuthMethod::Internal,
                         success: false,
                         error_message: Some("Authentication failed".to_string()),
                         requires_mfa: false,
@@ -267,7 +267,7 @@ impl UnifiedAuthService {
         if !self.config.methods.contains(&AuthenticationMethod::SSO) {
             return Ok(AuthenticationResult {
                 user_context: UnifiedUserContext::anonymous(),
-                auth_method: AuthMethod::SSO {
+                auth_method: UnifiedAuthMethod::SSO {
                     provider: "disabled".to_string(),
                 },
                 success: false,
@@ -283,7 +283,7 @@ impl UnifiedAuthService {
                         let user_context = self.convert_enterprise_user_to_unified(enterprise_user);
                         Ok(AuthenticationResult {
                             user_context,
-                            auth_method: AuthMethod::SSO {
+                            auth_method: UnifiedAuthMethod::SSO {
                                 provider: format!("{:?}", token.provider),
                             },
                             success: true,
@@ -295,7 +295,7 @@ impl UnifiedAuthService {
                         warn!("SSO authentication failed: {}", e);
                         Ok(AuthenticationResult {
                             user_context: UnifiedUserContext::anonymous(),
-                            auth_method: AuthMethod::SSO {
+                            auth_method: UnifiedAuthMethod::SSO {
                                 provider: format!("{:?}", token.provider),
                             },
                             success: false,
@@ -316,7 +316,7 @@ impl UnifiedAuthService {
         if !self.config.methods.contains(&AuthenticationMethod::JWT) {
             return Ok(AuthenticationResult {
                 user_context: UnifiedUserContext::anonymous(),
-                auth_method: AuthMethod::JWT,
+                auth_method: UnifiedAuthMethod::JWT,
                 success: false,
                 error_message: Some("JWT authentication disabled".to_string()),
                 requires_mfa: false,
@@ -329,7 +329,7 @@ impl UnifiedAuthService {
                     let user_context = self.convert_jwt_claims_to_unified(claims);
                     Ok(AuthenticationResult {
                         user_context,
-                        auth_method: AuthMethod::JWT,
+                        auth_method: UnifiedAuthMethod::JWT,
                         success: true,
                         error_message: None,
                         requires_mfa: false,
@@ -339,7 +339,7 @@ impl UnifiedAuthService {
                     warn!("JWT authentication failed: {}", e);
                     Ok(AuthenticationResult {
                         user_context: UnifiedUserContext::anonymous(),
-                        auth_method: AuthMethod::JWT,
+                        auth_method: UnifiedAuthMethod::JWT,
                         success: false,
                         error_message: Some(e.to_string()),
                         requires_mfa: false,
@@ -357,7 +357,7 @@ impl UnifiedAuthService {
         if !self.config.methods.contains(&AuthenticationMethod::ApiKey) {
             return Ok(AuthenticationResult {
                 user_context: UnifiedUserContext::anonymous(),
-                auth_method: AuthMethod::ApiKey,
+                auth_method: UnifiedAuthMethod::ApiKey,
                 success: false,
                 error_message: Some("API key authentication disabled".to_string()),
                 requires_mfa: false,
@@ -372,7 +372,7 @@ impl UnifiedAuthService {
                 {
                     return Ok(AuthenticationResult {
                         user_context: UnifiedUserContext::anonymous(),
-                        auth_method: AuthMethod::ApiKey,
+                        auth_method: UnifiedAuthMethod::ApiKey,
                         success: false,
                         error_message: Some("API key expired".to_string()),
                         requires_mfa: false,
@@ -382,7 +382,7 @@ impl UnifiedAuthService {
                 let user_context = self.convert_api_key_to_unified(api_key_info.clone());
                 Ok(AuthenticationResult {
                     user_context,
-                    auth_method: AuthMethod::ApiKey,
+                    auth_method: UnifiedAuthMethod::ApiKey,
                     success: true,
                     error_message: None,
                     requires_mfa: false,
@@ -395,7 +395,7 @@ impl UnifiedAuthService {
                 );
                 Ok(AuthenticationResult {
                     user_context: UnifiedUserContext::anonymous(),
-                    auth_method: AuthMethod::ApiKey,
+                    auth_method: UnifiedAuthMethod::ApiKey,
                     success: false,
                     error_message: Some("Invalid API key".to_string()),
                     requires_mfa: false,
@@ -421,7 +421,7 @@ impl UnifiedAuthService {
         {
             return Ok(AuthenticationResult {
                 user_context: UnifiedUserContext::anonymous(),
-                auth_method: AuthMethod::ClientCertificate,
+                auth_method: UnifiedAuthMethod::ClientCertificate,
                 success: false,
                 error_message: Some("Client certificate authentication disabled".to_string()),
                 requires_mfa: false,
@@ -431,7 +431,7 @@ impl UnifiedAuthService {
         if !self.config.mtls.enabled {
             return Ok(AuthenticationResult {
                 user_context: UnifiedUserContext::anonymous(),
-                auth_method: AuthMethod::ClientCertificate,
+                auth_method: UnifiedAuthMethod::ClientCertificate,
                 success: false,
                 error_message: Some("mTLS is not enabled in configuration".to_string()),
                 requires_mfa: false,
@@ -446,7 +446,7 @@ impl UnifiedAuthService {
                     warn!("mTLS certificate validation failed: {}", e);
                     return Ok(AuthenticationResult {
                         user_context: UnifiedUserContext::anonymous(),
-                        auth_method: AuthMethod::ClientCertificate,
+                        auth_method: UnifiedAuthMethod::ClientCertificate,
                         success: false,
                         error_message: Some(format!("Certificate validation failed: {}", e)),
                         requires_mfa: false,
@@ -460,7 +460,7 @@ impl UnifiedAuthService {
                 if now < cert_data.not_before || now > cert_data.not_after {
                     return Ok(AuthenticationResult {
                         user_context: UnifiedUserContext::anonymous(),
-                        auth_method: AuthMethod::ClientCertificate,
+                        auth_method: UnifiedAuthMethod::ClientCertificate,
                         success: false,
                         error_message: Some(
                             "Client certificate has expired or is not yet valid".to_string(),
@@ -485,7 +485,7 @@ impl UnifiedAuthService {
             );
             return Ok(AuthenticationResult {
                 user_context: UnifiedUserContext::anonymous(),
-                auth_method: AuthMethod::ClientCertificate,
+                auth_method: UnifiedAuthMethod::ClientCertificate,
                 success: false,
                 error_message: Some(format!(
                     "No roles mapped for certificate CN={}",
@@ -505,7 +505,7 @@ impl UnifiedAuthService {
             tenant_id: None,
             roles: identity.roles,
             effective_permissions: HashSet::new(), // Populated by RBAC manager
-            auth_method: AuthMethod::ClientCertificate,
+            auth_method: UnifiedAuthMethod::ClientCertificate,
             session_id: format!("mtls_{}", uuid::Uuid::new_v4()),
             expires_at: None, // Certificate expiry is validated at authentication time
             created_at: Utc::now(),
@@ -521,7 +521,7 @@ impl UnifiedAuthService {
 
         Ok(AuthenticationResult {
             user_context,
-            auth_method: AuthMethod::ClientCertificate,
+            auth_method: UnifiedAuthMethod::ClientCertificate,
             success: true,
             error_message: None,
             requires_mfa: false,
@@ -726,7 +726,7 @@ impl UnifiedAuthService {
             tenant_id: Some(enterprise_user.tenant_id),
             roles: enterprise_user.roles,
             effective_permissions: HashSet::new(), // Will be populated by RBAC manager
-            auth_method: AuthMethod::SSO {
+            auth_method: UnifiedAuthMethod::SSO {
                 provider: provider_name.to_string(),
             },
             session_id: enterprise_user.session_id,
@@ -746,7 +746,7 @@ impl UnifiedAuthService {
             tenant_id: claims.tenant_id,
             roles: claims.roles,
             effective_permissions: HashSet::new(), // Will be populated by RBAC manager
-            auth_method: AuthMethod::JWT,
+            auth_method: UnifiedAuthMethod::JWT,
             session_id: claims.jti,
             expires_at: Some(DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(Utc::now)),
             created_at: DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(Utc::now),
@@ -768,7 +768,7 @@ impl UnifiedAuthService {
             tenant_id: api_key_info.tenant_id,
             roles: vec!["api_user".to_string()], // Default role for API key users
             effective_permissions: permissions,
-            auth_method: AuthMethod::ApiKey,
+            auth_method: UnifiedAuthMethod::ApiKey,
             session_id: format!("apikey_{}", uuid::Uuid::new_v4()),
             expires_at: api_key_info.expires_at,
             created_at: api_key_info.created_at.unwrap_or_else(Utc::now),
@@ -857,7 +857,7 @@ impl UnifiedUserContext {
             tenant_id: None,
             roles: vec!["anonymous".to_string()],
             effective_permissions: HashSet::new(),
-            auth_method: AuthMethod::Internal,
+            auth_method: UnifiedAuthMethod::Internal,
             session_id: format!("anon_{}", uuid::Uuid::new_v4()),
             expires_at: None,
             created_at: Utc::now(),

@@ -402,6 +402,12 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
 
     match stmt {
         sqlparser::ast::Statement::CreateTable(create) => {
+            if create.query.is_some() || create.like.is_some() || create.clone.is_some() {
+                return Err(anyhow!(
+                    "CREATE TABLE with query/LIKE/CLONE clauses is not supported"
+                ));
+            }
+
             let mut columns = HashMap::new();
             let mut primary_key = Vec::new();
 
@@ -472,24 +478,56 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
             object_type,
             names,
             if_exists,
+            table,
             ..
         } => {
-            let name = names.first().map(|n| n.to_string()).unwrap_or_default();
-
             match object_type {
                 sqlparser::ast::ObjectType::Table => Ok(DdlStatement::DropTable {
-                    name,
+                    name: names
+                        .first()
+                        .ok_or_else(|| anyhow!("DROP TABLE requires a table name"))?
+                        .to_string(),
                     if_exists: *if_exists,
                 }),
-                sqlparser::ast::ObjectType::Index => Ok(DdlStatement::DropIndex {
-                    name,
-                    if_exists: *if_exists,
-                }),
+                sqlparser::ast::ObjectType::Index => {
+                    if table.is_none() {
+                        return Err(anyhow!("DROP INDEX requires a table name"));
+                    }
+                    Ok(DdlStatement::DropIndex {
+                        name: names
+                            .first()
+                            .ok_or_else(|| anyhow!("DROP INDEX requires an index name"))?
+                            .to_string(),
+                        if_exists: *if_exists,
+                    })
+                }
                 _ => Err(anyhow!("Unsupported DROP object type: {:?}", object_type)),
             }
         }
 
         sqlparser::ast::Statement::CreateIndex(create_index) => {
+            use sqlparser::ast::{IndexOption, IndexType as SqlIndexType};
+
+            if let Some(index_type) = create_index
+                .using
+                .as_ref()
+                .cloned()
+                .or_else(|| {
+                    create_index
+                        .index_options
+                        .iter()
+                        .find_map(|opt| match opt {
+                            IndexOption::Using(index_type) => Some(index_type.clone()),
+                            _ => None,
+                        })
+                })
+            {
+                match index_type {
+                    SqlIndexType::BTree => {}
+                    other => return Err(anyhow!("Unsupported CREATE INDEX USING {}", other)),
+                }
+            }
+
             // CreateIndex.name (not index_name) is the index name
             let index_name = create_index
                 .name
@@ -680,6 +718,7 @@ fn convert_sql_type(data_type: &sqlparser::ast::DataType) -> SqlDataType {
         sqlparser::ast::DataType::Uuid => SqlDataType::Uuid,
         sqlparser::ast::DataType::Bytea => SqlDataType::Bytea,
         sqlparser::ast::DataType::JSON => SqlDataType::Json,
+        sqlparser::ast::DataType::JSONB => SqlDataType::Jsonb,
         sqlparser::ast::DataType::Custom(name, tokens) => {
             // Handle vector type - use to_string() for ObjectName
             let type_name = name.to_string().to_uppercase();
@@ -774,6 +813,23 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_create_table_supports_jsonb() {
+        let sql = "CREATE TABLE users (id INTEGER, payload JSONB)";
+        let result = parse_ddl(sql).unwrap();
+
+        if let DdlStatement::CreateTable { table, .. } = result {
+            assert_eq!(table.name, "users");
+            let payload = table
+                .columns
+                .get("payload")
+                .expect("expected payload column");
+            assert!(matches!(payload.data_type, SqlDataType::Jsonb));
+        } else {
+            panic!("Expected CreateTable");
+        }
+    }
+
+    #[test]
     fn test_parse_drop_table() {
         let sql = "DROP TABLE IF EXISTS users";
         let result = parse_ddl(sql).unwrap();
@@ -802,6 +858,39 @@ mod tests {
             assert_eq!(values.len(), 2);
         } else {
             panic!("Expected Insert");
+        }
+    }
+
+    #[test]
+    fn test_parse_create_index() {
+        let sql = "CREATE INDEX users_name_idx ON users (name)";
+        let result = parse_ddl(sql).unwrap();
+
+        if let DdlStatement::CreateIndex {
+            index,
+            if_not_exists,
+        } = result
+        {
+            assert_eq!(index.name, "users_name_idx");
+            assert_eq!(index.table, "users");
+            assert_eq!(index.columns, vec!["name".to_string()]);
+            assert!(matches!(index.index_type, IndexType::BTree));
+            assert!(!if_not_exists);
+        } else {
+            panic!("Expected CreateIndex");
+        }
+    }
+
+    #[test]
+    fn test_parse_drop_index() {
+        let sql = "DROP INDEX users_name_idx ON users";
+        let result = parse_ddl(sql).unwrap();
+
+        if let DdlStatement::DropIndex { name, if_exists } = result {
+            assert_eq!(name, "users_name_idx");
+            assert!(!if_exists);
+        } else {
+            panic!("Expected DropIndex");
         }
     }
 
@@ -838,6 +927,50 @@ mod tests {
             assert!(where_clause.is_some());
         } else {
             panic!("Expected Delete");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_unsupported_statements_still_fail_fast() {
+        let unsupported = [
+            (
+                "CREATE TABLE demo AS SELECT * FROM events;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            (
+                "CREATE TABLE demo LIKE users;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            (
+                "CREATE TABLE demo CLONE users;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            ("DROP TABLE;", "DROP TABLE requires a table name", true),
+            (
+                "CREATE INDEX demo_payload_idx ON demo USING GIN (payload);",
+                "Unsupported CREATE INDEX USING",
+                false,
+            ),
+            ("DROP VIEW users;", "Unsupported DROP object type", false),
+            ("DROP INDEX demo_payload_idx;", "DROP INDEX requires a table name", true),
+            ("INSERT INTO users (id) VALUES (1);", "Unsupported DDL statement", false),
+            ("SELECT * FROM users;", "Unsupported DDL statement", false),
+        ];
+
+        for (sql, expected, exact) in unsupported {
+            let err = parse_ddl(sql).expect_err("expected unsupported ddl to be rejected");
+            let err_msg = err.to_string();
+            if exact {
+                assert_eq!(err_msg, expected, "unexpected parse error for `{sql}`");
+            } else {
+                assert!(
+                    err_msg.contains(expected),
+                    "unexpected parse error for `{sql}`: {err_msg}"
+                );
+            }
         }
     }
 }

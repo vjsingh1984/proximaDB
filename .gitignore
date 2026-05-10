@@ -133,10 +133,14 @@ file_list.txt
 *.tmp
 *.temp
 *.bak
+*.bak2
 *.backup
 *.migrated
 *.old
 *.obsolete
+*.disabled
+.victor/
+**/.victor/
 tmp/
 temp/
 demo/results/

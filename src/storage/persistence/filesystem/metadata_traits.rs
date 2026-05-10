@@ -7,6 +7,7 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::any::Any;
 use std::fmt::Debug;
@@ -35,6 +36,26 @@ pub trait EngineMetadataSerializer: Send + Sync + Debug {
     fn should_cache_metadata(&self, _file_path: &str) -> bool {
         true
     }
+}
+
+pub fn serialize_typed_metadata<T>(metadata: &dyn Any, expected_type: &str) -> Result<Bytes>
+where
+    T: Serialize + Send + Sync + 'static,
+{
+    if let Some(typed_metadata) = metadata.downcast_ref::<T>() {
+        let bytes = bincode::serialize(typed_metadata)?;
+        Ok(Bytes::from(bytes))
+    } else {
+        anyhow::bail!("Expected {expected_type} type for serializer")
+    }
+}
+
+pub fn deserialize_typed_metadata<T>(bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>>
+where
+    T: DeserializeOwned + Send + Sync + 'static,
+{
+    let typed_metadata: T = bincode::deserialize(bytes)?;
+    Ok(Box::new(typed_metadata))
 }
 
 /// Generic metadata that can be cached by the filesystem

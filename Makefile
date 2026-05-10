@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline
+.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check
 
 # Default target
 all: build test
@@ -64,7 +64,17 @@ clippy:
 	@echo "📎 Running clippy..."
 	cargo clippy -- -D warnings
 
-check: fmt clippy test
+hygiene-check:
+	@echo "🧹 Running tracked artifact hygiene check..."
+	@bad_files=$$(git ls-files | rg '(^|/)\\.victor($|/)|\\.bak[0-9]*$|\\.disabled$'); \
+	if [ -n "$$bad_files" ]; then \
+		echo "❌ Forbidden tracked artifacts detected:"; \
+		echo "$$bad_files"; \
+		exit 1; \
+	fi; \
+	echo "✅ No tracked artifact files detected."
+
+check: fmt clippy test hygiene-check
 	@echo "✅ Code quality checks passed"
 
 capability-matrix-check:
@@ -194,6 +204,7 @@ help:
 	@echo "  fmt                - Format code"
 	@echo "  clippy             - Run linter"
 	@echo "  check              - Format + lint + test"
+	@echo "  hygiene-check      - Detect tracked backup/disabled/.victor artifacts"
 	@echo "  capability-matrix-check - Validate docs/_internal/roadmap/CAPABILITY_MATRIX.toml"
 	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"

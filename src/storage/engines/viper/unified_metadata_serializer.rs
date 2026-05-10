@@ -19,7 +19,6 @@ use std::fmt::Debug;
 use crate::storage::persistence::filesystem::metadata_traits::{
     deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
 };
-use crate::storage::engines::core::metadata_serializer::{extract_footer, path_matches_engine};
 
 /// VIPER-specific metadata for caching
 ///

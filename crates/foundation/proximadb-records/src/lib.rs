@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use proximadb_data_model::ProximaValue;
+use proximadb_data_model::{MemoryType, ProximaValue};
 use serde::{Deserialize, Serialize};
 
 pub mod conversions;
@@ -238,6 +238,10 @@ pub struct ProximaRecord {
     /// Ingestion method (e.g. "api", "cdc", "migration").
     pub method: Option<String>,
 
+    // === Agentic Memory (Memanto — TD-055) ===
+    /// High-fidelity memory category.
+    pub memory_type: Option<MemoryType>,
+
     // === Properties (NF² tree) ===
     /// Modality-specific and user-defined properties.
     pub props: ProximaTree,
@@ -282,6 +286,7 @@ impl Default for ProximaRecord {
             origin: None,
             actor: None,
             method: None,
+            memory_type: None,
             props: HashMap::new(),
             refs: Vec::new(),
             edge: None,
@@ -308,6 +313,18 @@ impl ProximaRecord {
     pub fn matches_tenant(&self, tenant_id: &str) -> bool {
         self.tenant_id.is_empty() || self.tenant_id == tenant_id
     }
+
+    /// Resolve a conflict between two records using Last-Write-Wins (LWW).
+    ///
+    /// If `self.updated_at_ns >= other.updated_at_ns`, `self` is returned.
+    /// Otherwise, `other` is returned.
+    pub fn resolve_conflict(&self, other: &Self) -> Self {
+        if self.updated_at_ns >= other.updated_at_ns {
+            self.clone()
+        } else {
+            other.clone()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -317,7 +334,7 @@ impl ProximaRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_data_model::ProximaValue;
+    use proximadb_data_model::{MemoryType, ProximaValue};
 
     #[test]
     fn test_proxima_record_defaults() {
@@ -328,6 +345,31 @@ mod tests {
         assert!(r.props.is_empty());
         assert_eq!(r.record_version, 0);
         assert_eq!(r.spec_version, 1);
+        assert!(r.memory_type.is_none());
+    }
+
+    #[test]
+    fn test_resolve_conflict_lww() {
+        let mut r1 = ProximaRecord::default();
+        r1.updated_at_ns = 100;
+        r1.origin = Some("r1".to_string());
+
+        let mut r2 = ProximaRecord::default();
+        r2.updated_at_ns = 200;
+        r2.origin = Some("r2".to_string());
+
+        let resolved = r1.resolve_conflict(&r2);
+        assert_eq!(resolved.origin.unwrap(), "r2");
+
+        let resolved_inverse = r2.resolve_conflict(&r1);
+        assert_eq!(resolved_inverse.origin.unwrap(), "r2");
+    }
+
+    #[test]
+    fn test_memory_type_field() {
+        let mut r = ProximaRecord::default();
+        r.memory_type = Some(MemoryType::Decision);
+        assert_eq!(r.memory_type, Some(MemoryType::Decision));
     }
 
     #[test]

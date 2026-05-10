@@ -18,7 +18,7 @@ use tracing::{debug, info};
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::security_service_server::{SecurityService, SecurityServiceServer};
 use crate::security::unified_rbac::{
-    ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
+    ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
 
 /// Security service implementation for RBAC operations
@@ -64,7 +64,7 @@ impl SecurityServiceImpl {
             },
             roles: Vec::new(),
             effective_permissions: std::collections::HashSet::new(),
-            auth_method: crate::security::unified_rbac::AuthMethod::Internal,
+            auth_method: UnifiedAuthMethod::Internal,
             session_id: auth_ctx.session_id.clone(),
             expires_at,
             created_at: chrono::Utc::now(),
@@ -168,7 +168,7 @@ impl SecurityService for SecurityServiceImpl {
             },
             roles: Vec::new(),
             effective_permissions: std::collections::HashSet::new(),
-            auth_method: crate::security::unified_rbac::AuthMethod::Internal,
+            auth_method: UnifiedAuthMethod::Internal,
             session_id: uuid::Uuid::new_v4().to_string(),
             expires_at: None,
             created_at: chrono::Utc::now(),

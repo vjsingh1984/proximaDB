@@ -28,6 +28,53 @@ impl ObservabilityAqlSource {
             "default".to_string()
         }
     }
+
+    fn sql_data_to_aql(value: SqlValueData) -> AqlValue {
+        match value {
+            SqlValueData::StringValue(s) => AqlValue::String(s),
+            SqlValueData::Int64Value(i) => AqlValue::Int(i),
+            SqlValueData::NumberValue(f) => AqlValue::Float(f),
+            SqlValueData::BoolValue(b) => AqlValue::Bool(b),
+            SqlValueData::BytesValue(bytes) => serde_json::from_slice(&bytes)
+                .map(AqlValue::Jsonb)
+                .unwrap_or(AqlValue::Null),
+            SqlValueData::ObjectValue(obj) => {
+                let mut map = serde_json::Map::new();
+                for (key, value) in obj.fields {
+                    if let Some(inner) = value.value {
+                        map.insert(key, Self::aql_to_json_value(Self::sql_data_to_aql(inner)));
+                    }
+                }
+                AqlValue::Jsonb(serde_json::Value::Object(map))
+            }
+            SqlValueData::ArrayValue(arr) => {
+                let values = arr
+                    .values
+                    .into_iter()
+                    .map(|value| {
+                        value
+                            .value
+                            .map(Self::sql_data_to_aql)
+                            .map(Self::aql_to_json_value)
+                            .unwrap_or(serde_json::Value::Null)
+                    })
+                    .collect();
+                AqlValue::Jsonb(serde_json::Value::Array(values))
+            }
+            _ => AqlValue::Null,
+        }
+    }
+
+    fn aql_to_json_value(value: AqlValue) -> serde_json::Value {
+        match value {
+            AqlValue::String(s) => serde_json::Value::String(s),
+            AqlValue::Int(i) => serde_json::json!(i),
+            AqlValue::Float(f) => serde_json::json!(f),
+            AqlValue::Bool(b) => serde_json::Value::Bool(b),
+            AqlValue::Json(j) | AqlValue::Jsonb(j) => j,
+            _ => serde_json::Value::Null,
+        }
+    }
 }
 
 #[async_trait]
@@ -40,10 +87,9 @@ impl AqlSource for ObservabilityAqlSource {
         let namespace = self.extract_obs_params(query);
         let start = Instant::now();
 
-        // Perform observability query (logs for now)
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let params = LogQueryParams {
-            start_time_ns: now_ns - (3600 * 1_000_000_000), // Last hour default
+            start_time_ns: now_ns - (3600 * 1_000_000_000),
             end_time_ns: now_ns,
             query: None,
             severities: Vec::new(),
@@ -65,7 +111,6 @@ impl AqlSource for ObservabilityAqlSource {
 
         let wall_time_us = start.elapsed().as_micros() as u64;
 
-        // Convert to AQL rows
         let mut rows = Vec::new();
         for log in log_result.logs {
             let mut row = HashMap::new();
@@ -76,27 +121,19 @@ impl AqlSource for ObservabilityAqlSource {
                 row.insert("service".to_string(), AqlValue::String(svc));
             }
 
-            for (k, v) in log.fields {
-                if let Some(val) = v.value {
-                    let aql_val = match val {
-                        SqlValueData::StringValue(s) => AqlValue::String(s),
-                        SqlValueData::Int64Value(i) => AqlValue::Int(i),
-                        SqlValueData::NumberValue(f) => AqlValue::Float(f),
-                        SqlValueData::BoolValue(b) => AqlValue::Bool(b),
-                        _ => AqlValue::Null,
-                    };
-                    row.insert(k, aql_val);
+            for (key, value) in log.fields {
+                if let Some(inner) = value.value {
+                    row.insert(key, Self::sql_data_to_aql(inner));
                 }
             }
             rows.push(row);
         }
 
-        // Emit audit frame
         let frame = AuditFrame {
             frame_id: 0,
             source: self.model(),
             op: AuditOp::DocumentQuery {
-                // Reuse DocumentQuery for now or add LogQuery to AuditOp
+                // Reuse DocumentQuery for now or add LogQuery to AuditOp.
                 collection: namespace.clone(),
             },
             filters_pushed: Vec::new(),

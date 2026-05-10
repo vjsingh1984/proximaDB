@@ -1,10 +1,21 @@
 //! ProximaDB Unified Benchmark Suite
 //!
 //! A comprehensive benchmark suite for ProximaDB that tests:
-//! - Distance computation performance  
+//! - Distance computation performance
 //! - Vector operations
 //! - Index operations (HNSW, LSH)
 //! - Future: Storage engines and concurrent operations
+
+#![allow(
+    clippy::clone_on_copy,
+    clippy::collapsible_if,
+    clippy::get_first,
+    clippy::iter_cloned_collect,
+    clippy::let_and_return,
+    clippy::manual_clamp,
+    clippy::manual_div_ceil,
+    clippy::unnecessary_map_or
+)]
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

@@ -133,6 +133,23 @@ jobs:
   # ============================================================================
   # QUALITY CHECKS - Run in parallel, fast feedback
   # ============================================================================
+  hygiene-check:
+    name: Hygiene Guardrails
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for tracked artifact files
+        run: |
+          bad_files=$(git ls-files | rg '(^|/)\\.victor($|/)|\\.bak[0-9]*$|\\.disabled$')
+          if [ -n "$bad_files" ]; then
+            echo "::error::Forbidden tracked artifacts detected:"
+            echo "$bad_files"
+            exit 1
+          fi
+          echo "No tracked artifact files detected."
+
   rust-format:
     name: Rust Format
     runs-on: ubuntu-latest
