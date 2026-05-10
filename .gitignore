@@ -133,7 +133,7 @@ file_list.txt
 *.tmp
 *.temp
 *.bak
-*.bak2
+*.bak*
 *.backup
 *.migrated
 *.old

@@ -85,3 +85,12 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: ['--maxkb=1000']
+
+  # Repository hygiene guardrails
+  - repo: local
+    hooks:
+      - id: hygiene-forbidden-artifacts
+        name: Hygiene - forbid tracked .victor/.bak/.disabled artifacts
+        entry: bash -c 'bad_files=$(git ls-files | rg "(^|/)\\.victor($|/)|\\.bak[0-9]*$|\\.disabled$" || true); if [ -n "$bad_files" ]; then echo "::error::Forbidden tracked artifacts detected:"; echo "$bad_files"; exit 1; fi'
+        language: system
+        pass_filenames: false
