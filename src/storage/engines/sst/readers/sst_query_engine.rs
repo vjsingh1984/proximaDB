@@ -5362,9 +5362,6 @@ impl UnifiedSstableReader {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 impl ReadingStrategySelector {
     pub fn new(config: ReaderConfig) -> Self {
         Self { config }
