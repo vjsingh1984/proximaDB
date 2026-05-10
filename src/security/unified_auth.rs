@@ -136,6 +136,9 @@ pub struct AuthenticationResult {
     pub requires_mfa: bool,
 }
 
+/// Canonical generic authentication result for unified security auth flows.
+pub type SecurityAuthenticationResult = AuthenticationResult;
+
 /// Unified authentication service
 pub struct UnifiedAuthService {
     /// Enterprise auth manager for SSO

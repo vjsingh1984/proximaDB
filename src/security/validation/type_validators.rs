@@ -39,8 +39,13 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
 
-/// Validation result type alias
-pub type ValidationResult = Result<(), ValidationError>;
+/// Canonical validation result type for security field validators.
+pub type TypeValidationResult = Result<(), ValidationError>;
+
+/// Compatibility alias retained for existing imports; prefer `TypeValidationResult` for
+/// explicit type-surface locality.
+#[deprecated(note = "Use TypeValidationResult instead.")]
+pub type ValidationResult = TypeValidationResult;
 
 /// Validation error with details
 #[derive(Debug, Clone, thiserror::Error)]

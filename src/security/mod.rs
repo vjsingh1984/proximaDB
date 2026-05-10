@@ -20,10 +20,12 @@ pub use unified_rbac::{
 
 pub use unified_auth::{
     AuthenticationConfig, AuthenticationData, AuthenticationMethod, AuthenticationResult,
-    ClientIdentity, MtlsConfig, UnifiedAuthService,
+    ClientIdentity, MtlsConfig, SecurityAuthenticationResult, UnifiedAuthService,
 };
 
-pub use security_coordinator::{SecurityConfig, SecurityCoordinator, SecurityMode};
+pub use security_coordinator::{
+    AuthorizedContext, SecurityConfig, SecurityCoordinator, SecurityMode, SessionMetadata,
+};
 
 pub use advanced_features::{
     IPAccessConfig, IPAccessControlService, IPAccessResult, MFAChallenge, MFAConfig, MFAProvider,
