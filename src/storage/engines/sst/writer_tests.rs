@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use tempfile::NamedTempFile;
@@ -158,12 +160,12 @@
         let fs = filesystem.get_filesystem("file:///").unwrap();
         let file_data = fs.read(sstable_path.to_str().unwrap()).await.unwrap();
 
-        debug!("SSTable file size: {} bytes", file_data.len());
+        println!("SSTable file size: {} bytes", file_data.len());
 
         // Parse header length
         let header_len =
             u32::from_le_bytes([file_data[0], file_data[1], file_data[2], file_data[3]]);
-        debug!("Header length: {} bytes", header_len);
+        println!("Header length: {} bytes", header_len);
 
         // Check bloom filter offset and length
         let bloom_offset = 4 + header_len as usize;
@@ -174,7 +176,7 @@
                 file_data[bloom_offset + 2],
                 file_data[bloom_offset + 3],
             ]);
-            debug!(
+            println!(
                 "Bloom filter length: {} bytes at offset {}",
                 bloom_len, bloom_offset
             );
@@ -195,7 +197,7 @@
                     file_data[bloom_end + 2],
                     file_data[bloom_end + 3],
                 ]);
-                debug!("Index length: {} bytes at offset {}", index_len, bloom_end);
+                println!("Index length: {} bytes at offset {}", index_len, bloom_end);
             }
         }
 
@@ -233,4 +235,5 @@
                 "Vector values should match"
             );
         }
+    }
 }

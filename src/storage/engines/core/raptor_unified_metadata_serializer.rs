@@ -19,7 +19,25 @@ use crate::storage::persistence::filesystem::metadata_traits::{
     deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
 };
 
-use super::common::{CentroidStats, VectorCentroidCompressionMetadata};
+// Types moved from raptor::common - define locally for core serialization
+/// Centroid statistics for boundary detection
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CentroidStats {
+    pub centroid_id: usize,
+    pub vector: Vec<f32>,
+    pub min_distance: f32,
+    pub max_distance: f32,
+    pub count: usize,
+}
+
+/// Compression metadata for vector centroids
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct VectorCentroidCompressionMetadata {
+    pub algorithm: String,
+    pub compression_level: u32,
+    pub original_size: usize,
+    pub compressed_size: usize,
+}
 
 /// Cached RAPTOR metadata structure
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

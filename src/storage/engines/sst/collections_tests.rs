@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod tests {
     use super::*;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::SstConfig;
@@ -54,3 +56,4 @@
             .await
             .unwrap()
     }
+}

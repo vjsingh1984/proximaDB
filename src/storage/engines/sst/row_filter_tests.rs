@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod tests {
     use super::*;
     use crate::core::search::{ComparisonOperator, FilterExpression};
 
@@ -20,7 +22,7 @@
             .unwrap();
 
         assert!(!indices.is_empty(), "Should find some matching records");
-        debug!(
+        println!(
             "SST Row Filter found {} matches out of {} records",
             indices.len(),
             records.len()
@@ -59,7 +61,7 @@
             .unwrap();
 
         assert!(!indices.is_empty(), "Should find some matching records");
-        debug!("Parallel filter found {} matches", indices.len());
+        println!("Parallel filter found {} matches", indices.len());
     }
 
     fn create_test_vector_records(count: usize) -> Vec<VectorRecord> {
@@ -138,3 +140,4 @@
 
         records
     }
+}

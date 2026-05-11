@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod tests {
     use super::*;
     use crate::storage::engines::sst::blocks::SstRecord;
 
@@ -140,11 +142,11 @@
         );
         assert_eq!(stats.tombstones_removed, 1, "Should remove 1 old tombstone");
 
-        debug!("✅ LSM compaction expired deletion unit test passed!");
-        debug!("   - Input records: {}", test_records.len());
-        debug!("   - Bytes written: {}", stats.bytes_written);
-        debug!("   - Expired deleted: {}", stats.expired_records_deleted);
-        debug!("   - Tombstones removed: {}", stats.tombstones_removed);
+        println!("✅ LSM compaction expired deletion unit test passed!");
+        println!("   - Input records: {}", test_records.len());
+        println!("   - Bytes written: {}", stats.bytes_written);
+        println!("   - Expired deleted: {}", stats.expired_records_deleted);
+        println!("   - Tombstones removed: {}", stats.tombstones_removed);
 
         Ok(())
     }
@@ -175,7 +177,7 @@
             if let Some(expires_at) = expires_at {
                 if expires_at < current_time {
                     expired_count += 1;
-                    debug!(
+                    println!(
                         "⏰ Compaction: Skipping expired record {} (expired at {})",
                         record_id, expires_at
                     );
@@ -204,10 +206,10 @@
             "Expired record should be filtered out"
         );
 
-        debug!("✅ Expired record logic unit test passed!");
-        debug!("   - Input records: 3");
-        debug!("   - Kept records: {}", kept_records.len());
-        debug!("   - Expired filtered: {}", expired_count);
+        println!("✅ Expired record logic unit test passed!");
+        println!("   - Input records: 3");
+        println!("   - Kept records: {}", kept_records.len());
+        println!("   - Expired filtered: {}", expired_count);
 
         Ok(())
     }
@@ -244,7 +246,7 @@
             );
         }
 
-        debug!("✅ Expiry edge cases unit test passed!");
+        println!("✅ Expiry edge cases unit test passed!");
         Ok(())
     }
 
@@ -276,6 +278,7 @@
             );
         }
 
-        debug!("✅ Tombstone cleanup unit test passed!");
+        println!("✅ Tombstone cleanup unit test passed!");
         Ok(())
     }
+}

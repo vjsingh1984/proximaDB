@@ -1,8 +1,15 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
     use crate::graph::GraphOperationsService;
     use crate::proto::proximadb_v1::{
         CreateGraphRequest, Node as ProtoNode, VectorData, property_value,
     };
     use std::collections::HashMap;
+
+    // Import required types from parent module
+    use crate::query::federated::execution::{ExecutionConfig, ExecutionResult, FederatedExecutor};
+    use std::sync::Arc;
 
     #[test]
     fn test_execution_result_empty() {
@@ -135,7 +142,7 @@
             .schema()
             .fields()
             .iter()
-            .map(|field| field.name().clone())
+            .map(|field: &arrow::datatypes::Field| field.name().clone())
             .collect();
         assert_eq!(fields, vec!["node_id", "label", "properties", "embedding"]);
 
@@ -176,7 +183,7 @@
             .schema()
             .fields()
             .iter()
-            .map(|field| field.name().clone())
+            .map(|field: &arrow::datatypes::Field| field.name().clone())
             .collect();
         assert_eq!(fields, vec!["person_name"]);
 
@@ -263,7 +270,7 @@
             .schema()
             .fields()
             .iter()
-            .map(|field| field.name().clone())
+            .map(|field: &arrow::datatypes::Field| field.name().clone())
             .collect();
         assert_eq!(fields, vec!["neighbor"]);
 
@@ -751,14 +758,16 @@
             .schema
             .fields()
             .iter()
-            .map(|field| field.name().clone())
+            .map(|field: &arrow::datatypes::Field| field.name().clone())
             .collect();
         let preserved_fields: Vec<String> = preserved
             .schema
             .fields()
             .iter()
-            .map(|field| field.name().clone())
+            .map(|field: &arrow::datatypes::Field| field.name().clone())
             .collect();
 
         assert_eq!(stripped_fields, vec!["id", "document"]);
         assert_eq!(preserved_fields, vec!["id", "document", "embedding"]);
+    }
+}
