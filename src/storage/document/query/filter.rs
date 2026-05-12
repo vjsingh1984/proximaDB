@@ -174,13 +174,12 @@ impl FilterEvaluator {
             }
             Some(SqlValueVariant::StringValue(s)) => Some(JsonValue::String(s.clone())),
             Some(SqlValueVariant::BytesValue(b)) => {
-                // Encode bytes as hex string
-                let hex_str: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
-                Some(JsonValue::String(format!("0x{}", hex_str)))
-            }
-            Some(SqlValueVariant::JsonbValue(b)) => {
-                // Deserialize binary JSONB (MessagePack)
-                ProximaValue::from_jsonb_slice(b).ok()
+                if let Ok(jsonb) = ProximaValue::from_jsonb_slice(b) {
+                    Some(jsonb)
+                } else {
+                    let hex_str: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
+                    Some(JsonValue::String(format!("0x{}", hex_str)))
+                }
             }
             Some(SqlValueVariant::ArrayValue(arr)) => {
                 let json_arr: Vec<JsonValue> = arr
@@ -267,9 +266,6 @@ impl FilterEvaluator {
                 va == vb
             }
             (Some(SqlValueVariant::BytesValue(va)), Some(SqlValueVariant::BytesValue(vb))) => {
-                va == vb
-            }
-            (Some(SqlValueVariant::JsonbValue(va)), Some(SqlValueVariant::JsonbValue(vb))) => {
                 va == vb
             }
             // Cross-type numeric comparison
@@ -388,8 +384,13 @@ impl FilterEvaluator {
                     Some(SqlValueVariant::Int64Value(_)) => "integer",
                     Some(SqlValueVariant::NumberValue(_)) => "number",
                     Some(SqlValueVariant::StringValue(_)) => "string",
-                    Some(SqlValueVariant::BytesValue(_)) => "bytes",
-                    Some(SqlValueVariant::JsonbValue(_)) => "jsonb",
+                    Some(SqlValueVariant::BytesValue(bytes)) => {
+                        if ProximaValue::from_jsonb_slice(bytes).is_ok() {
+                            "jsonb"
+                        } else {
+                            "bytes"
+                        }
+                    }
                     Some(SqlValueVariant::ArrayValue(_)) => "array",
                     Some(SqlValueVariant::ObjectValue(_)) => "object",
                     None => "undefined",
@@ -609,9 +610,9 @@ mod tests {
         let evaluator = FilterEvaluator::new();
         let original = serde_json::json!({"priority": "high", "active": true});
         let bytes = ProximaValue::to_jsonb_vec(&original).unwrap();
-        
+
         let val = SqlValue {
-            value: Some(SqlValueVariant::JsonbValue(bytes)),
+            value: Some(SqlValueVariant::BytesValue(bytes)),
         };
 
         // Extract path value from a document containing this jsonb
@@ -621,7 +622,10 @@ mod tests {
 
         let result = evaluator.extract_path_value(&doc, "$.metadata.priority");
         assert!(result.is_some());
-        if let Some(SqlValue { value: Some(SqlValueVariant::StringValue(s)) }) = result {
+        if let Some(SqlValue {
+            value: Some(SqlValueVariant::StringValue(s)),
+        }) = result
+        {
             assert_eq!(s, "high");
         } else {
             panic!("Expected string 'high' from jsonb path");

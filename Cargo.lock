@@ -5964,6 +5964,7 @@ dependencies = [
 name = "proximadb-records"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "proximadb-data-model",
  "proximadb-proto",
  "serde",

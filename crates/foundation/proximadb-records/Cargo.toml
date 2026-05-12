@@ -14,6 +14,7 @@ name = "proximadb_records"
 path = "src/lib.rs"
 
 [dependencies]
+anyhow.workspace = true
 proximadb-data-model = { workspace = true }
 proximadb-proto = { workspace = true }
 serde.workspace = true

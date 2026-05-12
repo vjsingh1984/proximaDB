@@ -32,6 +32,7 @@ use proximadb_data_model::{MemoryType, ProximaValue};
 use serde::{Deserialize, Serialize};
 
 pub mod conversions;
+pub mod proto_v2;
 
 // ---------------------------------------------------------------------------
 // NF² Property Tree

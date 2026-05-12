@@ -26,8 +26,8 @@
 //!
 //! ## ProximaRecord Structure
 //!
-//! ProximaRecord extends VectorRecord with:
-//! - `typed_fields`: Strongly-typed fields (INTEGER, FLOAT, DECIMAL, UUID, etc.)
+//! ProximaRecord replaces VectorRecord with:
+//! - `props`: Canonical rich fields (INTEGER, FLOAT, DECIMAL, UUID, JSONB, etc.)
 //! - `text_fields`: Dedicated TEXT column storage with chunking support
 //! - Schema validation at insert time (when enabled)
 
@@ -39,12 +39,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
+use crate::api_handlers::RichRecordBatchRequest;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
-use crate::proto::proximadb_v1::{
-    SearchQuery, VectorBatchRequest, VectorRecord, VectorSearchRequest,
-};
+use crate::proto::proximadb_v1::{SearchQuery, VectorSearchRequest};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 /// Convert a JSON value to SqlValue for storage
 fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
@@ -339,7 +340,7 @@ fn convert_typed_filters_to_clauses(
 ///         {
 ///             "id": "doc_1",
 ///             "vector": [0.1, 0.2, 0.3],
-///             "typed_fields": {
+///             "props": {
 ///                 "category": "electronics",
 ///                 "price": 299.99,
 ///                 "in_stock": true
@@ -351,9 +352,7 @@ fn convert_typed_filters_to_clauses(
 ///                     "storage_hint": "adaptive"
 ///                 }
 ///             ],
-///             "metadata": {
-///                 "source": "catalog_import"
-///             }
+///             "source": "catalog_import"
 ///         }
 ///     ],
 ///     "validate_schema": true
@@ -378,21 +377,130 @@ pub struct ProximaRecordInput {
     pub id: Option<String>,
     /// Vector embedding (required)
     pub vector: Vec<f32>,
-    /// Typed fields with strong type support
-    ///
-    /// Supported types:
-    /// - String: TEXT
-    /// - Number (integer): INTEGER
-    /// - Number (float): FLOAT
-    /// - Boolean: BOOLEAN
-    /// - Array: ARRAY types
-    /// - Object: JSON or MAP types
-    /// - null: NULL
-    pub typed_fields: Option<HashMap<String, serde_json::Value>>,
+    /// Canonical rich property map.
+    pub props: Option<HashMap<String, RestProximaValue>>,
     /// Dedicated TEXT fields with storage hints
     pub text_fields: Option<Vec<TextFieldInput>>,
-    /// Legacy metadata (for backward compatibility)
-    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// REST value shape for the canonical `ProximaValue` type system.
+///
+/// Scalars may be sent directly for ergonomic JSON. Rich or ambiguous values use
+/// `{ "type": "...", "value": ... }`, e.g. `{ "type": "jsonb", "value": {...} }`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum RestProximaValue {
+    Typed {
+        #[serde(rename = "type")]
+        type_name: String,
+        value: serde_json::Value,
+    },
+    Inferred(serde_json::Value),
+}
+
+fn rest_value_to_proxima(value: &RestProximaValue) -> Result<ProximaValue, ApiError> {
+    match value {
+        RestProximaValue::Inferred(value) => infer_json_value(value),
+        RestProximaValue::Typed { type_name, value } => typed_json_value(type_name, value),
+    }
+}
+
+fn infer_json_value(value: &serde_json::Value) -> Result<ProximaValue, ApiError> {
+    Ok(match value {
+        serde_json::Value::Null => ProximaValue::Null,
+        serde_json::Value::Bool(v) => ProximaValue::Boolean(*v),
+        serde_json::Value::Number(v) => {
+            if let Some(i) = v.as_i64() {
+                ProximaValue::Int64(i)
+            } else if let Some(u) = v.as_u64() {
+                ProximaValue::UInt64(u)
+            } else if let Some(f) = v.as_f64() {
+                ProximaValue::Float64(f)
+            } else {
+                return Err(ApiError::InvalidArgument(format!("Invalid number: {v}")));
+            }
+        }
+        serde_json::Value::String(v) => ProximaValue::String(v.clone()),
+        serde_json::Value::Array(values) => ProximaValue::Array(
+            values
+                .iter()
+                .map(infer_json_value)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        serde_json::Value::Object(values) => ProximaValue::Struct(
+            values
+                .iter()
+                .map(|(k, v)| infer_json_value(v).map(|value| (k.clone(), value)))
+                .collect::<Result<HashMap<_, _>, _>>()?,
+        ),
+    })
+}
+
+fn typed_json_value(type_name: &str, value: &serde_json::Value) -> Result<ProximaValue, ApiError> {
+    let normalized = type_name.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "json" => Ok(ProximaValue::Json(value.clone())),
+        "jsonb" => Ok(ProximaValue::Jsonb(value.clone())),
+        "decimal" => Ok(ProximaValue::Decimal(match value {
+            serde_json::Value::String(v) => v.clone(),
+            _ => value.to_string(),
+        })),
+        "symbol" => value
+            .as_str()
+            .map(|v| ProximaValue::Symbol(v.to_string()))
+            .ok_or_else(|| ApiError::InvalidArgument("symbol requires a string".to_string())),
+        "uuid" => value
+            .as_str()
+            .ok_or_else(|| ApiError::InvalidArgument("uuid requires a string".to_string()))
+            .and_then(|v| {
+                uuid::Uuid::parse_str(v)
+                    .map(|uuid| ProximaValue::Uuid(*uuid.as_bytes()))
+                    .map_err(|e| ApiError::InvalidArgument(format!("invalid uuid: {e}")))
+            }),
+        "uint64" => value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
+            .map(ProximaValue::UInt64)
+            .ok_or_else(|| {
+                ApiError::InvalidArgument("uint64 requires an unsigned integer".to_string())
+            }),
+        "float32" => value
+            .as_f64()
+            .map(|v| ProximaValue::Float32(v as f32))
+            .ok_or_else(|| ApiError::InvalidArgument("float32 requires a number".to_string())),
+        "binary_vector" => bytes_from_json_array(value).map(ProximaValue::BinaryVector),
+        "binary" => bytes_from_json_array(value).map(ProximaValue::Binary),
+        "dense_vector" | "vector" => value
+            .as_array()
+            .ok_or_else(|| ApiError::InvalidArgument("vector requires an array".to_string()))?
+            .iter()
+            .map(|v| {
+                v.as_f64().map(|n| n as f32).ok_or_else(|| {
+                    ApiError::InvalidArgument("vector values must be numeric".to_string())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(ProximaValue::DenseVector),
+        _ => infer_json_value(value),
+    }
+}
+
+fn bytes_from_json_array(value: &serde_json::Value) -> Result<Vec<u8>, ApiError> {
+    value
+        .as_array()
+        .ok_or_else(|| {
+            ApiError::InvalidArgument("binary values require an array of bytes".to_string())
+        })?
+        .iter()
+        .map(|v| {
+            v.as_u64()
+                .filter(|v| *v <= u8::MAX as u64)
+                .map(|v| v as u8)
+                .ok_or_else(|| {
+                    ApiError::InvalidArgument("binary byte values must be 0..255".to_string())
+                })
+        })
+        .collect()
 }
 
 /// Input format for TEXT fields
@@ -495,7 +603,7 @@ pub async fn insert_records(
 
     let mut inserted_ids = Vec::new();
     let mut errors = Vec::new();
-    let mut vector_records = Vec::new();
+    let mut rich_records = Vec::new();
 
     for (index, record) in request.records.iter().enumerate() {
         // Validate vector is not empty
@@ -515,57 +623,48 @@ pub async fn insert_records(
             new_id
         });
 
-        // Convert typed_fields to metadata for backward compatibility with v1 storage
-        let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
+        let mut props = HashMap::new();
 
-        // Convert typed_fields
-        if let Some(ref typed_fields) = record.typed_fields {
-            for (key, value) in typed_fields {
-                let sql_value = json_to_sql_value(value);
-                metadata.insert(key.clone(), sql_value);
+        if let Some(ref input_props) = record.props {
+            for (key, value) in input_props {
+                let proxima_value = rest_value_to_proxima(value)?;
+                props.insert(key.clone(), ProximaTreeNode::Value(proxima_value));
             }
         }
 
-        // Convert text_fields to metadata
         if let Some(ref text_fields) = record.text_fields {
             for text_field in text_fields {
-                let sql_value = crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        text_field.content.clone(),
-                    )),
-                };
-                metadata.insert(text_field.name.clone(), sql_value);
+                props.insert(
+                    text_field.name.clone(),
+                    ProximaTreeNode::Value(ProximaValue::String(text_field.content.clone())),
+                );
             }
         }
 
-        // Merge legacy metadata
-        if let Some(ref legacy_metadata) = record.metadata {
-            for (key, value) in legacy_metadata {
-                if !metadata.contains_key(key) {
-                    let sql_value = json_to_sql_value(value);
-                    metadata.insert(key.clone(), sql_value);
-                }
-            }
-        }
-
-        // Create VectorRecord for storage
-        let vector_record = VectorRecord {
-            id: record_id.clone(),
-            vector: record.vector.clone(),
-            metadata,
-            version: None,
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            source: Some("v2_api".to_string()),
-            updated_at: None,
-            expires_at: None,
+        let now_ns = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_mul(1_000_000);
+        let rich_record = ProximaRecord {
+            oid: record_id.clone(),
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            origin: Some("v2_api".to_string()),
+            props,
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: record.vector.len() as u32,
+                values: record.vector.clone(),
+            }],
+            ..ProximaRecord::default()
         };
 
-        vector_records.push(vector_record);
+        rich_records.push(rich_record);
         inserted_ids.push(record_id);
     }
 
     // Early return if all records failed validation
-    if vector_records.is_empty() {
+    if rich_records.is_empty() {
         return Ok(Json(InsertRecordsResponse {
             inserted_count: 0,
             failed_count: errors.len(),
@@ -574,15 +673,14 @@ pub async fn insert_records(
         }));
     }
 
-    // Insert via unified handlers
-    let batch_request = VectorBatchRequest {
+    let batch_request = RichRecordBatchRequest {
         collection_id: collection.clone(),
-        vectors: vector_records,
+        records: rich_records,
     };
 
     match state
         .unified_handlers
-        .handle_vector_batch_v1_for_tenant(batch_request, Some(&tenant.tenant_id))
+        .handle_record_batch_for_tenant(batch_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
@@ -682,12 +780,10 @@ pub struct TypedSearchResult {
     pub score: f32,
     /// Vector embedding (if requested)
     pub vector: Option<Vec<f32>>,
-    /// Typed fields from the record
-    pub typed_fields: HashMap<String, serde_json::Value>,
+    /// Rich properties from the record
+    pub props: HashMap<String, serde_json::Value>,
     /// TEXT fields (if include_text is true)
     pub text_fields: Option<Vec<TextFieldOutput>>,
-    /// Legacy metadata
-    pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Output format for TEXT fields
@@ -880,8 +976,7 @@ pub async fn search_with_typed_filters(
                 .results
                 .iter()
                 .map(|r| {
-                    // Convert metadata to typed_fields
-                    let typed_fields: HashMap<String, serde_json::Value> = r
+                    let props: HashMap<String, serde_json::Value> = r
                         .metadata
                         .iter()
                         .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
@@ -898,14 +993,13 @@ pub async fn search_with_typed_filters(
                         } else {
                             None
                         },
-                        typed_fields,
+                        props,
                         text_fields: if include_text {
                             // Extract text fields from metadata
                             Some(vec![]) // Would be populated from text storage
                         } else {
                             None
                         },
-                        metadata: None, // Legacy metadata is converted to typed_fields
                     })
                 })
                 .collect::<Result<_, ApiError>>()?;
@@ -954,8 +1048,8 @@ pub struct RecordV2Response {
     pub id: String,
     /// Vector embedding (if requested)
     pub vector: Option<Vec<f32>>,
-    /// Typed fields from the record
-    pub typed_fields: HashMap<String, serde_json::Value>,
+    /// Rich properties from the record
+    pub props: HashMap<String, serde_json::Value>,
     /// TEXT fields (if include_text is true)
     pub text_fields: Option<Vec<TextFieldOutput>>,
     /// Record version
@@ -1041,8 +1135,7 @@ pub async fn get_record_v2(
                 .first()
                 .ok_or_else(|| ApiError::NotFound(format!("Record '{}' not found", record_id)))?;
 
-            // Convert metadata to typed_fields
-            let typed_fields: HashMap<String, serde_json::Value> = result
+            let props: HashMap<String, serde_json::Value> = result
                 .metadata
                 .iter()
                 .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
@@ -1055,7 +1148,7 @@ pub async fn get_record_v2(
                 } else {
                     None
                 },
-                typed_fields,
+                props,
                 text_fields: if include_text {
                     Some(vec![]) // Would be populated from text storage
                 } else {
@@ -1091,7 +1184,7 @@ mod tests {
                 {
                     "id": "doc_1",
                     "vector": [0.1, 0.2, 0.3],
-                    "typed_fields": {
+                    "props": {
                         "category": "test",
                         "price": 99.99
                     },
@@ -1943,7 +2036,7 @@ mod tests {
                 {
                     "id": "rec_001",
                     "vector": [0.1, 0.2, 0.3, 0.4],
-                    "typed_fields": {
+                    "props": {
                         "name": "Widget",
                         "price": 29.99,
                         "in_stock": true,
@@ -1955,14 +2048,11 @@ mod tests {
                             "content": "A high-quality widget for all purposes",
                             "storage_hint": "adaptive"
                         }
-                    ],
-                    "metadata": {
-                        "source": "api_test"
-                    }
+                    ]
                 },
                 {
                     "vector": [0.5, 0.6, 0.7, 0.8],
-                    "typed_fields": {
+                    "props": {
                         "name": "Gadget"
                     }
                 }
@@ -1980,15 +2070,12 @@ mod tests {
         let rec0 = &request.records[0];
         assert_eq!(rec0.id, Some("rec_001".to_string()));
         assert_eq!(rec0.vector.len(), 4);
-        assert!(rec0.typed_fields.is_some());
-        let typed = rec0
-            .typed_fields
-            .as_ref()
-            .expect("typed_fields should be Some");
-        assert_eq!(typed.get("name"), Some(&serde_json::json!("Widget")));
-        assert_eq!(typed.get("price"), Some(&serde_json::json!(29.99)));
-        assert_eq!(typed.get("in_stock"), Some(&serde_json::json!(true)));
-        assert_eq!(typed.get("quantity"), Some(&serde_json::json!(42)));
+        assert!(rec0.props.is_some());
+        let props = rec0.props.as_ref().expect("props should be Some");
+        assert!(props.contains_key("name"));
+        assert!(props.contains_key("price"));
+        assert!(props.contains_key("in_stock"));
+        assert!(props.contains_key("quantity"));
 
         let text_fields = rec0
             .text_fields
@@ -1998,15 +2085,12 @@ mod tests {
         assert_eq!(text_fields[0].name, "description");
         assert_eq!(text_fields[0].storage_hint, Some("adaptive".to_string()));
 
-        let metadata = rec0.metadata.as_ref().expect("metadata should be Some");
-        assert_eq!(metadata.get("source"), Some(&serde_json::json!("api_test")));
-
         // Second record has auto-generated ID (None)
         let rec1 = &request.records[1];
         assert!(rec1.id.is_none());
         assert_eq!(rec1.vector.len(), 4);
         assert!(rec1.text_fields.is_none());
-        assert!(rec1.metadata.is_none());
+        assert!(rec1.props.is_some());
     }
 
     // ============================================================
@@ -2057,9 +2141,9 @@ mod tests {
         // A batch with multiple records of varying completeness
         let json = r#"{
             "records": [
-                {"vector": [0.1, 0.2], "typed_fields": {"a": 1}},
-                {"vector": [0.3, 0.4], "typed_fields": {"b": 2}},
-                {"vector": [0.5, 0.6], "typed_fields": {"c": 3}},
+                {"vector": [0.1, 0.2], "props": {"a": 1}},
+                {"vector": [0.3, 0.4], "props": {"b": 2}},
+                {"vector": [0.5, 0.6], "props": {"c": 3}},
                 {"vector": [0.7, 0.8]}
             ]
         }"#;
@@ -2076,11 +2160,11 @@ mod tests {
             assert_eq!(rec.vector.len(), 2);
         }
 
-        // Only first three have typed_fields
-        assert!(request.records[0].typed_fields.is_some());
-        assert!(request.records[1].typed_fields.is_some());
-        assert!(request.records[2].typed_fields.is_some());
-        assert!(request.records[3].typed_fields.is_none());
+        // Only first three have props
+        assert!(request.records[0].props.is_some());
+        assert!(request.records[1].props.is_some());
+        assert!(request.records[2].props.is_some());
+        assert!(request.records[3].props.is_none());
     }
 
     // ============================================================
@@ -2262,13 +2346,12 @@ mod tests {
                 id: "doc_1".to_string(),
                 score: 0.95,
                 vector: None,
-                typed_fields: {
+                props: {
                     let mut m = HashMap::new();
                     m.insert("category".to_string(), serde_json::json!("test"));
                     m
                 },
                 text_fields: None,
-                metadata: None,
             }],
             total_matches: Some(100),
             latency_ms: 5,

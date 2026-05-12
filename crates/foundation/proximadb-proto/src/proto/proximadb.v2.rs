@@ -2,14 +2,14 @@
 /// # =============================================================================
 /// TypedValue: Strongly-typed value wrapper
 ///
-/// Used in typed_fields map for schema-validated columns.
+/// Used in the canonical props map for schema-validated columns.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedValue {
     #[prost(enumeration = "ColumnDataType", tag = "1")]
     pub declared_type: i32,
     #[prost(
         oneof = "typed_value::Value",
-        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 30, 31, 32, 33, 34, 40, 41, 42, 50, 51, 52, 53, 99"
+        tags = "10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 30, 31, 32, 33, 34, 40, 41, 42, 50, 51, 52, 53, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 99"
     )]
     pub value: ::core::option::Option<typed_value::Value>,
 }
@@ -89,6 +89,37 @@ pub mod typed_value {
         VectorValue(super::FloatArray),
         #[prost(message, tag = "53")]
         SparseVectorValue(super::SparseVector),
+        /// Canonical ProximaValue extensions
+        #[prost(int32, tag = "60")]
+        Int8Value(i32),
+        #[prost(int32, tag = "61")]
+        Int16Value(i32),
+        #[prost(int32, tag = "62")]
+        Int32Value(i32),
+        #[prost(uint32, tag = "63")]
+        Uint8Value(u32),
+        #[prost(uint32, tag = "64")]
+        Uint16Value(u32),
+        #[prost(uint32, tag = "65")]
+        Uint32Value(u32),
+        #[prost(uint64, tag = "66")]
+        Uint64Value(u64),
+        #[prost(float, tag = "67")]
+        Float32Value(f32),
+        #[prost(string, tag = "68")]
+        SymbolValue(::prost::alloc::string::String),
+        #[prost(bytes, tag = "69")]
+        JsonbValue(::prost::alloc::vec::Vec<u8>),
+        #[prost(bytes, tag = "70")]
+        UlidValue(::prost::alloc::vec::Vec<u8>),
+        #[prost(message, tag = "71")]
+        ArrayValue(super::TypedValueArray),
+        #[prost(message, tag = "72")]
+        MapValue(super::TypedValueMap),
+        #[prost(message, tag = "73")]
+        StructValue(super::TypedValueMap),
+        #[prost(bytes, tag = "74")]
+        BinaryVectorValue(::prost::alloc::vec::Vec<u8>),
         /// Null marker
         #[prost(bool, tag = "99")]
         IsNull(bool),
@@ -153,6 +184,19 @@ pub struct UuidArray {
     /// Each 16 bytes
     #[prost(bytes = "vec", repeated, tag = "1")]
     pub values: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TypedValueArray {
+    #[prost(message, repeated, tag = "1")]
+    pub values: ::prost::alloc::vec::Vec<TypedValue>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TypedValueMap {
+    #[prost(map = "string, message", tag = "1")]
+    pub entries: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        TypedValue,
+    >,
 }
 /// Map types
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -367,10 +411,9 @@ pub struct TextField {
 ///
 /// Replaces VectorRecord with:
 ///
-/// * Rich typed columns instead of generic metadata map
+/// * Rich typed properties instead of generic metadata map
 /// * Dedicated TEXT fields for chunked text storage
 /// * Schema enforcement with catalog integration
-/// * Full backward compatibility via flexible_fields
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProximaRecord {
     /// Core identity
@@ -385,18 +428,11 @@ pub struct ProximaRecord {
     /// Sparse vector (optional, for hybrid search)
     #[prost(message, optional, tag = "4")]
     pub sparse_vector: ::core::option::Option<SparseVector>,
-    /// Typed metadata (validated against schema)
+    /// Canonical NF2 property map (schema-validated where a schema is attached)
     #[prost(map = "string, message", tag = "5")]
-    pub typed_fields: ::std::collections::HashMap<
+    pub props: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         TypedValue,
-    >,
-    /// Flexible overflow (for HYBRID mode or unschematized data)
-    /// Uses SqlValue from v1 for backward compatibility
-    #[prost(map = "string, message", tag = "6")]
-    pub flexible_fields: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        super::v1::SqlValue,
     >,
     /// TEXT content - dedicated columnar storage
     /// These are stored separately to avoid metadata scanning
@@ -583,7 +619,7 @@ pub struct TypedSearchResult {
     pub score: f64,
     /// Fields (based on projection)
     #[prost(map = "string, message", tag = "3")]
-    pub typed_fields: ::std::collections::HashMap<
+    pub props: ::std::collections::HashMap<
         ::prost::alloc::string::String,
         TypedValue,
     >,
@@ -814,7 +850,7 @@ pub enum ColumnDataType {
     ///
     /// Map\<Utf8, Utf8>
     MapStringString = 22,
-    /// Map\<Utf8, SqlValue> - flexible values
+    /// Map\<Utf8, TypedValue> - flexible values
     MapStringAny = 23,
     /// Map\<Utf8, Int64>
     MapStringInteger = 24,
@@ -832,6 +868,21 @@ pub enum ColumnDataType {
     Vector = 28,
     /// Sparse vector with indices
     SparseVector = 29,
+    /// Full ProximaValue coverage (MULTIMODAL_OVERHAUL_SPEC §4.2)
+    Int8 = 60,
+    Int16 = 61,
+    Int32 = 62,
+    Uint8 = 63,
+    Uint16 = 64,
+    Uint32 = 65,
+    Uint64 = 66,
+    Float32 = 67,
+    Symbol = 68,
+    Jsonb = 69,
+    Ulid = 70,
+    ArrayAny = 71,
+    Struct = 72,
+    BinaryVector = 73,
 }
 impl ColumnDataType {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -870,6 +921,20 @@ impl ColumnDataType {
             Self::GeoPolygon => "GEO_POLYGON",
             Self::Vector => "VECTOR",
             Self::SparseVector => "SPARSE_VECTOR",
+            Self::Int8 => "INT8",
+            Self::Int16 => "INT16",
+            Self::Int32 => "INT32",
+            Self::Uint8 => "UINT8",
+            Self::Uint16 => "UINT16",
+            Self::Uint32 => "UINT32",
+            Self::Uint64 => "UINT64",
+            Self::Float32 => "FLOAT32",
+            Self::Symbol => "SYMBOL",
+            Self::Jsonb => "JSONB",
+            Self::Ulid => "ULID",
+            Self::ArrayAny => "ARRAY_ANY",
+            Self::Struct => "STRUCT",
+            Self::BinaryVector => "BINARY_VECTOR",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -905,6 +970,20 @@ impl ColumnDataType {
             "GEO_POLYGON" => Some(Self::GeoPolygon),
             "VECTOR" => Some(Self::Vector),
             "SPARSE_VECTOR" => Some(Self::SparseVector),
+            "INT8" => Some(Self::Int8),
+            "INT16" => Some(Self::Int16),
+            "INT32" => Some(Self::Int32),
+            "UINT8" => Some(Self::Uint8),
+            "UINT16" => Some(Self::Uint16),
+            "UINT32" => Some(Self::Uint32),
+            "UINT64" => Some(Self::Uint64),
+            "FLOAT32" => Some(Self::Float32),
+            "SYMBOL" => Some(Self::Symbol),
+            "JSONB" => Some(Self::Jsonb),
+            "ULID" => Some(Self::Ulid),
+            "ARRAY_ANY" => Some(Self::ArrayAny),
+            "STRUCT" => Some(Self::Struct),
+            "BINARY_VECTOR" => Some(Self::BinaryVector),
             _ => None,
         }
     }
@@ -918,7 +997,7 @@ pub enum SchemaEnforcementMode {
     Strict = 1,
     /// Schema on read, no validation at insert
     Flexible = 2,
-    /// Core columns enforced, additional fields allowed in flexible_fields
+    /// Core columns enforced, additional fields allowed in props
     Hybrid = 3,
 }
 impl SchemaEnforcementMode {
@@ -951,7 +1030,7 @@ pub enum SchemaEvolutionType {
     EvolutionTypeUnspecified = 0,
     /// New column with default
     AddColumn = 1,
-    /// Column dropped (data preserved in flexible_fields if HYBRID)
+    /// Column dropped (data preserved in props if HYBRID)
     RemoveColumn = 2,
     /// Column renamed
     RenameColumn = 3,

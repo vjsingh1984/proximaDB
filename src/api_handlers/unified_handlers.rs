@@ -55,6 +55,8 @@
 
 use anyhow::{Context, Result, anyhow};
 use proximadb_graph_query::service::GraphExecutionService;
+use proximadb_records::ProximaRecord;
+use proximadb_records::conversions::proxima_record_to_vector;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -217,6 +219,18 @@ use crate::query::QueryFacadeAdapter;
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::DocumentService;
+
+/// Canonical rich record batch request for public and private API handlers.
+///
+/// This follows MULTIMODAL_OVERHAUL_SPEC §3 and §4.2: callers pass the unified
+/// `ProximaRecord` envelope with `ProximaValue` props. The remaining
+/// `VectorRecord` conversion is isolated inside `UnifiedHandlers` until the
+/// storage write service accepts envelopes directly.
+#[derive(Debug, Clone)]
+pub struct RichRecordBatchRequest {
+    pub collection_id: String,
+    pub records: Vec<ProximaRecord>,
+}
 
 /// Unified handlers that implement all business logic for API operations
 ///
@@ -724,6 +738,25 @@ impl UnifiedHandlers {
             .map_err(|e| anyhow::anyhow!("Hybrid search fusion error: {}", e))?;
 
         Ok(fused_results)
+    }
+
+    /// Canonical rich-record batch handler used by v2 REST/gRPC/internal callers.
+    pub async fn handle_record_batch_for_tenant(
+        &self,
+        request: RichRecordBatchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let vector_request = crate::proto::proximadb_v1::VectorBatchRequest {
+            collection_id: request.collection_id,
+            vectors: request
+                .records
+                .iter()
+                .map(proxima_record_to_vector)
+                .collect(),
+        };
+
+        self.handle_vector_batch_v1_for_tenant(vector_request, tenant_id)
+            .await
     }
 
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response

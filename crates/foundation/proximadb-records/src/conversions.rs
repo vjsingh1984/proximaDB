@@ -25,7 +25,8 @@ use std::collections::HashMap;
 
 use proximadb_data_model::ProximaValue;
 use proximadb_proto::proximadb_v1::{
-    Edge, EmbeddingVersion, Node, PropertyValue, SqlValue, VectorRecord, property_value, sql_value,
+    Edge, EmbeddingVersion, Node, PropertyValue, SqlArray, SqlObject, SqlValue, VectorRecord,
+    property_value, sql_value,
 };
 
 use crate::{
@@ -64,6 +65,132 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
             ProximaValue::Map(map)
         }
         None => ProximaValue::Null,
+    }
+}
+
+/// Convert a canonical `ProximaValue` into the legacy v1 `SqlValue`.
+///
+/// This exists only as a storage-service adapter while the vector operations
+/// service still accepts `VectorRecord`. Public and internal v2 APIs should use
+/// `ProximaValue`/`ProximaRecord` directly.
+pub fn proxima_to_sql_value(value: &ProximaValue) -> SqlValue {
+    let inner = match value {
+        ProximaValue::Boolean(v) => sql_value::Value::BoolValue(*v),
+        ProximaValue::Int8(v) => sql_value::Value::Int64Value(*v as i64),
+        ProximaValue::Int16(v) => sql_value::Value::Int64Value(*v as i64),
+        ProximaValue::Int32(v) => sql_value::Value::Int64Value(*v as i64),
+        ProximaValue::Int64(v) => sql_value::Value::Int64Value(*v),
+        ProximaValue::UInt8(v) => sql_value::Value::Int64Value(*v as i64),
+        ProximaValue::UInt16(v) => sql_value::Value::Int64Value(*v as i64),
+        ProximaValue::UInt32(v) => sql_value::Value::Int64Value(*v as i64),
+        ProximaValue::UInt64(v) => sql_value::Value::StringValue(v.to_string()),
+        ProximaValue::Float16(v) | ProximaValue::Float32(v) => {
+            sql_value::Value::NumberValue(*v as f64)
+        }
+        ProximaValue::Float64(v) => sql_value::Value::NumberValue(*v),
+        ProximaValue::Decimal(v) => sql_value::Value::StringValue(v.clone()),
+        ProximaValue::String(v) | ProximaValue::Symbol(v) => {
+            sql_value::Value::StringValue(v.clone())
+        }
+        ProximaValue::Binary(v) | ProximaValue::BinaryVector(v) => {
+            sql_value::Value::BytesValue(v.clone())
+        }
+        ProximaValue::Date(v) => sql_value::Value::Int64Value(*v as i64),
+        ProximaValue::Time(v, _) => sql_value::Value::Int64Value(*v),
+        ProximaValue::Timestamp(v, _) | ProximaValue::TimestampTz(v, _) => {
+            sql_value::Value::Int64Value(*v)
+        }
+        ProximaValue::Uuid(v) | ProximaValue::ULID(v) => sql_value::Value::BytesValue(v.to_vec()),
+        ProximaValue::Json(v) => sql_value::Value::StringValue(v.to_string()),
+        ProximaValue::Jsonb(v) => sql_value::Value::BytesValue(
+            ProximaValue::to_jsonb_vec(v).unwrap_or_else(|_| v.to_string().into_bytes()),
+        ),
+        ProximaValue::Array(values) => sql_value::Value::ArrayValue(SqlArray {
+            values: values.iter().map(proxima_to_sql_value).collect(),
+        }),
+        ProximaValue::Map(values) | ProximaValue::Struct(values) => {
+            sql_value::Value::ObjectValue(SqlObject {
+                fields: values
+                    .iter()
+                    .map(|(k, v)| (k.clone(), proxima_to_sql_value(v)))
+                    .collect(),
+            })
+        }
+        ProximaValue::DenseVector(values) => sql_value::Value::ArrayValue(SqlArray {
+            values: values
+                .iter()
+                .map(|v| SqlValue {
+                    value: Some(sql_value::Value::NumberValue(*v as f64)),
+                })
+                .collect(),
+        }),
+        ProximaValue::SparseVector { indices, values } => {
+            sql_value::Value::ObjectValue(SqlObject {
+                fields: HashMap::from([
+                    (
+                        "indices".to_string(),
+                        proxima_to_sql_value(&ProximaValue::Array(
+                            indices.iter().map(|v| ProximaValue::UInt32(*v)).collect(),
+                        )),
+                    ),
+                    (
+                        "values".to_string(),
+                        proxima_to_sql_value(&ProximaValue::DenseVector(values.clone())),
+                    ),
+                ]),
+            })
+        }
+        ProximaValue::Null => sql_value::Value::NullValue(0),
+    };
+
+    SqlValue { value: Some(inner) }
+}
+
+/// Flatten a `ProximaTree` into legacy metadata for the remaining v1 storage path.
+pub fn proxima_tree_to_sql_metadata(tree: &ProximaTree) -> HashMap<String, SqlValue> {
+    tree.iter()
+        .map(|(key, node)| {
+            let value = match node {
+                ProximaTreeNode::Value(value) => proxima_to_sql_value(value),
+                ProximaTreeNode::Object(subtree) => {
+                    proxima_to_sql_value(&ProximaValue::Map(tree_to_value_map(subtree)))
+                }
+            };
+            (key.clone(), value)
+        })
+        .collect()
+}
+
+fn tree_to_value_map(tree: &ProximaTree) -> HashMap<String, ProximaValue> {
+    tree.iter()
+        .map(|(key, node)| {
+            let value = match node {
+                ProximaTreeNode::Value(value) => value.clone(),
+                ProximaTreeNode::Object(subtree) => ProximaValue::Map(tree_to_value_map(subtree)),
+            };
+            (key.clone(), value)
+        })
+        .collect()
+}
+
+/// Convert the canonical envelope to `VectorRecord` for the current vector
+/// operations service. This should be deleted once storage accepts envelopes.
+pub fn proxima_record_to_vector(record: &ProximaRecord) -> VectorRecord {
+    let vector = record
+        .embeddings
+        .first()
+        .map(|embedding| embedding.values.clone())
+        .unwrap_or_default();
+
+    VectorRecord {
+        id: record.oid.clone(),
+        vector,
+        metadata: proxima_tree_to_sql_metadata(&record.props),
+        timestamp: Some(record.created_at_ns / 1_000_000),
+        updated_at: Some(record.updated_at_ns / 1_000_000),
+        expires_at: record.valid_to_ns.map(|ns| ns / 1_000_000),
+        version: Some(record.record_version as u32),
+        source: record.origin.clone(),
     }
 }
 

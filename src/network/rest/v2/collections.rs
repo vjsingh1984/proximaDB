@@ -79,7 +79,7 @@ pub struct CreateCollectionV2Request {
     /// Enable ProximaRecord support for this collection
     ///
     /// When enabled:
-    /// - Records can use typed_fields and text_fields
+    /// - Records can use rich props and text_fields
     /// - Schema validation is applied at insert time
     /// - TEXT columns are stored in dedicated columnar format
     ///

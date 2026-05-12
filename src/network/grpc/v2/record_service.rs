@@ -22,10 +22,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::api_handlers::UnifiedHandlers;
+use crate::api_handlers::{RichRecordBatchRequest, UnifiedHandlers};
 use crate::proto::proximadb_v1::{
-    CollectionOperation, CollectionRequest, SearchQuery, VectorBatchRequest, VectorRecord,
-    VectorSearchRequest,
+    CollectionOperation, CollectionRequest, SearchQuery, VectorSearchRequest,
 };
 use crate::proto::proximadb_v2::{
     self, BackpressureLevel, BackpressureSignal, BatchError, BatchWriteMode,
@@ -36,6 +35,8 @@ use crate::proto::proximadb_v2::{
     proxima_record_service_server::ProximaRecordService,
     proxima_record_service_server::ProximaRecordServiceServer,
 };
+use proximadb_records::conversions::sql_value_to_proxima;
+use proximadb_records::proto_v2::{proto_record_to_envelope, proxima_value_to_typed_value};
 
 /// gRPC V2 ProximaRecord service implementation
 ///
@@ -312,59 +313,22 @@ impl ProximaRecordServiceImpl {
             .map(|value| value.to_string())
     }
 
-    /// Convert ProximaRecordBatch to VectorBatchRequest for v1 storage
-    fn convert_to_v1_batch(
+    /// Convert ProximaRecordBatch to the canonical internal rich-record request.
+    fn convert_to_rich_batch(
         &self,
         batch: &ProximaRecordBatch,
-    ) -> Result<VectorBatchRequest, Status> {
-        let mut vectors = Vec::with_capacity(batch.records.len());
+    ) -> Result<RichRecordBatchRequest, Status> {
+        let mut records = Vec::with_capacity(batch.records.len());
 
         for record in &batch.records {
-            // Convert typed_fields to metadata for backward compatibility
-            let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> =
-                HashMap::new();
-
-            // Convert typed_fields
-            for (key, typed_value) in &record.typed_fields {
-                if let Some(sql_value) = self.typed_value_to_sql_value(typed_value) {
-                    metadata.insert(key.clone(), sql_value);
-                }
-            }
-
-            // Convert text_fields
-            for text_field in &record.text_fields {
-                let sql_value = crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        text_field.content.clone(),
-                    )),
-                };
-                metadata.insert(text_field.name.clone(), sql_value);
-            }
-
-            // Merge flexible_fields
-            for (key, sql_value) in &record.flexible_fields {
-                if !metadata.contains_key(key) {
-                    metadata.insert(key.clone(), sql_value.clone());
-                }
-            }
-
-            let vector_record = VectorRecord {
-                id: record.id.clone(),
-                vector: record.vector.clone(),
-                metadata,
-                version: record.version,
-                timestamp: Some(record.timestamp_ms),
-                source: record.source.clone(),
-                updated_at: record.updated_at_ms,
-                expires_at: record.expires_at_ms,
-            };
-
-            vectors.push(vector_record);
+            let envelope = proto_record_to_envelope(record)
+                .map_err(|e| Status::invalid_argument(format!("invalid ProximaRecord: {e}")))?;
+            records.push(envelope);
         }
 
-        Ok(VectorBatchRequest {
+        Ok(RichRecordBatchRequest {
             collection_id: batch.collection_id.clone(),
-            vectors,
+            records,
         })
     }
 
@@ -430,17 +394,22 @@ impl ProximaRecordServiceImpl {
             .results
             .iter()
             .map(|r| {
-                // Convert metadata back to typed_fields
-                let typed_fields: HashMap<String, proximadb_v2::TypedValue> = r
+                // Convert metadata back to canonical rich props.
+                let props: HashMap<String, proximadb_v2::TypedValue> = r
                     .metadata
                     .iter()
-                    .filter_map(|(k, v)| self.sql_value_to_typed_value(v).map(|tv| (k.clone(), tv)))
+                    .map(|(k, v)| {
+                        (
+                            k.clone(),
+                            proxima_value_to_typed_value(&sql_value_to_proxima(v)),
+                        )
+                    })
                     .collect();
 
                 TypedSearchResult {
                     id: r.id.clone(),
                     score: r.score,
-                    typed_fields,
+                    props,
                     vector: if include_vector {
                         r.vector.clone()
                     } else {
@@ -453,192 +422,6 @@ impl ProximaRecordServiceImpl {
                 }
             })
             .collect()
-    }
-
-    /// Convert SqlValue to TypedValue
-    fn sql_value_to_typed_value(
-        &self,
-        sql_value: &crate::proto::proximadb_v1::SqlValue,
-    ) -> Option<proximadb_v2::TypedValue> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-        use proximadb_v2::ColumnDataType;
-        use proximadb_v2::typed_value::Value as TypedVal;
-
-        let (declared_type, value) = match sql_value.value.as_ref()? {
-            Value::NullValue(_) => (
-                ColumnDataType::ColumnTypeUnspecified as i32,
-                TypedVal::IsNull(true),
-            ),
-            Value::BoolValue(b) => (ColumnDataType::Boolean as i32, TypedVal::BooleanValue(*b)),
-            Value::Int64Value(i) => (ColumnDataType::Integer as i32, TypedVal::IntegerValue(*i)),
-            Value::NumberValue(f) => (ColumnDataType::Float as i32, TypedVal::FloatValue(*f)),
-            Value::StringValue(s) => (ColumnDataType::Text as i32, TypedVal::TextValue(s.clone())),
-            Value::BytesValue(b) => (
-                ColumnDataType::Binary as i32,
-                TypedVal::BinaryValue(b.clone()),
-            ),
-            Value::ArrayValue(arr) => {
-                // Convert array to JSON string for storage
-                let values: Vec<serde_json::Value> = arr
-                    .values
-                    .iter()
-                    .filter_map(|v| self.sql_value_to_json(v))
-                    .collect();
-                let json = serde_json::to_string(&values).unwrap_or_default();
-                (ColumnDataType::Json as i32, TypedVal::JsonValue(json))
-            }
-            Value::ObjectValue(obj) => {
-                // Convert object to JSON string
-                let map: serde_json::Map<String, serde_json::Value> = obj
-                    .fields
-                    .iter()
-                    .filter_map(|(k, v)| self.sql_value_to_json(v).map(|jv| (k.clone(), jv)))
-                    .collect();
-                let json = serde_json::to_string(&map).unwrap_or_default();
-                (ColumnDataType::Json as i32, TypedVal::JsonValue(json))
-            }
-        };
-
-        Some(proximadb_v2::TypedValue {
-            declared_type,
-            value: Some(value),
-        })
-    }
-
-    /// Convert SqlValue to JSON value
-    fn sql_value_to_json(
-        &self,
-        sql_value: &crate::proto::proximadb_v1::SqlValue,
-    ) -> Option<serde_json::Value> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-
-        match sql_value.value.as_ref()? {
-            Value::NullValue(_) => Some(serde_json::Value::Null),
-            Value::BoolValue(b) => Some(serde_json::Value::Bool(*b)),
-            Value::Int64Value(i) => Some(serde_json::Value::Number((*i).into())),
-            Value::NumberValue(f) => {
-                serde_json::Number::from_f64(*f).map(serde_json::Value::Number)
-            }
-            Value::StringValue(s) => Some(serde_json::Value::String(s.clone())),
-            Value::BytesValue(b) => Some(serde_json::Value::String(hex::encode(b))),
-            Value::ArrayValue(arr) => {
-                let values: Vec<serde_json::Value> = arr
-                    .values
-                    .iter()
-                    .filter_map(|v| self.sql_value_to_json(v))
-                    .collect();
-                Some(serde_json::Value::Array(values))
-            }
-            Value::ObjectValue(obj) => {
-                let map: serde_json::Map<String, serde_json::Value> = obj
-                    .fields
-                    .iter()
-                    .filter_map(|(k, v)| self.sql_value_to_json(v).map(|jv| (k.clone(), jv)))
-                    .collect();
-                Some(serde_json::Value::Object(map))
-            }
-        }
-    }
-
-    /// Convert a single ProximaRecord to VectorRecord for V1 storage layer
-    fn convert_proxima_record_to_vector_record(
-        record: &proximadb_v2::ProximaRecord,
-    ) -> VectorRecord {
-        use crate::proto::proximadb_v1::sql_value::Value;
-
-        let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
-
-        // Convert typed_fields to metadata
-        for (key, typed_value) in &record.typed_fields {
-            if let Some(value) = &typed_value.value {
-                let sql_value = match value {
-                    proximadb_v2::typed_value::Value::TextValue(s) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::StringValue(s.clone())),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::IntegerValue(i) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::Int64Value(*i)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::FloatValue(f) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::NumberValue(*f)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::BooleanValue(b) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::BoolValue(*b)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::TimestampValue(ts) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::Int64Value(*ts)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::JsonValue(json) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::StringValue(json.clone())),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::BinaryValue(bytes) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::BytesValue(bytes.clone())),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::UuidValue(uuid) => {
-                        let uuid_str = if uuid.len() == 16 {
-                            uuid::Uuid::from_slice(uuid)
-                                .map_or_else(|_| hex::encode(uuid), |u| u.to_string())
-                        } else {
-                            hex::encode(uuid)
-                        };
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::StringValue(uuid_str)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::IsNull(true) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::NullValue(0)),
-                        }
-                    }
-                    _ => {
-                        // For other types, serialize to string representation
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::StringValue(format!("{:?}", value))),
-                        }
-                    }
-                };
-                metadata.insert(key.clone(), sql_value);
-            }
-        }
-
-        // Convert text_fields
-        for text_field in &record.text_fields {
-            let sql_value = crate::proto::proximadb_v1::SqlValue {
-                value: Some(Value::StringValue(text_field.content.clone())),
-            };
-            metadata.insert(text_field.name.clone(), sql_value);
-        }
-
-        // Merge flexible_fields
-        for (key, sql_value) in &record.flexible_fields {
-            if !metadata.contains_key(key) {
-                metadata.insert(key.clone(), sql_value.clone());
-            }
-        }
-
-        VectorRecord {
-            id: record.id.clone(),
-            vector: record.vector.clone(),
-            metadata,
-            version: record.version,
-            timestamp: Some(record.timestamp_ms),
-            source: record.source.clone(),
-            updated_at: record.updated_at_ms,
-            expires_at: record.expires_at_ms,
-        }
     }
 
     /// Calculate backpressure signal based on buffer utilization
@@ -781,14 +564,12 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             ));
         }
 
-        // Convert to v1 batch
-        let v1_batch = self.convert_to_v1_batch(&batch)?;
-        let record_count = v1_batch.vectors.len() as i64;
+        let rich_batch = self.convert_to_rich_batch(&batch)?;
+        let record_count = rich_batch.records.len() as i64;
 
-        // Insert via unified handlers
         match self
             .unified_handlers
-            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
             Ok(resp) => {
@@ -823,13 +604,12 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
-        // Upsert is handled the same as insert in v1 (overwrite semantics)
-        let v1_batch = self.convert_to_v1_batch(&batch)?;
-        let record_count = v1_batch.vectors.len() as i64;
+        let rich_batch = self.convert_to_rich_batch(&batch)?;
+        let record_count = rich_batch.records.len() as i64;
 
         match self
             .unified_handlers
-            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
             Ok(resp) => {
@@ -864,14 +644,12 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
-        // Update is handled the same as insert in v1 (overwrite semantics)
-        // In future, we could add version checking for optimistic locking
-        let v1_batch = self.convert_to_v1_batch(&batch)?;
-        let record_count = v1_batch.vectors.len() as i64;
+        let rich_batch = self.convert_to_rich_batch(&batch)?;
+        let record_count = rich_batch.records.len() as i64;
 
         match self
             .unified_handlers
-            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
             Ok(resp) => {
@@ -1195,10 +973,23 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         }
                     };
 
-                    // Convert to V1 batch for storage
-                    let v1_batch = VectorBatchRequest {
+                    let rich_record = match proto_record_to_envelope(record) {
+                        Ok(record) => record,
+                        Err(e) => {
+                            batch_errors.push(BatchError {
+                                record_index: idx as i32,
+                                record_id: record.id.clone(),
+                                error_code: "INVALID_RECORD".to_string(),
+                                error_message: e.to_string(),
+                            });
+                            failed_count.fetch_add(1, Ordering::SeqCst);
+                            continue;
+                        }
+                    };
+
+                    let rich_batch = RichRecordBatchRequest {
                         collection_id: batch.collection_id.clone(),
-                        vectors: vec![Self::convert_proxima_record_to_vector_record(record)],
+                        records: vec![rich_record],
                     };
 
                     // Execute the write based on mode
@@ -1208,7 +999,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         | Ok(BatchWriteMode::Upsert)
                         | Ok(BatchWriteMode::Update) => {
                             unified_handlers
-                                .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+                                .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
                                 .await
                         }
                         Ok(BatchWriteMode::Delete) => {

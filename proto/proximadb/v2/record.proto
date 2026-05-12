@@ -18,8 +18,6 @@ syntax = "proto3";
 
 package proximadb.v2;
 
-import "proximadb/v1/types.proto"; // SqlValue for backward compatibility
-
 // =============================================================================
 // ColumnDataType: Rich data type enum for ProximaRecord columns
 // =============================================================================
@@ -67,7 +65,7 @@ enum ColumnDataType {
 
   // Map types
   MAP_STRING_STRING = 22;  // Map<Utf8, Utf8>
-  MAP_STRING_ANY = 23;     // Map<Utf8, SqlValue> - flexible values
+  MAP_STRING_ANY = 23;     // Map<Utf8, TypedValue> - flexible values
   MAP_STRING_INTEGER = 24; // Map<Utf8, Int64>
   MAP_STRING_FLOAT = 25;   // Map<Utf8, Float64>
 
@@ -78,12 +76,28 @@ enum ColumnDataType {
   // Vector embedding (native support)
   VECTOR = 28;           // Dense vector, List<Float32>
   SPARSE_VECTOR = 29;    // Sparse vector with indices
+
+  // Full ProximaValue coverage (MULTIMODAL_OVERHAUL_SPEC §4.2)
+  INT8 = 60;
+  INT16 = 61;
+  INT32 = 62;
+  UINT8 = 63;
+  UINT16 = 64;
+  UINT32 = 65;
+  UINT64 = 66;
+  FLOAT32 = 67;
+  SYMBOL = 68;
+  JSONB = 69;
+  ULID = 70;
+  ARRAY_ANY = 71;
+  STRUCT = 72;
+  BINARY_VECTOR = 73;
 }
 
 // =============================================================================
 // TypedValue: Strongly-typed value wrapper
 // =============================================================================
-// Used in typed_fields map for schema-validated columns.
+// Used in the canonical props map for schema-validated columns.
 message TypedValue {
   ColumnDataType declared_type = 1;
 
@@ -136,6 +150,23 @@ message TypedValue {
     FloatArray vector_value = 52;
     SparseVector sparse_vector_value = 53;
 
+    // Canonical ProximaValue extensions
+    int32 int8_value = 60;
+    int32 int16_value = 61;
+    int32 int32_value = 62;
+    uint32 uint8_value = 63;
+    uint32 uint16_value = 64;
+    uint32 uint32_value = 65;
+    uint64 uint64_value = 66;
+    float float32_value = 67;
+    string symbol_value = 68;
+    bytes jsonb_value = 69;          // MessagePack-encoded JSONB
+    bytes ulid_value = 70;           // 16-byte ULID
+    TypedValueArray array_value = 71;
+    TypedValueMap map_value = 72;
+    TypedValueMap struct_value = 73;
+    bytes binary_vector_value = 74;
+
     // Null marker
     bool is_null = 99;
   }
@@ -180,6 +211,14 @@ message BooleanArray {
 
 message UuidArray {
   repeated bytes values = 1;  // Each 16 bytes
+}
+
+message TypedValueArray {
+  repeated TypedValue values = 1;
+}
+
+message TypedValueMap {
+  map<string, TypedValue> entries = 1;
 }
 
 // Map types
@@ -281,7 +320,7 @@ enum SchemaEnforcementMode {
   SCHEMA_ENFORCEMENT_UNSPECIFIED = 0;
   STRICT = 1;      // All columns must match schema exactly
   FLEXIBLE = 2;    // Schema on read, no validation at insert
-  HYBRID = 3;      // Core columns enforced, additional fields allowed in flexible_fields
+  HYBRID = 3;      // Core columns enforced, additional fields allowed in props
 }
 
 // Schema evolution rules for backward/forward compatibility
@@ -297,7 +336,7 @@ message SchemaEvolutionRule {
 enum SchemaEvolutionType {
   EVOLUTION_TYPE_UNSPECIFIED = 0;
   ADD_COLUMN = 1;        // New column with default
-  REMOVE_COLUMN = 2;     // Column dropped (data preserved in flexible_fields if HYBRID)
+  REMOVE_COLUMN = 2;     // Column dropped (data preserved in props if HYBRID)
   RENAME_COLUMN = 3;     // Column renamed
   CHANGE_TYPE = 4;       // Type changed with transform
   CHANGE_NULLABILITY = 5; // Nullable -> required or vice versa
@@ -329,10 +368,9 @@ enum TextStorageStrategy {
 // ProximaRecord: The new unified record type
 // =============================================================================
 // Replaces VectorRecord with:
-// - Rich typed columns instead of generic metadata map
+// - Rich typed properties instead of generic metadata map
 // - Dedicated TEXT fields for chunked text storage
 // - Schema enforcement with catalog integration
-// - Full backward compatibility via flexible_fields
 message ProximaRecord {
   // Core identity
   string id = 1;
@@ -344,12 +382,8 @@ message ProximaRecord {
   // Sparse vector (optional, for hybrid search)
   optional SparseVector sparse_vector = 4;
 
-  // Typed metadata (validated against schema)
-  map<string, TypedValue> typed_fields = 5;
-
-  // Flexible overflow (for HYBRID mode or unschematized data)
-  // Uses SqlValue from v1 for backward compatibility
-  map<string, proximadb.v1.SqlValue> flexible_fields = 6;
+  // Canonical NF2 property map (schema-validated where a schema is attached)
+  map<string, TypedValue> props = 5;
 
   // TEXT content - dedicated columnar storage
   // These are stored separately to avoid metadata scanning
@@ -525,7 +559,7 @@ message TypedSearchResult {
   double score = 2;
 
   // Fields (based on projection)
-  map<string, TypedValue> typed_fields = 3;
+  map<string, TypedValue> props = 3;
   repeated float vector = 4;
   repeated TextField text_fields = 5;
 
