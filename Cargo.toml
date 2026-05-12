@@ -15,6 +15,9 @@ rust-version = "1.88"
 [workspace]
 resolver = "2"
 members = [
+    "apps/proximadb-bench",
+    "apps/proximadb-migrate",
+    "apps/proximadb-server",
     ".",
     "clients/rust",
     "crates/foundation/proximadb-data-model",
@@ -26,8 +29,12 @@ members = [
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-security",
     "crates/horizontal/proximadb-telemetry",
+    "crates/platform/proximadb-api",
     "crates/platform/proximadb-runtime",
     "crates/modalities/proximadb-graph",
+    "crates/modalities/proximadb-vector",
+    "crates/modalities/proximadb-document",
+    "crates/modalities/proximadb-observability",
     "crates/storage/proximadb-storage-common",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
@@ -55,9 +62,14 @@ homepage = "https://github.com/vjsingh1984/proximadb"
 
 [workspace.dependencies]
 anyhow = "1.0"
+arrow = { version = "57.1", features = ["prettyprint"] }
+arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
 arrow-schema = { version = "57.1", default-features = false }
 async-trait = "0.1"
+axum = { version = "0.6", features = ["json", "ws"] }
 chrono = { version = "0.4.31", features = ["serde"] }
+clap = { version = "4.0", features = ["derive"] }
+hyper = { version = "0.14" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
@@ -67,20 +79,16 @@ rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
+tokio = { version = "1.37", features = ["full"] }
+tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
+tower = { version = "0.4", features = ["limit"] }
+tower-http = { version = "0.4", features = ["cors", "trace"] }
+proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-document = { path = "crates/modalities/proximadb-document" }
+proximadb-observability = { path = "crates/modalities/proximadb-observability" }
+proximadb-api = { path = "crates/platform/proximadb-api" }
 tonic-prost = "0.14"
-
-[[bin]]
-name = "proximadb-server"
-path = "src/bin/server.rs"
-
-[[bin]]
-name = "proximadb-bench"
-path = "src/bin/proximadb-bench-consolidated.rs"
-
-[[bin]]
-name = "proximadb-migrate"
-path = "src/bin/proximadb-migrate.rs"
 
 [[bin]]
 name = "simple-perf-bench"
@@ -126,6 +134,7 @@ proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
+proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
 proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }
 proximadb-graph-subset = { path = "crates/query/proximadb-graph-subset" }
@@ -706,6 +715,11 @@ path = "benches/bench_21_hybrid_search_fusion.rs"
 name = "bench_22_multimodal_queries"
 harness = false
 path = "benches/bench_22_multimodal_queries.rs"
+
+[[bench]]
+name = "hmgi_benchmark"
+harness = false
+path = "benches/hmgi_benchmark.rs"
 
 [[bench]]
 name = "streaming_search_bench"

@@ -93,6 +93,9 @@ pub mod types;
 pub mod utils;
 pub mod zero_overhead_vector;
 
+// HMGI - Hierarchical Multi-modality Graph Indexing
+pub mod hmgi;
+
 // Test modules
 #[cfg(test)]
 pub mod annoy_index_tests;
@@ -214,3 +217,14 @@ pub use crate::query::unified_query_optimizer::IndexCapabilities;
 pub use management::migration_engine::{MigrationEngine, MigrationPhase, MigrationPlan};
 pub use management::monitor::{AxisMonitor, MonitoringMetrics};
 pub use management::strategy::{IndexStrategy, StrategyRecommendation, StrategySelector};
+
+// HMGI exports
+pub use hmgi::{
+    ClusterMembership, ClusterNode, ClusterNodeId, CollectionTransition, DetectionResult,
+    DistributedPartitionLocator, EnablementReason, HmgiMigrationEngine, HmgiMigrationPhase,
+    HmgiPartitionKey, HmgiQueryCoordinator, HmgiRegistry, HmgiRouteStats, HmgiRouter,
+    HmgiTierPolicy, MigrationConfig, MigrationResult, MigrationState, ModalityDetector,
+    ModalityExtractor, NetworkService, NodeState, PartitionMetadata, PartitionSet, ResultMerger,
+    SearchRequest, TierChangeReason, TierChangeRecommendation, TierChangeResult,
+    VectorRecordSample,
+};

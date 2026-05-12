@@ -59,15 +59,15 @@ impl PlanExecutionCache {
 
         let mut map = self.inner.write();
 
-        if !map.contains_key(&key) && map.len() >= self.max_entries {
-            if let Some(lru_key) = map
+        if !map.contains_key(&key)
+            && map.len() >= self.max_entries
+            && let Some(lru_key) = map
                 .iter()
                 .min_by_key(|(_, stats)| stats.last_touch)
                 .map(|(k, _)| *k)
-            {
-                map.remove(&lru_key);
-                self.evictions.fetch_add(1, Ordering::Relaxed);
-            }
+        {
+            map.remove(&lru_key);
+            self.evictions.fetch_add(1, Ordering::Relaxed);
         }
 
         let entry = map.entry(key).or_insert(PlanStats {

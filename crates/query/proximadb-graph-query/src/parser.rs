@@ -46,6 +46,26 @@ use nom::{
 use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 
+type EdgeSpec = (
+    Option<String>,
+    Vec<String>,
+    HashMap<String, PropertyConstraint>,
+);
+type EdgePatternSpec = (
+    bool,
+    Option<String>,
+    Vec<String>,
+    HashMap<String, PropertyConstraint>,
+    bool,
+    Option<(u32, u32)>,
+);
+type CreateEdgeSpecParts = (
+    Option<String>,
+    Option<String>,
+    HashMap<String, serde_json::Value>,
+    EdgeDirection,
+);
+
 type QueryResult<T> = std::result::Result<T, ProximaDBError>;
 
 /// Main query parser struct
@@ -194,16 +214,7 @@ fn parse_edge_direction_right(input: &str) -> IResult<&str, bool> {
 }
 
 // Parse edge specification inside brackets [r:TYPE {prop: val}]
-fn parse_edge_spec(
-    input: &str,
-) -> IResult<
-    &str,
-    (
-        Option<String>,
-        Vec<String>,
-        HashMap<String, PropertyConstraint>,
-    ),
-> {
+fn parse_edge_spec(input: &str) -> IResult<&str, EdgeSpec> {
     map(
         tuple((
             opt(identifier),                          // Optional variable
@@ -241,19 +252,7 @@ fn parse_variable_length(input: &str) -> IResult<&str, (u32, u32)> {
 }
 
 // Parse edge pattern (e.g., -[r:KNOWS]-> or <-[r:KNOWS]- or -[r:KNOWS]-)
-fn parse_edge_pattern(
-    input: &str,
-) -> IResult<
-    &str,
-    (
-        bool,
-        Option<String>,
-        Vec<String>,
-        HashMap<String, PropertyConstraint>,
-        bool,
-        Option<(u32, u32)>,
-    ),
-> {
+fn parse_edge_pattern(input: &str) -> IResult<&str, EdgePatternSpec> {
     map(
         tuple((
             parse_edge_direction_left,
@@ -804,17 +803,7 @@ fn parse_create_edge_pattern(
 
 // Parse edge spec for CREATE: -[r:TYPE {props}]->
 #[allow(dead_code)]
-fn parse_create_edge_spec(
-    input: &str,
-) -> IResult<
-    &str,
-    (
-        Option<String>,
-        Option<String>,
-        HashMap<String, serde_json::Value>,
-        EdgeDirection,
-    ),
-> {
+fn parse_create_edge_spec(input: &str) -> IResult<&str, CreateEdgeSpecParts> {
     map(
         tuple((
             parse_edge_direction_left,

@@ -499,10 +499,10 @@ impl AxisHnswIndex {
             // Early-termination: current node is further than the worst accepted result
             if result_candidates.len() >= ef
                 && let Some((worst, _)) = result_candidates.peek()
-                    && curr_dist.0 > worst.0
-                {
-                    break;
-                }
+                && curr_dist.0 > worst.0
+            {
+                break;
+            }
 
             if let Some(neighbors) = self.layers.get(&(layer, curr_node)) {
                 let vectors_lock = self

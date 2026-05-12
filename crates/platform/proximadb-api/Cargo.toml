@@ -1,0 +1,35 @@
+[package]
+name = "proximadb-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://github.com/vjsingh1984/proximadb"
+description = "ProximaDB API handlers - REST, gRPC, pgwire, and Arrow Flight"
+
+[dependencies]
+anyhow.workspace = true
+arrow-flight.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+hyper.workspace = true
+proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
+proximadb-proto = { path = "../../foundation/proximadb-proto" }
+proximadb-query = { path = "../../query/proximadb-query" }
+proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { version = "1.37", features = ["full"] }
+tokio-stream.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tower.workspace = true
+uuid = { version = "1.6", features = ["v4"] }
+tower-http.workspace = true
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["macros", "rt-multi-thread"] }

@@ -2,6 +2,10 @@
 mod tests {
     use super::*;
     use crate::storage::engines::sst::blocks::SstRecord;
+    use crate::storage::engines::sst::{
+        Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,
+    };
+    use std::path::PathBuf;
 
     #[tokio::test]
     async fn test_compaction_basic() {

@@ -1,6 +1,6 @@
 //! Multi-Model Query AST
 //!
-//! Root compatibility re-exports for the unified multimodel query IR.
+//! Root compatibility re-exports for the unified multimodal query IR.
 
 pub use proximadb_document_query::{DocumentQueryExpr, DocumentSort, PathFilter};
 pub use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;

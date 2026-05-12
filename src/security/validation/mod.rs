@@ -57,9 +57,12 @@ pub use text_validator::{
     TextStorageValidationConfig, TextStorageValidationResult, TextValidationError, TextValidator,
     TextValidatorBuilder,
 };
+#[allow(deprecated)]
+#[deprecated(note = "Use TypeValidationResult instead.")]
+pub use type_validators::ValidationResult;
 pub use type_validators::{
     BinaryValidator, DecimalValidator, FieldValidationConfig, JsonValidator, TimestampValidator,
-    TypedValueValidator, UuidValidator, ValidationError, ValidationResult,
+    TypeValidationResult, TypedValueValidator, UuidValidator, ValidationError,
     contains_sql_injection_pattern,
 };
 

@@ -88,9 +88,9 @@ pub fn document_durable_writer(service: Arc<dyn DocumentStorageOperations>) -> D
                 let _id = id;
                 // Update requires structured DocumentUpdate objects; generic bytes
                 // are not sufficient. Log a warning and succeed — callers requiring
-                // updates should use the multimodel transaction system instead.
+                // updates should use the multimodal transaction system instead.
                 tracing::warn!(
-                    "DurableWriteFn update for '{}' is a no-op; use multimodel transactions for updates",
+                    "DurableWriteFn update for '{}' is a no-op; use multimodal transactions for updates",
                     id
                 );
                 Ok(())

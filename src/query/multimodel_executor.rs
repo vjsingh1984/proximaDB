@@ -19,19 +19,19 @@
 //!     └── Relational   → SequoiaEngine.query_rows()
 //!     │
 //!     ▼
-//! MultiModelResult → format for protocol layer (PG wire, REST, Flight)
+//! MultiModalResult → format for protocol layer (PG wire, REST, Flight)
 //! ```
 
 use std::sync::Arc;
 
-use crate::query::multimodel_router::{DataModel, MultiModelResult};
+use crate::query::multimodal_router::{DataModel, MultiModalResult};
 use anyhow::Result;
 
 /// Multi-model SQL execution context.
 ///
 /// Holds references to all service layers for dispatching SQL to the correct backend.
 /// Created once at server startup and shared across all connections.
-pub struct MultiModelExecutor {
+pub struct MultiModalExecutor {
     /// Store type for the current table/collection (resolved from catalog or SQL)
     _catalog_lookup: Option<Arc<dyn CatalogLookup>>,
 }
@@ -46,7 +46,7 @@ pub trait CatalogLookup: Send + Sync {
 #[derive(Debug)]
 pub struct SqlExecutionResult {
     /// The model-specific result
-    pub result: MultiModelResult,
+    pub result: MultiModalResult,
     /// Execution time in milliseconds
     pub execution_time_ms: u64,
     /// Store type that was used

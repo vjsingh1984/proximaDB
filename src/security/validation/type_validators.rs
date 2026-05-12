@@ -272,7 +272,7 @@ impl TypedValueValidator {
     }
 
     /// Validate a single field value
-    pub fn validate_field(&self, field_name: &str, value: &TypedValue) -> ValidationResult {
+    pub fn validate_field(&self, field_name: &str, value: &TypedValue) -> TypeValidationResult {
         // Get config if exists, otherwise use default validation
         let config = self.configs.get(field_name);
 
@@ -392,7 +392,7 @@ impl TypedValueValidator {
         field_name: &str,
         text: &str,
         config: Option<&FieldValidationConfig>,
-    ) -> ValidationResult {
+    ) -> TypeValidationResult {
         // Length check
         if let Some(cfg) = config
             && let Some(max_len) = cfg.max_length
@@ -429,7 +429,7 @@ impl TypedValueValidator {
         _field_name: &str,
         value: i64,
         config: Option<&FieldValidationConfig>,
-    ) -> ValidationResult {
+    ) -> TypeValidationResult {
         if let Some(cfg) = config {
             if let Some(min) = cfg.min_value
                 && (value as i128) < min
@@ -457,7 +457,7 @@ impl TypedValueValidator {
         _field_name: &str,
         value: f64,
         _config: Option<&FieldValidationConfig>,
-    ) -> ValidationResult {
+    ) -> TypeValidationResult {
         if value.is_nan() {
             return Err(ValidationError::InvalidFormat {
                 type_name: "float".to_string(),
@@ -479,7 +479,7 @@ impl TypedValueValidator {
         field_name: &str,
         arr: &[String],
         config: Option<&FieldValidationConfig>,
-    ) -> ValidationResult {
+    ) -> TypeValidationResult {
         for text in arr {
             self.validate_text(field_name, text, config)?;
         }
@@ -491,7 +491,7 @@ impl TypedValueValidator {
         &self,
         _field_name: &str,
         map: &HashMap<String, String>,
-    ) -> ValidationResult {
+    ) -> TypeValidationResult {
         if self.security_enabled {
             for (key, value) in map {
                 if contains_sql_injection(key) || contains_sql_injection(value) {
@@ -505,7 +505,7 @@ impl TypedValueValidator {
     }
 
     /// Validate geo point
-    fn validate_geo_point(&self, latitude: f64, longitude: f64) -> ValidationResult {
+    fn validate_geo_point(&self, latitude: f64, longitude: f64) -> TypeValidationResult {
         if !(-90.0..=90.0).contains(&latitude) {
             return Err(ValidationError::InvalidFormat {
                 type_name: "geo_point".to_string(),
@@ -528,7 +528,7 @@ impl TypedValueValidator {
     }
 
     /// Validate vector
-    fn validate_vector(&self, values: &[f32]) -> ValidationResult {
+    fn validate_vector(&self, values: &[f32]) -> TypeValidationResult {
         for (i, &v) in values.iter().enumerate() {
             if v.is_nan() {
                 return Err(ValidationError::InvalidFormat {
@@ -547,7 +547,7 @@ impl TypedValueValidator {
     }
 
     /// Validate sparse vector
-    fn validate_sparse_vector(&self, indices: &[u32], values: &[f32]) -> ValidationResult {
+    fn validate_sparse_vector(&self, indices: &[u32], values: &[f32]) -> TypeValidationResult {
         // Check indices are sorted and unique
         for i in 1..indices.len() {
             if indices[i] <= indices[i - 1] {
@@ -591,7 +591,7 @@ static UUID_REGEX: Lazy<Option<Regex>> = Lazy::new(|| {
 
 impl UuidValidator {
     /// Validate UUID string format (RFC 4122)
-    pub fn validate(value: &str) -> ValidationResult {
+    pub fn validate(value: &str) -> TypeValidationResult {
         if let Some(regex) = &*UUID_REGEX
             && regex.is_match(value)
         {
@@ -605,7 +605,7 @@ impl UuidValidator {
     }
 
     /// Validate UUID bytes (must be exactly 16 bytes)
-    pub fn validate_bytes(bytes: &[u8]) -> ValidationResult {
+    pub fn validate_bytes(bytes: &[u8]) -> TypeValidationResult {
         if bytes.len() != 16 {
             return Err(ValidationError::InvalidFormat {
                 type_name: "UUID".to_string(),
@@ -631,7 +631,7 @@ impl DecimalValidator {
     }
 
     /// Validate a decimal value (i128 representation)
-    pub fn validate(&self, value: i128) -> ValidationResult {
+    pub fn validate(&self, value: i128) -> TypeValidationResult {
         // Calculate max absolute value for given precision
         // precision 38 is the max for i128
         let effective_precision = self.precision.min(38);
@@ -649,7 +649,7 @@ impl DecimalValidator {
     }
 
     /// Validate a decimal string
-    pub fn validate_string(&self, value: &str) -> ValidationResult {
+    pub fn validate_string(&self, value: &str) -> TypeValidationResult {
         // Parse the string to check format
         let parts: Vec<&str> = value.split('.').collect();
         if parts.len() > 2 {
@@ -699,7 +699,7 @@ impl BinaryValidator {
     }
 
     /// Validate binary data
-    pub fn validate(&self, data: &[u8]) -> ValidationResult {
+    pub fn validate(&self, data: &[u8]) -> TypeValidationResult {
         if data.len() > self.max_size {
             return Err(ValidationError::BinarySizeExceeded {
                 actual: data.len(),
@@ -740,12 +740,12 @@ impl JsonValidator {
     }
 
     /// Validate JSON value
-    pub fn validate(&self, json: &serde_json::Value) -> ValidationResult {
+    pub fn validate(&self, json: &serde_json::Value) -> TypeValidationResult {
         self.check_depth(json, 0)
     }
 
     /// Validate JSON string
-    pub fn validate_string(&self, json_str: &str) -> ValidationResult {
+    pub fn validate_string(&self, json_str: &str) -> TypeValidationResult {
         let value: serde_json::Value =
             serde_json::from_str(json_str).map_err(|_| ValidationError::InvalidFormat {
                 type_name: "JSON".to_string(),
@@ -755,7 +755,7 @@ impl JsonValidator {
     }
 
     /// Recursively check JSON depth
-    fn check_depth(&self, value: &serde_json::Value, current_depth: usize) -> ValidationResult {
+    fn check_depth(&self, value: &serde_json::Value, current_depth: usize) -> TypeValidationResult {
         if current_depth > self.max_depth {
             return Err(ValidationError::JsonDepthExceeded {
                 depth: current_depth,
@@ -826,7 +826,7 @@ impl TimestampValidator {
     }
 
     /// Validate a timestamp value (milliseconds since epoch)
-    pub fn validate(&self, timestamp_ms: i64) -> ValidationResult {
+    pub fn validate(&self, timestamp_ms: i64) -> TypeValidationResult {
         // Check minimum
         if let Some(min) = self.min_timestamp
             && timestamp_ms < min

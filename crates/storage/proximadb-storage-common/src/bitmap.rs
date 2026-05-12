@@ -58,6 +58,10 @@ impl std::error::Error for BitmapError {}
 
 /// Container types for different density patterns
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "bitmap containers are hot-path storage structures; avoid boxing to preserve locality"
+)]
 enum Container {
     /// Array container for sparse data (< 4096 elements)
     Array(ArrayContainer),
@@ -758,15 +762,15 @@ impl RoaringBitmap {
     }
 
     /// Create bitmap from iterator
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "kept as an inherent convenience constructor alongside FromIterator"
+    )]
     pub fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = u32>,
     {
-        let mut bitmap = RoaringBitmap::new();
-        for value in iter {
-            bitmap.insert(value);
-        }
-        bitmap
+        iter.into_iter().collect()
     }
 
     /// Get range of values [start, end)
@@ -965,6 +969,19 @@ impl RoaringBitmap {
     /// Compute the union with another bitmap (alias for union)
     pub fn or(&self, other: &RoaringBitmap) -> RoaringBitmap {
         self.union(other)
+    }
+}
+
+impl FromIterator<u32> for RoaringBitmap {
+    fn from_iter<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = u32>,
+    {
+        let mut bitmap = RoaringBitmap::new();
+        for value in iter {
+            bitmap.insert(value);
+        }
+        bitmap
     }
 }
 

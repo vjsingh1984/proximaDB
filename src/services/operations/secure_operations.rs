@@ -19,7 +19,7 @@ use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::security::encryption::{EncryptedField, FieldEncryption};
 use crate::security::rls::{CollectionRLS, Operation as RLSOperation, RLSFilterResult};
-use crate::security::unified_rbac::{UnifiedAuthMethod, UnifiedUserContext};
+use crate::security::unified_rbac::UnifiedUserContext;
 use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
 /// Helper to create a SqlValue from a string

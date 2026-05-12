@@ -103,14 +103,13 @@ impl EvolutionaryOptimizer {
                     self.mutate(&mut child, &dependents, &in_degrees, &mut rng);
                 }
 
-                if self.advisor.is_some() && rng.gen_bool(0.05) {
-                    if let Some(advised_child) =
+                if self.advisor.is_some()
+                    && rng.gen_bool(0.05)
+                    && let Some(advised_child) =
                         self.advisor_mutate(&child, components, selectivity).await
-                    {
-                        if self.is_valid(&advised_child, &in_degrees, &dependents) {
-                            child = advised_child;
-                        }
-                    }
+                    && self.is_valid(&advised_child, &in_degrees, &dependents)
+                {
+                    child = advised_child;
                 }
 
                 new_population.push(child);
@@ -188,7 +187,7 @@ impl EvolutionaryOptimizer {
 
     fn mutate(
         &self,
-        order: &mut Vec<usize>,
+        order: &mut [usize],
         dependents: &[Vec<usize>],
         in_degrees: &[usize],
         rng: &mut ThreadRng,

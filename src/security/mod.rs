@@ -42,10 +42,13 @@ pub use encryption::{
     KeyInfo, KeyStore, KeyStoreConfig, KeyStoreError,
 };
 
+#[allow(deprecated)]
+#[deprecated(note = "Use TypeValidationResult instead.")]
+pub use validation::ValidationResult;
 pub use validation::{
     BinaryValidator, CollectionNameValidator, DecimalValidator, FieldValidationConfig,
     JsonValidator, MetadataValidationConfig, MetadataValidator, TimestampValidator,
-    TypedValueValidator, UuidValidator, ValidationError, ValidationResult,
+    TypeValidationResult, TypedValueValidator, UuidValidator, ValidationError,
     contains_sql_injection_pattern, validate_collection_name, validate_record_metadata,
 };
 

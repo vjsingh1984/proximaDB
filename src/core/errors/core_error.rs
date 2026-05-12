@@ -63,6 +63,7 @@
 //! ```
 
 use super::{ConfigError, MetadataError, ServiceError};
+use crate::storage::error::StorageError as CanonicalStorageError;
 use serde::{Deserialize, Serialize};
 use std::io;
 use thiserror::Error;
@@ -91,8 +92,9 @@ pub enum ProximaDBError {
     Service(#[from] ServiceError),
 
     /// Storage engine error (disk, WAL, compaction)
+    /// Uses the canonical StorageError from storage::error module
     #[error("Storage error: {0}")]
-    Storage(#[from] StorageError),
+    Storage(#[from] CanonicalStorageError),
 
     /// Index build or search error
     #[error("Index error: {0}")]
@@ -230,55 +232,10 @@ pub enum ProximaDBError {
     },
 }
 
-/// Storage-specific error types
-#[derive(Debug, Clone, Error, Serialize, Deserialize)]
-pub enum StorageError {
-    /// Low-level disk I/O failure
-    #[error("Disk IO error: {0}")]
-    DiskIO(String),
-
-    /// Write-ahead log error
-    #[error("WAL error: {0}")]
-    WAL(String),
-
-    /// Compaction process failure
-    #[error("Compaction error: {0}")]
-    Compaction(String),
-
-    /// Memtable flush failure
-    #[error("Flush error: {0}")]
-    Flush(String),
-
-    /// Data integrity violation detected
-    #[error("Corruption detected: {0}")]
-    Corruption(String),
-
-    /// Requested storage engine not registered
-    #[error("Engine not found: {0}")]
-    EngineNotFound(String),
-
-    /// Operation not valid in the current engine state
-    #[error("Invalid operation: {0}")]
-    InvalidOperation(String),
-
-    /// Failed to acquire a storage-level lock
-    #[error("Lock acquisition failed: {0}")]
-    LockFailed(String),
-
-    /// Metadata catalog error
-    #[error("Metadata error: {0}")]
-    Metadata(String),
-}
-
 // Custom implementation for io::Error conversion since it's not Clone/Serialize
+// Note: The canonical StorageError from storage::error has its own From<io::Error> impl
 impl From<io::Error> for ProximaDBError {
     fn from(err: io::Error) -> Self {
         ProximaDBError::Io(err.to_string())
-    }
-}
-
-impl From<io::Error> for StorageError {
-    fn from(err: io::Error) -> Self {
-        StorageError::DiskIO(err.to_string())
     }
 }

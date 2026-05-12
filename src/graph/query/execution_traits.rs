@@ -1,8 +1,70 @@
 use crate::graph::engines::GraphEngine;
-pub use proximadb_graph::query::execution::{
-    ColumnSpec, ExecutionStats, PathElement, PhysicalOperator, QueryValue, ResultTuple, ValueType,
-};
 use std::sync::Arc;
+
+// TODO: Move implementation to proximadb-graph crate
+// Stub implementations for compatibility
+
+/// Column specification for query results
+#[derive(Debug, Clone, PartialEq)]
+pub struct ColumnSpec {
+    pub name: String,
+    pub value_type: ValueType,
+}
+
+/// Execution statistics
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionStats {
+    pub rows_processed: usize,
+    pub execution_time_ms: u64,
+}
+
+/// Path element for graph traversal results
+#[derive(Debug, Clone)]
+pub struct PathElement {
+    pub node_id: String,
+    pub edge_id: Option<String>,
+}
+
+/// Physical query operator
+#[derive(Debug, Clone)]
+pub enum PhysicalOperator {
+    Scan,
+    Filter,
+    Project,
+    Join,
+    Aggregate,
+    Sort,
+    Limit,
+}
+
+/// Query value
+#[derive(Debug, Clone)]
+pub enum QueryValue {
+    Null,
+    Bool(bool),
+    Int64(i64),
+    Float64(f64),
+    String(String),
+    Node(String),
+    Edge(String),
+    Path(Vec<PathElement>),
+}
+
+/// Result tuple
+pub type ResultTuple = Vec<(String, QueryValue)>;
+
+/// Value type
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueType {
+    Null,
+    Bool,
+    Int64,
+    Float64,
+    String,
+    Node,
+    Edge,
+    Path,
+}
 
 /// Query execution context
 ///

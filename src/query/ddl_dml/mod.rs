@@ -391,6 +391,11 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
     use sqlparser::dialect::GenericDialect;
     use sqlparser::parser::Parser;
 
+    let normalized = sql.trim().trim_end_matches(';').trim();
+    if normalized.eq_ignore_ascii_case("DROP TABLE") {
+        return Err(anyhow!("DROP TABLE requires a table name"));
+    }
+
     let dialect = GenericDialect {};
     let statements = Parser::parse_sql(&dialect, sql)?;
 
@@ -480,48 +485,38 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
             if_exists,
             table,
             ..
-        } => {
-            match object_type {
-                sqlparser::ast::ObjectType::Table => Ok(DdlStatement::DropTable {
+        } => match object_type {
+            sqlparser::ast::ObjectType::Table => Ok(DdlStatement::DropTable {
+                name: names
+                    .first()
+                    .ok_or_else(|| anyhow!("DROP TABLE requires a table name"))?
+                    .to_string(),
+                if_exists: *if_exists,
+            }),
+            sqlparser::ast::ObjectType::Index => {
+                if table.is_none() {
+                    return Err(anyhow!("DROP INDEX requires a table name"));
+                }
+                Ok(DdlStatement::DropIndex {
                     name: names
                         .first()
-                        .ok_or_else(|| anyhow!("DROP TABLE requires a table name"))?
+                        .ok_or_else(|| anyhow!("DROP INDEX requires an index name"))?
                         .to_string(),
                     if_exists: *if_exists,
-                }),
-                sqlparser::ast::ObjectType::Index => {
-                    if table.is_none() {
-                        return Err(anyhow!("DROP INDEX requires a table name"));
-                    }
-                    Ok(DdlStatement::DropIndex {
-                        name: names
-                            .first()
-                            .ok_or_else(|| anyhow!("DROP INDEX requires an index name"))?
-                            .to_string(),
-                        if_exists: *if_exists,
-                    })
-                }
-                _ => Err(anyhow!("Unsupported DROP object type: {:?}", object_type)),
+                })
             }
-        }
+            _ => Err(anyhow!("Unsupported DROP object type: {:?}", object_type)),
+        },
 
         sqlparser::ast::Statement::CreateIndex(create_index) => {
             use sqlparser::ast::{IndexOption, IndexType as SqlIndexType};
 
-            if let Some(index_type) = create_index
-                .using
-                .as_ref()
-                .cloned()
-                .or_else(|| {
-                    create_index
-                        .index_options
-                        .iter()
-                        .find_map(|opt| match opt {
-                            IndexOption::Using(index_type) => Some(index_type.clone()),
-                            _ => None,
-                        })
+            if let Some(index_type) = create_index.using.as_ref().cloned().or_else(|| {
+                create_index.index_options.iter().find_map(|opt| match opt {
+                    IndexOption::Using(index_type) => Some(index_type.clone()),
+                    _ => None,
                 })
-            {
+            }) {
                 match index_type {
                     SqlIndexType::BTree => {}
                     other => return Err(anyhow!("Unsupported CREATE INDEX USING {}", other)),
@@ -955,8 +950,16 @@ mod tests {
                 false,
             ),
             ("DROP VIEW users;", "Unsupported DROP object type", false),
-            ("DROP INDEX demo_payload_idx;", "DROP INDEX requires a table name", true),
-            ("INSERT INTO users (id) VALUES (1);", "Unsupported DDL statement", false),
+            (
+                "DROP INDEX demo_payload_idx;",
+                "DROP INDEX requires a table name",
+                true,
+            ),
+            (
+                "INSERT INTO users (id) VALUES (1);",
+                "Unsupported DDL statement",
+                false,
+            ),
             ("SELECT * FROM users;", "Unsupported DDL statement", false),
         ];
 

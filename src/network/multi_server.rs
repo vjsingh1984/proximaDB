@@ -92,10 +92,10 @@ use crate::query::federated::FederatedQueryContext;
 use crate::security::SecurityCoordinator;
 use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
+use crate::storage::MultiModalStorageFacade;
 use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
 use crate::storage::metadata::backends::MetadataBackendFactory;
-use crate::storage::multimodel::MultiModelStorageFacade;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 
@@ -1372,47 +1372,47 @@ impl SharedServices {
             "✅ SharedServices::new - ObservabilityStrategy created for logs/metrics/traces queries"
         );
 
-        // Create MultiModelStorageFacade for federated queries and wire the live stores
+        // Create MultiModalStorageFacade for federated queries and wire the live stores
         debug!(
-            "🔧 SharedServices::new - Creating MultiModelStorageFacade for federated queries..."
+            "🔧 SharedServices::new - Creating MultiModalStorageFacade for federated queries..."
         );
         let vector_store = Arc::new(
-            crate::storage::multimodel::VectorStore::with_engine(
+            crate::storage::multimodal::VectorStore::with_engine(
                 vector_operations_service.unified_engine(),
             )
             .with_index_manager(axis_manager.clone()),
         );
         let graph_store = Arc::new(
-            crate::storage::multimodel::GraphStore::new(Default::default())
+            crate::storage::multimodal::GraphStore::new(Default::default())
                 .with_service(graph_service.clone()),
         );
         let document_store = Arc::new(
-            crate::storage::multimodel::DocumentStore::new(Default::default())
+            crate::storage::multimodal::DocumentStore::new(Default::default())
                 .with_service(document_service.clone()),
         );
         let obs_base_path = storage_config.metadata_url.replace("file://", "");
         let observability_store = Arc::new(
-            crate::storage::multimodel::ObservabilityStore::new(
-                crate::storage::multimodel::stores::observability_store::ObservabilityStoreConfig {
+            crate::storage::multimodal::ObservabilityStore::new(
+                crate::storage::multimodal::stores::observability_store::ObservabilityStoreConfig {
                     base_path: obs_base_path,
                     ..Default::default()
                 },
             )
             .with_service(observability_service.clone()),
         );
-        let multimodel_storage = Arc::new(
-            MultiModelStorageFacade::new()
+        let multimodal_storage = Arc::new(
+            MultiModalStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_graph_store(graph_store)
                 .with_document_store(document_store)
                 .with_observability_store(observability_store),
         );
-        debug!("✅ SharedServices::new - MultiModelStorageFacade created and wired");
+        debug!("✅ SharedServices::new - MultiModalStorageFacade created and wired");
 
         // Create FederatedQueryContext for SQL with multi-model extensions
         debug!("🔧 SharedServices::new - Creating FederatedQueryContext...");
         let federated_context = Arc::new(
-            FederatedQueryContext::new(multimodel_storage)
+            FederatedQueryContext::new(multimodal_storage)
                 .with_collection_service(collection_service.clone())
                 .with_vector_operations(vector_operations_service.clone()),
         );

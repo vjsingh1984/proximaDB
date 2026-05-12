@@ -276,19 +276,19 @@ impl PlanCache {
 
         {
             let cache = self.cache.read();
-            if let Some(entry) = cache.get(&query_hash) {
-                if now.duration_since(entry.created_at) < self.ttl {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    let plan = entry.plan.clone();
-                    drop(cache);
+            if let Some(entry) = cache.get(&query_hash)
+                && now.duration_since(entry.created_at) < self.ttl
+            {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                let plan = entry.plan.clone();
+                drop(cache);
 
-                    if let Some(entry) = self.cache.write().get_mut(&query_hash) {
-                        entry.last_accessed = now;
-                        entry.hit_count += 1;
-                    }
-
-                    return Some(plan);
+                if let Some(entry) = self.cache.write().get_mut(&query_hash) {
+                    entry.last_accessed = now;
+                    entry.hit_count += 1;
                 }
+
+                return Some(plan);
             }
         }
 

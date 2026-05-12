@@ -68,10 +68,7 @@ use crate::storage::engines::core::formats::columnar::columnar_query_engine::vec
 use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Field, Schema};
 
-pub(crate) use super::block_pruning::{
-    calculate_zorder_epsilon, compute_query_zorder_code, filter_blocks_by_zorder,
-    metric_distance, normalize_coords_for_zorder, select_blocks_by_centroid,
-};
+pub(crate) use super::block_pruning::{compute_query_zorder_code, select_blocks_by_centroid};
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;
@@ -1666,9 +1663,10 @@ impl UnifiedSstableReader {
                             && !crate::core::search::sql_value_filter::evaluate_filter(
                                 filter_expr,
                                 &record.metadata,
-                            ) {
-                                continue; // Skip filtered records
-                            }
+                            )
+                        {
+                            continue; // Skip filtered records
+                        }
 
                         // Compute distance
                         let distance =

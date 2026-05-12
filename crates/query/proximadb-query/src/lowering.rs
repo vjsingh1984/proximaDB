@@ -121,7 +121,7 @@ impl UQLLowerer {
         trace!("Lowering FROM clause: {:?}", from);
 
         Ok(Operator::Scan {
-            data_model: from.model.clone(),
+            data_model: from.model,
             source: from.collection.clone(),
             columns: None,
             filter: None,
@@ -158,7 +158,7 @@ impl UQLLowerer {
 
         let right_plan = MultiModelPlan::new(
             vec![Operator::Scan {
-                data_model: join.source.model.clone(),
+                data_model: join.source.model,
                 source: join.source.collection.clone(),
                 columns: None,
                 filter: None,
@@ -241,10 +241,10 @@ impl UQLLowerer {
 
         let mut plans = Vec::new();
 
-        for (data_model, _query_string) in &multimodal.components {
+        for data_model in multimodal.components.keys() {
             let component_plan = MultiModelPlan::new(
                 vec![Operator::Scan {
-                    data_model: data_model.clone(),
+                    data_model: *data_model,
                     source: format!("component_{}", data_model),
                     columns: None,
                     filter: None,

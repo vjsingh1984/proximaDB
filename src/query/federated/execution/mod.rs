@@ -39,7 +39,7 @@ use crate::proto::proximadb_v1::{
 };
 use crate::query::graph_lowering::lower_supported_graph_query_expr;
 use crate::query::graph_runtime::execute_graph_query_expr_with_start_nodes;
-use crate::storage::multimodel::{ModelType, MultiModelStorageFacade};
+use crate::storage::multimodal::{ModelType, MultiModalStorageFacade};
 use crate::storage::traits::{
     DocumentRecord, DocumentStorageOperations, MetricAggregationParams,
     ObservabilityStorageOperations, StorageQueryContext,
@@ -221,7 +221,7 @@ const VECTOR_SOURCE_ALIAS_METADATA_KEY: &str = "proximadb.federated.vector_sourc
 /// Federated query executor
 pub struct FederatedExecutor {
     /// Multi-model storage facade
-    storage: Arc<MultiModelStorageFacade>,
+    storage: Arc<MultiModalStorageFacade>,
     /// Collection metadata resolver for storage assignments and engine details
     collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
     /// Reuse the existing vector service so SQL VECTOR_SEARCH follows the
@@ -258,7 +258,7 @@ impl Default for ExecutionConfig {
 
 impl FederatedExecutor {
     /// Create a new federated executor
-    pub fn new(storage: Arc<MultiModelStorageFacade>) -> Self {
+    pub fn new(storage: Arc<MultiModalStorageFacade>) -> Self {
         Self {
             storage,
             collection_service: None,
@@ -268,7 +268,7 @@ impl FederatedExecutor {
     }
 
     /// Create with custom configuration
-    pub fn with_config(storage: Arc<MultiModelStorageFacade>, config: ExecutionConfig) -> Self {
+    pub fn with_config(storage: Arc<MultiModalStorageFacade>, config: ExecutionConfig) -> Self {
         Self {
             storage,
             collection_service: None,
@@ -4110,7 +4110,6 @@ impl FederatedExecutor {
         })
     }
 }
-
 
 #[cfg(test)]
 mod tests;

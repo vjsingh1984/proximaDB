@@ -173,18 +173,13 @@ pub enum JoinType {
 }
 
 /// Strategies for evaluating a [`JoinType::Semantic`] join.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum SemanticJoinMode {
     /// Cosine similarity over an extracted vector field.
+    #[default]
     Cosine,
     /// LLM-driven block-batched matching.
     LlmBlockBatch(BlockBatchConfig),
-}
-
-impl Default for SemanticJoinMode {
-    fn default() -> Self {
-        Self::Cosine
-    }
 }
 
 /// Configuration for [`SemanticJoinMode::LlmBlockBatch`].

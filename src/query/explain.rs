@@ -25,9 +25,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use proximadb_graph::query::planner::{GraphStatistics, PlanStepType, QueryPlan as GraphQueryPlan};
+// TODO: Move to proximadb-graph crate
+// For now, use local definitions
+use crate::graph::query::planner::{GraphStatistics, PlanStepType, QueryPlan as GraphQueryPlan};
 
-use crate::storage::multimodel::ModelType;
+use crate::storage::multimodal::ModelType;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExplainPlan {
@@ -341,7 +343,7 @@ impl GraphHints {
                     ..
                 } => {
                     hints.traversal_algorithm = Some(format!("{:?}", algorithm));
-                    hints.max_depth = *max_depth;
+                    hints.max_depth = Some(*max_depth as u32);
                 }
                 _ => {}
             }

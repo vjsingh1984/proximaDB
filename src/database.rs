@@ -14,14 +14,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
-// Re-use the canonical Result type from the crate root
-// (defined once in lib.rs to avoid duplication)
-use crate::Result;
-
 // RL Planner checkpoint interval (5 minutes default)
 const RL_CHECKPOINT_INTERVAL_SECS: u64 = 300;
 
-use crate::{core, graph, metrics, monitoring, network, proto, query, security, storage};
+use crate::{core, graph, network, proto, query, security, storage};
 
 /// Main ProximaDB database instance
 pub struct ProximaDB {
@@ -42,22 +38,19 @@ pub struct ProximaDB {
 }
 
 impl ProximaDB {
-    /// Create and initialize a new ProximaDB instance from the given configuration.    /// Create and initialize a new ProximaDB instance from the given configuration.
-    pub async fn new(config: core::Config) -> Result<Self> {
+    /// Create and initialize a new ProximaDB instance from the given configuration.
+    pub async fn new(config: core::Config) -> anyhow::Result<Self> {
         tracing::info!("🚀 ProximaDB::new - STARTING database initialization");
         tracing::debug!("🔍 ProximaDB::new - Config: {:?}", config);
 
         // Step 1: Create metrics collector first
         tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
-        let _metrics_config = metrics::MetricsConfig::default();
-        let metrics_collector = Arc::new(monitoring::MetricsCollector::new());
+        let metrics_collector = Arc::new(crate::metrics::UnifiedMetricsCollector::new());
         tracing::debug!("✅ ProximaDB::new - Metrics collector created successfully");
 
-        // Step 2: Create SharedServices FIRST (owns all services)
-        // This avoids duplicate CollectionService creation
-        tracing::info!(
-            "🔧 ProximaDB::new - Creating SharedServices FIRST to avoid circular dependency"
-        );
+        // Step 2: Initialize SharedServices with orchestrator
+        tracing::info!("🌐 ProximaDB::new - Initializing SharedServices...");
+
         // Build global Cross-Cache Orchestrator from [cache] or fallback to storage.cache_size_mb
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
         let cache_config = config.cache.clone().unwrap_or_default();
@@ -108,8 +101,9 @@ impl ProximaDB {
         wal_config.multi_disk.data_directories = config.storage.storage_urls();
 
         // Initialize global WAL manifest using WALConfig
-        let _manifest_service =
-            storage::persistence::write_ahead_log::manifest::init(&wal_config).await?;
+        let _manifest_service = storage::persistence::write_ahead_log::manifest::init(&wal_config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to init WAL manifest: {}", e))?;
         tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
 
         // Step 4: Set global metadata provider BEFORE creating StorageEngine
@@ -123,24 +117,21 @@ impl ProximaDB {
         .await;
         tracing::info!("✅ ProximaDB::new - Global metadata provider set for WAL");
 
-        // Step 5: Create StorageEngine using the CollectionService from SharedServices
-        tracing::debug!(
-            "🔧 ProximaDB::new - Creating storage engine with injected CollectionService..."
-        );
+        // Step 5: Initialize the storage engine (SST/VIPER/etc)
+        tracing::info!("🌐 ProximaDB::new - Creating StorageEngine...");
         let storage_engine =
-            storage::StorageEngine::new_without_collection_service(config.storage.clone()).await?;
-        // Inject the metadata backend from CollectionService (not CollectionService itself!)
+            storage::StorageEngine::new_without_collection_service(config.storage.clone())
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to create storage engine: {}", e))?;
+
         storage_engine
             .set_metadata_provider(collection_service.metadata_backend().clone())
             .await;
-        tracing::info!(
-            "✅ ProximaDB::new - Storage engine created with SharedServices' CollectionService"
-        );
+
         let storage = Arc::new(RwLock::new(storage_engine));
+        tracing::info!("✅ ProximaDB::new - StorageEngine initialized successfully");
 
-        // let consensus = consensus::ConsensusEngine::new(config.consensus.clone()).await?; // Disabled
-
-        // Create multi-server configuration from actual config values
+        // Step 6: Create multi-server configuration from actual config values
         use std::net::SocketAddr;
         tracing::debug!("🔧 ProximaDB::new - Creating server addresses...");
         // Determine ports: prefer ApiConfig, fall back to ServerConfig
@@ -149,10 +140,10 @@ impl ProximaDB {
 
         let rest_addr: SocketAddr = format!("{}:{}", config.server.bind_address, rest_port)
             .parse()
-            .map_err(|e| format!("Invalid REST address: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid REST address: {}", e))?;
         let grpc_addr: SocketAddr = format!("{}:{}", config.server.bind_address, grpc_port)
             .parse()
-            .map_err(|e| format!("Invalid gRPC address: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid gRPC address: {}", e))?;
         tracing::debug!(
             "🔧 ProximaDB::new - REST address: {}, gRPC address: {}",
             rest_addr,
@@ -180,7 +171,7 @@ impl ProximaDB {
         tracing::debug!("🔧 ProximaDB::new - Building multi-server config...");
         let multi_config = builder
             .build()
-            .map_err(|e| format!("Failed to create server config: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to create server config: {}", e))?;
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
@@ -201,8 +192,6 @@ impl ProximaDB {
             None
         };
 
-        // SharedServices and metrics collector already created above
-
         // Initialize LLM engine if configured
         let llm_engine = if let Some(llm_cfg) = config.llm.clone() {
             match crate::ai::llm_integration::LLMIntegrationEngine::new(llm_cfg).await {
@@ -221,7 +210,7 @@ impl ProximaDB {
         let rest_auth_enabled = config
             .security
             .as_ref()
-            .is_some_and(|s| s.authentication.enabled);
+            .map_or(false, |s| s.authentication.enabled);
         let mut multi_server = network::MultiServer::new(
             multi_config,
             shared_services,
@@ -235,7 +224,6 @@ impl ProximaDB {
 
         Ok(Self {
             storage,
-            // consensus,  // Disabled
             multi_server: Some(multi_server),
             _config: config,
             security,
@@ -245,7 +233,7 @@ impl ProximaDB {
     }
 
     /// Start all database services (network listeners, background tasks, WAL recovery).
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(&mut self) -> anyhow::Result<()> {
         tracing::info!("🚀 ProximaDB::start - Starting database services...");
 
         // Step 1: Start storage engine (recovers collections from metadata)
@@ -254,36 +242,33 @@ impl ProximaDB {
         );
         {
             let mut storage = self.storage.write().await;
-            storage.start().await?;
+            storage
+                .start()
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to start storage engine: {}", e))?;
         }
         tracing::info!(
             "✅ ProximaDB::start - Storage engine started, collections recovered from metadata_info"
         );
 
         // Step 2: Recover vectors from WAL (persisted data)
-        eprintln!("🔍 DEBUG: ProximaDB::start - About to call storage.recover_from_wal()");
         tracing::info!(
             "📦 ProximaDB::start - Step 2: Recovering vectors from WAL (persisted data)..."
         );
         {
             let storage = self.storage.read().await;
-            eprintln!("🔍 DEBUG: Got storage lock, calling recover_from_wal()...");
             match storage.recover_from_wal().await {
                 Ok(()) => {
-                    eprintln!("✅ DEBUG: recover_from_wal() returned Ok(())");
                     tracing::info!("✅ ProximaDB::start - Vectors recovered from WAL successfully");
                 }
                 Err(e) => {
-                    eprintln!("❌ DEBUG: recover_from_wal() returned Err: {}", e);
                     tracing::warn!(
                         "⚠️  ProximaDB::start - WAL recovery failed (continuing anyway): {}",
                         e
                     );
-                    // Don't fail startup if WAL recovery fails - data might still be in memtable
                 }
             }
         }
-        eprintln!("🔍 DEBUG: ProximaDB::start - WAL recovery step complete");
 
         // Step 3: Recover graphs from snapshots + WAL
         tracing::info!(
@@ -304,7 +289,6 @@ impl ProximaDB {
                         "⚠️  ProximaDB::start - Graph recovery failed (continuing anyway): {}",
                         e
                     );
-                    // Don't fail startup if graph recovery fails
                 }
             }
         }
@@ -313,10 +297,6 @@ impl ProximaDB {
         tracing::info!(
             "🗺️ ProximaDB::start - Step 4: Recovering assignments from collection metadata..."
         );
-        // Deferred: When AssignmentService is added to SharedServices, call:
-        // if let Some(ms) = self.multi_server.as_ref() {
-        //     ms.shared_services.assignment_service.recover_assignments().await?;
-        // }
         tracing::info!(
             "✅ ProximaDB::start - Assignment recovery completed (or skipped if no service)"
         );
@@ -327,7 +307,10 @@ impl ProximaDB {
             multi_server
                 .shared_services
                 .recover_vectors_from_write_buffer(&self.storage)
-                .await?;
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to recover vectors from write buffer: {}", e)
+                })?;
         }
 
         // Step 6: Initialize RL Query Planner (if enabled)
@@ -342,31 +325,25 @@ impl ProximaDB {
             multi_server
                 .start()
                 .await
-                .map_err(|e| format!("Failed to start multi-server: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to start multi-server: {}", e))?;
         }
         tracing::info!("✅ ProximaDB::start - Multi-server started successfully");
 
         tracing::info!(
             "🎉 ProximaDB::start - Database startup complete with full persistence recovery!"
         );
-        tracing::info!("📋 Recovery Order Summary:");
-        tracing::info!("  1️⃣ Collections: Recovered from metadata snapshots");
-        tracing::info!("  2️⃣ Vectors (WAL): Recovered from persisted WAL files");
-        tracing::info!("  3️⃣ Graphs: Recovered from snapshots + WAL replay");
-        tracing::info!("  4️⃣ Assignments: Recovered from collection metadata");
-        tracing::info!("  5️⃣ Vectors (Buffer): Recovered from in-memory write buffer");
-        tracing::info!("  6️⃣ RL Planner: Initialized with policy recovery");
-        tracing::info!("  7️⃣ Services: HTTP/gRPC servers started");
         Ok(())
     }
 
-    /// Gracefully shut down all database services and flush pending writes.
-    pub async fn stop(&mut self) -> Result<()> {
-        // Stop RL planner checkpoint task and persist policy
+    /// Shutdown the database instance gracefully.
+    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+        info!("Graceful shutdown requested");
+
+        // 1. Stop RL planner checkpoint task and persist policy
         tracing::info!("Stopping RL Query Planner...");
         self.shutdown_rl_planner().await;
 
-        // Flush graph WAL for all graphs before shutdown
+        // 2. Flush graph WAL for all graphs before shutdown
         tracing::info!("Flushing graph WAL for all graphs...");
         if let Some(ref multi_server) = self.multi_server {
             match tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
@@ -389,7 +366,7 @@ impl ProximaDB {
                     }
                 }
                 tracing::debug!("Flushed WAL for {} graphs", flushed);
-                Ok::<_, crate::core::error::ProximaDBError>(())
+                Ok::<_, anyhow::Error>(())
             })
             .await
             {
@@ -399,31 +376,15 @@ impl ProximaDB {
             }
         }
 
-        // Shutdown global WAL manifest (flush pending writes) with timeout
-        tracing::info!("Shutting down global WAL manifest...");
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(5),
-            storage::persistence::write_ahead_log::manifest::shutdown(),
-        )
-        .await
-        {
-            Ok(Ok(())) => tracing::debug!("Global WAL manifest shut down"),
-            Ok(Err(e)) => tracing::warn!("WAL manifest shutdown error: {}", e),
-            Err(_) => tracing::warn!("WAL manifest shutdown timeout - forcing continuation"),
-        }
-
-        // Stop multi-server with timeout
-        if let Some(ref mut multi_server) = self.multi_server {
-            match tokio::time::timeout(tokio::time::Duration::from_secs(3), multi_server.stop())
+        // 3. Shutdown servers
+        if let Some(mut multi_server) = self.multi_server.take() {
+            multi_server
+                .stop()
                 .await
-            {
-                Ok(Ok(())) => tracing::debug!("Multi-server stopped"),
-                Ok(Err(e)) => tracing::warn!("Multi-server stop error: {}", e),
-                Err(_) => tracing::warn!("Multi-server stop timeout"),
-            }
+                .map_err(|e| anyhow::anyhow!("Failed to stop multi-server: {}", e))?;
         }
 
-        // Stop storage engine with timeout
+        // 4. Stop storage engine with timeout
         match tokio::time::timeout(tokio::time::Duration::from_secs(3), async {
             let mut storage = self.storage.write().await;
             storage.stop().await
@@ -439,138 +400,16 @@ impl ProximaDB {
         Ok(())
     }
 
-    /// Initialize the RL Query Planner from configuration
-    ///
-    /// This method:
-    /// 1. Reads RL planner config from the main config
-    /// 2. Initializes the global RL planner
-    /// 3. Loads persisted policy if it exists
-    /// 4. Starts a background checkpoint task for periodic policy persistence
-    async fn init_rl_planner(&mut self) -> Result<()> {
-        // Get RL config from main config (or use defaults)
-        let rl_config = self
-            ._config
-            .query
-            .as_ref()
-            .map(|q| q.rl_planner.to_rl_planner_config())
-            .unwrap_or_default();
-
-        if !rl_config.enabled {
-            tracing::info!("RL Query Planner is disabled in configuration");
-            return Ok(());
-        }
-
-        // Determine policy path - use config path or default to data_dir
-        let policy_path = rl_config.log_path.clone().unwrap_or_else(|| {
-            format!("{}/rl_policy.json", self._config.server.data_dir.display())
-        });
-        self.rl_policy_path = Some(policy_path.clone());
-
-        // Initialize global RL planner
-        query::rl_planner::init_rl_planner(rl_config.clone());
-        tracing::info!("✅ RL Query Planner initialized");
-
-        // Try to load existing policy
-        if let Some(planner) = query::rl_planner::get_rl_planner() {
-            if std::path::Path::new(&policy_path).exists() {
-                match planner.load_policy(&policy_path).await {
-                    Ok(()) => {
-                        tracing::info!("✅ RL policy loaded from {}", policy_path);
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to load RL policy (starting fresh): {}", e);
-                    }
-                }
-            } else {
-                tracing::debug!(
-                    "No existing RL policy found at {}, starting fresh",
-                    policy_path
-                );
-            }
-
-            // Start periodic checkpoint task
-            let checkpoint_path = policy_path.clone();
-            let checkpoint_handle = tokio::spawn(async move {
-                let interval = std::time::Duration::from_secs(RL_CHECKPOINT_INTERVAL_SECS);
-                let mut ticker = tokio::time::interval(interval);
-                ticker.tick().await; // Skip first immediate tick
-
-                loop {
-                    ticker.tick().await;
-                    if let Some(planner) = query::rl_planner::get_rl_planner() {
-                        match planner.save_policy(&checkpoint_path).await {
-                            Ok(()) => {
-                                tracing::debug!(
-                                    "RL policy checkpoint saved to {}",
-                                    checkpoint_path
-                                );
-                            }
-                            Err(e) => {
-                                tracing::warn!("Failed to save RL policy checkpoint: {}", e);
-                            }
-                        }
-                    } else {
-                        tracing::debug!("RL planner not available for checkpoint");
-                        break;
-                    }
-                }
-            });
-            self.rl_checkpoint_handle = Some(checkpoint_handle);
-            tracing::info!(
-                "✅ RL policy checkpoint task started (interval: {}s)",
-                RL_CHECKPOINT_INTERVAL_SECS
-            );
-        }
-
-        Ok(())
-    }
-
-    /// Shutdown RL planner: stop checkpoint task and persist final policy
-    async fn shutdown_rl_planner(&mut self) {
-        // Stop checkpoint task
-        if let Some(handle) = self.rl_checkpoint_handle.take() {
-            handle.abort();
-            tracing::debug!("RL checkpoint task stopped");
-        }
-
-        // Persist final policy
-        if let Some(ref policy_path) = self.rl_policy_path
-            && let Some(planner) = query::rl_planner::get_rl_planner()
-        {
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(5),
-                planner.save_policy(policy_path),
-            )
-            .await
-            {
-                Ok(Ok(())) => {
-                    tracing::info!("✅ RL policy persisted to {}", policy_path);
-                }
-                Ok(Err(e)) => {
-                    tracing::warn!("Failed to persist RL policy: {}", e);
-                }
-                Err(_) => {
-                    tracing::warn!("RL policy persist timeout");
-                }
-            }
-
-            // Log final stats
-            let stats = planner.get_action_stats().await;
-            if !stats.is_empty() {
-                tracing::info!("RL Planner final stats: {} actions tracked", stats.len());
-                for (action, (avg_reward, count)) in stats.iter().take(5) {
-                    tracing::debug!(
-                        "  {}: avg_reward={:.3}, count={}",
-                        action,
-                        avg_reward,
-                        count
-                    );
-                }
-            }
+    /// Check if the database instance is healthy.
+    pub async fn is_healthy(&self) -> bool {
+        if let Some(ref multi_server) = self.multi_server {
+            multi_server.status().await.http_running
+        } else {
+            false
         }
     }
 
-    /// Get the multi-server status
+    /// Get current server status including versions and uptime.
     pub async fn server_status(&self) -> Option<network::multi_server::ServerStatus> {
         if let Some(ref multi_server) = self.multi_server {
             Some(multi_server.status().await)
@@ -579,17 +418,8 @@ impl ProximaDB {
         }
     }
 
-    /// Check if any server is running
-    pub async fn is_server_running(&self) -> bool {
-        if let Some(status) = self.server_status().await {
-            status.http_running || status.grpc_running
-        } else {
-            false
-        }
-    }
-
-    /// Get HTTP server address
-    pub async fn http_server_address(&self) -> Option<std::net::SocketAddr> {
+    /// Get REST server address
+    pub async fn rest_server_address(&self) -> Option<std::net::SocketAddr> {
         if let Some(status) = self.server_status().await {
             status.http_address
         } else {
@@ -606,24 +436,89 @@ impl ProximaDB {
         }
     }
 
+    /// Initialize the RL Query Planner from configuration
+    async fn init_rl_planner(&mut self) -> anyhow::Result<()> {
+        let rl_config = self
+            ._config
+            .query
+            .as_ref()
+            .map(|q| q.rl_planner.to_rl_planner_config())
+            .unwrap_or_default();
+
+        if !rl_config.enabled {
+            tracing::info!("RL Query Planner is disabled in configuration");
+            return Ok(());
+        }
+
+        let policy_path = rl_config.log_path.clone().unwrap_or_else(|| {
+            format!("{}/rl_policy.json", self._config.server.data_dir.display())
+        });
+        self.rl_policy_path = Some(policy_path.clone());
+
+        query::rl_planner::init_rl_planner(rl_config.clone());
+        tracing::info!("✅ RL Query Planner initialized");
+
+        if let Some(planner) = query::rl_planner::get_rl_planner() {
+            if std::path::Path::new(&policy_path).exists() {
+                planner.load_policy(&policy_path).await?;
+                tracing::info!("✅ RL policy loaded from {}", policy_path);
+            }
+
+            let checkpoint_path = policy_path.clone();
+            let checkpoint_handle = tokio::spawn(async move {
+                let interval = std::time::Duration::from_secs(RL_CHECKPOINT_INTERVAL_SECS);
+                let mut ticker = tokio::time::interval(interval);
+                ticker.tick().await;
+
+                loop {
+                    ticker.tick().await;
+                    if let Some(planner) = query::rl_planner::get_rl_planner() {
+                        if let Err(e) = planner.save_policy(&checkpoint_path).await {
+                            tracing::warn!("Failed to save RL policy checkpoint: {}", e);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            });
+            self.rl_checkpoint_handle = Some(checkpoint_handle);
+        }
+
+        Ok(())
+    }
+
+    /// Shutdown RL planner: stop checkpoint task and persist final policy
+    async fn shutdown_rl_planner(&mut self) {
+        if let Some(handle) = self.rl_checkpoint_handle.take() {
+            handle.abort();
+        }
+
+        if let Some(ref policy_path) = self.rl_policy_path
+            && let Some(planner) = query::rl_planner::get_rl_planner()
+        {
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(5),
+                planner.save_policy(policy_path),
+            )
+            .await
+            {
+                Ok(Ok(())) => tracing::info!("✅ RL policy persisted to {}", policy_path),
+                Ok(Err(e)) => tracing::warn!("Failed to persist RL policy: {}", e),
+                Err(_) => tracing::warn!("RL policy persist timeout"),
+            }
+        }
+    }
+
     // =========================================================================
     // Graph Database API - High-level graph operations
     // =========================================================================
 
     /// Create a new graph collection
-    ///
-    /// # Arguments
-    /// * `graph_id` - Unique identifier for the graph
-    /// * `schema` - Optional schema definition for the graph
-    ///
-    /// # Returns
-    /// * `Ok(())` on success
-    /// * `Err` if the graph already exists or creation fails
     pub async fn create_graph(
         &self,
         graph_id: &str,
         schema: Option<proto::proximadb_v1::GraphSchema>,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         if let Some(ref multi_server) = self.multi_server {
             let request = proto::proximadb_v1::CreateGraphRequest {
                 graph_id: graph_id.to_string(),
@@ -639,242 +534,182 @@ impl ProximaDB {
                 .graph_service
                 .create_graph_collection(request)
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+                .map_err(|e| anyhow::anyhow!("Failed to create graph collection: {}", e))?;
             Ok(())
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// List all graphs in the database
-    ///
-    /// # Returns
-    /// * `Vec<String>` - List of graph IDs
-    pub async fn list_graphs(&self) -> Result<Vec<String>> {
+    pub async fn list_graphs(&self) -> anyhow::Result<Vec<String>> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .list_graphs()
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to list graphs: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Create a node in a graph
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph to add the node to
-    /// * `node` - The node to create
-    ///
-    /// # Returns
-    /// * `Ok(Arc<Node>)` - The created node
     pub async fn create_node(
         &self,
         graph_id: &str,
         node: graph::Node,
-    ) -> Result<std::sync::Arc<graph::Node>> {
+    ) -> anyhow::Result<std::sync::Arc<graph::Node>> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .create_node(graph_id, node)
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to create node: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Get a node by ID from a graph
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph containing the node
-    /// * `node_id` - The ID of the node to retrieve
-    ///
-    /// # Returns
-    /// * `Ok(Some(Arc<Node>))` if found, `Ok(None)` if not found
     pub async fn get_node(
         &self,
         graph_id: &str,
         node_id: &str,
-    ) -> Result<Option<std::sync::Arc<graph::Node>>> {
+    ) -> anyhow::Result<Option<std::sync::Arc<graph::Node>>> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .get_node(graph_id, &node_id.to_string())
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to get node: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Update a node in a graph
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph containing the node
-    /// * `node` - The updated node (must have same ID as existing node)
-    ///
-    /// # Returns
-    /// * `Ok(Arc<Node>)` - The updated node
     pub async fn update_node(
         &self,
         graph_id: &str,
         node: graph::Node,
-    ) -> Result<std::sync::Arc<graph::Node>> {
+    ) -> anyhow::Result<std::sync::Arc<graph::Node>> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .update_node(graph_id, node)
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to update node: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Delete a node from a graph
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph containing the node
-    /// * `node_id` - The ID of the node to delete
-    ///
-    /// # Returns
-    /// * `Ok(Some(Arc<Node>))` if deleted, `Ok(None)` if not found
     pub async fn delete_node(
         &self,
         graph_id: &str,
         node_id: &str,
-    ) -> Result<Option<std::sync::Arc<graph::Node>>> {
+    ) -> anyhow::Result<Option<std::sync::Arc<graph::Node>>> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .delete_node(graph_id, &node_id.to_string())
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to delete node: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Create an edge between two nodes in a graph
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph to add the edge to
-    /// * `edge` - The edge to create
-    ///
-    /// # Returns
-    /// * `Ok(Arc<Edge>)` - The created edge
     pub async fn create_edge(
         &self,
         graph_id: &str,
         edge: graph::Edge,
-    ) -> Result<std::sync::Arc<graph::Edge>> {
+    ) -> anyhow::Result<std::sync::Arc<graph::Edge>> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .create_edge(graph_id, edge)
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to create edge: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Get an edge by ID from a graph
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph containing the edge
-    /// * `edge_id` - The ID of the edge to retrieve
-    ///
-    /// # Returns
-    /// * `Ok(Some(Arc<Edge>))` if found, `Ok(None)` if not found
     pub async fn get_edge(
         &self,
         graph_id: &str,
         edge_id: &str,
-    ) -> Result<Option<std::sync::Arc<graph::Edge>>> {
+    ) -> anyhow::Result<Option<std::sync::Arc<graph::Edge>>> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .get_edge(graph_id, &edge_id.to_string())
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to get edge: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Delete an edge from a graph
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph containing the edge
-    /// * `edge_id` - The ID of the edge to delete
-    ///
-    /// # Returns
-    /// * `Ok(Some(Arc<Edge>))` if deleted, `Ok(None)` if not found
     pub async fn delete_edge(
         &self,
         graph_id: &str,
         edge_id: &str,
-    ) -> Result<Option<std::sync::Arc<graph::Edge>>> {
+    ) -> anyhow::Result<Option<std::sync::Arc<graph::Edge>>> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .delete_edge(graph_id, &edge_id.to_string())
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to delete edge: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Get graph statistics
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph to get stats for
-    ///
-    /// # Returns
-    /// * `Ok(GraphStats)` - Statistics about the graph
-    pub async fn get_graph_stats(&self, graph_id: &str) -> Result<proto::proximadb_v1::GraphStats> {
+    pub async fn get_graph_stats(
+        &self,
+        graph_id: &str,
+    ) -> anyhow::Result<proto::proximadb_v1::GraphStats> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .get_stats(graph_id)
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to get graph stats: {}", e))
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 
     /// Flush the WAL for a specific graph to ensure durability
-    ///
-    /// # Arguments
-    /// * `graph_id` - The graph to flush
-    ///
-    /// # Returns
-    /// * `Ok(())` on success
-    pub async fn flush_graph_wal(&self, graph_id: &str) -> Result<()> {
+    pub async fn flush_graph_wal(&self, graph_id: &str) -> anyhow::Result<()> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services
                 .graph_service
                 .flush_wal(graph_id)
                 .await
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .map_err(|e| anyhow::anyhow!("Failed to flush graph WAL: {}", e))?;
+            Ok(())
         } else {
-            Err("Multi-server not initialized".into())
+            anyhow::bail!("Multi-server not initialized")
         }
     }
 }

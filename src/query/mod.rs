@@ -125,13 +125,15 @@ pub mod execution; // New unified execution engine
 pub mod explain;
 pub mod facade; // Unified query facade - single entry point for all queries (consolidates 5 parallel paths)
 pub mod federated; // Federated multi-model query engine (cross-model joins, SQL extensions)
-pub mod graph_lowering; // Shared lowering from supported graph queries into multimodel IR
+pub mod graph_lowering; // Shared lowering from supported graph queries into multimodal IR
 pub mod graph_runtime; // Shared runtime for lowered graph-query execution and canonical row shaping
 pub mod graph_subset; // Shared graph query subset for facade and federated SQL extensions
 pub mod materialized_view; // A1: Materialized views for complex dashboard queries
-pub mod multimodal; // MultiModelPlan v1 - Unified cross-model query execution
-pub mod multimodel_executor; // Multi-model SQL executor - SqlPlan lowering + dispatch
-pub mod multimodel_router; // Multi-model SQL router - DataModel detection + result envelope
+pub mod multimodal; // MultiModalPlan v1 - Unified cross-model query execution
+pub mod multimodal_executor; // Multi-model SQL executor - SqlPlan lowering + dispatch
+pub mod multimodal_router; // Multi-model SQL router - DataModel detection + result envelope
+pub mod multimodel_executor; // Canonical multi-model SQL executor implementation
+pub mod multimodel_router; // Canonical multi-model SQL router implementation
 pub mod nl; // AV-SQL (TD-048) — 3-Agent Decomposition
 pub mod parsers; // Query language parsers (MongoDB, etc.)
 pub mod prepared; // Prepared statements for parse-once-execute-many pattern

@@ -41,7 +41,13 @@ CRATE_DISALLOWED_DEPS: dict[str, set[str]] = {
         "tower",
     },
 }
-MODALITY_ALLOWED_QUERY_CONTRACTS = {"proximadb-graph-query", "proximadb-query-filter"}
+MODALITY_ALLOWED_QUERY_CONTRACTS = {
+    "proximadb-graph-query",
+    "proximadb-query-filter",
+    "proximadb-document-query",
+    "proximadb-observability-query",
+    "proximadb-vector-query",
+}
 QUERY_RUNTIME_CRATES = {"proximadb-query"}
 QUERY_ADAPTER_CRATES = {
     "proximadb-graph-arrow",

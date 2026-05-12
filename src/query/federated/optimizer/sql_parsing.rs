@@ -1,4 +1,7 @@
-use super::{AggregateExpr, AggregateFunction, OrderByClause, Predicate, PredicateOp, PredicateValue, SelectItem};
+use super::{
+    AggregateExpr, AggregateFunction, OrderByClause, Predicate, PredicateOp, PredicateValue,
+    SelectItem,
+};
 
 pub(crate) fn find_top_level_keyword(sql: &str, keyword: &str) -> Option<usize> {
     find_top_level_keyword_from(sql, keyword, 0)
@@ -401,7 +404,9 @@ pub(crate) fn extract_where_predicate(sql: &str) -> Option<Predicate> {
     let upper = clause.to_uppercase();
     if upper.ends_with(" IS NOT NULL") {
         return Some(Predicate {
-            column: clause[..clause.len() - "IS NOT NULL".len()].trim().to_string(),
+            column: clause[..clause.len() - "IS NOT NULL".len()]
+                .trim()
+                .to_string(),
             op: PredicateOp::IsNotNull,
             value: PredicateValue::Null,
         });

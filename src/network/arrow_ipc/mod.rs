@@ -17,6 +17,7 @@
 
 pub mod codec;
 pub mod file_export;
+pub mod multimodal_codec;
 pub mod multimodel_codec;
 pub mod server;
 pub mod service;

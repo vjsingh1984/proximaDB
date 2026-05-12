@@ -18,7 +18,7 @@ use super::parser::{
 };
 use crate::core::error::VectorDBError;
 use crate::query::capability::{Capability, CapabilitySet};
-use crate::storage::multimodel::ModelType;
+use crate::storage::multimodal::ModelType;
 
 mod sql_parsing;
 mod vector_query_parsing;
@@ -2753,7 +2753,9 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: collection.clone(),
                             top_k: *top_k,
-                            query_vector_source: vector_query_parsing::vector_source_from_query(query_vector),
+                            query_vector_source: vector_query_parsing::vector_source_from_query(
+                                query_vector,
+                            ),
                         },
                         estimated_cost: cost,
                         estimated_rows: rows,
@@ -2874,7 +2876,9 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: target,
                             top_k: 10,
-                            query_vector_source: vector_query_parsing::vector_source_from_literal(right_literal),
+                            query_vector_source: vector_query_parsing::vector_source_from_literal(
+                                right_literal,
+                            ),
                         },
                         estimated_cost: 10.0,
                         estimated_rows: 10,
@@ -3357,7 +3361,9 @@ impl CrossModelOptimizer {
                     node_type: PlanNodeType::VectorSearch {
                         collection: collection.clone(),
                         top_k: *top_k,
-                        query_vector_source: vector_query_parsing::vector_source_from_query(query_vector),
+                        query_vector_source: vector_query_parsing::vector_source_from_query(
+                            query_vector,
+                        ),
                     },
                     estimated_cost: 10.0,
                     estimated_rows: *top_k as u64,
@@ -3452,7 +3458,9 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: target,
                             top_k: 10,
-                            query_vector_source: vector_query_parsing::vector_source_from_literal(right_literal),
+                            query_vector_source: vector_query_parsing::vector_source_from_literal(
+                                right_literal,
+                            ),
                         },
                         estimated_cost: 10.0,
                         estimated_rows: 10,

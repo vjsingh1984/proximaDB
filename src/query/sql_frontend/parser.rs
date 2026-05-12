@@ -1,16 +1,16 @@
 //! SQL frontend parser: wraps sqlparser-rs and produces the internal AST.
 
 use anyhow::{Result, anyhow};
-use std::collections::HashMap;
 use sqlparser::ast::{
     BinaryOperator, Cte as SqlCte, Expr as SqlExpr, FunctionArg, FunctionArgExpr, Join as SqlJoin,
     JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr, Query as SqlQuery,
     Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator, Statement,
     TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
 };
+use sqlparser::ast::{CreateIndex, IndexOption};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
-use sqlparser::ast::{CreateIndex, IndexOption};
+use std::collections::HashMap;
 
 // DML types for INSERT/UPDATE/DELETE
 use crate::services::dml::{
@@ -1627,10 +1627,7 @@ mod tests {
             }
         }
 
-        let non_ddl = [
-            "INSERT INTO users (id) VALUES (1);",
-            "SELECT * FROM users;",
-        ];
+        let non_ddl = ["INSERT INTO users (id) VALUES (1);", "SELECT * FROM users;"];
 
         for sql in non_ddl {
             assert!(
@@ -1646,8 +1643,8 @@ mod tests {
 // ========================
 
 use crate::services::ddl::{
-    AlterTableChange, ColumnDefinition, ColumnPosition, DdlStatement, SqlDataType, TableConstraint,
-    IndexType,
+    AlterTableChange, ColumnDefinition, ColumnPosition, DdlStatement, IndexType, SqlDataType,
+    TableConstraint,
 };
 
 impl SqlFrontendParser {
@@ -1673,9 +1670,7 @@ impl SqlFrontendParser {
 
     /// Try to convert a statement to DDL, returning None for non-DDL statements
     fn try_convert_ddl(&self, statement: &Statement) -> Result<Option<DdlStatement>> {
-        use sqlparser::ast::{
-            AlterTableOperation, ColumnOption, ObjectType as SqlObjectType,
-        };
+        use sqlparser::ast::{AlterTableOperation, ColumnOption, ObjectType as SqlObjectType};
 
         match statement {
             Statement::AlterTable {
@@ -1936,11 +1931,7 @@ impl SqlFrontendParser {
     }
 
     fn parse_index_type(&self, create_index: &CreateIndex) -> Result<IndexType> {
-        let explicit_using = create_index
-            .using
-            .as_ref()
-            .cloned()
-            .or_else(|| {
+        let explicit_using = create_index.using.as_ref().cloned().or_else(|| {
             create_index.index_options.iter().find_map(|opt| {
                 if let IndexOption::Using(index_type) = opt {
                     Some(index_type.clone())
@@ -1954,7 +1945,9 @@ impl SqlFrontendParser {
         let index_type = match index_type {
             sqlparser::ast::IndexType::BTree => IndexType::BTree,
             sqlparser::ast::IndexType::Hash => IndexType::Hash,
-            sqlparser::ast::IndexType::Custom(name) if name.value.eq_ignore_ascii_case("fulltext") => {
+            sqlparser::ast::IndexType::Custom(name)
+                if name.value.eq_ignore_ascii_case("fulltext") =>
+            {
                 IndexType::FullText
             }
             sqlparser::ast::IndexType::Custom(name) => {

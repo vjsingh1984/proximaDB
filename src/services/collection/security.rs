@@ -20,7 +20,7 @@ use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::security::encryption::{EncryptionConfig, FieldEncryption, KeyStore, KeyStoreConfig};
 use crate::security::rls::{CollectionRLS, RLSConfig};
-use crate::security::unified_rbac::{UnifiedAuthMethod, UnifiedUserContext};
+use crate::security::unified_rbac::UnifiedUserContext;
 use crate::services::operations::{SecureVectorOperations, combine_filters};
 use proximadb_security::{AuditConfig, AuditEvent, AuditEventType, AuditResource, AuditResult};
 

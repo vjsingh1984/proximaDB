@@ -19,6 +19,15 @@ Technical debt items are prioritized based on their impact on the four developme
 |===
 | ID | Area | Phase | Priority | Status | Impact | Effort | Notes
 
+| TD-CROSS-LAYER
+| Storage→Index dependency inversion
+| All
+| Critical
+| *Resolved*
+| Storage layer imported from index layer, violating layering
+| 2 days
+| *RESOLVED May 2026*: **Cross-layer dependency resolved**. `StorageEngineType` moved from `index/axis/eventlog` to `core/types/storage.rs`. Storage layer now imports from shared types module instead of index layer. See `src/core/types/storage.rs:16-20` for documentation.
+
 | TD-001
 | PULSAR/QUASAR wiring
 | P3

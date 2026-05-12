@@ -347,6 +347,10 @@ where
 }
 
 /// Dispatch a semantic join to cosine or block-batch mode behind extracted traits.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "public dispatcher keeps mode, engines, and join parameters explicit"
+)]
 pub async fn dispatch_semantic_join_with_service<S, B>(
     left: &[UnifiedRecord],
     right: &[UnifiedRecord],

@@ -1595,7 +1595,7 @@ impl UQLParser {
         };
 
         Ok(QueryComponent {
-            model: source.model.clone(),
+            model: source.model,
             operation,
             filters: vec![],
             dependencies: vec![],

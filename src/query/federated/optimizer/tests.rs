@@ -1,6 +1,14 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::capability::{Capability, CapabilitySet};
+    use crate::query::federated::optimizer::*;
+    use crate::query::federated::parser::{
+        self, FederatedParser, FederatedQuery, QueryType, SqlExtension, TargetModelType,
+        VectorQuery,
+    };
+    use crate::storage::multimodal::ModelType;
+    use std::collections::HashMap;
 
     #[test]
     fn test_optimizer_creation() {
@@ -18,7 +26,7 @@ mod tests {
             extensions: vec![],
             extension_positions: vec![],
             extension_aliases: vec![],
-            targets: vec![super::super::parser::QueryTarget {
+            targets: vec![parser::QueryTarget {
                 name: "users".to_string(),
                 alias: None,
                 model_type: TargetModelType::Table,
@@ -37,7 +45,7 @@ mod tests {
     #[test]
     fn test_graph_query_plan_uses_projected_output_columns_for_scalar_subset_queries() {
         let optimizer = CrossModelOptimizer::new();
-        let query = super::super::parser::FederatedParser::new()
+        let query = parser::FederatedParser::new()
             .parse(
                 "SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n.name AS person_name')",
             )
@@ -53,7 +61,7 @@ mod tests {
     #[test]
     fn test_graph_query_plan_preserves_legacy_output_columns_for_node_projection() {
         let optimizer = CrossModelOptimizer::new();
-        let query = super::super::parser::FederatedParser::new()
+        let query = parser::FederatedParser::new()
             .parse("SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n')")
             .expect("graph query should parse");
 
@@ -97,7 +105,7 @@ mod tests {
 
     #[test]
     fn test_lateral_plan_preserves_sql_source_order_and_correlation() {
-        let parser = super::super::parser::FederatedParser::new();
+        let parser = parser::FederatedParser::new();
         let query = parser
             .parse(
                 "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 1) v ON true",
@@ -134,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_lateral_plan_preserves_right_document_alias_in_multi_document_outer_join() {
-        let parser = super::super::parser::FederatedParser::new();
+        let parser = parser::FederatedParser::new();
         let query = parser
             .parse(
                 "SELECT * FROM DOCUMENT_QUERY('left_profiles') p, DOCUMENT_QUERY('right_profiles') q JOIN LATERAL VECTOR_SEARCH('products', q.document.embedding, 1) v ON true",
@@ -178,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_lateral_plan_preserves_quoted_alias_with_dot_in_vector_source() {
-        let parser = super::super::parser::FederatedParser::new();
+        let parser = parser::FederatedParser::new();
         let query = parser
             .parse(
                 "SELECT * FROM DOCUMENT_QUERY('left_profiles') \"Left.Alias\", DOCUMENT_QUERY('right_profiles') \"Right.Alias\" JOIN LATERAL VECTOR_SEARCH('products', \"Right.Alias\".document.embedding, 1) v ON true",

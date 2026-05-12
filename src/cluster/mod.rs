@@ -84,6 +84,14 @@ pub use shard::{
     ShardPlacement, ShardState,
 };
 
+// HMGI distributed partitioning surfaces used by cluster-aware AXIS routing.
+pub use crate::index::axis::hmgi::{
+    ClusterMembership as HmgiClusterMembership, ClusterNode as HmgiClusterNode,
+    ClusterNodeId as HmgiClusterNodeId, DistributedPartitionLocator as HmgiPartitionLocator,
+    HmgiQueryCoordinator, HmgiRouteStats, NetworkService as HmgiNetworkService,
+    NodeState as HmgiNodeState, SearchRequest as HmgiSearchRequest,
+};
+
 // Re-export RPC abstractions for inter-node communication
 pub use rpc::{
     // Traits

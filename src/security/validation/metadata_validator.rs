@@ -20,7 +20,7 @@
 //! SQL injection and ensure data integrity.
 
 use super::type_validators::{
-    BinaryValidator, JsonValidator, ValidationError, ValidationResult,
+    BinaryValidator, JsonValidator, TypeValidationResult, ValidationError,
     contains_sql_injection_pattern,
 };
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
@@ -166,7 +166,7 @@ impl MetadataValidator {
     }
 
     /// Validate a metadata field key
-    fn validate_field_key(&self, key: &str) -> ValidationResult {
+    fn validate_field_key(&self, key: &str) -> TypeValidationResult {
         // Key length check
         if key.len() > 256 {
             return Err(ValidationError::LengthExceeded {
@@ -199,7 +199,7 @@ impl MetadataValidator {
         field_name: &str,
         value: &SqlValue,
         depth: usize,
-    ) -> ValidationResult {
+    ) -> TypeValidationResult {
         // Check nesting depth
         if depth > self.config.max_json_depth {
             return Err(ValidationError::JsonDepthExceeded {
@@ -253,7 +253,7 @@ impl MetadataValidator {
     }
 
     /// Validate a string value for SQL injection and length
-    fn validate_string_value(&self, field_name: &str, value: &str) -> ValidationResult {
+    fn validate_string_value(&self, field_name: &str, value: &str) -> TypeValidationResult {
         // Length check
         if value.len() > self.config.max_string_length {
             return Err(ValidationError::LengthExceeded {
@@ -375,7 +375,7 @@ impl CollectionNameValidator {
     }
 
     /// Validate a collection name
-    pub fn validate(&self, name: &str) -> ValidationResult {
+    pub fn validate(&self, name: &str) -> TypeValidationResult {
         // Length checks
         if name.len() < self.min_length {
             return Err(ValidationError::InvalidFormat {
@@ -426,7 +426,7 @@ pub fn validate_record_metadata(
 }
 
 /// Convenience function to validate a collection name
-pub fn validate_collection_name(name: &str) -> ValidationResult {
+pub fn validate_collection_name(name: &str) -> TypeValidationResult {
     CollectionNameValidator::default().validate(name)
 }
 

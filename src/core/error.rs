@@ -13,56 +13,66 @@ impl From<crate::storage::persistence::filesystem::FilesystemError> for VectorDB
     }
 }
 
-impl From<StorageError> for crate::core::errors::StorageError {
+/// Convert from kernel StorageError to canonical storage::error::StorageError.
+///
+/// This bridges the foundational kernel error types to the comprehensive storage error
+/// struct used throughout the storage layer.
+impl From<StorageError> for crate::storage::error::StorageError {
     fn from(err: StorageError) -> Self {
+        use crate::storage::error::StorageErrorKind;
         match err {
             StorageError::SstEngine(msg) => {
-                crate::core::errors::StorageError::DiskIO(format!("SST engine: {}", msg))
+                crate::storage::error::StorageError::new(StorageErrorKind::SstEngine, msg)
             }
-            StorageError::Mmap(msg) => {
-                crate::core::errors::StorageError::DiskIO(format!("MMAP: {}", msg))
-            }
-            StorageError::DiskIO(io_err) => {
-                crate::core::errors::StorageError::DiskIO(io_err.to_string())
-            }
+            StorageError::Mmap(msg) => crate::storage::error::StorageError::new(
+                StorageErrorKind::Io,
+                format!("MMAP: {}", msg),
+            ),
+            StorageError::DiskIO(io_err) => crate::storage::error::StorageError::with_source(
+                StorageErrorKind::Io,
+                io_err.to_string(),
+                io_err,
+            ),
             StorageError::Serialization(msg) | StorageError::SerializationError(msg) => {
-                crate::core::errors::StorageError::DiskIO(format!("Serialization: {}", msg))
+                crate::storage::error::StorageError::new(
+                    StorageErrorKind::Internal,
+                    format!("Serialization: {}", msg),
+                )
             }
-            StorageError::Corruption(msg) => crate::core::errors::StorageError::Corruption(msg),
-            StorageError::AlreadyExists(msg) => {
-                crate::core::errors::StorageError::InvalidOperation(format!(
-                    "Already exists: {}",
-                    msg
-                ))
+            StorageError::Corruption(msg) => {
+                crate::storage::error::StorageError::new(StorageErrorKind::Corruption, msg)
             }
+            StorageError::AlreadyExists(msg) => crate::storage::error::StorageError::new(
+                StorageErrorKind::Internal,
+                format!("Already exists: {}", msg),
+            ),
             StorageError::NotFound(msg) | StorageError::KeyNotFound(msg) => {
-                crate::core::errors::StorageError::InvalidOperation(format!("Not found: {}", msg))
+                crate::storage::error::StorageError::new(StorageErrorKind::NotFound, msg)
             }
             StorageError::IndexError(msg) => {
-                crate::core::errors::StorageError::InvalidOperation(format!("Index: {}", msg))
+                crate::storage::error::StorageError::new(StorageErrorKind::IndexCorruption, msg)
             }
-            StorageError::WalError(msg) => crate::core::errors::StorageError::WAL(msg),
-            StorageError::MetadataError(err) => {
-                crate::core::errors::StorageError::Metadata(err.to_string())
+            StorageError::WalError(msg) => {
+                crate::storage::error::StorageError::new(StorageErrorKind::WalCorruption, msg)
             }
-            StorageError::CollectionNotFound(id) => {
-                crate::core::errors::StorageError::InvalidOperation(format!(
-                    "Collection not found: {}",
-                    id
-                ))
-            }
+            StorageError::MetadataError(anyhow_err) => crate::storage::error::StorageError::new(
+                StorageErrorKind::Internal,
+                anyhow_err.to_string(),
+            ),
+            StorageError::CollectionNotFound(id) => crate::storage::error::StorageError::new(
+                StorageErrorKind::NotFound,
+                format!("Collection not found: {}", id),
+            ),
             StorageError::InvalidDimension { expected, actual } => {
-                crate::core::errors::StorageError::InvalidOperation(format!(
-                    "Dimension mismatch: expected {}, got {}",
-                    expected, actual
-                ))
+                crate::storage::error::StorageError::new(
+                    StorageErrorKind::InvalidConfiguration,
+                    format!("Dimension mismatch: expected {}, got {}", expected, actual),
+                )
             }
-            StorageError::TransactionCommitFailed(msg) => {
-                crate::core::errors::StorageError::InvalidOperation(format!(
-                    "Transaction commit failed: {}",
-                    msg
-                ))
-            }
+            StorageError::TransactionCommitFailed(msg) => crate::storage::error::StorageError::new(
+                StorageErrorKind::Internal,
+                format!("Transaction commit failed: {}", msg),
+            ),
         }
     }
 }

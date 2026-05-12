@@ -852,7 +852,7 @@ mod tests {
     }
 
     #[test]
-    fn test_multimodel_codec_vector() {
+    fn test_multimodal_codec_vector() {
         // Test round-trip: VectorRecords -> RecordBatch -> VectorRecords
         use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
 
@@ -910,9 +910,9 @@ mod tests {
     }
 
     #[test]
-    fn test_multimodel_codec_document() {
-        // Test document schema from multimodel_codec and verify field types
-        use crate::network::arrow_ipc::multimodel_codec::document_schema;
+    fn test_multimodal_codec_document() {
+        // Test document schema from multimodal_codec and verify field types
+        use crate::network::arrow_ipc::multimodal_codec::document_schema;
 
         let schema = document_schema();
         assert_eq!(schema.fields().len(), 5);

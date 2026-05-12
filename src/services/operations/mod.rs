@@ -18,4 +18,7 @@ pub use catalog_bulk_write::{
     CatalogBulkWriteService, IsolationLevel,
 };
 pub use secure_operations::{SecureVectorOperations, combine_filters};
-pub use vectors::{UnifiedSearchConfig as SearchConfig, VectorOperationsService as VectorOps};
+// Re-export from vectors module (now decomposed)
+pub use vectors::{
+    SearchPlanHints, UnifiedSearchConfig as SearchConfig, VectorOperationsService as VectorOps,
+};

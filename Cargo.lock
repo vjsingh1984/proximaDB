@@ -5625,6 +5625,7 @@ dependencies = [
  "proximadb-storage-common",
  "proximadb-telemetry",
  "proximadb-uql",
+ "proximadb-vector",
  "proximadb-vector-query",
  "pyo3",
  "rand 0.8.5",
@@ -5674,12 +5675,71 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-api"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow-flight",
+ "async-trait",
+ "axum 0.6.20",
+ "hyper 0.14.32",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-query",
+ "proximadb-query-filter",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tower 0.4.13",
+ "tower-http",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "proximadb-bench"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "criterion",
+ "proximadb",
+ "rand 0.8.5",
+ "rand_distr",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "proximadb-data-model"
 version = "0.2.0"
 dependencies = [
  "arrow-schema",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-document"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "async-trait",
+ "proximadb-document-query",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-query-filter",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5771,6 +5831,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-migrate"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "proximadb",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "proximadb-multimodel-plan"
 version = "0.2.0"
 dependencies = [
@@ -5797,6 +5869,23 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-query-fusion",
  "proximadb-vector-query",
+]
+
+[[package]]
+name = "proximadb-observability"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "async-trait",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-query-filter",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5920,6 +6009,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-server"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "proximadb",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "proximadb-storage-common"
 version = "0.2.0"
 
@@ -5945,6 +6047,24 @@ dependencies = [
  "proximadb-query-fusion",
  "proximadb-vector-query",
  "regex",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-vector"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "arrow",
+ "async-trait",
+ "proximadb-kernel",
+ "proximadb-proto",
+ "proximadb-query-filter",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
  "tracing",
 ]
 

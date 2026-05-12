@@ -17,6 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
+use crate::core::types::StorageEngineType;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 
@@ -49,25 +50,6 @@ pub struct IndexEvent {
 
     /// Operation type
     pub operation: OperationType,
-}
-
-/// Storage engine types that produce index events.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StorageEngineType {
-    /// Sorted String Table engine.
-    SST,
-    /// VIPER engine for high-throughput writes.
-    VIPER,
-    /// NOVA engine for large-scale batch operations.
-    NOVA,
-    /// RAPTOR engine for columnar analytics.
-    RAPTOR,
-    /// SWIFT engine for low-latency reads.
-    SWIFT,
-    /// HELIX engine for time-series workloads.
-    HELIX,
-    /// TST (Ternary Search Tree) engine for text indexing.
-    TST,
 }
 
 /// Type of storage operation that triggered an index event.

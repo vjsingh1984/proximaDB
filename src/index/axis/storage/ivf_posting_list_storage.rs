@@ -27,6 +27,7 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{debug, info};
 
+use crate::core::types::StorageEngineType;
 use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::sst::writer::SstableWriter;
@@ -113,6 +114,11 @@ impl PostingListStorage {
                     base_path: mount_path.clone(),
                     collection_id,
                 }),
+                // For newer engine types, default to SST disk storage
+                _ => Ok(PostingListStorage::SstDisk {
+                    base_path: mount_path.clone(),
+                    collection_id,
+                }),
             },
             InfrastructureTier::CloudExpressOneZone { provider, .. }
             | InfrastructureTier::CloudStandard { provider, .. }
@@ -133,6 +139,11 @@ impl PostingListStorage {
                         collection_id,
                     }),
                     StorageEngineType::VIPER => Ok(PostingListStorage::CloudViper {
+                        bucket,
+                        collection_id,
+                    }),
+                    // For newer engine types, default to SST cloud storage
+                    _ => Ok(PostingListStorage::CloudSst {
                         bucket,
                         collection_id,
                     }),
@@ -361,15 +372,6 @@ impl PostingListStorage {
             }
         }
     }
-}
-
-/// Storage engine type for posting lists
-#[derive(Debug, Clone, Copy)]
-pub enum StorageEngineType {
-    /// Sorted String Table engine — optimised for bloom-filter lookups
-    SST,
-    /// VIPER columnar engine — optimised for analytical scans (Parquet)
-    VIPER,
 }
 
 /// Manager for tiered posting list storage

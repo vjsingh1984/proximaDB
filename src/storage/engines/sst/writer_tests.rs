@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::proximadb_v1::VectorRecord;
+    use crate::storage::engines::sst::SstableWriter;
     use std::collections::BTreeMap;
+    use std::sync::Arc;
     use tempfile::NamedTempFile;
 
     #[tokio::test]

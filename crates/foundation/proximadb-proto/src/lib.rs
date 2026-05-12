@@ -6,6 +6,7 @@
 //! the full protocol surface.
 
 #![allow(missing_docs)]
+#![allow(clippy::large_enum_variant)]
 
 pub mod utils {
     pub use proximadb_kernel::encoding;

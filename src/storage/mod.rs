@@ -246,6 +246,7 @@ pub mod operations;
 pub mod document;
 
 // Multi-model storage facade for unified access to all specialized stores
+pub mod multimodal;
 pub mod multimodel;
 
 // Storage format abstraction layer for Hadoop-style storage-compute separation
@@ -306,6 +307,7 @@ pub use transaction::{
 // ResultProcessor has naming conflicts, import explicitly when needed
 
 // Multi-model storage exports
+pub use multimodal::{MultiModalFacadeConfig, MultiModalStorageFacade};
 pub use multimodel::{
     AggregationFunction,
     CardinalityConfig,

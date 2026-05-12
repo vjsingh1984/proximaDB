@@ -542,40 +542,61 @@ impl ProximaValue {
         if matches!(self, ProximaValue::Null) {
             return true;
         }
-        match (self, ty) {
-            (ProximaValue::Boolean(_), ProximaType::Boolean) => true,
-            (ProximaValue::Int8(_), ProximaType::Int8) => true,
-            (ProximaValue::Int16(_), ProximaType::Int16) => true,
-            (ProximaValue::Int32(_), ProximaType::Int32) => true,
-            (ProximaValue::Int64(_), ProximaType::Int64) => true,
-            (ProximaValue::UInt8(_), ProximaType::UInt8) => true,
-            (ProximaValue::UInt16(_), ProximaType::UInt16) => true,
-            (ProximaValue::UInt32(_), ProximaType::UInt32) => true,
-            (ProximaValue::UInt64(_), ProximaType::UInt64) => true,
-            (ProximaValue::Float16(_), ProximaType::Float16) => true,
-            (ProximaValue::Float32(_), ProximaType::Float32) => true,
-            (ProximaValue::Float64(_), ProximaType::Float64) => true,
-            (ProximaValue::Decimal(_), ProximaType::Decimal { .. }) => true,
-            (ProximaValue::String(_), ProximaType::String) => true,
-            (ProximaValue::Symbol(_), ProximaType::Symbol) => true,
-            (ProximaValue::String(_), ProximaType::Symbol) => true,
-            (ProximaValue::Binary(_), ProximaType::Binary) => true,
-            (ProximaValue::Date(_), ProximaType::Date) => true,
-            (ProximaValue::Time(_, _), ProximaType::Time(_)) => true,
-            (ProximaValue::Timestamp(_, _), ProximaType::Timestamp(_)) => true,
-            (ProximaValue::TimestampTz(_, _), ProximaType::TimestampTz(_)) => true,
-            (ProximaValue::Uuid(_), ProximaType::Uuid) => true,
-            (ProximaValue::ULID(_), ProximaType::ULID) => true,
-            (ProximaValue::Json(_), ProximaType::Json | ProximaType::Jsonb) => true,
-            (ProximaValue::Jsonb(_), ProximaType::Json | ProximaType::Jsonb) => true,
-            (ProximaValue::Array(_), ProximaType::Array(_)) => true,
-            (ProximaValue::Map(_), ProximaType::Map { .. } | ProximaType::Jsonb) => true,
-            (ProximaValue::Struct(_), ProximaType::Struct { .. } | ProximaType::Jsonb) => true,
-            (ProximaValue::DenseVector(_), ProximaType::DenseVector { .. }) => true,
-            (ProximaValue::SparseVector { .. }, ProximaType::SparseVector { .. }) => true,
-            (ProximaValue::BinaryVector(_), ProximaType::BinaryVector { .. }) => true,
-            _ => false,
-        }
+        matches!(
+            (self, ty),
+            (ProximaValue::Boolean(_), ProximaType::Boolean)
+                | (ProximaValue::Int8(_), ProximaType::Int8)
+                | (ProximaValue::Int16(_), ProximaType::Int16)
+                | (ProximaValue::Int32(_), ProximaType::Int32)
+                | (ProximaValue::Int64(_), ProximaType::Int64)
+                | (ProximaValue::UInt8(_), ProximaType::UInt8)
+                | (ProximaValue::UInt16(_), ProximaType::UInt16)
+                | (ProximaValue::UInt32(_), ProximaType::UInt32)
+                | (ProximaValue::UInt64(_), ProximaType::UInt64)
+                | (ProximaValue::Float16(_), ProximaType::Float16)
+                | (ProximaValue::Float32(_), ProximaType::Float32)
+                | (ProximaValue::Float64(_), ProximaType::Float64)
+                | (ProximaValue::Decimal(_), ProximaType::Decimal { .. })
+                | (ProximaValue::String(_), ProximaType::String)
+                | (ProximaValue::Symbol(_), ProximaType::Symbol)
+                | (ProximaValue::String(_), ProximaType::Symbol)
+                | (ProximaValue::Binary(_), ProximaType::Binary)
+                | (ProximaValue::Date(_), ProximaType::Date)
+                | (ProximaValue::Time(_, _), ProximaType::Time(_))
+                | (ProximaValue::Timestamp(_, _), ProximaType::Timestamp(_))
+                | (ProximaValue::TimestampTz(_, _), ProximaType::TimestampTz(_))
+                | (ProximaValue::Uuid(_), ProximaType::Uuid)
+                | (ProximaValue::ULID(_), ProximaType::ULID)
+                | (
+                    ProximaValue::Json(_),
+                    ProximaType::Json | ProximaType::Jsonb
+                )
+                | (
+                    ProximaValue::Jsonb(_),
+                    ProximaType::Json | ProximaType::Jsonb
+                )
+                | (ProximaValue::Array(_), ProximaType::Array(_))
+                | (
+                    ProximaValue::Map(_),
+                    ProximaType::Map { .. } | ProximaType::Jsonb
+                )
+                | (
+                    ProximaValue::Struct(_),
+                    ProximaType::Struct { .. } | ProximaType::Jsonb
+                )
+                | (
+                    ProximaValue::DenseVector(_),
+                    ProximaType::DenseVector { .. }
+                )
+                | (
+                    ProximaValue::SparseVector { .. },
+                    ProximaType::SparseVector { .. }
+                )
+                | (
+                    ProximaValue::BinaryVector(_),
+                    ProximaType::BinaryVector { .. }
+                )
+        )
     }
 }
 

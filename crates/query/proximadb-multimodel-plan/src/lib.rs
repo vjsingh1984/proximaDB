@@ -228,19 +228,19 @@ impl MultiModelPlan {
                 // Validate value based on operator
                 match operator {
                     ComparisonOperator::In => {
-                        if let Some(arr) = value.as_array() {
-                            if arr.is_empty() {
-                                return Err(anyhow::anyhow!("IN filter has empty array"));
-                            }
+                        if let Some(arr) = value.as_array()
+                            && arr.is_empty()
+                        {
+                            return Err(anyhow::anyhow!("IN filter has empty array"));
                         }
                     }
                     ComparisonOperator::Between => {
-                        if let Some(arr) = value.as_array() {
-                            if arr.len() != 2 {
-                                return Err(anyhow::anyhow!(
-                                    "BETWEEN filter requires exactly 2 values"
-                                ));
-                            }
+                        if let Some(arr) = value.as_array()
+                            && arr.len() != 2
+                        {
+                            return Err(anyhow::anyhow!(
+                                "BETWEEN filter requires exactly 2 values"
+                            ));
                         }
                     }
                     _ => {}
@@ -531,18 +531,13 @@ pub enum Operator {
 // ── Supporting types for spec §7 operators ──────────────────────────────────
 
 /// Distance metric for vector search.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VectorMetric {
+    #[default]
     Cosine,
     L2,
     DotProduct,
     Manhattan,
-}
-
-impl Default for VectorMetric {
-    fn default() -> Self {
-        Self::Cosine
-    }
 }
 
 /// Edge pattern for graph traversal (HybridTraverse spec §7).
@@ -665,22 +660,17 @@ impl Default for PlanContext {
 }
 
 /// Execution priority
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
 pub enum ExecutionPriority {
     Low,
+    #[default]
     Normal,
     High,
     Urgent,
 }
 
-impl Default for ExecutionPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
 /// Plan optimization hints
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PlanHints {
     /// Suggest using index for specific column
     pub use_index: Option<String>,
@@ -696,18 +686,6 @@ pub struct PlanHints {
 
     /// Custom optimization hints
     pub custom_hints: HashMap<String, serde_json::Value>,
-}
-
-impl Default for PlanHints {
-    fn default() -> Self {
-        Self {
-            use_index: None,
-            join_order: None,
-            estimated_rows: None,
-            enable_cache: false,
-            custom_hints: HashMap::new(),
-        }
-    }
 }
 
 /// Plan validation result
@@ -1064,10 +1042,9 @@ impl OperatorContract for Operator {
 fn extract_columns_from_filter(expression: &FilterExpression) -> Vec<String> {
     match expression {
         FilterExpression::Comparison { field, .. } => vec![field.clone()],
-        FilterExpression::And(exprs) | FilterExpression::Or(exprs) => exprs
-            .iter()
-            .flat_map(|e| extract_columns_from_filter(e))
-            .collect(),
+        FilterExpression::And(exprs) | FilterExpression::Or(exprs) => {
+            exprs.iter().flat_map(extract_columns_from_filter).collect()
+        }
         FilterExpression::Not(expr) => extract_columns_from_filter(expr),
     }
 }

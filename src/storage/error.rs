@@ -29,24 +29,25 @@
 //! }
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io;
 
 /// The main storage error type that encompasses all storage-related errors
-#[derive(Debug)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageError {
     /// The kind of error that occurred
     pub kind: StorageErrorKind,
     /// Human-readable error message
     pub message: String,
-    /// Optional source error
-    pub source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    /// Optional source error message (extracted from source error)
+    pub source: Option<String>,
     /// Error context (file path, collection ID, etc.)
     pub context: ErrorContext,
 }
 
 /// Error context providing additional information about where the error occurred
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ErrorContext {
     /// File path involved (if any)
     pub file_path: Option<String>,
@@ -106,7 +107,7 @@ impl ErrorContext {
 }
 
 /// Categories of storage errors
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StorageErrorKind {
     // === I/O Errors ===
     /// Generic I/O error
@@ -315,7 +316,7 @@ impl StorageError {
         Self {
             kind,
             message: message.into(),
-            source: Some(Box::new(source)),
+            source: Some(source.to_string()),
             context: ErrorContext::default(),
         }
     }
@@ -332,7 +333,7 @@ impl StorageError {
     pub fn io(message: impl Into<String>, source: Option<io::Error>) -> Self {
         let mut err = Self::new(StorageErrorKind::Io, message);
         if let Some(s) = source {
-            err.source = Some(Box::new(s));
+            err.source = Some(s.to_string());
         }
         err
     }
@@ -450,6 +451,11 @@ impl fmt::Display for StorageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.kind, self.message)?;
 
+        // Add source if available
+        if let Some(ref source) = self.source {
+            write!(f, " caused by: {}", source)?;
+        }
+
         // Add context if available
         if let Some(ref path) = self.context.file_path {
             write!(f, " (file: {})", path)?;
@@ -467,9 +473,9 @@ impl fmt::Display for StorageError {
 
 impl std::error::Error for StorageError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.source
-            .as_ref()
-            .map(|s| s.as_ref() as &(dyn std::error::Error + 'static))
+        // Since source is now a String, we can't return it as an Error
+        // The source information is preserved in the source field as a String
+        None
     }
 }
 

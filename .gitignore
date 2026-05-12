@@ -427,6 +427,27 @@ docs/archive/sessions/
 *.dat
 *.txt
 
+# Consolidated config dir (configs/ merged into config/)
+/configs/
+
+# Stray root-level artifacts from test runs
+/segment_0/
+/test_exists_dir/
+/test_metadata/
+/test_metadata_atomic/
+/test_size
+/test_filter_debug.rs
+/nohup.out
+/=1.75.1
+/file:
+
+# Stray benchmark data at root
+benchmark_report_*.csv
+*.puml
+
+# Coverage data at root (use .coverage/ dir)
+/.coverage
+
 # Obsolete files marked for removal
 *.obsolete
 /target/

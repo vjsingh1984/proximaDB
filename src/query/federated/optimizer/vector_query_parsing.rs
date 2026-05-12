@@ -8,10 +8,8 @@ pub(crate) fn vector_source_from_query(query: &VectorQuery) -> VectorSource {
 }
 
 pub(crate) fn vector_source_from_literal(raw: &str) -> VectorSource {
-    parse_vector_literal(raw).map_or_else(
-        || vector_source_from_expression(raw),
-        VectorSource::Literal,
-    )
+    parse_vector_literal(raw)
+        .map_or_else(|| vector_source_from_expression(raw), VectorSource::Literal)
 }
 
 pub(crate) fn vector_source_from_expression(expr: &str) -> VectorSource {

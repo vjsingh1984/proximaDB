@@ -29,8 +29,6 @@ impl GraphAqlSource {
             graph_id = name.clone();
         }
 
-        // Predicates could specify traversal depth or starting nodes.
-        // For this skeleton, we use defaults.
         (graph_id, max_depth)
     }
 
@@ -40,47 +38,37 @@ impl GraphAqlSource {
             PropValueData::IntValue(i) => AqlValue::Int(*i),
             PropValueData::DoubleValue(f) => AqlValue::Float(*f),
             PropValueData::BoolValue(b) => AqlValue::Bool(*b),
-            PropValueData::BytesValue(b) => serde_json::from_slice(b)
-                .map(AqlValue::Jsonb)
-                .unwrap_or(AqlValue::Null),
+            PropValueData::BytesValue(b) => {
+                if let Ok(json) = serde_json::from_slice(b) {
+                    AqlValue::Jsonb(json)
+                } else {
+                    AqlValue::Null
+                }
+            }
             PropValueData::ObjectValue(obj) => {
                 let mut map = serde_json::Map::new();
-                for (key, value) in &obj.fields {
-                    if let Some(inner) = &value.value {
+                for (k, v) in &obj.fields {
+                    if let Some(inner_val) = &v.value {
                         map.insert(
-                            key.clone(),
-                            Self::aql_to_json_value(&Self::prop_data_to_aql(inner)),
+                            k.clone(),
+                            Self::aql_to_json_value(&Self::prop_data_to_aql(inner_val)),
                         );
                     }
                 }
-                AqlValue::Jsonb(serde_json::Value::Object(map))
-            }
-            PropValueData::ArrayValue(arr) => {
-                let values = arr
-                    .values
-                    .iter()
-                    .map(|value| {
-                        value
-                            .value
-                            .as_ref()
-                            .map(Self::prop_data_to_aql)
-                            .map(|value| Self::aql_to_json_value(&value))
-                            .unwrap_or(serde_json::Value::Null)
-                    })
-                    .collect();
-                AqlValue::Jsonb(serde_json::Value::Array(values))
+                AqlValue::Json(serde_json::Value::Object(map))
             }
             _ => AqlValue::Null,
         }
     }
 
-    fn aql_to_json_value(value: &AqlValue) -> serde_json::Value {
-        match value {
+    fn aql_to_json_value(aql: &AqlValue) -> serde_json::Value {
+        match aql {
             AqlValue::String(s) => serde_json::Value::String(s.clone()),
             AqlValue::Int(i) => serde_json::json!(i),
             AqlValue::Float(f) => serde_json::json!(f),
             AqlValue::Bool(b) => serde_json::Value::Bool(*b),
-            AqlValue::Json(j) | AqlValue::Jsonb(j) => j.clone(),
+            AqlValue::Json(j) => j.clone(),
+            AqlValue::Jsonb(j) => j.clone(),
             _ => serde_json::Value::Null,
         }
     }
@@ -96,9 +84,6 @@ impl AqlSource for GraphAqlSource {
         let (graph_id, depth) = self.extract_graph_params(query);
         let start = Instant::now();
 
-        // In a real implementation, we'd use the AQL WHERE clause to find
-        // starting nodes and then perform a traversal. For this skeleton, use a
-        // generic traversal from a placeholder ID when no start node is derived.
         let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
             graph_id: graph_id.clone(),
             start_node_id: "root".to_string(),
@@ -135,7 +120,12 @@ impl AqlSource for GraphAqlSource {
 
             for (key, property) in node.properties {
                 if let Some(value) = property.value {
-                    row.insert(key, Self::prop_data_to_aql(&value));
+                    let aql_val = Self::prop_data_to_aql(&value);
+                    row.insert(key.clone(), aql_val.clone());
+
+                    if key == "memory_type" {
+                        row.insert("memory_type".to_string(), aql_val);
+                    }
                 }
             }
 

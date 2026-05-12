@@ -302,7 +302,7 @@ impl DistributedQueryStrategy {
             .collect()
     }
 
-    fn query_to_multimodel(&self, request: &QueryRequest, sql: &str) -> Result<MultiModelQuery> {
+    fn query_to_multimodal(&self, request: &QueryRequest, sql: &str) -> Result<MultiModelQuery> {
         let parser = FederatedParser::new();
         let federated = parser.parse(sql)?;
 
@@ -480,7 +480,7 @@ impl QueryStrategy for DistributedQueryStrategy {
 
         let sql = self.extract_sql(&request)?;
         let normalized_sql = self.strip_strategy_comments(sql)?;
-        let query = self.query_to_multimodel(&request, &normalized_sql)?;
+        let query = self.query_to_multimodal(&request, &normalized_sql)?;
 
         // Execute via distributed coordinator
         let results = self
@@ -563,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_to_multimodel_translates_document_filter() {
+    fn test_query_to_multimodal_translates_document_filter() {
         let strategy = DistributedQueryStrategy::new(
             "test-node".to_string(),
             DistributedStrategyConfig::default(),
@@ -573,7 +573,7 @@ mod tests {
         );
 
         let query = strategy
-            .query_to_multimodel(
+            .query_to_multimodal(
                 &request,
                 "SELECT * FROM DOCUMENT_QUERY('users', 'status = active') LIMIT 5",
             )
@@ -593,7 +593,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_to_multimodel_rejects_expression_vector() {
+    fn test_query_to_multimodal_rejects_expression_vector() {
         let strategy = DistributedQueryStrategy::new(
             "test-node".to_string(),
             DistributedStrategyConfig::default(),
@@ -602,7 +602,7 @@ mod tests {
             QueryRequest::federated("SELECT * FROM VECTOR_SEARCH('users', u.embedding, 10)");
 
         let error = strategy
-            .query_to_multimodel(
+            .query_to_multimodal(
                 &request,
                 "SELECT * FROM VECTOR_SEARCH('users', u.embedding, 10)",
             )
@@ -612,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_to_multimodel_uses_graph_target_from_supported_subset() {
+    fn test_query_to_multimodal_uses_graph_target_from_supported_subset() {
         let strategy = DistributedQueryStrategy::new(
             "test-node".to_string(),
             DistributedStrategyConfig::default(),
@@ -622,7 +622,7 @@ mod tests {
         );
 
         let query = strategy
-            .query_to_multimodel(
+            .query_to_multimodal(
                 &request,
                 "SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n')",
             )
@@ -649,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_to_multimodel_rejects_conflicting_graph_target_and_from_clause() {
+    fn test_query_to_multimodal_rejects_conflicting_graph_target_and_from_clause() {
         let strategy = DistributedQueryStrategy::new(
             "test-node".to_string(),
             DistributedStrategyConfig::default(),
@@ -659,7 +659,7 @@ mod tests {
                 .with_target("api_graph");
 
         let error = strategy
-            .query_to_multimodel(
+            .query_to_multimodal(
                 &request,
                 "SELECT * FROM GRAPH_QUERY('MATCH (n) FROM social RETURN n')",
             )

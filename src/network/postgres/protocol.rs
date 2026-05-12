@@ -25,7 +25,7 @@ use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::observability::ObservabilityService;
-use crate::query::multimodel_router::{self, DataModel};
+use crate::query::multimodal_router::{self, DataModel};
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
@@ -100,7 +100,7 @@ struct Portal {
     max_rows: i32,
 }
 
-// DataModel imported from crate::query::multimodel_router (canonical definition)
+// DataModel imported from crate::query::multimodal_router (canonical definition)
 
 /// COPY format type for bulk data transfer
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -577,7 +577,7 @@ impl PostgresProtocol {
 
     /// Detect store type for SELECT queries
     fn detect_select_store_type(&self, table_name: &str, query: &str) -> DataModel {
-        multimodel_router::detect_store_type_from_query(query, table_name, None)
+        multimodal_router::detect_store_type_from_query(query, table_name, None)
     }
 
     /// Execute a query against a vector collection
@@ -1303,7 +1303,7 @@ impl PostgresProtocol {
 
     /// Detect store type from USING clause or column definitions
     fn detect_store_type(&self, query: &str) -> DataModel {
-        multimodel_router::detect_store_type_from_create(query)
+        multimodal_router::detect_store_type_from_create(query)
     }
 
     /// Create a vector collection (existing behavior)
@@ -1597,7 +1597,7 @@ impl PostgresProtocol {
 
     /// Detect store type for INSERT from table name or query content
     fn detect_insert_store_type(&self, table_name: &str, query: &str) -> DataModel {
-        multimodel_router::detect_store_type_from_query(query, table_name, None)
+        multimodal_router::detect_store_type_from_query(query, table_name, None)
     }
 
     /// Insert vector into collection (existing behavior)
@@ -3000,7 +3000,7 @@ impl PostgresProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::multimodel_router;
+    use crate::query::multimodal_router;
 
     #[test]
     fn test_frontend_message() {
@@ -3012,7 +3012,7 @@ mod tests {
     fn test_store_type_detection_vector() {
         // Vector queries contain <->, <=>, or <#> operators (pgvector syntax)
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM embeddings ORDER BY vec <-> '[0.1, 0.2, 0.3]' LIMIT 10",
                 "embeddings",
                 None,
@@ -3020,7 +3020,7 @@ mod tests {
             DataModel::Vector
         );
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT id, vec <=> '[0.5, 0.5]' AS similarity FROM items",
                 "items",
                 None,
@@ -3028,7 +3028,7 @@ mod tests {
             DataModel::Vector
         );
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT id FROM products ORDER BY embedding <#> $1 LIMIT 5",
                 "products",
                 None,
@@ -3038,7 +3038,7 @@ mod tests {
 
         // CREATE TABLE with VECTOR column type
         assert_eq!(
-            multimodel_router::detect_store_type_from_create(
+            multimodal_router::detect_store_type_from_create(
                 "CREATE TABLE items (id TEXT, embedding VECTOR(384))",
             ),
             DataModel::Vector
@@ -3046,7 +3046,7 @@ mod tests {
 
         // Explicit USING VECTOR clause
         assert_eq!(
-            multimodel_router::detect_store_type_from_create(
+            multimodal_router::detect_store_type_from_create(
                 "CREATE TABLE vecs (id TEXT, data FLOAT[]) USING VECTOR",
             ),
             DataModel::Vector
@@ -3057,7 +3057,7 @@ mod tests {
     fn test_store_type_detection_document() {
         // Document queries use JSON path expressions ($.)
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM products WHERE data $.price > 100",
                 "products",
                 None,
@@ -3067,7 +3067,7 @@ mod tests {
 
         // Document tables detected by doc_ prefix
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM doc_users WHERE active = true",
                 "doc_users",
                 None,
@@ -3077,7 +3077,7 @@ mod tests {
 
         // document_ prefix also works
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM document_orders",
                 "document_orders",
                 None,
@@ -3087,7 +3087,7 @@ mod tests {
 
         // CREATE with JSONB column
         assert_eq!(
-            multimodel_router::detect_store_type_from_create(
+            multimodal_router::detect_store_type_from_create(
                 "CREATE TABLE docs (id TEXT PRIMARY KEY, data JSONB)",
             ),
             DataModel::Document
@@ -3095,7 +3095,7 @@ mod tests {
 
         // CREATE with explicit USING DOCUMENT
         assert_eq!(
-            multimodel_router::detect_store_type_from_create(
+            multimodal_router::detect_store_type_from_create(
                 "CREATE TABLE catalog (id TEXT, payload JSON) USING DOCUMENT",
             ),
             DataModel::Document
@@ -3106,7 +3106,7 @@ mod tests {
     fn test_store_type_detection_graph() {
         // Graph tables detected by graph_ prefix
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM graph_social WHERE node_type = 'person'",
                 "graph_social",
                 None,
@@ -3116,7 +3116,7 @@ mod tests {
 
         // node_ prefix
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM node_users",
                 "node_users",
                 None,
@@ -3126,7 +3126,7 @@ mod tests {
 
         // edge_ prefix
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM edge_follows",
                 "edge_follows",
                 None,
@@ -3136,7 +3136,7 @@ mod tests {
 
         // CREATE with explicit USING GRAPH
         assert_eq!(
-            multimodel_router::detect_store_type_from_create(
+            multimodal_router::detect_store_type_from_create(
                 "CREATE TABLE social_network (id TEXT) USING GRAPH",
             ),
             DataModel::Graph
@@ -3147,7 +3147,7 @@ mod tests {
     fn test_store_type_detection_observability() {
         // log_ prefix -> Observability
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM log_application WHERE severity = 'error'",
                 "log_application",
                 None,
@@ -3157,7 +3157,7 @@ mod tests {
 
         // metric_ prefix -> Observability
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM metric_http_requests",
                 "metric_http_requests",
                 None,
@@ -3167,7 +3167,7 @@ mod tests {
 
         // trace_ prefix -> Observability
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM trace_spans WHERE service = 'gateway'",
                 "trace_spans",
                 None,
@@ -3177,7 +3177,7 @@ mod tests {
 
         // CREATE with USING OBSERVABILITY
         assert_eq!(
-            multimodel_router::detect_store_type_from_create(
+            multimodal_router::detect_store_type_from_create(
                 "CREATE TABLE system_logs (ts TIMESTAMP, msg TEXT) USING OBSERVABILITY",
             ),
             DataModel::Observability
@@ -3185,7 +3185,7 @@ mod tests {
 
         // CREATE with USING TIMESERIES (also maps to Observability)
         assert_eq!(
-            multimodel_router::detect_store_type_from_create(
+            multimodal_router::detect_store_type_from_create(
                 "CREATE TABLE sensor_data (ts TIMESTAMP, value FLOAT) USING TIMESERIES",
             ),
             DataModel::Observability
@@ -3196,7 +3196,7 @@ mod tests {
     fn test_store_type_detection_relational() {
         // Standard SQL without any special markers -> Relational (default)
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT id, name, email FROM users WHERE active = true",
                 "users",
                 None,
@@ -3206,7 +3206,7 @@ mod tests {
 
         // CREATE TABLE without USING clause or special column types
         assert_eq!(
-            multimodel_router::detect_store_type_from_create(
+            multimodal_router::detect_store_type_from_create(
                 "CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(255), email TEXT)",
             ),
             DataModel::Relational
@@ -3215,7 +3215,7 @@ mod tests {
         // Verify priority: vector operators override table name prefix
         // Even with a graph_ prefix, <-> forces Vector detection
         assert_eq!(
-            multimodel_router::detect_store_type_from_query(
+            multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM graph_nodes ORDER BY embedding <-> '[0.1]' LIMIT 5",
                 "graph_nodes",
                 None,
