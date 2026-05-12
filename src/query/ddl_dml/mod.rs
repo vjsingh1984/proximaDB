@@ -789,6 +789,7 @@ fn extract_value(expr: &sqlparser::ast::Expr) -> Result<SqlValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[test]
     fn test_parse_create_table() {
@@ -822,6 +823,165 @@ mod tests {
         } else {
             panic!("Expected CreateTable");
         }
+    }
+
+    #[test]
+    fn test_parse_agentic_relational_jsonb_vector_table() {
+        let sql = "CREATE TABLE IF NOT EXISTS agent_store (
+            \"record_id\" TEXT NOT NULL,
+            \"tenant_id\" TEXT NOT NULL,
+            \"thread_id\" TEXT NOT NULL,
+            \"namespace\" TEXT NOT NULL,
+            \"key\" TEXT NOT NULL,
+            \"payload\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+            \"metadata\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+            \"embedding\" VECTOR(384),
+            PRIMARY KEY (\"record_id\")
+        )";
+        let result = parse_ddl(sql).unwrap();
+
+        if let DdlStatement::CreateTable {
+            table,
+            if_not_exists,
+        } = result
+        {
+            assert!(if_not_exists);
+            assert_eq!(table.name, "agent_store");
+            assert!(matches!(
+                table.columns.get("payload").unwrap().data_type,
+                SqlDataType::Jsonb
+            ));
+            assert!(matches!(
+                table.columns.get("metadata").unwrap().data_type,
+                SqlDataType::Jsonb
+            ));
+            assert!(matches!(
+                table.columns.get("embedding").unwrap().data_type,
+                SqlDataType::Vector(384)
+            ));
+            assert_eq!(table.primary_key, vec!["\"record_id\""]);
+        } else {
+            panic!("Expected CreateTable");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_agentic_relational_jsonb_vector_table() {
+        #[derive(Default)]
+        struct MockTableOps {
+            created: Mutex<Vec<TableDefinition>>,
+        }
+
+        #[async_trait]
+        impl TableOperations for MockTableOps {
+            async fn create_table(&self, table: &TableDefinition) -> Result<()> {
+                self.created.lock().unwrap().push(table.clone());
+                Ok(())
+            }
+
+            async fn drop_table(&self, _table_name: &str, _if_exists: bool) -> Result<()> {
+                Ok(())
+            }
+
+            async fn alter_table(
+                &self,
+                _table_name: &str,
+                _alterations: Vec<TableAlteration>,
+            ) -> Result<()> {
+                Ok(())
+            }
+
+            async fn table_exists(&self, _table_name: &str) -> Result<bool> {
+                Ok(false)
+            }
+
+            async fn get_table(&self, _table_name: &str) -> Result<Option<TableDefinition>> {
+                Ok(None)
+            }
+
+            async fn list_tables(&self) -> Result<Vec<String>> {
+                Ok(vec![])
+            }
+        }
+
+        struct MockIndexOps;
+
+        #[async_trait]
+        impl IndexOperations for MockIndexOps {
+            async fn create_index(&self, _index: &IndexDefinition) -> Result<()> {
+                Ok(())
+            }
+
+            async fn drop_index(&self, _index_name: &str, _if_exists: bool) -> Result<()> {
+                Ok(())
+            }
+
+            async fn index_exists(&self, _index_name: &str) -> Result<bool> {
+                Ok(false)
+            }
+
+            async fn list_indexes(&self, _table_name: &str) -> Result<Vec<IndexDefinition>> {
+                Ok(vec![])
+            }
+        }
+
+        struct MockDmlOps;
+
+        #[async_trait]
+        impl DmlOperations for MockDmlOps {
+            async fn insert(
+                &self,
+                _table: &str,
+                _columns: &[String],
+                _rows: Vec<Vec<SqlValue>>,
+            ) -> Result<u64> {
+                Ok(0)
+            }
+
+            async fn update(
+                &self,
+                _table: &str,
+                _updates: Vec<(String, SqlValue)>,
+                _where_clause: Option<String>,
+            ) -> Result<u64> {
+                Ok(0)
+            }
+
+            async fn delete(&self, _table: &str, _where_clause: Option<String>) -> Result<u64> {
+                Ok(0)
+            }
+        }
+
+        let table_ops = Arc::new(MockTableOps::default());
+        let executor = DdlDmlExecutor::new(
+            table_ops.clone(),
+            Arc::new(MockIndexOps),
+            Arc::new(MockDmlOps),
+        );
+        let statement = parse_ddl(
+            "CREATE TABLE IF NOT EXISTS agent_store (
+                record_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                embedding VECTOR(384),
+                PRIMARY KEY (record_id)
+            )",
+        )
+        .unwrap();
+
+        let result = executor.execute_ddl(statement).await.unwrap();
+
+        assert_eq!(result.message, "CREATE TABLE agent_store");
+        let created = table_ops.created.lock().unwrap();
+        assert_eq!(created.len(), 1);
+        assert!(matches!(
+            created[0].columns.get("payload").unwrap().data_type,
+            SqlDataType::Jsonb
+        ));
+        assert!(matches!(
+            created[0].columns.get("embedding").unwrap().data_type,
+            SqlDataType::Vector(384)
+        ));
     }
 
     #[test]

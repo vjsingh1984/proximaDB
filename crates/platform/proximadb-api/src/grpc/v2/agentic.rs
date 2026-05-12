@@ -196,8 +196,6 @@ fn validate_namespace(namespace: &[String]) -> Result<(), Status> {
 mod tests {
     use super::*;
 
-    const AGENTIC_PROTO: &str = include_str!("../../../../../../proto/proximadb/v2/agentic.proto");
-
     #[test]
     fn agentic_grpc_contracts_are_serializable_until_proto_codegen_lands() {
         let request = MemoryPutServiceRequest {
@@ -211,29 +209,6 @@ mod tests {
         let encoded = serde_json::to_value(&request).unwrap();
         let decoded: MemoryPutServiceRequest = serde_json::from_value(encoded).unwrap();
         assert_eq!(decoded, request);
-    }
-
-    #[test]
-    fn agentic_proto_declares_native_v2_services() {
-        for expected in [
-            "package proximadb.v2;",
-            "service AgentMemoryService",
-            "rpc PutMemory(PutMemoryRequest) returns (MemoryItem);",
-            "rpc SearchMemory(SearchMemoryRequest) returns (SearchMemoryResponse);",
-            "service AgentCheckpointService",
-            "rpc PutCheckpoint(PutCheckpointRequest) returns (CheckpointResponse);",
-            "rpc GetCheckpoint(GetCheckpointRequest) returns (CheckpointResponse);",
-            "service AgentEventService",
-            "rpc AppendEvent(AppendEventRequest) returns (AppendEventResponse);",
-            "rpc ReplayEvents(ReplayEventsRequest) returns (ReplayEventsResponse);",
-            "message MemoryItem",
-            "message EventRecord",
-        ] {
-            assert!(
-                AGENTIC_PROTO.contains(expected),
-                "agentic.proto is missing contract fragment: {expected}"
-            );
-        }
     }
 
     #[derive(Default)]

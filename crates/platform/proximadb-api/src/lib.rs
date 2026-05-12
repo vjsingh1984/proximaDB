@@ -23,7 +23,6 @@
 //! - `proximadb-proto` - Protocol buffer types
 //! - `proximadb-kernel` - Core error types
 
-pub mod agentic_schema;
 pub mod grpc;
 pub mod middleware;
 pub mod rest;
@@ -33,11 +32,6 @@ pub mod rest;
 // pub mod arrow_flight;
 
 // Re-export common types
-pub use agentic_schema::{
-    AgentField, AgentFieldType, AgentPhysicalLayout, AgentStoreSchema, DocumentStoreLayout,
-    EventLogLayout, EventStreamSpec, FieldStorage, GraphEdgeSpec, GraphStoreLayout,
-    RelationalColumn, RelationalTableLayout, VectorIndexSpec,
-};
 pub use grpc::{GrpcApiHandler, GrpcRequest, GrpcResponse};
 pub use rest::{RestApiHandler, RestRequest, RestResponse};
 

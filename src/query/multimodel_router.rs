@@ -30,6 +30,26 @@
 
 pub use proximadb_data_model::DataModel;
 
+/// Physical storage preference parsed from pgwire-compatible CREATE TABLE DDL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageOptions {
+    pub engine: Option<String>,
+    pub layout: Option<String>,
+}
+
+impl StorageOptions {
+    pub fn is_columnar(&self) -> bool {
+        self.layout.as_deref() == Some("columnar")
+            || matches!(self.engine.as_deref(), Some("VIPER") | Some("RAPTOR"))
+    }
+
+    pub fn is_record_or_hybrid(&self) -> bool {
+        self.layout
+            .as_deref()
+            .is_none_or(|layout| matches!(layout, "record" | "hybrid"))
+    }
+}
+
 /// Detect the store type from a SQL CREATE TABLE statement.
 ///
 /// Priority:
@@ -66,6 +86,72 @@ pub fn detect_store_type_from_create(sql: &str) -> DataModel {
 
     // 3. Default: standard relational table
     DataModel::Relational
+}
+
+/// Extract physical storage options from pgwire-compatible CREATE TABLE DDL.
+///
+/// Supported forms:
+/// - `CREATE TABLE t (...) USING VIPER`
+/// - `CREATE TABLE t (...) WITH (storage_engine='helix', layout='hybrid')`
+/// - xcatalog comments emitted by SDK DDL helpers:
+///   `COMMENT ON TABLE t IS 'xcatalog.namespace=...;engine=SST;layout=hybrid'`
+pub fn detect_storage_options_from_create(sql: &str) -> StorageOptions {
+    let engine = extract_using_engine(sql)
+        .or_else(|| extract_option_value(sql, "storage_engine"))
+        .or_else(|| extract_option_value(sql, "engine"))
+        .map(|engine| engine.to_ascii_uppercase());
+    let layout = extract_option_value(sql, "layout").map(|layout| layout.to_ascii_lowercase());
+
+    StorageOptions { engine, layout }
+}
+
+fn extract_using_engine(sql: &str) -> Option<String> {
+    let mut tokens = sql
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | ',' | ')'))
+        .filter(|token| !token.is_empty());
+    while let Some(token) = tokens.next() {
+        if token.eq_ignore_ascii_case("USING") {
+            let candidate = tokens.next()?.trim_matches('"').trim_matches('\'');
+            let upper = candidate.to_ascii_uppercase();
+            if matches!(
+                upper.as_str(),
+                "SST"
+                    | "VIPER"
+                    | "SWIFT"
+                    | "HELIX"
+                    | "NOVA"
+                    | "RAPTOR"
+                    | "MMAP"
+                    | "HYBRID"
+                    | "TST"
+                    | "CEDAR"
+                    | "TITAN"
+                    | "CHRONO"
+            ) {
+                return Some(upper);
+            }
+        }
+    }
+    None
+}
+
+fn extract_option_value(sql: &str, key: &str) -> Option<String> {
+    let lower_sql = sql.to_ascii_lowercase();
+    let key_lower = key.to_ascii_lowercase();
+    let key_pos = lower_sql.find(&key_lower)?;
+    let after_key = &sql[key_pos + key.len()..];
+    let equals_pos = after_key.find('=')?;
+    let value = after_key[equals_pos + 1..].trim_start();
+    let trimmed = value.trim_start_matches(['"', '\'']);
+    let end = trimmed
+        .find(|ch: char| matches!(ch, '\'' | '"' | ';' | ',' | ')' | ' '))
+        .unwrap_or(trimmed.len());
+    let candidate = trimmed[..end].trim();
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate.to_string())
+    }
 }
 
 /// Detect the store type from a SQL SELECT/INSERT/UPDATE/DELETE statement.
@@ -210,6 +296,28 @@ mod tests {
             ),
             DataModel::Observability
         );
+    }
+
+    #[test]
+    fn test_detect_create_storage_options_for_engines_and_layouts() {
+        let viper = detect_storage_options_from_create(
+            "CREATE TABLE events (id TEXT, payload JSONB) WITH (storage_engine='viper', layout='columnar')",
+        );
+        assert_eq!(viper.engine.as_deref(), Some("VIPER"));
+        assert_eq!(viper.layout.as_deref(), Some("columnar"));
+        assert!(viper.is_columnar());
+
+        let helix =
+            detect_storage_options_from_create("CREATE TABLE vectors (id TEXT) USING HELIX");
+        assert_eq!(helix.engine.as_deref(), Some("HELIX"));
+        assert!(helix.is_record_or_hybrid());
+
+        let swift = detect_storage_options_from_create(
+            "COMMENT ON TABLE agent_store IS 'xcatalog.namespace=agentic.demo;engine=SWIFT;layout=hybrid'",
+        );
+        assert_eq!(swift.engine.as_deref(), Some("SWIFT"));
+        assert_eq!(swift.layout.as_deref(), Some("hybrid"));
+        assert!(swift.is_record_or_hybrid());
     }
 
     #[test]

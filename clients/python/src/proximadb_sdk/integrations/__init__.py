@@ -8,6 +8,8 @@ __all__ = [
     "autogen",
     "agentic_store",
     "agentic_io",
+    "agentic_ddl",
+    "mlops",
     "crewai",
     "dspy",
     "dual_use_store",
