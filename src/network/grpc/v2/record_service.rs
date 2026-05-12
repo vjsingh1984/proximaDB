@@ -396,27 +396,36 @@ impl ProximaRecordServiceImpl {
         })
     }
 
-    fn batch_result_to_response(result: BatchOperationResult) -> ProximaRecordBatchResponse {
+    fn batch_result_to_response(
+        result: BatchOperationResult,
+        record_ids: &[String],
+        default_error_code: &str,
+    ) -> ProximaRecordBatchResponse {
+        let failed_count = result.metrics.failed_count.max(result.errors.len() as i64);
+        let total_processed = result
+            .metrics
+            .total_processed
+            .max(result.metrics.successful_count + failed_count);
         let errors = result
             .errors
             .iter()
             .enumerate()
             .map(|(index, error)| BatchError {
                 record_index: index as i32,
-                record_id: String::new(),
+                record_id: record_ids.get(index).cloned().unwrap_or_default(),
                 error_code: result
                     .error_code
                     .clone()
-                    .unwrap_or_else(|| "WRITE_FAILED".to_string()),
+                    .unwrap_or_else(|| default_error_code.to_string()),
                 error_message: error.clone(),
             })
             .collect();
 
         ProximaRecordBatchResponse {
             success: result.success,
-            total_processed: result.metrics.total_processed,
+            total_processed,
             success_count: result.metrics.successful_count,
-            failed_count: result.metrics.failed_count,
+            failed_count,
             inserted_ids: result.vector_ids,
             errors,
             processing_time_us: result.metrics.processing_time_us,
@@ -597,6 +606,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             ));
         }
 
+        let record_ids: Vec<String> = batch
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
         let rich_batch = self.convert_to_rich_batch(&batch)?;
 
         match self
@@ -604,7 +618,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
-            Ok(result) => Ok(Response::new(Self::batch_result_to_response(result))),
+            Ok(result) => Ok(Response::new(Self::batch_result_to_response(
+                result,
+                &record_ids,
+                "WRITE_FAILED",
+            ))),
             Err(e) => {
                 error!("V2 gRPC: InsertRecords failed: {}", e);
                 Err(Status::internal(format!("Insert failed: {}", e)))
@@ -625,6 +643,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
+        let record_ids: Vec<String> = batch
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
         let rich_batch = self.convert_to_rich_batch(&batch)?;
 
         match self
@@ -632,7 +655,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
-            Ok(result) => Ok(Response::new(Self::batch_result_to_response(result))),
+            Ok(result) => Ok(Response::new(Self::batch_result_to_response(
+                result,
+                &record_ids,
+                "WRITE_FAILED",
+            ))),
             Err(e) => {
                 error!("V2 gRPC: UpsertRecords failed: {}", e);
                 Err(Status::internal(format!("Upsert failed: {}", e)))
@@ -653,6 +680,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
+        let record_ids: Vec<String> = batch
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
         let rich_batch = self.convert_to_rich_batch(&batch)?;
 
         match self
@@ -660,7 +692,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
-            Ok(result) => Ok(Response::new(Self::batch_result_to_response(result))),
+            Ok(result) => Ok(Response::new(Self::batch_result_to_response(
+                result,
+                &record_ids,
+                "WRITE_FAILED",
+            ))),
             Err(e) => {
                 error!("V2 gRPC: UpdateRecords failed: {}", e);
                 Err(Status::internal(format!("Update failed: {}", e)))
@@ -707,28 +743,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             )
             .await
         {
-            Ok(result) => Ok(Response::new(ProximaRecordBatchResponse {
-                success: result.success,
-                total_processed: result.metrics.total_processed,
-                success_count: result.metrics.successful_count,
-                failed_count: result.metrics.failed_count,
-                inserted_ids: result.vector_ids,
-                errors: result
-                    .errors
-                    .iter()
-                    .enumerate()
-                    .map(|(index, error)| BatchError {
-                        record_index: index as i32,
-                        record_id: record_ids.get(index).cloned().unwrap_or_default(),
-                        error_code: result
-                            .error_code
-                            .clone()
-                            .unwrap_or_else(|| "DELETE_FAILED".to_string()),
-                        error_message: error.clone(),
-                    })
-                    .collect(),
-                processing_time_us: result.metrics.processing_time_us,
-            })),
+            Ok(result) => Ok(Response::new(Self::batch_result_to_response(
+                result,
+                &record_ids,
+                "DELETE_FAILED",
+            ))),
             Err(e) => {
                 error!("V2 gRPC: DeleteRecords failed: {}", e);
                 if e.to_string().contains("not found") {
@@ -1343,6 +1362,51 @@ mod tests {
     fn test_typed_value_conversion() {
         // Test would require mocking UnifiedHandlers
         // For now, just verify the module compiles
+    }
+
+    #[test]
+    fn test_batch_result_response_maps_error_record_ids() {
+        let record_ids = vec!["record-1".to_string()];
+        let response = ProximaRecordServiceImpl::batch_result_to_response(
+            BatchOperationResult::failure("write failed".to_string(), "BAD_WRITE".to_string()),
+            &record_ids,
+            "WRITE_FAILED",
+        );
+
+        assert!(!response.success);
+        assert_eq!(response.total_processed, 1);
+        assert_eq!(response.failed_count, 1);
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].record_id, "record-1");
+        assert_eq!(response.errors[0].error_code, "BAD_WRITE");
+    }
+
+    #[test]
+    fn test_batch_result_response_preserves_success_metrics() {
+        let response = ProximaRecordServiceImpl::batch_result_to_response(
+            BatchOperationResult::success(
+                vec!["record-1".to_string(), "record-2".to_string()],
+                crate::services::operations::OperationMetrics {
+                    total_processed: 2,
+                    successful_count: 2,
+                    failed_count: 0,
+                    updated_count: 0,
+                    processing_time_us: 42,
+                    wal_write_time_us: 7,
+                    index_update_time_us: 3,
+                },
+            ),
+            &["record-1".to_string(), "record-2".to_string()],
+            "WRITE_FAILED",
+        );
+
+        assert!(response.success);
+        assert_eq!(response.total_processed, 2);
+        assert_eq!(response.success_count, 2);
+        assert_eq!(response.failed_count, 0);
+        assert_eq!(response.inserted_ids, ["record-1", "record-2"]);
+        assert_eq!(response.processing_time_us, 42);
+        assert!(response.errors.is_empty());
     }
 
     #[test]
