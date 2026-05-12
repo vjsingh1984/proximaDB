@@ -6,6 +6,8 @@ integration do not break imports for unrelated integrations.
 
 __all__ = [
     "autogen",
+    "agentic_store",
+    "agentic_io",
     "crewai",
     "dspy",
     "dual_use_store",
