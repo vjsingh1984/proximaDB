@@ -1022,13 +1022,38 @@ pub async fn insert_records(
     {
         Ok(resp) => {
             // Check for success - if successful, all records were inserted
-            let success_count = if resp.success { inserted_ids.len() } else { 0 };
+            let validation_error_count = errors.len();
+            let success_count = if resp.success {
+                resp.metrics.successful_count as usize
+            } else {
+                0
+            }
+            .min(inserted_ids.len());
+            let service_failed_count = inserted_ids
+                .len()
+                .saturating_sub(success_count)
+                .max(resp.metrics.failed_count.max(0) as usize)
+                .max(resp.errors.len());
+            errors.extend(
+                resp.errors
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, error)| InsertError {
+                        index: success_count + idx,
+                        id: None,
+                        error,
+                    }),
+            );
 
             let response = InsertRecordsResponse {
                 inserted_count: success_count,
-                failed_count: errors.len() + (inserted_ids.len() - success_count),
+                failed_count: validation_error_count + service_failed_count,
                 errors,
-                inserted_ids: if resp.success { inserted_ids } else { vec![] },
+                inserted_ids: if resp.success {
+                    resp.vector_ids
+                } else {
+                    vec![]
+                },
             };
 
             info!(

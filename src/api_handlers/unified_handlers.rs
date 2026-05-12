@@ -215,6 +215,7 @@ use crate::proto::proximadb_v1::{
 };
 use crate::query::QueryFacadeAdapter;
 use crate::services::collection::manager::CollectionService;
+use crate::services::operations::BatchOperationResult;
 use crate::services::operations::vectors::{
     RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest,
     RichRecordGetResponse, RichSearchRequest, RichSearchResponse, VectorOperationsService,
@@ -810,7 +811,7 @@ impl UnifiedHandlers {
         &self,
         request: RichRecordBatchRequest,
         tenant_id: Option<&str>,
-    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+    ) -> Result<BatchOperationResult> {
         let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
         let collection_id = match self
             .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
@@ -818,15 +819,10 @@ impl UnifiedHandlers {
         {
             Some(id) => id,
             None => {
-                return Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-                    success: false,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
-                    metrics: None,
-                    results: None,
-                    vector_ids: vec![],
-                    error_message: None,
-                    error_code: Some("NOT_FOUND".to_string()),
-                });
+                return Ok(BatchOperationResult::failure(
+                    format!("Collection '{}' not found", request.collection_id),
+                    "NOT_FOUND".to_string(),
+                ));
             }
         };
 
@@ -839,46 +835,13 @@ impl UnifiedHandlers {
             )
             .await
         {
-            Ok(result) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-                success: result.success,
-                operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
-                metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
-                    total_processed: result.metrics.total_processed,
-                    successful_count: result.metrics.successful_count,
-                    failed_count: result.metrics.failed_count,
-                    updated_count: result.metrics.updated_count,
-                    processing_time_us: result.metrics.processing_time_us,
-                    wal_write_time_us: result.metrics.wal_write_time_us,
-                    index_update_time_us: result.metrics.index_update_time_us,
-                }),
-                results: None,
-                vector_ids: result.vector_ids,
-                error_message: if result.errors.is_empty() {
-                    None
-                } else {
-                    Some(result.errors.join("; "))
-                },
-                error_code: result.error_code,
-            }),
+            Ok(result) => Ok(result),
             Err(error) => {
                 tracing::error!("Failed to process rich record batch: {:?}", error);
-                Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-                    success: false,
-                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
-                    metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
-                        total_processed: 0,
-                        successful_count: 0,
-                        failed_count: 0,
-                        updated_count: 0,
-                        processing_time_us: 0,
-                        wal_write_time_us: 0,
-                        index_update_time_us: 0,
-                    }),
-                    results: None,
-                    vector_ids: vec![],
-                    error_message: Some(format!("Record insert failed: {}", error)),
-                    error_code: Some("RECORD_INSERT_FAILED".to_string()),
-                })
+                Ok(BatchOperationResult::failure(
+                    format!("Record insert failed: {}", error),
+                    "RECORD_INSERT_FAILED".to_string(),
+                ))
             }
         }
     }
