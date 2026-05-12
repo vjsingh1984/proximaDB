@@ -32,13 +32,13 @@ class TestEmbeddedBasics:
         """Test listing collections"""
         with tempfile.TemporaryDirectory() as tmpdir:
             db = ProximaDB(data_dirs=tmpdir)
-            db.create_collection("col1", dimension=64)
-            db.create_collection("col2", dimension=128)
+            db.create_collection("collection_one", dimension=64)
+            db.create_collection("collection_two", dimension=128)
 
             collections = db.list_collections()
             names = [c.name for c in collections]
-            assert "col1" in names
-            assert "col2" in names
+            assert "collection_one" in names
+            assert "collection_two" in names
 
     def test_delete_collection(self):
         """Test collection deletion"""
@@ -58,25 +58,25 @@ class TestVectorOperations:
         """Test vector insertion"""
         with tempfile.TemporaryDirectory() as tmpdir:
             db = ProximaDB(data_dirs=tmpdir)
-            db.create_collection("vectors", dimension=128)
+            db.create_collection("vectors_main", dimension=128)
 
             vectors = np.random.rand(100, 128).astype(np.float32)
             ids = [f"vec_{i}" for i in range(100)]
 
-            count = db.insert("vectors", ids=ids, vectors=vectors)
+            count = db.insert("vectors_main", ids=ids, vectors=vectors)
             assert count == 100
 
     def test_insert_with_metadata(self):
         """Test vector insertion with metadata"""
         with tempfile.TemporaryDirectory() as tmpdir:
             db = ProximaDB(data_dirs=tmpdir)
-            db.create_collection("vectors", dimension=64)
+            db.create_collection("vectors_meta", dimension=64)
 
             vectors = np.random.rand(10, 64).astype(np.float32)
             ids = [f"vec_{i}" for i in range(10)]
             metadata = [{"category": "A", "score": 0.9} for _ in range(10)]
 
-            count = db.insert("vectors", ids=ids, vectors=vectors, metadata=metadata)
+            count = db.insert("vectors_meta", ids=ids, vectors=vectors, metadata=metadata)
             assert count == 10
 
     def test_search_basic(self):
@@ -148,7 +148,7 @@ class TestPersistence:
 
     def test_flush(self):
         """Test explicit flush"""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db = ProximaDB(data_dirs=tmpdir)
             db.create_collection("flush_test", dimension=64)
 
@@ -168,6 +168,7 @@ class TestPersistence:
             vectors = np.random.rand(100, 128).astype(np.float32)
             ids = [f"v{i}" for i in range(100)]
             db.insert("stats_test", ids=ids, vectors=vectors)
+            db.flush()
 
             stats = db.stats()
             assert stats.total_collections >= 1
@@ -179,7 +180,7 @@ class TestContextManager:
 
     def test_with_statement(self):
         """Test using database with context manager"""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             with ProximaDB(data_dirs=tmpdir) as db:
                 db.create_collection("context_test", dimension=32)
                 vectors = np.random.rand(10, 32).astype(np.float32)
