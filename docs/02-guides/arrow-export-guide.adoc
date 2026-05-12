@@ -192,6 +192,10 @@ When `trigger_compaction` is true, DoPut triggers collection compaction after
 the batch write completes. The `compact_collection` action remains available
 for explicit maintenance outside the write path.
 
+For tenant-scoped writes, send the tenant as Flight call metadata using
+`x-proximadb-tenant-id`. The Python `ArrowFlightClient` exposes this as the
+optional `tenant_id` constructor argument.
+
 === DuckDB Direct Query
 
 [source,sql]

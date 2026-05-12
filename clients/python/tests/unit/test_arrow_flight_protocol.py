@@ -113,6 +113,16 @@ def test_metadata_from_exchange_chunk_reads_app_metadata():
 
 
 @pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_call_options_include_auth_and_tenant_headers():
+    client = ArrowFlightClient("localhost:5680", api_key="token-1", tenant_id="tenant-a")
+
+    options = client._get_call_options()
+
+    assert (b"authorization", b"Bearer token-1") in options.headers
+    assert (b"x-proximadb-tenant-id", b"tenant-a") in options.headers
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
 def test_bulk_upsert_exchange_streams_batches_and_parses_metadata():
     progress = {"type": "progress", "operation": "upsert", "batch": 1}
     complete = {

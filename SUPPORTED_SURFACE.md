@@ -415,7 +415,7 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 
 **Current limitations**:
 - `insert` currently uses the same write path as `upsert`; strict insert-only conflict semantics are not yet enforced.
-- Tenant/auth metadata for Flight write handlers is not yet wired into the rich-record tenant context.
+- Flight write handlers honor tenant metadata headers (`x-proximadb-tenant-id`, `x-tenant-id`, `tenant-id`, `tenant_id`), but authorization metadata is not yet authenticated by the Flight server.
 
 ---
 

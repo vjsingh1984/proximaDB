@@ -135,6 +135,24 @@ impl ProximaFlightService {
         serde_json::to_vec(&final_status).map_err(Into::into)
     }
 
+    fn tenant_id_from_metadata(metadata: &tonic::metadata::MetadataMap) -> Option<String> {
+        [
+            "x-proximadb-tenant-id",
+            "x-tenant-id",
+            "tenant-id",
+            "tenant_id",
+        ]
+        .iter()
+        .find_map(|key| {
+            metadata
+                .get(*key)
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })
+    }
+
     fn parse_exchange_descriptor(
         descriptor: &FlightDescriptor,
     ) -> Result<(String, String, Option<FlightWriteOperation>)> {
@@ -249,11 +267,13 @@ impl ProximaFlightService {
         collection_id: String,
         write_mode: WriteMode,
         trigger_compaction: bool,
+        tenant_id: Option<String>,
         batches: Vec<arrow_array::RecordBatch>,
     ) -> Result<BatchOperationResult> {
         debug!(
             collection_id = %collection_id,
             write_mode = ?write_mode,
+            tenant_id = ?tenant_id,
             num_batches = batches.len(),
             "Arrow IPC vector insert"
         );
@@ -278,7 +298,7 @@ impl ProximaFlightService {
                             collection_id: collection_id.clone(),
                             records,
                         },
-                        None,
+                        tenant_id.as_deref(),
                     )
                     .await?
             }
@@ -295,7 +315,7 @@ impl ProximaFlightService {
                             collection_id: collection_id.clone(),
                             records,
                         },
-                        None,
+                        tenant_id.as_deref(),
                     )
                     .await?
             }
@@ -318,10 +338,12 @@ impl ProximaFlightService {
         &self,
         collection_id: String,
         trigger_compaction: bool,
+        tenant_id: Option<String>,
         batches: Vec<arrow_array::RecordBatch>,
     ) -> Result<BatchOperationResult> {
         debug!(
             collection_id = %collection_id,
+            tenant_id = ?tenant_id,
             num_batches = batches.len(),
             "Arrow IPC record delete"
         );
@@ -335,7 +357,7 @@ impl ProximaFlightService {
                     collection_id: collection_id.clone(),
                     record_ids,
                 },
-                None,
+                tenant_id.as_deref(),
             )
             .await?;
 
@@ -670,6 +692,7 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<TonicStreaming<FlightData>>,
     ) -> TonicResult<Self::DoPutStream> {
+        let tenant_id = Self::tenant_id_from_metadata(request.metadata());
         let mut stream = request.into_inner();
 
         // First message should contain descriptor
@@ -714,6 +737,7 @@ impl FlightService for ProximaFlightService {
                     metadata.collection_id.clone(),
                     metadata.write_mode,
                     metadata.trigger_compaction,
+                    tenant_id.clone(),
                     batches,
                 )
                 .await
@@ -722,6 +746,7 @@ impl FlightService for ProximaFlightService {
                 self.handle_record_delete(
                     metadata.collection_id.clone(),
                     metadata.trigger_compaction,
+                    tenant_id.clone(),
                     batches,
                 )
                 .await
@@ -1545,6 +1570,7 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<TonicStreaming<FlightData>>,
     ) -> TonicResult<Self::DoExchangeStream> {
+        let tenant_id = Self::tenant_id_from_metadata(request.metadata());
         let mut stream = request.into_inner();
 
         // First message should contain the descriptor with exchange type
@@ -1572,13 +1598,20 @@ impl FlightService for ProximaFlightService {
         match exchange_type.as_str() {
             "bulk_insert" | "bulk_upsert" => {
                 let operation = write_operation.unwrap_or_default();
-                self.handle_bulk_write_exchange(collection_id, operation, first_msg, stream)
-                    .await
+                self.handle_bulk_write_exchange(
+                    collection_id,
+                    operation,
+                    tenant_id,
+                    first_msg,
+                    stream,
+                )
+                .await
             }
             "bulk_delete" => {
                 self.handle_bulk_write_exchange(
                     collection_id,
                     FlightWriteOperation::Delete,
+                    tenant_id,
                     first_msg,
                     stream,
                 )
@@ -1606,6 +1639,7 @@ impl ProximaFlightService {
         &self,
         collection_id: String,
         operation: FlightWriteOperation,
+        tenant_id: Option<String>,
         first_msg: FlightData,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
@@ -1649,7 +1683,7 @@ impl ProximaFlightService {
                                 collection_id: collection_id.clone(),
                                 records,
                             },
-                            None,
+                            tenant_id.as_deref(),
                         )
                         .await
                 }
@@ -1670,7 +1704,7 @@ impl ProximaFlightService {
                                 collection_id: collection_id.clone(),
                                 record_ids,
                             },
-                            None,
+                            tenant_id.as_deref(),
                         )
                         .await
                 }
@@ -1999,6 +2033,29 @@ mod tests {
         assert_eq!(value["total_failed"], 2);
         assert_eq!(value["success"], false);
         assert!(value.get("total_vectors").is_none());
+    }
+
+    #[test]
+    fn test_tenant_id_from_flight_metadata_prefers_proximadb_header() {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert("x-tenant-id", "tenant-b".parse().unwrap());
+        metadata.insert("x-proximadb-tenant-id", "tenant-a".parse().unwrap());
+
+        assert_eq!(
+            ProximaFlightService::tenant_id_from_metadata(&metadata),
+            Some("tenant-a".to_string())
+        );
+    }
+
+    #[test]
+    fn test_tenant_id_from_flight_metadata_ignores_empty_header() {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert("x-proximadb-tenant-id", "".parse().unwrap());
+
+        assert_eq!(
+            ProximaFlightService::tenant_id_from_metadata(&metadata),
+            None
+        );
     }
 
     #[test]

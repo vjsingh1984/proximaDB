@@ -125,6 +125,7 @@ class ArrowFlightClient:
         self,
         url: str,
         api_key: Optional[str] = None,
+        tenant_id: Optional[str] = None,
         timeout_seconds: float = 300.0,
         max_message_size_mb: int = 512,
     ):
@@ -134,6 +135,7 @@ class ArrowFlightClient:
         Args:
             url: Server URL (e.g., "grpc://localhost:5678" or "localhost:5680")
             api_key: Optional API key for authentication
+            tenant_id: Optional tenant ID sent as Flight call metadata
             timeout_seconds: Request timeout in seconds (default: 5 min for bulk ops)
             max_message_size_mb: Maximum message size in MB (default: 512MB)
         """
@@ -144,6 +146,7 @@ class ArrowFlightClient:
 
         self._url = url
         self._api_key = api_key
+        self._tenant_id = tenant_id
         self._timeout_seconds = timeout_seconds
         self._max_message_size = max_message_size_mb * 1024 * 1024
 
@@ -205,6 +208,8 @@ class ArrowFlightClient:
         headers = []
         if self._api_key:
             headers.append((b"authorization", f"Bearer {self._api_key}".encode()))
+        if self._tenant_id:
+            headers.append((b"x-proximadb-tenant-id", self._tenant_id.encode()))
 
         return flight.FlightCallOptions(
             timeout=self._timeout_seconds,
