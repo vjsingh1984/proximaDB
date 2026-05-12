@@ -10,12 +10,14 @@
 
 use anyhow::{Context, Result};
 use arrow_array::{
-    Array, ArrayRef, BinaryArray, FixedSizeListArray, Float32Array, Int64Array, RecordBatch,
-    StringArray, StructArray,
+    Array, ArrayRef, BinaryArray, BooleanArray, FixedSizeListArray, Float32Array, Float64Array,
+    Int32Array, Int64Array, RecordBatch, StringArray, StructArray,
 };
 use arrow_flight::{FlightData, FlightDescriptor, Ticket};
 use arrow_ipc::writer::IpcWriteOptions;
 use arrow_schema::{DataType, Field, Fields, Schema};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EdgeShape, EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -93,6 +95,127 @@ impl ArrowProtoCodec {
         }
 
         Ok(all_records)
+    }
+
+    /// Convert Arrow RecordBatches to canonical ProximaRecord envelopes.
+    ///
+    /// Implements the rich Arrow Flight ingestion boundary for the multimodal
+    /// record envelope described in MULTIMODAL_OVERHAUL_SPEC §3 and §9.2. The
+    /// columns `id`/`oid`, `vector`, tenant/provenance fields, and graph edge
+    /// topology fields are lifted into first-class envelope fields. Remaining
+    /// supported Arrow scalar columns become typed `props` entries.
+    pub fn batches_to_proxima_records(batches: Vec<RecordBatch>) -> Result<Vec<ProximaRecord>> {
+        let mut all_records = Vec::new();
+
+        for batch in batches {
+            let records = Self::batch_to_proxima_records(&batch)?;
+            all_records.extend(records);
+        }
+
+        Ok(all_records)
+    }
+
+    fn batch_to_proxima_records(batch: &RecordBatch) -> Result<Vec<ProximaRecord>> {
+        let id_array = batch
+            .column_by_name("id")
+            .or_else(|| batch.column_by_name("oid"))
+            .context("Missing 'id' or 'oid' column")?
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .context("'id'/'oid' column is not StringArray")?;
+
+        let vectors = if let Some(vector_array) = batch.column_by_name("vector") {
+            Some(Self::extract_vectors(vector_array, batch.num_rows())?)
+        } else {
+            None
+        };
+
+        let edge_sources = Self::optional_string_values(batch, "source_id")?;
+        let edge_targets = Self::optional_string_values(batch, "target_id")?;
+        let edge_types = Self::optional_string_values(batch, "edge_type")?;
+        let edge_weights = Self::optional_float64_values(batch, "weight")?;
+
+        let mut records = Vec::with_capacity(batch.num_rows());
+        for row in 0..batch.num_rows() {
+            if id_array.is_null(row) {
+                return Err(anyhow::anyhow!("Record id is null at row {}", row));
+            }
+
+            let oid = id_array.value(row).to_string();
+            let mut record = ProximaRecord {
+                oid: oid.clone(),
+                local_id: Some(oid),
+                ..ProximaRecord::default()
+            };
+
+            if let Some(tenant_id) = Self::string_value(batch, "tenant_id", row)? {
+                record.tenant_id = tenant_id;
+            }
+            let origin = Self::string_value(batch, "origin", row)?;
+            let origin = match origin {
+                Some(origin) => Some(origin),
+                None => Self::string_value(batch, "source", row)?,
+            };
+            if let Some(origin) = origin {
+                record.origin = Some(origin);
+            }
+            if let Some(created_at_ns) = Self::int64_value(batch, "created_at_ns", row)? {
+                record.created_at_ns = created_at_ns;
+            } else if let Some(timestamp_ms) = Self::int64_value(batch, "timestamp", row)? {
+                record.created_at_ns = timestamp_ms * 1_000_000;
+            }
+            if let Some(updated_at_ns) = Self::int64_value(batch, "updated_at_ns", row)? {
+                record.updated_at_ns = updated_at_ns;
+            } else {
+                record.updated_at_ns = record.created_at_ns;
+            }
+
+            if let Some(values) = vectors.as_ref() {
+                record.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: values[row].len() as u32,
+                    values: values[row].clone(),
+                });
+            }
+
+            if let (Some(source_id), Some(target_id), Some(edge_type)) = (
+                edge_sources.get(row).and_then(Clone::clone),
+                edge_targets.get(row).and_then(Clone::clone),
+                edge_types.get(row).and_then(Clone::clone),
+            ) {
+                record.edge = Some(EdgeShape {
+                    source_id,
+                    target_id,
+                    edge_type,
+                    weight: edge_weights.get(row).copied().flatten(),
+                });
+            }
+
+            for (column_index, field) in batch.schema().fields().iter().enumerate() {
+                let name = field.name();
+                if Self::is_reserved_record_column(name) {
+                    continue;
+                }
+
+                let array = batch.column(column_index);
+                if let Some(value) = Self::arrow_value_to_proxima(array, row)? {
+                    record
+                        .props
+                        .insert(name.clone(), ProximaTreeNode::Value(value));
+                }
+            }
+
+            if let Some(metadata) = batch.column_by_name("metadata") {
+                for (key, value) in Self::metadata_props(metadata, row)? {
+                    record.props.insert(key, ProximaTreeNode::Value(value));
+                }
+            }
+
+            records.push(record);
+        }
+
+        Ok(records)
     }
 
     /// Convert single RecordBatch to VectorRecords
@@ -181,6 +304,214 @@ impl ArrowProtoCodec {
         }
 
         Ok(records)
+    }
+
+    fn is_reserved_record_column(name: &str) -> bool {
+        matches!(
+            name,
+            "id" | "oid"
+                | "local_id"
+                | "vector"
+                | "metadata"
+                | "tenant_id"
+                | "origin"
+                | "source"
+                | "created_at_ns"
+                | "updated_at_ns"
+                | "timestamp"
+                | "source_id"
+                | "target_id"
+                | "edge_type"
+                | "weight"
+        )
+    }
+
+    fn string_value(batch: &RecordBatch, column: &str, row: usize) -> Result<Option<String>> {
+        let Some(array) = batch.column_by_name(column) else {
+            return Ok(None);
+        };
+        let array = array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .with_context(|| format!("'{column}' column is not StringArray"))?;
+        if array.is_null(row) {
+            Ok(None)
+        } else {
+            Ok(Some(array.value(row).to_string()))
+        }
+    }
+
+    fn int64_value(batch: &RecordBatch, column: &str, row: usize) -> Result<Option<i64>> {
+        let Some(array) = batch.column_by_name(column) else {
+            return Ok(None);
+        };
+        let array = array
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .with_context(|| format!("'{column}' column is not Int64Array"))?;
+        if array.is_null(row) {
+            Ok(None)
+        } else {
+            Ok(Some(array.value(row)))
+        }
+    }
+
+    fn optional_string_values(batch: &RecordBatch, column: &str) -> Result<Vec<Option<String>>> {
+        let Some(array) = batch.column_by_name(column) else {
+            return Ok(vec![None; batch.num_rows()]);
+        };
+        let array = array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .with_context(|| format!("'{column}' column is not StringArray"))?;
+        Ok((0..batch.num_rows())
+            .map(|row| {
+                if array.is_null(row) {
+                    None
+                } else {
+                    Some(array.value(row).to_string())
+                }
+            })
+            .collect())
+    }
+
+    fn optional_float64_values(batch: &RecordBatch, column: &str) -> Result<Vec<Option<f64>>> {
+        let Some(array) = batch.column_by_name(column) else {
+            return Ok(vec![None; batch.num_rows()]);
+        };
+        if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
+            return Ok((0..batch.num_rows())
+                .map(|row| {
+                    if array.is_null(row) {
+                        None
+                    } else {
+                        Some(array.value(row))
+                    }
+                })
+                .collect());
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Float32Array>() {
+            return Ok((0..batch.num_rows())
+                .map(|row| {
+                    if array.is_null(row) {
+                        None
+                    } else {
+                        Some(array.value(row) as f64)
+                    }
+                })
+                .collect());
+        }
+        Err(anyhow::anyhow!("'{column}' column is not Float32/Float64"))
+    }
+
+    fn arrow_value_to_proxima(array: &ArrayRef, row: usize) -> Result<Option<ProximaValue>> {
+        if array.is_null(row) {
+            return Ok(Some(ProximaValue::Null));
+        }
+
+        if let Some(array) = array.as_any().downcast_ref::<StringArray>() {
+            return Ok(Some(ProximaValue::String(array.value(row).to_string())));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<BooleanArray>() {
+            return Ok(Some(ProximaValue::Boolean(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Int32Array>() {
+            return Ok(Some(ProximaValue::Int32(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Int64Array>() {
+            return Ok(Some(ProximaValue::Int64(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Float32Array>() {
+            return Ok(Some(ProximaValue::Float32(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
+            return Ok(Some(ProximaValue::Float64(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<BinaryArray>() {
+            return Ok(Some(ProximaValue::Binary(array.value(row).to_vec())));
+        }
+        if matches!(array.data_type(), DataType::FixedSizeList(_, _)) {
+            return Ok(Some(ProximaValue::DenseVector(
+                Self::extract_vectors(array, row + 1)?
+                    .get(row)
+                    .cloned()
+                    .unwrap_or_default(),
+            )));
+        }
+
+        Ok(None)
+    }
+
+    fn metadata_props(array: &ArrayRef, row: usize) -> Result<Vec<(String, ProximaValue)>> {
+        if array.is_null(row) {
+            return Ok(Vec::new());
+        }
+
+        if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
+            let json: serde_json::Value = serde_json::from_str(string_array.value(row))?;
+            if let serde_json::Value::Object(map) = json {
+                return Ok(map
+                    .into_iter()
+                    .map(|(key, value)| (key, Self::json_to_proxima_value(value)))
+                    .collect());
+            }
+            return Ok(Vec::new());
+        }
+
+        if let Some(struct_array) = array.as_any().downcast_ref::<StructArray>() {
+            let key_array = struct_array
+                .column_by_name("key")
+                .context("Missing 'key' field in metadata struct")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("'key' field not StringArray")?;
+            let value_array = struct_array
+                .column_by_name("value")
+                .context("Missing 'value' field in metadata struct")?
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .context("'value' field not StringArray")?;
+            if key_array.is_null(row) || value_array.is_null(row) {
+                return Ok(Vec::new());
+            }
+            return Ok(vec![(
+                key_array.value(row).to_string(),
+                ProximaValue::String(value_array.value(row).to_string()),
+            )]);
+        }
+
+        Ok(Vec::new())
+    }
+
+    fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {
+        match value {
+            serde_json::Value::Null => ProximaValue::Null,
+            serde_json::Value::Bool(value) => ProximaValue::Boolean(value),
+            serde_json::Value::Number(value) => {
+                if let Some(value) = value.as_i64() {
+                    ProximaValue::Int64(value)
+                } else if let Some(value) = value.as_u64() {
+                    ProximaValue::UInt64(value)
+                } else if let Some(value) = value.as_f64() {
+                    ProximaValue::Float64(value)
+                } else {
+                    ProximaValue::String(value.to_string())
+                }
+            }
+            serde_json::Value::String(value) => ProximaValue::String(value),
+            serde_json::Value::Array(values) => ProximaValue::Array(
+                values
+                    .into_iter()
+                    .map(Self::json_to_proxima_value)
+                    .collect(),
+            ),
+            serde_json::Value::Object(values) => ProximaValue::Map(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, Self::json_to_proxima_value(value)))
+                    .collect(),
+            ),
+        }
     }
 
     /// Extract vectors from Arrow array (handles multiple formats)
@@ -605,7 +936,10 @@ impl ArrowProtoCodec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use arrow_array::{ArrayRef, FixedSizeListArray, Float32Array, Int64Array, StringArray};
+    use arrow_array::{
+        ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array,
+        StringArray,
+    };
     use arrow_schema::{DataType, Field};
 
     #[test]
@@ -669,6 +1003,90 @@ mod tests {
             ],
         )
         .expect("Failed to create test batch")
+    }
+
+    #[test]
+    fn test_batches_to_proxima_records_preserves_rich_arrow_values() {
+        let ids = StringArray::from(vec!["doc_1"]);
+        let flat_values = Arc::new(Float32Array::from(vec![0.1, 0.2, 0.3])) as ArrayRef;
+        let vector_array = FixedSizeListArray::new(
+            Arc::new(Field::new("item", DataType::Float32, false)),
+            3,
+            flat_values,
+            None,
+        );
+        let title = StringArray::from(vec!["Quarterly report"]);
+        let views = Int64Array::from(vec![42]);
+        let published = BooleanArray::from(vec![true]);
+        let metadata = StringArray::from(vec![r#"{"category":"finance","score":9.5}"#]);
+        let source_id = StringArray::from(vec!["node_a"]);
+        let target_id = StringArray::from(vec!["node_b"]);
+        let edge_type = StringArray::from(vec!["cites"]);
+        let weight = Float64Array::from(vec![0.75]);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), 3),
+                false,
+            ),
+            Field::new("title", DataType::Utf8, false),
+            Field::new("views", DataType::Int64, false),
+            Field::new("published", DataType::Boolean, false),
+            Field::new("metadata", DataType::Utf8, true),
+            Field::new("source_id", DataType::Utf8, false),
+            Field::new("target_id", DataType::Utf8, false),
+            Field::new("edge_type", DataType::Utf8, false),
+            Field::new("weight", DataType::Float64, false),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(ids),
+                Arc::new(vector_array),
+                Arc::new(title),
+                Arc::new(views),
+                Arc::new(published),
+                Arc::new(metadata),
+                Arc::new(source_id),
+                Arc::new(target_id),
+                Arc::new(edge_type),
+                Arc::new(weight),
+            ],
+        )
+        .unwrap();
+
+        let records = ArrowProtoCodec::batches_to_proxima_records(vec![batch]).unwrap();
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.oid, "doc_1");
+        assert_eq!(record.embeddings[0].values, vec![0.1, 0.2, 0.3]);
+        assert_eq!(
+            record.props.get("title"),
+            Some(&ProximaTreeNode::Value(ProximaValue::String(
+                "Quarterly report".to_string()
+            )))
+        );
+        assert_eq!(
+            record.props.get("views"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Int64(42)))
+        );
+        assert_eq!(
+            record.props.get("published"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Boolean(true)))
+        );
+        assert_eq!(
+            record.props.get("category"),
+            Some(&ProximaTreeNode::Value(ProximaValue::String(
+                "finance".to_string()
+            )))
+        );
+        assert_eq!(
+            record.edge.as_ref().map(|edge| edge.edge_type.as_str()),
+            Some("cites")
+        );
     }
 
     #[test]

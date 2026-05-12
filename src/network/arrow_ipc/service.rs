@@ -22,8 +22,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::api_handlers::unified_handlers::UnifiedHandlers;
-use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
+use crate::api_handlers::{RichRecordBatchRequest, unified_handlers::UnifiedHandlers};
+use crate::proto::proximadb_v1::VectorSearchRequest;
+use crate::services::operations::BatchOperationResult;
 
 use super::codec::{ArrowProtoCodec, WriteMode};
 use super::file_export::{
@@ -81,6 +82,32 @@ impl ProximaFlightService {
             unified_handlers,
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
+        }
+    }
+
+    fn batch_result_to_vector_response(
+        result: BatchOperationResult,
+    ) -> crate::proto::proximadb_v1::VectorOperationResponse {
+        crate::proto::proximadb_v1::VectorOperationResponse {
+            success: result.success,
+            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
+            metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                total_processed: result.metrics.total_processed,
+                successful_count: result.metrics.successful_count,
+                failed_count: result.metrics.failed_count,
+                updated_count: result.metrics.updated_count,
+                processing_time_us: result.metrics.processing_time_us,
+                wal_write_time_us: result.metrics.wal_write_time_us,
+                index_update_time_us: result.metrics.index_update_time_us,
+            }),
+            results: None,
+            vector_ids: result.vector_ids,
+            error_message: if result.errors.is_empty() {
+                None
+            } else {
+                Some(result.errors.join("; "))
+            },
+            error_code: result.error_code,
         }
     }
 
@@ -154,25 +181,31 @@ impl ProximaFlightService {
             "Arrow IPC vector insert"
         );
 
-        // Convert Arrow batches to VectorRecord protos
-        let vectors = ArrowProtoCodec::batches_to_vector_records(batches)?;
+        // Convert Arrow batches to canonical ProximaRecord envelopes so rich
+        // scalar fields and modality columns survive the Flight boundary.
+        let records = ArrowProtoCodec::batches_to_proxima_records(batches)?;
 
         info!(
             collection_id = %collection_id,
-            vectors = vectors.len(),
-            "Converted Arrow batches to VectorRecords"
+            records = records.len(),
+            "Converted Arrow batches to ProximaRecords"
         );
 
         // Route based on write mode
         let response = match write_mode {
             WriteMode::WAL => {
                 // Use standard WAL-backed insertion (reuses existing path)
-                self.unified_handlers
-                    .handle_vector_batch_v1(VectorBatchRequest {
-                        collection_id: collection_id.clone(),
-                        vectors,
-                    })
-                    .await?
+                let result = self
+                    .unified_handlers
+                    .handle_record_batch_for_tenant(
+                        RichRecordBatchRequest {
+                            collection_id: collection_id.clone(),
+                            records,
+                        },
+                        None,
+                    )
+                    .await?;
+                Self::batch_result_to_vector_response(result)
             }
             WriteMode::Direct => {
                 // Direct engine write (future enhancement)
@@ -181,12 +214,17 @@ impl ProximaFlightService {
                     collection_id = %collection_id,
                     "Direct write mode not yet implemented, using WAL"
                 );
-                self.unified_handlers
-                    .handle_vector_batch_v1(VectorBatchRequest {
-                        collection_id: collection_id.clone(),
-                        vectors,
-                    })
-                    .await?
+                let result = self
+                    .unified_handlers
+                    .handle_record_batch_for_tenant(
+                        RichRecordBatchRequest {
+                            collection_id: collection_id.clone(),
+                            records,
+                        },
+                        None,
+                    )
+                    .await?;
+                Self::batch_result_to_vector_response(result)
             }
         };
 
@@ -1453,8 +1491,9 @@ impl ProximaFlightService {
             let batch_rows = batch.num_rows();
             total_batches += 1;
 
-            // Convert to VectorRecords
-            let vectors = match ArrowProtoCodec::batches_to_vector_records(vec![batch]) {
+            // Convert to ProximaRecords so Flight batch ingest preserves rich
+            // Arrow scalar values and modality fields.
+            let records = match ArrowProtoCodec::batches_to_proxima_records(vec![batch]) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("Failed to convert batch {}: {}", total_batches, e);
@@ -1462,15 +1501,19 @@ impl ProximaFlightService {
                 }
             };
 
-            // Insert vectors
-            let response = self
+            // Insert records through the same rich internal boundary as REST/gRPC v2.
+            let result = self
                 .unified_handlers
-                .handle_vector_batch_v1(crate::proto::proximadb_v1::VectorBatchRequest {
-                    collection_id: collection_id.clone(),
-                    vectors,
-                })
+                .handle_record_batch_for_tenant(
+                    RichRecordBatchRequest {
+                        collection_id: collection_id.clone(),
+                        records,
+                    },
+                    None,
+                )
                 .await
                 .map_err(|e| TonicStatus::internal(format!("Insert failed: {}", e)))?;
+            let response = Self::batch_result_to_vector_response(result);
 
             total_vectors += response
                 .metrics
@@ -1496,32 +1539,30 @@ impl ProximaFlightService {
             results.push(Ok(progress_data));
         }
 
-        // Send final result
-        let final_result = serde_json::json!({
+        let final_status = serde_json::json!({
             "type": "complete",
-            "success": true,
             "total_batches": total_batches,
             "total_vectors": total_vectors,
-            "collection_id": collection_id
+            "success": true
         });
 
         let final_data = FlightData {
             flight_descriptor: None,
             data_header: Default::default(),
-            app_metadata: serde_json::to_vec(&final_result).unwrap_or_default().into(),
+            app_metadata: serde_json::to_vec(&final_status).unwrap_or_default().into(),
             data_body: Default::default(),
         };
 
         results.push(Ok(final_data));
 
         info!(
-            collection_id = %collection_id,
             total_batches = total_batches,
             total_vectors = total_vectors,
             "Arrow Flight: bulk_insert exchange completed"
         );
 
-        Ok(TonicResponse::new(Box::pin(stream::iter(results))))
+        let stream = stream::iter(results);
+        Ok(TonicResponse::new(Box::pin(stream)))
     }
 
     /// Handle bulk search exchange - stream query vectors and return results
