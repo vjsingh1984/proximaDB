@@ -157,6 +157,51 @@ def test_bulk_upsert_exchange_streams_batches_and_parses_metadata():
 
 
 @pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_bulk_write_exchange_handles_many_progress_batches():
+    progress = [
+        {
+            "type": "progress",
+            "operation": "upsert",
+            "batch": batch,
+            "batch_rows": 4,
+            "total_records": batch * 4,
+        }
+        for batch in range(1, 8)
+    ]
+    complete = {
+        "type": "complete",
+        "operation": "upsert",
+        "total_batches": 7,
+        "total_records": 25,
+        "total_failed": 0,
+        "success": True,
+    }
+    fake = _ExchangeClient(
+        [_Chunk(json.dumps(item).encode()) for item in [*progress, complete]]
+    )
+    client = _client_with_exchange(fake)
+    table = pa.table(
+        {
+            "id": [f"r{i}" for i in range(25)],
+            "category": [f"c{i % 3}" for i in range(25)],
+        }
+    )
+
+    result = client.bulk_write_exchange("records", table, operation="upsert", batch_size=4)
+
+    assert fake.descriptor.path == [b"bulk_upsert", b"records"]
+    assert len(fake.writer.batches) == 7
+    assert sum(batch.num_rows for batch in fake.writer.batches) == 25
+    assert fake.writer.closed
+    assert result.success
+    assert result.records_processed == 25
+    assert result.records_failed == 0
+    assert result.batches_processed == 7
+    assert result.progress == progress
+    assert result.metadata == complete
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
 def test_bulk_delete_exchange_sends_id_table():
     complete = {
         "type": "complete",
