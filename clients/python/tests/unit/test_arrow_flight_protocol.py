@@ -52,7 +52,49 @@ class _ExchangeClient:
         return self.writer, iter(self.chunks)
 
 
+class _PutReader:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def read(self):
+        return _Buffer(json.dumps(self.payload).encode())
+
+
+class _PutWriter:
+    def __init__(self):
+        self.batches = []
+        self.closed = False
+
+    def write_batch(self, batch):
+        self.batches.append(batch)
+
+    def close(self):
+        self.closed = True
+
+
+class _PutClient:
+    def __init__(self, payload):
+        self.payload = payload
+        self.writer = _PutWriter()
+        self.descriptor = None
+        self.schema = None
+        self.options = None
+
+    def do_put(self, descriptor, schema, options=None):
+        self.descriptor = descriptor
+        self.schema = schema
+        self.options = options
+        return self.writer, _PutReader(self.payload)
+
+
 def _client_with_exchange(fake_client):
+    client = ArrowFlightClient.__new__(ArrowFlightClient)
+    client._get_client = lambda: fake_client
+    client._get_call_options = lambda: None
+    return client
+
+
+def _client_with_put(fake_client):
     client = ArrowFlightClient.__new__(ArrowFlightClient)
     client._get_client = lambda: fake_client
     client._get_call_options = lambda: None
@@ -120,6 +162,51 @@ def test_call_options_include_auth_and_tenant_headers():
 
     assert (b"authorization", b"Bearer token-1") in options.headers
     assert (b"x-proximadb-tenant-id", b"tenant-a") in options.headers
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_bulk_upsert_doput_sends_upsert_descriptor_and_batches():
+    fake = _PutClient(
+        {
+            "success": True,
+            "metrics": {"successful_count": 3, "failed_count": 0},
+        }
+    )
+    client = _client_with_put(fake)
+    table = pa.table({"id": ["r1", "r2", "r3"], "category": ["a", "b", "c"]})
+
+    result = client.bulk_upsert("records", table, batch_size=2)
+
+    descriptor = json.loads(fake.descriptor.command)
+    assert descriptor["collection_id"] == "records"
+    assert descriptor["operation"] == "upsert"
+    assert fake.schema == table.schema
+    assert [batch.num_rows for batch in fake.writer.batches] == [2, 1]
+    assert fake.writer.closed
+    assert result.success
+    assert result.records_processed == 3
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_bulk_delete_doput_sends_delete_descriptor_and_id_table():
+    fake = _PutClient(
+        {
+            "success": True,
+            "metrics": {"successful_count": 2, "failed_count": 0},
+        }
+    )
+    client = _client_with_put(fake)
+
+    result = client.bulk_delete("records", ["r1", "r2"], batch_size=10)
+
+    descriptor = json.loads(fake.descriptor.command)
+    assert descriptor["collection_id"] == "records"
+    assert descriptor["operation"] == "delete"
+    assert fake.schema.names == ["id"]
+    assert fake.writer.batches[0].column("id").to_pylist() == ["r1", "r2"]
+    assert fake.writer.closed
+    assert result.success
+    assert result.records_processed == 2
 
 
 @pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
