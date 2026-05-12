@@ -45,7 +45,8 @@ use crate::api_handlers::{
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
-use proximadb_data_model::ProximaValue;
+use proximadb_data_model::{ProximaValue, TimeUnit};
+use proximadb_records::conversions::sql_value_to_proxima;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 #[cfg(test)]
@@ -83,7 +84,8 @@ fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::S
     SqlValue { value: Some(inner) }
 }
 
-/// Convert SqlValue back to JSON for responses
+#[cfg(test)]
+/// Convert SqlValue back to JSON for legacy conversion tests.
 fn sql_value_to_json(
     value: &crate::proto::proximadb_v1::SqlValue,
 ) -> Result<serde_json::Value, ApiError> {
@@ -169,9 +171,12 @@ fn convert_typed_filters_to_clauses(
     let mut clauses = Vec::new();
 
     for filter in typed_filters {
+        let value_json = rest_value_payload(&filter.value);
+        let value_upper_json = filter.value_upper.as_ref().map(rest_value_payload);
+
         match filter.op.as_str() {
             "eq" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Eq as i32,
@@ -180,7 +185,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "neq" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Ne as i32,
@@ -189,7 +194,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "gt" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Gt as i32,
@@ -198,7 +203,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "gte" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Gte as i32,
@@ -207,7 +212,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "lt" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Lt as i32,
@@ -216,7 +221,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "lte" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Lte as i32,
@@ -227,14 +232,14 @@ fn convert_typed_filters_to_clauses(
             "between" => {
                 // "between" requires both value and value_upper
                 // Convert to two clauses: field >= value AND field <= value_upper
-                let value_upper = filter.value_upper.as_ref().ok_or_else(|| {
+                let value_upper = value_upper_json.as_ref().ok_or_else(|| {
                     ApiError::InvalidArgument(
                         "Filter operator 'between' requires 'value_upper' to be specified"
                             .to_string(),
                     )
                 })?;
 
-                if let Some(lower_value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(lower_value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Gte as i32,
@@ -252,7 +257,7 @@ fn convert_typed_filters_to_clauses(
             }
             "contains" => {
                 // Contains for string substring matching
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Contains as i32,
@@ -264,7 +269,7 @@ fn convert_typed_filters_to_clauses(
                 // starts_with is implemented using Contains operator
                 // The backend should interpret this as prefix matching
                 // We encode the intent by using Contains with the prefix value
-                if let serde_json::Value::String(s) = &filter.value {
+                if let serde_json::Value::String(s) = &value_json {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Contains as i32,
@@ -280,7 +285,7 @@ fn convert_typed_filters_to_clauses(
                 // ends_with is implemented using Contains operator
                 // The backend should interpret this as suffix matching
                 // We encode the intent by using Contains with the suffix value
-                if let serde_json::Value::String(s) = &filter.value {
+                if let serde_json::Value::String(s) = &value_json {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Contains as i32,
@@ -295,7 +300,7 @@ fn convert_typed_filters_to_clauses(
             "in" => {
                 // "in" operator: value should be an array
                 // We use the In comparison operator
-                if let serde_json::Value::Array(arr) = &filter.value {
+                if let serde_json::Value::Array(arr) = &value_json {
                     // For the "in" operator, we need to pass the array of values
                     // The FilterClause only supports single values, so we convert
                     // the array to a comma-separated string representation
@@ -391,7 +396,7 @@ pub struct ProximaRecordInput {
 ///
 /// Scalars may be sent directly for ergonomic JSON. Rich or ambiguous values use
 /// `{ "type": "...", "value": ... }`, e.g. `{ "type": "jsonb", "value": {...} }`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(untagged)]
 pub enum RestProximaValue {
     Typed {
@@ -443,6 +448,15 @@ fn infer_json_value(value: &serde_json::Value) -> Result<ProximaValue, ApiError>
 fn typed_json_value(type_name: &str, value: &serde_json::Value) -> Result<ProximaValue, ApiError> {
     let normalized = type_name.trim().to_ascii_lowercase();
     match normalized.as_str() {
+        "null" => Ok(ProximaValue::Null),
+        "bool" | "boolean" => value
+            .as_bool()
+            .map(ProximaValue::Boolean)
+            .ok_or_else(|| ApiError::InvalidArgument("boolean requires true or false".to_string())),
+        "string" | "utf8" => value
+            .as_str()
+            .map(|v| ProximaValue::String(v.to_string()))
+            .ok_or_else(|| ApiError::InvalidArgument("string requires a string".to_string())),
         "json" => Ok(ProximaValue::Json(value.clone())),
         "jsonb" => Ok(ProximaValue::Jsonb(value.clone())),
         "decimal" => Ok(ProximaValue::Decimal(match value {
@@ -461,6 +475,38 @@ fn typed_json_value(type_name: &str, value: &serde_json::Value) -> Result<Proxim
                     .map(|uuid| ProximaValue::Uuid(*uuid.as_bytes()))
                     .map_err(|e| ApiError::InvalidArgument(format!("invalid uuid: {e}")))
             }),
+        "ulid" => parse_hex_16("ulid", value).map(ProximaValue::ULID),
+        "int8" => parse_i64("int8", value).and_then(|v| {
+            i8::try_from(v)
+                .map(ProximaValue::Int8)
+                .map_err(|_| ApiError::InvalidArgument("int8 out of range".to_string()))
+        }),
+        "int16" => parse_i64("int16", value).and_then(|v| {
+            i16::try_from(v)
+                .map(ProximaValue::Int16)
+                .map_err(|_| ApiError::InvalidArgument("int16 out of range".to_string()))
+        }),
+        "int32" => parse_i64("int32", value).and_then(|v| {
+            i32::try_from(v)
+                .map(ProximaValue::Int32)
+                .map_err(|_| ApiError::InvalidArgument("int32 out of range".to_string()))
+        }),
+        "int64" | "integer" => parse_i64("int64", value).map(ProximaValue::Int64),
+        "uint8" => parse_u64("uint8", value).and_then(|v| {
+            u8::try_from(v)
+                .map(ProximaValue::UInt8)
+                .map_err(|_| ApiError::InvalidArgument("uint8 out of range".to_string()))
+        }),
+        "uint16" => parse_u64("uint16", value).and_then(|v| {
+            u16::try_from(v)
+                .map(ProximaValue::UInt16)
+                .map_err(|_| ApiError::InvalidArgument("uint16 out of range".to_string()))
+        }),
+        "uint32" => parse_u64("uint32", value).and_then(|v| {
+            u32::try_from(v)
+                .map(ProximaValue::UInt32)
+                .map_err(|_| ApiError::InvalidArgument("uint32 out of range".to_string()))
+        }),
         "uint64" => value
             .as_u64()
             .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
@@ -468,12 +514,39 @@ fn typed_json_value(type_name: &str, value: &serde_json::Value) -> Result<Proxim
             .ok_or_else(|| {
                 ApiError::InvalidArgument("uint64 requires an unsigned integer".to_string())
             }),
+        "float16" => value
+            .as_f64()
+            .map(|v| ProximaValue::Float16(v as f32))
+            .ok_or_else(|| ApiError::InvalidArgument("float16 requires a number".to_string())),
         "float32" => value
             .as_f64()
             .map(|v| ProximaValue::Float32(v as f32))
             .ok_or_else(|| ApiError::InvalidArgument("float32 requires a number".to_string())),
+        "float64" | "float" | "number" => value
+            .as_f64()
+            .map(ProximaValue::Float64)
+            .ok_or_else(|| ApiError::InvalidArgument("float64 requires a number".to_string())),
+        "date" => parse_i64("date", value).and_then(|v| {
+            i32::try_from(v)
+                .map(ProximaValue::Date)
+                .map_err(|_| ApiError::InvalidArgument("date out of range".to_string()))
+        }),
+        "time" => parse_temporal(value).map(|(v, unit)| ProximaValue::Time(v, unit)),
+        "timestamp" => parse_temporal(value).map(|(v, unit)| ProximaValue::Timestamp(v, unit)),
+        "timestamptz" | "timestamp_tz" => {
+            parse_temporal(value).map(|(v, unit)| ProximaValue::TimestampTz(v, unit))
+        }
         "binary_vector" => bytes_from_json_array(value).map(ProximaValue::BinaryVector),
         "binary" => bytes_from_json_array(value).map(ProximaValue::Binary),
+        "array" => value
+            .as_array()
+            .ok_or_else(|| ApiError::InvalidArgument("array requires an array".to_string()))?
+            .iter()
+            .map(infer_json_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(ProximaValue::Array),
+        "map" => typed_object_to_proxima(value).map(ProximaValue::Map),
+        "struct" => typed_object_to_proxima(value).map(ProximaValue::Struct),
         "dense_vector" | "vector" => value
             .as_array()
             .ok_or_else(|| ApiError::InvalidArgument("vector requires an array".to_string()))?
@@ -485,8 +558,229 @@ fn typed_json_value(type_name: &str, value: &serde_json::Value) -> Result<Proxim
             })
             .collect::<Result<Vec<_>, _>>()
             .map(ProximaValue::DenseVector),
+        "sparse_vector" => {
+            let obj = value.as_object().ok_or_else(|| {
+                ApiError::InvalidArgument(
+                    "sparse_vector requires {\"indices\": [...], \"values\": [...]}".to_string(),
+                )
+            })?;
+            let indices = obj
+                .get("indices")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    ApiError::InvalidArgument("sparse_vector indices must be an array".to_string())
+                })?
+                .iter()
+                .map(|v| {
+                    v.as_u64()
+                        .and_then(|v| u32::try_from(v).ok())
+                        .ok_or_else(|| {
+                            ApiError::InvalidArgument(
+                                "sparse_vector indices must be uint32 values".to_string(),
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let values = obj
+                .get("values")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    ApiError::InvalidArgument("sparse_vector values must be an array".to_string())
+                })?
+                .iter()
+                .map(|v| {
+                    v.as_f64().map(|v| v as f32).ok_or_else(|| {
+                        ApiError::InvalidArgument(
+                            "sparse_vector values must be numeric".to_string(),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ProximaValue::SparseVector { indices, values })
+        }
         _ => infer_json_value(value),
     }
+}
+
+fn typed_object_to_proxima(
+    value: &serde_json::Value,
+) -> Result<HashMap<String, ProximaValue>, ApiError> {
+    value
+        .as_object()
+        .ok_or_else(|| ApiError::InvalidArgument("object type requires a JSON object".to_string()))?
+        .iter()
+        .map(|(key, value)| {
+            serde_json::from_value::<RestProximaValue>(value.clone())
+                .map_err(|e| ApiError::InvalidArgument(format!("invalid typed object value: {e}")))
+                .and_then(|value| rest_value_to_proxima(&value))
+                .map(|value| (key.clone(), value))
+        })
+        .collect()
+}
+
+fn parse_i64(type_name: &str, value: &serde_json::Value) -> Result<i64, ApiError> {
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
+        .ok_or_else(|| ApiError::InvalidArgument(format!("{type_name} requires an integer")))
+}
+
+fn parse_u64(type_name: &str, value: &serde_json::Value) -> Result<u64, ApiError> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
+        .ok_or_else(|| {
+            ApiError::InvalidArgument(format!("{type_name} requires an unsigned integer"))
+        })
+}
+
+fn parse_temporal(value: &serde_json::Value) -> Result<(i64, TimeUnit), ApiError> {
+    if let Some(object) = value.as_object() {
+        let value = object
+            .get("value")
+            .ok_or_else(|| {
+                ApiError::InvalidArgument("temporal value requires a value field".to_string())
+            })
+            .and_then(|value| parse_i64("temporal value", value))?;
+        let unit = object
+            .get("unit")
+            .and_then(|unit| unit.as_str())
+            .map(parse_time_unit)
+            .transpose()?
+            .unwrap_or(TimeUnit::Nanosecond);
+        Ok((value, unit))
+    } else {
+        parse_i64("temporal value", value).map(|value| (value, TimeUnit::Nanosecond))
+    }
+}
+
+fn parse_time_unit(unit: &str) -> Result<TimeUnit, ApiError> {
+    match unit.trim().to_ascii_lowercase().as_str() {
+        "s" | "sec" | "second" | "seconds" => Ok(TimeUnit::Second),
+        "ms" | "millisecond" | "milliseconds" => Ok(TimeUnit::Millisecond),
+        "us" | "microsecond" | "microseconds" => Ok(TimeUnit::Microsecond),
+        "ns" | "nanosecond" | "nanoseconds" => Ok(TimeUnit::Nanosecond),
+        other => Err(ApiError::InvalidArgument(format!(
+            "unsupported temporal unit: {other}"
+        ))),
+    }
+}
+
+fn parse_hex_16(type_name: &str, value: &serde_json::Value) -> Result<[u8; 16], ApiError> {
+    let raw = value
+        .as_str()
+        .ok_or_else(|| ApiError::InvalidArgument(format!("{type_name} requires a string")))?;
+    let decoded = hex::decode(raw.trim())
+        .map_err(|e| ApiError::InvalidArgument(format!("{type_name} must be 16 hex bytes: {e}")))?;
+    decoded.try_into().map_err(|_| {
+        ApiError::InvalidArgument(format!("{type_name} must decode to exactly 16 bytes"))
+    })
+}
+
+fn proxima_value_to_rest_value(value: &ProximaValue) -> RestProximaValue {
+    let typed = |type_name: &str, value: serde_json::Value| RestProximaValue::Typed {
+        type_name: type_name.to_string(),
+        value,
+    };
+
+    match value {
+        ProximaValue::Boolean(value) => typed("boolean", serde_json::Value::Bool(*value)),
+        ProximaValue::Int8(value) => typed("int8", serde_json::json!(value)),
+        ProximaValue::Int16(value) => typed("int16", serde_json::json!(value)),
+        ProximaValue::Int32(value) => typed("int32", serde_json::json!(value)),
+        ProximaValue::Int64(value) => typed("int64", serde_json::json!(value)),
+        ProximaValue::UInt8(value) => typed("uint8", serde_json::json!(value)),
+        ProximaValue::UInt16(value) => typed("uint16", serde_json::json!(value)),
+        ProximaValue::UInt32(value) => typed("uint32", serde_json::json!(value)),
+        ProximaValue::UInt64(value) => typed("uint64", serde_json::json!(value)),
+        ProximaValue::Float16(value) => typed("float16", serde_json::json!(value)),
+        ProximaValue::Float32(value) => typed("float32", serde_json::json!(value)),
+        ProximaValue::Float64(value) => typed("float64", serde_json::json!(value)),
+        ProximaValue::Decimal(value) => typed("decimal", serde_json::Value::String(value.clone())),
+        ProximaValue::String(value) => typed("string", serde_json::Value::String(value.clone())),
+        ProximaValue::Symbol(value) => typed("symbol", serde_json::Value::String(value.clone())),
+        ProximaValue::Binary(value) => typed("binary", bytes_to_json(value)),
+        ProximaValue::Date(value) => typed("date", serde_json::json!(value)),
+        ProximaValue::Time(value, unit) => typed("time", temporal_to_json(*value, *unit)),
+        ProximaValue::Timestamp(value, unit) => typed("timestamp", temporal_to_json(*value, *unit)),
+        ProximaValue::TimestampTz(value, unit) => {
+            typed("timestamptz", temporal_to_json(*value, *unit))
+        }
+        ProximaValue::Uuid(value) => typed(
+            "uuid",
+            serde_json::Value::String(uuid::Uuid::from_bytes(*value).to_string()),
+        ),
+        ProximaValue::ULID(value) => typed("ulid", serde_json::Value::String(hex::encode(value))),
+        ProximaValue::Json(value) => typed("json", value.clone()),
+        ProximaValue::Jsonb(value) => typed("jsonb", value.clone()),
+        ProximaValue::Array(values) => typed(
+            "array",
+            serde_json::Value::Array(
+                values
+                    .iter()
+                    .map(|value| rest_value_to_json_value(&proxima_value_to_rest_value(value)))
+                    .collect(),
+            ),
+        ),
+        ProximaValue::Map(values) => typed("map", proxima_map_to_json(values)),
+        ProximaValue::Struct(values) => typed("struct", proxima_map_to_json(values)),
+        ProximaValue::DenseVector(values) => typed("dense_vector", serde_json::json!(values)),
+        ProximaValue::SparseVector { indices, values } => typed(
+            "sparse_vector",
+            serde_json::json!({
+                "indices": indices,
+                "values": values,
+            }),
+        ),
+        ProximaValue::BinaryVector(value) => typed("binary_vector", bytes_to_json(value)),
+        ProximaValue::Null => typed("null", serde_json::Value::Null),
+    }
+}
+
+#[cfg(test)]
+fn rest_value_payload(value: &RestProximaValue) -> serde_json::Value {
+    match value {
+        RestProximaValue::Typed { value, .. } | RestProximaValue::Inferred(value) => value.clone(),
+    }
+}
+
+fn rest_value_to_json_value(value: &RestProximaValue) -> serde_json::Value {
+    serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+}
+
+fn proxima_map_to_json(values: &HashMap<String, ProximaValue>) -> serde_json::Value {
+    serde_json::Value::Object(
+        values
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    rest_value_to_json_value(&proxima_value_to_rest_value(value)),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn temporal_to_json(value: i64, unit: TimeUnit) -> serde_json::Value {
+    serde_json::json!({
+        "value": value,
+        "unit": match unit {
+            TimeUnit::Second => "second",
+            TimeUnit::Millisecond => "millisecond",
+            TimeUnit::Microsecond => "microsecond",
+            TimeUnit::Nanosecond => "nanosecond",
+        },
+    })
+}
+
+fn bytes_to_json(value: &[u8]) -> serde_json::Value {
+    serde_json::Value::Array(
+        value
+            .iter()
+            .map(|value| serde_json::Value::Number((*value as u64).into()))
+            .collect(),
+    )
 }
 
 fn bytes_from_json_array(value: &serde_json::Value) -> Result<Vec<u8>, ApiError> {
@@ -526,11 +820,11 @@ fn typed_filter_to_rich(filter: &TypedFilter) -> Result<RichFilterCondition, Api
         }
     };
 
-    let value = rest_value_to_proxima(&RestProximaValue::Inferred(filter.value.clone()))?;
+    let value = rest_value_to_proxima(&filter.value)?;
     let value_upper = filter
         .value_upper
         .as_ref()
-        .map(|value| rest_value_to_proxima(&RestProximaValue::Inferred(value.clone())))
+        .map(rest_value_to_proxima)
         .transpose()?;
     let value_list = match (&operator, &value) {
         (RichFilterOperator::In, ProximaValue::Array(values)) => values.clone(),
@@ -809,9 +1103,9 @@ pub struct TypedFilter {
     /// - "ends_with": String ends with suffix
     pub op: String,
     /// Filter value (type depends on field type)
-    pub value: serde_json::Value,
+    pub value: RestProximaValue,
     /// Upper bound for "between" operator
-    pub value_upper: Option<serde_json::Value>,
+    pub value_upper: Option<RestProximaValue>,
 }
 
 /// Search result with typed fields
@@ -824,7 +1118,7 @@ pub struct TypedSearchResult {
     /// Vector embedding (if requested)
     pub vector: Option<Vec<f32>>,
     /// Rich properties from the record
-    pub props: HashMap<String, serde_json::Value>,
+    pub props: HashMap<String, RestProximaValue>,
     /// TEXT fields (if include_text is true)
     pub text_fields: Option<Vec<TextFieldOutput>>,
 }
@@ -992,11 +1286,16 @@ pub async fn search_with_typed_filters(
                 .results
                 .iter()
                 .map(|r| {
-                    let props: HashMap<String, serde_json::Value> = r
+                    let props: HashMap<String, RestProximaValue> = r
                         .metadata
                         .iter()
-                        .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
-                        .collect::<Result<_, ApiError>>()?;
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                proxima_value_to_rest_value(&sql_value_to_proxima(v)),
+                            )
+                        })
+                        .collect();
 
                     Ok(TypedSearchResult {
                         id: r.id.clone(),
@@ -1065,7 +1364,7 @@ pub struct RecordV2Response {
     /// Vector embedding (if requested)
     pub vector: Option<Vec<f32>>,
     /// Rich properties from the record
-    pub props: HashMap<String, serde_json::Value>,
+    pub props: HashMap<String, RestProximaValue>,
     /// TEXT fields (if include_text is true)
     pub text_fields: Option<Vec<TextFieldOutput>>,
     /// Record version
@@ -1151,11 +1450,16 @@ pub async fn get_record_v2(
                 .first()
                 .ok_or_else(|| ApiError::NotFound(format!("Record '{}' not found", record_id)))?;
 
-            let props: HashMap<String, serde_json::Value> = result
+            let props: HashMap<String, RestProximaValue> = result
                 .metadata
                 .iter()
-                .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
-                .collect::<Result<_, ApiError>>()?;
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        proxima_value_to_rest_value(&sql_value_to_proxima(v)),
+                    )
+                })
+                .collect();
 
             let response = RecordV2Response {
                 id: result.id.clone(),
@@ -1192,6 +1496,10 @@ pub async fn get_record_v2(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rv(value: serde_json::Value) -> RestProximaValue {
+        RestProximaValue::Inferred(value)
+    }
 
     #[test]
     fn test_insert_request_deserialization() {
@@ -1253,8 +1561,8 @@ mod tests {
         let json = r#"{
             "field": "price",
             "op": "between",
-            "value": 100,
-            "value_upper": 500
+            "value": {"type": "decimal", "value": "100.00"},
+            "value_upper": {"type": "decimal", "value": "500.00"}
         }"#;
 
         let filter: TypedFilter =
@@ -1264,13 +1572,62 @@ mod tests {
     }
 
     #[test]
+    fn test_typed_filter_to_rich_preserves_explicit_decimal() {
+        let filter = TypedFilter {
+            field: "price".to_string(),
+            op: "between".to_string(),
+            value: RestProximaValue::Typed {
+                type_name: "decimal".to_string(),
+                value: serde_json::json!("10.50"),
+            },
+            value_upper: Some(RestProximaValue::Typed {
+                type_name: "decimal".to_string(),
+                value: serde_json::json!("20.75"),
+            }),
+        };
+
+        let rich = typed_filter_to_rich(&filter).expect("typed filter should convert");
+
+        assert!(matches!(rich.value, ProximaValue::Decimal(v) if v == "10.50"));
+        assert!(matches!(rich.value_upper, Some(ProximaValue::Decimal(v)) if v == "20.75"));
+    }
+
+    #[test]
+    fn test_proxima_value_to_rest_value_preserves_rich_type() {
+        let value = ProximaValue::Jsonb(serde_json::json!({"tags": ["a", "b"]}));
+        let rest = proxima_value_to_rest_value(&value);
+
+        assert_eq!(
+            rest,
+            RestProximaValue::Typed {
+                type_name: "jsonb".to_string(),
+                value: serde_json::json!({"tags": ["a", "b"]}),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nested_rest_values_preserve_element_types() {
+        let value = ProximaValue::Array(vec![ProximaValue::Decimal("10.50".to_string())]);
+        let rest = proxima_value_to_rest_value(&value);
+
+        assert_eq!(
+            rest,
+            RestProximaValue::Typed {
+                type_name: "array".to_string(),
+                value: serde_json::json!([{"type": "decimal", "value": "10.50"}]),
+            }
+        );
+    }
+
+    #[test]
     fn test_convert_eq_filter() {
         use crate::proto::proximadb_v1::ComparisonOp;
 
         let filters = vec![TypedFilter {
             field: "status".to_string(),
             op: "eq".to_string(),
-            value: serde_json::json!("active"),
+            value: rv(serde_json::json!("active")),
             value_upper: None,
         }];
 
@@ -1289,25 +1646,25 @@ mod tests {
             TypedFilter {
                 field: "price".to_string(),
                 op: "gt".to_string(),
-                value: serde_json::json!(100),
+                value: rv(serde_json::json!(100)),
                 value_upper: None,
             },
             TypedFilter {
                 field: "price".to_string(),
                 op: "gte".to_string(),
-                value: serde_json::json!(100),
+                value: rv(serde_json::json!(100)),
                 value_upper: None,
             },
             TypedFilter {
                 field: "price".to_string(),
                 op: "lt".to_string(),
-                value: serde_json::json!(500),
+                value: rv(serde_json::json!(500)),
                 value_upper: None,
             },
             TypedFilter {
                 field: "price".to_string(),
                 op: "lte".to_string(),
-                value: serde_json::json!(500),
+                value: rv(serde_json::json!(500)),
                 value_upper: None,
             },
         ];
@@ -1328,8 +1685,8 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "price".to_string(),
             op: "between".to_string(),
-            value: serde_json::json!(100),
-            value_upper: Some(serde_json::json!(500)),
+            value: rv(serde_json::json!(100)),
+            value_upper: Some(rv(serde_json::json!(500))),
         }];
 
         let clauses = convert_typed_filters_to_clauses(&filters)
@@ -1347,7 +1704,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "price".to_string(),
             op: "between".to_string(),
-            value: serde_json::json!(100),
+            value: rv(serde_json::json!(100)),
             value_upper: None, // Missing upper bound
         }];
 
@@ -1362,7 +1719,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "description".to_string(),
             op: "contains".to_string(),
-            value: serde_json::json!("search term"),
+            value: rv(serde_json::json!("search term")),
             value_upper: None,
         }];
 
@@ -1379,7 +1736,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "name".to_string(),
             op: "starts_with".to_string(),
-            value: serde_json::json!("pre"),
+            value: rv(serde_json::json!("pre")),
             value_upper: None,
         }];
 
@@ -1402,7 +1759,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "name".to_string(),
             op: "ends_with".to_string(),
-            value: serde_json::json!("suffix"),
+            value: rv(serde_json::json!("suffix")),
             value_upper: None,
         }];
 
@@ -1425,7 +1782,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "status".to_string(),
             op: "in".to_string(),
-            value: serde_json::json!(["active", "pending", "review"]),
+            value: rv(serde_json::json!(["active", "pending", "review"])),
             value_upper: None,
         }];
 
@@ -1452,7 +1809,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "priority".to_string(),
             op: "in".to_string(),
-            value: serde_json::json!([1, 2, 3]),
+            value: rv(serde_json::json!([1, 2, 3])),
             value_upper: None,
         }];
 
@@ -1474,7 +1831,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "status".to_string(),
             op: "in".to_string(),
-            value: serde_json::json!("not_an_array"),
+            value: rv(serde_json::json!("not_an_array")),
             value_upper: None,
         }];
 
@@ -1489,7 +1846,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "status".to_string(),
             op: "neq".to_string(),
-            value: serde_json::json!("deleted"),
+            value: rv(serde_json::json!("deleted")),
             value_upper: None,
         }];
 
@@ -1507,19 +1864,19 @@ mod tests {
             TypedFilter {
                 field: "category".to_string(),
                 op: "eq".to_string(),
-                value: serde_json::json!("electronics"),
+                value: rv(serde_json::json!("electronics")),
                 value_upper: None,
             },
             TypedFilter {
                 field: "price".to_string(),
                 op: "lt".to_string(),
-                value: serde_json::json!(1000),
+                value: rv(serde_json::json!(1000)),
                 value_upper: None,
             },
             TypedFilter {
                 field: "in_stock".to_string(),
                 op: "eq".to_string(),
-                value: serde_json::json!(true),
+                value: rv(serde_json::json!(true)),
                 value_upper: None,
             },
         ];
@@ -1830,7 +2187,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "x".to_string(),
             op: "regex".to_string(),
-            value: serde_json::json!(".*"),
+            value: rv(serde_json::json!(".*")),
             value_upper: None,
         }];
 
@@ -1845,7 +2202,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "name".to_string(),
             op: "starts_with".to_string(),
-            value: serde_json::json!(123),
+            value: rv(serde_json::json!(123)),
             value_upper: None,
         }];
 
@@ -1858,7 +2215,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "name".to_string(),
             op: "ends_with".to_string(),
-            value: serde_json::json!(true),
+            value: rv(serde_json::json!(true)),
             value_upper: None,
         }];
 
@@ -2223,7 +2580,7 @@ mod tests {
         assert_eq!(filters[2].op, "lte");
         assert_eq!(filters[3].field, "brand");
         assert_eq!(filters[3].op, "in");
-        assert!(filters[3].value.is_array());
+        assert!(rest_value_payload(&filters[3].value).is_array());
         assert_eq!(filters[4].field, "description");
         assert_eq!(filters[4].op, "contains");
 
@@ -2364,7 +2721,13 @@ mod tests {
                 vector: None,
                 props: {
                     let mut m = HashMap::new();
-                    m.insert("category".to_string(), serde_json::json!("test"));
+                    m.insert(
+                        "category".to_string(),
+                        RestProximaValue::Typed {
+                            type_name: "string".to_string(),
+                            value: serde_json::json!("test"),
+                        },
+                    );
                     m
                 },
                 text_fields: None,
