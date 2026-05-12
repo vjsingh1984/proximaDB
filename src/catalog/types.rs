@@ -426,6 +426,8 @@ pub enum CatalogIndexType {
     Hash,
     /// Full-text index
     FullText,
+    /// PostgreSQL-compatible GIN index for JSONB/path-heavy document projections
+    Gin,
     /// HNSW vector index
     Hnsw,
     /// IVF vector index

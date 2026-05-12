@@ -50,6 +50,39 @@ class TestEmbeddedBasics:
             info = db.get_collection("to_delete")
             assert info is None
 
+    def test_execute_sql_agentic_schema_ddl(self):
+        """Test embedded SQL DDL lowers mixed schema into Rust catalog."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = ProximaDB(data_dirs=tmpdir)
+            result = db.execute_sql(
+                """
+                CREATE TABLE IF NOT EXISTS "agent_store" (
+                    "record_id" TEXT NOT NULL,
+                    "payload" JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    "embedding" VECTOR(32),
+                    PRIMARY KEY ("record_id")
+                ) WITH (
+                    storage_engine = 'SST',
+                    layout = 'hybrid',
+                    xcatalog_namespace = 'agentic.pyembedded',
+                    schema_kind = 'agentic_mixed'
+                );
+                """
+            )
+
+            assert result["row_count"] == 1
+            assert result["rows"][0]["success"] is True
+            assert "Created table" in result["rows"][0]["message"]
+
+            gin = db.execute_sql(
+                "CREATE INDEX idx_agent_payload ON agent_store USING GIN (payload);"
+            )
+            hnsw = db.execute_sql(
+                "CREATE INDEX idx_agent_embedding ON agent_store USING HNSW (embedding);"
+            )
+            assert gin["rows"][0]["success"] is True
+            assert hnsw["rows"][0]["success"] is True
+
 
 class TestVectorOperations:
     """Vector insert and search tests"""
@@ -161,7 +194,7 @@ class TestPersistence:
 
     def test_stats(self):
         """Test storage statistics"""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db = ProximaDB(data_dirs=tmpdir)
             db.create_collection("stats_test", dimension=128)
 

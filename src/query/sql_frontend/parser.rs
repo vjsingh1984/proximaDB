@@ -2,10 +2,10 @@
 
 use anyhow::{Result, anyhow};
 use sqlparser::ast::{
-    BinaryOperator, Cte as SqlCte, Expr as SqlExpr, FunctionArg, FunctionArgExpr, Join as SqlJoin,
-    JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr, Query as SqlQuery,
-    Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator, Statement,
-    TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
+    BinaryOperator, CreateTableOptions, Cte as SqlCte, Expr as SqlExpr, FunctionArg,
+    FunctionArgExpr, Join as SqlJoin, JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr,
+    Query as SqlQuery, Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator,
+    SqlOption, Statement, TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
 };
 use sqlparser::ast::{CreateIndex, IndexOption};
 use sqlparser::dialect::GenericDialect;
@@ -1505,6 +1505,75 @@ mod tests {
     }
 
     #[test]
+    fn parse_ddl_create_table_lowers_catalog_options_and_table_primary_key() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl(
+                "CREATE TABLE IF NOT EXISTS \"agent_store\" (
+                    \"record_id\" TEXT NOT NULL,
+                    \"payload\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    \"embedding\" VECTOR(384),
+                    PRIMARY KEY (\"record_id\")
+                ) WITH (
+                    storage_engine = 'VIPER',
+                    layout = 'columnar',
+                    xcatalog_namespace = 'agentic.demo',
+                    schema_kind = 'agentic_mixed'
+                );",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected create table ddl");
+
+        if let DdlStatement::CreateTable {
+            table_name,
+            columns,
+            if_not_exists,
+            properties,
+        } = statement
+        {
+            assert_eq!(table_name, "agent_store");
+            assert!(if_not_exists);
+            assert_eq!(
+                properties.get("storage_engine").map(String::as_str),
+                Some("VIPER")
+            );
+            assert_eq!(
+                properties.get("layout").map(String::as_str),
+                Some("columnar")
+            );
+            assert_eq!(
+                properties.get("xcatalog_namespace").map(String::as_str),
+                Some("agentic.demo")
+            );
+            let record_id = columns
+                .iter()
+                .find(|column| column.name == "record_id")
+                .expect("record_id column should parse");
+            assert!(record_id.primary_key);
+            assert!(!record_id.nullable);
+            assert!(matches!(
+                columns
+                    .iter()
+                    .find(|column| column.name == "payload")
+                    .expect("payload column")
+                    .data_type,
+                SqlDataType::Jsonb
+            ));
+            assert!(matches!(
+                columns
+                    .iter()
+                    .find(|column| column.name == "embedding")
+                    .expect("embedding column")
+                    .data_type,
+                SqlDataType::Vector { dimension: 384 }
+            ));
+        } else {
+            panic!("expected create table statement");
+        }
+    }
+
+    #[test]
     fn parse_ddl_create_index_supports_default_btree() {
         let parser = SqlFrontendParser::new();
 
@@ -1530,6 +1599,35 @@ mod tests {
         } else {
             panic!("expected create index statement");
         }
+    }
+
+    #[test]
+    fn parse_ddl_create_index_supports_gin_and_hnsw() {
+        let parser = SqlFrontendParser::new();
+
+        let gin = parser
+            .parse_ddl("CREATE INDEX idx_payload ON agent_store USING GIN (payload);")
+            .expect("gin parse should succeed")
+            .expect("expected create index");
+        let hnsw = parser
+            .parse_ddl("CREATE INDEX idx_embedding ON agent_store USING HNSW (embedding);")
+            .expect("hnsw parse should succeed")
+            .expect("expected create index");
+
+        assert!(matches!(
+            gin,
+            DdlStatement::CreateIndex {
+                index_type: IndexType::Gin,
+                ..
+            }
+        ));
+        assert!(matches!(
+            hnsw,
+            DdlStatement::CreateIndex {
+                index_type: IndexType::Hnsw { .. },
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1600,11 +1698,6 @@ mod tests {
             ),
             ("DROP TABLESPACE sample_space;", "sql parser error", false),
             ("DROP VIEW demo;", "Unsupported DROP object type", false),
-            (
-                "CREATE INDEX demo_payload_idx ON demo USING GIN (payload);",
-                "Unsupported CREATE INDEX USING",
-                false,
-            ),
             (
                 "DROP INDEX demo_payload_idx;",
                 "DROP INDEX requires a table name",
@@ -1849,19 +1942,21 @@ impl SqlFrontendParser {
                     ));
                 }
 
-                let table_name = create_table.name.to_string();
+                let table_name = unquote_object_name(&create_table.name.to_string());
                 let if_not_exists = create_table.if_not_exists;
-                let columns = create_table
+                let mut columns = create_table
                     .columns
                     .iter()
                     .map(|col| self.convert_column_def(col))
                     .collect::<Result<Vec<_>>>()?;
+                apply_table_constraints(&mut columns, &create_table.constraints)?;
+                let properties = table_options_to_properties(&create_table.table_options);
 
                 Ok(Some(DdlStatement::CreateTable {
                     table_name,
                     columns,
                     if_not_exists,
-                    properties: HashMap::new(),
+                    properties,
                 }))
             }
             Statement::CreateIndex(create_index) => {
@@ -1870,11 +1965,11 @@ impl SqlFrontendParser {
                     .as_ref()
                     .map(|name| name.to_string())
                     .ok_or_else(|| anyhow!("CREATE INDEX requires an index name"))?;
-                let table_name = create_index.table_name.to_string();
+                let table_name = unquote_object_name(&create_index.table_name.to_string());
                 let columns = create_index
                     .columns
                     .iter()
-                    .map(|col| col.column.to_string())
+                    .map(|col| unquote_identifier_text(&col.column.to_string()))
                     .collect::<Vec<_>>();
                 let index_type = self.parse_index_type(create_index)?;
                 let if_not_exists = create_index.if_not_exists;
@@ -1945,10 +2040,23 @@ impl SqlFrontendParser {
         let index_type = match index_type {
             sqlparser::ast::IndexType::BTree => IndexType::BTree,
             sqlparser::ast::IndexType::Hash => IndexType::Hash,
+            sqlparser::ast::IndexType::GIN => IndexType::Gin,
             sqlparser::ast::IndexType::Custom(name)
                 if name.value.eq_ignore_ascii_case("fulltext") =>
             {
                 IndexType::FullText
+            }
+            sqlparser::ast::IndexType::Custom(name) if name.value.eq_ignore_ascii_case("gin") => {
+                IndexType::Gin
+            }
+            sqlparser::ast::IndexType::Custom(name) if name.value.eq_ignore_ascii_case("hnsw") => {
+                IndexType::Hnsw {
+                    m: None,
+                    ef_construction: None,
+                }
+            }
+            sqlparser::ast::IndexType::Custom(name) if name.value.eq_ignore_ascii_case("ivf") => {
+                IndexType::Ivf { nlist: None }
             }
             sqlparser::ast::IndexType::Custom(name) => {
                 return Err(anyhow!("Unsupported CREATE INDEX USING {}", name.value));
@@ -1963,7 +2071,7 @@ impl SqlFrontendParser {
     fn convert_column_def(&self, col_def: &sqlparser::ast::ColumnDef) -> Result<ColumnDefinition> {
         use sqlparser::ast::ColumnOption;
 
-        let name = col_def.name.to_string();
+        let name = col_def.name.value.clone();
         let data_type = self.convert_data_type(&col_def.data_type)?;
         let mut nullable = true;
         let mut default_value = None;
@@ -2086,5 +2194,86 @@ impl SqlFrontendParser {
             }
             _ => Err(anyhow!("Unsupported data type: {:?}", dt)),
         }
+    }
+}
+
+fn apply_table_constraints(
+    columns: &mut [ColumnDefinition],
+    constraints: &[sqlparser::ast::TableConstraint],
+) -> Result<()> {
+    for constraint in constraints {
+        if let sqlparser::ast::TableConstraint::PrimaryKey { columns: pk, .. } = constraint {
+            for ident in pk {
+                let name = unquote_identifier_text(&ident.to_string());
+                if let Some(column) = columns.iter_mut().find(|column| column.name == name) {
+                    column.primary_key = true;
+                    column.nullable = false;
+                } else {
+                    return Err(anyhow!("PRIMARY KEY references unknown column {}", name));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn table_options_to_properties(options: &CreateTableOptions) -> HashMap<String, String> {
+    let mut properties = HashMap::new();
+    let options = match options {
+        CreateTableOptions::With(options)
+        | CreateTableOptions::Options(options)
+        | CreateTableOptions::Plain(options)
+        | CreateTableOptions::TableProperties(options) => options,
+        CreateTableOptions::None => return properties,
+    };
+
+    for option in options {
+        match option {
+            SqlOption::KeyValue { key, value } => {
+                properties.insert(
+                    key.value.to_ascii_lowercase(),
+                    sql_option_value_to_string(value),
+                );
+            }
+            SqlOption::Ident(ident) => {
+                properties.insert(ident.value.to_ascii_lowercase(), "true".to_string());
+            }
+            SqlOption::Comment(comment) => {
+                properties.insert("comment".to_string(), comment.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    properties
+}
+
+fn sql_option_value_to_string(value: &SqlExpr) -> String {
+    match value {
+        SqlExpr::Value(value) => match &value.value {
+            Value::SingleQuotedString(value) | Value::DoubleQuotedString(value) => value.clone(),
+            Value::Boolean(value) => value.to_string(),
+            Value::Number(value, _) => value.clone(),
+            _ => value.value.to_string(),
+        },
+        SqlExpr::Identifier(ident) => ident.value.clone(),
+        _ => value.to_string().trim_matches('\'').to_string(),
+    }
+}
+
+fn unquote_object_name(value: &str) -> String {
+    value
+        .split('.')
+        .map(unquote_identifier_text)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn unquote_identifier_text(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        trimmed[1..trimmed.len() - 1].replace("\"\"", "\"")
+    } else {
+        trimmed.to_string()
     }
 }

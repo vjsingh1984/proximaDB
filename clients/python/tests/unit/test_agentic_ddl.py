@@ -18,6 +18,9 @@ def test_agentic_ddl_emits_pgwire_compatible_mixed_schema() -> None:
     assert '"payload" JSONB NOT NULL DEFAULT \'{}\'::jsonb' in statements[0]
     assert '"embedding" VECTOR(384)' in statements[0]
     assert 'PRIMARY KEY ("record_id")' in statements[0]
+    assert "WITH (storage_engine = 'VIPER', layout = 'columnar'" in statements[0]
+    assert "xcatalog_namespace = 'agentic.victor_repo'" in statements[0]
+    assert "schema_kind = 'agentic_mixed'" in statements[0]
     assert any("USING GIN" in statement and '"payload"' in statement for statement in statements)
     assert any("USING HNSW" in statement and '"embedding"' in statement for statement in statements)
     assert any(
@@ -48,5 +51,9 @@ def test_agentic_ddl_can_emit_relational_core_without_catalog_comments() -> None
         '"metadata" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
         '"checkpoint" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
         '"embedding" VECTOR(16), '
-        'PRIMARY KEY ("record_id"));'
+        'PRIMARY KEY ("record_id")) WITH ('
+        "storage_engine = 'SST', "
+        "layout = 'hybrid', "
+        "xcatalog_namespace = 'agentic.agent', "
+        "schema_kind = 'agentic_mixed');"
     )

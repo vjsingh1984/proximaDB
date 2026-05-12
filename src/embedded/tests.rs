@@ -85,6 +85,94 @@ mod tests {
     }
 
     #[test]
+    fn test_embedded_execute_sql_lowers_agentic_ddl_to_catalog() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = EmbeddedConfig::for_low_memory(temp_dir.path().to_string_lossy().as_ref());
+        let db = EmbeddedProximaDB::new(config).expect("create embedded db");
+
+        let result = db
+            .execute_sql(
+                "CREATE TABLE IF NOT EXISTS \"agent_store\" (
+                    \"record_id\" TEXT NOT NULL,
+                    \"tenant_id\" TEXT NOT NULL,
+                    \"payload\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    \"embedding\" VECTOR(64),
+                    PRIMARY KEY (\"record_id\")
+                ) WITH (
+                    storage_engine = 'SST',
+                    layout = 'hybrid',
+                    xcatalog_namespace = 'agentic.embedded',
+                    schema_kind = 'agentic_mixed'
+                );",
+                None,
+                None,
+            )
+            .expect("execute create table ddl");
+
+        assert_eq!(result.row_count, 1);
+        assert_eq!(result.rows[0]["success"], serde_json::json!(true));
+
+        db.execute_sql(
+            "CREATE INDEX idx_agent_payload ON agent_store USING GIN (payload);",
+            None,
+            None,
+        )
+        .expect("execute gin index ddl");
+        db.execute_sql(
+            "CREATE INDEX idx_agent_embedding ON agent_store USING HNSW (embedding);",
+            None,
+            None,
+        )
+        .expect("execute hnsw index ddl");
+
+        let (catalog, table_id) = db
+            .runtime
+            .block_on(db.catalog_manager.resolve_table("agent_store"))
+            .expect("resolve agent_store");
+        let schema = db
+            .runtime
+            .block_on(catalog.get_table(&table_id))
+            .expect("catalog schema");
+
+        assert_eq!(schema.primary_key, vec!["record_id".to_string()]);
+        assert_eq!(
+            schema
+                .properties
+                .get("xcatalog_namespace")
+                .map(String::as_str),
+            Some("agentic.embedded")
+        );
+        assert_eq!(
+            schema.properties.get("schema_kind").map(String::as_str),
+            Some("agentic_mixed")
+        );
+        assert_eq!(
+            schema
+                .columns
+                .iter()
+                .find(|column| column.name == "embedding")
+                .and_then(|column| column.properties.get("dimension"))
+                .map(String::as_str),
+            Some("64")
+        );
+
+        let indexes = db
+            .runtime
+            .block_on(catalog.list_indexes(&table_id))
+            .expect("catalog indexes");
+        assert!(
+            indexes
+                .iter()
+                .any(|index| index.index_type == crate::catalog::CatalogIndexType::Gin)
+        );
+        assert!(
+            indexes
+                .iter()
+                .any(|index| index.index_type == crate::catalog::CatalogIndexType::Hnsw)
+        );
+    }
+
+    #[test]
     fn test_embedded_config_for_benchmarks() {
         let config = EmbeddedConfig::for_benchmarks("/tmp/bench");
         assert_eq!(config.cache_size_mb, 1024);

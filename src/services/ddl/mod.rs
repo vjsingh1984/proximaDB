@@ -292,6 +292,8 @@ pub enum IndexType {
     Hash,
     /// Full-text search index
     FullText,
+    /// GIN index for JSONB/document projection columns
+    Gin,
     /// HNSW vector index (default for vector columns)
     Hnsw {
         /// Maximum number of bi-directional links per node (`M` parameter).
@@ -792,12 +794,21 @@ impl DdlService {
         schema.properties = properties;
 
         let mut primary_key_cols = Vec::new();
+        let mut has_json = false;
+        let mut has_vector = false;
 
         for (idx, col) in columns.into_iter().enumerate() {
             let (data_type, col_properties) = self.sql_to_catalog_type(&col.data_type)?;
+            has_json |= matches!(data_type, CatalogDataType::Json);
+            has_vector |= matches!(
+                data_type,
+                CatalogDataType::Vector
+                    | CatalogDataType::SparseVector
+                    | CatalogDataType::BinaryVector
+            );
 
             let catalog_col = CatalogColumn {
-                id: idx as i32,
+                id: idx as i32 + 1,
                 name: col.name.clone(),
                 data_type,
                 nullable: col.nullable,
@@ -816,6 +827,16 @@ impl DdlService {
         if !primary_key_cols.is_empty() {
             schema = schema.with_primary_key(primary_key_cols);
         }
+
+        schema
+            .properties
+            .entry("schema_kind".to_string())
+            .or_insert_with(|| match (has_json, has_vector) {
+                (true, true) => "mixed_relational_document_vector".to_string(),
+                (true, false) => "relational_document".to_string(),
+                (false, true) => "relational_vector".to_string(),
+                (false, false) => "relational".to_string(),
+            });
 
         Ok(schema)
     }
@@ -853,7 +874,14 @@ impl DdlService {
             SqlDataType::Timestamp => CatalogDataType::Timestamp,
             SqlDataType::TimestampTz => CatalogDataType::TimestampTz,
             SqlDataType::Uuid => CatalogDataType::Uuid,
-            SqlDataType::Json | SqlDataType::Jsonb => CatalogDataType::Json,
+            SqlDataType::Json => {
+                properties.insert("json_encoding".to_string(), "json".to_string());
+                CatalogDataType::Json
+            }
+            SqlDataType::Jsonb => {
+                properties.insert("json_encoding".to_string(), "jsonb".to_string());
+                CatalogDataType::Json
+            }
             SqlDataType::Vector { dimension } => {
                 properties.insert("dimension".to_string(), dimension.to_string());
                 CatalogDataType::Vector
@@ -991,6 +1019,7 @@ impl DdlService {
             IndexType::BTree => CatalogIndexType::BTree,
             IndexType::Hash => CatalogIndexType::Hash,
             IndexType::FullText => CatalogIndexType::FullText,
+            IndexType::Gin => CatalogIndexType::Gin,
             IndexType::Hnsw { .. } => CatalogIndexType::Hnsw,
             IndexType::Ivf { .. } => CatalogIndexType::Ivf,
             IndexType::Pq { .. } => CatalogIndexType::Pq,
@@ -1084,10 +1113,126 @@ mod tests {
                 .sql_to_catalog_type(&sql_type)
                 .expect("mapping json/jsonb should succeed");
             assert_eq!(catalog_type, CatalogDataType::Json);
-            assert!(
-                props.is_empty(),
-                "json/jsonb mapping should not emit extra properties"
-            );
+            assert_eq!(props.len(), 1, "json/jsonb should preserve encoding");
         }
+    }
+
+    #[tokio::test]
+    async fn test_agentic_pgwire_ddl_executes_into_catalog_schema() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let service = DdlService::new(manager.clone());
+        service
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("create default namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let create_table = parser
+            .parse_ddl(
+                "CREATE TABLE IF NOT EXISTS \"agent_store\" (
+                    \"record_id\" TEXT NOT NULL,
+                    \"tenant_id\" TEXT NOT NULL,
+                    \"payload\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    \"metadata\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    \"embedding\" VECTOR(384),
+                    PRIMARY KEY (\"record_id\")
+                ) WITH (
+                    storage_engine = 'SST',
+                    layout = 'hybrid',
+                    xcatalog_namespace = 'agentic.demo',
+                    schema_kind = 'agentic_mixed'
+                );",
+            )
+            .expect("parse create table")
+            .expect("ddl statement");
+        service
+            .execute(create_table)
+            .await
+            .expect("execute create table");
+
+        for index_sql in [
+            "CREATE INDEX idx_agent_store_payload_gin ON agent_store USING GIN (payload);",
+            "CREATE INDEX idx_agent_store_embedding_hnsw ON agent_store USING HNSW (embedding);",
+        ] {
+            let statement = parser
+                .parse_ddl(index_sql)
+                .expect("parse create index")
+                .expect("index ddl statement");
+            service
+                .execute(statement)
+                .await
+                .expect("execute create index");
+        }
+
+        let (catalog, table_id) = manager
+            .resolve_table("agent_store")
+            .await
+            .expect("resolve table");
+        let schema = catalog.get_table(&table_id).await.expect("get schema");
+
+        assert_eq!(schema.primary_key, vec!["record_id".to_string()]);
+        assert_eq!(
+            schema.properties.get("storage_engine").map(String::as_str),
+            Some("SST")
+        );
+        assert_eq!(
+            schema.properties.get("layout").map(String::as_str),
+            Some("hybrid")
+        );
+        assert_eq!(
+            schema
+                .properties
+                .get("xcatalog_namespace")
+                .map(String::as_str),
+            Some("agentic.demo")
+        );
+        assert_eq!(
+            schema.properties.get("schema_kind").map(String::as_str),
+            Some("agentic_mixed")
+        );
+
+        let payload = schema
+            .columns
+            .iter()
+            .find(|column| column.name == "payload")
+            .expect("payload column");
+        assert_eq!(payload.data_type, CatalogDataType::Json);
+        assert_eq!(
+            payload.properties.get("json_encoding").map(String::as_str),
+            Some("jsonb")
+        );
+
+        let embedding = schema
+            .columns
+            .iter()
+            .find(|column| column.name == "embedding")
+            .expect("embedding column");
+        assert_eq!(embedding.data_type, CatalogDataType::Vector);
+        assert_eq!(
+            embedding.properties.get("dimension").map(String::as_str),
+            Some("384")
+        );
+
+        let indexes = catalog.list_indexes(&table_id).await.expect("list indexes");
+        assert!(
+            indexes
+                .iter()
+                .any(|index| index.index_type == CatalogIndexType::Gin)
+        );
+        assert!(
+            indexes
+                .iter()
+                .any(|index| index.index_type == CatalogIndexType::Hnsw)
+        );
     }
 }

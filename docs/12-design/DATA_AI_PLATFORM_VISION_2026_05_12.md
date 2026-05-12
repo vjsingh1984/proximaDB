@@ -2,6 +2,12 @@
 
 Date: 2026-05-12
 
+Status: Superseded by `docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc`.
+This Markdown draft is retained for historical continuity from the first MVP pass. The AsciiDoc
+anchor is the go-forward reference for competitive positioning, platform planes, phase sequencing,
+branchable state, streaming, ML/MLOps, AutoML, Ray/Flink/Kafka/Kinesis integration, and
+developer-to-enterprise roadmap.
+
 This document defines the target shape for ProximaDB as an open, protocol-compatible, multi-modal data and AI platform. The goal is to avoid painting the system into a storage-engine-specific or API-specific corner while still creating real ProximaDB stickiness through catalog, optimization, governance, agentic semantics, and lifecycle automation.
 
 ## North Star

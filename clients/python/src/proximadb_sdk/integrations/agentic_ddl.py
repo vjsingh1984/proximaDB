@@ -111,7 +111,16 @@ class AgenticDDL:
             for item in self.vectors
         )
         definitions.append(f"PRIMARY KEY ({_q('record_id')})")
-        return f"CREATE TABLE IF NOT EXISTS {_q(self.table)} ({', '.join(definitions)});"
+        options = (
+            f"storage_engine = '{self.storage_engine}', "
+            f"layout = '{self.physical_layout}', "
+            f"xcatalog_namespace = '{self.catalog_namespace or f'agentic.{self.store}'}', "
+            "schema_kind = 'agentic_mixed'"
+        )
+        return (
+            f"CREATE TABLE IF NOT EXISTS {_q(self.table)} "
+            f"({', '.join(definitions)}) WITH ({options});"
+        )
 
     def index_sql(self) -> list[str]:
         statements: list[str] = []

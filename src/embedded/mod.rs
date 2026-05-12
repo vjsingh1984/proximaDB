@@ -631,6 +631,8 @@ pub struct EmbeddedProximaDB {
     runtime: tokio::runtime::Runtime,
     /// Shared services containing all ProximaDB functionality
     shared_services: crate::network::multi_server::SharedServices,
+    /// Embedded catalog manager for pgwire-compatible schema DDL and metadata
+    catalog_manager: std::sync::Arc<crate::catalog::CatalogManager>,
     /// Collection service for collection management
     collection_service: std::sync::Arc<crate::services::collection::manager::CollectionService>,
     /// Path where RL planner policy is persisted (None if RL disabled)
@@ -726,6 +728,31 @@ impl EmbeddedProximaDB {
             .storage_locations
             .first()
             .map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
+
+        let catalog_manager = std::sync::Arc::new(crate::catalog::CatalogManager::new());
+        runtime
+            .block_on(async {
+                let catalog_path = std::path::Path::new(&base_path).join("catalog");
+                catalog_manager
+                    .create_native_catalog("embedded", catalog_path.to_string_lossy().as_ref())
+                    .await?;
+                let ddl_service = crate::services::DdlService::new(catalog_manager.clone());
+                ddl_service
+                    .execute(crate::services::DdlStatement::CreateNamespace {
+                        namespace: vec!["default".to_string()],
+                        if_not_exists: true,
+                        properties: std::collections::HashMap::new(),
+                    })
+                    .await?;
+                anyhow::Ok(())
+            })
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(format!(
+                    "Failed to initialize embedded catalog: {}",
+                    e
+                )))
+            })?;
+
         let checkpoint_manager = std::sync::Arc::new(CheckpointManager::new(&base_path));
         runtime.block_on(async {
             if let Err(e) = checkpoint_manager.init().await {
@@ -799,6 +826,7 @@ impl EmbeddedProximaDB {
             config,
             runtime,
             shared_services,
+            catalog_manager,
             collection_service,
             rl_policy_path,
             metrics_collector,
@@ -3669,6 +3697,72 @@ impl EmbeddedProximaDB {
         parameters: Option<Vec<serde_json::Value>>,
         collection: Option<&str>,
     ) -> Result<EmbeddedSqlQueryResult, Box<dyn std::error::Error + Send + Sync>> {
+        let trimmed = query.trim();
+        let upper = trimmed.to_ascii_uppercase();
+        if upper.starts_with("COMMENT ON ") {
+            return Ok(EmbeddedSqlQueryResult {
+                rows: vec![serde_json::json!({
+                    "status": "ok",
+                    "message": "COMMENT accepted for catalog-compatible SDK DDL"
+                })],
+                columns: vec!["status".to_string(), "message".to_string()],
+                column_types: vec!["text".to_string(), "text".to_string()],
+                row_count: 1,
+                rows_scanned: 0,
+                execution_time_ms: 0,
+            });
+        }
+
+        let ddl_parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        match ddl_parser.parse_ddl(trimmed) {
+            Ok(Some(statement)) => {
+                let start_time = std::time::Instant::now();
+                let catalog_manager = self.catalog_manager.clone();
+                let result = self
+                    .runtime
+                    .block_on(async {
+                        let ddl_service = crate::services::DdlService::new(catalog_manager);
+                        ddl_service.execute(statement).await
+                    })
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(e.to_string()))
+                    })?;
+
+                return Ok(EmbeddedSqlQueryResult {
+                    rows: vec![serde_json::json!({
+                        "success": result.success,
+                        "message": result.message,
+                        "affected_count": result.affected_count,
+                        "warnings": result.warnings
+                    })],
+                    columns: vec![
+                        "success".to_string(),
+                        "message".to_string(),
+                        "affected_count".to_string(),
+                        "warnings".to_string(),
+                    ],
+                    column_types: vec![
+                        "bool".to_string(),
+                        "text".to_string(),
+                        "int4".to_string(),
+                        "jsonb".to_string(),
+                    ],
+                    row_count: 1,
+                    rows_scanned: 0,
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                });
+            }
+            Ok(None) => {}
+            Err(error)
+                if upper.starts_with("CREATE ")
+                    || upper.starts_with("ALTER ")
+                    || upper.starts_with("DROP ") =>
+            {
+                return Err(Box::new(std::io::Error::other(error.to_string())));
+            }
+            Err(_) => {}
+        }
+
         self.runtime.block_on(async {
             let proto_params = parameters.map(|values| {
                 values
@@ -5238,7 +5332,6 @@ pub struct UnifiedQueryPlan {
     /// Individual query components
     pub components: Vec<QueryComponent>,
 }
-
 
 #[cfg(test)]
 mod tests;
