@@ -42,6 +42,8 @@
 // These are declared in the parent module's mod.rs
 
 use anyhow::{Result, anyhow};
+use proximadb_records::ProximaRecord;
+use proximadb_records::conversions::proxima_record_to_vector;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -283,6 +285,27 @@ impl VectorOperationsService {
         }
 
         Ok(())
+    }
+
+    fn rich_records_to_vectors(
+        mut records: Vec<ProximaRecord>,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<VectorRecord>> {
+        if let Some(tenant_id) = tenant_id {
+            for record in records.iter_mut() {
+                if !record.tenant_id.is_empty() && record.tenant_id != tenant_id {
+                    return Err(anyhow::anyhow!(
+                        "Record '{}' has tenant_id '{}' but request is scoped to tenant '{}'",
+                        record.oid,
+                        record.tenant_id,
+                        tenant_id
+                    ));
+                }
+                record.tenant_id = tenant_id.to_string();
+            }
+        }
+
+        Ok(records.iter().map(proxima_record_to_vector).collect())
     }
 
     /// Execute a v1 vector search after validating that the caller has access to the collection
@@ -868,6 +891,23 @@ impl VectorOperationsService {
         }
 
         self.insert_batch_internal(collection_id, vectors).await
+    }
+
+    /// Insert canonical ProximaRecord envelopes through the vector write path.
+    ///
+    /// This is the rich internal/private API for v2 and multimodal callers
+    /// (MULTIMODAL_OVERHAUL_SPEC §3, §4.2, ADR-001/ADR-002). The remaining
+    /// VectorRecord conversion is kept here until WAL/storage accept envelopes.
+    pub async fn insert_records_with_tenant_context(
+        &self,
+        collection_id: &str,
+        records: Vec<ProximaRecord>,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<BatchOperationResult> {
+        let tenant_id = tenant_context.map(|tenant| tenant.tenant_id.as_str());
+        let vectors = Self::rich_records_to_vectors(records, tenant_id)?;
+        self.insert_batch_with_tenant_context(collection_id, vectors, tenant_context)
+            .await
     }
 
     async fn insert_batch_internal(
@@ -3273,6 +3313,8 @@ impl VectorOperationsService {
 #[cfg(test)]
 mod tenant_tests {
     use super::*;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
     fn make_vector(id: &str) -> VectorRecord {
         VectorRecord {
@@ -3321,6 +3363,50 @@ mod tenant_tests {
             "tenant_a",
         )
         .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("request is scoped to tenant 'tenant_a'")
+        );
+    }
+
+    #[test]
+    fn rich_records_to_vectors_preserves_embedding_and_props() {
+        let mut record = ProximaRecord {
+            oid: "rec-1".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                values: vec![0.1, 0.2, 0.3],
+                dim: 3,
+            }],
+            ..ProximaRecord::default()
+        };
+        record.props.insert(
+            "category".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("docs".to_string())),
+        );
+
+        let vectors =
+            VectorOperationsService::rich_records_to_vectors(vec![record], Some("tenant_a"))
+                .expect("rich record conversion should succeed");
+
+        assert_eq!(vectors.len(), 1);
+        assert_eq!(vectors[0].id, "rec-1");
+        assert_eq!(vectors[0].vector, vec![0.1, 0.2, 0.3]);
+        assert!(vectors[0].metadata.contains_key("category"));
+    }
+
+    #[test]
+    fn rich_records_to_vectors_rejects_mismatched_tenant_id() {
+        let record = ProximaRecord {
+            oid: "rec-1".to_string(),
+            tenant_id: "tenant_b".to_string(),
+            ..ProximaRecord::default()
+        };
+
+        let err = VectorOperationsService::rich_records_to_vectors(vec![record], Some("tenant_a"))
+            .unwrap_err();
 
         assert!(
             err.to_string()

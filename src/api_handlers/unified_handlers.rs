@@ -57,7 +57,7 @@ use anyhow::{Context, Result, anyhow};
 use proximadb_data_model::ProximaValue;
 use proximadb_graph_query::service::GraphExecutionService;
 use proximadb_records::ProximaRecord;
-use proximadb_records::conversions::{proxima_record_to_vector, proxima_to_sql_value};
+use proximadb_records::conversions::proxima_to_sql_value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1008,17 +1008,76 @@ impl UnifiedHandlers {
         request: RichRecordBatchRequest,
         tenant_id: Option<&str>,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
-        let vector_request = crate::proto::proximadb_v1::VectorBatchRequest {
-            collection_id: request.collection_id,
-            vectors: request
-                .records
-                .iter()
-                .map(proxima_record_to_vector)
-                .collect(),
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let collection_id = match self
+            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
+            .await?
+        {
+            Some(id) => id,
+            None => {
+                return Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                    success: false,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
+                    metrics: None,
+                    results: None,
+                    vector_ids: vec![],
+                    error_message: None,
+                    error_code: Some("NOT_FOUND".to_string()),
+                });
+            }
         };
 
-        self.handle_vector_batch_v1_for_tenant(vector_request, tenant_id)
+        match self
+            .vector_operations_service
+            .insert_records_with_tenant_context(
+                &collection_id,
+                request.records,
+                tenant_context.as_ref(),
+            )
             .await
+        {
+            Ok(result) => Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                success: result.success,
+                operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
+                metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                    total_processed: result.metrics.total_processed,
+                    successful_count: result.metrics.successful_count,
+                    failed_count: result.metrics.failed_count,
+                    updated_count: result.metrics.updated_count,
+                    processing_time_us: result.metrics.processing_time_us,
+                    wal_write_time_us: result.metrics.wal_write_time_us,
+                    index_update_time_us: result.metrics.index_update_time_us,
+                }),
+                results: None,
+                vector_ids: result.vector_ids,
+                error_message: if result.errors.is_empty() {
+                    None
+                } else {
+                    Some(result.errors.join("; "))
+                },
+                error_code: result.error_code,
+            }),
+            Err(error) => {
+                tracing::error!("Failed to process rich record batch: {:?}", error);
+                Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                    success: false,
+                    operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
+                    metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                        total_processed: 0,
+                        successful_count: 0,
+                        failed_count: 0,
+                        updated_count: 0,
+                        processing_time_us: 0,
+                        wal_write_time_us: 0,
+                        index_update_time_us: 0,
+                    }),
+                    results: None,
+                    vector_ids: vec![],
+                    error_message: Some(format!("Record insert failed: {}", error)),
+                    error_code: Some("RECORD_INSERT_FAILED".to_string()),
+                })
+            }
+        }
     }
 
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response
