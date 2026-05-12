@@ -18,6 +18,8 @@ use arrow_flight::{
     flight_service_server::FlightService,
 };
 use futures::{Stream, stream};
+use proximadb_records::ProximaRecord;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -261,10 +263,44 @@ impl ProximaFlightService {
         Ok(())
     }
 
+    fn insert_request_conflict_result(
+        records: &[ProximaRecord],
+        seen_ids: &mut HashSet<String>,
+    ) -> Option<BatchOperationResult> {
+        for record in records {
+            if record.oid.is_empty() {
+                return Some(BatchOperationResult::failure(
+                    "Insert requires non-empty record id".to_string(),
+                    "INVALID_RECORD_ID".to_string(),
+                ));
+            }
+
+            if !seen_ids.insert(record.oid.clone()) {
+                return Some(BatchOperationResult::failure(
+                    format!(
+                        "Record '{}' appears more than once in insert request",
+                        record.oid
+                    ),
+                    "INSERT_CONFLICT".to_string(),
+                ));
+            }
+        }
+
+        None
+    }
+
+    fn insert_conflict_result(
+        records: &[ProximaRecord],
+        seen_ids: &mut HashSet<String>,
+    ) -> Option<BatchOperationResult> {
+        Self::insert_request_conflict_result(records, seen_ids)
+    }
+
     /// Handle bulk vector insert (DoPut)
     async fn handle_record_insert(
         &self,
         collection_id: String,
+        operation: FlightWriteOperation,
         write_mode: WriteMode,
         trigger_compaction: bool,
         tenant_id: Option<String>,
@@ -287,6 +323,13 @@ impl ProximaFlightService {
             records = records.len(),
             "Converted Arrow batches to ProximaRecords"
         );
+
+        if operation == FlightWriteOperation::Insert {
+            let mut seen_ids = HashSet::with_capacity(records.len());
+            if let Some(result) = Self::insert_conflict_result(&records, &mut seen_ids) {
+                return Ok(result);
+            }
+        }
 
         // Route based on write mode
         let result = match write_mode {
@@ -735,6 +778,7 @@ impl FlightService for ProximaFlightService {
             FlightWriteOperation::Upsert | FlightWriteOperation::Insert => {
                 self.handle_record_insert(
                     metadata.collection_id.clone(),
+                    operation,
                     metadata.write_mode,
                     metadata.trigger_compaction,
                     tenant_id.clone(),
@@ -1649,6 +1693,7 @@ impl ProximaFlightService {
         let mut all_success = true;
         let mut results = Vec::new();
         let mut flight_messages = vec![first_msg];
+        let mut insert_seen_ids = HashSet::new();
 
         while let Some(data) = stream
             .message()
@@ -1677,15 +1722,32 @@ impl ProximaFlightService {
                         }
                     };
 
-                    self.unified_handlers
-                        .handle_record_batch_for_tenant(
-                            RichRecordBatchRequest {
-                                collection_id: collection_id.clone(),
-                                records,
-                            },
-                            tenant_id.as_deref(),
-                        )
-                        .await
+                    if operation == FlightWriteOperation::Insert {
+                        match Self::insert_conflict_result(&records, &mut insert_seen_ids) {
+                            Some(result) => Ok(result),
+                            None => {
+                                self.unified_handlers
+                                    .handle_record_batch_for_tenant(
+                                        RichRecordBatchRequest {
+                                            collection_id: collection_id.clone(),
+                                            records,
+                                        },
+                                        tenant_id.as_deref(),
+                                    )
+                                    .await
+                            }
+                        }
+                    } else {
+                        self.unified_handlers
+                            .handle_record_batch_for_tenant(
+                                RichRecordBatchRequest {
+                                    collection_id: collection_id.clone(),
+                                    records,
+                                },
+                                tenant_id.as_deref(),
+                            )
+                            .await
+                    }
                 }
                 FlightWriteOperation::Delete => {
                     let record_ids = match ArrowProtoCodec::batches_to_record_ids(vec![batch]) {
@@ -2056,6 +2118,51 @@ mod tests {
             ProximaFlightService::tenant_id_from_metadata(&metadata),
             None
         );
+    }
+
+    #[test]
+    fn test_insert_request_conflict_result_rejects_duplicate_ids() {
+        let mut seen = HashSet::new();
+        let records = vec![
+            ProximaRecord {
+                oid: "r1".to_string(),
+                ..ProximaRecord::default()
+            },
+            ProximaRecord {
+                oid: "r1".to_string(),
+                ..ProximaRecord::default()
+            },
+        ];
+
+        let result = ProximaFlightService::insert_request_conflict_result(&records, &mut seen)
+            .expect("duplicate insert should return conflict");
+
+        assert!(!result.success);
+        assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
+        assert_eq!(result.metrics.successful_count, 0);
+        assert!(result.errors[0].contains("appears more than once"));
+    }
+
+    #[test]
+    fn test_insert_request_conflict_result_tracks_ids_across_batches() {
+        let mut seen = HashSet::new();
+        let first_batch = vec![ProximaRecord {
+            oid: "r1".to_string(),
+            ..ProximaRecord::default()
+        }];
+        let second_batch = vec![ProximaRecord {
+            oid: "r1".to_string(),
+            ..ProximaRecord::default()
+        }];
+
+        assert!(
+            ProximaFlightService::insert_request_conflict_result(&first_batch, &mut seen).is_none()
+        );
+        let result = ProximaFlightService::insert_request_conflict_result(&second_batch, &mut seen)
+            .expect("duplicate across batches should return conflict");
+
+        assert!(!result.success);
+        assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
     }
 
     #[test]

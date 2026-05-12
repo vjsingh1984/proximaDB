@@ -161,6 +161,11 @@ operation, and `collection_id` or `collection` may name the collection. Plain
 logical operations are normalized: `insert` -> `bulk_insert`, `upsert` ->
 `bulk_upsert`, and `delete` -> `bulk_delete`.
 
+`insert` is insert-only at the request boundary: duplicate IDs within the
+streamed request return a failed `BatchOperationResult` with `error_code`
+`INSERT_CONFLICT`. Use `upsert`/`bulk_upsert` when replacing existing records
+is intended.
+
 === Response Metadata
 
 DoPut returns a `BatchOperationResult` JSON payload in `PutResult.app_metadata`:

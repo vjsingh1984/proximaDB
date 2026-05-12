@@ -414,7 +414,7 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 - Progress-aware batch writes via `DoExchange` (`bulk_insert`/`bulk_upsert`/`bulk_delete`)
 
 **Current limitations**:
-- `insert` currently uses the same write path as `upsert`; strict insert-only conflict semantics are not yet enforced.
+- Arrow Flight `insert` rejects duplicate IDs in the request, but existing-record detection is not yet an atomic compare-and-insert storage primitive.
 - Flight write handlers honor tenant metadata headers (`x-proximadb-tenant-id`, `x-tenant-id`, `tenant-id`, `tenant_id`), but authorization metadata is not yet authenticated by the Flight server.
 
 ---
