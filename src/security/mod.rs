@@ -20,7 +20,8 @@ pub use unified_rbac::{
 
 pub use unified_auth::{
     AuthenticationConfig, AuthenticationData, AuthenticationMethod, AuthenticationResult,
-    ClientIdentity, MtlsConfig, SecurityAuthenticationResult, UnifiedAuthService,
+    ClientCertificateData, ClientIdentity, MtlsConfig, SecurityAuthenticationResult,
+    UnifiedAuthService,
 };
 
 pub use security_coordinator::{

@@ -28,8 +28,9 @@ use crate::api_handlers::{
     RichRecordBatchRequest, RichRecordDeleteBatchRequest, unified_handlers::UnifiedHandlers,
 };
 use crate::proto::proximadb_v1::VectorSearchRequest;
-use crate::security::{AuthenticationData, SecurityCoordinator};
+use crate::security::{AuthenticationData, ClientCertificateData, SecurityCoordinator};
 use crate::services::operations::BatchOperationResult;
+use chrono::Utc;
 
 use super::codec::{ArrowProtoCodec, FlightWriteOperation, WriteMode};
 use super::file_export::{
@@ -202,9 +203,38 @@ impl ProximaFlightService {
         Ok(None)
     }
 
+    fn auth_data_from_peer_certificate_der(cert_der: &[u8]) -> Option<AuthenticationData> {
+        if cert_der.is_empty() {
+            return None;
+        }
+
+        let now = Utc::now();
+        Some(AuthenticationData::ClientCertificate(
+            ClientCertificateData {
+                subject: String::new(),
+                issuer: String::new(),
+                serial_number: String::new(),
+                not_before: now,
+                not_after: now,
+                raw_cert_der: Some(cert_der.to_vec()),
+            },
+        ))
+    }
+
+    fn auth_data_from_peer_certs(
+        peer_certs: Option<Arc<Vec<tonic::transport::CertificateDer<'static>>>>,
+    ) -> Option<AuthenticationData> {
+        peer_certs.as_ref().and_then(|certs| {
+            certs
+                .first()
+                .and_then(|cert| Self::auth_data_from_peer_certificate_der(cert.as_ref()))
+        })
+    }
+
     async fn authenticated_tenant_id(
         &self,
         metadata: &tonic::metadata::MetadataMap,
+        peer_certs: Option<Arc<Vec<tonic::transport::CertificateDer<'static>>>>,
     ) -> std::result::Result<Option<String>, TonicStatus> {
         let requested_tenant_id = Self::tenant_id_from_metadata(metadata);
         let Some(security_coordinator) = &self.security_coordinator else {
@@ -212,6 +242,7 @@ impl ProximaFlightService {
         };
 
         let auth_data = Self::auth_data_from_metadata(metadata)?
+            .or_else(|| Self::auth_data_from_peer_certs(peer_certs))
             .ok_or_else(|| TonicStatus::unauthenticated("Arrow Flight authentication required"))?;
         let user_context = security_coordinator
             .authenticate_request(auth_data)
@@ -810,7 +841,9 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<TonicStreaming<FlightData>>,
     ) -> TonicResult<Self::DoPutStream> {
-        let tenant_id = self.authenticated_tenant_id(request.metadata()).await?;
+        let tenant_id = self
+            .authenticated_tenant_id(request.metadata(), request.peer_certs())
+            .await?;
         let mut stream = request.into_inner();
 
         // First message should contain descriptor
@@ -1689,7 +1722,9 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<TonicStreaming<FlightData>>,
     ) -> TonicResult<Self::DoExchangeStream> {
-        let tenant_id = self.authenticated_tenant_id(request.metadata()).await?;
+        let tenant_id = self
+            .authenticated_tenant_id(request.metadata(), request.peer_certs())
+            .await?;
         let mut stream = request.into_inner();
 
         // First message should contain the descriptor with exchange type
@@ -2238,6 +2273,27 @@ mod tests {
             AuthenticationData::ApiKey(key) => assert_eq!(key, "key-2"),
             other => panic!("expected API key auth data, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_auth_data_from_peer_certificate_der_uses_raw_cert_bytes() {
+        let auth_data = ProximaFlightService::auth_data_from_peer_certificate_der(&[1, 2, 3])
+            .expect("auth data");
+
+        match auth_data {
+            AuthenticationData::ClientCertificate(cert_data) => {
+                assert_eq!(cert_data.raw_cert_der, Some(vec![1, 2, 3]));
+            }
+            other => panic!("expected client certificate auth data, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_auth_data_from_peer_certificate_der_ignores_empty_cert() {
+        assert!(
+            ProximaFlightService::auth_data_from_peer_certificate_der(&[]).is_none(),
+            "empty peer certs should not create auth data"
+        );
     }
 
     #[test]

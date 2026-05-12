@@ -207,7 +207,8 @@ optional `tenant_id` constructor argument.
 When server authentication is enabled, Flight write streams are validated with
 the shared security coordinator. API keys are sent as `authorization:
 API-Key <key>` by the Python client; JWT callers may send `authorization:
-Bearer <token>`.
+Bearer <token>`. For mTLS deployments, Flight write streams can authenticate
+with the verified client certificate exposed by Tonic on TLS connections.
 
 === DuckDB Direct Query
 
