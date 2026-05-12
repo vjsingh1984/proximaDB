@@ -41,9 +41,9 @@
 // Import from sibling submodules (now in parent mod.rs)
 // These are declared in the parent module's mod.rs
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use proximadb_records::ProximaRecord;
-use proximadb_records::conversions::proxima_record_to_vector;
+use proximadb_records::conversions::{proxima_record_to_vector, proxima_to_sql_value};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -53,10 +53,7 @@ use crate::security::validation::{
 };
 use crate::storage::traits::UnifiedStorageEngine;
 
-use crate::compute::quantization::types::{
-    BinaryQuantization, ProductQuantization, QuantizationLevel, ScalarQuantization,
-    UnifiedQuantizationLevel,
-};
+use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::Collection;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -77,6 +74,236 @@ use super::validation::{
 use crate::services::operations::{BatchOperationResult, BulkWriteRouter, OperationMetrics};
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::sst::SstEngine;
+
+/// Canonical rich record batch request for internal callers.
+#[derive(Debug, Clone)]
+pub struct RichRecordBatchRequest {
+    pub collection_id: String,
+    pub records: Vec<ProximaRecord>,
+}
+
+/// Canonical rich search request for v2 and internal callers.
+#[derive(Debug, Clone)]
+pub struct RichSearchRequest {
+    pub collection_id: String,
+    pub query_vector: Vec<f32>,
+    pub top_k: u32,
+    pub filters: Vec<RichFilterCondition>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RichFilterCondition {
+    pub field: String,
+    pub operator: RichFilterOperator,
+    pub value: proximadb_data_model::ProximaValue,
+    pub value_upper: Option<proximadb_data_model::ProximaValue>,
+    pub value_list: Vec<proximadb_data_model::ProximaValue>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RichFilterOperator {
+    Eq,
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Between,
+    In,
+    NotIn,
+    Contains,
+}
+
+fn rich_filters_to_v1_clauses(
+    filters: &[RichFilterCondition],
+) -> Vec<crate::proto::proximadb_v1::FilterClause> {
+    use crate::proto::proximadb_v1::{ComparisonOp, FilterClause};
+
+    let mut clauses = Vec::new();
+    for filter in filters {
+        match filter.operator {
+            RichFilterOperator::Between => {
+                if let Some(lower) = proxima_value_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Gte as i32,
+                        value: Some(lower),
+                    });
+                }
+                if let Some(upper) = filter
+                    .value_upper
+                    .as_ref()
+                    .and_then(proxima_value_to_filter_clause_value)
+                {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: ComparisonOp::Lte as i32,
+                        value: Some(upper),
+                    });
+                }
+            }
+            RichFilterOperator::In | RichFilterOperator::NotIn => {
+                let values = if filter.value_list.is_empty() {
+                    match &filter.value {
+                        proximadb_data_model::ProximaValue::Array(values) => values.clone(),
+                        value => vec![value.clone()],
+                    }
+                } else {
+                    filter.value_list.clone()
+                };
+                let json_values: Vec<serde_json::Value> =
+                    values.iter().map(proxima_value_to_json).collect();
+                if let Ok(encoded) = serde_json::to_string(&json_values) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: match filter.operator {
+                            RichFilterOperator::In => ComparisonOp::In as i32,
+                            _ => ComparisonOp::NotIn as i32,
+                        },
+                        value: Some(
+                            crate::proto::proximadb_v1::filter_clause::Value::StringValue(encoded),
+                        ),
+                    });
+                }
+            }
+            operator => {
+                if let Some(value) = proxima_value_to_filter_clause_value(&filter.value) {
+                    clauses.push(FilterClause {
+                        field: filter.field.clone(),
+                        op: match operator {
+                            RichFilterOperator::Eq => ComparisonOp::Eq as i32,
+                            RichFilterOperator::Ne => ComparisonOp::Ne as i32,
+                            RichFilterOperator::Gt => ComparisonOp::Gt as i32,
+                            RichFilterOperator::Gte => ComparisonOp::Gte as i32,
+                            RichFilterOperator::Lt => ComparisonOp::Lt as i32,
+                            RichFilterOperator::Lte => ComparisonOp::Lte as i32,
+                            RichFilterOperator::Contains => ComparisonOp::Contains as i32,
+                            RichFilterOperator::Between
+                            | RichFilterOperator::In
+                            | RichFilterOperator::NotIn => unreachable!(),
+                        },
+                        value: Some(value),
+                    });
+                }
+            }
+        }
+    }
+
+    clauses
+}
+
+fn proxima_value_to_filter_clause_value(
+    value: &proximadb_data_model::ProximaValue,
+) -> Option<crate::proto::proximadb_v1::filter_clause::Value> {
+    use crate::proto::proximadb_v1::filter_clause::Value;
+    use proximadb_data_model::ProximaValue;
+
+    match value {
+        ProximaValue::String(value)
+        | ProximaValue::Symbol(value)
+        | ProximaValue::Decimal(value) => Some(Value::StringValue(value.clone())),
+        ProximaValue::Boolean(value) => Some(Value::BoolValue(*value)),
+        ProximaValue::Int8(value) => Some(Value::IntValue(*value as i64)),
+        ProximaValue::Int16(value) => Some(Value::IntValue(*value as i64)),
+        ProximaValue::Int32(value) => Some(Value::IntValue(*value as i64)),
+        ProximaValue::Int64(value) => Some(Value::IntValue(*value)),
+        ProximaValue::UInt8(value) => Some(Value::IntValue(*value as i64)),
+        ProximaValue::UInt16(value) => Some(Value::IntValue(*value as i64)),
+        ProximaValue::UInt32(value) => Some(Value::IntValue(*value as i64)),
+        ProximaValue::UInt64(value) => i64::try_from(*value).ok().map(Value::IntValue),
+        ProximaValue::Float16(value) | ProximaValue::Float32(value) => {
+            Some(Value::DoubleValue(*value as f64))
+        }
+        ProximaValue::Float64(value) => Some(Value::DoubleValue(*value)),
+        ProximaValue::Date(value) => Some(Value::IntValue(*value as i64)),
+        ProximaValue::Time(value, _)
+        | ProximaValue::Timestamp(value, _)
+        | ProximaValue::TimestampTz(value, _) => Some(Value::IntValue(*value)),
+        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
+            Some(Value::StringValue(hex::encode(value)))
+        }
+        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => {
+            Some(Value::StringValue(value.to_string()))
+        }
+        ProximaValue::Array(_)
+        | ProximaValue::Map(_)
+        | ProximaValue::Struct(_)
+        | ProximaValue::DenseVector(_)
+        | ProximaValue::SparseVector { .. }
+        | ProximaValue::Binary(_)
+        | ProximaValue::BinaryVector(_) => Some(Value::StringValue(
+            serde_json::to_string(&proxima_value_to_json(value)).ok()?,
+        )),
+        ProximaValue::Null => None,
+    }
+}
+
+fn proxima_value_to_json(value: &proximadb_data_model::ProximaValue) -> serde_json::Value {
+    use proximadb_data_model::ProximaValue;
+
+    match value {
+        ProximaValue::Boolean(value) => serde_json::Value::Bool(*value),
+        ProximaValue::Int8(value) => serde_json::Value::Number((*value as i64).into()),
+        ProximaValue::Int16(value) => serde_json::Value::Number((*value as i64).into()),
+        ProximaValue::Int32(value) => serde_json::Value::Number((*value as i64).into()),
+        ProximaValue::Int64(value) => serde_json::Value::Number((*value).into()),
+        ProximaValue::UInt8(value) => serde_json::Value::Number((*value as u64).into()),
+        ProximaValue::UInt16(value) => serde_json::Value::Number((*value as u64).into()),
+        ProximaValue::UInt32(value) => serde_json::Value::Number((*value as u64).into()),
+        ProximaValue::UInt64(value) => serde_json::Value::Number((*value).into()),
+        ProximaValue::Float16(value) | ProximaValue::Float32(value) => {
+            serde_json::Number::from_f64(*value as f64)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        ProximaValue::Float64(value) => serde_json::Number::from_f64(*value)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        ProximaValue::Decimal(value)
+        | ProximaValue::String(value)
+        | ProximaValue::Symbol(value) => serde_json::Value::String(value.clone()),
+        ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => {
+            serde_json::Value::Array(
+                value
+                    .iter()
+                    .map(|value| serde_json::Value::Number((*value as u64).into()))
+                    .collect(),
+            )
+        }
+        ProximaValue::Date(value) => serde_json::Value::Number((*value).into()),
+        ProximaValue::Time(value, _)
+        | ProximaValue::Timestamp(value, _)
+        | ProximaValue::TimestampTz(value, _) => serde_json::Value::Number((*value).into()),
+        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
+            serde_json::Value::String(hex::encode(value))
+        }
+        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
+        ProximaValue::Array(values) => {
+            serde_json::Value::Array(values.iter().map(proxima_value_to_json).collect())
+        }
+        ProximaValue::Map(values) | ProximaValue::Struct(values) => serde_json::Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), proxima_value_to_json(value)))
+                .collect(),
+        ),
+        ProximaValue::DenseVector(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .map(|value| {
+                    serde_json::Number::from_f64(*value as f64)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null)
+                })
+                .collect(),
+        ),
+        ProximaValue::SparseVector { indices, values } => serde_json::json!({
+            "indices": indices,
+            "values": values,
+        }),
+        ProximaValue::Null => serde_json::Value::Null,
+    }
+}
 
 /// Convert a query optimizer quantization strategy to a unified quantization level.
 #[allow(dead_code)]
@@ -318,6 +545,51 @@ impl VectorOperationsService {
         self.validate_tenant_collection_access(&req.collection_id, tenant_context)
             .await?;
         self.search_v1(req).await
+    }
+
+    /// Execute canonical rich-record vector search.
+    ///
+    /// The caller supplies `ProximaValue` predicates. The temporary v1 filter
+    /// lowering stays inside the vector service until storage/index search
+    /// paths accept rich predicates natively.
+    pub async fn search_records_with_tenant_context(
+        &self,
+        request: RichSearchRequest,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let filters = request
+            .filters
+            .iter()
+            .filter(|filter| filter.operator == RichFilterOperator::Eq)
+            .map(|filter| (filter.field.clone(), proxima_to_sql_value(&filter.value)))
+            .collect();
+
+        let clauses = rich_filters_to_v1_clauses(&request.filters);
+        let advanced_filter = if clauses.is_empty() {
+            None
+        } else {
+            Some(crate::proto::proximadb_v1::MetadataFilter {
+                clauses,
+                op: crate::proto::proximadb_v1::LogicalOp::And as i32,
+            })
+        };
+
+        let vector_request = crate::proto::proximadb_v1::VectorSearchRequest {
+            collection_id: request.collection_id,
+            queries: vec![crate::proto::proximadb_v1::SearchQuery {
+                vector: request.query_vector,
+                filters,
+                advanced_filter,
+            }],
+            top_k: request.top_k,
+            include_fields: None,
+            search_params: None,
+            distance_metric_override: None,
+            search_optimization: None,
+        };
+
+        self.search_v1_with_tenant_context(vector_request, tenant_context)
+            .await
     }
 
     /// Public v1 boundary: execute vector search and return v1 response
@@ -3411,6 +3683,42 @@ mod tenant_tests {
         assert!(
             err.to_string()
                 .contains("request is scoped to tenant 'tenant_a'")
+        );
+    }
+
+    #[test]
+    fn rich_filters_to_v1_clauses_preserves_rich_values() {
+        let filters = vec![
+            RichFilterCondition {
+                field: "price".to_string(),
+                operator: RichFilterOperator::Between,
+                value: ProximaValue::Decimal("10.50".to_string()),
+                value_upper: Some(ProximaValue::Decimal("20.75".to_string())),
+                value_list: Vec::new(),
+            },
+            RichFilterCondition {
+                field: "category".to_string(),
+                operator: RichFilterOperator::Eq,
+                value: ProximaValue::Symbol("books".to_string()),
+                value_upper: None,
+                value_list: Vec::new(),
+            },
+        ];
+
+        let clauses = rich_filters_to_v1_clauses(&filters);
+
+        assert_eq!(clauses.len(), 3);
+        assert_eq!(
+            clauses[0].op,
+            crate::proto::proximadb_v1::ComparisonOp::Gte as i32
+        );
+        assert_eq!(
+            clauses[1].op,
+            crate::proto::proximadb_v1::ComparisonOp::Lte as i32
+        );
+        assert_eq!(
+            clauses[2].op,
+            crate::proto::proximadb_v1::ComparisonOp::Eq as i32
         );
     }
 }

@@ -26,7 +26,7 @@ pub mod unified_handlers;
 #[cfg(test)]
 mod unified_handlers_tests;
 
-pub use unified_handlers::{
+pub use crate::services::operations::vectors::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichSearchRequest,
-    UnifiedHandlers,
 };
+pub use unified_handlers::UnifiedHandlers;
