@@ -430,15 +430,21 @@ class ArrowFlightClient:
             collection_id: Target collection ID
             data: Arrow Table. Upsert/insert expects id/oid plus record columns;
                 delete expects id or oid.
-            operation: "bulk_insert", "bulk_upsert", or "bulk_delete"
+            operation: "insert"/"bulk_insert", "upsert"/"bulk_upsert", or
+                "delete"/"bulk_delete"
             batch_size: Number of rows per streamed batch
 
         Returns:
             FlightExchangeResult with final metadata and per-batch progress.
         """
+        operation = {
+            "insert": "bulk_insert",
+            "upsert": "bulk_upsert",
+            "delete": "bulk_delete",
+        }.get(operation, operation)
         if operation not in {"bulk_insert", "bulk_upsert", "bulk_delete"}:
             raise ValueError(
-                "operation must be one of bulk_insert, bulk_upsert, or bulk_delete"
+                "operation must be one of insert, upsert, delete, bulk_insert, bulk_upsert, or bulk_delete"
             )
 
         client = self._get_client()

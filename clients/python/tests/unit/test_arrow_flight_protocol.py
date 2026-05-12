@@ -166,3 +166,45 @@ def test_bulk_delete_exchange_sends_id_table():
     assert fake.writer.batches[0].column("id").to_pylist() == ["r1", "r2"]
     assert result.success
     assert result.records_processed == 2
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_bulk_write_exchange_accepts_plain_upsert_alias():
+    complete = {
+        "type": "complete",
+        "operation": "upsert",
+        "total_batches": 1,
+        "total_records": 1,
+        "total_failed": 0,
+        "success": True,
+    }
+    fake = _ExchangeClient([_Chunk(json.dumps(complete).encode())])
+    client = _client_with_exchange(fake)
+    table = pa.table({"id": ["r1"]})
+
+    result = client.bulk_write_exchange("records", table, operation="upsert")
+
+    assert fake.descriptor.path == [b"bulk_upsert", b"records"]
+    assert result.success
+    assert result.records_processed == 1
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_bulk_write_exchange_accepts_plain_delete_alias():
+    complete = {
+        "type": "complete",
+        "operation": "delete",
+        "total_batches": 1,
+        "total_records": 1,
+        "total_failed": 0,
+        "success": True,
+    }
+    fake = _ExchangeClient([_Chunk(json.dumps(complete).encode())])
+    client = _client_with_exchange(fake)
+    table = pa.table({"id": ["r1"]})
+
+    result = client.bulk_write_exchange("records", table, operation="delete")
+
+    assert fake.descriptor.path == [b"bulk_delete", b"records"]
+    assert result.success
+    assert result.records_processed == 1
