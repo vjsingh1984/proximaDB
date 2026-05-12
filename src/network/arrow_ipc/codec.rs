@@ -10,13 +10,17 @@
 
 use anyhow::{Context, Result};
 use arrow_array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, FixedSizeListArray, Float32Array, Float64Array,
-    Int32Array, Int64Array, RecordBatch, StringArray, StructArray,
+    Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, FixedSizeListArray,
+    Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, LargeBinaryArray,
+    LargeStringArray, ListArray, RecordBatch, StringArray, StructArray, Time32MillisecondArray,
+    Time32SecondArray, Time64MicrosecondArray, Time64NanosecondArray, TimestampMicrosecondArray,
+    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt8Array,
+    UInt16Array, UInt32Array, UInt64Array,
 };
 use arrow_flight::{FlightData, FlightDescriptor, Ticket};
 use arrow_ipc::writer::IpcWriteOptions;
-use arrow_schema::{DataType, Field, Fields, Schema};
-use proximadb_data_model::ProximaValue;
+use arrow_schema::{DataType, Field, Fields, Schema, TimeUnit as ArrowTimeUnit};
+use proximadb_data_model::{ProximaValue, TimeUnit};
 use proximadb_records::{EdgeShape, EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -412,8 +416,17 @@ impl ArrowProtoCodec {
         if let Some(array) = array.as_any().downcast_ref::<StringArray>() {
             return Ok(Some(ProximaValue::String(array.value(row).to_string())));
         }
+        if let Some(array) = array.as_any().downcast_ref::<LargeStringArray>() {
+            return Ok(Some(ProximaValue::String(array.value(row).to_string())));
+        }
         if let Some(array) = array.as_any().downcast_ref::<BooleanArray>() {
             return Ok(Some(ProximaValue::Boolean(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Int8Array>() {
+            return Ok(Some(ProximaValue::Int8(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Int16Array>() {
+            return Ok(Some(ProximaValue::Int16(array.value(row))));
         }
         if let Some(array) = array.as_any().downcast_ref::<Int32Array>() {
             return Ok(Some(ProximaValue::Int32(array.value(row))));
@@ -421,14 +434,69 @@ impl ArrowProtoCodec {
         if let Some(array) = array.as_any().downcast_ref::<Int64Array>() {
             return Ok(Some(ProximaValue::Int64(array.value(row))));
         }
+        if let Some(array) = array.as_any().downcast_ref::<UInt8Array>() {
+            return Ok(Some(ProximaValue::UInt8(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<UInt16Array>() {
+            return Ok(Some(ProximaValue::UInt16(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<UInt32Array>() {
+            return Ok(Some(ProximaValue::UInt32(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<UInt64Array>() {
+            return Ok(Some(ProximaValue::UInt64(array.value(row))));
+        }
         if let Some(array) = array.as_any().downcast_ref::<Float32Array>() {
             return Ok(Some(ProximaValue::Float32(array.value(row))));
         }
         if let Some(array) = array.as_any().downcast_ref::<Float64Array>() {
             return Ok(Some(ProximaValue::Float64(array.value(row))));
         }
+        if let Some(array) = array.as_any().downcast_ref::<Decimal128Array>() {
+            let scale = match array.data_type() {
+                DataType::Decimal128(_, scale) => *scale,
+                _ => 0,
+            };
+            return Ok(Some(ProximaValue::Decimal(Self::format_decimal128(
+                array.value(row),
+                scale,
+            ))));
+        }
         if let Some(array) = array.as_any().downcast_ref::<BinaryArray>() {
             return Ok(Some(ProximaValue::Binary(array.value(row).to_vec())));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<LargeBinaryArray>() {
+            return Ok(Some(ProximaValue::Binary(array.value(row).to_vec())));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Date32Array>() {
+            return Ok(Some(ProximaValue::Date(array.value(row))));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Time32SecondArray>() {
+            return Ok(Some(ProximaValue::Time(
+                array.value(row) as i64,
+                TimeUnit::Second,
+            )));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Time32MillisecondArray>() {
+            return Ok(Some(ProximaValue::Time(
+                array.value(row) as i64,
+                TimeUnit::Millisecond,
+            )));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Time64MicrosecondArray>() {
+            return Ok(Some(ProximaValue::Time(
+                array.value(row),
+                TimeUnit::Microsecond,
+            )));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<Time64NanosecondArray>() {
+            return Ok(Some(ProximaValue::Time(
+                array.value(row),
+                TimeUnit::Nanosecond,
+            )));
+        }
+        if let Some(value) = Self::timestamp_value_to_proxima(array, row) {
+            return Ok(Some(value));
         }
         if matches!(array.data_type(), DataType::FixedSizeList(_, _)) {
             return Ok(Some(ProximaValue::DenseVector(
@@ -438,8 +506,84 @@ impl ArrowProtoCodec {
                     .unwrap_or_default(),
             )));
         }
+        if matches!(array.data_type(), DataType::List(_)) {
+            return Ok(Some(ProximaValue::DenseVector(
+                Self::extract_vectors(array, row + 1)?
+                    .get(row)
+                    .cloned()
+                    .unwrap_or_default(),
+            )));
+        }
 
         Ok(None)
+    }
+
+    fn timestamp_value_to_proxima(array: &ArrayRef, row: usize) -> Option<ProximaValue> {
+        let (unit, has_timezone) = match array.data_type() {
+            DataType::Timestamp(unit, timezone) => (*unit, timezone.is_some()),
+            _ => return None,
+        };
+
+        let value = match unit {
+            ArrowTimeUnit::Second => array
+                .as_any()
+                .downcast_ref::<TimestampSecondArray>()?
+                .value(row),
+            ArrowTimeUnit::Millisecond => array
+                .as_any()
+                .downcast_ref::<TimestampMillisecondArray>()?
+                .value(row),
+            ArrowTimeUnit::Microsecond => array
+                .as_any()
+                .downcast_ref::<TimestampMicrosecondArray>()?
+                .value(row),
+            ArrowTimeUnit::Nanosecond => array
+                .as_any()
+                .downcast_ref::<TimestampNanosecondArray>()?
+                .value(row),
+        };
+        let unit = Self::arrow_time_unit_to_proxima(unit);
+
+        if has_timezone {
+            Some(ProximaValue::TimestampTz(value, unit))
+        } else {
+            Some(ProximaValue::Timestamp(value, unit))
+        }
+    }
+
+    fn arrow_time_unit_to_proxima(unit: ArrowTimeUnit) -> TimeUnit {
+        match unit {
+            ArrowTimeUnit::Second => TimeUnit::Second,
+            ArrowTimeUnit::Millisecond => TimeUnit::Millisecond,
+            ArrowTimeUnit::Microsecond => TimeUnit::Microsecond,
+            ArrowTimeUnit::Nanosecond => TimeUnit::Nanosecond,
+        }
+    }
+
+    fn format_decimal128(value: i128, scale: i8) -> String {
+        if scale == 0 {
+            return value.to_string();
+        }
+
+        if scale < 0 {
+            return format!("{}{}", value, "0".repeat((-scale) as usize));
+        }
+
+        let negative = value < 0;
+        let digits = value.abs().to_string();
+        let scale = scale as usize;
+        let decimal = if digits.len() <= scale {
+            format!("0.{}{}", "0".repeat(scale - digits.len()), digits)
+        } else {
+            let split = digits.len() - scale;
+            format!("{}.{}", &digits[..split], &digits[split..])
+        };
+
+        if negative {
+            format!("-{}", decimal)
+        } else {
+            decimal
+        }
     }
 
     fn metadata_props(array: &ArrayRef, row: usize) -> Result<Vec<(String, ProximaValue)>> {
@@ -519,18 +663,53 @@ impl ArrowProtoCodec {
         // Try FixedSizeList<Float32> first (standard format)
         if let Some(list_array) = array.as_any().downcast_ref::<FixedSizeListArray>() {
             let value_length = list_array.value_length() as usize;
-            let flat_array = list_array
-                .values()
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .context("FixedSizeList values not Float32Array")?;
+            if let Some(flat_array) = list_array.values().as_any().downcast_ref::<Float32Array>() {
+                return Ok((0..num_rows)
+                    .map(|i| {
+                        let start = i * value_length;
+                        flat_array.values()[start..start + value_length].to_vec()
+                    })
+                    .collect());
+            }
+            if let Some(flat_array) = list_array.values().as_any().downcast_ref::<Float64Array>() {
+                return Ok((0..num_rows)
+                    .map(|i| {
+                        let start = i * value_length;
+                        flat_array.values()[start..start + value_length]
+                            .iter()
+                            .map(|value| *value as f32)
+                            .collect()
+                    })
+                    .collect());
+            }
+            return Err(anyhow::anyhow!(
+                "FixedSizeList values are not Float32/Float64"
+            ));
+        }
 
-            return Ok((0..num_rows)
-                .map(|i| {
-                    let start = i * value_length;
-                    flat_array.values()[start..start + value_length].to_vec()
-                })
-                .collect());
+        if let Some(list_array) = array.as_any().downcast_ref::<ListArray>() {
+            if let Some(values) = list_array.values().as_any().downcast_ref::<Float32Array>() {
+                return Ok((0..num_rows)
+                    .map(|i| {
+                        let start = list_array.value_offsets()[i] as usize;
+                        let end = list_array.value_offsets()[i + 1] as usize;
+                        values.values()[start..end].to_vec()
+                    })
+                    .collect());
+            }
+            if let Some(values) = list_array.values().as_any().downcast_ref::<Float64Array>() {
+                return Ok((0..num_rows)
+                    .map(|i| {
+                        let start = list_array.value_offsets()[i] as usize;
+                        let end = list_array.value_offsets()[i + 1] as usize;
+                        values.values()[start..end]
+                            .iter()
+                            .map(|value| *value as f32)
+                            .collect()
+                    })
+                    .collect());
+            }
+            return Err(anyhow::anyhow!("List values are not Float32/Float64"));
         }
 
         // Fallback: Binary format (serialized f32 vectors)
@@ -937,8 +1116,10 @@ impl ArrowProtoCodec {
 mod tests {
     use super::*;
     use arrow_array::{
-        ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array,
-        StringArray,
+        ArrayRef, BooleanArray, Date32Array, Decimal128Array, FixedSizeListArray, Float32Array,
+        Float64Array, Int8Array, Int64Array, LargeBinaryArray, LargeStringArray, ListArray,
+        StringArray, Time64MicrosecondArray, TimestampNanosecondArray, UInt64Array,
+        types::Float32Type,
     };
     use arrow_schema::{DataType, Field};
 
@@ -1086,6 +1267,118 @@ mod tests {
         assert_eq!(
             record.edge.as_ref().map(|edge| edge.edge_type.as_str()),
             Some("cites")
+        );
+    }
+
+    #[test]
+    fn test_batches_to_proxima_records_preserves_extended_arrow_types() {
+        let ids = StringArray::from(vec!["rich_1"]);
+        let vector_array = ListArray::from_iter_primitive::<Float32Type, _, _>(vec![Some(vec![
+            Some(1.0),
+            Some(2.0),
+            Some(3.5),
+        ])]);
+        let small_int = Int8Array::from(vec![-8]);
+        let unsigned_big = UInt64Array::from(vec![9_223_372_036_854_775_808_u64]);
+        let large_text = LargeStringArray::from(vec!["large text"]);
+        let large_binary = LargeBinaryArray::from_vec(vec![b"bytes".as_slice()]);
+        let decimal = Decimal128Array::from(vec![12345_i128])
+            .with_precision_and_scale(10, 2)
+            .unwrap();
+        let date = Date32Array::from(vec![19_000]);
+        let time = Time64MicrosecondArray::from(vec![86_400_000_000_i64]);
+        let timestamp = TimestampNanosecondArray::from(vec![1_700_000_000_000_000_000_i64]);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new(
+                "vector",
+                DataType::List(Arc::new(Field::new("item", DataType::Float32, true))),
+                false,
+            ),
+            Field::new("small_int", DataType::Int8, false),
+            Field::new("unsigned_big", DataType::UInt64, false),
+            Field::new("large_text", DataType::LargeUtf8, false),
+            Field::new("large_binary", DataType::LargeBinary, false),
+            Field::new("decimal", DataType::Decimal128(10, 2), false),
+            Field::new("date", DataType::Date32, false),
+            Field::new(
+                "time",
+                DataType::Time64(arrow_schema::TimeUnit::Microsecond),
+                false,
+            ),
+            Field::new(
+                "event_ts",
+                DataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, None),
+                false,
+            ),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(ids),
+                Arc::new(vector_array),
+                Arc::new(small_int),
+                Arc::new(unsigned_big),
+                Arc::new(large_text),
+                Arc::new(large_binary),
+                Arc::new(decimal),
+                Arc::new(date),
+                Arc::new(time),
+                Arc::new(timestamp),
+            ],
+        )
+        .unwrap();
+
+        let records = ArrowProtoCodec::batches_to_proxima_records(vec![batch]).unwrap();
+        let record = &records[0];
+        assert_eq!(record.embeddings[0].values, vec![1.0, 2.0, 3.5]);
+        assert_eq!(
+            record.props.get("small_int"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Int8(-8)))
+        );
+        assert_eq!(
+            record.props.get("unsigned_big"),
+            Some(&ProximaTreeNode::Value(ProximaValue::UInt64(
+                9_223_372_036_854_775_808_u64
+            )))
+        );
+        assert_eq!(
+            record.props.get("large_text"),
+            Some(&ProximaTreeNode::Value(ProximaValue::String(
+                "large text".to_string()
+            )))
+        );
+        assert_eq!(
+            record.props.get("large_binary"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Binary(
+                b"bytes".to_vec()
+            )))
+        );
+        assert_eq!(
+            record.props.get("decimal"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Decimal(
+                "123.45".to_string()
+            )))
+        );
+        assert_eq!(
+            record.props.get("date"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Date(19_000)))
+        );
+        assert_eq!(
+            record.props.get("time"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Time(
+                86_400_000_000,
+                TimeUnit::Microsecond
+            )))
+        );
+        assert_eq!(
+            record.props.get("event_ts"),
+            Some(&ProximaTreeNode::Value(ProximaValue::Timestamp(
+                1_700_000_000_000_000_000,
+                TimeUnit::Nanosecond
+            )))
         );
     }
 
