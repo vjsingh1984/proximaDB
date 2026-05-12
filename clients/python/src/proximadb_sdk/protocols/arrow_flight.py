@@ -17,6 +17,7 @@ limitations under the License.
 """
 
 import json
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -35,8 +36,8 @@ except ImportError:
 class WriteMode:
     """Write mode for Arrow Flight operations."""
 
-    WAL = "wal"  # WAL-backed writes (30-50K vectors/sec)
-    DIRECT = "direct"  # Direct engine writes (100-200K vectors/sec)
+    WAL = "wal"  # WAL-backed writes
+    DIRECT = "direct"  # Accepted by the server, currently falls back to WAL
 
 
 @dataclass
@@ -217,6 +218,16 @@ class ArrowFlightClient:
         )
 
     @staticmethod
+    def _warn_direct_write_fallback(write_mode: str) -> None:
+        if write_mode == WriteMode.DIRECT:
+            warnings.warn(
+                "Arrow Flight write_mode='direct' is accepted by the server "
+                "but currently falls back to WAL-backed writes.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+    @staticmethod
     def _affected_count(result_data: Dict[str, Any], fallback: int) -> int:
         """Extract affected row count from ProximaDB batch metadata."""
         metrics = result_data.get("metrics", {})
@@ -316,6 +327,7 @@ class ArrowFlightClient:
             result = client.bulk_insert("my_collection", table)
         """
         client = self._get_client()
+        self._warn_direct_write_fallback(write_mode)
 
         # Create FlightDescriptor with collection ID and options
         cmd = json.dumps(
@@ -571,6 +583,7 @@ class ArrowFlightClient:
             FlightPutResult with insert statistics
         """
         client = self._get_client()
+        self._warn_direct_write_fallback(write_mode)
 
         descriptor = flight.FlightDescriptor.for_command(
             json.dumps(

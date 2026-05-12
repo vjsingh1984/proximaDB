@@ -6,6 +6,7 @@ from proximadb_sdk.protocols.arrow_flight import (
     ARROW_AVAILABLE,
     ArrowFlightClient,
     FlightPutResult,
+    WriteMode,
     pa,
 )
 
@@ -185,6 +186,26 @@ def test_bulk_upsert_doput_sends_upsert_descriptor_and_batches():
     assert fake.writer.closed
     assert result.success
     assert result.records_processed == 3
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_bulk_upsert_doput_warns_for_direct_write_mode():
+    fake = _PutClient(
+        {
+            "success": True,
+            "metrics": {"successful_count": 1, "failed_count": 0},
+        }
+    )
+    client = _client_with_put(fake)
+    table = pa.table({"id": ["r1"]})
+
+    with pytest.warns(RuntimeWarning, match="falls back to WAL-backed writes"):
+        result = client.bulk_upsert("records", table, write_mode=WriteMode.DIRECT)
+
+    descriptor = json.loads(fake.descriptor.command)
+    assert descriptor["write_mode"] == "direct"
+    assert result.success
+    assert result.records_processed == 1
 
 
 @pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")

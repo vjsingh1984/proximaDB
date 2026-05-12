@@ -31,10 +31,11 @@ use crate::proto::proximadb_v1::{MetadataItem, SqlValue, VectorRecord, VectorSea
 /// Write mode for Arrow IPC operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum WriteMode {
-    /// Use WAL for durability (30-50K vectors/sec)
+    /// Use WAL for durability.
     #[default]
     WAL,
-    /// Direct engine write bypassing WAL (100-200K vectors/sec)
+    /// Direct engine write request. The current Flight service accepts this
+    /// token for forward compatibility but falls back to WAL-backed writes.
     Direct,
 }
 

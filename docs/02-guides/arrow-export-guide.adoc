@@ -166,6 +166,9 @@ streamed request return a failed `BatchOperationResult` with `error_code`
 `INSERT_CONFLICT`. Use `upsert`/`bulk_upsert` when replacing existing records
 is intended.
 
+`write_mode` accepts `wal` and `direct`; `direct` is reserved for a future
+WAL-bypass path and currently falls back to WAL-backed writes on the server.
+
 === Response Metadata
 
 DoPut returns a `BatchOperationResult` JSON payload in `PutResult.app_metadata`:
