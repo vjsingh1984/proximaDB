@@ -85,30 +85,48 @@ impl ProximaFlightService {
         }
     }
 
-    fn batch_result_to_vector_response(
-        result: BatchOperationResult,
-    ) -> crate::proto::proximadb_v1::VectorOperationResponse {
-        crate::proto::proximadb_v1::VectorOperationResponse {
-            success: result.success,
-            operation: crate::proto::proximadb_v1::VectorServiceOperation::VsBatch as i32,
-            metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
-                total_processed: result.metrics.total_processed,
-                successful_count: result.metrics.successful_count,
-                failed_count: result.metrics.failed_count,
-                updated_count: result.metrics.updated_count,
-                processing_time_us: result.metrics.processing_time_us,
-                wal_write_time_us: result.metrics.wal_write_time_us,
-                index_update_time_us: result.metrics.index_update_time_us,
-            }),
-            results: None,
-            vector_ids: result.vector_ids,
-            error_message: if result.errors.is_empty() {
-                None
-            } else {
-                Some(result.errors.join("; "))
-            },
-            error_code: result.error_code,
-        }
+    fn batch_result_app_metadata(result: &BatchOperationResult) -> Result<Vec<u8>> {
+        serde_json::to_vec(result).map_err(Into::into)
+    }
+
+    fn batch_progress_app_metadata(
+        batch: u64,
+        batch_rows: usize,
+        cumulative_records: u64,
+        result: &BatchOperationResult,
+    ) -> Result<Vec<u8>> {
+        let failed_count = result.metrics.failed_count.max(result.errors.len() as i64);
+        let progress = serde_json::json!({
+            "type": "progress",
+            "batch": batch,
+            "batch_rows": batch_rows,
+            "total_records": cumulative_records,
+            "success": result.success,
+            "successful_count": result.metrics.successful_count,
+            "failed_count": failed_count,
+            "record_ids": result.vector_ids,
+            "errors": result.errors,
+            "error_code": result.error_code,
+        });
+
+        serde_json::to_vec(&progress).map_err(Into::into)
+    }
+
+    fn bulk_insert_complete_app_metadata(
+        total_batches: u64,
+        total_records: u64,
+        total_failed: u64,
+        success: bool,
+    ) -> Result<Vec<u8>> {
+        let final_status = serde_json::json!({
+            "type": "complete",
+            "total_batches": total_batches,
+            "total_records": total_records,
+            "total_failed": total_failed,
+            "success": success,
+        });
+
+        serde_json::to_vec(&final_status).map_err(Into::into)
     }
 
     /// Convert serde_json::Value to SqlValue for metadata
@@ -167,13 +185,13 @@ impl ProximaFlightService {
     }
 
     /// Handle bulk vector insert (DoPut)
-    async fn handle_vector_insert(
+    async fn handle_record_insert(
         &self,
         collection_id: String,
         write_mode: WriteMode,
         trigger_compaction: bool,
         batches: Vec<arrow_array::RecordBatch>,
-    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+    ) -> Result<BatchOperationResult> {
         debug!(
             collection_id = %collection_id,
             write_mode = ?write_mode,
@@ -192,11 +210,10 @@ impl ProximaFlightService {
         );
 
         // Route based on write mode
-        let response = match write_mode {
+        let result = match write_mode {
             WriteMode::WAL => {
                 // Use standard WAL-backed insertion (reuses existing path)
-                let result = self
-                    .unified_handlers
+                self.unified_handlers
                     .handle_record_batch_for_tenant(
                         RichRecordBatchRequest {
                             collection_id: collection_id.clone(),
@@ -204,8 +221,7 @@ impl ProximaFlightService {
                         },
                         None,
                     )
-                    .await?;
-                Self::batch_result_to_vector_response(result)
+                    .await?
             }
             WriteMode::Direct => {
                 // Direct engine write (future enhancement)
@@ -214,8 +230,7 @@ impl ProximaFlightService {
                     collection_id = %collection_id,
                     "Direct write mode not yet implemented, using WAL"
                 );
-                let result = self
-                    .unified_handlers
+                self.unified_handlers
                     .handle_record_batch_for_tenant(
                         RichRecordBatchRequest {
                             collection_id: collection_id.clone(),
@@ -223,8 +238,7 @@ impl ProximaFlightService {
                         },
                         None,
                     )
-                    .await?;
-                Self::batch_result_to_vector_response(result)
+                    .await?
             }
         };
 
@@ -237,7 +251,7 @@ impl ProximaFlightService {
             );
         }
 
-        Ok(response)
+        Ok(result)
     }
 
     /// Handle vector search (DoGet)
@@ -602,9 +616,9 @@ impl FlightService for ProximaFlightService {
             "Received all batches"
         );
 
-        // Insert vectors
-        let response = self
-            .handle_vector_insert(
+        // Insert records
+        let result = self
+            .handle_record_insert(
                 metadata.collection_id.clone(),
                 metadata.write_mode,
                 metadata.trigger_compaction,
@@ -613,9 +627,9 @@ impl FlightService for ProximaFlightService {
             .await
             .map_err(|e| TonicStatus::internal(format!("Insert failed: {}", e)))?;
 
-        // Return result
-        let result_bytes =
-            serde_json::to_vec(&response).map_err(|e| TonicStatus::internal(e.to_string()))?;
+        // Return rich batch result metadata to Flight clients.
+        let result_bytes = Self::batch_result_app_metadata(&result)
+            .map_err(|e| TonicStatus::internal(e.to_string()))?;
 
         let put_result = PutResult {
             app_metadata: result_bytes.into(),
@@ -1469,8 +1483,10 @@ impl ProximaFlightService {
         collection_id: String,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
-        let mut total_vectors = 0u64;
+        let mut total_records = 0u64;
+        let mut total_failed = 0u64;
         let mut total_batches = 0u64;
+        let mut all_success = true;
         let mut results = Vec::new();
 
         // Collect and process batches
@@ -1513,43 +1529,46 @@ impl ProximaFlightService {
                 )
                 .await
                 .map_err(|e| TonicStatus::internal(format!("Insert failed: {}", e)))?;
-            let response = Self::batch_result_to_vector_response(result);
 
-            total_vectors += response
+            total_records += result.metrics.successful_count.max(0) as u64;
+            total_failed += result
                 .metrics
-                .as_ref()
-                .map_or(0, |m| m.successful_count as u64);
+                .failed_count
+                .max(result.errors.len() as i64)
+                .max(0) as u64;
+            all_success &= result.success;
 
             // Send progress update as FlightData
-            let progress = serde_json::json!({
-                "type": "progress",
-                "batch": total_batches,
-                "batch_rows": batch_rows,
-                "total_vectors": total_vectors,
-                "success": response.success
-            });
+            let progress_metadata = Self::batch_progress_app_metadata(
+                total_batches,
+                batch_rows,
+                total_records,
+                &result,
+            )
+            .map_err(|e| TonicStatus::internal(format!("Failed to encode progress: {}", e)))?;
 
             let progress_data = FlightData {
                 flight_descriptor: None,
                 data_header: Default::default(),
-                app_metadata: serde_json::to_vec(&progress).unwrap_or_default().into(),
+                app_metadata: progress_metadata.into(),
                 data_body: Default::default(),
             };
 
             results.push(Ok(progress_data));
         }
 
-        let final_status = serde_json::json!({
-            "type": "complete",
-            "total_batches": total_batches,
-            "total_vectors": total_vectors,
-            "success": true
-        });
+        let final_metadata = Self::bulk_insert_complete_app_metadata(
+            total_batches,
+            total_records,
+            total_failed,
+            all_success,
+        )
+        .map_err(|e| TonicStatus::internal(format!("Failed to encode final status: {}", e)))?;
 
         let final_data = FlightData {
             flight_descriptor: None,
             data_header: Default::default(),
-            app_metadata: serde_json::to_vec(&final_status).unwrap_or_default().into(),
+            app_metadata: final_metadata.into(),
             data_body: Default::default(),
         };
 
@@ -1557,7 +1576,8 @@ impl ProximaFlightService {
 
         info!(
             total_batches = total_batches,
-            total_vectors = total_vectors,
+            total_records = total_records,
+            total_failed = total_failed,
             "Arrow Flight: bulk_insert exchange completed"
         );
 
@@ -1754,6 +1774,53 @@ mod tests {
     use crate::network::arrow_ipc::file_export::{
         ArrowFileExportHandler, ArrowFileInfo, ArrowFileRequest, ArrowFileTicket, ExportFileFormat,
     };
+    use crate::services::operations::OperationMetrics;
+
+    #[test]
+    fn test_batch_result_app_metadata_uses_rich_shape() {
+        let result = BatchOperationResult::success(
+            vec!["record-1".to_string()],
+            OperationMetrics {
+                total_processed: 1,
+                successful_count: 1,
+                failed_count: 0,
+                updated_count: 0,
+                processing_time_us: 123,
+                wal_write_time_us: 10,
+                index_update_time_us: 20,
+            },
+        );
+
+        let metadata = ProximaFlightService::batch_result_app_metadata(&result).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
+
+        assert_eq!(value["success"], true);
+        assert_eq!(value["vector_ids"], serde_json::json!(["record-1"]));
+        assert_eq!(value["metrics"]["successful_count"], 1);
+        assert!(value.get("operation").is_none());
+        assert!(value.get("error_message").is_none());
+    }
+
+    #[test]
+    fn test_batch_progress_metadata_is_record_oriented() {
+        let result = BatchOperationResult::failure(
+            "bad record".to_string(),
+            "VALIDATION_FAILED".to_string(),
+        );
+
+        let metadata =
+            ProximaFlightService::batch_progress_app_metadata(2, 10, 7, &result).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
+
+        assert_eq!(value["type"], "progress");
+        assert_eq!(value["batch"], 2);
+        assert_eq!(value["batch_rows"], 10);
+        assert_eq!(value["total_records"], 7);
+        assert_eq!(value["successful_count"], 0);
+        assert_eq!(value["failed_count"], 1);
+        assert_eq!(value["errors"], serde_json::json!(["bad record"]));
+        assert!(value.get("total_vectors").is_none());
+    }
 
     #[test]
     fn test_arrow_file_ticket_detection() {
