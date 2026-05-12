@@ -35,7 +35,7 @@ pub struct StorageEngine {
     distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 
     /// Collection metadata provider - injected after construction to break circular dependency
-    metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
+    metadata_provider: RwLock<Option<Arc<dyn InternalCollectionProvider>>>,
 }
 
 impl StorageEngine {
@@ -165,7 +165,7 @@ impl StorageEngine {
             distance_compute: Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
             ),
-            metadata_provider: Arc::new(RwLock::new(metadata_provider)),
+            metadata_provider: RwLock::new(metadata_provider),
         })
     }
 

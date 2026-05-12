@@ -1687,8 +1687,6 @@ pub struct MultiServer {
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     rest_auth_enabled: bool,
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    /// Storage engine reference for PostgreSQL wire protocol server
-    storage: Option<Arc<RwLock<StorageEngine>>>,
     /// LLM engine for semantic operations
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
 }
@@ -1716,16 +1714,8 @@ impl MultiServer {
             security_coordinator,
             rest_auth_enabled,
             server_handles: Arc::new(Mutex::new(Vec::new())),
-            storage: None,
             llm_engine,
         }
-    }
-
-    /// Set the storage engine reference for PostgreSQL wire protocol support
-    /// This should be called after ProximaDB creates the storage engine
-    pub fn set_storage(&mut self, storage: Arc<RwLock<StorageEngine>>) {
-        self.storage = Some(storage);
-        info!("🐘 MultiServer: Storage engine wired for PostgreSQL protocol");
     }
 
     /// Start all configured servers
@@ -2110,35 +2100,22 @@ impl MultiServer {
             let graph_service = Some(services.graph_service.clone());
             let observability_service = Some(services.observability_service.clone());
 
-            if let Some(ref storage) = self.storage {
-                let storage_clone = storage.clone();
-
-                let postgres_handle = tokio::spawn(async move {
-                    use crate::network::postgres::PostgresServer;
-                    let server = PostgresServer::new(
-                        pg_bind_addr,
-                        storage_clone,
-                        collection_service,
-                        vector_ops,
-                        document_service,
-                        graph_service,
-                        observability_service,
-                    );
-                    if let Err(e) = server.start().await {
-                        tracing::error!("❌ PostgreSQL Server error: {}", e);
-                    }
-                });
-                handles.push(postgres_handle);
-                info!("✅ PostgreSQL Server started on {}", pg_bind_addr);
-            } else {
-                warn!(
-                    "PostgreSQL server is enabled but storage engine is not wired - use set_storage() before start()"
+            let postgres_handle = tokio::spawn(async move {
+                use crate::network::postgres::PostgresServer;
+                let server = PostgresServer::new(
+                    pg_bind_addr,
+                    collection_service,
+                    vector_ops,
+                    document_service,
+                    graph_service,
+                    observability_service,
                 );
-                info!(
-                    "📋 PostgreSQL server will be available at {} once storage wiring is complete",
-                    pg_bind_addr
-                );
-            }
+                if let Err(e) = server.start().await {
+                    tracing::error!("❌ PostgreSQL Server error: {}", e);
+                }
+            });
+            handles.push(postgres_handle);
+            info!("✅ PostgreSQL Server started on {}", pg_bind_addr);
         }
 
         *self.server_handles.lock().await = handles;

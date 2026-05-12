@@ -133,61 +133,61 @@ pub enum OperationMode {
 #[derive(Debug)]
 pub struct GraphMemoryPool {
     /// Node storage with Arc for zero-copy sharing
-    pub nodes: Arc<DashMap<NodeId, Arc<Node>>>,
+    pub nodes: DashMap<NodeId, Arc<Node>>,
 
     /// Edge storage with Arc for zero-copy sharing
-    pub edges: Arc<DashMap<EdgeId, Arc<Edge>>>,
+    pub edges: DashMap<EdgeId, Arc<Edge>>,
 
     /// Property indexes for efficient querying
-    pub node_property_indexes: Arc<DashMap<String, DashMap<String, Vec<NodeId>>>>,
+    pub node_property_indexes: DashMap<String, DashMap<String, Vec<NodeId>>>,
     /// Ordered string indexes for node properties (for range/prefix queries)
     pub node_property_str_ordered:
-        Arc<DashMap<String, std::sync::RwLock<std::collections::BTreeMap<String, Vec<NodeId>>>>>,
+        DashMap<String, std::sync::RwLock<std::collections::BTreeMap<String, Vec<NodeId>>>>,
     /// Numeric indexes for node properties (for numeric range queries)
     pub node_property_num_indexes:
-        Arc<DashMap<String, std::sync::RwLock<std::collections::HashMap<i64, Vec<NodeId>>>>>,
+        DashMap<String, std::sync::RwLock<std::collections::HashMap<i64, Vec<NodeId>>>>,
     /// Property indexes for edge-level properties, keyed by property name.
-    pub edge_property_indexes: Arc<DashMap<String, DashMap<String, Vec<EdgeId>>>>,
+    pub edge_property_indexes: DashMap<String, DashMap<String, Vec<EdgeId>>>,
     /// Ordered string indexes for edge properties (for range/prefix queries)
     pub edge_property_str_ordered:
-        Arc<DashMap<String, std::sync::RwLock<std::collections::BTreeMap<String, Vec<EdgeId>>>>>,
+        DashMap<String, std::sync::RwLock<std::collections::BTreeMap<String, Vec<EdgeId>>>>,
     /// Numeric indexes for edge properties (for numeric range queries)
     pub edge_property_num_indexes:
-        Arc<DashMap<String, std::sync::RwLock<std::collections::HashMap<i64, Vec<EdgeId>>>>>,
+        DashMap<String, std::sync::RwLock<std::collections::HashMap<i64, Vec<EdgeId>>>>,
 
     /// Label indexes for fast label-based queries
-    pub label_indexes: Arc<DashMap<String, Vec<NodeId>>>,
+    pub label_indexes: DashMap<String, Vec<NodeId>>,
     /// Edge type indexes mapping edge type strings to edge identifiers.
-    pub edge_type_indexes: Arc<DashMap<String, Vec<EdgeId>>>,
+    pub edge_type_indexes: DashMap<String, Vec<EdgeId>>,
 
     /// Composite (from,to,type) edge index for uniqueness checks
-    pub edge_composite_index: Arc<DashMap<(NodeId, NodeId, String), EdgeId>>,
+    pub edge_composite_index: DashMap<(NodeId, NodeId, String), EdgeId>,
 
     /// Unique constraints registry: (graph_id, label, property) -> (value -> node_id)
-    pub unique_constraints: Arc<DashMap<(String, String, String), DashMap<String, NodeId>>>,
+    pub unique_constraints: DashMap<(String, String, String), DashMap<String, NodeId>>,
     /// Multi-property unique constraints per graph:
     /// Key: (graph_id, labels_key, props_key) where labels_key and props_key are joined, normalized strings
     /// Value: composite_key -> node_id
-    pub unique_constraints_multi: Arc<DashMap<(String, String, String), DashMap<String, NodeId>>>,
+    pub unique_constraints_multi: DashMap<(String, String, String), DashMap<String, NodeId>>,
 }
 
 impl GraphMemoryPool {
     /// Create a new graph memory pool
     pub fn new() -> Self {
         Self {
-            nodes: Arc::new(DashMap::new()),
-            edges: Arc::new(DashMap::new()),
-            node_property_indexes: Arc::new(DashMap::new()),
-            node_property_str_ordered: Arc::new(DashMap::new()),
-            node_property_num_indexes: Arc::new(DashMap::new()),
-            edge_property_indexes: Arc::new(DashMap::new()),
-            edge_property_str_ordered: Arc::new(DashMap::new()),
-            edge_property_num_indexes: Arc::new(DashMap::new()),
-            label_indexes: Arc::new(DashMap::new()),
-            edge_type_indexes: Arc::new(DashMap::new()),
-            edge_composite_index: Arc::new(DashMap::new()),
-            unique_constraints: Arc::new(DashMap::new()),
-            unique_constraints_multi: Arc::new(DashMap::new()),
+            nodes: DashMap::new(),
+            edges: DashMap::new(),
+            node_property_indexes: DashMap::new(),
+            node_property_str_ordered: DashMap::new(),
+            node_property_num_indexes: DashMap::new(),
+            edge_property_indexes: DashMap::new(),
+            edge_property_str_ordered: DashMap::new(),
+            edge_property_num_indexes: DashMap::new(),
+            label_indexes: DashMap::new(),
+            edge_type_indexes: DashMap::new(),
+            edge_composite_index: DashMap::new(),
+            unique_constraints: DashMap::new(),
+            unique_constraints_multi: DashMap::new(),
         }
     }
 

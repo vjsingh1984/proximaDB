@@ -30,7 +30,6 @@ use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
 use crate::services::{DdlService, DmlService};
-use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
 
 /// PostgreSQL protocol handler
@@ -39,9 +38,6 @@ pub struct PostgresProtocol {
     stream: TcpStream,
     /// Session state
     session: Arc<RwLock<Session>>,
-    /// Storage engine
-    #[allow(dead_code)]
-    storage: Arc<RwLock<StorageEngine>>,
     /// Collection service
     collection_service: Arc<CollectionService>,
     /// Vector operations service for search
@@ -154,7 +150,6 @@ impl PostgresProtocol {
     pub fn new(
         stream: TcpStream,
         session: Session,
-        storage: Arc<RwLock<StorageEngine>>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
         document_service: Option<Arc<DocumentService>>,
@@ -164,7 +159,6 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
-            storage,
             collection_service,
             vector_ops,
             translator: QueryTranslator::new(),
@@ -184,7 +178,6 @@ impl PostgresProtocol {
     pub fn with_catalog_services(
         stream: TcpStream,
         session: Session,
-        storage: Arc<RwLock<StorageEngine>>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
         catalog_manager: Arc<CatalogManager>,
@@ -195,7 +188,6 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
-            storage,
             collection_service,
             vector_ops,
             translator: QueryTranslator::new(),

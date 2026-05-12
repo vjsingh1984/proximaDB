@@ -211,16 +211,14 @@ impl ProximaDB {
             .security
             .as_ref()
             .map_or(false, |s| s.authentication.enabled);
-        let mut multi_server = network::MultiServer::new(
+        let multi_server = network::MultiServer::new(
             multi_config,
             shared_services,
             security.clone(),
             rest_auth_enabled,
             llm_engine,
         );
-        // Wire storage engine for PostgreSQL wire protocol support
-        multi_server.set_storage(storage.clone());
-        tracing::debug!("✅ ProximaDB::new - MultiServer created with storage engine wired");
+        tracing::debug!("✅ ProximaDB::new - MultiServer created");
 
         Ok(Self {
             storage,

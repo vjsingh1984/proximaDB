@@ -21,7 +21,6 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use self::protocol::PostgresProtocol;
@@ -30,7 +29,6 @@ use crate::graph::GraphService;
 use crate::observability::ObservabilityService;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
-use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
 
 /// PostgreSQL-compatible server
@@ -39,8 +37,6 @@ pub struct PostgresServer {
     bind_address: SocketAddr,
     /// Session manager
     session_manager: Arc<SessionManager>,
-    /// Storage engine reference
-    storage: Arc<RwLock<StorageEngine>>,
     /// Collection service reference
     collection_service: Arc<CollectionService>,
     /// Vector operations service for search
@@ -59,7 +55,6 @@ impl PostgresServer {
     /// Create a new PostgreSQL server
     pub fn new(
         bind_address: SocketAddr,
-        storage: Arc<RwLock<StorageEngine>>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
         document_service: Option<Arc<DocumentService>>,
@@ -69,7 +64,6 @@ impl PostgresServer {
         Self {
             bind_address,
             session_manager: Arc::new(SessionManager::new()),
-            storage,
             collection_service,
             vector_ops,
             document_service,
@@ -92,7 +86,6 @@ impl PostgresServer {
                 Ok((stream, addr)) => {
                     info!("New PostgreSQL connection from {}", addr);
                     let session_manager = self.session_manager.clone();
-                    let storage = self.storage.clone();
                     let collection_service = self.collection_service.clone();
                     let vector_ops = self.vector_ops.clone();
                     let document_service = self.document_service.clone();
@@ -104,7 +97,6 @@ impl PostgresServer {
                             stream,
                             addr,
                             session_manager,
-                            storage,
                             collection_service,
                             vector_ops,
                             document_service,
@@ -138,7 +130,6 @@ impl PostgresServer {
         stream: TcpStream,
         addr: SocketAddr,
         session_manager: Arc<SessionManager>,
-        storage: Arc<RwLock<StorageEngine>>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
         document_service: Option<Arc<DocumentService>>,
@@ -153,7 +144,6 @@ impl PostgresServer {
         let mut protocol = PostgresProtocol::new(
             stream,
             session,
-            storage,
             collection_service,
             vector_ops,
             document_service,
