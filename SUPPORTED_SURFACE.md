@@ -409,6 +409,14 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 - High-performance data transfer
 - Columnar data format
 - Integration with Arrow ecosystem
+- Export via `DoGet`/file tickets
+- Rich-record batch writes via `DoPut` (`insert`/`upsert`/`delete`)
+- Progress-aware batch writes via `DoExchange` (`bulk_insert`/`bulk_upsert`/`bulk_delete`)
+
+**Current limitations**:
+- `insert` currently uses the same write path as `upsert`; strict insert-only conflict semantics are not yet enforced.
+- `trigger_compaction` is parsed on Flight batch writes, but explicit compaction should currently be requested with the `compact_collection` action.
+- Tenant/auth metadata for Flight write handlers is not yet wired into the rich-record tenant context.
 
 ---
 
