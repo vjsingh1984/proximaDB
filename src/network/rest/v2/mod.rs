@@ -25,6 +25,7 @@
 //! - `PUT /api/v2/collections/{id}/schema` - Update collection schema
 //! - `GET /api/v2/collections/{id}/schema` - Get collection schema
 //! - `POST /api/v2/collections/{collection}/records/batch` - Insert ProximaRecords
+//! - `DELETE /api/v2/collections/{collection}/records/{id}` - Delete a ProximaRecord
 //! - `POST /api/v2/collections/{collection}/search` - Search with typed filters
 //!
 //! ## Key Features
@@ -99,7 +100,7 @@ pub fn create_v2_router() -> Router<AppState> {
         )
         .route(
             "/collections/:collection_id/records/:record_id",
-            get(records::get_record_v2),
+            get(records::get_record_v2).delete(records::delete_record_v2),
         )
         // Search with typed filters
         .route(

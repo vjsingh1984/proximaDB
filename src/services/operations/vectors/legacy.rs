@@ -84,6 +84,13 @@ pub struct RichRecordBatchRequest {
     pub records: Vec<ProximaRecord>,
 }
 
+/// Canonical rich record delete request for v2 and internal callers.
+#[derive(Debug, Clone)]
+pub struct RichRecordDeleteBatchRequest {
+    pub collection_id: String,
+    pub record_ids: Vec<String>,
+}
+
 /// Canonical rich record get request for v2 and internal callers.
 #[derive(Debug, Clone)]
 pub struct RichRecordGetRequest {
@@ -618,6 +625,22 @@ impl VectorOperationsService {
         Ok(records.iter().map(proxima_record_to_vector).collect())
     }
 
+    fn tombstone_vectors_for_ids(record_ids: &[String], now_millis: i64) -> Vec<VectorRecord> {
+        record_ids
+            .iter()
+            .map(|id| VectorRecord {
+                id: id.clone(),
+                vector: Vec::new(),
+                metadata: HashMap::new(),
+                timestamp: Some(now_millis),
+                updated_at: Some(now_millis),
+                expires_at: Some(0),
+                version: None,
+                source: Some("delete".to_string()),
+            })
+            .collect()
+    }
+
     /// Execute a v1 vector search after validating that the caller has access to the collection
     /// under the provided tenant context.
     pub async fn search_v1_with_tenant_context(
@@ -703,6 +726,50 @@ impl VectorOperationsService {
         )
         .await
         .map(|record| record.map(vector_record_to_rich_result))
+    }
+
+    /// Delete canonical rich records by writing tombstones.
+    pub async fn delete_records_with_tenant_context(
+        &self,
+        collection_id: &str,
+        record_ids: Vec<String>,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<BatchOperationResult> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+
+        if record_ids.is_empty() {
+            return Ok(BatchOperationResult::success(
+                Vec::new(),
+                OperationMetrics::default(),
+            ));
+        }
+
+        let start = std::time::Instant::now();
+        let now_millis = chrono::Utc::now().timestamp_millis();
+        let mut tombstones = Self::tombstone_vectors_for_ids(&record_ids, now_millis);
+        if let Some(tenant_context) = tenant_context {
+            Self::ensure_tenant_metadata(&mut tombstones, &tenant_context.tenant_id)?;
+        }
+
+        let result = self
+            .insert_vectors_via_batch_pipeline(collection_id, tombstones)
+            .await?;
+        let total_processed = result.entries_written.max(0);
+        let processing_time_us = start.elapsed().as_micros() as i64;
+
+        Ok(BatchOperationResult::success(
+            record_ids,
+            OperationMetrics {
+                total_processed,
+                successful_count: total_processed,
+                failed_count: 0,
+                updated_count: 0,
+                processing_time_us,
+                wal_write_time_us: result.duration_micros,
+                index_update_time_us: 0,
+            },
+        ))
     }
 
     /// Public v1 boundary: execute vector search and return v1 response
@@ -3908,6 +3975,20 @@ mod tenant_tests {
             rich.props.get("category"),
             Some(ProximaValue::String(value)) if value == "books"
         ));
+    }
+
+    #[test]
+    fn tombstone_vectors_for_ids_use_delete_shape() {
+        let tombstones =
+            VectorOperationsService::tombstone_vectors_for_ids(&["doc_3".to_string()], 1234);
+
+        assert_eq!(tombstones.len(), 1);
+        assert_eq!(tombstones[0].id, "doc_3");
+        assert!(tombstones[0].vector.is_empty());
+        assert_eq!(tombstones[0].timestamp, Some(1234));
+        assert_eq!(tombstones[0].updated_at, Some(1234));
+        assert_eq!(tombstones[0].expires_at, Some(0));
+        assert_eq!(tombstones[0].source.as_deref(), Some("delete"));
     }
 }
 

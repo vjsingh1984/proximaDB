@@ -216,8 +216,8 @@ use crate::proto::proximadb_v1::{
 use crate::query::QueryFacadeAdapter;
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::{
-    RichRecordBatchRequest, RichRecordGetRequest, RichRecordGetResponse, RichSearchRequest,
-    RichSearchResponse, VectorOperationsService,
+    RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest,
+    RichRecordGetResponse, RichSearchRequest, RichSearchResponse, VectorOperationsService,
 };
 use crate::storage::document::DocumentService;
 
@@ -776,6 +776,32 @@ impl UnifiedHandlers {
 
         self.vector_operations_service
             .get_record_with_tenant_context(request, tenant_context.as_ref())
+            .await
+    }
+
+    /// Canonical rich-record delete handler used by v2 REST/gRPC/internal callers.
+    pub async fn handle_record_delete_batch_for_tenant(
+        &self,
+        request: RichRecordDeleteBatchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<crate::services::operations::BatchOperationResult> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let collection_id = match self
+            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
+            .await?
+        {
+            Some(id) => id,
+            None => {
+                return Err(anyhow!("Collection '{}' not found", request.collection_id));
+            }
+        };
+
+        self.vector_operations_service
+            .delete_records_with_tenant_context(
+                &collection_id,
+                request.record_ids,
+                tenant_context.as_ref(),
+            )
             .await
     }
 

@@ -23,8 +23,8 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, trace, warn};
 
 use crate::api_handlers::{
-    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichSearchRequest,
-    RichSearchResponse, UnifiedHandlers,
+    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
+    RichSearchRequest, RichSearchResponse, UnifiedHandlers,
 };
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v2::{
@@ -681,6 +681,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
         let batch = request.into_inner();
         info!(
             "V2 gRPC: DeleteRecords - collection='{}', records={}",
@@ -688,12 +689,66 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
-        // Delete is not directly supported in v1 batch API
-        // For now, return unimplemented
-        warn!("V2 gRPC: DeleteRecords not yet implemented in batch mode");
-        Err(Status::unimplemented(
-            "Batch delete not yet implemented. Use individual delete operations.",
-        ))
+        let record_ids: Vec<String> = batch
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
+        if let Some((index, _)) = record_ids
+            .iter()
+            .enumerate()
+            .find(|(_, record_id)| record_id.is_empty())
+        {
+            return Err(Status::invalid_argument(format!(
+                "DeleteRecords requires record id at index {index}"
+            )));
+        }
+
+        match self
+            .unified_handlers
+            .handle_record_delete_batch_for_tenant(
+                RichRecordDeleteBatchRequest {
+                    collection_id: batch.collection_id.clone(),
+                    record_ids: record_ids.clone(),
+                },
+                tenant_id.as_deref(),
+            )
+            .await
+        {
+            Ok(result) => Ok(Response::new(ProximaRecordBatchResponse {
+                success: result.success,
+                total_processed: result.metrics.total_processed,
+                success_count: result.metrics.successful_count,
+                failed_count: result.metrics.failed_count,
+                inserted_ids: result.vector_ids,
+                errors: result
+                    .errors
+                    .iter()
+                    .enumerate()
+                    .map(|(index, error)| BatchError {
+                        record_index: index as i32,
+                        record_id: record_ids.get(index).cloned().unwrap_or_default(),
+                        error_code: result
+                            .error_code
+                            .clone()
+                            .unwrap_or_else(|| "DELETE_FAILED".to_string()),
+                        error_message: error.clone(),
+                    })
+                    .collect(),
+                processing_time_us: result.metrics.processing_time_us,
+            })),
+            Err(e) => {
+                error!("V2 gRPC: DeleteRecords failed: {}", e);
+                if e.to_string().contains("not found") {
+                    Err(Status::not_found(format!(
+                        "Collection not found: {}",
+                        batch.collection_id
+                    )))
+                } else {
+                    Err(Status::internal(format!("Delete failed: {}", e)))
+                }
+            }
+        }
     }
 
     // =========================================================================
@@ -956,12 +1011,40 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                                 .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
                                 .await
                         }
-                        Ok(BatchWriteMode::Delete) => {
-                            // Delete not yet supported in batch mode
-                            Err(anyhow::anyhow!(
-                                "DELETE mode not supported in BatchWriteStream"
-                            ))
-                        }
+                        Ok(BatchWriteMode::Delete) => unified_handlers
+                            .handle_record_delete_batch_for_tenant(
+                                RichRecordDeleteBatchRequest {
+                                    collection_id: batch.collection_id.clone(),
+                                    record_ids: vec![record.id.clone()],
+                                },
+                                tenant_id.as_deref(),
+                            )
+                            .await
+                            .map(
+                                |result| crate::proto::proximadb_v1::VectorOperationResponse {
+                                    success: result.success,
+                                    operation:
+                                        crate::proto::proximadb_v1::VectorServiceOperation::VsBatch
+                                            as i32,
+                                    metrics: Some(crate::proto::proximadb_v1::OperationMetrics {
+                                        total_processed: result.metrics.total_processed,
+                                        successful_count: result.metrics.successful_count,
+                                        failed_count: result.metrics.failed_count,
+                                        updated_count: result.metrics.updated_count,
+                                        processing_time_us: result.metrics.processing_time_us,
+                                        wal_write_time_us: result.metrics.wal_write_time_us,
+                                        index_update_time_us: result.metrics.index_update_time_us,
+                                    }),
+                                    results: None,
+                                    vector_ids: result.vector_ids,
+                                    error_message: if result.errors.is_empty() {
+                                        None
+                                    } else {
+                                        Some(result.errors.join("; "))
+                                    },
+                                    error_code: result.error_code,
+                                },
+                            ),
                         Err(_) => Err(anyhow::anyhow!(
                             "Invalid write_mode: {}",
                             stream_record.write_mode

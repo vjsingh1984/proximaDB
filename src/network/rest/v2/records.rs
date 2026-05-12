@@ -40,8 +40,8 @@ use std::collections::HashMap;
 use tracing::{debug, error, info};
 
 use crate::api_handlers::{
-    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordGetRequest,
-    RichSearchRequest,
+    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
+    RichRecordGetRequest, RichSearchRequest,
 };
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
@@ -1360,6 +1360,17 @@ pub struct RecordV2Response {
     pub timestamp: Option<i64>,
 }
 
+/// Response for deleting a single record.
+#[derive(Debug, Serialize)]
+pub struct DeleteRecordV2Response {
+    /// Whether the delete tombstone was accepted.
+    pub success: bool,
+    /// Deleted record ID.
+    pub id: String,
+    /// Processing latency in microseconds.
+    pub processing_time_us: i64,
+}
+
 /// GET /api/v2/collections/{collection_id}/records/{record_id}
 ///
 /// Get a single record by ID.
@@ -1465,6 +1476,71 @@ pub async fn get_record_v2(
                 )))
             } else {
                 Err(ApiError::Internal(format!("Failed to get record: {}", e)))
+            }
+        }
+    }
+}
+
+/// DELETE /api/v2/collections/{collection_id}/records/{record_id}
+///
+/// Delete a single record by writing a tombstone through the rich record path.
+pub async fn delete_record_v2(
+    Path((collection_id, record_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
+) -> ApiResult<Json<DeleteRecordV2Response>> {
+    debug!(
+        "V2 API: Deleting record '{}' from collection '{}'",
+        record_id, collection_id
+    );
+
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    if record_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Record ID is required".to_string(),
+        ));
+    }
+
+    match state
+        .unified_handlers
+        .handle_record_delete_batch_for_tenant(
+            RichRecordDeleteBatchRequest {
+                collection_id: collection_id.clone(),
+                record_ids: vec![record_id.clone()],
+            },
+            Some(&tenant.tenant_id),
+        )
+        .await
+    {
+        Ok(result) if result.success => Ok(Json(DeleteRecordV2Response {
+            success: true,
+            id: record_id,
+            processing_time_us: result.metrics.processing_time_us,
+        })),
+        Ok(result) => Err(ApiError::Internal(format!(
+            "Delete failed: {}",
+            result
+                .errors
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "unknown error".to_string())
+        ))),
+        Err(e) => {
+            if e.to_string().contains("not found") {
+                Err(ApiError::NotFound(format!(
+                    "Record '{}' not found in collection '{}'",
+                    record_id, collection_id
+                )))
+            } else {
+                Err(ApiError::Internal(format!(
+                    "Failed to delete record: {}",
+                    e
+                )))
             }
         }
     }
