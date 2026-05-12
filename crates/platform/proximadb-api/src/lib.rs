@@ -49,14 +49,16 @@ pub use rest::v1::{
 
 // Re-export v2 agentic contracts
 pub use grpc::v2::{
-    AgentCheckpointService, AgentEventService, AgentMemoryService, CheckpointServiceRequest,
-    CheckpointServiceResponse, EventAppendServiceRequest, EventAppendServiceResponse,
-    MemoryPutServiceRequest, MemorySearchServiceRequest, MemorySearchServiceResponse,
+    AgentCheckpointService, AgentEventService, AgentMemoryService, AgenticGrpcBackend,
+    CheckpointServiceRequest, CheckpointServiceResponse, EventAppendServiceRequest,
+    EventAppendServiceResponse, MemoryPutServiceRequest, MemoryPutServiceResponse,
+    MemorySearchServiceRequest, MemorySearchServiceResponse,
 };
 pub use rest::v2::{
     AgentCheckpointRequest, AgentCheckpointResponse, AgentEventAppendRequest,
     AgentEventAppendResponse, AgentEventRecord, AgentEventReplayRequest, AgentMemoryItem,
-    AgentMemoryPutRequest, AgentMemorySearchRequest, AgentMemorySearchResponse,
+    AgentMemoryPutRequest, AgentMemorySearchRequest, AgentMemorySearchResponse, AgenticApiError,
+    AgenticErrorBody, AgenticRestBackend,
 };
 
 // Re-export middleware

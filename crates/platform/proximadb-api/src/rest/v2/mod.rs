@@ -7,5 +7,6 @@ pub mod agentic;
 pub use agentic::{
     AgentCheckpointRequest, AgentCheckpointResponse, AgentEventAppendRequest,
     AgentEventAppendResponse, AgentEventRecord, AgentEventReplayRequest, AgentMemoryItem,
-    AgentMemoryPutRequest, AgentMemorySearchRequest, AgentMemorySearchResponse,
+    AgentMemoryPutRequest, AgentMemorySearchRequest, AgentMemorySearchResponse, AgenticApiError,
+    AgenticErrorBody, AgenticRestBackend,
 };
