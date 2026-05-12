@@ -24,7 +24,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::api_handlers::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichSearchRequest,
-    UnifiedHandlers,
+    RichSearchResponse, UnifiedHandlers,
 };
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v2::{
@@ -36,7 +36,6 @@ use crate::proto::proximadb_v2::{
     proxima_record_service_server::ProximaRecordService,
     proxima_record_service_server::ProximaRecordServiceServer,
 };
-use proximadb_records::conversions::sql_value_to_proxima;
 use proximadb_records::proto_v2::{
     proto_record_to_envelope, proxima_value_to_typed_value, typed_value_to_proxima,
 };
@@ -399,23 +398,17 @@ impl ProximaRecordServiceImpl {
     /// Convert search results to TypedSearchResult
     fn convert_search_results(
         &self,
-        results: &crate::proto::proximadb_v1::SearchResult,
+        results: &RichSearchResponse,
         include_vector: bool,
     ) -> Vec<TypedSearchResult> {
         results
             .results
             .iter()
             .map(|r| {
-                // Convert metadata back to canonical rich props.
                 let props: HashMap<String, proximadb_v2::TypedValue> = r
-                    .metadata
+                    .props
                     .iter()
-                    .map(|(k, v)| {
-                        (
-                            k.clone(),
-                            proxima_value_to_typed_value(&sql_value_to_proxima(v)),
-                        )
-                    })
+                    .map(|(k, v)| (k.clone(), proxima_value_to_typed_value(v)))
                     .collect();
 
                 TypedSearchResult {
@@ -732,11 +725,10 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .await
         {
             Ok(resp) => {
-                let search_result = resp.results.unwrap_or_default();
                 let include_vector = req.include_vector;
 
-                let results = self.convert_search_results(&search_result, include_vector);
-                let total_found = search_result.total_found;
+                let results = self.convert_search_results(&resp, include_vector);
+                let total_found = resp.total_found;
 
                 Ok(Response::new(TypedSearchResponse {
                     results,
@@ -794,8 +786,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let (tx, rx) = tokio::sync::mpsc::channel(128);
 
         // Convert results
-        let search_result = response.results.unwrap_or_default();
-        let results = self.convert_search_results(&search_result, include_vector);
+        let results = self.convert_search_results(&response, include_vector);
 
         // Spawn a task to send results through the channel
         tokio::spawn(async move {

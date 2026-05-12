@@ -43,7 +43,9 @@
 
 use anyhow::Result;
 use proximadb_records::ProximaRecord;
-use proximadb_records::conversions::{proxima_record_to_vector, proxima_to_sql_value};
+use proximadb_records::conversions::{
+    proxima_record_to_vector, proxima_to_sql_value, sql_value_to_proxima,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
@@ -89,6 +91,26 @@ pub struct RichSearchRequest {
     pub query_vector: Vec<f32>,
     pub top_k: u32,
     pub filters: Vec<RichFilterCondition>,
+}
+
+/// Canonical rich search response for v2 and internal callers.
+#[derive(Debug, Clone, Default)]
+pub struct RichSearchResponse {
+    pub results: Vec<RichSearchResult>,
+    pub total_found: i64,
+    pub collection_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RichSearchResult {
+    pub id: String,
+    pub score: f64,
+    pub similarity: Option<f32>,
+    pub vector: Vec<f32>,
+    pub props: HashMap<String, proximadb_data_model::ProximaValue>,
+    pub version: Option<u32>,
+    pub timestamp: Option<i64>,
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -302,6 +324,33 @@ fn proxima_value_to_json(value: &proximadb_data_model::ProximaValue) -> serde_js
             "values": values,
         }),
         ProximaValue::Null => serde_json::Value::Null,
+    }
+}
+
+fn v1_search_result_to_rich(
+    result: crate::proto::proximadb_v1::SearchResult,
+) -> RichSearchResponse {
+    RichSearchResponse {
+        results: result
+            .results
+            .into_iter()
+            .map(|record| RichSearchResult {
+                id: record.id,
+                score: record.score,
+                similarity: record.similarity,
+                vector: record.vector,
+                props: record
+                    .metadata
+                    .iter()
+                    .map(|(key, value)| (key.clone(), sql_value_to_proxima(value)))
+                    .collect(),
+                version: record.version,
+                timestamp: record.timestamp,
+                source: record.source,
+            })
+            .collect(),
+        total_found: result.total_found,
+        collection_id: result.collection_id,
     }
 }
 
@@ -556,7 +605,8 @@ impl VectorOperationsService {
         &self,
         request: RichSearchRequest,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+    ) -> Result<RichSearchResponse> {
+        let collection_id = request.collection_id.clone();
         let filters = request
             .filters
             .iter()
@@ -588,8 +638,18 @@ impl VectorOperationsService {
             search_optimization: None,
         };
 
-        self.search_v1_with_tenant_context(vector_request, tenant_context)
-            .await
+        let response = self
+            .search_v1_with_tenant_context(vector_request, tenant_context)
+            .await?;
+        let Some(search_result) = response.results else {
+            return Ok(RichSearchResponse {
+                results: Vec::new(),
+                total_found: 0,
+                collection_id: Some(collection_id),
+            });
+        };
+
+        Ok(v1_search_result_to_rich(search_result))
     }
 
     /// Public v1 boundary: execute vector search and return v1 response
@@ -3720,6 +3780,47 @@ mod tenant_tests {
             clauses[2].op,
             crate::proto::proximadb_v1::ComparisonOp::Eq as i32
         );
+    }
+
+    #[test]
+    fn v1_search_result_to_rich_preserves_props() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "price".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "10.50".to_string(),
+                )),
+            },
+        );
+
+        let rich = v1_search_result_to_rich(crate::proto::proximadb_v1::SearchResult {
+            results: vec![crate::proto::proximadb_v1::SearchVectorRecord {
+                id: "doc_1".to_string(),
+                score: 0.91,
+                vector: vec![0.1, 0.2],
+                metadata,
+                version: Some(7),
+                similarity: Some(0.91),
+                timestamp: Some(123),
+                source: Some("test".to_string()),
+                expanded_context: Vec::new(),
+                semantic_similarity: None,
+                quantization_info: None,
+                engine_stats: HashMap::new(),
+                index_path: None,
+            }],
+            total_found: 1,
+            collection_id: Some("products".to_string()),
+        });
+
+        assert_eq!(rich.total_found, 1);
+        assert_eq!(rich.collection_id.as_deref(), Some("products"));
+        assert_eq!(rich.results[0].id, "doc_1");
+        assert!(matches!(
+            rich.results[0].props.get("price"),
+            Some(ProximaValue::String(value)) if value == "10.50"
+        ));
     }
 }
 

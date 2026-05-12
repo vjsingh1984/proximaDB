@@ -1274,27 +1274,14 @@ pub async fn search_with_typed_filters(
         Ok(resp) => {
             let latency_ms = start_time.elapsed().as_millis() as u64;
 
-            // resp.results is Option<SearchResult> - use default if None
-            let search_result = resp.results.unwrap_or_else(|| {
-                debug!("Search response contains no results, using default");
-                Default::default()
-            });
-
-            // Convert results to TypedSearchResult format
-            // search_result.results is Vec<SearchVectorRecord>
-            let results: Vec<TypedSearchResult> = search_result
+            let results: Vec<TypedSearchResult> = resp
                 .results
                 .iter()
                 .map(|r| {
                     let props: HashMap<String, RestProximaValue> = r
-                        .metadata
+                        .props
                         .iter()
-                        .map(|(k, v)| {
-                            (
-                                k.clone(),
-                                proxima_value_to_rest_value(&sql_value_to_proxima(v)),
-                            )
-                        })
+                        .map(|(k, v)| (k.clone(), proxima_value_to_rest_value(v)))
                         .collect();
 
                     Ok(TypedSearchResult {
@@ -1319,7 +1306,7 @@ pub async fn search_with_typed_filters(
                 })
                 .collect::<Result<_, ApiError>>()?;
 
-            let total_matches = search_result.total_found as u64;
+            let total_matches = resp.total_found as u64;
             let response = TypedSearchResponse {
                 results: results.clone(),
                 total_matches: Some(total_matches),

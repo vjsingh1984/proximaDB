@@ -53,7 +53,7 @@ pub use config::{SearchPlanHints, UnifiedSearchConfig};
 pub use hybrid::build_axis_hybrid_query;
 pub use legacy::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichSearchRequest,
-    VectorOperationsService,
+    RichSearchResponse, RichSearchResult, VectorOperationsService,
 };
 pub use search::{
     executor::{SearchResult, proto_results_to_vector_records},

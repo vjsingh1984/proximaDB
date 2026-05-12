@@ -216,7 +216,7 @@ use crate::proto::proximadb_v1::{
 use crate::query::QueryFacadeAdapter;
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::vectors::{
-    RichRecordBatchRequest, RichSearchRequest, VectorOperationsService,
+    RichRecordBatchRequest, RichSearchRequest, RichSearchResponse, VectorOperationsService,
 };
 use crate::storage::document::DocumentService;
 
@@ -733,7 +733,7 @@ impl UnifiedHandlers {
         &self,
         request: RichSearchRequest,
         tenant_id: Option<&str>,
-    ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+    ) -> Result<RichSearchResponse> {
         let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
         let request = RichSearchRequest {
             collection_id: match self
@@ -742,16 +742,7 @@ impl UnifiedHandlers {
             {
                 Some(id) => id,
                 None => {
-                    return Ok(crate::proto::proximadb_v1::VectorOperationResponse {
-                        success: false,
-                        operation: crate::proto::proximadb_v1::VectorServiceOperation::VsSearch
-                            as i32,
-                        metrics: None,
-                        results: None,
-                        vector_ids: vec![],
-                        error_message: None,
-                        error_code: Some("NOT_FOUND".to_string()),
-                    });
+                    return Err(anyhow!("Collection '{}' not found", request.collection_id));
                 }
             },
             ..request
