@@ -29,7 +29,7 @@ use parquet::file::properties::WriterProperties;
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio::sync::{Mutex, Notify, RwLock, broadcast};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -387,6 +387,7 @@ pub struct CompactionEngine {
 
     /// Task queue for compaction operations
     task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
+    task_notify: Arc<Notify>,
 
     /// Active compaction operations
     active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
@@ -2352,6 +2353,7 @@ impl CompactionEngine {
         Ok(Self {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
+            task_notify: Arc::new(Notify::new()),
             active_compactions: Arc::new(RwLock::new(HashMap::new())),
             optimization_model: Arc::new(RwLock::new(None)),
             worker_handles: Arc::new(Mutex::new(Vec::new())),
@@ -2384,6 +2386,8 @@ impl CompactionEngine {
 
             let mut queue = self.task_queue.lock().await;
             queue.push_back(task);
+            drop(queue);
+            self.task_notify.notify_one();
         }
 
         Ok(())
@@ -2396,6 +2400,7 @@ impl CompactionEngine {
 
         for worker_id in 0..self.config.worker_count {
             let task_queue = self.task_queue.clone();
+            let task_notify = self.task_notify.clone();
             let active_compactions = self.active_compactions.clone();
             let stats = self.stats.clone();
             let filesystem = self.filesystem.clone();
@@ -2406,6 +2411,7 @@ impl CompactionEngine {
                 Self::worker_loop(
                     worker_id,
                     task_queue,
+                    task_notify,
                     active_compactions,
                     stats,
                     filesystem,
@@ -2443,6 +2449,7 @@ impl CompactionEngine {
     async fn worker_loop(
         worker_id: usize,
         task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
+        task_notify: Arc<Notify>,
         active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
         stats: Arc<RwLock<CompactionStats>>,
         _filesystem: Arc<FilesystemFactory>,
@@ -2452,19 +2459,24 @@ impl CompactionEngine {
         debug!("🔧 Compaction worker {} started", worker_id);
 
         loop {
+            let notified = task_notify.notified();
+
+            if let Some(task) = {
+                let mut queue = task_queue.lock().await;
+                queue.pop_front()
+            } {
+                Self::execute_compaction_task(task, active_compactions.clone(), stats.clone())
+                    .await;
+                continue;
+            }
+
             tokio::select! {
                 _ = shutdown_receiver.recv() => {
                     debug!("🔧 Compaction worker {} shutting down", worker_id);
                     break;
                 }
-                _ = tokio::time::sleep(Duration::from_secs(10)) => {
-                    // Process tasks from queue
-                    if let Some(task) = {
-                        let mut queue = task_queue.lock().await;
-                        queue.pop_front()
-                    } {
-                        Self::execute_compaction_task(task, active_compactions.clone(), stats.clone()).await;
-                    }
+                _ = notified => {
+                    continue;
                 }
             }
         }

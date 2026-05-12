@@ -55,7 +55,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, Notify, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
@@ -114,6 +114,7 @@ pub struct EnhancedCompactionStats {
 pub struct Compaction {
     config: SstConfig,
     task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
+    task_notify: Arc<Notify>,
     worker_handles: Vec<JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<CompactionStats>>,
@@ -134,6 +135,7 @@ impl std::fmt::Debug for Compaction {
         f.debug_struct("Compaction")
             .field("config", &self.config)
             .field("task_queue", &"<task_queue>")
+            .field("task_notify", &"<task_notify>")
             .field("worker_handles", &self.worker_handles.len())
             .field("shutdown_signal", &self.shutdown_signal)
             .field("stats", &"<stats>")
@@ -247,6 +249,7 @@ impl Compaction {
         Ok(Self {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
+            task_notify: Arc::new(Notify::new()),
             worker_handles: Vec::new(),
             shutdown_signal: Arc::new(AtomicBool::new(false)),
             stats: Arc::new(RwLock::new(CompactionStats::default())),
@@ -322,6 +325,7 @@ impl Compaction {
 
         for worker_id in 0..worker_count {
             let task_queue = Arc::clone(&self.task_queue);
+            let task_notify = Arc::clone(&self.task_notify);
             let shutdown_signal = Arc::clone(&self.shutdown_signal);
             let stats = Arc::clone(&self.stats);
             let active_compactions = Arc::clone(&self.active_compactions);
@@ -332,6 +336,7 @@ impl Compaction {
                 Self::worker_loop(
                     worker_id,
                     task_queue,
+                    task_notify,
                     shutdown_signal,
                     stats,
                     active_compactions,
@@ -352,6 +357,7 @@ impl Compaction {
         info!("Stopping compaction manager");
 
         self.shutdown_signal.store(true, Ordering::SeqCst);
+        self.task_notify.notify_waiters();
 
         // Wait for all workers to finish
         for handle in self.worker_handles.drain(..) {
@@ -410,11 +416,13 @@ impl Compaction {
             .unwrap_or(queue.len()); // Insert at end if no lower priority task found
 
         queue.insert(insert_pos, task);
+        drop(queue);
+        self.task_notify.notify_one();
 
         debug!(
             "Compaction task queued (position: {}, queue size: {})",
             insert_pos,
-            queue.len()
+            self.task_queue.lock().await.len()
         );
 
         Ok(())
@@ -508,6 +516,7 @@ impl Compaction {
     async fn worker_loop(
         worker_id: usize,
         task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
+        task_notify: Arc<Notify>,
         shutdown_signal: Arc<AtomicBool>,
         stats: Arc<RwLock<CompactionStats>>,
         active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
@@ -520,6 +529,9 @@ impl Compaction {
             if shutdown_signal.load(Ordering::SeqCst) {
                 break;
             }
+
+            // Register for notification before checking the queue to avoid lost wakeups.
+            let notified = task_notify.notified();
 
             // Get next task from queue
             let task = {
@@ -606,8 +618,7 @@ impl Compaction {
                     active.remove(&compaction_key);
                 }
             } else {
-                // No tasks available, wait a bit
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                notified.await;
             }
         }
 

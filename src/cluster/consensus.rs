@@ -24,6 +24,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::sync::mpsc;
@@ -195,7 +196,7 @@ pub struct RaftConsensus {
     /// Current leader ID
     current_leader: Arc<RwLock<Option<String>>>,
     /// Whether the consensus module is running
-    running: Arc<RwLock<bool>>,
+    running: Arc<AtomicBool>,
     /// Transport layer for RPC communication (optional, required for distributed mode)
     transport: Option<Arc<dyn ConsensusTransport>>,
     /// Connection manager for resilient connections
@@ -223,7 +224,7 @@ impl RaftConsensus {
             volatile: Arc::new(RwLock::new(VolatileState::default())),
             leader_state: Arc::new(RwLock::new(None)),
             current_leader: Arc::new(RwLock::new(None)),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
             transport: None,
             _connection_manager: None,
             peers: Arc::new(RwLock::new(Vec::new())),
@@ -284,7 +285,7 @@ impl RaftConsensus {
             volatile: Arc::new(RwLock::new(VolatileState::default())),
             leader_state: Arc::new(RwLock::new(None)),
             current_leader: Arc::new(RwLock::new(None)),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
             transport: Some(transport),
             _connection_manager: Some(connection_manager),
             peers: Arc::new(RwLock::new(peers)),
@@ -338,12 +339,8 @@ impl RaftConsensus {
     /// 1. Election timer - triggers elections when no heartbeat received
     /// 2. Heartbeat sender - sends heartbeats when leader
     pub async fn start(&mut self) -> Result<()> {
-        {
-            let mut running = self.running.write().await;
-            if *running {
-                return Ok(());
-            }
-            *running = true;
+        if self.running.swap(true, Ordering::AcqRel) {
+            return Ok(());
         }
 
         tracing::info!(node_id = %self.node_id, "Starting Raft consensus module");
@@ -402,7 +399,7 @@ impl RaftConsensus {
                 tokio::select! {
                     _ = tokio::time::sleep(timeout) => {
                         // Check if still running
-                        if !*running.read().await {
+                        if !running.load(Ordering::Acquire) {
                             break;
                         }
 
@@ -552,7 +549,7 @@ impl RaftConsensus {
                 tokio::select! {
                     _ = interval.tick() => {
                         // Check if still running
-                        if !*running.read().await {
+                        if !running.load(Ordering::Acquire) {
                             break;
                         }
 
@@ -643,12 +640,8 @@ impl RaftConsensus {
 
     /// Stop the consensus module
     pub async fn stop(&mut self) -> Result<()> {
-        {
-            let mut running = self.running.write().await;
-            if !*running {
-                return Ok(());
-            }
-            *running = false;
+        if !self.running.swap(false, Ordering::AcqRel) {
+            return Ok(());
         }
 
         tracing::info!(node_id = %self.node_id, "Stopping Raft consensus module");
@@ -1489,10 +1482,10 @@ mod tests {
             .expect("failed to create consensus instance");
 
         consensus.start().await.expect("failed to start consensus");
-        assert!(*consensus.running.read().await);
+        assert!(consensus.running.load(Ordering::Acquire));
 
         consensus.stop().await.expect("failed to stop consensus");
-        assert!(!*consensus.running.read().await);
+        assert!(!consensus.running.load(Ordering::Acquire));
     }
 
     #[tokio::test]
@@ -1766,12 +1759,12 @@ mod tests {
 
         // Start should create background tasks
         consensus.start().await.expect("failed to start consensus");
-        assert!(*consensus.running.read().await);
+        assert!(consensus.running.load(Ordering::Acquire));
         assert!(!consensus.task_handles.read().await.is_empty());
 
         // Stop should clean up tasks
         consensus.stop().await.expect("failed to stop consensus");
-        assert!(!*consensus.running.read().await);
+        assert!(!consensus.running.load(Ordering::Acquire));
     }
 
     #[tokio::test]

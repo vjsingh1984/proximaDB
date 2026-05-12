@@ -62,6 +62,7 @@ pub mod rpc;
 
 use anyhow::Result;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
@@ -153,7 +154,7 @@ pub struct ClusterManager {
     consensus: Arc<RwLock<RaftConsensus>>,
     routing_service: Arc<RoutingService>,
     shard_manager: Arc<ShardManager>,
-    is_leader: Arc<RwLock<bool>>,
+    is_leader: Arc<AtomicBool>,
 }
 
 impl ClusterManager {
@@ -172,7 +173,7 @@ impl ClusterManager {
             consensus,
             routing_service,
             shard_manager,
-            is_leader: Arc::new(RwLock::new(false)),
+            is_leader: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -236,7 +237,7 @@ impl ClusterManager {
 
     /// Check if this node is the current leader
     pub async fn is_leader(&self) -> bool {
-        *self.is_leader.read().await
+        self.is_leader.load(Ordering::Acquire)
     }
 
     /// Get the metadata service

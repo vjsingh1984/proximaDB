@@ -19,7 +19,6 @@
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::isolation::{IsolationLevel, Lock, LockMode};
@@ -214,30 +213,51 @@ impl WriteSet {
 pub struct TransactionContext {
     /// Unique transaction ID
     pub id: TransactionId,
-    /// Current state
-    state: Arc<RwLock<TransactionState>>,
+    /// Mutable transaction state guarded as one consistency boundary
+    inner: RwLock<TransactionInner>,
     /// Isolation level
     pub isolation_level: IsolationLevel,
     /// When transaction started
     pub started_at: Instant,
     /// Transaction timeout
     pub timeout: Duration,
-    /// Read set
-    read_set: Arc<RwLock<ReadSet>>,
-    /// Write set
-    write_set: Arc<RwLock<WriteSet>>,
-    /// Locks held by this transaction
-    locks: Arc<RwLock<Vec<Lock>>>,
-    /// Savepoints within transaction
-    savepoints: Arc<RwLock<HashMap<String, u64>>>,
-    /// Operation sequence counter
-    sequence_counter: Arc<RwLock<u64>>,
     /// Parent transaction (for nested transactions)
     parent: Option<TransactionId>,
+}
+
+#[derive(Debug)]
+struct TransactionInner {
+    /// Current state
+    state: TransactionState,
+    /// Read set
+    read_set: ReadSet,
+    /// Write set
+    write_set: WriteSet,
+    /// Locks held by this transaction
+    locks: Vec<Lock>,
+    /// Savepoints within transaction
+    savepoints: HashMap<String, u64>,
+    /// Operation sequence counter
+    sequence_counter: u64,
     /// Child transactions (for nested transactions)
-    children: Arc<RwLock<Vec<TransactionId>>>,
+    children: Vec<TransactionId>,
     /// Participant stores involved in this transaction
-    participants: Arc<RwLock<HashSet<String>>>,
+    participants: HashSet<String>,
+}
+
+impl Default for TransactionInner {
+    fn default() -> Self {
+        Self {
+            state: TransactionState::Active,
+            read_set: ReadSet::default(),
+            write_set: WriteSet::default(),
+            locks: Vec::new(),
+            savepoints: HashMap::new(),
+            sequence_counter: 0,
+            children: Vec::new(),
+            participants: HashSet::new(),
+        }
+    }
 }
 
 impl TransactionContext {
@@ -245,18 +265,11 @@ impl TransactionContext {
     pub fn new(id: TransactionId, isolation_level: IsolationLevel, timeout: Duration) -> Self {
         Self {
             id,
-            state: Arc::new(RwLock::new(TransactionState::Active)),
+            inner: RwLock::new(TransactionInner::default()),
             isolation_level,
             started_at: Instant::now(),
             timeout,
-            read_set: Arc::new(RwLock::new(ReadSet::default())),
-            write_set: Arc::new(RwLock::new(WriteSet::default())),
-            locks: Arc::new(RwLock::new(Vec::new())),
-            savepoints: Arc::new(RwLock::new(HashMap::new())),
-            sequence_counter: Arc::new(RwLock::new(0)),
             parent: None,
-            children: Arc::new(RwLock::new(Vec::new())),
-            participants: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -274,12 +287,12 @@ impl TransactionContext {
 
     /// Get current state
     pub fn state(&self) -> TransactionState {
-        *self.state.read()
+        self.inner.read().state
     }
 
     /// Set transaction state
     pub fn set_state(&self, new_state: TransactionState) {
-        *self.state.write() = new_state;
+        self.inner.write().state = new_state;
     }
 
     /// Check if transaction has timed out
@@ -299,27 +312,26 @@ impl TransactionContext {
 
     /// Add a read to the read set
     pub fn add_read(&self, container: &str, id: &str, version: u64) {
-        self.read_set.write().add(container, id, version);
+        self.inner.write().read_set.add(container, id, version);
     }
 
     /// Add a write to the write set
     pub fn add_write(&self, operation: MultiModelOperation) -> u64 {
-        let mut counter = self.sequence_counter.write();
-        *counter += 1;
-        let seq = *counter;
+        let mut inner = self.inner.write();
+        inner.sequence_counter += 1;
+        let seq = inner.sequence_counter;
 
         let target = operation.target().to_string();
         let ids = Self::extract_ids(&operation);
         let tx_op = TransactionOperation::new(seq, operation);
 
-        let mut write_set = self.write_set.write();
         for id in ids {
-            write_set.add(&target, &id, tx_op.clone());
+            inner.write_set.add(&target, &id, tx_op.clone());
         }
 
         // Register participant store
         let model_type = tx_op.operation.model_type();
-        self.participants.write().insert(model_type.to_string());
+        inner.participants.insert(model_type.to_string());
 
         seq
     }
@@ -340,39 +352,39 @@ impl TransactionContext {
 
     /// Get read set
     pub fn read_set(&self) -> ReadSet {
-        self.read_set.read().clone()
+        self.inner.read().read_set.clone()
     }
 
     /// Get write set
     pub fn write_set(&self) -> WriteSet {
-        self.write_set.read().clone()
+        self.inner.read().write_set.clone()
     }
 
     /// Create a savepoint
     pub fn savepoint(&self, name: &str) {
-        let current_seq = *self.sequence_counter.read();
-        self.savepoints
-            .write()
-            .insert(name.to_string(), current_seq);
+        let mut inner = self.inner.write();
+        let current_seq = inner.sequence_counter;
+        inner.savepoints.insert(name.to_string(), current_seq);
     }
 
     /// Rollback to a savepoint
     pub fn rollback_to_savepoint(&self, name: &str) -> Option<Vec<TransactionOperation>> {
-        let seq = self.savepoints.read().get(name).copied()?;
+        let mut inner = self.inner.write();
+        let seq = inner.savepoints.get(name).copied()?;
 
-        let mut write_set = self.write_set.write();
-        let operations = write_set.take_operations();
+        let operations = inner.write_set.take_operations();
 
         // Keep operations before savepoint, return those after
         let (keep, rollback): (Vec<_>, Vec<_>) =
             operations.into_iter().partition(|op| op.sequence <= seq);
 
         // Restore kept operations
+        inner.write_set = WriteSet::default();
         for op in keep {
             let target = op.operation.target().to_string();
             let ids = Self::extract_ids(&op.operation);
             for id in ids {
-                write_set.add(&target, &id, op.clone());
+                inner.write_set.add(&target, &id, op.clone());
             }
         }
 
@@ -387,27 +399,30 @@ impl TransactionContext {
             mode,
             acquired_at: Instant::now(),
         };
-        self.locks.write().push(lock.clone());
+        self.inner.write().locks.push(lock.clone());
         lock
     }
 
     /// Release all locks
     pub fn release_locks(&self) -> Vec<Lock> {
-        std::mem::take(&mut *self.locks.write())
+        std::mem::take(&mut self.inner.write().locks)
     }
 
     /// Get all locks
     pub fn locks(&self) -> Vec<Lock> {
-        self.locks.read().clone()
+        self.inner.read().locks.clone()
     }
 
     /// Check for conflicts with another transaction
     pub fn conflicts_with(&self, other: &TransactionContext) -> bool {
-        // Check write-write conflicts
-        let our_writes = self.write_set.read();
-        let their_writes = other.write_set.read();
+        let our_snapshot = {
+            let inner = self.inner.read();
+            (inner.read_set.clone(), inner.write_set.clone())
+        };
+        let their_writes = other.inner.read().write_set.clone();
 
-        for (container, our_ids) in our_writes.entries() {
+        // Check write-write conflicts
+        for (container, our_ids) in our_snapshot.1.entries() {
             if let Some(their_ids) = their_writes.entries().get(container) {
                 for id in our_ids {
                     if their_ids.contains(id) {
@@ -419,8 +434,7 @@ impl TransactionContext {
 
         // For higher isolation levels, also check read-write conflicts
         if self.isolation_level.prevents_non_repeatable_reads() {
-            let our_reads = self.read_set.read();
-            for (container, our_ids) in our_reads.entries() {
+            for (container, our_ids) in our_snapshot.0.entries() {
                 if let Some(their_ids) = their_writes.entries().get(container) {
                     for id in our_ids {
                         if their_ids.contains(id) {
@@ -436,17 +450,17 @@ impl TransactionContext {
 
     /// Get participant stores
     pub fn participants(&self) -> HashSet<String> {
-        self.participants.read().clone()
+        self.inner.read().participants.clone()
     }
 
     /// Add a child transaction
     pub fn add_child(&self, child_id: TransactionId) {
-        self.children.write().push(child_id);
+        self.inner.write().children.push(child_id);
     }
 
     /// Get child transactions
     pub fn children(&self) -> Vec<TransactionId> {
-        self.children.read().clone()
+        self.inner.read().children.clone()
     }
 
     /// Get parent transaction
@@ -456,15 +470,16 @@ impl TransactionContext {
 
     /// Get transaction statistics
     pub fn stats(&self) -> TransactionStats {
+        let inner = self.inner.read();
         TransactionStats {
             id: self.id.clone(),
-            state: self.state(),
+            state: inner.state,
             isolation_level: self.isolation_level,
             duration: self.started_at.elapsed(),
-            read_count: self.read_set.read().entries.values().map(|s| s.len()).sum(),
-            write_count: self.write_set.read().operations.len(),
-            lock_count: self.locks.read().len(),
-            participant_count: self.participants.read().len(),
+            read_count: inner.read_set.entries.values().map(|s| s.len()).sum(),
+            write_count: inner.write_set.operations.len(),
+            lock_count: inner.locks.len(),
+            participant_count: inner.participants.len(),
         }
     }
 }

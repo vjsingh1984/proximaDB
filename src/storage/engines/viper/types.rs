@@ -8,6 +8,7 @@
 //! This module contains all the type definitions, enums, and structs used by the VIPER storage engine.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
 // Import columnar common types to avoid duplication
@@ -427,11 +428,10 @@ pub struct EngineStats {
     pub active_clusters: AtomicUsize,
     /// Number of active data partitions
     pub active_partitions: AtomicUsize,
-    // Non-atomic fields for computed metrics (rarely updated)
     /// Average compression ratio across all data
-    avg_compression_ratio: std::sync::RwLock<f32>,
+    avg_compression_ratio: AtomicU32,
     /// Average ML prediction accuracy
-    avg_ml_prediction_accuracy: std::sync::RwLock<f32>,
+    avg_ml_prediction_accuracy: AtomicU32,
 }
 
 impl Default for EngineStats {
@@ -445,43 +445,29 @@ impl Default for EngineStats {
             total_storage_size_bytes: AtomicU64::new(0),
             active_clusters: AtomicUsize::new(0),
             active_partitions: AtomicUsize::new(0),
-            avg_compression_ratio: std::sync::RwLock::new(1.0),
-            avg_ml_prediction_accuracy: std::sync::RwLock::new(0.0),
+            avg_compression_ratio: AtomicU32::new(1.0f32.to_bits()),
+            avg_ml_prediction_accuracy: AtomicU32::new(0.0f32.to_bits()),
         }
     }
 }
 
 impl EngineStats {
-    /// Get compression ratio (requires read lock)
     pub fn get_compression_ratio(&self) -> f32 {
-        *self
-            .avg_compression_ratio
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        f32::from_bits(self.avg_compression_ratio.load(Ordering::Relaxed))
     }
 
-    /// Update compression ratio (requires write lock)
     pub fn update_compression_ratio(&self, ratio: f32) {
-        *self
-            .avg_compression_ratio
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = ratio;
+        self.avg_compression_ratio
+            .store(ratio.to_bits(), Ordering::Relaxed);
     }
 
-    /// Get ML prediction accuracy (requires read lock)
     pub fn get_ml_accuracy(&self) -> f32 {
-        *self
-            .avg_ml_prediction_accuracy
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        f32::from_bits(self.avg_ml_prediction_accuracy.load(Ordering::Relaxed))
     }
 
-    /// Update ML prediction accuracy (requires write lock)  
     pub fn update_ml_accuracy(&self, accuracy: f32) {
-        *self
-            .avg_ml_prediction_accuracy
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = accuracy;
+        self.avg_ml_prediction_accuracy
+            .store(accuracy.to_bits(), Ordering::Relaxed);
     }
 }
 

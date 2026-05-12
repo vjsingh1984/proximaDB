@@ -20,6 +20,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -100,7 +101,7 @@ pub struct TieringPolicyEngine {
     /// Engine statistics
     stats: Arc<RwLock<TieringStats>>,
     /// Running state
-    running: Arc<RwLock<bool>>,
+    running: Arc<AtomicBool>,
 }
 
 impl TieringPolicyEngine {
@@ -115,7 +116,7 @@ impl TieringPolicyEngine {
             )),
             item_states: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(TieringStats::default())),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -158,12 +159,9 @@ impl TieringPolicyEngine {
 
     /// Start the tiering engine background evaluation loop
     pub async fn start(&self) -> Result<()> {
-        let mut running = self.running.write().await;
-        if *running {
+        if self.running.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        *running = true;
-        drop(running);
 
         if self.config.auto_evaluate {
             let engine = self.clone_for_background();
@@ -174,11 +172,9 @@ impl TieringPolicyEngine {
                 loop {
                     ticker.tick().await;
 
-                    let running = engine.running.read().await;
-                    if !*running {
+                    if !engine.running.load(Ordering::Acquire) {
                         break;
                     }
-                    drop(running);
 
                     if let Err(e) = engine.evaluate_all().await {
                         warn!("Tiering evaluation error: {}", e);
@@ -197,8 +193,7 @@ impl TieringPolicyEngine {
 
     /// Stop the tiering engine
     pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
+        self.running.store(false, Ordering::Release);
         info!("Tiering engine stopped");
     }
 

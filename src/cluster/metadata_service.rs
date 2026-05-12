@@ -23,6 +23,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 /// Configuration for the metadata service
@@ -142,7 +143,7 @@ pub struct MetadataService {
     #[allow(dead_code)] // Config reserved for future use (TTL, replication settings)
     config: MetadataServiceConfig,
     metadata: Arc<RwLock<ClusterMetadata>>,
-    version_counter: Arc<RwLock<u64>>,
+    version_counter: Arc<AtomicU64>,
 }
 
 impl MetadataService {
@@ -151,7 +152,7 @@ impl MetadataService {
         Ok(Self {
             config,
             metadata: Arc::new(RwLock::new(ClusterMetadata::default())),
-            version_counter: Arc::new(RwLock::new(0)),
+            version_counter: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -169,13 +170,13 @@ impl MetadataService {
     /// Register a new collection
     pub async fn register_collection(&self, collection: CollectionMetadata) -> Result<()> {
         let mut metadata = self.metadata.write().await;
-        let mut version = self.version_counter.write().await;
+        let next_version = self.version_counter.load(Ordering::Acquire) + 1;
 
-        *version += 1;
-        metadata.version = *version;
+        metadata.version = next_version;
         metadata
             .collections
             .insert(collection.collection_id.clone(), collection);
+        self.version_counter.store(next_version, Ordering::Release);
 
         tracing::info!(
             version = metadata.version,
@@ -188,7 +189,6 @@ impl MetadataService {
     /// Update collection metadata
     pub async fn update_collection(&self, collection: CollectionMetadata) -> Result<()> {
         let mut metadata = self.metadata.write().await;
-        let mut version = self.version_counter.write().await;
 
         if !metadata.collections.contains_key(&collection.collection_id) {
             return Err(anyhow::anyhow!(
@@ -197,11 +197,12 @@ impl MetadataService {
             ));
         }
 
-        *version += 1;
-        metadata.version = *version;
+        let next_version = self.version_counter.load(Ordering::Acquire) + 1;
+        metadata.version = next_version;
         metadata
             .collections
             .insert(collection.collection_id.clone(), collection);
+        self.version_counter.store(next_version, Ordering::Release);
 
         Ok(())
     }
@@ -209,7 +210,6 @@ impl MetadataService {
     /// Remove a collection from metadata
     pub async fn remove_collection(&self, collection_id: &str) -> Result<()> {
         let mut metadata = self.metadata.write().await;
-        let mut version = self.version_counter.write().await;
 
         if metadata.collections.remove(collection_id).is_none() {
             return Err(anyhow::anyhow!("Collection not found: {}", collection_id));
@@ -220,8 +220,9 @@ impl MetadataService {
             .shard_placements
             .retain(|_, v| v.collection_id != collection_id);
 
-        *version += 1;
-        metadata.version = *version;
+        let next_version = self.version_counter.load(Ordering::Acquire) + 1;
+        metadata.version = next_version;
+        self.version_counter.store(next_version, Ordering::Release);
 
         Ok(())
     }
@@ -240,20 +241,20 @@ impl MetadataService {
     /// Update shard placement
     pub async fn update_shard_placement(&self, placement: ShardPlacement) -> Result<()> {
         let mut metadata = self.metadata.write().await;
-        let mut version = self.version_counter.write().await;
 
-        *version += 1;
-        metadata.version = *version;
+        let next_version = self.version_counter.load(Ordering::Acquire) + 1;
+        metadata.version = next_version;
         metadata
             .shard_placements
             .insert(placement.shard_id.clone(), placement);
+        self.version_counter.store(next_version, Ordering::Release);
 
         Ok(())
     }
 
     /// Get the current metadata version
     pub async fn version(&self) -> u64 {
-        *self.version_counter.read().await
+        self.version_counter.load(Ordering::Acquire)
     }
 
     /// List all collections

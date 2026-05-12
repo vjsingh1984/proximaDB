@@ -22,6 +22,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, warn};
@@ -171,9 +172,9 @@ pub struct ReplicaState {
 pub struct EngineReplication {
     config: ReplicationConfig,
     /// Current LSN counter
-    current_lsn: Arc<RwLock<u64>>,
+    current_lsn: Arc<AtomicU64>,
     /// Entry ID counter
-    entry_id_counter: Arc<RwLock<u64>>,
+    entry_id_counter: Arc<AtomicU64>,
     /// Pending replication entries by shard
     pending_entries: Arc<RwLock<HashMap<ShardId, Vec<ReplicationEntry>>>>,
     /// Replica states by shard
@@ -210,8 +211,8 @@ impl EngineReplication {
 
         Self {
             config,
-            current_lsn: Arc::new(RwLock::new(0)),
-            entry_id_counter: Arc::new(RwLock::new(0)),
+            current_lsn: Arc::new(AtomicU64::new(0)),
+            entry_id_counter: Arc::new(AtomicU64::new(0)),
             pending_entries: Arc::new(RwLock::new(HashMap::new())),
             replica_states: Arc::new(RwLock::new(HashMap::new())),
             replication_semaphore: Arc::new(Semaphore::new(max_concurrent)),
@@ -246,8 +247,8 @@ impl EngineReplication {
 
         Self {
             config,
-            current_lsn: Arc::new(RwLock::new(0)),
-            entry_id_counter: Arc::new(RwLock::new(0)),
+            current_lsn: Arc::new(AtomicU64::new(0)),
+            entry_id_counter: Arc::new(AtomicU64::new(0)),
             pending_entries: Arc::new(RwLock::new(HashMap::new())),
             replica_states: Arc::new(RwLock::new(HashMap::new())),
             replication_semaphore: Arc::new(Semaphore::new(max_concurrent)),
@@ -462,17 +463,8 @@ impl EngineReplication {
         operation: ReplicationOperation,
         data: Vec<u8>,
     ) -> Result<ReplicationEntry> {
-        let entry_id = {
-            let mut counter = self.entry_id_counter.write().await;
-            *counter += 1;
-            *counter
-        };
-
-        let lsn = {
-            let mut lsn = self.current_lsn.write().await;
-            *lsn += 1;
-            *lsn
-        };
+        let entry_id = self.entry_id_counter.fetch_add(1, Ordering::AcqRel) + 1;
+        let lsn = self.current_lsn.fetch_add(1, Ordering::AcqRel) + 1;
 
         let checksum = crc32fast::hash(&data);
 
@@ -842,13 +834,13 @@ impl EngineReplication {
 
     /// Get current LSN
     pub async fn current_lsn(&self) -> u64 {
-        *self.current_lsn.read().await
+        self.current_lsn.load(Ordering::Acquire)
     }
 
     /// Check replication health
     pub async fn check_health(&self) -> ReplicationHealth {
         let states = self.replica_states.read().await;
-        let current_lsn = *self.current_lsn.read().await;
+        let current_lsn = self.current_lsn.load(Ordering::Acquire);
 
         let healthy_replicas = states.values().filter(|s| s.healthy).count();
         let total_replicas = states.len();

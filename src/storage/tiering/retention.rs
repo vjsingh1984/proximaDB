@@ -20,6 +20,7 @@
 //! Supports automatic deletion after retention period and archival to cold storage.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -402,7 +403,7 @@ pub struct RetentionManager {
     /// Statistics
     stats: Arc<RwLock<RetentionStats>>,
     /// Running state
-    running: Arc<RwLock<bool>>,
+    running: Arc<AtomicBool>,
 }
 
 impl RetentionManager {
@@ -414,7 +415,7 @@ impl RetentionManager {
             pending_tasks: Arc::new(RwLock::new(Vec::new())),
             completed_results: Arc::new(RwLock::new(Vec::new())),
             stats: Arc::new(RwLock::new(RetentionStats::default())),
-            running: Arc::new(RwLock::new(false)),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -441,12 +442,9 @@ impl RetentionManager {
 
     /// Start the retention manager background loop
     pub async fn start(&self) {
-        let mut running = self.running.write().await;
-        if *running {
+        if self.running.swap(true, Ordering::AcqRel) {
             return;
         }
-        *running = true;
-        drop(running);
 
         if self.config.auto_evaluate {
             let manager = self.clone_for_background();
@@ -457,11 +455,9 @@ impl RetentionManager {
                 loop {
                     ticker.tick().await;
 
-                    let running = manager.running.read().await;
-                    if !*running {
+                    if !manager.running.load(Ordering::Acquire) {
                         break;
                     }
-                    drop(running);
 
                     // Evaluate would be called here with actual item metadata
                     debug!("Retention evaluation cycle");
@@ -477,8 +473,7 @@ impl RetentionManager {
 
     /// Stop the retention manager
     pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        *running = false;
+        self.running.store(false, Ordering::Release);
         info!("Retention manager stopped");
     }
 

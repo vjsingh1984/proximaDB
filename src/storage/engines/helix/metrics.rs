@@ -8,8 +8,7 @@ use prometheus::{
     CounterVec, GaugeVec, HistogramVec, register_counter_vec, register_gauge_vec,
     register_histogram_vec,
 };
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::warn;
 
 fn register_histogram_vec_safe(name: &str, help: &str, labels: &[&str]) -> Option<HistogramVec> {
@@ -168,18 +167,18 @@ lazy_static! {
 /// HELIX engine metrics aggregator
 pub struct HelixMetrics {
     collection: String,
-    query_count: Arc<RwLock<u64>>,
-    compaction_count: Arc<RwLock<u64>>,
-    flush_count: Arc<RwLock<u64>>,
+    query_count: AtomicU64,
+    compaction_count: AtomicU64,
+    flush_count: AtomicU64,
 }
 
 impl HelixMetrics {
     pub fn new(collection: String) -> Self {
         Self {
             collection,
-            query_count: Arc::new(RwLock::new(0)),
-            compaction_count: Arc::new(RwLock::new(0)),
-            flush_count: Arc::new(RwLock::new(0)),
+            query_count: AtomicU64::new(0),
+            compaction_count: AtomicU64::new(0),
+            flush_count: AtomicU64::new(0),
         }
     }
 
@@ -326,27 +325,24 @@ impl HelixMetrics {
 
     /// Get query throughput
     pub async fn query_throughput(&self) -> f64 {
-        let count = *self.query_count.read().await;
+        let count = self.query_count.load(Ordering::Relaxed);
         // Would need time tracking for actual throughput
         count as f64
     }
 
     /// Increment query count
     pub async fn inc_query_count(&self) {
-        let mut count = self.query_count.write().await;
-        *count += 1;
+        self.query_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment compaction count
     pub async fn inc_compaction_count(&self) {
-        let mut count = self.compaction_count.write().await;
-        *count += 1;
+        self.compaction_count.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Increment flush count
     pub async fn inc_flush_count(&self) {
-        let mut count = self.flush_count.write().await;
-        *count += 1;
+        self.flush_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 

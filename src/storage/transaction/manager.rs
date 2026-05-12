@@ -16,10 +16,11 @@
 
 //! Multi-Model Transaction Manager with 2PC Support
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
@@ -126,11 +127,11 @@ pub struct MultiModelTransactionManager {
     /// Global lock table
     lock_table: Arc<RwLock<HashMap<String, LockEntry>>>,
     /// Transaction history (for debugging/auditing)
-    history: Arc<RwLock<Vec<TransactionResult>>>,
+    history: Arc<Mutex<VecDeque<TransactionResult>>>,
     /// Commit lock for serializing commits
     commit_lock: Arc<AsyncMutex<()>>,
     /// Statistics
-    stats: Arc<RwLock<ManagerStats>>,
+    stats: Arc<ManagerStatsCounters>,
 }
 
 /// Manager statistics
@@ -154,6 +155,33 @@ pub struct ManagerStats {
     pub avg_duration_ms: f64,
 }
 
+#[derive(Debug, Default)]
+struct ManagerStatsCounters {
+    total_started: AtomicU64,
+    total_committed: AtomicU64,
+    total_aborted: AtomicU64,
+    total_timed_out: AtomicU64,
+    total_conflicts: AtomicU64,
+    total_deadlocks: AtomicU64,
+    current_active: AtomicUsize,
+    avg_duration_ms_bits: AtomicU64,
+}
+
+impl ManagerStatsCounters {
+    fn snapshot(&self) -> ManagerStats {
+        ManagerStats {
+            total_started: self.total_started.load(Ordering::Relaxed),
+            total_committed: self.total_committed.load(Ordering::Relaxed),
+            total_aborted: self.total_aborted.load(Ordering::Relaxed),
+            total_timed_out: self.total_timed_out.load(Ordering::Relaxed),
+            total_conflicts: self.total_conflicts.load(Ordering::Relaxed),
+            total_deadlocks: self.total_deadlocks.load(Ordering::Relaxed),
+            current_active: self.current_active.load(Ordering::Relaxed),
+            avg_duration_ms: f64::from_bits(self.avg_duration_ms_bits.load(Ordering::Relaxed)),
+        }
+    }
+}
+
 impl MultiModelTransactionManager {
     /// Create a new transaction manager
     pub fn new(config: TransactionConfig) -> Self {
@@ -162,9 +190,9 @@ impl MultiModelTransactionManager {
             active_transactions: Arc::new(RwLock::new(HashMap::new())),
             participants: Arc::new(RwLock::new(HashMap::new())),
             lock_table: Arc::new(RwLock::new(HashMap::new())),
-            history: Arc::new(RwLock::new(Vec::new())),
+            history: Arc::new(Mutex::new(VecDeque::new())),
             commit_lock: Arc::new(AsyncMutex::new(())),
-            stats: Arc::new(RwLock::new(ManagerStats::default())),
+            stats: Arc::new(ManagerStatsCounters::default()),
         }
     }
 
@@ -174,7 +202,8 @@ impl MultiModelTransactionManager {
         isolation_level: Option<IsolationLevel>,
     ) -> Result<Arc<TransactionContext>> {
         // Check capacity
-        let active_count = self.active_transactions.read().len();
+        let mut active_transactions = self.active_transactions.write();
+        let active_count = active_transactions.len();
         if active_count >= self.config.max_concurrent_transactions {
             return Err(ProximaDBError::TooManyTransactions {
                 max: self.config.max_concurrent_transactions,
@@ -191,17 +220,15 @@ impl MultiModelTransactionManager {
         ));
 
         // Register transaction
-        self.active_transactions
-            .write()
-            .insert(tx_id.clone(), ctx.clone());
+        active_transactions.insert(tx_id.clone(), ctx.clone());
+        drop(active_transactions);
         self.participants.write().insert(tx_id, HashMap::new());
 
         // Update stats
-        {
-            let mut stats = self.stats.write();
-            stats.total_started += 1;
-            stats.current_active = active_count + 1;
-        }
+        self.stats.total_started.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .current_active
+            .store(active_count + 1, Ordering::Relaxed);
 
         Ok(ctx)
     }
@@ -240,6 +267,9 @@ impl MultiModelTransactionManager {
             .write()
             .insert(tx_id.clone(), ctx.clone());
         self.participants.write().insert(tx_id, HashMap::new());
+        self.stats
+            .current_active
+            .store(self.active_transactions.read().len(), Ordering::Relaxed);
 
         Ok(ctx)
     }
@@ -360,7 +390,7 @@ impl MultiModelTransactionManager {
 
                 // Check for deadlock
                 if self.config.deadlock_detection && self.detect_deadlock(tx_id, resource) {
-                    self.stats.write().total_deadlocks += 1;
+                    self.stats.total_deadlocks.fetch_add(1, Ordering::Relaxed);
                     return Err(ProximaDBError::DeadlockDetected {
                         transaction: tx_id.clone(),
                     });
@@ -436,11 +466,10 @@ impl MultiModelTransactionManager {
                             self.cleanup_transaction(tx_id);
 
                             // Update stats
-                            {
-                                let mut stats = self.stats.write();
-                                stats.total_committed += 1;
-                                stats.current_active = self.active_transactions.read().len();
-                            }
+                            self.stats.total_committed.fetch_add(1, Ordering::Relaxed);
+                            self.stats
+                                .current_active
+                                .store(self.active_transactions.read().len(), Ordering::Relaxed);
 
                             Ok(result)
                         }
@@ -563,11 +592,10 @@ impl MultiModelTransactionManager {
         self.cleanup_transaction(tx_id);
 
         // Update stats
-        {
-            let mut stats = self.stats.write();
-            stats.total_aborted += 1;
-            stats.current_active = self.active_transactions.read().len();
-        }
+        self.stats.total_aborted.fetch_add(1, Ordering::Relaxed);
+        self.stats
+            .current_active
+            .store(self.active_transactions.read().len(), Ordering::Relaxed);
 
         Ok(result)
     }
@@ -614,7 +642,7 @@ impl MultiModelTransactionManager {
             }
 
             if ctx.conflicts_with(other_ctx) {
-                self.stats.write().total_conflicts += 1;
+                self.stats.total_conflicts.fetch_add(1, Ordering::Relaxed);
 
                 return match self.config.conflict_resolution {
                     ConflictResolution::FirstWriterWins => {
@@ -735,12 +763,12 @@ impl MultiModelTransactionManager {
                 error: None,
             };
 
-            let mut history = self.history.write();
-            history.push(result);
+            let mut history = self.history.lock();
+            history.push_back(result);
 
             // Keep only recent history
             if history.len() > 1000 {
-                history.remove(0);
+                history.pop_front();
             }
         }
 
@@ -751,7 +779,7 @@ impl MultiModelTransactionManager {
 
     /// Get statistics
     pub fn stats(&self) -> ManagerStats {
-        self.stats.read().clone()
+        self.stats.snapshot()
     }
 
     /// Get active transaction count
@@ -820,7 +848,7 @@ impl MultiModelTransactionManager {
                 let _ = self
                     .abort_with_reason(&tx_id, "Transaction timed out")
                     .await;
-                self.stats.write().total_timed_out += 1;
+                self.stats.total_timed_out.fetch_add(1, Ordering::Relaxed);
             }
         }
     }

@@ -28,6 +28,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
@@ -326,19 +327,25 @@ impl CachedPartitionConfig {
 /// ```
 pub struct RoutingService {
     config: RoutingConfig,
-    /// Routing table: shard_id -> (primary_node, replica_nodes)
-    routing_table: Arc<RwLock<HashMap<ShardId, ShardRoute>>>,
-    /// All known nodes with routing state
-    nodes: Arc<RwLock<HashMap<String, RoutableNode>>>,
+    /// Coherent routing state used to make route decisions from one snapshot.
+    state: Arc<RwLock<RoutingState>>,
     /// Round-robin counter for load balancing
-    rr_counter: Arc<RwLock<u64>>,
+    rr_counter: Arc<AtomicU64>,
     /// Routing statistics
     stats: Arc<RwLock<RoutingStats>>,
-    /// Cached partition configurations per collection
-    /// Key: collection_id, Value: cached partition config
-    partition_configs: Arc<RwLock<HashMap<String, CachedPartitionConfig>>>,
     /// TTL for partition config cache entries
     partition_config_ttl: Duration,
+}
+
+#[derive(Default)]
+struct RoutingState {
+    /// Routing table: shard_id -> (primary_node, replica_nodes)
+    routing_table: HashMap<ShardId, ShardRoute>,
+    /// All known nodes with routing state
+    nodes: HashMap<String, RoutableNode>,
+    /// Cached partition configurations per collection.
+    /// Key: collection_id, Value: cached partition config.
+    partition_configs: HashMap<String, CachedPartitionConfig>,
 }
 
 /// Route information for a shard
@@ -360,11 +367,9 @@ impl RoutingService {
     pub fn new(config: RoutingConfig) -> Result<Self> {
         Ok(Self {
             config,
-            routing_table: Arc::new(RwLock::new(HashMap::new())),
-            nodes: Arc::new(RwLock::new(HashMap::new())),
-            rr_counter: Arc::new(RwLock::new(0)),
+            state: Arc::new(RwLock::new(RoutingState::default())),
+            rr_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(RwLock::new(RoutingStats::default())),
-            partition_configs: Arc::new(RwLock::new(HashMap::new())),
             partition_config_ttl: Self::DEFAULT_PARTITION_CONFIG_TTL,
         })
     }
@@ -373,11 +378,9 @@ impl RoutingService {
     pub fn with_partition_config_ttl(config: RoutingConfig, ttl: Duration) -> Result<Self> {
         Ok(Self {
             config,
-            routing_table: Arc::new(RwLock::new(HashMap::new())),
-            nodes: Arc::new(RwLock::new(HashMap::new())),
-            rr_counter: Arc::new(RwLock::new(0)),
+            state: Arc::new(RwLock::new(RoutingState::default())),
+            rr_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(RwLock::new(RoutingStats::default())),
-            partition_configs: Arc::new(RwLock::new(HashMap::new())),
             partition_config_ttl: ttl,
         })
     }
@@ -399,17 +402,17 @@ impl RoutingService {
         let shard_id = self.compute_shard_id(collection_id, vector_id).await?;
 
         // Get route for the shard
-        let route = {
-            let table = self.routing_table.read().await;
-            table.get(&shard_id).cloned()
-        };
-
-        let target_node = match &route {
-            Some(r) if r.available => self.select_node(r, operation).await?,
-            _ => {
-                // No specific route, use any available node
-                self.select_any_node(operation).await?
-            }
+        let (route, target_node) = {
+            let state = self.state.read().await;
+            let route = state.routing_table.get(&shard_id).cloned();
+            let target_node = match &route {
+                Some(r) if r.available => self.select_node(r, operation, &state.nodes)?,
+                _ => {
+                    // No specific route, use any available node
+                    self.select_any_node_from(operation, &state.nodes)?
+                }
+            };
+            (route, target_node)
         };
 
         let is_primary = match &route {
@@ -560,17 +563,17 @@ impl RoutingService {
             .await?;
 
         // Get route for the shard
-        let route = {
-            let table = self.routing_table.read().await;
-            table.get(&shard_id).cloned()
-        };
-
-        let target_node = match &route {
-            Some(r) if r.available => self.select_node(r, operation).await?,
-            _ => {
-                // No specific route, use any available node
-                self.select_any_node(operation).await?
-            }
+        let (route, target_node) = {
+            let state = self.state.read().await;
+            let route = state.routing_table.get(&shard_id).cloned();
+            let target_node = match &route {
+                Some(r) if r.available => self.select_node(r, operation, &state.nodes)?,
+                _ => {
+                    // No specific route, use any available node
+                    self.select_any_node_from(operation, &state.nodes)?
+                }
+            };
+            (route, target_node)
         };
 
         let is_primary = match &route {
@@ -792,8 +795,8 @@ impl RoutingService {
         config: PartitionConfig,
         shard_count: u32,
     ) -> Result<()> {
-        let mut configs = self.partition_configs.write().await;
-        configs.insert(
+        let mut state = self.state.write().await;
+        state.partition_configs.insert(
             collection_id.to_string(),
             CachedPartitionConfig {
                 config,
@@ -815,36 +818,40 @@ impl RoutingService {
     ///
     /// Returns None if no config is cached or if the cache entry has expired.
     pub async fn get_partition_config(&self, collection_id: &str) -> Option<CachedPartitionConfig> {
-        let configs = self.partition_configs.read().await;
-        configs.get(collection_id).and_then(|cached| {
-            if cached.is_valid(self.partition_config_ttl) {
-                Some(cached.clone())
-            } else {
-                None
-            }
-        })
+        let state = self.state.read().await;
+        state
+            .partition_configs
+            .get(collection_id)
+            .and_then(|cached| {
+                if cached.is_valid(self.partition_config_ttl) {
+                    Some(cached.clone())
+                } else {
+                    None
+                }
+            })
     }
 
     /// Invalidate cached partition configuration for a collection
     ///
     /// Call this when the collection's partition config changes.
     pub async fn invalidate_partition_config(&self, collection_id: &str) -> Result<()> {
-        let mut configs = self.partition_configs.write().await;
-        configs.remove(collection_id);
+        let mut state = self.state.write().await;
+        state.partition_configs.remove(collection_id);
         Ok(())
     }
 
     /// Clear all cached partition configurations
     pub async fn clear_partition_configs(&self) -> Result<()> {
-        let mut configs = self.partition_configs.write().await;
-        configs.clear();
+        let mut state = self.state.write().await;
+        state.partition_configs.clear();
         Ok(())
     }
 
     /// Get all registered collection IDs with partition configs
     pub async fn list_partition_configs(&self) -> Vec<String> {
-        let configs = self.partition_configs.read().await;
-        configs
+        let state = self.state.read().await;
+        state
+            .partition_configs
             .iter()
             .filter(|(_, cached)| cached.is_valid(self.partition_config_ttl))
             .map(|(id, _)| id.clone())
@@ -878,12 +885,12 @@ impl RoutingService {
         let start = Instant::now();
 
         // Get all shards for this collection from routing table
-        let table = self.routing_table.read().await;
+        let state = self.state.read().await;
         let collection_prefix = format!("{}_", collection_id);
 
         let mut decisions = Vec::new();
 
-        for (shard_id, route) in table.iter() {
+        for (shard_id, route) in state.routing_table.iter() {
             // Filter to shards belonging to this collection
             if !shard_id.id().starts_with(&collection_prefix) {
                 continue;
@@ -898,7 +905,7 @@ impl RoutingService {
             // if we had access to the shard metadata. For now, we include all shards.
             // In production, the ShardManager would be consulted for metadata bounds.
 
-            let target_node = match self.select_node(route, operation).await {
+            let target_node = match self.select_node(route, operation, &state.nodes) {
                 Ok(node) => node,
                 Err(_) => continue, // Skip shards with no available nodes
             };
@@ -930,9 +937,12 @@ impl RoutingService {
     }
 
     /// Select a node based on operation type and load balancing
-    async fn select_node(&self, route: &ShardRoute, operation: OperationType) -> Result<NodeInfo> {
-        let nodes = self.nodes.read().await;
-
+    fn select_node(
+        &self,
+        route: &ShardRoute,
+        operation: OperationType,
+        nodes: &HashMap<String, RoutableNode>,
+    ) -> Result<NodeInfo> {
         match operation {
             OperationType::Write | OperationType::Admin => {
                 // Write operations must go to primary
@@ -945,15 +955,13 @@ impl RoutingService {
             OperationType::Read => {
                 if self.config.enable_read_replicas && !route.replicas.is_empty() {
                     // Try to use a replica
-                    self.select_from_nodes(&route.replicas, &nodes)
-                        .await
-                        .or_else(|_| {
-                            // Fall back to primary
-                            nodes
-                                .get(&route.primary)
-                                .map(|n| n.info.clone())
-                                .ok_or_else(|| anyhow::anyhow!("No nodes available"))
-                        })
+                    self.select_from_nodes(&route.replicas, nodes).or_else(|_| {
+                        // Fall back to primary
+                        nodes
+                            .get(&route.primary)
+                            .map(|n| n.info.clone())
+                            .ok_or_else(|| anyhow::anyhow!("No nodes available"))
+                    })
                 } else {
                     // Use primary
                     nodes
@@ -966,7 +974,7 @@ impl RoutingService {
     }
 
     /// Select a node from a list using load balancing
-    async fn select_from_nodes(
+    fn select_from_nodes(
         &self,
         node_ids: &[String],
         nodes: &HashMap<String, RoutableNode>,
@@ -983,9 +991,8 @@ impl RoutingService {
 
         let selected = match self.config.load_balancing {
             LoadBalancingStrategy::RoundRobin => {
-                let mut counter = self.rr_counter.write().await;
-                let idx = (*counter as usize) % healthy_nodes.len();
-                *counter += 1;
+                let idx =
+                    (self.rr_counter.fetch_add(1, Ordering::AcqRel) as usize) % healthy_nodes.len();
                 &healthy_nodes[idx]
             }
             LoadBalancingStrategy::LeastLoaded => healthy_nodes
@@ -1015,9 +1022,7 @@ impl RoutingService {
             LoadBalancingStrategy::WeightedRoundRobin => {
                 // Simplified weighted round-robin
                 let total_weight: u32 = healthy_nodes.iter().map(|n| n.weight).sum();
-                let mut counter = self.rr_counter.write().await;
-                let target = (*counter as u32) % total_weight;
-                *counter += 1;
+                let target = (self.rr_counter.fetch_add(1, Ordering::AcqRel) as u32) % total_weight;
 
                 let mut cumulative = 0u32;
                 // unwrap_or is safe: healthy_nodes is guaranteed non-empty at this point
@@ -1035,9 +1040,17 @@ impl RoutingService {
     }
 
     /// Select any available node for operations without specific routing
+    #[cfg(test)]
     async fn select_any_node(&self, operation: OperationType) -> Result<NodeInfo> {
-        let nodes = self.nodes.read().await;
+        let state = self.state.read().await;
+        self.select_any_node_from(operation, &state.nodes)
+    }
 
+    fn select_any_node_from(
+        &self,
+        operation: OperationType,
+        nodes: &HashMap<String, RoutableNode>,
+    ) -> Result<NodeInfo> {
         let healthy_nodes: Vec<_> = nodes
             .values()
             .filter(|n| n.info.health == NodeHealth::Healthy)
@@ -1052,24 +1065,22 @@ impl RoutingService {
         }
 
         // Use round-robin for selection
-        let mut counter = self.rr_counter.write().await;
-        let idx = (*counter as usize) % healthy_nodes.len();
-        *counter += 1;
+        let idx = (self.rr_counter.fetch_add(1, Ordering::AcqRel) as usize) % healthy_nodes.len();
 
         Ok(healthy_nodes[idx].info.clone())
     }
 
     /// Update routing table for a shard
     pub async fn update_route(&self, shard_id: ShardId, route: ShardRoute) -> Result<()> {
-        let mut table = self.routing_table.write().await;
-        table.insert(shard_id, route);
+        let mut state = self.state.write().await;
+        state.routing_table.insert(shard_id, route);
         Ok(())
     }
 
     /// Register a node for routing
     pub async fn register_node(&self, info: NodeInfo, weight: u32) -> Result<()> {
-        let mut nodes = self.nodes.write().await;
-        nodes.insert(
+        let mut state = self.state.write().await;
+        state.nodes.insert(
             info.node_id.clone(),
             RoutableNode {
                 info,
@@ -1083,8 +1094,8 @@ impl RoutingService {
 
     /// Update node latency for latency-based routing
     pub async fn update_node_latency(&self, node_id: &str, latency_ms: f64) -> Result<()> {
-        let mut nodes = self.nodes.write().await;
-        if let Some(node) = nodes.get_mut(node_id) {
+        let mut state = self.state.write().await;
+        if let Some(node) = state.nodes.get_mut(node_id) {
             // Exponential moving average
             node.last_latency_ms = node.last_latency_ms * 0.7 + latency_ms * 0.3;
         }

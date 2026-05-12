@@ -21,6 +21,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{RwLock, mpsc};
 use tracing::info;
 
@@ -44,7 +45,7 @@ pub struct PostgresConnector {
     /// Protocol decoder
     decoder: Arc<RwLock<PgOutputDecoder>>,
     /// Current LSN
-    current_lsn: Arc<RwLock<u64>>,
+    current_lsn: Arc<AtomicU64>,
     /// Current transaction
     current_tx: Arc<RwLock<Option<TransactionInfo>>>,
     /// Replication stream connection
@@ -68,7 +69,7 @@ impl PostgresConnector {
             pg_config,
             offset_store,
             decoder: Arc::new(RwLock::new(PgOutputDecoder::new())),
-            current_lsn: Arc::new(RwLock::new(0)),
+            current_lsn: Arc::new(AtomicU64::new(0)),
             current_tx: Arc::new(RwLock::new(None)),
             replication_stream: Arc::new(RwLock::new(None)),
         })
@@ -318,12 +319,12 @@ impl PostgresConnector {
 
     /// Get current LSN
     pub async fn current_lsn(&self) -> u64 {
-        *self.current_lsn.read().await
+        self.current_lsn.load(Ordering::Acquire)
     }
 
     /// Update current LSN
     pub async fn update_lsn(&self, lsn: u64) {
-        *self.current_lsn.write().await = lsn;
+        self.current_lsn.store(lsn, Ordering::Release);
     }
 
     /// Process raw replication data
@@ -380,7 +381,7 @@ impl CdcSource for PostgresConnector {
         // Load last known offset
         let _start_lsn = if let Ok(Some(offset)) = offset_store.get(&self.pg_config.slot_name).await
         {
-            *self.current_lsn.write().await = offset.lsn;
+            self.current_lsn.store(offset.lsn, Ordering::Release);
             offset.lsn
         } else {
             0
@@ -409,7 +410,7 @@ impl CdcSource for PostgresConnector {
         self.base.set_status(SourceStatus::Stopping);
 
         // Save current offset
-        let lsn = *self.current_lsn.read().await;
+        let lsn = self.current_lsn.load(Ordering::Acquire);
         if lsn > 0 {
             let offset = Offset::new(&self.pg_config.slot_name, lsn);
             self.offset_store.store(&offset).await?;
@@ -430,7 +431,7 @@ impl CdcSource for PostgresConnector {
     }
 
     async fn current_offset(&self) -> CdcResult<Option<Offset>> {
-        let lsn = *self.current_lsn.read().await;
+        let lsn = self.current_lsn.load(Ordering::Acquire);
         if lsn == 0 {
             return Ok(None);
         }

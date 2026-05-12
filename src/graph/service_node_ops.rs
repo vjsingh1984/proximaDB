@@ -147,14 +147,7 @@ impl super::GraphOperationsService {
                         && let Some(map_lock) =
                             self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
-                        // Handle poisoned lock gracefully
-                        let Ok(map) = map_lock.read() else {
-                            tracing::warn!(
-                                "Poisoned lock in node_property_str_ordered for key {}",
-                                filter.key
-                            );
-                            continue;
-                        };
+                        let map = map_lock.read();
                         let mut matched = HashSet::new();
                         for (_k, ids) in map
                             .range(prefix.to_string()..)
@@ -175,14 +168,7 @@ impl super::GraphOperationsService {
                         && let Some(map_lock) =
                             self.memory_pool.node_property_num_indexes.get(&filter.key)
                     {
-                        // Handle poisoned lock gracefully
-                        let Ok(map) = map_lock.read() else {
-                            tracing::warn!(
-                                "Poisoned lock in node_property_num_indexes for key {}",
-                                filter.key
-                            );
-                            continue;
-                        };
+                        let map = map_lock.read();
                         let mut matched = HashSet::new();
                         match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::GreaterThan => {
@@ -219,14 +205,7 @@ impl super::GraphOperationsService {
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
-                        // Handle poisoned lock gracefully
-                        let Ok(map) = map_lock.read() else {
-                            tracing::warn!(
-                                "Poisoned lock in node_property_str_ordered for key {} (string fallback)",
-                                filter.key
-                            );
-                            continue;
-                        };
+                        let map = map_lock.read();
                         let mut matched = HashSet::new();
                         // filter_val was already validated at the start of this Op branch
                         let s = super::extract_string_from_value(filter_val).unwrap_or("");
