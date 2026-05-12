@@ -527,10 +527,19 @@ impl AxisManager {
                 .insert(vector.id.clone(), vector.clone());
         }
 
-        self.maybe_auto_enable_hmgi(collection_id).await?;
-
         // Insert into appropriate indexes based on current search_strategy
         let search_strategy = self.get_collection_strategy(collection_id).await?;
+        let has_dense_vector_index = search_strategy
+            .indexes
+            .iter()
+            .any(|index_spec| matches!(index_spec.data_type, Data::DenseVector { .. }));
+
+        if has_dense_vector_index
+            && !processed_vector.id.is_empty()
+            && !processed_vector.vector.is_empty()
+        {
+            self.ensure_hmgi_collection_enabled(collection_id).await?;
+        }
 
         // Insert into global ID index if ID is present
         if !processed_vector.id.is_empty() {
@@ -550,35 +559,18 @@ impl AxisManager {
                     self.metadata_index.insert(&processed_vector).await?;
                 }
                 Data::DenseVector { .. } => {
-                    // Choose index based on algorithm type in strategy
-                    // HNSW: O(log N) search, O(log N) insert - search optimized
-                    // IVF: O(√N) search, O(1) insert after training - insert optimized
-                    match &index_spec.algorithm {
-                        IndexAlgorithm::HNSW { .. } => {
-                            self.insert_into_hnsw(collection_id, &processed_vector)
-                                .await?;
-                        }
-                        IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. } => {
-                            self.insert_into_ivf(collection_id, &processed_vector)
-                                .await?;
-                        }
-                        _ => {
-                            // Default to HNSW for other/unspecified algorithms
-                            self.insert_into_hnsw(collection_id, &processed_vector)
-                                .await?;
-                        }
-                    }
+                    self.insert_dense_vector_index(
+                        collection_id,
+                        &processed_vector,
+                        &index_spec.algorithm,
+                    )
+                    .await?;
                 }
                 Data::SparseVector { .. } => {
                     self.sparse_vector_index.insert(&processed_vector).await?;
                 }
                 _ => {} // Handle other data types
             }
-        }
-
-        if self.is_hmgi_enabled(collection_id).await {
-            self.insert_hmgi(collection_id, processed_vector.clone())
-                .await?;
         }
 
         // Update metrics
@@ -653,12 +645,7 @@ impl AxisManager {
 
         let search_strategy = self.get_collection_strategy(collection_id).await?;
 
-        let hmgi_query_safe = query.id_filters.is_empty()
-            && query
-                .metadata_filters
-                .iter()
-                .all(|filter| filter.field == "_modality")
-            && matches!(query.vector_query, Some(VectorQuery::Dense { .. }));
+        let hmgi_query_safe = self.is_hmgi_routable_query(&query);
 
         // Query using the appropriate index based on strategy algorithm
         // HNSW: O(log N) search - best for search latency
@@ -706,6 +693,31 @@ impl AxisManager {
             strategy_used: search_strategy,
             execution_time_ms: start.elapsed().as_millis() as u64,
         })
+    }
+
+    /// Insert dense vectors through the canonical HMGI path.
+    ///
+    /// Legacy collection-scoped HNSW/IVF remains as a fallback for collections
+    /// that have not been initialized for HMGI, but normal AXIS dense indexing is
+    /// per-modality so insert and query semantics match.
+    async fn insert_dense_vector_index(
+        &self,
+        collection_id: &str,
+        vector: &VectorRecord,
+        algorithm: &IndexAlgorithm,
+    ) -> Result<()> {
+        if self.is_hmgi_enabled(collection_id).await {
+            self.insert_hmgi(collection_id, vector.clone()).await?;
+            return Ok(());
+        }
+
+        match algorithm {
+            IndexAlgorithm::HNSW { .. } => self.insert_into_hnsw(collection_id, vector).await,
+            IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. } => {
+                self.insert_into_ivf(collection_id, vector).await
+            }
+            _ => self.insert_into_hnsw(collection_id, vector).await,
+        }
     }
 
     /// Insert a vector into the real HNSW index for a collection
@@ -2262,6 +2274,35 @@ impl AxisManager {
         }
 
         Ok(Some(detection))
+    }
+
+    /// Ensure a collection has HMGI partitioning before dense vector indexing.
+    async fn ensure_hmgi_collection_enabled(&self, collection_id: &str) -> Result<()> {
+        if self.is_hmgi_enabled(collection_id).await {
+            return Ok(());
+        }
+
+        let oid = self.hmgi_oid_for_collection(collection_id).await;
+        self.enable_hmgi(collection_id, None, oid).await
+    }
+
+    fn is_hmgi_routable_query(&self, query: &HybridQuery) -> bool {
+        if !matches!(query.vector_query, Some(VectorQuery::Dense { .. }))
+            || !query.id_filters.is_empty()
+        {
+            return false;
+        }
+
+        let modality_field = self
+            .hmgi_extractor
+            .as_ref()
+            .map(|extractor| extractor.modality_field())
+            .unwrap_or("_modality");
+
+        query
+            .metadata_filters
+            .iter()
+            .all(|filter| filter.field == modality_field)
     }
 
     /// Insert a vector with HMGI partitioning

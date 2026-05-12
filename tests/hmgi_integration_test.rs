@@ -309,9 +309,9 @@ async fn test_axismanager_hmgi_insert() {
     assert_eq!(partition_key.modality_tag, "text");
 }
 
-/// Test AxisManager auto-enables HMGI when indexed records contain multiple modalities.
+/// Test AxisManager uses HMGI as the canonical dense vector index path.
 #[tokio::test]
-async fn test_axismanager_hmgi_auto_enable_on_multimodality() {
+async fn test_axismanager_hmgi_auto_enable_on_dense_insert() {
     use proximadb::index::axis::types::AxisConfig;
 
     let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
@@ -324,7 +324,7 @@ async fn test_axismanager_hmgi_auto_enable_on_multimodality() {
         )
         .await
         .unwrap();
-    assert!(!manager.is_hmgi_enabled("auto_collection").await);
+    assert!(manager.is_hmgi_enabled("auto_collection").await);
 
     manager
         .insert(
@@ -343,6 +343,40 @@ async fn test_axismanager_hmgi_auto_enable_on_multimodality() {
     assert_eq!(partitions.len(), 2);
     assert!(partitions.iter().any(|p| p.modality_tag == "text"));
     assert!(partitions.iter().any(|p| p.modality_tag == "image"));
+}
+
+/// Test canonical HMGI handles a single-modality collection without monolithic HNSW/IVF.
+#[tokio::test]
+async fn test_axismanager_hmgi_single_modality_query_without_manual_enable() {
+    use proximadb::index::axis::types::AxisConfig;
+
+    let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+    manager
+        .insert(
+            "single_modality_collection",
+            &vector_record("text_vec", vec![1.0, 0.0, 0.0], "text"),
+        )
+        .await
+        .unwrap();
+
+    let result = manager
+        .query(HybridQuery {
+            collection_id: "single_modality_collection".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: vec![1.0, 0.0, 0.0],
+                similarity_threshold: 0.0,
+            }),
+            metadata_filters: Vec::new(),
+            id_filters: Vec::new(),
+            top_k: 10,
+            include_expired: false,
+        })
+        .await
+        .unwrap();
+
+    assert!(manager.is_hmgi_enabled("single_modality_collection").await);
+    assert_eq!(result.results.len(), 1);
+    assert_eq!(result.results[0].vector_id, "text_vec");
 }
 
 /// Test AxisManager routes HMGI-safe vector queries to modality partitions.
