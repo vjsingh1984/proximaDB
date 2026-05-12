@@ -204,6 +204,11 @@ For tenant-scoped writes, send the tenant as Flight call metadata using
 `x-proximadb-tenant-id`. The Python `ArrowFlightClient` exposes this as the
 optional `tenant_id` constructor argument.
 
+When server authentication is enabled, Flight write streams are validated with
+the shared security coordinator. API keys are sent as `authorization:
+API-Key <key>` by the Python client; JWT callers may send `authorization:
+Bearer <token>`.
+
 === DuckDB Direct Query
 
 [source,sql]

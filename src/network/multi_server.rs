@@ -2008,12 +2008,18 @@ impl MultiServer {
 
             let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
             let unified_handlers = services.unified_handlers.clone();
+            let security_coordinator = if self.rest_auth_enabled {
+                self.security_coordinator.clone()
+            } else {
+                None
+            };
             let max_message_size = self.config.arrow_ipc_config.max_message_size;
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::ArrowFlightServer;
 
                 match ArrowFlightServer::new(arrow_bind_addr, unified_handlers)
+                    .with_security_coordinator(security_coordinator)
                     .with_max_message_size(max_message_size)
                     .start()
                     .await
@@ -2270,7 +2276,12 @@ impl MultiServer {
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
                 services.unified_handlers.clone(),
-            );
+            )
+            .with_security_coordinator(if self.rest_auth_enabled {
+                self.security_coordinator.clone()
+            } else {
+                None
+            });
             let flight_server =
                 arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
                     .max_encoding_message_size(512 * 1024 * 1024) // 512MB for large vector batches
@@ -2666,12 +2677,18 @@ impl MultiServer {
 
             let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
             let unified_handlers = services.unified_handlers.clone();
+            let security_coordinator = if self.rest_auth_enabled {
+                self.security_coordinator.clone()
+            } else {
+                None
+            };
             let max_message_size = self.config.arrow_ipc_config.max_message_size;
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::ArrowFlightServer;
 
                 match ArrowFlightServer::new(arrow_bind_addr, unified_handlers)
+                    .with_security_coordinator(security_coordinator)
                     .with_max_message_size(max_message_size)
                     .start()
                     .await

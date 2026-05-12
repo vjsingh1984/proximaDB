@@ -15,6 +15,7 @@ use tonic::transport::Server;
 use tracing::info;
 
 use crate::api_handlers::unified_handlers::UnifiedHandlers;
+use crate::security::SecurityCoordinator;
 
 use super::service::ProximaFlightService;
 
@@ -22,6 +23,7 @@ use super::service::ProximaFlightService;
 pub struct ArrowFlightServer {
     bind_addr: SocketAddr,
     unified_handlers: Arc<UnifiedHandlers>,
+    security_coordinator: Option<Arc<SecurityCoordinator>>,
     max_message_size: usize,
 }
 
@@ -31,8 +33,18 @@ impl ArrowFlightServer {
         Self {
             bind_addr,
             unified_handlers,
+            security_coordinator: None,
             max_message_size: 512 * 1024 * 1024, // 512MB default
         }
+    }
+
+    /// Attach the shared security coordinator for Flight request authentication.
+    pub fn with_security_coordinator(
+        mut self,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
+    ) -> Self {
+        self.security_coordinator = security_coordinator;
+        self
     }
 
     /// Set maximum message size
@@ -53,7 +65,8 @@ impl ArrowFlightServer {
         );
 
         // Create Flight service
-        let flight_service = ProximaFlightService::new(self.unified_handlers.clone());
+        let flight_service = ProximaFlightService::new(self.unified_handlers.clone())
+            .with_security_coordinator(self.security_coordinator.clone());
 
         // Wrap in FlightServiceServer with size limits
         let flight_server = FlightServiceServer::new(flight_service)

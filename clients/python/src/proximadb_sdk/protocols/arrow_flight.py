@@ -208,7 +208,7 @@ class ArrowFlightClient:
         """Get call options with timeout and auth headers."""
         headers = []
         if self._api_key:
-            headers.append((b"authorization", f"Bearer {self._api_key}".encode()))
+            headers.append((b"authorization", f"API-Key {self._api_key}".encode()))
         if self._tenant_id:
             headers.append((b"x-proximadb-tenant-id", self._tenant_id.encode()))
 

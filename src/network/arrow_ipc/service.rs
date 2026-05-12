@@ -28,6 +28,7 @@ use crate::api_handlers::{
     RichRecordBatchRequest, RichRecordDeleteBatchRequest, unified_handlers::UnifiedHandlers,
 };
 use crate::proto::proximadb_v1::VectorSearchRequest;
+use crate::security::{AuthenticationData, SecurityCoordinator};
 use crate::services::operations::BatchOperationResult;
 
 use super::codec::{ArrowProtoCodec, FlightWriteOperation, WriteMode};
@@ -63,6 +64,7 @@ type TonicStream<T> = Pin<Box<dyn Stream<Item = std::result::Result<T, TonicStat
 /// - **.parquet**: Parquet files (from Nova, VIPER engines)
 pub struct ProximaFlightService {
     unified_handlers: Arc<UnifiedHandlers>,
+    security_coordinator: Option<Arc<SecurityCoordinator>>,
     _codec: ArrowProtoCodec,
     file_export_handler: ArrowFileExportHandler,
 }
@@ -84,9 +86,19 @@ impl ProximaFlightService {
 
         Self {
             unified_handlers,
+            security_coordinator: None,
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
         }
+    }
+
+    /// Attach the shared security coordinator used by other network surfaces.
+    pub fn with_security_coordinator(
+        mut self,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
+    ) -> Self {
+        self.security_coordinator = security_coordinator;
+        self
     }
 
     fn batch_result_app_metadata(result: &BatchOperationResult) -> Result<Vec<u8>> {
@@ -153,6 +165,69 @@ impl ProximaFlightService {
                 .filter(|value| !value.is_empty())
                 .map(ToOwned::to_owned)
         })
+    }
+
+    fn auth_data_from_metadata(
+        metadata: &tonic::metadata::MetadataMap,
+    ) -> std::result::Result<Option<AuthenticationData>, TonicStatus> {
+        if let Some(auth_header) = metadata
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if let Some(token) = auth_header.strip_prefix("Bearer ") {
+                return Ok(Some(AuthenticationData::JWTToken(token.to_string())));
+            }
+            if let Some(key) = auth_header
+                .strip_prefix("API-Key ")
+                .or_else(|| auth_header.strip_prefix("Api-Key "))
+            {
+                return Ok(Some(AuthenticationData::ApiKey(key.to_string())));
+            }
+            return Ok(Some(AuthenticationData::ApiKey(auth_header.to_string())));
+        }
+
+        for key in ["x-api-key", "api-key"] {
+            if let Some(api_key) = metadata
+                .get(key)
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                return Ok(Some(AuthenticationData::ApiKey(api_key.to_string())));
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn authenticated_tenant_id(
+        &self,
+        metadata: &tonic::metadata::MetadataMap,
+    ) -> std::result::Result<Option<String>, TonicStatus> {
+        let requested_tenant_id = Self::tenant_id_from_metadata(metadata);
+        let Some(security_coordinator) = &self.security_coordinator else {
+            return Ok(requested_tenant_id);
+        };
+
+        let auth_data = Self::auth_data_from_metadata(metadata)?
+            .ok_or_else(|| TonicStatus::unauthenticated("Arrow Flight authentication required"))?;
+        let user_context = security_coordinator
+            .authenticate_request(auth_data)
+            .await
+            .map_err(|e| TonicStatus::unauthenticated(format!("Authentication failed: {}", e)))?;
+
+        match (requested_tenant_id, user_context.tenant_id) {
+            (Some(requested), Some(authenticated)) if requested != authenticated => {
+                Err(TonicStatus::permission_denied(format!(
+                    "Tenant '{}' does not match authenticated tenant '{}'",
+                    requested, authenticated
+                )))
+            }
+            (Some(requested), _) => Ok(Some(requested)),
+            (None, authenticated) => Ok(authenticated),
+        }
     }
 
     fn parse_exchange_descriptor(
@@ -735,7 +810,7 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<TonicStreaming<FlightData>>,
     ) -> TonicResult<Self::DoPutStream> {
-        let tenant_id = Self::tenant_id_from_metadata(request.metadata());
+        let tenant_id = self.authenticated_tenant_id(request.metadata()).await?;
         let mut stream = request.into_inner();
 
         // First message should contain descriptor
@@ -1614,7 +1689,7 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<TonicStreaming<FlightData>>,
     ) -> TonicResult<Self::DoExchangeStream> {
-        let tenant_id = Self::tenant_id_from_metadata(request.metadata());
+        let tenant_id = self.authenticated_tenant_id(request.metadata()).await?;
         let mut stream = request.into_inner();
 
         // First message should contain the descriptor with exchange type
@@ -2118,6 +2193,51 @@ mod tests {
             ProximaFlightService::tenant_id_from_metadata(&metadata),
             None
         );
+    }
+
+    #[test]
+    fn test_auth_data_from_flight_metadata_accepts_api_key_scheme() {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert("authorization", "API-Key key-1".parse().unwrap());
+
+        let auth_data = ProximaFlightService::auth_data_from_metadata(&metadata)
+            .unwrap()
+            .expect("auth data");
+
+        match auth_data {
+            AuthenticationData::ApiKey(key) => assert_eq!(key, "key-1"),
+            other => panic!("expected API key auth data, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_auth_data_from_flight_metadata_accepts_bearer_jwt() {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert("authorization", "Bearer jwt-1".parse().unwrap());
+
+        let auth_data = ProximaFlightService::auth_data_from_metadata(&metadata)
+            .unwrap()
+            .expect("auth data");
+
+        match auth_data {
+            AuthenticationData::JWTToken(token) => assert_eq!(token, "jwt-1"),
+            other => panic!("expected JWT auth data, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_auth_data_from_flight_metadata_accepts_x_api_key() {
+        let mut metadata = tonic::metadata::MetadataMap::new();
+        metadata.insert("x-api-key", "key-2".parse().unwrap());
+
+        let auth_data = ProximaFlightService::auth_data_from_metadata(&metadata)
+            .unwrap()
+            .expect("auth data");
+
+        match auth_data {
+            AuthenticationData::ApiKey(key) => assert_eq!(key, "key-2"),
+            other => panic!("expected API key auth data, got {:?}", other),
+        }
     }
 
     #[test]

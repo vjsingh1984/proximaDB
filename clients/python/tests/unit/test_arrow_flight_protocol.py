@@ -161,7 +161,7 @@ def test_call_options_include_auth_and_tenant_headers():
 
     options = client._get_call_options()
 
-    assert (b"authorization", b"Bearer token-1") in options.headers
+    assert (b"authorization", b"API-Key token-1") in options.headers
     assert (b"x-proximadb-tenant-id", b"tenant-a") in options.headers
 
 

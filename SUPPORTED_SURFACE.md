@@ -416,7 +416,7 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 **Current limitations**:
 - Arrow Flight `insert` rejects duplicate IDs in the request, but existing-record detection is not yet an atomic compare-and-insert storage primitive.
 - Arrow Flight `write_mode=direct` is accepted for forward compatibility, but currently falls back to WAL-backed writes.
-- Flight write handlers honor tenant metadata headers (`x-proximadb-tenant-id`, `x-tenant-id`, `tenant-id`, `tenant_id`), but authorization metadata is not yet authenticated by the Flight server.
+- Flight write handlers validate API-key/JWT metadata when the shared security coordinator is enabled, but Flight mTLS client-certificate extraction is not yet wired.
 
 ---
 
