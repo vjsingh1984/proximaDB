@@ -415,7 +415,6 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 
 **Current limitations**:
 - `insert` currently uses the same write path as `upsert`; strict insert-only conflict semantics are not yet enforced.
-- `trigger_compaction` is parsed on Flight batch writes, but explicit compaction should currently be requested with the `compact_collection` action.
 - Tenant/auth metadata for Flight write handlers is not yet wired into the rich-record tenant context.
 
 ---

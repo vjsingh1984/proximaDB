@@ -231,6 +231,18 @@ impl ProximaFlightService {
             .read_arrow_file(&file_ticket.file_path)
     }
 
+    async fn trigger_collection_compaction(&self, collection_id: &str) -> Result<()> {
+        let storage_engine = self
+            .unified_handlers
+            .vector_operations_service
+            .unified_engine();
+        storage_engine
+            .compact_collection(collection_id, None)
+            .await
+            .with_context(|| format!("Failed to compact collection '{}'", collection_id))?;
+        Ok(())
+    }
+
     /// Handle bulk vector insert (DoPut)
     async fn handle_record_insert(
         &self,
@@ -291,11 +303,11 @@ impl ProximaFlightService {
 
         // Trigger compaction if requested
         if trigger_compaction {
-            // Deferred: Implement explicit compaction trigger
-            debug!(
+            info!(
                 collection_id = %collection_id,
-                "Compaction trigger requested (not yet implemented)"
+                "Arrow Flight: triggering compaction after record insert"
             );
+            self.trigger_collection_compaction(&collection_id).await?;
         }
 
         Ok(result)
@@ -328,10 +340,11 @@ impl ProximaFlightService {
             .await?;
 
         if trigger_compaction {
-            debug!(
+            info!(
                 collection_id = %collection_id,
-                "Compaction trigger requested after delete (not yet implemented)"
+                "Arrow Flight: triggering compaction after record delete"
             );
+            self.trigger_collection_compaction(&collection_id).await?;
         }
 
         Ok(result)

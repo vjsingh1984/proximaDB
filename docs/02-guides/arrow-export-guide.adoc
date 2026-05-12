@@ -188,8 +188,9 @@ DoExchange emits progress metadata messages and a final completion message:
 {"type":"complete","operation":"upsert","total_batches":1,"total_records":1000,"total_failed":0,"success":true}
 ----
 
-`trigger_compaction` is parsed for DoPut but explicit compaction after batch
-writes is not yet implemented; use the `compact_collection` action for now.
+When `trigger_compaction` is true, DoPut triggers collection compaction after
+the batch write completes. The `compact_collection` action remains available
+for explicit maintenance outside the write path.
 
 === DuckDB Direct Query
 
