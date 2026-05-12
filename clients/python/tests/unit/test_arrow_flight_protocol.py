@@ -1,0 +1,168 @@
+import json
+
+import pytest
+
+from proximadb_sdk.protocols.arrow_flight import (
+    ARROW_AVAILABLE,
+    ArrowFlightClient,
+    FlightPutResult,
+    pa,
+)
+
+
+class _Buffer:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def to_pybytes(self):
+        return self._payload
+
+
+class _Chunk:
+    def __init__(self, payload):
+        self.app_metadata = payload
+
+
+class _ExchangeWriter:
+    def __init__(self):
+        self.schema = None
+        self.batches = []
+        self.closed = False
+
+    def begin(self, schema):
+        self.schema = schema
+
+    def write_batch(self, batch):
+        self.batches.append(batch)
+
+    def close(self):
+        self.closed = True
+
+
+class _ExchangeClient:
+    def __init__(self, chunks):
+        self.chunks = chunks
+        self.writer = _ExchangeWriter()
+        self.descriptor = None
+        self.options = None
+
+    def do_exchange(self, descriptor, options=None):
+        self.descriptor = descriptor
+        self.options = options
+        return self.writer, iter(self.chunks)
+
+
+def _client_with_exchange(fake_client):
+    client = ArrowFlightClient.__new__(ArrowFlightClient)
+    client._get_client = lambda: fake_client
+    client._get_call_options = lambda: None
+    return client
+
+
+def test_affected_count_uses_successful_count():
+    metadata = {"metrics": {"successful_count": 7, "total_processed": 9}}
+
+    assert ArrowFlightClient._affected_count(metadata, fallback=3) == 7
+
+
+def test_affected_count_falls_back_to_total_processed():
+    metadata = {"metrics": {"total_processed": 9}}
+
+    assert ArrowFlightClient._affected_count(metadata, fallback=3) == 9
+
+
+def test_affected_count_falls_back_to_rows():
+    assert ArrowFlightClient._affected_count({}, fallback=3) == 3
+
+
+def test_flight_put_result_record_aliases():
+    result = FlightPutResult(
+        success=True,
+        vectors_inserted=7,
+        message="ok",
+        metadata={"metrics": {"failed_count": 2}, "errors": ["ignored"]},
+    )
+
+    assert result.records_processed == 7
+    assert result.records_failed == 2
+
+
+def test_flight_put_result_records_failed_falls_back_to_errors():
+    result = FlightPutResult(
+        success=False,
+        vectors_inserted=0,
+        message="bad",
+        metadata={"errors": ["a", "b"]},
+    )
+
+    assert result.records_failed == 2
+
+
+def test_decode_metadata_accepts_pyarrow_buffer_shape():
+    payload = {"type": "complete", "operation": "upsert", "total_records": 12}
+    encoded = json.dumps(payload).encode()
+
+    assert ArrowFlightClient._decode_metadata(_Buffer(encoded)) == payload
+
+
+def test_metadata_from_exchange_chunk_reads_app_metadata():
+    payload = {"type": "progress", "operation": "delete", "batch": 2}
+    encoded = json.dumps(payload).encode()
+
+    assert ArrowFlightClient._metadata_from_exchange_chunk(_Chunk(encoded)) == payload
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_bulk_upsert_exchange_streams_batches_and_parses_metadata():
+    progress = {"type": "progress", "operation": "upsert", "batch": 1}
+    complete = {
+        "type": "complete",
+        "operation": "upsert",
+        "total_batches": 1,
+        "total_records": 2,
+        "total_failed": 0,
+        "success": True,
+    }
+    fake = _ExchangeClient(
+        [
+            _Chunk(json.dumps(progress).encode()),
+            _Chunk(json.dumps(complete).encode()),
+        ]
+    )
+    client = _client_with_exchange(fake)
+    table = pa.table({"id": ["r1", "r2"], "category": ["a", "b"]})
+
+    result = client.bulk_upsert_exchange("records", table, batch_size=1)
+
+    assert fake.descriptor.path == [b"bulk_upsert", b"records"]
+    assert fake.writer.schema == table.schema
+    assert len(fake.writer.batches) == 2
+    assert fake.writer.closed
+    assert result.success
+    assert result.records_processed == 2
+    assert result.records_failed == 0
+    assert result.batches_processed == 1
+    assert result.progress == [progress]
+    assert result.metadata == complete
+
+
+@pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
+def test_bulk_delete_exchange_sends_id_table():
+    complete = {
+        "type": "complete",
+        "operation": "delete",
+        "total_batches": 1,
+        "total_records": 2,
+        "total_failed": 0,
+        "success": True,
+    }
+    fake = _ExchangeClient([_Chunk(json.dumps(complete).encode())])
+    client = _client_with_exchange(fake)
+
+    result = client.bulk_delete_exchange("records", ["r1", "r2"])
+
+    assert fake.descriptor.path == [b"bulk_delete", b"records"]
+    assert fake.writer.schema.names == ["id"]
+    assert fake.writer.batches[0].column("id").to_pylist() == ["r1", "r2"]
+    assert result.success
+    assert result.records_processed == 2

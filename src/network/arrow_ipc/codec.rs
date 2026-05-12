@@ -38,11 +38,45 @@ pub enum WriteMode {
     Direct,
 }
 
+/// Logical batch write operation requested over Arrow Flight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum FlightWriteOperation {
+    /// Insert or replace records. This is the current v2 rich-record write path.
+    #[default]
+    Upsert,
+    /// Insert records. Routed through the same rich-record path until strict
+    /// insert-only semantics are available below the protocol layer.
+    Insert,
+    /// Delete records by id/oid using the v2 tombstone path.
+    Delete,
+}
+
+impl FlightWriteOperation {
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "upsert" | "batch_upsert" | "bulk_upsert" => Some(Self::Upsert),
+            "insert" | "batch_insert" | "bulk_insert" => Some(Self::Insert),
+            "delete" | "batch_delete" | "bulk_delete" => Some(Self::Delete),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Upsert => "upsert",
+            Self::Insert => "insert",
+            Self::Delete => "delete",
+        }
+    }
+}
+
 /// Metadata extracted from FlightDescriptor
 #[derive(Debug, Clone)]
 pub struct FlightRequestMetadata {
     /// Target collection for the Arrow Flight operation
     pub collection_id: String,
+    /// Logical batch operation requested by the client
+    pub operation: FlightWriteOperation,
     /// Write mode (WAL or direct engine write)
     pub write_mode: WriteMode,
     /// Whether to trigger compaction after the write completes
@@ -117,6 +151,55 @@ impl ArrowProtoCodec {
         }
 
         Ok(all_records)
+    }
+
+    /// Extract record ids from Arrow batches for Flight delete operations.
+    ///
+    /// The v2 record envelope uses `oid`; vector-era clients commonly send
+    /// `id`. Both are accepted so the Flight boundary can serve rich records
+    /// and existing vector clients without a second protocol.
+    pub fn batches_to_record_ids(batches: Vec<RecordBatch>) -> Result<Vec<String>> {
+        let mut record_ids = Vec::new();
+
+        for batch in batches {
+            let ids = Self::batch_to_record_ids(&batch)?;
+            record_ids.extend(ids);
+        }
+
+        Ok(record_ids)
+    }
+
+    fn batch_to_record_ids(batch: &RecordBatch) -> Result<Vec<String>> {
+        let id_array = batch
+            .column_by_name("id")
+            .or_else(|| batch.column_by_name("oid"))
+            .context("Missing 'id' or 'oid' column")?;
+
+        if let Some(array) = id_array.as_any().downcast_ref::<StringArray>() {
+            return Ok((0..batch.num_rows())
+                .map(|row| {
+                    if array.is_null(row) {
+                        Err(anyhow::anyhow!("Record id is null at row {}", row))
+                    } else {
+                        Ok(array.value(row).to_string())
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?);
+        }
+
+        if let Some(array) = id_array.as_any().downcast_ref::<LargeStringArray>() {
+            return Ok((0..batch.num_rows())
+                .map(|row| {
+                    if array.is_null(row) {
+                        Err(anyhow::anyhow!("Record id is null at row {}", row))
+                    } else {
+                        Ok(array.value(row).to_string())
+                    }
+                })
+                .collect::<Result<Vec<_>>>()?);
+        }
+
+        Err(anyhow::anyhow!("'id'/'oid' column is not Utf8/LargeUtf8"))
     }
 
     fn batch_to_proxima_records(batch: &RecordBatch) -> Result<Vec<ProximaRecord>> {
@@ -941,34 +1024,75 @@ impl ArrowProtoCodec {
 
     /// Parse FlightDescriptor to extract request metadata
     pub fn parse_descriptor(descriptor: &FlightDescriptor) -> Result<FlightRequestMetadata> {
-        let path = descriptor
+        let path_operation = descriptor
             .path
             .first()
-            .context("FlightDescriptor path is empty")?;
+            .and_then(|first_path| FlightWriteOperation::from_token(first_path));
 
-        let collection_id = path.clone();
-
-        // Parse command from descriptor.cmd if present
-        let (write_mode, trigger_compaction) = if !descriptor.cmd.is_empty() {
-            let cmd: HashMap<String, String> = serde_json::from_slice(&descriptor.cmd)?;
-            let mode = match cmd.get("write_mode").map(|s| s.as_str()) {
-                Some("direct") => WriteMode::Direct,
-                _ => WriteMode::WAL,
-            };
-            let compact = cmd
-                .get("trigger_compaction")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(false);
-            (mode, compact)
-        } else {
-            (WriteMode::WAL, false)
+        let path_collection_id = match (descriptor.path.first(), path_operation) {
+            (Some(_), Some(_)) => Some(
+                descriptor
+                    .path
+                    .get(1)
+                    .context("FlightDescriptor operation path is missing collection id")?
+                    .clone(),
+            ),
+            (Some(first_path), None) => Some(first_path.clone()),
+            (None, None) => None,
+            (None, Some(_)) => unreachable!("path operation requires a first path segment"),
         };
+
+        let (collection_id, operation, write_mode, trigger_compaction) =
+            if !descriptor.cmd.is_empty() {
+                let cmd: HashMap<String, serde_json::Value> =
+                    serde_json::from_slice(&descriptor.cmd)?;
+                let collection_id = cmd
+                    .get("collection_id")
+                    .or_else(|| cmd.get("collection"))
+                    .and_then(Self::json_string)
+                    .or(path_collection_id)
+                    .context("FlightDescriptor is missing collection id")?;
+                let operation = cmd
+                    .get("operation")
+                    .or_else(|| cmd.get("write_operation"))
+                    .and_then(Self::json_string)
+                    .and_then(|operation| FlightWriteOperation::from_token(&operation))
+                    .or(path_operation)
+                    .unwrap_or_default();
+                let mode = match cmd.get("write_mode").and_then(Self::json_string).as_deref() {
+                    Some("direct") => WriteMode::Direct,
+                    _ => WriteMode::WAL,
+                };
+                let compact = cmd
+                    .get("trigger_compaction")
+                    .and_then(Self::json_bool)
+                    .unwrap_or(false);
+                (collection_id, operation, mode, compact)
+            } else {
+                (
+                    path_collection_id.context("FlightDescriptor is missing collection id")?,
+                    path_operation.unwrap_or_default(),
+                    WriteMode::WAL,
+                    false,
+                )
+            };
 
         Ok(FlightRequestMetadata {
             collection_id,
+            operation,
             write_mode,
             trigger_compaction,
         })
+    }
+
+    fn json_string(value: &serde_json::Value) -> Option<String> {
+        value.as_str().map(ToOwned::to_owned)
+    }
+
+    fn json_bool(value: &serde_json::Value) -> Option<bool> {
+        value
+            .as_bool()
+            .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
     }
 
     /// Parse Ticket to extract search request
@@ -984,6 +1108,27 @@ impl ArrowProtoCodec {
             &Default::default(),
         )
         .context("Failed to convert FlightData to RecordBatch")
+    }
+
+    /// Convert a FlightData stream containing an IPC schema followed by record
+    /// batch messages into Arrow RecordBatches.
+    ///
+    /// PyArrow DoPut/DoExchange clients commonly send a descriptor-only first
+    /// message and then a schema message before data batches. Descriptor-only
+    /// messages have an empty `data_header` and are ignored here.
+    pub fn flight_data_stream_to_batches(messages: &[FlightData]) -> Result<Vec<RecordBatch>> {
+        let arrow_messages: Vec<FlightData> = messages
+            .iter()
+            .filter(|message| !message.data_header.is_empty())
+            .cloned()
+            .collect();
+
+        if arrow_messages.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        arrow_flight::utils::flight_data_to_batches(&arrow_messages)
+            .context("Failed to convert FlightData stream to RecordBatches")
     }
 
     /// Convert RecordBatch to FlightData
@@ -1476,6 +1621,7 @@ mod tests {
         let metadata =
             ArrowProtoCodec::parse_descriptor(&descriptor).expect("Failed to parse descriptor");
         assert_eq!(metadata.collection_id, "my_collection");
+        assert_eq!(metadata.operation, FlightWriteOperation::Upsert);
         assert_eq!(metadata.write_mode, WriteMode::WAL);
         assert!(!metadata.trigger_compaction);
     }
@@ -1678,8 +1824,106 @@ mod tests {
         let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
             .expect("Failed to parse descriptor with metadata");
         assert_eq!(metadata.collection_id, "high_perf_collection");
+        assert_eq!(metadata.operation, FlightWriteOperation::Upsert);
         assert_eq!(metadata.write_mode, WriteMode::Direct);
         assert!(metadata.trigger_compaction);
+    }
+
+    #[test]
+    fn test_flight_descriptor_delete_operation_from_path() {
+        let descriptor = FlightDescriptor {
+            r#type: 0,
+            path: vec!["delete".to_string(), "records".to_string()],
+            cmd: Default::default(),
+        };
+
+        let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
+            .expect("Failed to parse delete descriptor");
+        assert_eq!(metadata.collection_id, "records");
+        assert_eq!(metadata.operation, FlightWriteOperation::Delete);
+        assert_eq!(metadata.write_mode, WriteMode::WAL);
+    }
+
+    #[test]
+    fn test_flight_descriptor_operation_from_command() {
+        let descriptor = FlightDescriptor {
+            r#type: 0,
+            path: vec!["records".to_string()],
+            cmd: serde_json::to_vec(&serde_json::json!({
+                "operation": "bulk_delete",
+                "write_mode": "direct",
+                "trigger_compaction": true
+            }))
+            .expect("Failed to serialize cmd")
+            .into(),
+        };
+
+        let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
+            .expect("Failed to parse command descriptor");
+        assert_eq!(metadata.collection_id, "records");
+        assert_eq!(metadata.operation, FlightWriteOperation::Delete);
+        assert_eq!(metadata.write_mode, WriteMode::Direct);
+        assert!(metadata.trigger_compaction);
+    }
+
+    #[test]
+    fn test_flight_descriptor_collection_from_command() {
+        let descriptor = FlightDescriptor {
+            r#type: 0,
+            path: Vec::new(),
+            cmd: serde_json::to_vec(&serde_json::json!({
+                "collection_id": "records",
+                "operation": "upsert",
+                "write_mode": "wal",
+                "trigger_compaction": false
+            }))
+            .expect("Failed to serialize cmd")
+            .into(),
+        };
+
+        let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
+            .expect("Failed to parse command descriptor");
+        assert_eq!(metadata.collection_id, "records");
+        assert_eq!(metadata.operation, FlightWriteOperation::Upsert);
+        assert_eq!(metadata.write_mode, WriteMode::WAL);
+        assert!(!metadata.trigger_compaction);
+    }
+
+    #[test]
+    fn test_batches_to_record_ids_accepts_oid() {
+        let schema = Arc::new(Schema::new(vec![Field::new("oid", DataType::Utf8, false)]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(StringArray::from(vec!["r1", "r2"])) as ArrayRef],
+        )
+        .expect("Failed to create id batch");
+
+        let ids =
+            ArrowProtoCodec::batches_to_record_ids(vec![batch]).expect("Failed to extract ids");
+        assert_eq!(ids, vec!["r1".to_string(), "r2".to_string()]);
+    }
+
+    #[test]
+    fn test_flight_data_stream_to_batches_skips_descriptor_only_message() {
+        let batch = create_test_batch(2, 4);
+        let mut messages = vec![FlightData {
+            flight_descriptor: Some(FlightDescriptor::new_path(vec![
+                "bulk_upsert".to_string(),
+                "records".to_string(),
+            ])),
+            data_header: Default::default(),
+            app_metadata: Default::default(),
+            data_body: Default::default(),
+        }];
+        messages.extend(
+            ArrowProtoCodec::batch_to_flight_data(&batch, &Default::default())
+                .expect("Failed to encode batch"),
+        );
+
+        let decoded = ArrowProtoCodec::flight_data_stream_to_batches(&messages)
+            .expect("Failed to decode stream");
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].num_rows(), 2);
     }
 
     #[test]

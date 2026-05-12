@@ -11,7 +11,7 @@
 //! Note: This uses tonic 0.13 (via arrow-flight), which is different from
 //! the main codebase's tonic 0.10. Types are carefully managed to avoid conflicts.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
@@ -22,11 +22,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::api_handlers::{RichRecordBatchRequest, unified_handlers::UnifiedHandlers};
+use crate::api_handlers::{
+    RichRecordBatchRequest, RichRecordDeleteBatchRequest, unified_handlers::UnifiedHandlers,
+};
 use crate::proto::proximadb_v1::VectorSearchRequest;
 use crate::services::operations::BatchOperationResult;
 
-use super::codec::{ArrowProtoCodec, WriteMode};
+use super::codec::{ArrowProtoCodec, FlightWriteOperation, WriteMode};
 use super::file_export::{
     ArrowFileExportHandler, ArrowFileRequest, ArrowFileTicket, FlightCompression,
 };
@@ -90,6 +92,7 @@ impl ProximaFlightService {
     }
 
     fn batch_progress_app_metadata(
+        operation: FlightWriteOperation,
         batch: u64,
         batch_rows: usize,
         cumulative_records: u64,
@@ -98,6 +101,7 @@ impl ProximaFlightService {
         let failed_count = result.metrics.failed_count.max(result.errors.len() as i64);
         let progress = serde_json::json!({
             "type": "progress",
+            "operation": operation.as_str(),
             "batch": batch,
             "batch_rows": batch_rows,
             "total_records": cumulative_records,
@@ -113,6 +117,7 @@ impl ProximaFlightService {
     }
 
     fn bulk_insert_complete_app_metadata(
+        operation: FlightWriteOperation,
         total_batches: u64,
         total_records: u64,
         total_failed: u64,
@@ -120,6 +125,7 @@ impl ProximaFlightService {
     ) -> Result<Vec<u8>> {
         let final_status = serde_json::json!({
             "type": "complete",
+            "operation": operation.as_str(),
             "total_batches": total_batches,
             "total_records": total_records,
             "total_failed": total_failed,
@@ -127,6 +133,47 @@ impl ProximaFlightService {
         });
 
         serde_json::to_vec(&final_status).map_err(Into::into)
+    }
+
+    fn parse_exchange_descriptor(
+        descriptor: &FlightDescriptor,
+    ) -> Result<(String, String, Option<FlightWriteOperation>)> {
+        if let Some(exchange_type) = descriptor.path.first() {
+            let collection_id = descriptor
+                .path
+                .get(1)
+                .cloned()
+                .context("Exchange descriptor path is missing collection id")?;
+            let operation = FlightWriteOperation::from_token(exchange_type);
+            return Ok((exchange_type.clone(), collection_id, operation));
+        }
+
+        // Command descriptors are accepted for parity with DoPut and for
+        // clients that cannot easily populate descriptor path segments.
+        let cmd: serde_json::Value = serde_json::from_slice(&descriptor.cmd)
+            .context("Invalid exchange descriptor command")?;
+        let exchange_type = cmd
+            .get("exchange_type")
+            .or_else(|| cmd.get("operation"))
+            .or_else(|| cmd.get("write_operation"))
+            .and_then(|value| value.as_str())
+            .context("Exchange descriptor command is missing exchange_type/operation")?
+            .to_string();
+        let operation = FlightWriteOperation::from_token(&exchange_type);
+        let exchange_type = match (exchange_type.as_str(), operation) {
+            ("insert", Some(FlightWriteOperation::Insert)) => "bulk_insert".to_string(),
+            ("upsert", Some(FlightWriteOperation::Upsert)) => "bulk_upsert".to_string(),
+            ("delete", Some(FlightWriteOperation::Delete)) => "bulk_delete".to_string(),
+            _ => exchange_type,
+        };
+        let collection_id = cmd
+            .get("collection_id")
+            .or_else(|| cmd.get("collection"))
+            .and_then(|value| value.as_str())
+            .context("Exchange descriptor command is missing collection_id")?
+            .to_string();
+
+        Ok((exchange_type, collection_id, operation))
     }
 
     /// Convert serde_json::Value to SqlValue for metadata
@@ -248,6 +295,42 @@ impl ProximaFlightService {
             debug!(
                 collection_id = %collection_id,
                 "Compaction trigger requested (not yet implemented)"
+            );
+        }
+
+        Ok(result)
+    }
+
+    /// Handle rich record deletes (DoPut) by extracting id/oid from Arrow rows.
+    async fn handle_record_delete(
+        &self,
+        collection_id: String,
+        trigger_compaction: bool,
+        batches: Vec<arrow_array::RecordBatch>,
+    ) -> Result<BatchOperationResult> {
+        debug!(
+            collection_id = %collection_id,
+            num_batches = batches.len(),
+            "Arrow IPC record delete"
+        );
+
+        let record_ids = ArrowProtoCodec::batches_to_record_ids(batches)?;
+
+        let result = self
+            .unified_handlers
+            .handle_record_delete_batch_for_tenant(
+                RichRecordDeleteBatchRequest {
+                    collection_id: collection_id.clone(),
+                    record_ids,
+                },
+                None,
+            )
+            .await?;
+
+        if trigger_compaction {
+            debug!(
+                collection_id = %collection_id,
+                "Compaction trigger requested after delete (not yet implemented)"
             );
         }
 
@@ -563,16 +646,9 @@ impl FlightService for ProximaFlightService {
             .await
             .map_err(|e| TonicStatus::internal(format!("Search failed: {}", e)))?;
 
-        // Convert batches to FlightData stream
-        let stream = stream::iter(batches.into_iter().filter_map(|batch| {
-            match ArrowProtoCodec::batch_to_flight_data(&batch, &Default::default()) {
-                Ok(flight_data_vec) => flight_data_vec.into_iter().next().map(Ok),
-                Err(e) => Some(Err(TonicStatus::internal(format!(
-                    "Failed to convert batch: {}",
-                    e
-                )))),
-            }
-        }));
+        let flight_data = ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, None)
+            .map_err(|e| TonicStatus::internal(format!("Failed to encode batches: {}", e)))?;
+        let stream = stream::iter(flight_data.into_iter().map(Ok));
 
         Ok(TonicResponse::new(Box::pin(stream)))
     }
@@ -593,22 +669,24 @@ impl FlightService for ProximaFlightService {
         // Parse descriptor
         let descriptor = first_msg
             .flight_descriptor
+            .clone()
             .ok_or_else(|| TonicStatus::invalid_argument("Missing FlightDescriptor"))?;
 
         let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
             .map_err(|e| TonicStatus::invalid_argument(format!("Invalid descriptor: {}", e)))?;
 
         // Collect all RecordBatches from stream
-        let mut batches = Vec::new();
+        let mut flight_messages = vec![first_msg];
         while let Some(data) = stream
             .message()
             .await
             .map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?
         {
-            let batch = ArrowProtoCodec::flight_data_to_batch(&data)
-                .map_err(|e| TonicStatus::internal(format!("Failed to parse batch: {}", e)))?;
-            batches.push(batch);
+            flight_messages.push(data);
         }
+
+        let batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
+            .map_err(|e| TonicStatus::internal(format!("Failed to parse batches: {}", e)))?;
 
         debug!(
             collection_id = %metadata.collection_id,
@@ -616,16 +694,27 @@ impl FlightService for ProximaFlightService {
             "Received all batches"
         );
 
-        // Insert records
-        let result = self
-            .handle_record_insert(
-                metadata.collection_id.clone(),
-                metadata.write_mode,
-                metadata.trigger_compaction,
-                batches,
-            )
-            .await
-            .map_err(|e| TonicStatus::internal(format!("Insert failed: {}", e)))?;
+        let operation = metadata.operation;
+        let result = match operation {
+            FlightWriteOperation::Upsert | FlightWriteOperation::Insert => {
+                self.handle_record_insert(
+                    metadata.collection_id.clone(),
+                    metadata.write_mode,
+                    metadata.trigger_compaction,
+                    batches,
+                )
+                .await
+            }
+            FlightWriteOperation::Delete => {
+                self.handle_record_delete(
+                    metadata.collection_id.clone(),
+                    metadata.trigger_compaction,
+                    batches,
+                )
+                .await
+            }
+        }
+        .map_err(|e| TonicStatus::internal(format!("{} failed: {}", operation.as_str(), e)))?;
 
         // Return rich batch result metadata to Flight clients.
         let result_bytes = Self::batch_result_app_metadata(&result)
@@ -1353,11 +1442,24 @@ impl FlightService for ProximaFlightService {
             // Vector operations
             ActionType {
                 r#type: "insert_vectors".to_string(),
-                description: "Insert vectors. Body: {collection_id, vectors: [{id, vector, metadata?}]}".to_string(),
+                description: "Insert/upsert vectors. Body: {collection_id, vectors: [{id, vector, metadata?}]}".to_string(),
             },
             ActionType {
                 r#type: "delete_vectors".to_string(),
                 description: "Mark vectors for deletion (soft delete). Body: {collection_id, vector_ids: [id1, id2, ...]}".to_string(),
+            },
+            // Streaming batch operations
+            ActionType {
+                r#type: "bulk_insert".to_string(),
+                description: "DoExchange batch insert. Descriptor path: [bulk_insert, collection_id]; stream Arrow RecordBatches with id/oid, vector?, and rich props".to_string(),
+            },
+            ActionType {
+                r#type: "bulk_upsert".to_string(),
+                description: "DoExchange batch upsert. Descriptor path: [bulk_upsert, collection_id]; stream Arrow RecordBatches with id/oid, vector?, and rich props".to_string(),
+            },
+            ActionType {
+                r#type: "bulk_delete".to_string(),
+                description: "DoExchange batch delete. Descriptor path: [bulk_delete, collection_id]; stream Arrow RecordBatches with id or oid".to_string(),
             },
             ActionType {
                 r#type: "get_vectors".to_string(),
@@ -1399,9 +1501,14 @@ impl FlightService for ProximaFlightService {
     /// The exchange type is determined by the first FlightData message which should
     /// contain a FlightDescriptor with the exchange operation:
     ///
-    /// - **bulk_insert**: Stream large batches of vectors for insertion
-    ///   - Descriptor path: ["bulk_insert", collection_id]
+    /// - **bulk_insert/bulk_upsert**: Stream large batches of records for insertion/upsert
+    ///   - Descriptor path: ["bulk_insert", collection_id] or ["bulk_upsert", collection_id]
     ///   - Input: Stream of Arrow RecordBatches with vector data
+    ///   - Output: Stream of progress updates and final result
+    ///
+    /// - **bulk_delete**: Stream record ids for deletion
+    ///   - Descriptor path: ["bulk_delete", collection_id]
+    ///   - Input: Stream of Arrow RecordBatches with `id` or `oid`
     ///   - Output: Stream of progress updates and final result
     ///
     /// - **bulk_search**: Execute multiple search queries in parallel
@@ -1435,19 +1542,13 @@ impl FlightService for ProximaFlightService {
             .ok_or_else(|| TonicStatus::invalid_argument("Empty stream - expected descriptor"))?;
 
         // Parse descriptor to determine exchange type
-        let descriptor = first_msg.flight_descriptor.ok_or_else(|| {
+        let descriptor = first_msg.flight_descriptor.clone().ok_or_else(|| {
             TonicStatus::invalid_argument("First message must contain FlightDescriptor")
         })?;
 
-        let exchange_type = descriptor
-            .path
-            .first()
-            .ok_or_else(|| {
-                TonicStatus::invalid_argument("Descriptor path must specify exchange type")
-            })?
-            .as_str();
-
-        let collection_id = descriptor.path.get(1).cloned().unwrap_or_default();
+        let (exchange_type, collection_id, write_operation) =
+            Self::parse_exchange_descriptor(&descriptor)
+                .map_err(|e| TonicStatus::invalid_argument(format!("Invalid descriptor: {}", e)))?;
 
         info!(
             exchange_type = %exchange_type,
@@ -1455,21 +1556,31 @@ impl FlightService for ProximaFlightService {
             "Arrow Flight: do_exchange initiated"
         );
 
-        match exchange_type {
-            "bulk_insert" => {
-                self.handle_bulk_insert_exchange(collection_id, stream)
+        match exchange_type.as_str() {
+            "bulk_insert" | "bulk_upsert" => {
+                let operation = write_operation.unwrap_or_default();
+                self.handle_bulk_write_exchange(collection_id, operation, first_msg, stream)
                     .await
             }
+            "bulk_delete" => {
+                self.handle_bulk_write_exchange(
+                    collection_id,
+                    FlightWriteOperation::Delete,
+                    first_msg,
+                    stream,
+                )
+                .await
+            }
             "bulk_search" => {
-                self.handle_bulk_search_exchange(collection_id, stream)
+                self.handle_bulk_search_exchange(collection_id, first_msg, stream)
                     .await
             }
             "data_transfer" => {
-                self.handle_data_transfer_exchange(collection_id, stream)
+                self.handle_data_transfer_exchange(collection_id, first_msg, stream)
                     .await
             }
             _ => Err(TonicStatus::unimplemented(format!(
-                "Unknown exchange type: {}. Supported: bulk_insert, bulk_search, data_transfer",
+                "Unknown exchange type: {}. Supported: bulk_insert, bulk_upsert, bulk_delete, bulk_search, data_transfer",
                 exchange_type
             ))),
         }
@@ -1477,10 +1588,12 @@ impl FlightService for ProximaFlightService {
 }
 
 impl ProximaFlightService {
-    /// Handle bulk insert exchange - stream large batches for insertion
-    async fn handle_bulk_insert_exchange(
+    /// Handle bulk write exchange - stream large batches for upsert/insert/delete.
+    async fn handle_bulk_write_exchange(
         &self,
         collection_id: String,
+        operation: FlightWriteOperation,
+        first_msg: FlightData,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
         let mut total_records = 0u64;
@@ -1488,47 +1601,68 @@ impl ProximaFlightService {
         let mut total_batches = 0u64;
         let mut all_success = true;
         let mut results = Vec::new();
+        let mut flight_messages = vec![first_msg];
 
-        // Collect and process batches
         while let Some(data) = stream
             .message()
             .await
             .map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?
         {
-            // Parse batch
-            let batch = match ArrowProtoCodec::flight_data_to_batch(&data) {
-                Ok(b) => b,
-                Err(e) => {
-                    warn!("Failed to parse batch {}: {}", total_batches, e);
-                    continue;
-                }
-            };
+            flight_messages.push(data);
+        }
 
+        let batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
+            .map_err(|e| TonicStatus::internal(format!("Failed to parse batches: {}", e)))?;
+
+        for batch in batches {
             let batch_rows = batch.num_rows();
             total_batches += 1;
 
-            // Convert to ProximaRecords so Flight batch ingest preserves rich
-            // Arrow scalar values and modality fields.
-            let records = match ArrowProtoCodec::batches_to_proxima_records(vec![batch]) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!("Failed to convert batch {}: {}", total_batches, e);
-                    continue;
-                }
-            };
+            let result = match operation {
+                FlightWriteOperation::Upsert | FlightWriteOperation::Insert => {
+                    let records = match ArrowProtoCodec::batches_to_proxima_records(vec![batch]) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!("Failed to convert batch {}: {}", total_batches, e);
+                            total_failed += batch_rows as u64;
+                            all_success = false;
+                            continue;
+                        }
+                    };
 
-            // Insert records through the same rich internal boundary as REST/gRPC v2.
-            let result = self
-                .unified_handlers
-                .handle_record_batch_for_tenant(
-                    RichRecordBatchRequest {
-                        collection_id: collection_id.clone(),
-                        records,
-                    },
-                    None,
-                )
-                .await
-                .map_err(|e| TonicStatus::internal(format!("Insert failed: {}", e)))?;
+                    self.unified_handlers
+                        .handle_record_batch_for_tenant(
+                            RichRecordBatchRequest {
+                                collection_id: collection_id.clone(),
+                                records,
+                            },
+                            None,
+                        )
+                        .await
+                }
+                FlightWriteOperation::Delete => {
+                    let record_ids = match ArrowProtoCodec::batches_to_record_ids(vec![batch]) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!("Failed to convert delete batch {}: {}", total_batches, e);
+                            total_failed += batch_rows as u64;
+                            all_success = false;
+                            continue;
+                        }
+                    };
+
+                    self.unified_handlers
+                        .handle_record_delete_batch_for_tenant(
+                            RichRecordDeleteBatchRequest {
+                                collection_id: collection_id.clone(),
+                                record_ids,
+                            },
+                            None,
+                        )
+                        .await
+                }
+            }
+            .map_err(|e| TonicStatus::internal(format!("{} failed: {}", operation.as_str(), e)))?;
 
             total_records += result.metrics.successful_count.max(0) as u64;
             total_failed += result
@@ -1540,6 +1674,7 @@ impl ProximaFlightService {
 
             // Send progress update as FlightData
             let progress_metadata = Self::batch_progress_app_metadata(
+                operation,
                 total_batches,
                 batch_rows,
                 total_records,
@@ -1558,6 +1693,7 @@ impl ProximaFlightService {
         }
 
         let final_metadata = Self::bulk_insert_complete_app_metadata(
+            operation,
             total_batches,
             total_records,
             total_failed,
@@ -1575,10 +1711,11 @@ impl ProximaFlightService {
         results.push(Ok(final_data));
 
         info!(
+            operation = %operation.as_str(),
             total_batches = total_batches,
             total_records = total_records,
             total_failed = total_failed,
-            "Arrow Flight: bulk_insert exchange completed"
+            "Arrow Flight: bulk write exchange completed"
         );
 
         let stream = stream::iter(results);
@@ -1589,36 +1726,31 @@ impl ProximaFlightService {
     async fn handle_bulk_search_exchange(
         &self,
         collection_id: String,
+        first_msg: FlightData,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
         let mut results = Vec::new();
         let mut query_count = 0u64;
+        let mut flight_messages = vec![first_msg];
 
-        // Process query batches
         while let Some(data) = stream
             .message()
             .await
             .map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?
         {
-            // Check if this is a configuration message or query batch
             if !data.app_metadata.is_empty() {
-                // Configuration message with search parameters
                 if let Ok(config) = serde_json::from_slice::<serde_json::Value>(&data.app_metadata)
                 {
                     debug!("Received search config: {:?}", config);
                     continue;
                 }
             }
+            flight_messages.push(data);
+        }
 
-            // Parse query batch
-            let batch = match ArrowProtoCodec::flight_data_to_batch(&data) {
-                Ok(b) => b,
-                Err(e) => {
-                    warn!("Failed to parse query batch: {}", e);
-                    continue;
-                }
-            };
-
+        let query_batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
+            .map_err(|e| TonicStatus::internal(format!("Failed to parse query batches: {}", e)))?;
+        for batch in query_batches {
             // Extract query vectors from batch
             let query_vectors = match ArrowProtoCodec::batches_to_vector_records(vec![batch]) {
                 Ok(v) => v,
@@ -1706,11 +1838,17 @@ impl ProximaFlightService {
     async fn handle_data_transfer_exchange(
         &self,
         collection_id: String,
+        first_msg: FlightData,
         mut stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
         let mut results = Vec::new();
         let mut total_bytes = 0u64;
         let mut chunk_count = 0u64;
+
+        if !first_msg.data_body.is_empty() {
+            chunk_count += 1;
+            total_bytes += first_msg.data_body.len() as u64;
+        }
 
         // Process data chunks
         while let Some(data) = stream
@@ -1808,11 +1946,18 @@ mod tests {
             "VALIDATION_FAILED".to_string(),
         );
 
-        let metadata =
-            ProximaFlightService::batch_progress_app_metadata(2, 10, 7, &result).unwrap();
+        let metadata = ProximaFlightService::batch_progress_app_metadata(
+            FlightWriteOperation::Delete,
+            2,
+            10,
+            7,
+            &result,
+        )
+        .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
 
         assert_eq!(value["type"], "progress");
+        assert_eq!(value["operation"], "delete");
         assert_eq!(value["batch"], 2);
         assert_eq!(value["batch_rows"], 10);
         assert_eq!(value["total_records"], 7);
@@ -1820,6 +1965,94 @@ mod tests {
         assert_eq!(value["failed_count"], 1);
         assert_eq!(value["errors"], serde_json::json!(["bad record"]));
         assert!(value.get("total_vectors").is_none());
+    }
+
+    #[test]
+    fn test_bulk_completion_metadata_is_operation_tagged() {
+        let metadata = ProximaFlightService::bulk_insert_complete_app_metadata(
+            FlightWriteOperation::Upsert,
+            3,
+            25,
+            2,
+            false,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&metadata).unwrap();
+
+        assert_eq!(value["type"], "complete");
+        assert_eq!(value["operation"], "upsert");
+        assert_eq!(value["total_batches"], 3);
+        assert_eq!(value["total_records"], 25);
+        assert_eq!(value["total_failed"], 2);
+        assert_eq!(value["success"], false);
+        assert!(value.get("total_vectors").is_none());
+    }
+
+    #[test]
+    fn test_exchange_descriptor_from_path() {
+        let descriptor =
+            FlightDescriptor::new_path(vec!["bulk_delete".to_string(), "records".to_string()]);
+
+        let (exchange_type, collection_id, operation) =
+            ProximaFlightService::parse_exchange_descriptor(&descriptor).unwrap();
+
+        assert_eq!(exchange_type, "bulk_delete");
+        assert_eq!(collection_id, "records");
+        assert_eq!(operation, Some(FlightWriteOperation::Delete));
+    }
+
+    #[test]
+    fn test_exchange_descriptor_from_command() {
+        let descriptor = FlightDescriptor::new_cmd(
+            serde_json::to_vec(&serde_json::json!({
+                "exchange_type": "bulk_upsert",
+                "collection_id": "records"
+            }))
+            .unwrap(),
+        );
+
+        let (exchange_type, collection_id, operation) =
+            ProximaFlightService::parse_exchange_descriptor(&descriptor).unwrap();
+
+        assert_eq!(exchange_type, "bulk_upsert");
+        assert_eq!(collection_id, "records");
+        assert_eq!(operation, Some(FlightWriteOperation::Upsert));
+    }
+
+    #[test]
+    fn test_exchange_descriptor_from_command_operation_alias() {
+        let descriptor = FlightDescriptor::new_cmd(
+            serde_json::to_vec(&serde_json::json!({
+                "operation": "delete",
+                "collection": "records"
+            }))
+            .unwrap(),
+        );
+
+        let (exchange_type, collection_id, operation) =
+            ProximaFlightService::parse_exchange_descriptor(&descriptor).unwrap();
+
+        assert_eq!(exchange_type, "bulk_delete");
+        assert_eq!(collection_id, "records");
+        assert_eq!(operation, Some(FlightWriteOperation::Delete));
+    }
+
+    #[test]
+    fn test_exchange_descriptor_from_command_upsert_alias() {
+        let descriptor = FlightDescriptor::new_cmd(
+            serde_json::to_vec(&serde_json::json!({
+                "operation": "upsert",
+                "collection_id": "records"
+            }))
+            .unwrap(),
+        );
+
+        let (exchange_type, collection_id, operation) =
+            ProximaFlightService::parse_exchange_descriptor(&descriptor).unwrap();
+
+        assert_eq!(exchange_type, "bulk_upsert");
+        assert_eq!(collection_id, "records");
+        assert_eq!(operation, Some(FlightWriteOperation::Upsert));
     }
 
     #[test]
