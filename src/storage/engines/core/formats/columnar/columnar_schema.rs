@@ -189,6 +189,8 @@ impl ColumnarSchema {
                 DataType::Timestamp(arrow_schema::TimeUnit::Microsecond, None)
             }
             "list" => DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            "json" => DataType::Utf8,
+            "jsonb" => DataType::LargeBinary,
             _ => {
                 debug!(
                     "Unknown data type '{}', defaulting to Utf8",

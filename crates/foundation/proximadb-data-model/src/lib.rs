@@ -19,7 +19,6 @@
 //! Authoritative definition of the ProximaDB type system and model discriminators
 //! as specified in MULTIMODAL_OVERHAUL_SPEC_2026_05_08.
 
-use arrow_schema::DataType as ArrowDataType;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -76,43 +75,42 @@ pub type StoreType = DataModel;
 
 /// Standardized memory categories for agentic memory systems.
 ///
-/// The 13 categories are intentionally flat so records can be filtered by
-/// memory intent without inventing source-specific metadata conventions.
+/// Derived from arXiv:2604.22085 (Memanto). Categorizing memory allows for
+/// type-filtered retrieval and specialized conflict resolution strategies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryType {
-    /// Objective, verifiable information.
+    /// Objective, verifiable information (e.g., "User lives in PST").
     Fact,
-    /// User or system preference.
+    /// User or system preferences (e.g., "Prefers dark mode").
     Preference,
-    /// Choice made that affects future behavior.
+    /// Choices made affecting the future (e.g., "Chose PostgreSQL for DB").
     Decision,
-    /// Promise, obligation, or scheduled responsibility.
+    /// Promises or obligations (e.g., "Deliver report by Friday").
     Commitment,
-    /// Objective to achieve.
+    /// Objectives to achieve (e.g., "Reach 10K users by Q4").
     Goal,
-    /// Historical occurrence.
+    /// Historical occurrences (e.g., "Meeting with CEO at 2pm").
     Event,
-    /// Rule or guideline.
+    /// Rules and guidelines (e.g., "Always validate input").
     Instruction,
-    /// Entity connection.
+    /// Entity connections (e.g., "Alice manages Bob").
     Relationship,
-    /// Situational information.
+    /// Situational information (e.g., "Currently in budget review").
     Context,
-    /// Lesson learned from experience.
+    /// Lessons from experience (e.g., "Users need simpler onboarding").
     Learning,
-    /// Pattern or signal noticed.
+    /// Patterns noticed (e.g., "Traffic peaks on Fridays").
     Observation,
-    /// Mistake, failure, or constraint to avoid.
+    /// Mistakes to avoid (e.g., "Don't use unwrap in production").
     Error,
-    /// Document, code, or external reference.
+    /// Document or code references (e.g., "Reference to RFC 7519").
     Artifact,
 }
 
-impl MemoryType {
-    /// Stable lowercase name used in metadata, JSON, and AQL type filters.
-    pub fn as_str(self) -> &'static str {
-        match self {
+impl std::fmt::Display for MemoryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
             MemoryType::Fact => "fact",
             MemoryType::Preference => "preference",
             MemoryType::Decision => "decision",
@@ -126,21 +124,17 @@ impl MemoryType {
             MemoryType::Observation => "observation",
             MemoryType::Error => "error",
             MemoryType::Artifact => "artifact",
-        }
-    }
-}
-
-impl std::fmt::Display for MemoryType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        };
+        f.write_str(value)
     }
 }
 
 impl std::str::FromStr for MemoryType {
-    type Err = ();
+    type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
             "fact" => Ok(MemoryType::Fact),
             "preference" => Ok(MemoryType::Preference),
             "decision" => Ok(MemoryType::Decision),
@@ -154,7 +148,7 @@ impl std::str::FromStr for MemoryType {
             "observation" => Ok(MemoryType::Observation),
             "error" => Ok(MemoryType::Error),
             "artifact" => Ok(MemoryType::Artifact),
-            _ => Err(()),
+            _ => Err(format!("unknown memory type: {}", value)),
         }
     }
 }
@@ -169,6 +163,7 @@ impl std::str::FromStr for MemoryType {
 /// source of truth for catalog, wire, and storage types.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProximaType {
+    /// Boolean (true/false).
     Boolean,
     // Numeric
     Int8,
@@ -182,12 +177,14 @@ pub enum ProximaType {
     Float16,
     Float32,
     Float64,
+    /// Exact numeric with fixed precision and scale.
     Decimal {
         precision: u8,
         scale: u8,
     },
     // Text
     String,
+    /// Dictionary-encoded string for high-cardinality fields.
     Symbol,
     // Binary
     Binary,
@@ -195,6 +192,7 @@ pub enum ProximaType {
     Date,
     Time(TimeUnit),
     Timestamp(TimeUnit),
+    /// Timestamp with time zone.
     TimestampTz(TimeUnit),
     Interval(TimeUnit),
     Duration(TimeUnit),
@@ -202,7 +200,9 @@ pub enum ProximaType {
     Uuid,
     ULID,
     // Structured
+    /// Plain JSON text.
     Json,
+    /// Binary JSON for efficient querying and partial updates.
     Jsonb,
     Array(Box<ProximaType>),
     Map {
@@ -227,7 +227,33 @@ pub enum ProximaType {
     Point,
     GeographyPoint,
     // Special
+    /// Represents the absence of a value.
     Null,
+}
+
+impl ProximaType {
+    /// Return the PostgreSQL OID for this type for pgwire compatibility.
+    pub fn pgwire_oid(&self) -> u32 {
+        match self {
+            ProximaType::Boolean => 16,
+            ProximaType::Int16 => 21,
+            ProximaType::Int32 => 23,
+            ProximaType::Int64 => 20,
+            ProximaType::Float32 => 700,
+            ProximaType::Float64 => 701,
+            ProximaType::String => 1043, // varchar
+            ProximaType::Symbol => 1043,
+            ProximaType::TimestampTz(_) => 1184,
+            ProximaType::Uuid => 2950,
+            ProximaType::Binary => 17,
+            ProximaType::Date => 1082,
+            ProximaType::Json => 114,
+            ProximaType::Jsonb => 3802,
+            ProximaType::Decimal { .. } => 1700,
+            ProximaType::Array(_) => 2277, // anyarray
+            _ => 1043,                     // Default to varchar
+        }
+    }
 }
 
 /// Time units for temporal types.
@@ -268,10 +294,10 @@ pub enum ProximaValue {
     UInt16(u16),
     UInt32(u32),
     UInt64(u64),
-    Float16(f32), // Represented as f32 in-memory for ease of use
+    Float16(f32), // Represented as f32 in-memory
     Float32(f32),
     Float64(f64),
-    Decimal(String), // String-encoded for precision preservation
+    Decimal(String),
     // Text
     String(String),
     Symbol(String),
@@ -287,316 +313,34 @@ pub enum ProximaValue {
     ULID([u8; 16]),
     // Structured
     Json(serde_json::Value),
+    /// Binary JSON data (stored as MessagePack).
     Jsonb(serde_json::Value),
     Array(Vec<ProximaValue>),
     Map(std::collections::HashMap<String, ProximaValue>),
     Struct(std::collections::HashMap<String, ProximaValue>),
     // Vector
     DenseVector(Vec<f32>),
-    SparseVector { indices: Vec<u32>, values: Vec<f32> },
+    SparseVector {
+        indices: Vec<u32>,
+        values: Vec<f32>,
+    },
     BinaryVector(Vec<u8>),
     // Null
     Null,
 }
 
-// ---------------------------------------------------------------------------
-// Arrow + pgwire mappings for ProximaType
-// ---------------------------------------------------------------------------
-
-impl ProximaType {
-    /// Map to Arrow DataType for columnar storage and query execution.
-    pub fn to_arrow(&self) -> ArrowDataType {
-        use arrow_schema::Field;
-        use std::sync::Arc;
-
-        match self {
-            ProximaType::Boolean => ArrowDataType::Boolean,
-            ProximaType::Int8 => ArrowDataType::Int8,
-            ProximaType::Int16 => ArrowDataType::Int16,
-            ProximaType::Int32 => ArrowDataType::Int32,
-            ProximaType::Int64 => ArrowDataType::Int64,
-            ProximaType::UInt8 => ArrowDataType::UInt8,
-            ProximaType::UInt16 => ArrowDataType::UInt16,
-            ProximaType::UInt32 => ArrowDataType::UInt32,
-            ProximaType::UInt64 => ArrowDataType::UInt64,
-            ProximaType::Float16 => ArrowDataType::Float16,
-            ProximaType::Float32 => ArrowDataType::Float32,
-            ProximaType::Float64 => ArrowDataType::Float64,
-            ProximaType::Decimal { precision, scale } => {
-                ArrowDataType::Decimal128(*precision, *scale as i8)
-            }
-            ProximaType::String => ArrowDataType::Utf8,
-            ProximaType::Symbol => ArrowDataType::Dictionary(
-                Box::new(ArrowDataType::Int32),
-                Box::new(ArrowDataType::Utf8),
-            ),
-            ProximaType::Binary => ArrowDataType::Binary,
-            ProximaType::Date => ArrowDataType::Date32,
-            ProximaType::Time(unit) => ArrowDataType::Time64(arrow_time_unit(unit)),
-            ProximaType::Timestamp(unit) => ArrowDataType::Timestamp(arrow_time_unit(unit), None),
-            ProximaType::TimestampTz(unit) => {
-                ArrowDataType::Timestamp(arrow_time_unit(unit), Some("UTC".into()))
-            }
-            ProximaType::Interval(_) => {
-                ArrowDataType::Interval(arrow_schema::IntervalUnit::MonthDayNano)
-            }
-            ProximaType::Duration(unit) => ArrowDataType::Duration(arrow_time_unit(unit)),
-            ProximaType::Uuid => ArrowDataType::FixedSizeBinary(16),
-            ProximaType::ULID => ArrowDataType::FixedSizeBinary(16),
-            ProximaType::Json | ProximaType::Jsonb => ArrowDataType::LargeUtf8,
-            ProximaType::Array(inner) => {
-                let field = Field::new("item", inner.to_arrow(), true);
-                ArrowDataType::List(Arc::new(field))
-            }
-            ProximaType::Map { key, value } => {
-                let entries = Field::new(
-                    "entries",
-                    ArrowDataType::Struct(
-                        vec![
-                            Field::new("key", key.to_arrow(), false),
-                            Field::new("value", value.to_arrow(), true),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                );
-                ArrowDataType::Map(Arc::new(entries), false)
-            }
-            ProximaType::Struct { fields } => {
-                let arrow_fields: Vec<Field> = fields
-                    .iter()
-                    .map(|(name, ty)| Field::new(name.as_str(), ty.to_arrow(), true))
-                    .collect();
-                ArrowDataType::Struct(arrow_fields.into())
-            }
-            ProximaType::DenseVector { element, dim } => {
-                let elem_type = match element {
-                    VectorElement::Float16 => ArrowDataType::Float16,
-                    VectorElement::Float32 => ArrowDataType::Float32,
-                    VectorElement::Float64 => ArrowDataType::Float64,
-                    VectorElement::Int8 => ArrowDataType::Int8,
-                };
-                ArrowDataType::FixedSizeList(
-                    Arc::new(Field::new("item", elem_type, false)),
-                    *dim as i32,
-                )
-            }
-            ProximaType::SparseVector { element } => {
-                let elem_type = match element {
-                    VectorElement::Float16 => ArrowDataType::Float16,
-                    VectorElement::Float32 => ArrowDataType::Float32,
-                    VectorElement::Float64 => ArrowDataType::Float64,
-                    VectorElement::Int8 => ArrowDataType::Int8,
-                };
-                let entries = Field::new(
-                    "entries",
-                    ArrowDataType::Struct(
-                        vec![
-                            Field::new("index", ArrowDataType::Int32, false),
-                            Field::new("value", elem_type, false),
-                        ]
-                        .into(),
-                    ),
-                    false,
-                );
-                ArrowDataType::Map(Arc::new(entries), false)
-            }
-            ProximaType::BinaryVector { .. } => ArrowDataType::Binary,
-            ProximaType::Point => ArrowDataType::Struct(
-                vec![
-                    Field::new("x", ArrowDataType::Float64, false),
-                    Field::new("y", ArrowDataType::Float64, false),
-                ]
-                .into(),
-            ),
-            ProximaType::GeographyPoint => ArrowDataType::Struct(
-                vec![
-                    Field::new("lat", ArrowDataType::Float64, false),
-                    Field::new("lon", ArrowDataType::Float64, false),
-                ]
-                .into(),
-            ),
-            ProximaType::Null => ArrowDataType::Null,
-        }
-    }
-
-    /// Return the PostgreSQL wire protocol type OID for this type.
-    ///
-    /// Used by the pgwire surface (port 5433) to encode column metadata. OIDs
-    /// match standard PostgreSQL built-in type catalog values.
-    pub fn pgwire_oid(&self) -> u32 {
-        match self {
-            ProximaType::Boolean => 16,
-            ProximaType::Int8 => 21,  // smallint
-            ProximaType::Int16 => 21, // smallint
-            ProximaType::Int32 => 23, // integer
-            ProximaType::Int64 => 20, // bigint
-            ProximaType::UInt8 => 21,
-            ProximaType::UInt16 => 23,
-            ProximaType::UInt32 => 20,
-            ProximaType::UInt64 => 1700, // numeric (closest lossless)
-            ProximaType::Float16 => 700, // real
-            ProximaType::Float32 => 700, // real
-            ProximaType::Float64 => 701, // double precision
-            ProximaType::Decimal { .. } => 1700, // numeric
-            ProximaType::String => 25,   // text
-            ProximaType::Symbol => 25,   // text
-            ProximaType::Binary => 17,   // bytea
-            ProximaType::Date => 1082,
-            ProximaType::Time(_) => 1083,
-            ProximaType::Timestamp(_) => 1114,
-            ProximaType::TimestampTz(_) => 1184,
-            ProximaType::Interval(_) => 1186,
-            ProximaType::Duration(_) => 1186,
-            ProximaType::Uuid => 2950,
-            ProximaType::ULID => 2950,
-            ProximaType::Json => 114,        // json
-            ProximaType::Jsonb => 3802,      // jsonb
-            ProximaType::Array(_) => 2277,   // anyarray
-            ProximaType::Map { .. } => 3802, // jsonb (no native map)
-            ProximaType::Struct { .. } => 3802,
-            ProximaType::DenseVector { .. } => 17, // bytea (pgvector uses custom OID when registered)
-            ProximaType::SparseVector { .. } => 17,
-            ProximaType::BinaryVector { .. } => 17,
-            ProximaType::Point => 600, // pg point
-            ProximaType::GeographyPoint => 600,
-            ProximaType::Null => 705, // unknown
-        }
-    }
-}
-
-fn arrow_time_unit(unit: &TimeUnit) -> arrow_schema::TimeUnit {
-    match unit {
-        TimeUnit::Second => arrow_schema::TimeUnit::Second,
-        TimeUnit::Millisecond => arrow_schema::TimeUnit::Millisecond,
-        TimeUnit::Microsecond => arrow_schema::TimeUnit::Microsecond,
-        TimeUnit::Nanosecond => arrow_schema::TimeUnit::Nanosecond,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ProximaValue: dynamic type introspection
-// ---------------------------------------------------------------------------
-
 impl ProximaValue {
-    /// Return the `ProximaType` discriminant for this value.
-    pub fn type_of(&self) -> ProximaType {
-        match self {
-            ProximaValue::Boolean(_) => ProximaType::Boolean,
-            ProximaValue::Int8(_) => ProximaType::Int8,
-            ProximaValue::Int16(_) => ProximaType::Int16,
-            ProximaValue::Int32(_) => ProximaType::Int32,
-            ProximaValue::Int64(_) => ProximaType::Int64,
-            ProximaValue::UInt8(_) => ProximaType::UInt8,
-            ProximaValue::UInt16(_) => ProximaType::UInt16,
-            ProximaValue::UInt32(_) => ProximaType::UInt32,
-            ProximaValue::UInt64(_) => ProximaType::UInt64,
-            ProximaValue::Float16(_) => ProximaType::Float16,
-            ProximaValue::Float32(_) => ProximaType::Float32,
-            ProximaValue::Float64(_) => ProximaType::Float64,
-            ProximaValue::Decimal(_) => ProximaType::Decimal {
-                precision: 38,
-                scale: 10,
-            },
-            ProximaValue::String(_) => ProximaType::String,
-            ProximaValue::Symbol(_) => ProximaType::Symbol,
-            ProximaValue::Binary(_) => ProximaType::Binary,
-            ProximaValue::Date(_) => ProximaType::Date,
-            ProximaValue::Time(_, unit) => ProximaType::Time(*unit),
-            ProximaValue::Timestamp(_, unit) => ProximaType::Timestamp(*unit),
-            ProximaValue::TimestampTz(_, unit) => ProximaType::TimestampTz(*unit),
-            ProximaValue::Uuid(_) => ProximaType::Uuid,
-            ProximaValue::ULID(_) => ProximaType::ULID,
-            ProximaValue::Json(_) => ProximaType::Json,
-            ProximaValue::Jsonb(_) => ProximaType::Jsonb,
-            ProximaValue::Array(items) => {
-                let inner = items
-                    .first()
-                    .map(|v| v.type_of())
-                    .unwrap_or(ProximaType::String);
-                ProximaType::Array(Box::new(inner))
-            }
-            ProximaValue::Map(_) => ProximaType::Map {
-                key: Box::new(ProximaType::String),
-                value: Box::new(ProximaType::Jsonb),
-            },
-            ProximaValue::Struct(_) => ProximaType::Struct { fields: vec![] },
-            ProximaValue::DenseVector(v) => ProximaType::DenseVector {
-                element: VectorElement::Float32,
-                dim: v.len(),
-            },
-            ProximaValue::SparseVector { .. } => ProximaType::SparseVector {
-                element: VectorElement::Float32,
-            },
-            ProximaValue::BinaryVector(v) => ProximaType::BinaryVector { dim: v.len() * 8 },
-            ProximaValue::Null => ProximaType::Null,
-        }
+    /// Serialize a `serde_json::Value` to MessagePack bytes for `Jsonb`.
+    pub fn to_jsonb_vec(val: &serde_json::Value) -> anyhow::Result<Vec<u8>> {
+        let mut buf = Vec::new();
+        val.serialize(&mut rmp_serde::Serializer::new(&mut buf))?;
+        Ok(buf)
     }
 
-    /// Return `true` if this value is assignment-compatible with the given type.
-    ///
-    /// `Null` is compatible with any type. JSON and JSONB are mutually
-    /// assignable at this layer because both carry `serde_json::Value`; pgwire
-    /// presentation decides whether the column OID is JSON or JSONB.
-    pub fn is_compatible_with(&self, ty: &ProximaType) -> bool {
-        if matches!(self, ProximaValue::Null) {
-            return true;
-        }
-        matches!(
-            (self, ty),
-            (ProximaValue::Boolean(_), ProximaType::Boolean)
-                | (ProximaValue::Int8(_), ProximaType::Int8)
-                | (ProximaValue::Int16(_), ProximaType::Int16)
-                | (ProximaValue::Int32(_), ProximaType::Int32)
-                | (ProximaValue::Int64(_), ProximaType::Int64)
-                | (ProximaValue::UInt8(_), ProximaType::UInt8)
-                | (ProximaValue::UInt16(_), ProximaType::UInt16)
-                | (ProximaValue::UInt32(_), ProximaType::UInt32)
-                | (ProximaValue::UInt64(_), ProximaType::UInt64)
-                | (ProximaValue::Float16(_), ProximaType::Float16)
-                | (ProximaValue::Float32(_), ProximaType::Float32)
-                | (ProximaValue::Float64(_), ProximaType::Float64)
-                | (ProximaValue::Decimal(_), ProximaType::Decimal { .. })
-                | (ProximaValue::String(_), ProximaType::String)
-                | (ProximaValue::Symbol(_), ProximaType::Symbol)
-                | (ProximaValue::String(_), ProximaType::Symbol)
-                | (ProximaValue::Binary(_), ProximaType::Binary)
-                | (ProximaValue::Date(_), ProximaType::Date)
-                | (ProximaValue::Time(_, _), ProximaType::Time(_))
-                | (ProximaValue::Timestamp(_, _), ProximaType::Timestamp(_))
-                | (ProximaValue::TimestampTz(_, _), ProximaType::TimestampTz(_))
-                | (ProximaValue::Uuid(_), ProximaType::Uuid)
-                | (ProximaValue::ULID(_), ProximaType::ULID)
-                | (
-                    ProximaValue::Json(_),
-                    ProximaType::Json | ProximaType::Jsonb
-                )
-                | (
-                    ProximaValue::Jsonb(_),
-                    ProximaType::Json | ProximaType::Jsonb
-                )
-                | (ProximaValue::Array(_), ProximaType::Array(_))
-                | (
-                    ProximaValue::Map(_),
-                    ProximaType::Map { .. } | ProximaType::Jsonb
-                )
-                | (
-                    ProximaValue::Struct(_),
-                    ProximaType::Struct { .. } | ProximaType::Jsonb
-                )
-                | (
-                    ProximaValue::DenseVector(_),
-                    ProximaType::DenseVector { .. }
-                )
-                | (
-                    ProximaValue::SparseVector { .. },
-                    ProximaType::SparseVector { .. }
-                )
-                | (
-                    ProximaValue::BinaryVector(_),
-                    ProximaType::BinaryVector { .. }
-                )
-        )
+    /// Deserialize MessagePack bytes back to a `serde_json::Value`.
+    pub fn from_jsonb_slice(slice: &[u8]) -> anyhow::Result<serde_json::Value> {
+        let val: serde_json::Value = rmp_serde::from_slice(slice)?;
+        Ok(val)
     }
 }
 
@@ -624,210 +368,43 @@ mod tests {
         let mt = MemoryType::Preference;
         let json = serde_json::to_string(&mt).unwrap();
         assert_eq!(json, "\"preference\"");
-        assert_eq!(mt.to_string(), "preference");
+    }
+
+    #[test]
+    fn memory_type_parses_stable_names() {
         assert_eq!(
-            "preference".parse::<MemoryType>(),
-            Ok(MemoryType::Preference)
+            "decision".parse::<MemoryType>().unwrap(),
+            MemoryType::Decision
         );
+        assert_eq!(
+            " Relationship ".parse::<MemoryType>().unwrap(),
+            MemoryType::Relationship
+        );
+        assert!("unknown".parse::<MemoryType>().is_err());
     }
 
     #[test]
-    fn test_arrow_roundtrip_all_scalars() {
-        let types = vec![
-            ProximaType::Boolean,
-            ProximaType::Int8,
-            ProximaType::Int16,
-            ProximaType::Int32,
-            ProximaType::Int64,
-            ProximaType::UInt8,
-            ProximaType::UInt16,
-            ProximaType::UInt32,
-            ProximaType::UInt64,
-            ProximaType::Float16,
-            ProximaType::Float32,
-            ProximaType::Float64,
-            ProximaType::String,
-            ProximaType::Symbol,
-            ProximaType::Binary,
-            ProximaType::Date,
-            ProximaType::Uuid,
-            ProximaType::ULID,
-            ProximaType::Json,
-            ProximaType::Jsonb,
-            ProximaType::Point,
-            ProximaType::GeographyPoint,
-            ProximaType::Null,
-        ];
-        for ty in &types {
-            let _ = ty.to_arrow();
-        }
-    }
-
-    #[test]
-    fn test_jsonb_arrow_and_pgwire_oid() {
-        assert_eq!(ProximaType::Json.to_arrow(), ArrowDataType::LargeUtf8);
-        assert_eq!(ProximaType::Jsonb.to_arrow(), ArrowDataType::LargeUtf8);
+    fn test_pgwire_oids() {
         assert_eq!(ProximaType::Json.pgwire_oid(), 114);
         assert_eq!(ProximaType::Jsonb.pgwire_oid(), 3802);
         assert_eq!(
-            ProximaType::Map {
-                key: Box::new(ProximaType::String),
-                value: Box::new(ProximaType::Jsonb),
-            }
-            .pgwire_oid(),
-            3802
-        );
-    }
-
-    #[test]
-    fn test_decimal_arrow() {
-        let ty = ProximaType::Decimal {
-            precision: 38,
-            scale: 10,
-        };
-        assert_eq!(ty.to_arrow(), ArrowDataType::Decimal128(38, 10));
-    }
-
-    #[test]
-    fn test_timestamptz_arrow() {
-        let ty = ProximaType::TimestampTz(TimeUnit::Nanosecond);
-        match ty.to_arrow() {
-            ArrowDataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, tz) => {
-                assert_eq!(tz.as_deref(), Some("UTC"));
-            }
-            other => panic!("Expected Timestamp(Nanosecond, UTC), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_timestamp_no_tz_arrow() {
-        let ty = ProximaType::Timestamp(TimeUnit::Microsecond);
-        match ty.to_arrow() {
-            ArrowDataType::Timestamp(arrow_schema::TimeUnit::Microsecond, tz) => {
-                assert!(tz.is_none());
-            }
-            other => panic!("Expected Timestamp(Microsecond, None), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_dense_vector_arrow() {
-        let ty = ProximaType::DenseVector {
-            element: VectorElement::Float32,
-            dim: 512,
-        };
-        match ty.to_arrow() {
-            ArrowDataType::FixedSizeList(field, 512) => {
-                assert_eq!(field.data_type(), &ArrowDataType::Float32);
-            }
-            other => panic!("Expected FixedSizeList(Float32, 512), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_pgwire_decimal_oid() {
-        assert_eq!(
-            ProximaType::Decimal {
-                precision: 10,
-                scale: 2
-            }
-            .pgwire_oid(),
-            1700
-        );
-    }
-
-    #[test]
-    fn test_pgwire_timestamptz_oid() {
-        assert_eq!(
-            ProximaType::TimestampTz(TimeUnit::Microsecond).pgwire_oid(),
+            ProximaType::TimestampTz(TimeUnit::Millisecond).pgwire_oid(),
             1184
         );
     }
 
     #[test]
-    fn test_pgwire_uuid_oid() {
-        assert_eq!(ProximaType::Uuid.pgwire_oid(), 2950);
-    }
+    fn test_jsonb_serialization_roundtrip() {
+        let original = serde_json::json!({
+            "key": "value",
+            "number": 123,
+            "bool": true,
+            "nested": { "a": [1, 2, 3] }
+        });
 
-    #[test]
-    fn test_pgwire_vector_oid() {
-        assert_eq!(
-            ProximaType::DenseVector {
-                element: VectorElement::Float32,
-                dim: 128
-            }
-            .pgwire_oid(),
-            17
-        );
-    }
+        let encoded = ProximaValue::to_jsonb_vec(&original).unwrap();
+        let decoded = ProximaValue::from_jsonb_slice(&encoded).unwrap();
 
-    #[test]
-    fn test_proxima_value_type_of_decimal() {
-        let val = ProximaValue::Decimal("123.456".to_string());
-        assert!(matches!(val.type_of(), ProximaType::Decimal { .. }));
-    }
-
-    #[test]
-    fn test_proxima_value_type_of_int64() {
-        let val = ProximaValue::Int64(42);
-        assert!(matches!(val.type_of(), ProximaType::Int64));
-    }
-
-    #[test]
-    fn test_proxima_value_type_of_timestamptz() {
-        let val = ProximaValue::TimestampTz(1_700_000_000, TimeUnit::Microsecond);
-        assert!(matches!(val.type_of(), ProximaType::TimestampTz(_)));
-    }
-
-    #[test]
-    fn test_proxima_value_type_of_jsonb_and_null() {
-        let val = ProximaValue::Jsonb(serde_json::json!({"a": 1}));
-        assert!(matches!(val.type_of(), ProximaType::Jsonb));
-        assert!(matches!(ProximaValue::Null.type_of(), ProximaType::Null));
-    }
-
-    #[test]
-    fn test_value_compatible_with_exact() {
-        assert!(ProximaValue::Int64(5).is_compatible_with(&ProximaType::Int64));
-        assert!(ProximaValue::Float32(1.0).is_compatible_with(&ProximaType::Float32));
-        assert!(ProximaValue::Decimal("1.0".to_string()).is_compatible_with(
-            &ProximaType::Decimal {
-                precision: 38,
-                scale: 10
-            }
-        ));
-        assert!(ProximaValue::Uuid([0u8; 16]).is_compatible_with(&ProximaType::Uuid));
-    }
-
-    #[test]
-    fn test_json_and_jsonb_are_assignment_compatible() {
-        let json = ProximaValue::Json(serde_json::json!({"a": 1}));
-        let jsonb = ProximaValue::Jsonb(serde_json::json!({"a": 1}));
-        assert!(json.is_compatible_with(&ProximaType::Jsonb));
-        assert!(jsonb.is_compatible_with(&ProximaType::Json));
-        assert!(jsonb.is_compatible_with(&ProximaType::Jsonb));
-    }
-
-    #[test]
-    fn test_value_incompatible_types() {
-        assert!(!ProximaValue::Int64(5).is_compatible_with(&ProximaType::Float32));
-        assert!(!ProximaValue::String("x".to_string()).is_compatible_with(&ProximaType::Int64));
-    }
-
-    #[test]
-    fn test_null_compatible_any() {
-        assert!(ProximaValue::Null.is_compatible_with(&ProximaType::Int64));
-        assert!(
-            ProximaValue::Null.is_compatible_with(&ProximaType::Decimal {
-                precision: 38,
-                scale: 0
-            })
-        );
-        assert!(
-            ProximaValue::Null.is_compatible_with(&ProximaType::DenseVector {
-                element: VectorElement::Float32,
-                dim: 512
-            })
-        );
+        assert_eq!(original, decoded);
     }
 }

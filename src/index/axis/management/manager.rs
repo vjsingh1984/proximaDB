@@ -621,7 +621,8 @@ impl AxisManager {
                     self.metadata_index.remove(&vector_id).await?;
                 }
                 Data::DenseVector { .. } => {
-                    self.dense_vector_index.remove(&vector_id).await?;
+                    self.remove_dense_vector_index(collection_id, &vector_id)
+                        .await?;
                 }
                 Data::SparseVector { .. } => {
                     self.sparse_vector_index.remove(&vector_id).await?;
@@ -718,6 +719,37 @@ impl AxisManager {
             }
             _ => self.insert_into_hnsw(collection_id, vector).await,
         }
+    }
+
+    /// Remove dense vectors through the same layout used for dense inserts.
+    async fn remove_dense_vector_index(
+        &self,
+        collection_id: &str,
+        vector_id: &VectorId,
+    ) -> Result<()> {
+        if self.is_hmgi_enabled(collection_id).await {
+            self.remove_hmgi_vector(collection_id, vector_id).await?;
+            return Ok(());
+        }
+
+        use crate::index::axis::index_factory::AxisVectorIndex;
+
+        if let Some(index) = self.hnsw_indexes.read().await.get(collection_id).cloned() {
+            index.remove(vector_id).await?;
+        }
+
+        if let Some(index) = self.ivf_indexes.read().await.get(collection_id).cloned() {
+            index.read().await.remove(vector_id).await?;
+        }
+
+        {
+            let mut pending = self.ivf_pending_vectors.write().await;
+            if let Some(vectors) = pending.get_mut(collection_id) {
+                vectors.retain(|(id, _)| id != vector_id);
+            }
+        }
+
+        self.dense_vector_index.remove(vector_id).await
     }
 
     /// Insert a vector into the real HNSW index for a collection
@@ -1246,6 +1278,29 @@ impl AxisManager {
         self.dense_vector_index
             .remove_collection(collection_id)
             .await?;
+        if let Some(registry) = &self.hmgi_registry {
+            registry.drop_collection_partitions(collection_id).await?;
+        }
+        {
+            let mut enabled = self.hmgi_enabled_collections.write().await;
+            enabled.remove(collection_id);
+        }
+        {
+            let mut oids = self.hmgi_collection_oids.write().await;
+            oids.remove(collection_id);
+        }
+        {
+            let mut hnsw_indexes = self.hnsw_indexes.write().await;
+            hnsw_indexes.remove(collection_id);
+        }
+        {
+            let mut ivf_indexes = self.ivf_indexes.write().await;
+            ivf_indexes.remove(collection_id);
+        }
+        {
+            let mut pending = self.ivf_pending_vectors.write().await;
+            pending.remove(collection_id);
+        }
         self.sparse_vector_index
             .remove_collection(collection_id)
             .await?;
@@ -2383,6 +2438,25 @@ impl AxisManager {
         );
 
         Ok(partition_key)
+    }
+
+    /// Remove a vector from every HMGI partition registered for the collection.
+    async fn remove_hmgi_vector(&self, collection_id: &str, vector_id: &VectorId) -> Result<()> {
+        let registry = self
+            .hmgi_registry
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("HMGI registry not initialized"))?;
+
+        let partitions = registry.get_partitions_for_collection(collection_id).await;
+
+        use crate::index::axis::index_factory::AxisVectorIndex;
+        for partition in partitions {
+            if let Some(index) = registry.get_partition(&partition).await {
+                index.remove(vector_id).await?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Search with HMGI partition routing

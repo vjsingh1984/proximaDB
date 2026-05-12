@@ -28,6 +28,7 @@ message SqlValue {
     google.protobuf.NullValue null_value = 6;
     SqlArray array_value = 7;
     SqlObject object_value = 8;
+    bytes jsonb_value = 9;
   }
 }
 

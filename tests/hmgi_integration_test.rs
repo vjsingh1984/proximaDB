@@ -379,6 +379,80 @@ async fn test_axismanager_hmgi_single_modality_query_without_manual_enable() {
     assert_eq!(result.results[0].vector_id, "text_vec");
 }
 
+/// Test AXIS dense deletes remove vectors from HMGI partitions.
+#[tokio::test]
+async fn test_axismanager_hmgi_delete_removes_partition_vector() {
+    use proximadb::index::axis::types::AxisConfig;
+
+    let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+    manager
+        .insert(
+            "delete_collection",
+            &vector_record("delete_vec", vec![1.0, 0.0, 0.0], "text"),
+        )
+        .await
+        .unwrap();
+
+    manager
+        .delete("delete_collection", "delete_vec".to_string())
+        .await
+        .unwrap();
+
+    let result = manager
+        .query(HybridQuery {
+            collection_id: "delete_collection".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: vec![1.0, 0.0, 0.0],
+                similarity_threshold: 0.0,
+            }),
+            metadata_filters: Vec::new(),
+            id_filters: Vec::new(),
+            top_k: 10,
+            include_expired: false,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.results.is_empty());
+}
+
+/// Test collection deletion cleans up HMGI state with other AXIS indexes.
+#[tokio::test]
+async fn test_axismanager_drop_collection_removes_hmgi_partitions() {
+    use proximadb::index::axis::types::AxisConfig;
+
+    let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+    manager
+        .insert(
+            "drop_collection",
+            &vector_record("drop_vec", vec![1.0, 0.0, 0.0], "text"),
+        )
+        .await
+        .unwrap();
+
+    assert!(manager.is_hmgi_enabled("drop_collection").await);
+    assert!(
+        !manager
+            .hmgi_registry()
+            .unwrap()
+            .get_partitions_for_collection("drop_collection")
+            .await
+            .is_empty()
+    );
+
+    manager.drop_collection("drop_collection").await.unwrap();
+
+    assert!(!manager.is_hmgi_enabled("drop_collection").await);
+    assert!(
+        manager
+            .hmgi_registry()
+            .unwrap()
+            .get_partitions_for_collection("drop_collection")
+            .await
+            .is_empty()
+    );
+}
+
 /// Test AxisManager routes HMGI-safe vector queries to modality partitions.
 #[tokio::test]
 async fn test_axismanager_hmgi_query_routes_to_modality_partition() {

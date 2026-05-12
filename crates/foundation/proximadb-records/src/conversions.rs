@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 
-use proximadb_data_model::{MemoryType, ProximaValue};
+use proximadb_data_model::ProximaValue;
 use proximadb_proto::proximadb_v1::{
     Edge, EmbeddingVersion, Node, PropertyValue, SqlValue, VectorRecord, property_value, sql_value,
 };
@@ -46,7 +46,10 @@ pub fn sql_value_to_proxima(sql: &SqlValue) -> ProximaValue {
         Some(sql_value::Value::NumberValue(f)) => ProximaValue::Float64(*f),
         Some(sql_value::Value::BoolValue(b)) => ProximaValue::Boolean(*b),
         Some(sql_value::Value::Int64Value(i)) => ProximaValue::Int64(*i),
-        Some(sql_value::Value::BytesValue(b)) => ProximaValue::Binary(b.clone()),
+        Some(sql_value::Value::BytesValue(b)) => match ProximaValue::from_jsonb_slice(b) {
+            Ok(v) => ProximaValue::Jsonb(v),
+            Err(_) => ProximaValue::Binary(b.clone()),
+        },
         Some(sql_value::Value::NullValue(_)) => ProximaValue::Null,
         Some(sql_value::Value::ArrayValue(arr)) => {
             let items: Vec<ProximaValue> = arr.values.iter().map(sql_value_to_proxima).collect();
@@ -108,20 +111,6 @@ fn ms_to_ns(ms: i64) -> i64 {
     ms.saturating_mul(1_000_000)
 }
 
-fn memory_type_from_value(value: &ProximaValue) -> Option<MemoryType> {
-    match value {
-        ProximaValue::String(s) | ProximaValue::Symbol(s) => s.parse().ok(),
-        _ => None,
-    }
-}
-
-fn memory_type_from_tree(props: &ProximaTree) -> Option<MemoryType> {
-    props.get("memory_type").and_then(|node| match node {
-        ProximaTreeNode::Value(value) => memory_type_from_value(value),
-        ProximaTreeNode::Object(_) => None,
-    })
-}
-
 // ---------------------------------------------------------------------------
 // VectorRecord → ProximaRecord
 // ---------------------------------------------------------------------------
@@ -142,7 +131,6 @@ impl From<&VectorRecord> for ProximaRecord {
             .iter()
             .map(|(k, sv)| (k.clone(), ProximaTreeNode::Value(sql_value_to_proxima(sv))))
             .collect();
-        let memory_type = memory_type_from_tree(&props);
 
         // The vector becomes a default embedding cell
         let embeddings = if !v.vector.is_empty() {
@@ -173,7 +161,7 @@ impl From<&VectorRecord> for ProximaRecord {
             origin: v.source.clone(),
             actor: None,
             method: Some("vector_insert".to_string()),
-            memory_type,
+            memory_type: None,
             props,
             refs: Vec::new(),
             edge: None,
@@ -203,7 +191,6 @@ impl From<&Node> for ProximaRecord {
                 )
             })
             .collect();
-        let memory_type = memory_type_from_tree(&props);
 
         let labels = LabelSet::from(n.labels.clone());
 
@@ -236,7 +223,7 @@ impl From<&Node> for ProximaRecord {
             origin: None,
             actor: None,
             method: Some("graph_node".to_string()),
-            memory_type,
+            memory_type: None,
             props,
             refs,
             edge: None,
@@ -266,7 +253,6 @@ impl From<&Edge> for ProximaRecord {
                 )
             })
             .collect();
-        let memory_type = memory_type_from_tree(&props);
 
         let edge = Some(EdgeShape {
             source_id: e.from_node_id.clone(),
@@ -292,7 +278,7 @@ impl From<&Edge> for ProximaRecord {
             origin: None,
             actor: None,
             method: Some("graph_edge".to_string()),
-            memory_type,
+            memory_type: None,
             props,
             refs: Vec::new(),
             edge,
@@ -310,7 +296,7 @@ impl From<&Edge> for ProximaRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_data_model::{MemoryType, ProximaValue};
+    use proximadb_data_model::ProximaValue;
     use proximadb_proto::proximadb_v1::{
         PropertyValue, SqlValue, VectorRecord, property_value, sql_value,
     };
@@ -383,6 +369,19 @@ mod tests {
         assert!(matches!(sql_value_to_proxima(&sv), ProximaValue::Null));
     }
 
+    #[test]
+    fn test_sql_jsonb_to_proxima() {
+        let original = serde_json::json!({"foo": "bar"});
+        let bytes = ProximaValue::to_jsonb_vec(&original).unwrap();
+        let sv = SqlValue {
+            value: Some(sql_value::Value::BytesValue(bytes)),
+        };
+        match sql_value_to_proxima(&sv) {
+            ProximaValue::Jsonb(v) => assert_eq!(v, original),
+            other => panic!("expected Jsonb, got {:?}", other),
+        }
+    }
+
     // --- PropertyValue → ProximaValue ---
 
     #[test]
@@ -440,27 +439,6 @@ mod tests {
     }
 
     #[test]
-    fn test_vector_record_memory_type_metadata_to_proxima() {
-        let mut meta = HashMap::new();
-        meta.insert("memory_type".to_string(), make_sql_string("decision"));
-
-        let vr = VectorRecord {
-            id: "mem_vec".to_string(),
-            vector: vec![0.1, 0.2],
-            metadata: meta,
-            timestamp: None,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
-        };
-
-        let pr = ProximaRecord::from(&vr);
-
-        assert_eq!(pr.memory_type, Some(MemoryType::Decision));
-    }
-
-    #[test]
     fn test_vector_record_empty_vector() {
         let vr = VectorRecord {
             id: "empty_vec".to_string(),
@@ -506,26 +484,6 @@ mod tests {
         assert_eq!(pr.created_at_ns, ms_to_ns(1_000_000));
     }
 
-    #[test]
-    fn test_node_memory_type_property_to_proxima() {
-        use proximadb_proto::proximadb_v1::Node;
-        let mut props = HashMap::new();
-        props.insert("memory_type".to_string(), make_prop_string("preference"));
-
-        let node = Node {
-            id: "mem_node".to_string(),
-            labels: vec![],
-            properties: props,
-            embedding: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-
-        let pr = ProximaRecord::from(&node);
-
-        assert_eq!(pr.memory_type, Some(MemoryType::Preference));
-    }
-
     // --- Edge → ProximaRecord ---
 
     #[test]
@@ -551,28 +509,6 @@ mod tests {
         assert_eq!(es.target_id, "node_b");
         assert_eq!(es.edge_type, "KNOWS");
         assert!((es.weight.unwrap() - 0.75).abs() < 1e-9);
-    }
-
-    #[test]
-    fn test_edge_memory_type_property_to_proxima() {
-        use proximadb_proto::proximadb_v1::Edge;
-        let mut props = HashMap::new();
-        props.insert("memory_type".to_string(), make_prop_string("relationship"));
-
-        let edge = Edge {
-            id: "mem_edge".to_string(),
-            from_node_id: "a".to_string(),
-            to_node_id: "b".to_string(),
-            edge_type: "RELATES_TO".to_string(),
-            properties: props,
-            weight: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-
-        let pr = ProximaRecord::from(&edge);
-
-        assert_eq!(pr.memory_type, Some(MemoryType::Relationship));
     }
 
     #[test]

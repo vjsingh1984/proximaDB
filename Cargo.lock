@@ -5719,7 +5719,9 @@ dependencies = [
 name = "proximadb-data-model"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "arrow-schema",
+ "rmp-serde",
  "serde",
  "serde_json",
 ]

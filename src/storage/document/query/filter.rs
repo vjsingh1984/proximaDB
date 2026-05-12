@@ -5,6 +5,7 @@
 
 use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
+use proximadb_data_model::ProximaValue;
 use regex::Regex;
 use serde_json::Value as JsonValue;
 
@@ -173,9 +174,13 @@ impl FilterEvaluator {
             }
             Some(SqlValueVariant::StringValue(s)) => Some(JsonValue::String(s.clone())),
             Some(SqlValueVariant::BytesValue(b)) => {
-                // Encode bytes as hex string (avoiding extra base64 dependency)
+                // Encode bytes as hex string
                 let hex_str: String = b.iter().map(|byte| format!("{:02x}", byte)).collect();
                 Some(JsonValue::String(format!("0x{}", hex_str)))
+            }
+            Some(SqlValueVariant::JsonbValue(b)) => {
+                // Deserialize binary JSONB (MessagePack)
+                ProximaValue::from_jsonb_slice(b).ok()
             }
             Some(SqlValueVariant::ArrayValue(arr)) => {
                 let json_arr: Vec<JsonValue> = arr
@@ -262,6 +267,9 @@ impl FilterEvaluator {
                 va == vb
             }
             (Some(SqlValueVariant::BytesValue(va)), Some(SqlValueVariant::BytesValue(vb))) => {
+                va == vb
+            }
+            (Some(SqlValueVariant::JsonbValue(va)), Some(SqlValueVariant::JsonbValue(vb))) => {
                 va == vb
             }
             // Cross-type numeric comparison
@@ -381,6 +389,7 @@ impl FilterEvaluator {
                     Some(SqlValueVariant::NumberValue(_)) => "number",
                     Some(SqlValueVariant::StringValue(_)) => "string",
                     Some(SqlValueVariant::BytesValue(_)) => "bytes",
+                    Some(SqlValueVariant::JsonbValue(_)) => "jsonb",
                     Some(SqlValueVariant::ArrayValue(_)) => "array",
                     Some(SqlValueVariant::ObjectValue(_)) => "object",
                     None => "undefined",
@@ -592,6 +601,30 @@ mod tests {
                 evaluator.sql_values_equal(&original, &back.unwrap()),
                 "Round-trip should preserve value"
             );
+        }
+    }
+
+    #[test]
+    fn test_jsonb_filtering() {
+        let evaluator = FilterEvaluator::new();
+        let original = serde_json::json!({"priority": "high", "active": true});
+        let bytes = ProximaValue::to_jsonb_vec(&original).unwrap();
+        
+        let val = SqlValue {
+            value: Some(SqlValueVariant::JsonbValue(bytes)),
+        };
+
+        // Extract path value from a document containing this jsonb
+        let mut fields = HashMap::new();
+        fields.insert("metadata".to_string(), val);
+        let doc = SqlObject { fields };
+
+        let result = evaluator.extract_path_value(&doc, "$.metadata.priority");
+        assert!(result.is_some());
+        if let Some(SqlValue { value: Some(SqlValueVariant::StringValue(s)) }) = result {
+            assert_eq!(s, "high");
+        } else {
+            panic!("Expected string 'high' from jsonb path");
         }
     }
 }
