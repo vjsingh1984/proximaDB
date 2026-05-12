@@ -40,13 +40,13 @@ use std::collections::HashMap;
 use tracing::{debug, error, info};
 
 use crate::api_handlers::{
-    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichSearchRequest,
+    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordGetRequest,
+    RichSearchRequest,
 };
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use proximadb_data_model::{ProximaValue, TimeUnit};
-use proximadb_records::conversions::sql_value_to_proxima;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 #[cfg(test)]
@@ -1414,44 +1414,30 @@ pub async fn get_record_v2(
         false
     });
 
-    // Get vector via unified handlers
     match state
         .unified_handlers
-        .handle_vector_v1_for_tenant(
-            &collection_id,
-            &record_id,
-            include_vector,
-            true,
+        .handle_record_get_for_tenant(
+            RichRecordGetRequest {
+                collection_id: collection_id.clone(),
+                record_id: record_id.clone(),
+                include_vector,
+                include_props: true,
+            },
             Some(&tenant.tenant_id),
         )
         .await
     {
-        Ok(resp) => {
-            // resp.results is Option<SearchResult>, use default if None
-            let search_result = resp.results.unwrap_or_else(|| {
-                debug!("Get vector response contains no results, using default");
-                Default::default()
-            });
-            let result = search_result
-                .results
-                .first()
-                .ok_or_else(|| ApiError::NotFound(format!("Record '{}' not found", record_id)))?;
-
-            let props: HashMap<String, RestProximaValue> = result
-                .metadata
+        Ok(Some(record)) => {
+            let props: HashMap<String, RestProximaValue> = record
+                .props
                 .iter()
-                .map(|(k, v)| {
-                    (
-                        k.clone(),
-                        proxima_value_to_rest_value(&sql_value_to_proxima(v)),
-                    )
-                })
+                .map(|(k, v)| (k.clone(), proxima_value_to_rest_value(v)))
                 .collect();
 
             let response = RecordV2Response {
-                id: result.id.clone(),
+                id: record.id,
                 vector: if include_vector {
-                    Some(result.vector.clone())
+                    Some(record.vector)
                 } else {
                     None
                 },
@@ -1461,12 +1447,16 @@ pub async fn get_record_v2(
                 } else {
                     None
                 },
-                version: result.version.map(|v| v as u64),
-                timestamp: result.timestamp,
+                version: record.version.map(|v| v as u64),
+                timestamp: record.timestamp,
             };
 
             Ok(Json(response))
         }
+        Ok(None) => Err(ApiError::NotFound(format!(
+            "Record '{}' not found in collection '{}'",
+            record_id, collection_id
+        ))),
         Err(e) => {
             if e.to_string().contains("not found") {
                 Err(ApiError::NotFound(format!(

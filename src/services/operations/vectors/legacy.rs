@@ -84,6 +84,15 @@ pub struct RichRecordBatchRequest {
     pub records: Vec<ProximaRecord>,
 }
 
+/// Canonical rich record get request for v2 and internal callers.
+#[derive(Debug, Clone)]
+pub struct RichRecordGetRequest {
+    pub collection_id: String,
+    pub record_id: String,
+    pub include_vector: bool,
+    pub include_props: bool,
+}
+
 /// Canonical rich search request for v2 and internal callers.
 #[derive(Debug, Clone)]
 pub struct RichSearchRequest {
@@ -112,6 +121,8 @@ pub struct RichSearchResult {
     pub timestamp: Option<i64>,
     pub source: Option<String>,
 }
+
+pub type RichRecordGetResponse = Option<RichSearchResult>;
 
 #[derive(Debug, Clone)]
 pub struct RichFilterCondition {
@@ -351,6 +362,29 @@ fn v1_search_result_to_rich(
             .collect(),
         total_found: result.total_found,
         collection_id: result.collection_id,
+    }
+}
+
+fn vector_record_to_rich_result(
+    record: crate::proto::proximadb_v1::VectorRecord,
+) -> RichSearchResult {
+    RichSearchResult {
+        id: if record.id.is_empty() {
+            "unknown".to_string()
+        } else {
+            record.id
+        },
+        score: 1.0,
+        similarity: None,
+        vector: record.vector,
+        props: record
+            .metadata
+            .iter()
+            .map(|(key, value)| (key.clone(), sql_value_to_proxima(value)))
+            .collect(),
+        version: record.version,
+        timestamp: record.timestamp,
+        source: record.source,
     }
 }
 
@@ -650,6 +684,25 @@ impl VectorOperationsService {
         };
 
         Ok(v1_search_result_to_rich(search_result))
+    }
+
+    /// Execute canonical rich-record get.
+    pub async fn get_record_with_tenant_context(
+        &self,
+        request: RichRecordGetRequest,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<RichRecordGetResponse> {
+        self.validate_tenant_collection_access(&request.collection_id, tenant_context)
+            .await?;
+
+        self.vector(
+            &request.collection_id,
+            &request.record_id,
+            request.include_vector,
+            request.include_props,
+        )
+        .await
+        .map(|record| record.map(vector_record_to_rich_result))
     }
 
     /// Public v1 boundary: execute vector search and return v1 response
@@ -3820,6 +3873,40 @@ mod tenant_tests {
         assert!(matches!(
             rich.results[0].props.get("price"),
             Some(ProximaValue::String(value)) if value == "10.50"
+        ));
+    }
+
+    #[test]
+    fn vector_record_to_rich_result_preserves_get_record_shape() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "category".to_string(),
+            crate::proto::proximadb_v1::SqlValue {
+                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                    "books".to_string(),
+                )),
+            },
+        );
+
+        let rich = vector_record_to_rich_result(crate::proto::proximadb_v1::VectorRecord {
+            id: "doc_2".to_string(),
+            vector: vec![0.3, 0.4],
+            metadata,
+            timestamp: Some(456),
+            updated_at: None,
+            expires_at: None,
+            version: Some(8),
+            source: Some("catalog".to_string()),
+        });
+
+        assert_eq!(rich.id, "doc_2");
+        assert_eq!(rich.vector, vec![0.3, 0.4]);
+        assert_eq!(rich.version, Some(8));
+        assert_eq!(rich.timestamp, Some(456));
+        assert_eq!(rich.source.as_deref(), Some("catalog"));
+        assert!(matches!(
+            rich.props.get("category"),
+            Some(ProximaValue::String(value)) if value == "books"
         ));
     }
 }
