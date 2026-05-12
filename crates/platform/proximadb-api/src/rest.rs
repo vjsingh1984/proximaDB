@@ -3,6 +3,7 @@
 //! HTTP/JSON API handlers via Axum framework.
 
 pub mod v1;
+pub mod v2;
 
 use serde::Serialize;
 

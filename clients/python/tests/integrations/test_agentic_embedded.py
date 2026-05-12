@@ -49,6 +49,52 @@ def test_agentic_store_checkpoint_and_event_use_real_embedded_documents(tmp_path
     ]
 
 
+def test_unified_query_cross_modal_path_uses_embedded_unified_entrypoint(tmp_path) -> None:
+    adapter = _adapter(tmp_path)
+    adapter.create_document_collection("agent_docs", config={"indexed_paths": ["$.role"]})
+    adapter.insert_document(
+        "agent_docs",
+        {"id": "doc-main", "role": "planner", "embedding": [1.0, 0.0, 0.0, 0.0]},
+        id="doc-main",
+    )
+    adapter.create_collection("agent_vectors", dimension=4)
+    adapter.insert_vectors(
+        "agent_vectors",
+        [
+            {
+                "id": "doc-main",
+                "vector": [1.0, 0.0, 0.0, 0.0],
+                "metadata": {"role": "planner"},
+            }
+        ],
+    )
+    adapter.create_graph("agent_graph")
+    adapter.create_node(
+        graph="agent_graph",
+        node_id="doc-main",
+        labels=["Symbol"],
+        properties={"name": "main"},
+    )
+
+    query = (
+        "SELECT * "
+        "FROM DOCUMENT_QUERY('agent_docs', '$.role = \"planner\"') d "
+        "JOIN LATERAL VECTOR_SEARCH('agent_vectors', d.document.embedding, 1) v ON true "
+        "JOIN LATERAL GRAPH_QUERY('MATCH (s:Symbol) RETURN s') g ON true"
+    )
+
+    plan = adapter._db.explain_unified_query(query)
+    assert plan["fusion_strategy"] == "rrf"
+    assert {component["model"] for component in plan["components"]} == {
+        "document",
+        "vector",
+        "graph",
+    }
+
+    results = adapter.execute_unified_query(query, fusion_strategy="rrf")
+    assert isinstance(results, list)
+
+
 @pytest.mark.asyncio
 async def test_victor_embedded_provider_uses_mapper_graph_and_events(tmp_path) -> None:
     adapter = _adapter(tmp_path)
@@ -98,3 +144,48 @@ async def test_victor_embedded_provider_uses_mapper_graph_and_events(tmp_path) -
         "SymbolUpserted",
         "SymbolLinked",
     ]
+
+
+@pytest.mark.asyncio
+async def test_victor_embedded_provider_matches_codingagent_unified_symbol_protocol(tmp_path) -> None:
+    pytest.importorskip("victor.storage.unified.protocol")
+    from victor.storage.unified.protocol import SearchParams, UnifiedEdge, UnifiedSymbol
+
+    adapter = _adapter(tmp_path)
+    provider = ProximaDBEmbeddedVictorProvider(adapter, workspace="victor_protocol")
+    await provider.initialize(tmp_path)
+
+    symbol = UnifiedSymbol(
+        unified_id=provider.make_symbol_id("app.py", "main"),
+        name="main",
+        type="function",
+        file_path="app.py",
+        line=1,
+        lang="python",
+        signature="def main()",
+        docstring="Entry point",
+    )
+    await provider.index_symbol(symbol, "def main(): return helper()")
+    await provider.index_edge(
+        UnifiedEdge(
+            src_id=symbol.unified_id,
+            dst_id=provider.make_symbol_id("app.py", "helper"),
+            type="CALLS",
+        )
+    )
+
+    loaded = await provider.get_symbol(symbol.unified_id)
+    assert loaded is not None
+    assert loaded.unified_id == symbol.unified_id
+
+    by_file = await provider.get_symbols_in_file("app.py")
+    assert [item.unified_id for item in by_file] == [symbol.unified_id]
+
+    keyword = await provider.search_keyword("main", limit=5)
+    assert keyword[0].symbol.unified_id == symbol.unified_id
+
+    hybrid = await provider.search(SearchParams(query="main", limit=5))
+    assert hybrid[0].symbol.unified_id == symbol.unified_id
+
+    stats = await provider.stats()
+    assert stats["symbol_count"] == 1

@@ -47,6 +47,18 @@ pub use rest::v1::{
     LogsHandler, MetricsHandler, ProgressiveSearchHandler, VectorHandler,
 };
 
+// Re-export v2 agentic contracts
+pub use grpc::v2::{
+    AgentCheckpointService, AgentEventService, AgentMemoryService, CheckpointServiceRequest,
+    CheckpointServiceResponse, EventAppendServiceRequest, EventAppendServiceResponse,
+    MemoryPutServiceRequest, MemorySearchServiceRequest, MemorySearchServiceResponse,
+};
+pub use rest::v2::{
+    AgentCheckpointRequest, AgentCheckpointResponse, AgentEventAppendRequest,
+    AgentEventAppendResponse, AgentEventRecord, AgentEventReplayRequest, AgentMemoryItem,
+    AgentMemoryPutRequest, AgentMemorySearchRequest, AgentMemorySearchResponse,
+};
+
 // Re-export middleware
 pub use middleware::{
     AuthMiddleware, CorsMiddleware, RateLimitMiddleware, RequestIdMiddleware, auth::AuthConfig,

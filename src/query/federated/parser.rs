@@ -288,7 +288,7 @@ impl FederatedParser {
             return None;
         }
 
-        let collection = parts[0].trim_matches('\'').trim_matches('"').to_string();
+        let collection = Self::unquote_sql_string(&parts[0]).to_string();
         let query_vector = self.parse_vector_argument(&parts[1])?;
         let top_k = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
 
@@ -301,33 +301,29 @@ impl FederatedParser {
 
     /// Parse GRAPH_QUERY('cypher')
     fn parse_graph_query_args(&self, args: &str) -> Option<SqlExtension> {
-        let cypher = args.trim().trim_matches('\'').trim_matches('"').to_string();
+        let cypher = Self::unquote_sql_string(args).to_string();
         Some(SqlExtension::GraphQuery { cypher })
     }
 
     /// Parse DOCUMENT_QUERY(collection, filter)
     fn parse_document_query_args(&self, args: &str) -> Option<SqlExtension> {
         let parts = self.split_function_args(args);
-        let collection = parts
-            .first()?
-            .trim_matches('\'')
-            .trim_matches('"')
-            .to_string();
+        let collection = Self::unquote_sql_string(parts.first()?).to_string();
         let filter = parts
             .get(1)
-            .map(|s| s.trim_matches('\'').trim_matches('"').to_string());
+            .map(|s| Self::unquote_sql_string(s).to_string());
         Some(SqlExtension::DocumentQuery { collection, filter })
     }
 
     /// Parse LOGS(namespace)
     fn parse_logs_query_args(&self, args: &str) -> Option<SqlExtension> {
-        let namespace = args.trim().trim_matches('\'').trim_matches('"').to_string();
+        let namespace = Self::unquote_sql_string(args).to_string();
         Some(SqlExtension::Logs { namespace })
     }
 
     /// Parse METRICS(namespace)
     fn parse_metrics_query_args(&self, args: &str) -> Option<SqlExtension> {
-        let namespace = args.trim().trim_matches('\'').trim_matches('"').to_string();
+        let namespace = Self::unquote_sql_string(args).to_string();
         Some(SqlExtension::Metrics { namespace })
     }
 
@@ -556,6 +552,18 @@ impl FederatedParser {
         }
 
         None
+    }
+
+    fn unquote_sql_string(s: &str) -> &str {
+        let trimmed = s.trim();
+        if trimmed.len() >= 2 {
+            let first = trimmed.as_bytes()[0];
+            let last = trimmed.as_bytes()[trimmed.len() - 1];
+            if (first == b'\'' && last == b'\'') || (first == b'"' && last == b'"') {
+                return &trimmed[1..trimmed.len() - 1];
+            }
+        }
+        trimmed
     }
 
     fn parse_extension_alias(&self, sql: &str, mut position: usize) -> Option<String> {
@@ -883,5 +891,59 @@ mod tests {
         assert!(extensions.contains(&"VECTOR_SEARCH"));
         assert!(extensions.contains(&"GRAPH_QUERY"));
         assert!(extensions.contains(&"LOGS"));
+    }
+
+    #[test]
+    fn test_parse_cross_modal_document_vector_graph_query() {
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse(
+                "SELECT d.id, v.score, g.path \
+                 FROM DOCUMENT_QUERY('agent_docs', '$.role = \"planner\"') d \
+                 JOIN LATERAL VECTOR_SEARCH('agent_vectors', d.document.embedding, 5) v ON true \
+                 JOIN LATERAL GRAPH_QUERY('MATCH (s:Symbol)-[:CALLS]->(t) RETURN t') g ON true",
+            )
+            .expect("cross-modal query should parse");
+
+        assert_eq!(query.query_type, QueryType::Federated);
+        assert!(query.is_cross_model_join);
+        assert_eq!(query.extensions.len(), 3);
+        assert_eq!(
+            query.extension_aliases,
+            vec![
+                Some("d".to_string()),
+                Some("v".to_string()),
+                Some("g".to_string())
+            ]
+        );
+
+        match &query.extensions[0] {
+            SqlExtension::DocumentQuery { collection, filter } => {
+                assert_eq!(collection, "agent_docs");
+                assert_eq!(filter.as_deref(), Some("$.role = \"planner\""));
+            }
+            other => panic!("expected document query, got {other:?}"),
+        }
+        match &query.extensions[1] {
+            SqlExtension::VectorSearch {
+                collection,
+                query_vector,
+                top_k,
+            } => {
+                assert_eq!(collection, "agent_vectors");
+                assert_eq!(
+                    query_vector,
+                    &VectorQuery::Expression("d.document.embedding".to_string())
+                );
+                assert_eq!(*top_k, 5);
+            }
+            other => panic!("expected vector search, got {other:?}"),
+        }
+        match &query.extensions[2] {
+            SqlExtension::GraphQuery { cypher } => {
+                assert_eq!(cypher, "MATCH (s:Symbol)-[:CALLS]->(t) RETURN t");
+            }
+            other => panic!("expected graph query, got {other:?}"),
+        }
     }
 }

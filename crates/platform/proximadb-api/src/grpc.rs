@@ -3,6 +3,7 @@
 //! Protocol Buffers API handlers via Tonic framework.
 
 pub mod v1;
+pub mod v2;
 
 // Re-export v1 services
 pub use v1::{
