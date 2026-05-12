@@ -39,15 +39,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
-use crate::api_handlers::RichRecordBatchRequest;
+use crate::api_handlers::{
+    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichSearchRequest,
+};
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
-use crate::proto::proximadb_v1::{SearchQuery, VectorSearchRequest};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
-/// Convert a JSON value to SqlValue for storage
+#[cfg(test)]
+/// Convert a JSON value to SqlValue for legacy conversion tests.
 fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
     use crate::proto::proximadb_v1::sql_value::Value;
     use crate::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue};
@@ -123,7 +125,8 @@ fn sql_value_to_json(
     })
 }
 
-/// Convert a JSON value to a FilterClause value
+#[cfg(test)]
+/// Convert a JSON value to a FilterClause value.
 fn json_to_filter_clause_value(
     value: &serde_json::Value,
 ) -> Option<crate::proto::proximadb_v1::filter_clause::Value> {
@@ -143,7 +146,8 @@ fn json_to_filter_clause_value(
     }
 }
 
-/// Convert TypedFilter list to FilterClause list for MetadataFilter
+#[cfg(test)]
+/// Convert TypedFilter list to FilterClause list for legacy MetadataFilter tests.
 ///
 /// Supports the following operators:
 /// - eq: Equals
@@ -501,6 +505,45 @@ fn bytes_from_json_array(value: &serde_json::Value) -> Result<Vec<u8>, ApiError>
                 })
         })
         .collect()
+}
+
+fn typed_filter_to_rich(filter: &TypedFilter) -> Result<RichFilterCondition, ApiError> {
+    let operator = match filter.op.as_str() {
+        "eq" => RichFilterOperator::Eq,
+        "neq" => RichFilterOperator::Ne,
+        "gt" => RichFilterOperator::Gt,
+        "gte" => RichFilterOperator::Gte,
+        "lt" => RichFilterOperator::Lt,
+        "lte" => RichFilterOperator::Lte,
+        "contains" | "starts_with" | "ends_with" => RichFilterOperator::Contains,
+        "between" => RichFilterOperator::Between,
+        "in" => RichFilterOperator::In,
+        _ => {
+            return Err(ApiError::InvalidArgument(format!(
+                "Unsupported filter operator: {}",
+                filter.op
+            )));
+        }
+    };
+
+    let value = rest_value_to_proxima(&RestProximaValue::Inferred(filter.value.clone()))?;
+    let value_upper = filter
+        .value_upper
+        .as_ref()
+        .map(|value| rest_value_to_proxima(&RestProximaValue::Inferred(value.clone())))
+        .transpose()?;
+    let value_list = match (&operator, &value) {
+        (RichFilterOperator::In, ProximaValue::Array(values)) => values.clone(),
+        _ => Vec::new(),
+    };
+
+    Ok(RichFilterCondition {
+        field: filter.field.clone(),
+        operator,
+        value,
+        value_upper,
+        value_list,
+    })
 }
 
 /// Input format for TEXT fields
@@ -910,55 +953,28 @@ pub async fn search_with_typed_filters(
         request.filters.as_ref().map(|f| f.len())
     );
 
-    // Convert typed filters to MetadataFilter format with advanced filter support
-    let advanced_filter = if let Some(ref typed_filters) = request.filters {
-        let clauses = convert_typed_filters_to_clauses(typed_filters)?;
-        if clauses.is_empty() {
-            None
-        } else {
-            Some(crate::proto::proximadb_v1::MetadataFilter {
-                clauses,
-                op: crate::proto::proximadb_v1::LogicalOp::And as i32,
-            })
-        }
-    } else {
-        None
-    };
+    let filters = request
+        .filters
+        .as_ref()
+        .map(|filters| {
+            filters
+                .iter()
+                .map(typed_filter_to_rich)
+                .collect::<Result<Vec<_>, ApiError>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
 
-    // Keep simple equality filters in the filters map for backward compatibility
-    let filters = if let Some(ref typed_filters) = request.filters {
-        let mut filter_map: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
-        for filter in typed_filters {
-            if filter.op == "eq" {
-                filter_map.insert(filter.field.clone(), json_to_sql_value(&filter.value));
-            }
-        }
-        filter_map
-    } else {
-        HashMap::new()
-    };
-
-    // Create search query
-    let search_query = SearchQuery {
-        vector: request.vector.clone(),
-        filters,
-        advanced_filter,
-    };
-
-    let search_request = VectorSearchRequest {
+    let search_request = RichSearchRequest {
         collection_id: collection.clone(),
-        queries: vec![search_query],
+        query_vector: request.vector.clone(),
         top_k: request.top_k as u32,
-        include_fields: None,
-        search_params: None,
-        distance_metric_override: None,
-        search_optimization: None,
+        filters,
     };
 
-    // Execute search via unified handlers
     match state
         .unified_handlers
-        .handle_vector_search_v1_for_tenant(search_request, Some(&tenant.tenant_id))
+        .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {

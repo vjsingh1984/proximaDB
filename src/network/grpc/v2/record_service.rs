@@ -22,10 +22,11 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::api_handlers::{RichRecordBatchRequest, UnifiedHandlers};
-use crate::proto::proximadb_v1::{
-    CollectionOperation, CollectionRequest, SearchQuery, VectorSearchRequest,
+use crate::api_handlers::{
+    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichSearchRequest,
+    UnifiedHandlers,
 };
+use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v2::{
     self, BackpressureLevel, BackpressureSignal, BatchError, BatchWriteMode,
     BatchWriteStreamRequest, BatchWriteStreamResponse, CreateSchemaRequest, CreateSchemaResponse,
@@ -36,7 +37,9 @@ use crate::proto::proximadb_v2::{
     proxima_record_service_server::ProximaRecordServiceServer,
 };
 use proximadb_records::conversions::sql_value_to_proxima;
-use proximadb_records::proto_v2::{proto_record_to_envelope, proxima_value_to_typed_value};
+use proximadb_records::proto_v2::{
+    proto_record_to_envelope, proxima_value_to_typed_value, typed_value_to_proxima,
+};
 
 /// gRPC V2 ProximaRecord service implementation
 ///
@@ -79,6 +82,67 @@ const DELAY_CRITICAL_MS: u32 = 500;
 
 /// Maximum pending items before blocking (for flow control)
 const MAX_PENDING_ITEMS: u32 = 1000;
+
+fn grpc_filters_to_rich(
+    filters: &[proximadb_v2::TypedFilterCondition],
+) -> Result<Vec<RichFilterCondition>, Status> {
+    filters
+        .iter()
+        .map(|filter| {
+            let operator = match proximadb_v2::TypedFilterOperator::try_from(filter.operator)
+                .unwrap_or(proximadb_v2::TypedFilterOperator::TypedFilterOpUnspecified)
+            {
+                proximadb_v2::TypedFilterOperator::Eq => RichFilterOperator::Eq,
+                proximadb_v2::TypedFilterOperator::Ne => RichFilterOperator::Ne,
+                proximadb_v2::TypedFilterOperator::Gt => RichFilterOperator::Gt,
+                proximadb_v2::TypedFilterOperator::Gte => RichFilterOperator::Gte,
+                proximadb_v2::TypedFilterOperator::Lt => RichFilterOperator::Lt,
+                proximadb_v2::TypedFilterOperator::Lte => RichFilterOperator::Lte,
+                proximadb_v2::TypedFilterOperator::Between => RichFilterOperator::Between,
+                proximadb_v2::TypedFilterOperator::In => RichFilterOperator::In,
+                proximadb_v2::TypedFilterOperator::NotIn => RichFilterOperator::NotIn,
+                proximadb_v2::TypedFilterOperator::Contains => RichFilterOperator::Contains,
+                other => {
+                    return Err(Status::invalid_argument(format!(
+                        "unsupported v2 search filter operator: {}",
+                        other.as_str_name()
+                    )));
+                }
+            };
+
+            let value = filter
+                .value
+                .as_ref()
+                .ok_or_else(|| Status::invalid_argument("filter value is required"))
+                .and_then(|value| {
+                    typed_value_to_proxima(value)
+                        .map_err(|e| Status::invalid_argument(format!("invalid filter value: {e}")))
+                })?;
+            let value_upper = filter
+                .value_upper
+                .as_ref()
+                .map(typed_value_to_proxima)
+                .transpose()
+                .map_err(|e| {
+                    Status::invalid_argument(format!("invalid upper filter value: {e}"))
+                })?;
+            let value_list = filter
+                .value_list
+                .iter()
+                .map(typed_value_to_proxima)
+                .collect::<anyhow::Result<Vec<_>>>()
+                .map_err(|e| Status::invalid_argument(format!("invalid filter value list: {e}")))?;
+
+            Ok(RichFilterCondition {
+                field: filter.field_name.clone(),
+                operator,
+                value,
+                value_upper,
+                value_list,
+            })
+        })
+        .collect()
+}
 
 /// Streaming pipeline latency metrics for observability
 ///
@@ -330,58 +394,6 @@ impl ProximaRecordServiceImpl {
             collection_id: batch.collection_id.clone(),
             records,
         })
-    }
-
-    /// Convert TypedValue to SqlValue for v1 storage
-    fn typed_value_to_sql_value(
-        &self,
-        typed_value: &proximadb_v2::TypedValue,
-    ) -> Option<crate::proto::proximadb_v1::SqlValue> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-        use proximadb_v2::typed_value::Value as TypedVal;
-
-        let inner = match typed_value.value.as_ref()? {
-            TypedVal::TextValue(s) => Value::StringValue(s.clone()),
-            TypedVal::IntegerValue(i) => Value::Int64Value(*i),
-            TypedVal::FloatValue(f) => Value::NumberValue(*f),
-            TypedVal::BooleanValue(b) => Value::BoolValue(*b),
-            TypedVal::TimestampValue(ts) => Value::Int64Value(*ts),
-            TypedVal::JsonValue(json) => Value::StringValue(json.clone()),
-            TypedVal::BinaryValue(bytes) => Value::BytesValue(bytes.clone()),
-            TypedVal::UuidValue(uuid) => {
-                // Convert UUID bytes to string for storage
-                if uuid.len() == 16 {
-                    let uuid_str = uuid::Uuid::from_slice(uuid)
-                        .map_or_else(|_| hex::encode(uuid), |u| u.to_string());
-                    Value::StringValue(uuid_str)
-                } else {
-                    Value::BytesValue(uuid.clone())
-                }
-            }
-            TypedVal::IsNull(true) => Value::NullValue(0),
-            TypedVal::IsNull(false) => return None,
-            // Array types - store as JSON strings
-            TypedVal::TextArray(arr) => {
-                let json = serde_json::to_string(&arr.values).unwrap_or_default();
-                Value::StringValue(json)
-            }
-            TypedVal::IntegerArray(arr) => {
-                let json = serde_json::to_string(&arr.values).unwrap_or_default();
-                Value::StringValue(json)
-            }
-            TypedVal::FloatArray(arr) => {
-                let json = serde_json::to_string(&arr.values).unwrap_or_default();
-                Value::StringValue(json)
-            }
-            TypedVal::BooleanArray(arr) => {
-                let json = serde_json::to_string(&arr.values).unwrap_or_default();
-                Value::StringValue(json)
-            }
-            // Handle remaining variants with string conversion
-            _ => Value::StringValue(format!("{:?}", typed_value)),
-        };
-
-        Some(crate::proto::proximadb_v1::SqlValue { value: Some(inner) })
     }
 
     /// Convert search results to TypedSearchResult
@@ -707,42 +719,16 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             req.collection_id, req.top_k
         );
 
-        // Convert typed filters to v1 filter format
-        let filters: HashMap<String, crate::proto::proximadb_v1::SqlValue> = req
-            .filters
-            .iter()
-            .filter_map(|f| {
-                // For simple equality filters, convert directly
-                if f.operator == proximadb_v2::TypedFilterOperator::Eq as i32 {
-                    self.typed_value_to_sql_value(&f.value.clone().unwrap_or_default())
-                        .map(|v| (f.field_name.clone(), v))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Create search query
-        let search_query = SearchQuery {
-            vector: req.query_vector.clone(),
-            filters,
-            advanced_filter: None,
-        };
-
-        let search_request = VectorSearchRequest {
+        let search_request = RichSearchRequest {
             collection_id: req.collection_id.clone(),
-            queries: vec![search_query],
+            query_vector: req.query_vector.clone(),
             top_k: req.top_k,
-            include_fields: None,
-            search_params: None,
-            distance_metric_override: None,
-            search_optimization: None,
+            filters: grpc_filters_to_rich(&req.filters)?,
         };
 
-        // Execute search
         match self
             .unified_handlers
-            .handle_vector_search_v1_for_tenant(search_request, tenant_id.as_deref())
+            .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
             .await
         {
             Ok(resp) => {
@@ -788,34 +774,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             req.collection_id, req.top_k
         );
 
-        // Convert typed filters to v1 filter format
-        let filters: HashMap<String, crate::proto::proximadb_v1::SqlValue> = req
-            .filters
-            .iter()
-            .filter_map(|f| {
-                if f.operator == proximadb_v2::TypedFilterOperator::Eq as i32 {
-                    self.typed_value_to_sql_value(&f.value.clone().unwrap_or_default())
-                        .map(|v| (f.field_name.clone(), v))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let search_query = SearchQuery {
-            vector: req.query_vector.clone(),
-            filters,
-            advanced_filter: None,
-        };
-
-        let search_request = VectorSearchRequest {
+        let search_request = RichSearchRequest {
             collection_id: req.collection_id.clone(),
-            queries: vec![search_query],
+            query_vector: req.query_vector.clone(),
             top_k: req.top_k,
-            include_fields: None,
-            search_params: None,
-            distance_metric_override: None,
-            search_optimization: None,
+            filters: grpc_filters_to_rich(&req.filters)?,
         };
 
         let include_vector = req.include_vector;
@@ -823,7 +786,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Execute search
         let response = self
             .unified_handlers
-            .handle_vector_search_v1_for_tenant(search_request, tenant_id.as_deref())
+            .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
 
