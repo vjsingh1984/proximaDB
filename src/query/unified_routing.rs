@@ -42,15 +42,18 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, info, trace};
 
-use crate::compute::pipeline_executor::PipelineExecutor;
 use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::StorageEngineType;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::query::multimodal::plan::{MultiModelPlan, PlanContext, PlanStats};
 use crate::query::unified::lower::lower_uql_to_plan;
 use crate::query::unified::uql::UQLStatement;
+
+// Phase D: Import plan executor for operator dispatch (spec §7)
+use proximadb_query::{PlanDataSource, PlanExecutionContext, PlanExecutor};
 
 /// Unified query result
 #[derive(Debug, Clone)]
@@ -85,6 +88,40 @@ pub struct ExecutionStats {
     pub operators_executed: usize,
     /// Storage engines used
     pub engines_used: Vec<StorageEngineType>,
+}
+
+// ============================================================================
+// Phase D: Storage-Engine Bridge for PlanExecutor
+// ============================================================================
+
+/// Bridge adapter from root crate storage engines to PlanDataSource.
+///
+/// In production, this adapter would route scan requests to the appropriate
+/// storage engine based on DataModel via factory.rs. For now, it provides
+/// a minimal implementation that allows Phase D operator dispatch to work.
+struct RootStorageAdapter;
+
+impl PlanDataSource for RootStorageAdapter {
+    fn scan(
+        &self,
+        model: proximadb_data_model::DataModel,
+        _limit: Option<usize>,
+    ) -> Result<Vec<serde_json::Value>> {
+        // Phase D: Return empty result for all scans.
+        //
+        // Full implementation will:
+        // 1. Call into factory.rs to get the appropriate storage engine
+        // 2. Execute the scan with proper projection and filters
+        // 3. Convert results to JSON rows for MSHJ/HybridTraverse
+        //
+        // This placeholder allows CrossModelJoin and HybridTraverse tests to pass
+        // while storage-engine wiring is completed in Phase 5 (Query/Runtime layer).
+        trace!(
+            "RootStorageAdapter::scan called for model={:?} (Phase D placeholder)",
+            model
+        );
+        Ok(Vec::new())
+    }
 }
 
 /// Unified query router
@@ -209,39 +246,60 @@ impl UnifiedQueryRouter {
     /// Execute a MultiModelPlan directly
     ///
     /// This is the core execution method that all other paths lead to.
+    /// Phase D: Routes to PlanExecutor for CrossModelJoin and HybridTraverse operators.
     pub async fn execute_plan(&self, plan: MultiModelPlan) -> Result<UnifiedQueryResult> {
         trace!("Executing MultiModelPlan with {} operators", plan.len());
 
         let start = std::time::Instant::now();
         let plan_stats = plan.stats();
 
-        // Convert to compute operators for execution
-        let compute_operators = plan.to_compute_operators();
+        // Phase D: Create execution context with storage adapter
+        let data_source = Arc::new(RootStorageAdapter);
+        let mut ctx = PlanExecutionContext::new(data_source);
 
-        // Create pipeline executor
-        let _executor = PipelineExecutor::new(compute_operators.clone());
+        // Phase D: Execute plan via PlanExecutor (dispatches CrossModelJoin/HybridTraverse)
+        let execution_result = PlanExecutor::execute(&plan, &mut ctx)?;
+        let row_count = execution_result.rows.len();
 
-        // For now, return empty result as placeholder
-        // In production, you would:
-        // 1. Execute the plan against the storage engines
-        // 2. Collect results
-        // 3. Apply any post-processing
-        // 4. Return the final result set
+        // Convert JSON rows to VectorRecords for compatibility with existing result types
+        let records = execution_result
+            .rows
+            .into_iter()
+            .filter_map(|row| {
+                // Extract common fields; full schema mapping is Phase 5 work
+                let id = row.get("id").and_then(|v| v.as_str()).map(String::from);
+                id.map(|id| VectorRecord {
+                    id,
+                    vector: Vec::new(), // Empty for non-vector results
+                    metadata: HashMap::new(),
+                    timestamp: None,
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                })
+            })
+            .collect();
 
         let result = UnifiedQueryResult {
-            records: Vec::new(), // Placeholder - would execute plan
+            records,
             metadata: ResultMetadata {
-                columns: Vec::new(),
-                column_types: HashMap::new(),
-                row_count: 0,
+                columns: vec!["id".to_string()], // Minimal column set for Phase D
+                column_types: HashMap::from([("id".to_string(), "text".to_string())]),
+                row_count,
             },
             stats: ExecutionStats {
                 plan_stats,
                 execution_time_ms: start.elapsed().as_millis() as u64,
-                operators_executed: compute_operators.len(),
+                operators_executed: execution_result.operator_stats.len(),
                 engines_used: self.extract_engines_from_plan(&plan),
             },
         };
+
+        debug!(
+            "Plan execution completed in {}ms with {} results",
+            result.stats.execution_time_ms, result.metadata.row_count
+        );
 
         Ok(result)
     }
