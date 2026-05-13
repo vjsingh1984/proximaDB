@@ -867,20 +867,9 @@ impl UnifiedHandlers {
             }
         };
 
-        if let Some(conflict) = self
-            .existing_record_insert_conflict_result(
-                &collection_id,
-                &request.records,
-                tenant_context.as_ref(),
-            )
-            .await?
-        {
-            return Ok(conflict);
-        }
-
         match self
             .vector_operations_service
-            .insert_records_with_tenant_context(
+            .insert_records_only_with_tenant_context(
                 &collection_id,
                 request.records,
                 tenant_context.as_ref(),
@@ -899,28 +888,6 @@ impl UnifiedHandlers {
                 ))
             }
         }
-    }
-
-    async fn existing_record_insert_conflict_result(
-        &self,
-        collection_id: &str,
-        records: &[proximadb_records::ProximaRecord],
-        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
-    ) -> Result<Option<BatchOperationResult>> {
-        for record in records {
-            if self
-                .vector_operations_service
-                .record_exists_with_tenant_context(collection_id, &record.oid, tenant_context)
-                .await?
-            {
-                return Ok(Some(Self::insert_existing_record_conflict_result(
-                    collection_id,
-                    &record.oid,
-                )));
-            }
-        }
-
-        Ok(None)
     }
 
     fn insert_existing_record_conflict_result(

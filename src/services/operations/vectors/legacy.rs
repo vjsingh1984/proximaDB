@@ -46,8 +46,9 @@ use proximadb_records::ProximaRecord;
 use proximadb_records::conversions::{
     proxima_record_to_vector, proxima_to_sql_value, sql_value_to_proxima,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::security::validation::{
@@ -476,6 +477,9 @@ pub struct VectorOperationsService {
 
     /// Ingestion-time pseudo-query enrichment for auditable retrieval.
     pseudo_query_generator: Arc<dyn PseudoQueryGenerator>,
+
+    /// Per tenant+collection guard for insert-only check-and-append operations.
+    insert_only_locks: Arc<dashmap::DashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl VectorOperationsService {
@@ -1078,6 +1082,7 @@ impl VectorOperationsService {
             metadata_validator: MetadataValidator::default(),
             collection_name_validator: CollectionNameValidator::default(),
             pseudo_query_generator: Arc::new(DefaultPseudoQueryGenerator::default()),
+            insert_only_locks: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -1362,6 +1367,53 @@ impl VectorOperationsService {
             .await
     }
 
+    /// Insert canonical ProximaRecord envelopes with insert-only semantics.
+    ///
+    /// This method keeps the duplicate/existence check and WAL append under a
+    /// per tenant+collection guard so concurrent insert-only callers in this
+    /// process cannot both pass preflight for the same record id.
+    pub async fn insert_records_only_with_tenant_context(
+        &self,
+        collection_id: &str,
+        records: Vec<ProximaRecord>,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<BatchOperationResult> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+
+        let tenant_id = tenant_context.map(|tenant| tenant.tenant_id.as_str());
+        let mut vectors = Self::rich_records_to_vectors(records, tenant_id)?;
+        if let Some(tenant_id) = tenant_id {
+            Self::ensure_tenant_metadata(&mut vectors, tenant_id)?;
+        }
+
+        if let Some(conflict) = Self::duplicate_insert_conflict_result(collection_id, &vectors) {
+            return Ok(conflict);
+        }
+
+        let lock_key = Self::insert_only_lock_key(collection_id, tenant_id);
+        let lock = self
+            .insert_only_locks
+            .entry(lock_key)
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
+
+        for vector in &vectors {
+            if self
+                .record_exists_unchecked(collection_id, &vector.id)
+                .await?
+            {
+                return Ok(Self::insert_existing_record_conflict_result(
+                    collection_id,
+                    &vector.id,
+                ));
+            }
+        }
+
+        self.insert_batch_internal(collection_id, vectors).await
+    }
+
     /// Check whether a rich record ID already exists in WAL or the collection's
     /// configured storage engine.
     pub async fn record_exists_with_tenant_context(
@@ -1373,6 +1425,10 @@ impl VectorOperationsService {
         self.validate_tenant_collection_access(collection_id, tenant_context)
             .await?;
 
+        self.record_exists_unchecked(collection_id, record_id).await
+    }
+
+    async fn record_exists_unchecked(&self, collection_id: &str, record_id: &str) -> Result<bool> {
         if self
             .wal_manager
             .search_vector_by_id(collection_id, &record_id.to_string())
@@ -1394,6 +1450,46 @@ impl VectorOperationsService {
             .vector_by_id(collection_id, base_path, record_id)
             .await?
             .is_some())
+    }
+
+    fn duplicate_insert_conflict_result(
+        collection_id: &str,
+        vectors: &[VectorRecord],
+    ) -> Option<BatchOperationResult> {
+        let mut seen_ids = HashSet::new();
+        for vector in vectors {
+            if !seen_ids.insert(vector.id.as_str()) {
+                return Some(BatchOperationResult::failure(
+                    format!(
+                        "Record '{}' appears more than once in insert request for collection '{}'",
+                        vector.id, collection_id
+                    ),
+                    "INSERT_CONFLICT".to_string(),
+                ));
+            }
+        }
+
+        None
+    }
+
+    fn insert_existing_record_conflict_result(
+        collection_id: &str,
+        record_id: &str,
+    ) -> BatchOperationResult {
+        BatchOperationResult::failure(
+            format!(
+                "Record '{}' already exists in collection '{}'",
+                record_id, collection_id
+            ),
+            "INSERT_CONFLICT".to_string(),
+        )
+    }
+
+    fn insert_only_lock_key(collection_id: &str, tenant_id: Option<&str>) -> String {
+        match tenant_id {
+            Some(tenant_id) => format!("{tenant_id}:{collection_id}"),
+            None => collection_id.to_string(),
+        }
     }
 
     async fn insert_batch_internal(
@@ -4288,6 +4384,46 @@ mod index_first_search_tests {
         ));
 
         Ok((service, temp_dir))
+    }
+
+    #[test]
+    fn test_insert_only_duplicate_conflict_result() {
+        let vectors = vec![
+            VectorRecord {
+                id: "record-1".to_string(),
+                ..Default::default()
+            },
+            VectorRecord {
+                id: "record-1".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let result =
+            VectorOperationsService::duplicate_insert_conflict_result("collection-1", &vectors)
+                .expect("duplicate insert should return a conflict");
+
+        assert!(!result.success);
+        assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
+        assert_eq!(
+            result.errors,
+            vec![
+                "Record 'record-1' appears more than once in insert request for collection 'collection-1'"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_insert_only_lock_key_scopes_by_tenant() {
+        assert_eq!(
+            VectorOperationsService::insert_only_lock_key("collection-1", None),
+            "collection-1"
+        );
+        assert_eq!(
+            VectorOperationsService::insert_only_lock_key("collection-1", Some("tenant-a")),
+            "tenant-a:collection-1"
+        );
     }
 
     struct MockCollectionService {
