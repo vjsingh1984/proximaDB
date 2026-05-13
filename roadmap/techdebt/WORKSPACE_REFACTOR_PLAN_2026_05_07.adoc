@@ -821,6 +821,10 @@ Current status after the first refinement:
 * `proximadb-config` now owns the root TLS listener option contract (`TlsConfig`); root keeps a
   compatibility re-export while certificate loading, mTLS policy, rustls/tonic/axum conversion, and
   protocol listener lifecycle remain in security/network/runtime layers
+* `proximadb-config` now owns storage placement option contracts (`StorageLocation` and
+  `AssignmentConfig`); root keeps compatibility re-exports while URL derivation, storage-engine
+  layout wiring, WAL/data/index path construction, and collection placement execution remain in root
+  storage runtime code
 * the full root `Config` remains in root for now because it still composes AI, network, security,
   query, storage-engine, and runtime conversion behavior; only validated, serializable, low-level
   config contracts should move into `proximadb-config` until those dependencies are split
@@ -844,6 +848,9 @@ Current status after the first refinement:
 * TLS config extraction follows the same policy-once direction for protocol sidecars: shared
   listener options can cross REST, gRPC, pgwire, Arrow Flight, and streaming surfaces without
   moving certificate managers or protocol-specific TLS builders into foundation
+* storage placement config extraction is aligned with the anchor's xCatalog physical layout,
+  object-store, and branch/log sidecar direction: catalog, storage, and log/manifest components can
+  share location and assignment options without depending on root storage-engine orchestration
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside

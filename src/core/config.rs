@@ -546,60 +546,6 @@ fn default_prune_type() -> String {
     "sqrt".to_string()
 }
 
-/// Storage location configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageLocation {
-    /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb")
-    pub url: String,
-
-    /// Weight for weighted distribution (default: 1)
-    pub weight: u32,
-
-    /// Tags for filtering (e.g., ["fast", "local"], ["cloud", "archive"])
-    pub tags: Vec<String>,
-}
-
-#[allow(dead_code)]
-fn default_weight() -> u32 {
-    1
-}
-
-impl Default for StorageLocation {
-    fn default() -> Self {
-        Self {
-            url: "file://./data".to_string(),
-            weight: 1,
-            tags: vec!["local".to_string()],
-        }
-    }
-}
-
-/// Assignment configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssignmentConfig {
-    /// Assignment strategy: "hash", "round-robin", "weighted"
-    pub strategy: String,
-    /// Keep all collection data together (WAL, data, index on same location)
-    pub affinity: bool,
-}
-
-fn default_assignment_strategy() -> String {
-    "hash".to_string()
-}
-
-fn default_affinity() -> bool {
-    true
-}
-
-impl Default for AssignmentConfig {
-    fn default() -> Self {
-        Self {
-            strategy: default_assignment_strategy(),
-            affinity: default_affinity(),
-        }
-    }
-}
-
 /// Performance optimization configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationConfig {
@@ -666,8 +612,9 @@ impl Default for OptimizationConfig {
 }
 
 pub use proximadb_config::{
-    AzureConfig, CloudStorageConfig, FilesystemOptimizationConfig, GcsConfig,
-    MetadataBackendConfig, MonitoringConfig, S3Config, TempStrategy, TransactionalOperationsConfig,
+    AssignmentConfig, AzureConfig, CloudStorageConfig, FilesystemOptimizationConfig, GcsConfig,
+    MetadataBackendConfig, MonitoringConfig, S3Config, StorageLocation, TempStrategy,
+    TransactionalOperationsConfig,
 };
 
 impl StorageConfig {

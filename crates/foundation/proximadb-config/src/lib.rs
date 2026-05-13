@@ -261,6 +261,48 @@ impl MonitoringConfig {
     }
 }
 
+/// Storage location configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageLocation {
+    /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb").
+    pub url: String,
+
+    /// Weight for weighted distribution.
+    pub weight: u32,
+
+    /// Tags for filtering (e.g., ["fast", "local"], ["cloud", "archive"]).
+    pub tags: Vec<String>,
+}
+
+impl Default for StorageLocation {
+    fn default() -> Self {
+        Self {
+            url: "file://./data".to_string(),
+            weight: 1,
+            tags: vec!["local".to_string()],
+        }
+    }
+}
+
+/// Assignment configuration for placing collection data across storage locations.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssignmentConfig {
+    /// Assignment strategy: "hash", "round-robin", "weighted".
+    pub strategy: String,
+
+    /// Keep all collection data together (WAL, data, index on same location).
+    pub affinity: bool,
+}
+
+impl Default for AssignmentConfig {
+    fn default() -> Self {
+        Self {
+            strategy: "hash".to_string(),
+            affinity: true,
+        }
+    }
+}
+
 /// WAL storage configuration supporting multiple directories and cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
@@ -414,5 +456,22 @@ mod tests {
         };
 
         assert_eq!(config.dashboard_refresh_interval(), 15);
+    }
+
+    #[test]
+    fn storage_location_defaults_match_root_runtime_expectations() {
+        let config = StorageLocation::default();
+
+        assert_eq!(config.url, "file://./data");
+        assert_eq!(config.weight, 1);
+        assert_eq!(config.tags, vec!["local"]);
+    }
+
+    #[test]
+    fn assignment_defaults_match_root_runtime_expectations() {
+        let config = AssignmentConfig::default();
+
+        assert_eq!(config.strategy, "hash");
+        assert!(config.affinity);
     }
 }
