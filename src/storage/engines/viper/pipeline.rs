@@ -2404,7 +2404,6 @@ impl CompactionEngine {
             let active_compactions = self.active_compactions.clone();
             let stats = self.stats.clone();
             let filesystem = self.filesystem.clone();
-            let config = self.config.clone();
             let mut shutdown_receiver = shutdown_rx.resubscribe();
 
             let handle = tokio::spawn(async move {
@@ -2415,7 +2414,6 @@ impl CompactionEngine {
                     active_compactions,
                     stats,
                     filesystem,
-                    config,
                     &mut shutdown_receiver,
                 )
                 .await;
@@ -2453,7 +2451,6 @@ impl CompactionEngine {
         active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
         stats: Arc<RwLock<CompactionStats>>,
         _filesystem: Arc<FilesystemFactory>,
-        _config: CompactionConfig,
         shutdown_receiver: &mut broadcast::Receiver<()>,
     ) {
         debug!("🔧 Compaction worker {} started", worker_id);

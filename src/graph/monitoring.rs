@@ -61,6 +61,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 
+const METRIC_EVENT_CHANNEL_CAPACITY: usize = 10_000;
+
 /// Main monitoring system for graph operations
 pub struct GraphMonitor {
     /// Metrics collection and reporting
@@ -72,7 +74,7 @@ pub struct GraphMonitor {
     /// Configuration
     config: MonitoringConfig,
     /// Metrics export channel
-    metrics_sender: Option<mpsc::UnboundedSender<MetricEvent>>,
+    metrics_sender: Option<mpsc::Sender<MetricEvent>>,
 }
 
 /// Configuration for monitoring system
@@ -389,7 +391,7 @@ impl GraphMonitor {
         }
 
         // Create metrics processing channel
-        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (sender, mut receiver) = mpsc::channel(METRIC_EVENT_CHANNEL_CAPACITY);
         self.metrics_sender = Some(sender);
 
         // Start metrics processing task
@@ -446,7 +448,7 @@ impl GraphMonitor {
                 metadata: metadata.clone(),
             };
 
-            if sender.send(event).is_err() {
+            if sender.try_send(event).is_err() {
                 eprintln!("Failed to send operation metric event");
             }
         }
@@ -625,7 +627,7 @@ impl GraphMonitor {
 
         if let Some(ref sender) = self.metrics_sender {
             let event = MetricEvent::BusinessUpdate(business_metrics);
-            if sender.send(event).is_err() {
+            if sender.try_send(event).is_err() {
                 eprintln!("Failed to send business metrics update");
             }
         }

@@ -20,6 +20,8 @@ use super::{
     store::MetricsPersistenceLayer,
 };
 
+const METRICS_UPDATE_CHANNEL_CAPACITY: usize = 10_000;
+
 /// Internal interface for updating metrics - not exposed to external users
 #[async_trait]
 pub trait InternalMetricsUpdater: Send + Sync {
@@ -175,7 +177,7 @@ pub enum MetricsUpdate {
 /// Async metrics updater that processes updates in the background
 pub struct AsyncMetricsUpdater {
     /// Channel for sending updates
-    tx: mpsc::UnboundedSender<MetricsUpdate>,
+    tx: mpsc::Sender<MetricsUpdate>,
 
     /// Metrics store (shared with reader)
     metrics_cache: Arc<RwLock<std::collections::HashMap<String, CollectionMetrics>>>,
@@ -191,8 +193,8 @@ impl AsyncMetricsUpdater {
     /// Create a new async metrics updater
     pub fn new(
         metrics_cache: Arc<RwLock<std::collections::HashMap<String, CollectionMetrics>>>,
-    ) -> (Self, mpsc::UnboundedReceiver<MetricsUpdate>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    ) -> (Self, mpsc::Receiver<MetricsUpdate>) {
+        let (tx, rx) = mpsc::channel(METRICS_UPDATE_CHANNEL_CAPACITY);
 
         let updater = Self {
             tx,
@@ -207,7 +209,7 @@ impl AsyncMetricsUpdater {
     /// Process updates from the channel
     pub async fn process_updates(
         &self,
-        mut rx: mpsc::UnboundedReceiver<MetricsUpdate>,
+        mut rx: mpsc::Receiver<MetricsUpdate>,
         store: Arc<super::store::MetricsPersistenceLayer>,
     ) {
         while let Some(update) = rx.recv().await {
@@ -447,8 +449,8 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
         collection_id: &str,
         update: OperationMetricsUpdate,
     ) -> Result<()> {
-        // Fire and forget - never block
-        let _ = self.tx.send(MetricsUpdate::Operation {
+        // Fire and forget: drop when saturated so metrics cannot OOM or block callers.
+        let _ = self.tx.try_send(MetricsUpdate::Operation {
             collection_id: collection_id.to_string(),
             update,
         });
@@ -456,7 +458,7 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
     }
 
     async fn record_search(&self, collection_id: &str, update: SearchMetricsUpdate) -> Result<()> {
-        let _ = self.tx.send(MetricsUpdate::Search {
+        let _ = self.tx.try_send(MetricsUpdate::Search {
             collection_id: collection_id.to_string(),
             update,
         });
@@ -464,7 +466,7 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
     }
 
     async fn record_flush(&self, collection_id: &str, update: FlushMetricsUpdate) -> Result<()> {
-        let _ = self.tx.send(MetricsUpdate::Flush {
+        let _ = self.tx.try_send(MetricsUpdate::Flush {
             collection_id: collection_id.to_string(),
             update,
         });
@@ -476,7 +478,7 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
         collection_id: &str,
         update: CompactionMetricsUpdate,
     ) -> Result<()> {
-        let _ = self.tx.send(MetricsUpdate::Compaction {
+        let _ = self.tx.try_send(MetricsUpdate::Compaction {
             collection_id: collection_id.to_string(),
             update,
         });
@@ -488,7 +490,7 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
         collection_id: &str,
         update: StorageMetricsUpdate,
     ) -> Result<()> {
-        let _ = self.tx.send(MetricsUpdate::Storage {
+        let _ = self.tx.try_send(MetricsUpdate::Storage {
             collection_id: collection_id.to_string(),
             update,
         });
@@ -500,7 +502,7 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
         collection_id: &str,
         update: DataCharacteristicsUpdate,
     ) -> Result<()> {
-        let _ = self.tx.send(MetricsUpdate::DataCharacteristics {
+        let _ = self.tx.try_send(MetricsUpdate::DataCharacteristics {
             collection_id: collection_id.to_string(),
             update,
         });
@@ -513,7 +515,7 @@ impl InternalMetricsUpdater for AsyncMetricsUpdater {
         column_name: &str,
         stats: FilterableColumnStats,
     ) -> Result<()> {
-        let _ = self.tx.send(MetricsUpdate::ColumnStats {
+        let _ = self.tx.try_send(MetricsUpdate::ColumnStats {
             collection_id: collection_id.to_string(),
             column_name: column_name.to_string(),
             stats,
