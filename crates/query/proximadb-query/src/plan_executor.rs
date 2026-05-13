@@ -6,12 +6,12 @@
 //! All other operators are passed through as no-ops in this phase; they are
 //! handled by the storage-engine pipeline in `compute::pipeline_executor`.
 
-use std::sync::Arc;
+use std::{cmp::Ordering, collections::BTreeMap, sync::Arc};
 
 use anyhow::{Result, anyhow};
 use proximadb_data_model::DataModel;
 use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
-use proximadb_multimodel_plan::{MultiModelPlan, Operator};
+use proximadb_multimodel_plan::{AggregateExpression, AggregateFunction, MultiModelPlan, Operator};
 use serde_json::{Map, Value};
 
 use crate::operators::{
@@ -214,8 +214,28 @@ impl PlanExecutor {
                 ctx.current_rows = rows.into_iter().skip(*offset).take(*n).collect();
             }
 
-            Operator::TopK { k, .. } => {
+            Operator::Sort {
+                column,
+                ascending,
+                limit,
+            } => {
+                Self::sort_rows(&mut ctx.current_rows, column, *ascending);
+                if let Some(limit) = limit {
+                    ctx.current_rows.truncate(*limit);
+                }
+            }
+
+            Operator::TopK { k, sort_column } => {
+                Self::sort_rows(&mut ctx.current_rows, sort_column, false);
                 ctx.current_rows.truncate(*k);
+            }
+
+            Operator::Aggregate {
+                group_by,
+                aggregates,
+                ..
+            } => {
+                ctx.current_rows = Self::aggregate_rows(&ctx.current_rows, group_by, aggregates)?;
             }
 
             // All other operators are no-ops in Phase D (handled by PipelineExecutor)
@@ -228,6 +248,152 @@ impl PlanExecutor {
             }
         }
         Ok(())
+    }
+
+    fn sort_rows(rows: &mut [Value], column: &str, ascending: bool) {
+        rows.sort_by(|left, right| {
+            let ordering = Self::compare_json_values(
+                Self::field_value(left, column),
+                Self::field_value(right, column),
+            );
+            if ascending {
+                ordering
+            } else {
+                ordering.reverse()
+            }
+        });
+    }
+
+    fn aggregate_rows(
+        rows: &[Value],
+        group_by: &[String],
+        aggregates: &[AggregateExpression],
+    ) -> Result<Vec<Value>> {
+        let mut groups: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+        for row in rows {
+            let key = Self::group_key(row, group_by)?;
+            groups.entry(key).or_default().push(row);
+        }
+
+        let mut out = Vec::with_capacity(groups.len());
+        for (_key, group_rows) in groups {
+            let mut row = Map::new();
+            if let Some(first) = group_rows.first() {
+                for column in group_by {
+                    if let Some(value) = Self::field_value(first, column) {
+                        row.insert(column.clone(), value.clone());
+                    }
+                }
+            }
+
+            for aggregate in aggregates {
+                let name = aggregate
+                    .alias
+                    .clone()
+                    .unwrap_or_else(|| Self::aggregate_column_name(aggregate));
+                let value = Self::evaluate_aggregate(&group_rows, aggregate)?;
+                row.insert(name, value);
+            }
+
+            out.push(Value::Object(row));
+        }
+        Ok(out)
+    }
+
+    fn group_key(row: &Value, group_by: &[String]) -> Result<String> {
+        let values: Vec<Value> = group_by
+            .iter()
+            .map(|column| {
+                Self::field_value(row, column)
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            })
+            .collect();
+        serde_json::to_string(&values).map_err(Into::into)
+    }
+
+    fn aggregate_column_name(aggregate: &AggregateExpression) -> String {
+        let function = match aggregate.function {
+            AggregateFunction::Count => "count",
+            AggregateFunction::Sum => "sum",
+            AggregateFunction::Avg => "avg",
+            AggregateFunction::Min => "min",
+            AggregateFunction::Max => "max",
+            AggregateFunction::StdDev => "stddev",
+            AggregateFunction::Variance => "variance",
+            AggregateFunction::ArrayAgg => "array_agg",
+        };
+        format!("{}_{}", function, aggregate.column)
+    }
+
+    fn evaluate_aggregate(rows: &[&Value], aggregate: &AggregateExpression) -> Result<Value> {
+        match aggregate.function {
+            AggregateFunction::Count => {
+                if aggregate.distinct {
+                    let mut values = BTreeMap::new();
+                    for row in rows {
+                        if let Some(value) = Self::field_value(row, &aggregate.column) {
+                            values.insert(serde_json::to_string(value)?, ());
+                        }
+                    }
+                    Ok(serde_json::json!(values.len()))
+                } else {
+                    let count = rows
+                        .iter()
+                        .filter(|row| {
+                            Self::field_value(row, &aggregate.column)
+                                .is_some_and(|value| !value.is_null())
+                        })
+                        .count();
+                    Ok(serde_json::json!(count))
+                }
+            }
+            AggregateFunction::Sum => {
+                let sum: f64 = rows
+                    .iter()
+                    .filter_map(|row| Self::field_value(row, &aggregate.column)?.as_f64())
+                    .sum();
+                Ok(serde_json::json!(sum))
+            }
+            AggregateFunction::Avg => {
+                let values: Vec<f64> = rows
+                    .iter()
+                    .filter_map(|row| Self::field_value(row, &aggregate.column)?.as_f64())
+                    .collect();
+                let avg = if values.is_empty() {
+                    Value::Null
+                } else {
+                    serde_json::json!(values.iter().sum::<f64>() / values.len() as f64)
+                };
+                Ok(avg)
+            }
+            AggregateFunction::Min => Ok(rows
+                .iter()
+                .filter_map(|row| Self::field_value(row, &aggregate.column).cloned())
+                .min_by(|left, right| Self::compare_json_values(Some(left), Some(right)))
+                .unwrap_or(Value::Null)),
+            AggregateFunction::Max => Ok(rows
+                .iter()
+                .filter_map(|row| Self::field_value(row, &aggregate.column).cloned())
+                .max_by(|left, right| Self::compare_json_values(Some(left), Some(right)))
+                .unwrap_or(Value::Null)),
+            AggregateFunction::ArrayAgg => {
+                let mut values: Vec<Value> = rows
+                    .iter()
+                    .filter_map(|row| Self::field_value(row, &aggregate.column).cloned())
+                    .collect();
+                if aggregate.distinct {
+                    values
+                        .sort_by(|left, right| Self::compare_json_values(Some(left), Some(right)));
+                    values.dedup();
+                }
+                Ok(Value::Array(values))
+            }
+            AggregateFunction::StdDev | AggregateFunction::Variance => Err(anyhow!(
+                "{:?} aggregate is not implemented in row executor yet",
+                aggregate.function
+            )),
+        }
     }
 
     fn project_row(row: &Value, columns: &[String]) -> Value {
@@ -326,7 +492,7 @@ impl PlanExecutor {
 
     fn compare_ordering<F>(field_value: Option<&Value>, expected: &Value, predicate: F) -> bool
     where
-        F: FnOnce(std::cmp::Ordering) -> bool,
+        F: FnOnce(Ordering) -> bool,
     {
         let Some(field_value) = field_value else {
             return false;
@@ -340,6 +506,22 @@ impl PlanExecutor {
             _ => None,
         };
         ordering.is_some_and(predicate)
+    }
+
+    fn compare_json_values(left: Option<&Value>, right: Option<&Value>) -> Ordering {
+        match (left, right) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(Value::Number(left)), Some(Value::Number(right))) => left
+                .as_f64()
+                .zip(right.as_f64())
+                .and_then(|(left, right)| left.partial_cmp(&right))
+                .unwrap_or(Ordering::Equal),
+            (Some(Value::String(left)), Some(Value::String(right))) => left.cmp(right),
+            (Some(Value::Bool(left)), Some(Value::Bool(right))) => left.cmp(right),
+            (Some(left), Some(right)) => left.to_string().cmp(&right.to_string()),
+        }
     }
 
     fn matches_like_pattern(text: &str, pattern: &str) -> bool {
@@ -382,7 +564,8 @@ mod tests {
     use proximadb_data_model::DataModel as PlanDataModel;
     use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use proximadb_multimodel_plan::{
-        EdgePattern, JoinCondition, PlanContext, TraversalDirection, VectorMetric,
+        AggregateExpression, AggregateFunction, EdgePattern, JoinCondition, PlanContext,
+        TraversalDirection, VectorMetric,
     };
 
     // ── Mock data source ─────────────────────────────────────────────────────
@@ -684,5 +867,108 @@ mod tests {
         assert_eq!(result.operator_stats[0].rows_out, 1);
         assert_eq!(result.operator_stats[1].rows_in, 1);
         assert_eq!(result.operator_stats[1].rows_out, 1);
+    }
+
+    #[test]
+    fn test_sort_and_topk_rank_json_rows() {
+        let vector_rows = vec![
+            serde_json::json!({ "id": "v1", "score": 0.20 }),
+            serde_json::json!({ "id": "v2", "score": 0.95 }),
+            serde_json::json!({ "id": "v3", "score": 0.70 }),
+            serde_json::json!({ "id": "v4" }),
+        ];
+
+        let plan = MultiModelPlan::new(
+            vec![
+                Operator::Scan {
+                    source: "vector".to_string(),
+                    data_model: PlanDataModel::Vector,
+                    filter: None,
+                    columns: None,
+                },
+                Operator::Sort {
+                    column: "score".to_string(),
+                    ascending: true,
+                    limit: Some(3),
+                },
+                Operator::TopK {
+                    k: 2,
+                    sort_column: "score".to_string(),
+                },
+            ],
+            plan_ctx(),
+        );
+
+        let mut ctx = make_context(vector_rows, vec![]);
+        let result = PlanExecutor::execute(&plan, &mut ctx).unwrap();
+
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0]["id"], "v2");
+        assert_eq!(result.rows[1]["id"], "v3");
+        assert_eq!(result.operator_stats[1].rows_out, 3);
+        assert_eq!(result.operator_stats[2].rows_out, 2);
+    }
+
+    #[test]
+    fn test_aggregate_groups_and_computes_basic_functions() {
+        let vector_rows = vec![
+            serde_json::json!({ "tenant": "acme", "score": 0.20, "kind": "event" }),
+            serde_json::json!({ "tenant": "acme", "score": 0.80, "kind": "event" }),
+            serde_json::json!({ "tenant": "globex", "score": 0.50, "kind": "checkpoint" }),
+        ];
+
+        let plan = MultiModelPlan::new(
+            vec![
+                Operator::Scan {
+                    source: "vector".to_string(),
+                    data_model: PlanDataModel::Vector,
+                    filter: None,
+                    columns: None,
+                },
+                Operator::Aggregate {
+                    group_by: vec!["tenant".to_string()],
+                    aggregates: vec![
+                        AggregateExpression {
+                            function: AggregateFunction::Count,
+                            column: "score".to_string(),
+                            alias: Some("row_count".to_string()),
+                            distinct: false,
+                        },
+                        AggregateExpression {
+                            function: AggregateFunction::Avg,
+                            column: "score".to_string(),
+                            alias: Some("avg_score".to_string()),
+                            distinct: false,
+                        },
+                        AggregateExpression {
+                            function: AggregateFunction::ArrayAgg,
+                            column: "kind".to_string(),
+                            alias: Some("kinds".to_string()),
+                            distinct: true,
+                        },
+                    ],
+                    alias: None,
+                },
+                Operator::Sort {
+                    column: "tenant".to_string(),
+                    ascending: true,
+                    limit: None,
+                },
+            ],
+            plan_ctx(),
+        );
+
+        let mut ctx = make_context(vector_rows, vec![]);
+        let result = PlanExecutor::execute(&plan, &mut ctx).unwrap();
+
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(result.rows[0]["tenant"], "acme");
+        assert_eq!(result.rows[0]["row_count"], 2);
+        assert_eq!(result.rows[0]["avg_score"], 0.5);
+        assert_eq!(result.rows[0]["kinds"], serde_json::json!(["event"]));
+        assert_eq!(result.rows[1]["tenant"], "globex");
+        assert_eq!(result.rows[1]["row_count"], 1);
+        assert_eq!(result.operator_stats[1].rows_in, 3);
+        assert_eq!(result.operator_stats[1].rows_out, 2);
     }
 }
