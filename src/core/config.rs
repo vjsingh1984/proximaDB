@@ -680,7 +680,7 @@ impl Default for OptimizationConfig {
 
 pub use proximadb_config::{
     AzureConfig, CloudStorageConfig, FilesystemOptimizationConfig, GcsConfig,
-    MetadataBackendConfig, S3Config, TempStrategy, TransactionalOperationsConfig,
+    MetadataBackendConfig, MonitoringConfig, S3Config, TempStrategy, TransactionalOperationsConfig,
 };
 
 impl StorageConfig {
@@ -1393,39 +1393,6 @@ fn default_concurrent_flushes() -> Option<usize> {
 #[allow(dead_code)]
 fn default_global_shrink_factor() -> Option<f64> {
     Some(0.4) // 40% shrink factor - recommended for global threshold management
-}
-
-/// Observability and monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitoringConfig {
-    /// Whether Prometheus metrics collection is enabled
-    pub metrics_enabled: bool,
-    /// Default tracing log level (e.g., "info", "debug", "trace")
-    pub log_level: String,
-    /// Dashboard refresh interval in seconds (default: 60, minimum: 15)
-    #[serde(default = "default_dashboard_refresh_interval")]
-    pub dashboard_refresh_interval_seconds: u64,
-}
-
-fn default_dashboard_refresh_interval() -> u64 {
-    60
-}
-
-impl Default for MonitoringConfig {
-    fn default() -> Self {
-        Self {
-            metrics_enabled: true,
-            log_level: "info".to_string(),
-            dashboard_refresh_interval_seconds: 60,
-        }
-    }
-}
-
-impl MonitoringConfig {
-    /// Get dashboard refresh interval, ensuring it's at least 15 seconds
-    pub fn dashboard_refresh_interval(&self) -> u64 {
-        self.dashboard_refresh_interval_seconds.max(15)
-    }
 }
 
 /// Query processing configuration

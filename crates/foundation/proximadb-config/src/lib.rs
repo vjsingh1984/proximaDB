@@ -199,6 +199,41 @@ impl Default for TransactionalOperationsConfig {
     }
 }
 
+/// Observability and monitoring configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitoringConfig {
+    /// Whether Prometheus metrics collection is enabled.
+    pub metrics_enabled: bool,
+
+    /// Default tracing log level (e.g., "info", "debug", "trace").
+    pub log_level: String,
+
+    /// Dashboard refresh interval in seconds.
+    #[serde(default = "default_dashboard_refresh_interval")]
+    pub dashboard_refresh_interval_seconds: u64,
+}
+
+fn default_dashboard_refresh_interval() -> u64 {
+    60
+}
+
+impl Default for MonitoringConfig {
+    fn default() -> Self {
+        Self {
+            metrics_enabled: true,
+            log_level: "info".to_string(),
+            dashboard_refresh_interval_seconds: 60,
+        }
+    }
+}
+
+impl MonitoringConfig {
+    /// Get dashboard refresh interval, ensuring it is at least 15 seconds.
+    pub fn dashboard_refresh_interval(&self) -> u64 {
+        self.dashboard_refresh_interval_seconds.max(15)
+    }
+}
+
 /// WAL storage configuration supporting multiple directories and cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
@@ -322,5 +357,25 @@ mod tests {
         assert!(config.atomic_config.enable_local_atomic);
         assert!(config.atomic_config.enable_object_store_atomic);
         assert!(config.atomic_config.cleanup_temp_on_startup);
+    }
+
+    #[test]
+    fn monitoring_defaults_match_root_runtime_expectations() {
+        let config = MonitoringConfig::default();
+
+        assert!(config.metrics_enabled);
+        assert_eq!(config.log_level, "info");
+        assert_eq!(config.dashboard_refresh_interval_seconds, 60);
+        assert_eq!(config.dashboard_refresh_interval(), 60);
+    }
+
+    #[test]
+    fn monitoring_dashboard_refresh_interval_has_minimum() {
+        let config = MonitoringConfig {
+            dashboard_refresh_interval_seconds: 1,
+            ..MonitoringConfig::default()
+        };
+
+        assert_eq!(config.dashboard_refresh_interval(), 15);
     }
 }

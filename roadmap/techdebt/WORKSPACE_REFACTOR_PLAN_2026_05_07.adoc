@@ -815,6 +815,9 @@ Current status after the first refinement:
   `TransactionalOperationsConfig`); root keeps compatibility re-exports while concrete temp-path
   generation, atomic write execution, object-store semantics, and cleanup behavior remain in storage
   runtime code
+* `proximadb-config` now owns the root observability runtime option contract
+  (`MonitoringConfig`); root keeps a compatibility re-export while metrics exporters, tracing
+  setup, dashboard refresh execution, and telemetry collection remain in runtime/telemetry layers
 * the full root `Config` remains in root for now because it still composes AI, network, security,
   query, storage-engine, and runtime conversion behavior; only validated, serializable, low-level
   config contracts should move into `proximadb-config` until those dependencies are split
@@ -832,6 +835,9 @@ Current status after the first refinement:
 * filesystem optimization config extraction is aligned with the anchor's disaggregated storage and
   object-store roadmap: shared config can describe local/object-store write semantics for storage,
   catalog, and log/manifest sidecars without pulling filesystem implementations into foundation
+* monitoring config extraction is aligned with the anchor's policy-once and cross-surface
+  operational roadmap: REST, gRPC, pgwire, Arrow Flight, streaming, catalog, and compute sidecars
+  can share observability options without depending on root server bootstrap or telemetry exporters
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside
