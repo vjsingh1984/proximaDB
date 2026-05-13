@@ -1167,7 +1167,7 @@ impl SqlFrontendParser {
     ) -> Result<DmlStatement> {
         // Get table name
         let table_name = match &table.relation {
-            TableFactor::Table { name, .. } => name.to_string(),
+            TableFactor::Table { name, .. } => unquote_object_name(&name.to_string()),
             _ => return Err(anyhow!("UPDATE requires a table name")),
         };
 
@@ -1205,7 +1205,7 @@ impl SqlFrontendParser {
                 Ok(names
                     .0
                     .iter()
-                    .map(|n| n.to_string())
+                    .map(|n| unquote_identifier_text(&n.to_string()))
                     .collect::<Vec<_>>()
                     .join("."))
             }
@@ -1229,7 +1229,7 @@ impl SqlFrontendParser {
             FromTable::WithFromKeyword(tables) => {
                 if let Some(first) = tables.first() {
                     match &first.relation {
-                        TableFactor::Table { name, .. } => name.to_string(),
+                        TableFactor::Table { name, .. } => unquote_object_name(&name.to_string()),
                         _ => return Err(anyhow!("DELETE requires a table name")),
                     }
                 } else {
@@ -1239,7 +1239,7 @@ impl SqlFrontendParser {
             FromTable::WithoutKeyword(tables) => {
                 if let Some(first) = tables.first() {
                     match &first.relation {
-                        TableFactor::Table { name, .. } => name.to_string(),
+                        TableFactor::Table { name, .. } => unquote_object_name(&name.to_string()),
                         _ => return Err(anyhow!("DELETE requires a table name")),
                     }
                 } else {
@@ -1609,6 +1609,44 @@ mod tests {
     }
 
     #[test]
+    fn parse_dml_update_supports_quoted_catalog_names_jsonb_and_vector_literal() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "UPDATE \"agent_store\"
+                 SET \"payload\" = '{\"kind\":\"updated\"}'::jsonb,
+                     \"embedding\" = '[0.1, 0.2]'::vector(2)
+                 WHERE \"record_id\" = 'r1';",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected update dml");
+
+        match statement {
+            DmlStatement::Update {
+                table_name,
+                assignments,
+                where_clause: Some(where_clause),
+            } => {
+                assert_eq!(table_name, "agent_store");
+                assert_eq!(assignments.len(), 2);
+                assert_eq!(assignments[0].0, "payload");
+                assert!(matches!(assignments[0].1, SqlValueLiteral::String(_)));
+                assert_eq!(assignments[1].0, "embedding");
+                assert!(matches!(assignments[1].1, SqlValueLiteral::String(_)));
+                match &where_clause.conditions[0] {
+                    Condition::Comparison { column, value, .. } => {
+                        assert_eq!(column, "record_id");
+                        assert!(matches!(value, SqlValueLiteral::String(id) if id == "r1"));
+                    }
+                    other => panic!("expected comparison condition, got {other:?}"),
+                }
+            }
+            other => panic!("expected update statement, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_dml_delete_preserves_catalog_primary_key_column() {
         let parser = SqlFrontendParser::new();
 
@@ -1635,6 +1673,23 @@ mod tests {
                     }
                     other => panic!("expected IN condition, got {other:?}"),
                 }
+            }
+            other => panic!("expected delete statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_delete_unquotes_catalog_table_name() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml("DELETE FROM \"agent_store\" WHERE record_id = 'r1';")
+            .expect("expected dml parse to succeed")
+            .expect("expected delete dml");
+
+        match statement {
+            DmlStatement::Delete { table_name, .. } => {
+                assert_eq!(table_name, "agent_store");
             }
             other => panic!("expected delete statement, got {other:?}"),
         }
