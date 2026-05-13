@@ -54,6 +54,10 @@ pub enum FlightWriteOperation {
 
 impl FlightWriteOperation {
     pub fn from_token(token: &str) -> Option<Self> {
+        let token = token.trim().to_ascii_lowercase();
+        let token = token
+            .strip_prefix("batch_write_mode_")
+            .unwrap_or(token.as_str());
         match token {
             "upsert" | "batch_upsert" | "bulk_upsert" => Some(Self::Upsert),
             "insert" | "batch_insert" | "bulk_insert" => Some(Self::Insert),
@@ -204,13 +208,14 @@ impl ArrowProtoCodec {
     }
 
     fn batch_to_proxima_records(batch: &RecordBatch) -> Result<Vec<ProximaRecord>> {
-        let id_array = batch
-            .column_by_name("id")
-            .or_else(|| batch.column_by_name("oid"))
-            .context("Missing 'id' or 'oid' column")?
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .context("'id'/'oid' column is not StringArray")?;
+        let ids = Self::required_string_column_values(
+            batch
+                .column_by_name("id")
+                .or_else(|| batch.column_by_name("oid"))
+                .context("Missing 'id' or 'oid' column")?,
+            "id/oid",
+            batch.num_rows(),
+        )?;
 
         let vectors = if let Some(vector_array) = batch.column_by_name("vector") {
             Some(Self::extract_vectors(vector_array, batch.num_rows())?)
@@ -225,11 +230,7 @@ impl ArrowProtoCodec {
 
         let mut records = Vec::with_capacity(batch.num_rows());
         for row in 0..batch.num_rows() {
-            if id_array.is_null(row) {
-                return Err(anyhow::anyhow!("Record id is null at row {}", row));
-            }
-
-            let oid = id_array.value(row).to_string();
+            let oid = ids[row].clone();
             let mut record = ProximaRecord {
                 oid: oid.clone(),
                 local_id: Some(oid),
@@ -418,15 +419,7 @@ impl ArrowProtoCodec {
         let Some(array) = batch.column_by_name(column) else {
             return Ok(None);
         };
-        let array = array
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .with_context(|| format!("'{column}' column is not StringArray"))?;
-        if array.is_null(row) {
-            Ok(None)
-        } else {
-            Ok(Some(array.value(row).to_string()))
-        }
+        Self::optional_string_value(array, column, row)
     }
 
     fn int64_value(batch: &RecordBatch, column: &str, row: usize) -> Result<Option<i64>> {
@@ -448,19 +441,32 @@ impl ArrowProtoCodec {
         let Some(array) = batch.column_by_name(column) else {
             return Ok(vec![None; batch.num_rows()]);
         };
-        let array = array
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .with_context(|| format!("'{column}' column is not StringArray"))?;
         Ok((0..batch.num_rows())
+            .map(|row| Self::optional_string_value(array, column, row))
+            .collect::<Result<Vec<_>>>()?)
+    }
+
+    fn optional_string_value(array: &ArrayRef, column: &str, row: usize) -> Result<Option<String>> {
+        if let Some(array) = array.as_any().downcast_ref::<StringArray>() {
+            return Ok((!array.is_null(row)).then(|| array.value(row).to_string()));
+        }
+        if let Some(array) = array.as_any().downcast_ref::<LargeStringArray>() {
+            return Ok((!array.is_null(row)).then(|| array.value(row).to_string()));
+        }
+        Err(anyhow::anyhow!("'{column}' column is not Utf8/LargeUtf8"))
+    }
+
+    fn required_string_column_values(
+        array: &ArrayRef,
+        column: &str,
+        num_rows: usize,
+    ) -> Result<Vec<String>> {
+        (0..num_rows)
             .map(|row| {
-                if array.is_null(row) {
-                    None
-                } else {
-                    Some(array.value(row).to_string())
-                }
+                Self::optional_string_value(array, column, row)?
+                    .ok_or_else(|| anyhow::anyhow!("Record id is null at row {}", row))
             })
-            .collect())
+            .collect()
     }
 
     fn optional_float64_values(batch: &RecordBatch, column: &str) -> Result<Vec<Option<f64>>> {
@@ -1525,6 +1531,68 @@ mod tests {
                 1_700_000_000_000_000_000,
                 TimeUnit::Nanosecond
             )))
+        );
+    }
+
+    #[test]
+    fn test_batches_to_proxima_records_accepts_large_utf8_envelope_columns() {
+        let ids = LargeStringArray::from(vec!["rich_large_1"]);
+        let tenant_ids = LargeStringArray::from(vec!["tenant-a"]);
+        let origins = LargeStringArray::from(vec!["pyarrow"]);
+        let source_ids = LargeStringArray::from(vec!["node-a"]);
+        let target_ids = LargeStringArray::from(vec!["node-b"]);
+        let edge_types = LargeStringArray::from(vec!["depends_on"]);
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("oid", DataType::LargeUtf8, false),
+            Field::new("tenant_id", DataType::LargeUtf8, false),
+            Field::new("origin", DataType::LargeUtf8, false),
+            Field::new("source_id", DataType::LargeUtf8, false),
+            Field::new("target_id", DataType::LargeUtf8, false),
+            Field::new("edge_type", DataType::LargeUtf8, false),
+        ]));
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(ids),
+                Arc::new(tenant_ids),
+                Arc::new(origins),
+                Arc::new(source_ids),
+                Arc::new(target_ids),
+                Arc::new(edge_types),
+            ],
+        )
+        .unwrap();
+
+        let records = ArrowProtoCodec::batches_to_proxima_records(vec![batch]).unwrap();
+        let record = &records[0];
+
+        assert_eq!(record.oid, "rich_large_1");
+        assert_eq!(record.local_id.as_deref(), Some("rich_large_1"));
+        assert_eq!(record.tenant_id, "tenant-a");
+        assert_eq!(record.origin.as_deref(), Some("pyarrow"));
+        assert_eq!(
+            record.edge.as_ref().map(|edge| {
+                (
+                    edge.source_id.as_str(),
+                    edge.target_id.as_str(),
+                    edge.edge_type.as_str(),
+                )
+            }),
+            Some(("node-a", "node-b", "depends_on"))
+        );
+    }
+
+    #[test]
+    fn test_flight_write_operation_accepts_v2_enum_tokens() {
+        assert_eq!(
+            FlightWriteOperation::from_token("UPSERT"),
+            Some(FlightWriteOperation::Upsert)
+        );
+        assert_eq!(
+            FlightWriteOperation::from_token("BATCH_WRITE_MODE_DELETE"),
+            Some(FlightWriteOperation::Delete)
         );
     }
 
