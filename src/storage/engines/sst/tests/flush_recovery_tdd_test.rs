@@ -26,7 +26,7 @@ mod tests {
         Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
         StorageAssignment, StorageConfig, VectorRecord,
     };
-    use crate::storage::engines::sst::{SstConfig, core::SstEngine, SstableHeader};
+    use crate::storage::engines::sst::{SstConfig, SstableHeader, core::SstEngine};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
@@ -282,10 +282,7 @@ mod tests {
 
         assert!(!sst_files.is_empty(), "Should have SST files");
 
-        info!(
-            "✅ Flush completed with {} SST files",
-            sst_files.len()
-        );
+        info!("✅ Flush completed with {} SST files", sst_files.len());
 
         // Note: To fully verify centroid, we would need to read the SST header
         // The centroid computation is verified via logs during flush
@@ -359,7 +356,10 @@ mod tests {
 
         // First result should be the query vector itself (exact match)
         let first_result = &results[0];
-        assert_eq!(first_result.id, "vec_0", "First result should be vec_0 (exact match)");
+        assert_eq!(
+            first_result.id, "vec_0",
+            "First result should be vec_0 (exact match)"
+        );
         assert!(
             first_result.score < 0.001,
             "Exact match should have score close to 0, got {}",
@@ -437,18 +437,14 @@ mod tests {
         let results = engine.search_vectors_unified(&ctx).await?;
 
         // Should find results (may have lower recall in approximate mode)
-        info!(
-            "✅ Approximate search returned {} results",
-            results.len()
-        );
+        info!("✅ Approximate search returned {} results", results.len());
 
         // The first result should still be reasonably good
         if !results.is_empty() {
             let first_result = &results[0];
             info!(
                 "  Top match: {} (score: {:.6})",
-                first_result.id,
-                first_result.score
+                first_result.id, first_result.score
             );
 
             // With only one SST file, approximate should still find exact match
@@ -513,7 +509,11 @@ mod tests {
             };
 
             let flush_result = engine.do_flush(&flush_params).await?;
-            assert!(flush_result.success, "Batch {} flush should succeed", batch_idx);
+            assert!(
+                flush_result.success,
+                "Batch {} flush should succeed",
+                batch_idx
+            );
             total_flushed += flush_result.entries_flushed.unwrap_or(0);
 
             info!(
@@ -727,10 +727,8 @@ mod tests {
             };
 
             let exact_results = engine.search_vectors_unified(&exact_ctx).await?;
-            let ground_truth: std::collections::HashSet<_> = exact_results
-                .iter()
-                .map(|r| r.id.clone())
-                .collect();
+            let ground_truth: std::collections::HashSet<_> =
+                exact_results.iter().map(|r| r.id.clone()).collect();
 
             // Get approximate results
             let approx_params = Arc::new(SearchParams {
@@ -756,10 +754,8 @@ mod tests {
             let approx_results = engine.search_vectors_unified(&approx_ctx).await?;
 
             // Calculate recall
-            let approx_ids: std::collections::HashSet<_> = approx_results
-                .iter()
-                .map(|r| r.id.clone())
-                .collect();
+            let approx_ids: std::collections::HashSet<_> =
+                approx_results.iter().map(|r| r.id.clone()).collect();
 
             let intersection = ground_truth.intersection(&approx_ids).count();
             let recall = if !ground_truth.is_empty() {
@@ -778,11 +774,7 @@ mod tests {
         }
 
         let avg_recall = total_recall / num_queries as f64;
-        info!(
-            "✅ Average Recall@{}: {:.2}%",
-            k,
-            avg_recall * 100.0
-        );
+        info!("✅ Average Recall@{}: {:.2}%", k, avg_recall * 100.0);
 
         // With a single SST file, recall should be 100%
         // With multiple SST files, approximate might have lower recall

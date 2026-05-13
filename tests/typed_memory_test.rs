@@ -232,7 +232,10 @@ async fn test_aql_type_filtering_reduces_topic_bleed() {
 
             let mut row1 = HashMap::new();
             row1.insert("id".to_string(), AqlValue::String("pref1".to_string()));
-            row1.insert("memory_type".to_string(), AqlValue::String("preference".to_string()));
+            row1.insert(
+                "memory_type".to_string(),
+                AqlValue::String("preference".to_string()),
+            );
             row1.insert(
                 "text".to_string(),
                 AqlValue::String("release notes should mention deprecation".to_string()),
@@ -241,7 +244,10 @@ async fn test_aql_type_filtering_reduces_topic_bleed() {
 
             let mut row2 = HashMap::new();
             row2.insert("id".to_string(), AqlValue::String("fact1".to_string()));
-            row2.insert("memory_type".to_string(), AqlValue::String("fact".to_string()));
+            row2.insert(
+                "memory_type".to_string(),
+                AqlValue::String("fact".to_string()),
+            );
             row2.insert(
                 "text".to_string(),
                 AqlValue::String("release notes should mention deprecation".to_string()),
@@ -250,7 +256,10 @@ async fn test_aql_type_filtering_reduces_topic_bleed() {
 
             let mut row3 = HashMap::new();
             row3.insert("id".to_string(), AqlValue::String("decision1".to_string()));
-            row3.insert("memory_type".to_string(), AqlValue::String("decision".to_string()));
+            row3.insert(
+                "memory_type".to_string(),
+                AqlValue::String("decision".to_string()),
+            );
             row3.insert(
                 "text".to_string(),
                 AqlValue::String("release notes should mention deprecation".to_string()),
@@ -312,7 +321,10 @@ async fn test_aql_type_filtering_reduces_topic_bleed() {
 
     let (filtered, _) = executor.execute(query_with_type).await.unwrap();
     assert_eq!(filtered.rows.len(), 1);
-    assert_eq!(filtered.rows[0].get("id"), Some(&AqlValue::String("decision1".to_string())));
+    assert_eq!(
+        filtered.rows[0].get("id"),
+        Some(&AqlValue::String("decision1".to_string()))
+    );
 }
 
 #[tokio::test]
@@ -352,7 +364,10 @@ async fn test_aql_type_filtering_preserves_intent_recall() {
                 [
                     ("id", AqlValue::String("decision-2".to_string())),
                     ("memory_type", AqlValue::String("decision".to_string())),
-                    ("text", AqlValue::String("enable fallback safety".to_string())),
+                    (
+                        "text",
+                        AqlValue::String("enable fallback safety".to_string()),
+                    ),
                 ],
                 [
                     ("id", AqlValue::String("decision-3".to_string())),
@@ -402,7 +417,11 @@ async fn test_aql_type_filtering_preserves_intent_recall() {
     };
 
     let (decision_rows, _) = executor.execute(decision_context_query).await.unwrap();
-    assert_eq!(decision_rows.rows.len(), 2, "should return all matching decision memories");
+    assert_eq!(
+        decision_rows.rows.len(),
+        2,
+        "should return all matching decision memories"
+    );
     let returned_ids: Vec<&str> = decision_rows
         .rows
         .iter()
@@ -418,14 +437,14 @@ async fn test_aql_type_filtering_preserves_intent_recall() {
 
 #[tokio::test]
 async fn test_aql_type_filtering_integration_full_path() {
-    use std::collections::HashMap;
     use proximadb::proto::proximadb_v1::sql_value::Value as SqlValueData;
     use proximadb::proto::proximadb_v1::{DocumentCollectionConfig, SqlObject, SqlValue};
-    use proximadb::query::aql::executor::AqlExecutor;
     use proximadb::query::aql;
+    use proximadb::query::aql::executor::AqlExecutor;
     use proximadb::query::aql::sources::document::DocumentAqlSource;
     use proximadb::storage::document::DocumentService;
     use proximadb::storage::engines::sst::SstEngine;
+    use std::collections::HashMap;
 
     let collection_id = format!("typed_mem_full_aql_{}", Uuid::new_v4().simple());
 
@@ -447,7 +466,7 @@ async fn test_aql_type_filtering_integration_full_path() {
     fact.insert(
         "memory_type".to_string(),
         SqlValue {
-            value: Some(SqlValueData::StringValue(MemoryType::Fact.as_str().to_string())),
+            value: Some(SqlValueData::StringValue(MemoryType::Fact.to_string())),
         },
     );
     fact.insert(
@@ -462,9 +481,7 @@ async fn test_aql_type_filtering_integration_full_path() {
     decision.insert(
         "memory_type".to_string(),
         SqlValue {
-            value: Some(SqlValueData::StringValue(
-                MemoryType::Decision.as_str().to_string(),
-            )),
+            value: Some(SqlValueData::StringValue(MemoryType::Decision.to_string())),
         },
     );
     decision.insert(
@@ -479,31 +496,27 @@ async fn test_aql_type_filtering_integration_full_path() {
     error.insert(
         "memory_type".to_string(),
         SqlValue {
-            value: Some(SqlValueData::StringValue(MemoryType::Error.as_str().to_string())),
+            value: Some(SqlValueData::StringValue(MemoryType::Error.to_string())),
         },
     );
     error.insert(
         "text".to_string(),
         SqlValue {
-            value: Some(SqlValueData::StringValue("error note should not match decision".to_string())),
+            value: Some(SqlValueData::StringValue(
+                "error note should not match decision".to_string(),
+            )),
         },
     );
 
     document_service
-        .insert_document(
-            &collection_id,
-            Some("mem-fact"),
-            SqlObject { fields: fact },
-        )
+        .insert_document(&collection_id, Some("mem-fact"), SqlObject { fields: fact })
         .await
         .unwrap();
     document_service
         .insert_document(
             &collection_id,
             Some("mem-decision"),
-            SqlObject {
-                fields: decision,
-            },
+            SqlObject { fields: decision },
         )
         .await
         .unwrap();
@@ -542,14 +555,21 @@ async fn test_aql_type_filtering_integration_full_path() {
 
     let (result, trail) = executor.execute(query).await.unwrap();
 
-    assert_eq!(result.rows.len(), 1, "only decision memory should match type filter");
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "only decision memory should match type filter"
+    );
 
     let row = result.rows.first().expect("a matching row should exist");
     assert_eq!(
         row.get("memory_type"),
-        Some(&aql::AqlValue::String(MemoryType::Decision.as_str().to_string()))
+        Some(&aql::AqlValue::String(MemoryType::Decision.to_string()))
     );
-    assert_eq!(row.get("_id"), Some(&aql::AqlValue::String("mem-decision".to_string())));
+    assert_eq!(
+        row.get("_id"),
+        Some(&aql::AqlValue::String("mem-decision".to_string()))
+    );
 
     assert!(
         trail.frames

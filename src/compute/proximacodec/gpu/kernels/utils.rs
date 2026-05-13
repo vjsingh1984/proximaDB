@@ -70,8 +70,7 @@ impl GpuBatchConfig {
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 48 * 1024; // 48 KB per SM
 
-        let batch_size =
-            total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let batch_size = total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
         let num_blocks = total_vectors.div_ceil(THREADS_PER_BLOCK);
 
         debug!(
@@ -94,8 +93,7 @@ impl GpuBatchConfig {
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 64 * 1024; // 64 KB LDS per CU
 
-        let batch_size =
-            total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let batch_size = total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
         let num_blocks = total_vectors.div_ceil(THREADS_PER_BLOCK);
 
         debug!(
@@ -118,8 +116,7 @@ impl GpuBatchConfig {
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 32 * 1024; // 32 KB threadgroup memory
 
-        let batch_size =
-            total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let batch_size = total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
         let num_blocks = total_vectors.div_ceil(THREADS_PER_BLOCK);
 
         debug!(
@@ -141,8 +138,7 @@ impl GpuBatchConfig {
         const THREADS_PER_BLOCK: usize = 256;
         const SHARED_MEM: usize = 16 * 1024; // 16 KB local memory (conservative)
 
-        let batch_size =
-            total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
+        let batch_size = total_vectors.div_ceil(THREADS_PER_BLOCK) * THREADS_PER_BLOCK;
         let num_blocks = total_vectors.div_ceil(THREADS_PER_BLOCK);
 
         debug!(

@@ -373,19 +373,28 @@ impl<T> PooledItem<T> {
     }
 
     /// Get mutable reference to the buffer
-    #[expect(clippy::expect_used, reason = "buffer is always Some for live PooledItem; None only after take()")]
+    #[expect(
+        clippy::expect_used,
+        reason = "buffer is always Some for live PooledItem; None only after take()"
+    )]
     pub fn as_buffer_mut(&mut self) -> &mut T {
         self.buffer.as_mut().expect("Buffer should be present")
     }
 
     /// Get immutable reference to the buffer
-    #[expect(clippy::expect_used, reason = "buffer is always Some for live PooledItem; None only after take()")]
+    #[expect(
+        clippy::expect_used,
+        reason = "buffer is always Some for live PooledItem; None only after take()"
+    )]
     pub fn get(&self) -> &T {
         self.buffer.as_ref().expect("Buffer should be present")
     }
 
     /// Take ownership of the buffer (breaks pooling)
-    #[expect(clippy::expect_used, reason = "buffer is always Some for live PooledItem; None only after take()")]
+    #[expect(
+        clippy::expect_used,
+        reason = "buffer is always Some for live PooledItem; None only after take()"
+    )]
     pub fn take(mut self) -> T {
         self.buffer.take().expect("Buffer should be present")
     }
@@ -429,14 +438,20 @@ impl<T> Drop for PooledItem<T> {
 impl<T> std::ops::Deref for PooledItem<T> {
     type Target = T;
 
-    #[expect(clippy::expect_used, reason = "Deref cannot return Result; buffer always Some for live PooledItem")]
+    #[expect(
+        clippy::expect_used,
+        reason = "Deref cannot return Result; buffer always Some for live PooledItem"
+    )]
     fn deref(&self) -> &Self::Target {
         self.buffer.as_ref().expect("Buffer should be present")
     }
 }
 
 impl<T> std::ops::DerefMut for PooledItem<T> {
-    #[expect(clippy::expect_used, reason = "DerefMut cannot return Result; buffer always Some for live PooledItem")]
+    #[expect(
+        clippy::expect_used,
+        reason = "DerefMut cannot return Result; buffer always Some for live PooledItem"
+    )]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.buffer.as_mut().expect("Buffer should be present")
     }

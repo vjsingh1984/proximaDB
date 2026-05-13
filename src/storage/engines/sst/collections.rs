@@ -398,7 +398,6 @@ pub struct CollectionSizeInfo {
     pub estimated_vector_count: u64,
 }
 
-
 #[cfg(test)]
 #[cfg_attr(test, path = "collections_tests.rs")]
 mod tests;

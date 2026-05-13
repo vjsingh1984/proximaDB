@@ -126,7 +126,10 @@ pub struct SSTIndexBasedReader {
 }
 
 impl SSTIndexBasedReader {
-    #[expect(clippy::expect_used, reason = "new() is a convenience wrapper; callers needing error handling should use try_new()")]
+    #[expect(
+        clippy::expect_used,
+        reason = "new() is a convenience wrapper; callers needing error handling should use try_new()"
+    )]
     pub fn new() -> Self {
         Self::try_new().expect("Failed to initialize SSTIndexBasedReader")
     }

@@ -1719,7 +1719,6 @@ impl SstableWriter {
     // Use ProximaDataBlock::new_with_engine_profile(records, config, EngineProfile::SST) instead
 }
 
-
 #[cfg(test)]
 #[cfg_attr(test, path = "writer_tests.rs")]
 mod tests;

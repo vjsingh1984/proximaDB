@@ -4330,7 +4330,10 @@ impl RaptorWriter {
                 rg.centroid_stats = Some(stats);
 
                 // centroid_stats is guaranteed to be Some after the assignment above
-                #[expect(clippy::expect_used, reason = "just assigned Some(stats) two lines above")]
+                #[expect(
+                    clippy::expect_used,
+                    reason = "just assigned Some(stats) two lines above"
+                )]
                 let stats_ref = rg
                     .centroid_stats
                     .as_ref()

@@ -867,9 +867,7 @@ impl SwiftFile {
         let mut superblock_codes: std::collections::HashMap<usize, Vec<u64>> =
             std::collections::HashMap::new();
 
-        for (block_id, (mut block, _, adacurve_code)) in
-            blocks_with_score.into_iter().enumerate()
-        {
+        for (block_id, (mut block, _, adacurve_code)) in blocks_with_score.into_iter().enumerate() {
             let block_id = block_id as u32;
             // Assign deterministic block_id (preserves ID ordering inside blocks)
             block.block_id = block_id;

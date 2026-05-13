@@ -1586,7 +1586,10 @@ pub fn simd_double_delta_decode_f32(double_deltas: &[i64], count: usize) -> Resu
     first_deltas.push(first_delta);
 
     for dd in double_deltas.iter().skip(2) {
-        #[expect(clippy::expect_used, reason = "first_delta was pushed before skip(2), so last() is always Some")]
+        #[expect(
+            clippy::expect_used,
+            reason = "first_delta was pushed before skip(2), so last() is always Some"
+        )]
         let prev_delta = *first_deltas
             .last()
             .expect("first_deltas should have at least one element");

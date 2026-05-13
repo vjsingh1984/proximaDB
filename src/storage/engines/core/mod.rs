@@ -8,19 +8,19 @@ pub mod adaptive_strategy_optimizer; // Intelligent strategy optimization and tu
 pub mod constants; // Centralized constants for all storage engines
 pub mod filter_evaluator; // Unified filter evaluation for all engines
 pub mod formats; // Storage formats: row-based, columnar
+pub mod helix_unified_metadata_serializer; // HELIX metadata serializer moved to shared core module
 pub mod io; // I/O operations: zero-copy, filesystem abstractions
 pub mod metadata_serializer; // Shared metadata serializer helpers (DRY across engines)
-pub mod raptor_unified_metadata_serializer; // RAPTOR metadata serializer moved to shared core module
-pub mod helix_unified_metadata_serializer; // HELIX metadata serializer moved to shared core module
-pub mod viper_unified_metadata_serializer; // VIPER metadata serializer moved to shared core module
-pub mod swift_unified_metadata_serializer; // SWIFT metadata serializer moved to shared core module
 pub mod nova_unified_metadata_serializer; // NOVA metadata serializer moved to shared core module
-pub mod sst_unified_metadata_serializer; // SST metadata serializer moved to shared core module
 pub mod ops; // Common operations: compression, encoding, optimization
 pub mod pca; // PCA model management for spatial clustering
 pub mod progressive; // ISP-compliant progressive search stages
+pub mod raptor_unified_metadata_serializer; // RAPTOR metadata serializer moved to shared core module
 pub mod read_strategy; // Unified read access strategy for all engines
 pub mod search; // Search infrastructure: progressive search, filtering
+pub mod sst_unified_metadata_serializer; // SST metadata serializer moved to shared core module
+pub mod swift_unified_metadata_serializer; // SWIFT metadata serializer moved to shared core module
+pub mod viper_unified_metadata_serializer; // VIPER metadata serializer moved to shared core module
 
 // Re-export commonly used types for convenience
 pub use filter_evaluator::{

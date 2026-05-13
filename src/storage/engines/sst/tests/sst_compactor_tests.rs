@@ -12,11 +12,11 @@ mod tests {
     };
     use super::super::sst_compactor::{SstCompactor, ZeroCopyCompactionStats};
     use super::super::{DataBlock, DataBlockMetadata};
-    use super::super::{SstRecord, SstEngine};
-    use crate::proto::proximadb_v1::VectorRecord;
+    use super::super::{SstEngine, SstRecord};
     use crate::core::search::mvcc_resolution::MvccResolver;
     use crate::core::{BloomFilterConfig, SstConfig};
     use crate::proto::proximadb_v1::MetadataItem;
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
     use std::collections::HashMap;
@@ -24,11 +24,11 @@ mod tests {
     // Import test utilities from sst_test_config
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::utils::StoragePath;
     use std::path::Path;
     use std::sync::Arc;
     use tempfile::TempDir;
     use tracing::debug;
-    use crate::utils::StoragePath;
 
     /// Setup test directories
     async fn setup_test_directories(base_path: &Path) -> anyhow::Result<()> {
@@ -192,7 +192,10 @@ mod tests {
         );
 
         // Get storage URL from collection config
-        let storage_url = format!("file://{}", StoragePath::collection_data_path(base_path, &collection_id));
+        let storage_url = format!(
+            "file://{}",
+            StoragePath::collection_data_path(base_path, &collection_id)
+        );
         debug!("📁 Looking for SST files in: {}", storage_url);
 
         let fs = filesystem_factory.get_filesystem("file:///")?;
@@ -709,9 +712,11 @@ mod tests {
                 None,
                 vec![MetadataItem {
                     key: "category".to_string(),
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "A".to_string(),
-                    )),
+                    value: Some(
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                            "A".to_string(),
+                        ),
+                    ),
                 }],
             ),
             create_test_vector_record(
@@ -721,9 +726,11 @@ mod tests {
                 None,
                 vec![MetadataItem {
                     key: "category".to_string(),
-                    value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                        "B".to_string(),
-                    )),
+                    value: Some(
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                            "B".to_string(),
+                        ),
+                    ),
                 }],
             ),
         ];
@@ -869,15 +876,20 @@ mod tests {
                 vec![
                     MetadataItem {
                         key: "score".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            (i * 10).to_string(),
-                        )),
+                        value: Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                (i * 10).to_string(),
+                            ),
+                        ),
                     },
                     MetadataItem {
                         key: "category".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            format!("cat_{}", i % 5),
-                        )),
+                        value: Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
+                                "cat_{}",
+                                i % 5
+                            )),
+                        ),
                     },
                 ],
             ));
@@ -936,15 +948,19 @@ mod tests {
                 vec![
                     MetadataItem {
                         key: "score".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            (i * 10).to_string(),
-                        )),
+                        value: Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                (i * 10).to_string(),
+                            ),
+                        ),
                     },
                     MetadataItem {
                         key: "type".to_string(),
-                        value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue(
-                            if i < 100 { "A" } else { "B" }.to_string(),
-                        )),
+                        value: Some(
+                            crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                                if i < 100 { "A" } else { "B" }.to_string(),
+                            ),
+                        ),
                     },
                 ],
             ));

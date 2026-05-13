@@ -4,15 +4,13 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::core::bloom::MetadataBloomFilter;
     use crate::storage::engines::sst::readers::sst_query_engine::{
-        UnifiedSstableReader, CollectionContext,
-    };
-    use crate::core::bloom::{
-        MetadataBloomFilter,
+        CollectionContext, UnifiedSstableReader,
     };
     // use crate::core::config::{BloomFilterConfig, SstConfig};
-    use crate::core::search::{SearchParams, FilterExpression, ComparisonOperator};
     use crate::compute::distance_computation::DistanceMetric;
+    use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 
     fn create_test_config() -> SstConfig {
         SstConfig {
@@ -21,10 +19,10 @@ mod tests {
             ..SstConfig::default()
         }
     }
-    use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-    use std::sync::Arc;
-    use std::collections::HashMap;
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
 
     // Test helpers
     async fn create_test_reader() -> UnifiedSstableReader {
@@ -64,7 +62,7 @@ mod tests {
             distance_metric: Some(DistanceMetric::Cosine),
             ..Default::default()
         };
-        
+
         // Without filters, should use basic strategy
         assert!(params.filter_expression.is_none());
     }
@@ -82,7 +80,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        
+
         // With metadata filter
         assert!(params.filter_expression.is_some());
     }
@@ -95,46 +93,67 @@ mod tests {
             expected_items: 100,
             ..Default::default()
         };
-        let mut builder = crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder::new(config);
-        
+        let mut builder =
+            crate::core::bloom::strategies::composite::CompositeBloomFilterBuilder::new(config);
+
         // Add metadata values using MetadataItem
         let electronics_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("electronics".to_string())),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "electronics".to_string(),
+                ),
+            ),
         };
         let books_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("books".to_string())),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue("books".to_string()),
+            ),
         };
         let active_item = crate::proto::proximadb_v1::MetadataItem {
             key: "status".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("active".to_string())),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue("active".to_string()),
+            ),
         };
         let inactive_item = crate::proto::proximadb_v1::MetadataItem {
             key: "status".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("inactive".to_string())),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "inactive".to_string(),
+                ),
+            ),
         };
-        
+
         builder.add_metadata_item("category".to_string(), electronics_item.clone());
         builder.add_metadata_item("category".to_string(), books_item.clone());
         builder.add_metadata_item("status".to_string(), active_item.clone());
         builder.add_metadata_item("status".to_string(), inactive_item.clone());
-        
+
         let filter = builder.build();
-        
+
         // Test single condition using MetadataBloomFilter trait
         use crate::core::bloom::MetadataBloomFilter;
         assert!(filter.might_match_metadata("category", &electronics_item));
         assert!(filter.might_match_metadata("status", &active_item));
-        
+
         // Test non-existent values
         let furniture_item = crate::proto::proximadb_v1::MetadataItem {
             key: "category".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("furniture".to_string())),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "furniture".to_string(),
+                ),
+            ),
         };
         let deleted_item = crate::proto::proximadb_v1::MetadataItem {
             key: "status".to_string(),
-            value: Some(crate::proto::proximadb_v1::metadata_item::Value::StringValue("deleted".to_string())),
+            value: Some(
+                crate::proto::proximadb_v1::metadata_item::Value::StringValue(
+                    "deleted".to_string(),
+                ),
+            ),
         };
         assert!(!filter.might_match_metadata("category", &furniture_item));
         assert!(!filter.might_match_metadata("status", &deleted_item));
@@ -146,24 +165,24 @@ mod tests {
         let test_config = create_test_config();
         let block_size = (test_config.block_size_kb * 1024) as usize;
         let blocks = vec![0, 1, 2, 5, 6, 7, 10]; // Some consecutive, some not
-        
+
         // Calculate ranges for reading
         let mut ranges = Vec::new();
         let mut i = 0;
         while i < blocks.len() {
             let start = blocks[i];
             let mut end = start;
-            
+
             // Merge consecutive blocks
             while i + 1 < blocks.len() && blocks[i + 1] == blocks[i] + 1 {
                 i += 1;
                 end = blocks[i];
             }
-            
+
             ranges.push((start * block_size, (end + 1) * block_size));
             i += 1;
         }
-        
+
         // Should have merged consecutive blocks
         assert_eq!(ranges.len(), 3); // [0-2], [5-7], [10]
     }
@@ -183,7 +202,7 @@ mod tests {
                 value: json!(5),
             },
         ]);
-        
+
         let conditions = extract_conditions(&filter);
         assert_eq!(conditions.len(), 2);
         assert!(conditions.contains_key("status"));
@@ -192,7 +211,7 @@ mod tests {
 
     fn extract_conditions(filter: &FilterExpression) -> HashMap<String, String> {
         let mut conditions = HashMap::new();
-        
+
         match filter {
             FilterExpression::Comparison { field, value, .. } => {
                 // Convert value to string regardless of type
@@ -216,7 +235,7 @@ mod tests {
             }
             _ => {}
         }
-        
+
         conditions
     }
 
@@ -225,10 +244,10 @@ mod tests {
     async fn test_compression_ratio() {
         let uncompressed_size = 1000000; // 1MB
         let compression_ratio = 0.3; // 30% of original
-        
+
         let compressed_size = (uncompressed_size as f64 * compression_ratio) as usize;
         assert_eq!(compressed_size, 300000);
-        
+
         // Estimate decompressed size
         let estimated = (compressed_size as f64 / compression_ratio) as usize;
         assert_eq!(estimated, uncompressed_size);
@@ -238,14 +257,14 @@ mod tests {
     async fn test_parallel_block_partitioning() {
         let blocks = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         let max_parallelism = 3;
-        
+
         // Partition blocks for parallel processing
         let chunk_size = (blocks.len() + max_parallelism - 1) / max_parallelism;
         let batches: Vec<Vec<usize>> = blocks
             .chunks(chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
-        
+
         assert_eq!(batches.len(), 3);
         assert_eq!(batches[0].len(), 4);
         assert_eq!(batches[1].len(), 4);

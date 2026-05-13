@@ -276,8 +276,7 @@ impl<'a, T> Iterator for GpuBatchIterator<'a, T> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining =
-            (self.data.len() - self.current_offset).div_ceil(self.batch_size);
+        let remaining = (self.data.len() - self.current_offset).div_ceil(self.batch_size);
         (remaining, Some(remaining))
     }
 }

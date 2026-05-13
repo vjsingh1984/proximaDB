@@ -72,7 +72,9 @@ mod tests {
             for item in &record.metadata {
                 if let Some(value) = &value {
                     let value_str = match value {
-                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => s.clone(),
+                        crate::proto::proximadb_v1::metadata_item::Value::StringValue(s) => {
+                            s.clone()
+                        }
                         _ => continue, // Skip non-string values for this test
                     };
 

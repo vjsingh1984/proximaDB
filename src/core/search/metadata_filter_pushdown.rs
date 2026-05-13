@@ -261,12 +261,8 @@ impl MetadataFilterPushdown {
                     true // No bloom filter, can't eliminate
                 }
             }
-            FilterExpression::And(exprs) => exprs
-                .iter()
-                .all(|expr| self.check_bloom_filters(expr)),
-            FilterExpression::Or(exprs) => exprs
-                .iter()
-                .any(|expr| self.check_bloom_filters(expr)),
+            FilterExpression::And(exprs) => exprs.iter().all(|expr| self.check_bloom_filters(expr)),
+            FilterExpression::Or(exprs) => exprs.iter().any(|expr| self.check_bloom_filters(expr)),
             FilterExpression::Not(expr) => !self.check_bloom_filters(expr),
         }
     }

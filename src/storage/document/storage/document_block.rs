@@ -148,7 +148,7 @@ impl DocumentBlock {
             } else {
                 serde_json::to_vec(doc).unwrap_or_default()
             };
-            
+
             block
                 .data
                 .extend_from_slice(&(bytes.len() as u32).to_le_bytes());
@@ -365,7 +365,8 @@ mod tests {
             ),
         ];
         let block =
-            DocumentBlock::from_documents(docs, &["name".to_string(), "age".to_string()], false).unwrap();
+            DocumentBlock::from_documents(docs, &["name".to_string(), "age".to_string()], false)
+                .unwrap();
 
         assert!(block.might_contain_path("name"));
         assert!(block.might_contain_path("age"));

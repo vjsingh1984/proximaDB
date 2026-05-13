@@ -47,14 +47,14 @@ impl PromQLParser {
                             range,
                             ..
                         } = expr
-                        {
-                            return Ok(PromQLExpr::VectorSelector {
-                                name,
-                                matchers,
-                                range,
-                                offset: Some(offset_duration),
-                            });
-                        }
+                    {
+                        return Ok(PromQLExpr::VectorSelector {
+                            name,
+                            matchers,
+                            range,
+                            offset: Some(offset_duration),
+                        });
+                    }
                 }
                 return Ok(PromQLExpr::Paren(Box::new(expr)));
             }
@@ -89,14 +89,14 @@ impl PromQLParser {
                 range,
                 ..
             } = selector
-            {
-                selector = PromQLExpr::VectorSelector {
-                    name,
-                    matchers,
-                    range,
-                    offset: Some(offset_duration),
-                };
-            }
+        {
+            selector = PromQLExpr::VectorSelector {
+                name,
+                matchers,
+                range,
+                offset: Some(offset_duration),
+            };
+        }
 
         Ok(selector)
     }
@@ -516,9 +516,10 @@ impl PromQLParser {
                 // If there's a range, find the closing bracket after the braces
                 if range.is_some()
                     && let Some(bracket_pos) = query[after_braces..].find('[')
-                        && let Some(close_pos) = query[after_braces + bracket_pos..].find(']') {
-                            return after_braces + bracket_pos + close_pos + 1;
-                        }
+                    && let Some(close_pos) = query[after_braces + bracket_pos..].find(']')
+                {
+                    return after_braces + bracket_pos + close_pos + 1;
+                }
 
                 after_braces
             }

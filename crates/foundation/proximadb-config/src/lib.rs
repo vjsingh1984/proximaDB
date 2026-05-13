@@ -5,6 +5,49 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Hardware acceleration configuration controlling SIMD and GPU features.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HardwareConfig {
+    /// Enable automatic hardware detection.
+    pub enable_detection: bool,
+
+    /// Enable GPU acceleration if detected.
+    pub enable_gpu_acceleration: bool,
+
+    /// Enable SIMD acceleration if detected.
+    pub enable_simd: bool,
+
+    /// Enable AVX-512 if available.
+    pub enable_avx512: bool,
+
+    /// Enable GPU for SQL parsing.
+    pub enable_gpu_parsing: bool,
+
+    /// Enable GPU for distance calculations.
+    pub enable_gpu_similarity: bool,
+
+    /// Minimum vector size to use GPU.
+    pub gpu_min_vector_size: usize,
+
+    /// Minimum batch size to use GPU.
+    pub gpu_min_batch_size: usize,
+}
+
+impl Default for HardwareConfig {
+    fn default() -> Self {
+        Self {
+            enable_detection: true,
+            enable_gpu_acceleration: true,
+            enable_simd: true,
+            enable_avx512: true,
+            enable_gpu_parsing: true,
+            enable_gpu_similarity: true,
+            gpu_min_vector_size: 64,
+            gpu_min_batch_size: 100,
+        }
+    }
+}
+
 /// WAL storage configuration supporting multiple directories and cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
@@ -92,5 +135,19 @@ mod tests {
         assert_eq!(config.memory_flush_size_bytes, 10 * 1024 * 1024);
         assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024);
         assert_eq!(config.global_shrink_factor, Some(0.4));
+    }
+
+    #[test]
+    fn hardware_defaults_match_root_runtime_expectations() {
+        let config = HardwareConfig::default();
+
+        assert!(config.enable_detection);
+        assert!(config.enable_gpu_acceleration);
+        assert!(config.enable_simd);
+        assert!(config.enable_avx512);
+        assert!(config.enable_gpu_parsing);
+        assert!(config.enable_gpu_similarity);
+        assert_eq!(config.gpu_min_vector_size, 64);
+        assert_eq!(config.gpu_min_batch_size, 100);
     }
 }

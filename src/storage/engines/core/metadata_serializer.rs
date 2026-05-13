@@ -28,7 +28,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
-
 /// Common metadata header shared across all storage engines.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnifiedMetadataHeader {

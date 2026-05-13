@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use crate::storage::persistence::filesystem::metadata_traits::{
-    deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
+    EngineMetadataSerializer, deserialize_typed_metadata, serialize_typed_metadata,
 };
 use serde::{Deserialize, Serialize};
 

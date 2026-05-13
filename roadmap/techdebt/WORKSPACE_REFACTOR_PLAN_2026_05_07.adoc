@@ -802,6 +802,10 @@ Current status after the first refinement:
   transport-neutral WAL storage configuration contract (`WalStorageConfig` and
   `WalDistributionStrategy`) previously embedded in the root `core::config` monolith; root keeps a
   compatibility re-export while WAL/storage callers continue to compile through existing paths
+* `proximadb-config` also owns the reusable `HardwareConfig` contract used to steer SIMD/GPU
+  capability detection across compute and storage paths; root keeps `core::config::HardwareConfig`
+  as a compatibility re-export while hardware detection and global initialization remain in root
+  runtime code
 * the full root `Config` remains in root for now because it still composes AI, network, security,
   query, storage-engine, and runtime conversion behavior; only validated, serializable, low-level
   config contracts should move into `proximadb-config` until those dependencies are split
@@ -809,6 +813,10 @@ Current status after the first refinement:
   log/manifest, pgwire, Arrow Flight, streaming connector, compute adapter, and branch-manager
   sidecars may share typed config contracts, but their lifecycle, runtime clients, and bootstrap
   wiring must stay in platform/runtime/application crates rather than foundation
+* hardware config extraction is also aligned with the anchor's engine-autopilot and external
+  compute adapter direction: the config contract can be reused by native SIMD/GPU paths and future
+  Spark/Trino/Ray/Flink adapter planning, while host probing, scheduling, and runtime policy stay
+  above foundation
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside

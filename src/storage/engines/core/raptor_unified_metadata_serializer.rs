@@ -16,7 +16,7 @@ use std::any::Any;
 use std::fmt::Debug;
 
 use crate::storage::persistence::filesystem::metadata_traits::{
-    deserialize_typed_metadata, serialize_typed_metadata, EngineMetadataSerializer,
+    EngineMetadataSerializer, deserialize_typed_metadata, serialize_typed_metadata,
 };
 
 // Types moved from raptor::common - define locally for core serialization

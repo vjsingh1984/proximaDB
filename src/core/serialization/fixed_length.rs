@@ -128,7 +128,10 @@ impl<D: FixedDimension> FixedVector<D> {
 }
 
 impl<D: FixedDimension> From<Vec<f32>> for FixedVector<D> {
-    #[expect(clippy::expect_used, reason = "From trait cannot return Result; callers must ensure correct dimension")]
+    #[expect(
+        clippy::expect_used,
+        reason = "From trait cannot return Result; callers must ensure correct dimension"
+    )]
     fn from(data: Vec<f32>) -> Self {
         Self::new(data).expect("Vector dimension must match")
     }

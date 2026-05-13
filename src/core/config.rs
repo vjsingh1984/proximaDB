@@ -55,63 +55,7 @@ pub struct TlsConfig {
     pub bind_interface: Option<String>,
 }
 
-/// Hardware acceleration configuration controlling SIMD and GPU features
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HardwareConfig {
-    /// Enable automatic hardware detection (default: true)
-    pub enable_detection: bool,
-
-    /// Enable GPU acceleration if detected (default: true)
-    pub enable_gpu_acceleration: bool,
-
-    /// Enable SIMD acceleration if detected (default: true)
-    pub enable_simd: bool,
-
-    /// Enable AVX-512 if available (default: true)
-    pub enable_avx512: bool,
-
-    /// Enable GPU for SQL parsing (default: true)
-    pub enable_gpu_parsing: bool,
-
-    /// Enable GPU for distance calculations (default: true)
-    pub enable_gpu_similarity: bool,
-
-    /// Minimum vector size to use GPU (default: 64)
-    pub gpu_min_vector_size: usize,
-
-    /// Minimum batch size to use GPU (default: 100)
-    pub gpu_min_batch_size: usize,
-}
-
-#[allow(dead_code)]
-fn default_true() -> bool {
-    true
-}
-
-#[allow(dead_code)]
-fn default_gpu_min_vector_size() -> usize {
-    64
-}
-
-#[allow(dead_code)]
-fn default_gpu_min_batch_size() -> usize {
-    100
-}
-
-impl Default for HardwareConfig {
-    fn default() -> Self {
-        Self {
-            enable_detection: true,
-            enable_gpu_acceleration: true,
-            enable_simd: true,
-            enable_avx512: true,
-            enable_gpu_parsing: true,
-            enable_gpu_similarity: true,
-            gpu_min_vector_size: 64,
-            gpu_min_batch_size: 100,
-        }
-    }
-}
+pub use proximadb_config::HardwareConfig;
 
 /// Semantic Knowledge Store (SKS) configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

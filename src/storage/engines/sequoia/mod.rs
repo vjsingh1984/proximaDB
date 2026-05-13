@@ -246,18 +246,16 @@ fn evaluate_filter(row: &TypedRow, columns: &[(String, String)], filter: &RowFil
         }
         RowFilter::Gt(col, val) => {
             if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
-                row.values
-                    .get(idx)
-                    .and_then(|v| v.partial_cmp_typed(val)) == Some(std::cmp::Ordering::Greater)
+                row.values.get(idx).and_then(|v| v.partial_cmp_typed(val))
+                    == Some(std::cmp::Ordering::Greater)
             } else {
                 false
             }
         }
         RowFilter::Lt(col, val) => {
             if let Some(idx) = columns.iter().position(|(name, _)| name == col) {
-                row.values
-                    .get(idx)
-                    .and_then(|v| v.partial_cmp_typed(val)) == Some(std::cmp::Ordering::Less)
+                row.values.get(idx).and_then(|v| v.partial_cmp_typed(val))
+                    == Some(std::cmp::Ordering::Less)
             } else {
                 false
             }
@@ -430,12 +428,13 @@ impl RelationalStorageEngine for SequoiaEngine {
                         let va = a.values.get(idx);
                         let vb = b.values.get(idx);
                         if let (Some(va), Some(vb)) = (va, vb)
-                            && let Some(ord) = va.partial_cmp_typed(vb) {
-                                let ord = if *ascending { ord } else { ord.reverse() };
-                                if ord != std::cmp::Ordering::Equal {
-                                    return ord;
-                                }
+                            && let Some(ord) = va.partial_cmp_typed(vb)
+                        {
+                            let ord = if *ascending { ord } else { ord.reverse() };
+                            if ord != std::cmp::Ordering::Equal {
+                                return ord;
                             }
+                        }
                     }
                 }
                 std::cmp::Ordering::Equal

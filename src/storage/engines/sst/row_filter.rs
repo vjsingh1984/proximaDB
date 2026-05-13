@@ -445,7 +445,6 @@ impl Default for SSTBatchFilterEvaluator {
     }
 }
 
-
 #[cfg(test)]
 #[cfg_attr(test, path = "row_filter_tests.rs")]
 mod tests;

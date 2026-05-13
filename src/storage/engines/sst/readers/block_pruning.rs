@@ -1,5 +1,5 @@
+use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::core::search::BlockPruneConfig;
-use crate::compute::distance_computation::{engine::UnifiedDistanceCompute, DistanceMetric};
 use crate::storage::engines::core::constants::pruning as pruning_constants;
 use crate::storage::engines::sst::IndexEntry;
 use tracing::debug;
@@ -58,7 +58,10 @@ pub(crate) fn calculate_zorder_epsilon(
 ) -> crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode {
     use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
 
-    let codes: Vec<&SpatialCode> = entries.iter().filter_map(|e| e.zorder_code.as_ref()).collect();
+    let codes: Vec<&SpatialCode> = entries
+        .iter()
+        .filter_map(|e| e.zorder_code.as_ref())
+        .collect();
     if codes.is_empty() {
         return match query_code {
             SpatialCode::Code64(_) => SpatialCode::Code64(u64::MAX),
@@ -137,7 +140,10 @@ pub(crate) fn normalize_coords_for_zorder(coords: &[f32]) -> Vec<f32> {
         return vec![0.5; coords.len()];
     }
 
-    coords.iter().map(|&c| ((c - min_val) / range).clamp(0.0, 1.0)).collect()
+    coords
+        .iter()
+        .map(|&c| ((c - min_val) / range).clamp(0.0, 1.0))
+        .collect()
 }
 
 pub(crate) fn select_blocks_by_centroid(
@@ -166,8 +172,10 @@ pub(crate) fn select_blocks_by_centroid(
     let mut scored = Vec::with_capacity(entries.len());
 
     for (idx, entry) in entries.iter().enumerate() {
-        let centroid =
-            crate::storage::engines::sst::get_centroid_fp32(&entry.block_centroid_fp16, &entry.block_centroid);
+        let centroid = crate::storage::engines::sst::get_centroid_fp32(
+            &entry.block_centroid_fp16,
+            &entry.block_centroid,
+        );
         if centroid.len() != query.len() {
             scored.push((f32::INFINITY, idx));
             continue;
@@ -202,11 +210,7 @@ pub(crate) fn select_blocks_by_centroid(
     selected
 }
 
-pub(crate) fn metric_distance(
-    a: &[f32],
-    b: &[f32],
-    metric: DistanceMetric,
-) -> f32 {
+pub(crate) fn metric_distance(a: &[f32], b: &[f32], metric: DistanceMetric) -> f32 {
     let distance_compute = UnifiedDistanceCompute::default();
     distance_compute.distance_with_metric(a, b, &metric)
 }
