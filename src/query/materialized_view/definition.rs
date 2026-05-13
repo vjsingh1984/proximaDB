@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use arrow_schema::{DataType as ArrowDataType, Field};
 use chrono::{DateTime, Utc};
+use proximadb_catalog::{CatalogColumn, CatalogDataType};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -16,7 +17,6 @@ use super::refresh::RefreshStrategy;
 use crate::catalog::internal::{
     CatalogObject, ModelProperties, ObjectSchema, ObjectType, SchemaEnforcementMode,
 };
-use crate::catalog::types::{CatalogColumn, CatalogDataType};
 use crate::query::federated::{ExecutionResult, FederatedQuery, QueryPlan};
 
 /// Unique identifier for a materialized view

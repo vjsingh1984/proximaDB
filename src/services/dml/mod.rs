@@ -10,13 +10,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_catalog::{CatalogDataType, CatalogTableSchema};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use tracing::info;
 
-use crate::catalog::types::CatalogTableSchema;
-use crate::catalog::{CatalogDataType, CatalogManager};
+use crate::catalog::CatalogManager;
 use crate::services::operations::VectorOps;
+use crate::services::operations::vectors::{RichRecordGetRequest, RichSearchResult};
 
 /// DML Statement types
 #[derive(Debug, Clone)]
@@ -360,7 +361,7 @@ impl DmlService {
     async fn execute_update(
         &self,
         table_name: &str,
-        _assignments: Vec<(String, SqlValueLiteral)>,
+        assignments: Vec<(String, SqlValueLiteral)>,
         where_clause: Option<WhereClause>,
     ) -> Result<DmlResult> {
         let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
@@ -370,20 +371,79 @@ impl DmlService {
             return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
-        // For now, UPDATE is not fully implemented
-        // Vector databases typically use delete + insert pattern
         let table_schema = catalog.get_table(&table_id).await?;
-        let _ids_to_update = if let Some(ref wc) = where_clause {
+        let ids_to_update = if let Some(ref wc) = where_clause {
             self.extract_ids_from_where(wc, &table_schema)?
         } else {
             return Err(anyhow!("UPDATE without WHERE clause is not allowed"));
         };
+        if ids_to_update.is_empty() {
+            return Ok(DmlResult::success(0, "No rows matched WHERE clause"));
+        }
+        Self::validate_update_assignments(&assignments, &table_schema)?;
 
-        // Deferred: Implement update logic using delete + insert pattern
-        // For now, return a not-implemented error with guidance
-        Err(anyhow!(
-            "UPDATE is not fully implemented. Use DELETE followed by INSERT for vector updates."
-        ))
+        let mut records = Vec::new();
+        let mut warnings = Vec::new();
+        for record_id in &ids_to_update {
+            let Some(existing) = self
+                .vector_ops
+                .get_record_with_tenant_context(
+                    RichRecordGetRequest {
+                        collection_id: table_id.name.clone(),
+                        record_id: record_id.clone(),
+                        include_vector: true,
+                        include_props: true,
+                    },
+                    None,
+                )
+                .await?
+            else {
+                warnings.push(format!(
+                    "Record '{}' was not found in table '{}'",
+                    record_id, table_schema.name
+                ));
+                continue;
+            };
+
+            records.push(self.build_updated_proxima_record(
+                existing,
+                &assignments,
+                &table_schema,
+            )?);
+        }
+
+        if records.is_empty() {
+            return Ok(DmlResult::success(0, "No rows matched WHERE clause"));
+        }
+
+        let updated_count = records.len();
+        let batch_result = self
+            .vector_ops
+            .insert_records_with_tenant_context(&table_id.name, records, None)
+            .await?;
+        if !batch_result.success {
+            return Err(anyhow!(
+                "Update failed: {}",
+                batch_result
+                    .errors
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "unknown error".to_string())
+            ));
+        }
+
+        info!(
+            table = %table_name,
+            rows = updated_count,
+            "Updated rows"
+        );
+
+        let mut result = DmlResult::success(
+            updated_count as u64,
+            format!("Updated {} rows", updated_count),
+        );
+        result.warnings = warnings;
+        Ok(result)
     }
 
     /// Execute DELETE statement
@@ -687,6 +747,157 @@ impl DmlService {
         }
 
         Ok(())
+    }
+
+    fn validate_update_assignments(
+        assignments: &[(String, SqlValueLiteral)],
+        table_schema: &CatalogTableSchema,
+    ) -> Result<()> {
+        if assignments.is_empty() {
+            return Err(anyhow!("UPDATE requires at least one assignment"));
+        }
+
+        let primary_key_column = Self::primary_key_column(table_schema);
+        for (column_name, value) in assignments {
+            let Some(column) = table_schema
+                .columns
+                .iter()
+                .find(|column| column.name == *column_name)
+            else {
+                return Err(anyhow!(
+                    "Column '{}' does not exist in table '{}'",
+                    column_name,
+                    table_schema.name
+                ));
+            };
+            if primary_key_column.as_deref() == Some(column_name.as_str()) {
+                return Err(anyhow!(
+                    "UPDATE cannot modify primary key column '{}'",
+                    column_name
+                ));
+            }
+            if Self::literal_is_null(value) && !column.nullable {
+                return Err(anyhow!(
+                    "Column '{}' cannot be NULL for table '{}'",
+                    column.name,
+                    table_schema.name
+                ));
+            }
+            if matches!(value, SqlValueLiteral::Default) && column.default_value.is_none() {
+                return Err(anyhow!("Column '{}' has no DEFAULT value", column_name));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn build_updated_proxima_record(
+        &self,
+        existing: RichSearchResult,
+        assignments: &[(String, SqlValueLiteral)],
+        table_schema: &CatalogTableSchema,
+    ) -> Result<ProximaRecord> {
+        let vector_column = table_schema
+            .columns
+            .iter()
+            .find(|column| matches!(column.data_type, CatalogDataType::Vector))
+            .map(|column| (column.name.clone(), column.properties.clone()));
+
+        let mut props: HashMap<String, ProximaTreeNode> = existing
+            .props
+            .into_iter()
+            .map(|(key, value)| (key, ProximaTreeNode::Value(value)))
+            .collect();
+        let mut embeddings = if existing.vector.is_empty() {
+            Vec::new()
+        } else {
+            vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: existing.vector.len() as u32,
+                values: existing.vector,
+            }]
+        };
+        let mut created_at_ns = existing
+            .timestamp
+            .map(|timestamp_ms| timestamp_ms.saturating_mul(1_000_000));
+        let mut updated_at_ns = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_mul(1_000_000);
+
+        for (column_name, value) in assignments {
+            let effective_value =
+                self.effective_insert_literal(column_name, value, table_schema)?;
+
+            if vector_column
+                .as_ref()
+                .is_some_and(|(name, _)| name == column_name)
+            {
+                if Self::literal_is_null(&effective_value) {
+                    embeddings.clear();
+                    continue;
+                }
+                let vector = self.literal_to_vector(&effective_value)?;
+                if let Some((_, properties)) = &vector_column
+                    && let Some(expected) = properties
+                        .get("dimension")
+                        .and_then(|dimension| dimension.parse::<usize>().ok())
+                    && vector.len() != expected
+                {
+                    return Err(anyhow!(
+                        "Vector column '{}' expects dimension {}, got {}",
+                        column_name,
+                        expected,
+                        vector.len()
+                    ));
+                }
+                embeddings = vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: vector.len() as u32,
+                    values: vector,
+                }];
+                continue;
+            }
+
+            if column_name == "timestamp" {
+                if let Some(timestamp_ms) = self.literal_to_timestamp(&effective_value)? {
+                    let timestamp_ns = timestamp_ms.saturating_mul(1_000_000);
+                    created_at_ns = Some(timestamp_ns);
+                    updated_at_ns = timestamp_ns;
+                }
+                continue;
+            }
+
+            props.insert(
+                column_name.clone(),
+                ProximaTreeNode::Value(self.literal_to_proxima_value_for_column(
+                    column_name,
+                    &effective_value,
+                    table_schema,
+                )?),
+            );
+        }
+
+        if let Some(primary_key_column) = Self::primary_key_column(table_schema) {
+            props.entry(primary_key_column).or_insert_with(|| {
+                ProximaTreeNode::Value(ProximaValue::String(existing.id.clone()))
+            });
+        }
+
+        let mut record = ProximaRecord {
+            oid: existing.id.clone(),
+            local_id: Some(existing.id),
+            props,
+            embeddings,
+            method: Some("sql_dml_update".to_string()),
+            ..ProximaRecord::default()
+        };
+        if let Some(created_at_ns) = created_at_ns {
+            record.created_at_ns = created_at_ns;
+        }
+        record.updated_at_ns = updated_at_ns;
+        Ok(record)
     }
 
     fn literal_is_null(value: &SqlValueLiteral) -> bool {
@@ -1092,6 +1303,18 @@ impl DmlService {
 mod tests {
     use super::*;
 
+    fn update_test_schema() -> CatalogTableSchema {
+        CatalogTableSchema::new("agent_store")
+            .with_column(
+                CatalogColumn::new(1, "record_id", CatalogDataType::String).nullable(false),
+            )
+            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String).nullable(false))
+            .with_column(
+                CatalogColumn::new(3, "payload", CatalogDataType::Json).with_default("'{}'::jsonb"),
+            )
+            .with_column(CatalogColumn::new(4, "notes", CatalogDataType::String))
+    }
+
     #[test]
     fn test_dml_result_success() {
         let result = DmlResult::success(5, "Operation completed");
@@ -1167,5 +1390,50 @@ mod tests {
             }
             other => panic!("expected string default literal, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_update_assignment_validation_rejects_primary_key_change() {
+        let err = DmlService::validate_update_assignments(
+            &[(
+                "record_id".to_string(),
+                SqlValueLiteral::String("r2".to_string()),
+            )],
+            &update_test_schema(),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("cannot modify primary key"));
+    }
+
+    #[test]
+    fn test_update_assignment_validation_rejects_null_for_not_null_column() {
+        let err = DmlService::validate_update_assignments(
+            &[("name".to_string(), SqlValueLiteral::Null)],
+            &update_test_schema(),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("cannot be NULL"));
+    }
+
+    #[test]
+    fn test_update_assignment_validation_accepts_default_with_catalog_default() {
+        DmlService::validate_update_assignments(
+            &[("payload".to_string(), SqlValueLiteral::Default)],
+            &update_test_schema(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_update_assignment_validation_rejects_default_without_catalog_default() {
+        let err = DmlService::validate_update_assignments(
+            &[("notes".to_string(), SqlValueLiteral::Default)],
+            &update_test_schema(),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("has no DEFAULT"));
     }
 }

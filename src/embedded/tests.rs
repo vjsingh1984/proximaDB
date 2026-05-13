@@ -258,6 +258,34 @@ mod tests {
             serde_json::json!(["record-1"])
         );
 
+        let update = db
+            .execute_sql(
+                "UPDATE agent_store
+                 SET payload = '{\"kind\":\"updated\",\"score\":9}'::jsonb,
+                     embedding = '[9.9, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
+                       0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6,
+                       1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4,
+                       2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 3.1, 3.2,
+                       3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 4.0,
+                       4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8,
+                       4.9, 5.0, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6,
+                       5.7, 5.8, 5.9, 6.0, 6.1, 6.2, 6.3, 6.4]'
+                 WHERE record_id = 'record-1';",
+                None,
+                None,
+            )
+            .expect("update canonical mixed record through DML");
+        assert_eq!(update.row_count, 1);
+        assert_eq!(update.rows[0]["success"], serde_json::json!(true));
+        assert_eq!(update.rows[0]["rows_affected"], serde_json::json!(1));
+
+        let updated_record = db
+            .get_vector("agent_store", "record-1")
+            .expect("get updated record")
+            .expect("updated record should exist");
+        assert_eq!(updated_record.vector.len(), 64);
+        assert!((updated_record.vector[0] - 9.9).abs() < 0.001);
+
         let default_insert = db
             .execute_sql(
                 "INSERT INTO agent_store (

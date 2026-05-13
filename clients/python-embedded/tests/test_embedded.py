@@ -140,6 +140,26 @@ class TestEmbeddedBasics:
             assert insert["rows"][0]["rows_affected"] == 1
             assert insert["rows"][0]["inserted_ids"] == ["record-1"]
 
+            update = db.execute_sql(
+                """
+                UPDATE agent_store
+                SET payload = '{"kind":"updated","score":9}'::jsonb,
+                    embedding = '[9.9, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
+                      0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6,
+                      1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4,
+                      2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 3.1, 3.2]'
+                WHERE record_id = 'record-1';
+                """
+            )
+            assert update["row_count"] == 1
+            assert update["rows"][0]["success"] is True
+            assert update["rows"][0]["rows_affected"] == 1
+
+            updated_record = db.get_vector("agent_store", "record-1")
+            assert updated_record is not None
+            assert len(updated_record["vector"]) == 32
+            assert abs(updated_record["vector"][0] - 9.9) < 0.001
+
             default_insert = db.execute_sql(
                 """
                 INSERT INTO agent_store (

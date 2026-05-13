@@ -13,12 +13,12 @@ use anyhow::{Result, anyhow};
 use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Schema};
 use parking_lot::RwLock;
-use tracing::{debug, info, warn};
-
-use crate::catalog::types::{
+use proximadb_catalog::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogTableSchema,
     CatalogTableStatistics,
 };
+use tracing::{debug, info, warn};
+
 use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::network::arrow_ipc::codec::ArrowProtoCodec;
 use crate::proto::proximadb_v1::VectorRecord;

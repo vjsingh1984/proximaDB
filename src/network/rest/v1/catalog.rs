@@ -26,13 +26,11 @@ use axum::{
     extract::{Path, State},
     routing::{get, post},
 };
+use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogNamespace, CatalogTableSchema};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::catalog::{
-    Catalog, CatalogManager, TableIdentifier,
-    types::{CatalogColumn, CatalogDataType, CatalogNamespace, CatalogTableSchema},
-};
+use crate::catalog::{Catalog, CatalogManager, TableIdentifier};
 use crate::errors::{ApiError, ApiResult};
 use crate::proto::proximadb_v1::{
     CatalogConfig, CatalogListNamespacesRequest, CatalogListNamespacesResponse, CatalogType,

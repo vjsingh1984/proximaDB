@@ -11,13 +11,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_catalog::{
+    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution,
+    CatalogTableSchema, ColumnConstraint, SchemaChange,
+};
 use tracing::info;
 
 use crate::catalog::CatalogManager;
-use crate::catalog::types::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution,
-    CatalogTableSchema, SchemaChange,
-};
 
 /// DDL Statement types
 #[derive(Debug, Clone)]
@@ -978,7 +978,6 @@ impl DdlService {
                     constraint_name,
                     constraint,
                 } => {
-                    use crate::catalog::types::ColumnConstraint;
                     let catalog_constraint = match constraint {
                         TableConstraint::Unique { columns } => ColumnConstraint::Unique { columns },
                         TableConstraint::Check { expression } => {
