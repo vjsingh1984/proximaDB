@@ -83,6 +83,42 @@ class TestEmbeddedBasics:
             assert gin["rows"][0]["success"] is True
             assert hnsw["rows"][0]["success"] is True
 
+            tables = db.execute_sql(
+                "SELECT * FROM xcatalog.tables WHERE table_name = 'agent_store';"
+            )
+            assert tables["row_count"] == 1
+            assert tables["rows"][0]["table_name"] == "agent_store"
+            assert tables["rows"][0]["schema_kind"] == "agentic_mixed"
+            assert tables["rows"][0]["storage_engine"] == "SST"
+            assert tables["rows"][0]["xcatalog_namespace"] == "agentic.pyembedded"
+
+            columns = db.execute_sql(
+                "SELECT * FROM xcatalog.columns WHERE table_name = 'agent_store';"
+            )
+            assert any(
+                row["column_name"] == "payload" and row["data_type"] == "jsonb"
+                for row in columns["rows"]
+            )
+            assert any(
+                row["column_name"] == "embedding"
+                and row["data_type"] == "vector"
+                and row["vector_dimension"] == "32"
+                for row in columns["rows"]
+            )
+
+            indexes = db.execute_sql(
+                "SELECT * FROM xcatalog.indexes WHERE table_name = 'agent_store';"
+            )
+            assert any(
+                row["index_name"] == "idx_agent_payload" and row["index_type"] == "gin"
+                for row in indexes["rows"]
+            )
+            assert any(
+                row["index_name"] == "idx_agent_embedding"
+                and row["index_type"] == "hnsw"
+                for row in indexes["rows"]
+            )
+
 
 class TestVectorOperations:
     """Vector insert and search tests"""

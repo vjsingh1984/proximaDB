@@ -56,6 +56,8 @@ pub struct PostgresProtocol {
     /// DDL service for CREATE/DROP/ALTER operations (optional, for catalog integration)
     #[allow(dead_code)]
     ddl_service: Option<Arc<DdlService>>,
+    /// Catalog manager for SQL-facing xCatalog/information_schema introspection.
+    catalog_manager: Option<Arc<CatalogManager>>,
     /// DML service for INSERT/UPDATE/DELETE operations (optional, for catalog integration)
     dml_service: Option<Arc<DmlService>>,
     /// Document service for native document collections
@@ -109,6 +111,24 @@ enum CopyFormat {
     Binary,
     /// Arrow IPC format (ProximaDB extension, most efficient)
     Arrow,
+}
+
+fn pg_type_for_catalog_column(column_type: &str) -> PgType {
+    match column_type {
+        "bool" | "boolean" => PgType::Bool,
+        "int2" => PgType::Int2,
+        "int4" | "int32" => PgType::Int4,
+        "int8" | "int64" => PgType::Int8,
+        "float4" | "float32" => PgType::Float4,
+        "float8" | "float64" => PgType::Float8,
+        "json" => PgType::Json,
+        "jsonb" => PgType::Jsonb,
+        "uuid" => PgType::Uuid,
+        "timestamp" => PgType::Timestamp,
+        "timestamptz" => PgType::Timestamptz,
+        "vector" => PgType::Vector,
+        _ => PgType::Text,
+    }
 }
 
 /// PostgreSQL message types (frontend)
@@ -167,6 +187,7 @@ impl PostgresProtocol {
             prepared_statements: HashMap::new(),
             portals: HashMap::new(),
             ddl_service: None,
+            catalog_manager: None,
             dml_service: None,
             document_service,
             graph_service,
@@ -183,7 +204,7 @@ impl PostgresProtocol {
         catalog_manager: Arc<CatalogManager>,
     ) -> Self {
         let ddl_service = Arc::new(DdlService::new(catalog_manager.clone()));
-        let dml_service = Arc::new(DmlService::new(catalog_manager, vector_ops.clone()));
+        let dml_service = Arc::new(DmlService::new(catalog_manager.clone(), vector_ops.clone()));
 
         Self {
             stream,
@@ -196,6 +217,7 @@ impl PostgresProtocol {
             prepared_statements: HashMap::new(),
             portals: HashMap::new(),
             ddl_service: Some(ddl_service),
+            catalog_manager: Some(catalog_manager),
             dml_service: Some(dml_service),
             document_service: None,
             graph_service: None,
@@ -381,7 +403,11 @@ impl PostgresProtocol {
             return self.send_single_value_result("search_path", "public").await;
         }
 
-        // Handle listing collections (tables)
+        if crate::services::CatalogIntrospectionService::is_catalog_query(query) {
+            return self.execute_catalog_introspection_query(query).await;
+        }
+
+        // Handle pg_catalog compatibility queries not yet backed by xCatalog.
         if upper.contains("FROM PG_CATALOG") || upper.contains("FROM INFORMATION_SCHEMA") {
             return self.send_empty_result().await;
         }
@@ -412,6 +438,48 @@ impl PostgresProtocol {
 
             // Default: return empty result for unknown queries
             return self.send_empty_result().await;
+        }
+
+        if upper.starts_with("CREATE ") || upper.starts_with("ALTER ") || upper.starts_with("DROP ")
+        {
+            if let Some(ddl_service) = self.ddl_service.clone() {
+                let parser = SqlFrontendParser::new();
+                match parser.parse_ddl(query) {
+                    Ok(Some(statement)) => match ddl_service.execute(statement).await {
+                        Ok(result) => {
+                            let tag = if upper.starts_with("CREATE TABLE") {
+                                "CREATE TABLE"
+                            } else if upper.starts_with("CREATE INDEX") {
+                                "CREATE INDEX"
+                            } else if upper.starts_with("ALTER TABLE") {
+                                "ALTER TABLE"
+                            } else if upper.starts_with("DROP TABLE") {
+                                "DROP TABLE"
+                            } else if upper.starts_with("DROP INDEX") {
+                                "DROP INDEX"
+                            } else {
+                                "OK"
+                            };
+                            info!(message = %result.message, "DDL executed via catalog service");
+                            return self.send_command_complete(tag).await;
+                        }
+                        Err(e) => {
+                            warn!("DdlService execution failed: {}", e);
+                            return self
+                                .send_error("ERROR", "42P01", &format!("DDL failed: {}", e))
+                                .await;
+                        }
+                    },
+                    Ok(None) => {}
+                    Err(e) => {
+                        if upper.starts_with("CREATE INDEX") || upper.starts_with("ALTER TABLE") {
+                            return self
+                                .send_error("ERROR", "42601", &format!("Parse error: {}", e))
+                                .await;
+                        }
+                    }
+                }
+            }
         }
 
         // Handle CREATE TABLE (creates a collection)
@@ -454,6 +522,39 @@ impl PostgresProtocol {
         self.send_row_description(&fields).await?;
         self.send_data_row(&[value]).await?;
         self.send_command_complete("SELECT 1").await
+    }
+
+    async fn execute_catalog_introspection_query(&mut self, query: &str) -> Result<()> {
+        let Some(catalog_manager) = self.catalog_manager.clone() else {
+            return self.send_empty_result().await;
+        };
+
+        let result = crate::services::CatalogIntrospectionService::new(catalog_manager)
+            .execute_select(query)
+            .await?;
+        let Some(result) = result else {
+            return self.send_empty_result().await;
+        };
+
+        let fields = result
+            .columns
+            .iter()
+            .zip(result.column_types.iter())
+            .map(|(name, column_type)| {
+                FieldDescription::new(name, pg_type_for_catalog_column(column_type))
+            })
+            .collect::<Vec<_>>();
+        self.send_row_description(&fields).await?;
+
+        let mut count = 0;
+        for row in &result.rows {
+            let values = row.iter().map(String::as_str).collect::<Vec<_>>();
+            self.send_data_row(&values).await?;
+            count += 1;
+        }
+
+        self.send_command_complete(&format!("SELECT {}", count))
+            .await
     }
 
     /// Send empty result

@@ -167,6 +167,7 @@
 //! - Queue depths
 //! - Cache hit rates
 
+pub mod catalog_introspection;
 pub mod collection;
 pub mod conversion;
 pub mod ddl;
@@ -181,6 +182,7 @@ pub mod search;
 pub mod tenant_access;
 
 // Re-export main service types with cleaner names
+pub use catalog_introspection::{CatalogIntrospectionResult, CatalogIntrospectionService};
 pub use collection::Collections;
 pub use conversion::RecordConverter;
 pub use ddl::{

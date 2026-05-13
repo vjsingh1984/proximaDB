@@ -170,6 +170,61 @@ mod tests {
                 .iter()
                 .any(|index| index.index_type == crate::catalog::CatalogIndexType::Hnsw)
         );
+
+        let tables = db
+            .execute_sql(
+                "SELECT * FROM xcatalog.tables WHERE table_name = 'agent_store';",
+                None,
+                None,
+            )
+            .expect("query xcatalog tables");
+        assert_eq!(tables.row_count, 1);
+        assert_eq!(
+            tables.rows[0]["table_name"],
+            serde_json::json!("agent_store")
+        );
+        assert_eq!(
+            tables.rows[0]["schema_kind"],
+            serde_json::json!("agentic_mixed")
+        );
+        assert_eq!(tables.rows[0]["storage_engine"], serde_json::json!("SST"));
+        assert_eq!(
+            tables.rows[0]["xcatalog_namespace"],
+            serde_json::json!("agentic.embedded")
+        );
+
+        let columns = db
+            .execute_sql(
+                "SELECT * FROM xcatalog.columns WHERE table_name = 'agent_store';",
+                None,
+                None,
+            )
+            .expect("query xcatalog columns");
+        assert!(columns.rows.iter().any(|row| {
+            row["column_name"] == serde_json::json!("payload")
+                && row["data_type"] == serde_json::json!("jsonb")
+        }));
+        assert!(columns.rows.iter().any(|row| {
+            row["column_name"] == serde_json::json!("embedding")
+                && row["data_type"] == serde_json::json!("vector")
+                && row["vector_dimension"] == serde_json::json!("64")
+        }));
+
+        let index_rows = db
+            .execute_sql(
+                "SELECT * FROM xcatalog.indexes WHERE table_name = 'agent_store';",
+                None,
+                None,
+            )
+            .expect("query xcatalog indexes");
+        assert!(index_rows.rows.iter().any(|row| {
+            row["index_name"] == serde_json::json!("idx_agent_payload")
+                && row["index_type"] == serde_json::json!("gin")
+        }));
+        assert!(index_rows.rows.iter().any(|row| {
+            row["index_name"] == serde_json::json!("idx_agent_embedding")
+                && row["index_type"] == serde_json::json!("hnsw")
+        }));
     }
 
     #[test]

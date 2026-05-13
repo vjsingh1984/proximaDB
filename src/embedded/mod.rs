@@ -3713,6 +3713,48 @@ impl EmbeddedProximaDB {
             });
         }
 
+        if crate::services::CatalogIntrospectionService::is_catalog_query(trimmed) {
+            let start_time = std::time::Instant::now();
+            let catalog_manager = self.catalog_manager.clone();
+            if let Some(result) = self
+                .runtime
+                .block_on(async {
+                    crate::services::CatalogIntrospectionService::new(catalog_manager)
+                        .execute_select(trimmed)
+                        .await
+                })
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                })?
+            {
+                let rows = result
+                    .rows
+                    .iter()
+                    .map(|row| {
+                        let mut object = serde_json::Map::new();
+                        for (idx, value) in row.iter().enumerate() {
+                            if let Some(column) = result.columns.get(idx) {
+                                object.insert(
+                                    column.clone(),
+                                    serde_json::Value::String(value.clone()),
+                                );
+                            }
+                        }
+                        serde_json::Value::Object(object)
+                    })
+                    .collect::<Vec<_>>();
+
+                return Ok(EmbeddedSqlQueryResult {
+                    row_count: rows.len() as u64,
+                    rows,
+                    columns: result.columns,
+                    column_types: result.column_types,
+                    rows_scanned: 0,
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                });
+            }
+        }
+
         let ddl_parser = crate::query::sql_frontend::SqlFrontendParser::new();
         match ddl_parser.parse_ddl(trimmed) {
             Ok(Some(statement)) => {
