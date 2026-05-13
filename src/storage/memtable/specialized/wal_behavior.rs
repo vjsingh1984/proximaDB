@@ -1143,6 +1143,31 @@ mod tests {
     use super::*;
     // Tests now use unified add_vector_batch API only
 
+    fn test_vector_record(id: &str, vector: Vec<f32>) -> crate::proto::proximadb_v1::VectorRecord {
+        let now = chrono::Utc::now().timestamp_millis();
+        crate::proto::proximadb_v1::VectorRecord {
+            id: id.to_string(),
+            vector,
+            metadata: std::collections::HashMap::new(),
+            timestamp: Some(now),
+            updated_at: Some(now),
+            expires_at: None,
+            version: Some(1),
+            source: Some("test".to_string()),
+        }
+    }
+
+    fn test_wal_batch(records: Vec<crate::proto::proximadb_v1::VectorRecord>) -> WALVectorBatch {
+        WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(records),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        }
+    }
+
     #[tokio::test]
     async fn test_wal_behavior_wrapper() {
         let config = MemtableConfig::default();
@@ -1229,6 +1254,77 @@ mod tests {
         let metrics = wal_wrapper.get_wal_metrics().await;
         assert_eq!(metrics.entries_written, 2);
         assert_eq!(metrics.flushes_performed, 0); // flush_up_to_sequence doesn't update this metric
+    }
+
+    #[tokio::test]
+    async fn test_insert_only_wrapper_rejects_duplicate_ids_in_request() {
+        let wal_wrapper = WALBehaviorWrapper::new(MemtableConfig::default());
+        let batch = test_wal_batch(vec![
+            test_vector_record("record_1", vec![1.0, 0.0]),
+            test_vector_record("record_1", vec![0.0, 1.0]),
+        ]);
+
+        let error = wal_wrapper
+            .add_vector_batch_insert_only("test_collection", batch)
+            .await
+            .expect_err("duplicate ids in insert-only WAL batch should fail");
+
+        assert!(error.to_string().contains("INSERT_CONFLICT"));
+        assert!(
+            wal_wrapper
+                .vector_by_id("test_collection", "record_1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            wal_wrapper
+                .get_unflushed_batches("test_collection")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_only_wrapper_rejects_existing_id_without_partial_batch() {
+        let wal_wrapper = WALBehaviorWrapper::new(MemtableConfig::default());
+        wal_wrapper
+            .add_vector_batch_insert_only(
+                "test_collection",
+                test_wal_batch(vec![test_vector_record("record_1", vec![1.0, 0.0])]),
+            )
+            .await
+            .unwrap();
+
+        let error = wal_wrapper
+            .add_vector_batch_insert_only(
+                "test_collection",
+                test_wal_batch(vec![
+                    test_vector_record("record_1", vec![0.0, 1.0]),
+                    test_vector_record("record_2", vec![0.5, 0.5]),
+                ]),
+            )
+            .await
+            .expect_err("existing ids in insert-only WAL batch should fail");
+
+        assert!(error.to_string().contains("INSERT_CONFLICT"));
+        assert!(
+            wal_wrapper
+                .vector_by_id("test_collection", "record_2")
+                .await
+                .unwrap()
+                .is_none(),
+            "failed insert-only WAL batch must not partially add new records"
+        );
+        assert_eq!(
+            wal_wrapper
+                .get_unflushed_batches("test_collection")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
