@@ -1,0 +1,19 @@
+[package]
+name = "proximadb-catalog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "xCatalog contract types shared by catalog, query, API, and storage layers"
+
+[lib]
+name = "proximadb_catalog"
+path = "src/lib.rs"
+
+[dependencies]
+arrow-schema = { workspace = true, default-features = false }
+proximadb-data-model = { workspace = true }
+serde.workspace = true

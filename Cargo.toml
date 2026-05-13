@@ -26,6 +26,7 @@ members = [
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-records",
+    "crates/control/proximadb-catalog",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-security",
     "crates/horizontal/proximadb-telemetry",
@@ -73,6 +74,7 @@ hyper = { version = "0.14" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
+proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 prost = "0.14"
 prost-types = "0.14"
 rand = { version = "0.8", features = ["small_rng"] }
@@ -127,6 +129,7 @@ proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-document-query = { path = "crates/query/proximadb-document-query" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
+proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }

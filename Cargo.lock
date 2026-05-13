@@ -5601,6 +5601,7 @@ dependencies = [
  "proptest",
  "prost",
  "prost-types",
+ "proximadb-catalog",
  "proximadb-data-model",
  "proximadb-document-query",
  "proximadb-filter-expression",
@@ -5713,6 +5714,15 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "proximadb-catalog"
+version = "0.2.0"
+dependencies = [
+ "arrow-schema",
+ "proximadb-data-model",
+ "serde",
 ]
 
 [[package]]

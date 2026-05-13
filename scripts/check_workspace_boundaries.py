@@ -69,6 +69,7 @@ ALL_LAYERS = frozenset(
     {
         "foundation",
         "storage",
+        "control",
         "horizontal",
         "modality",
         "platform",
@@ -152,6 +153,22 @@ LAYER_RULES = (
         ),
         "error",
         "horizontal infrastructure crates must stay reusable and not depend on domain, platform, integration, or app layers",
+    ),
+    LayerRule(
+        frozenset({"control"}),
+        frozenset(
+            {
+                "modality",
+                "platform",
+                "integration",
+                "query-adapter",
+                "query-planner",
+                "query-runtime",
+                *APPLICATION_LAYERS,
+            }
+        ),
+        "error",
+        "control-plane contract crates must stay below runtime/protocol/adapters and not depend on domain implementations",
     ),
     LayerRule(
         frozenset({"modality"}),
@@ -495,6 +512,8 @@ def crate_layer(member_path: Path, name: str) -> str:
         return "foundation"
     if parts[:2] == ("crates", "storage"):
         return "storage"
+    if parts[:2] == ("crates", "control"):
+        return "control"
     if parts[:2] == ("crates", "horizontal"):
         return "horizontal"
     if parts[:2] == ("crates", "modalities"):

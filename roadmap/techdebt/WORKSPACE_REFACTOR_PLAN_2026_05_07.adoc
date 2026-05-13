@@ -62,6 +62,41 @@ The root `proximadb` crate should remain as a transitional facade until downstre
 
 Crate boundaries should align with change frequency and dependency weight.
 
+=== 7. Align crate boundaries to the platform planes
+
+The workspace isolation strategy must follow
+link:../../docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc[the data and AI
+platform architecture anchor], not just today's module tree. The anchor adds product planes that
+need explicit ownership boundaries:
+
+* compatibility plane: pgwire, REST/gRPC, Arrow Flight, SDK, and streaming protocol adapters
+* xCatalog/control plane: schema, policy, branches, lineage, model metadata, stream metadata, and
+  optimization statistics
+* planning/runtime plane: logical algebra, policy-aware planner/router, native runtime,
+  DataFusion, and external compute adapters
+* storage/format plane: WAL/log/manifest, context segments, row/PAX/columnar layouts, vector
+  index fragments, graph topology, events, and open-format publication
+* data/AI workload planes: agent state, MLOps, feature store, AutoML, streaming, and connectors
+
+These planes should refine workspace isolation without creating a crate for every future feature.
+New crates are justified only when they establish a reusable contract, remove concrete root/runtime
+coupling, or isolate a materially heavy dependency edge.
+
+=== 8. Keep xCatalog, policy, and branch semantics below protocols
+
+The architecture anchor makes xCatalog, engine-level governance, and branchable state platform
+foundations. Pgwire, REST/gRPC, Arrow Flight, SDKs, and streaming APIs must all call into shared
+catalog/policy/branch contracts instead of each owning parallel metadata logic.
+
+Implication for isolation:
+
+* catalog schema and catalog-facing contracts belong below `proximadb-api` and above foundation
+  primitives
+* policy context and enforcement contracts must be reusable by query, storage, and modality crates
+* branch/log/manifest contracts should be isolated from any one storage engine or protocol surface
+* protocol crates may shape requests and responses, but they must not become the source of truth for
+  catalog, policy, branch, connector, agent, or MLOps state
+
 == Non-Goals
 
 * No big-bang rewrite.
@@ -79,24 +114,39 @@ crates/
     proximadb-kernel/
     proximadb-config/
     proximadb-proto/
+    proximadb-data-model/
+    proximadb-records/
   horizontal/
     proximadb-runtime-common/
     proximadb-security/
     proximadb-telemetry/
   storage/
     proximadb-storage-common/
+    # later, only after contracts stabilize:
+    # proximadb-log-manifest/
+    # proximadb-context-segment/
   modalities/
     proximadb-vector/
     proximadb-graph/
     proximadb-document/
     proximadb-relational/
     proximadb-observability/
-  crossmodel/
+  query/
+    proximadb-*-query/
     proximadb-query/
-    proximadb-facade/
+  control/
+    # future, after root catalog/service contracts are isolated:
+    # proximadb-catalog/
+    # proximadb-branching/
   platform/
     proximadb-api/
     proximadb-runtime/
+  integrations/
+    # future sidecar/adapter crates, not core dependencies:
+    # proximadb-datafusion-adapter/
+    # proximadb-stream-connectors/
+    # proximadb-mlops/
+    # proximadb-agent/
 apps/
   proximadb-server/
   proximadb-bench/
@@ -170,6 +220,39 @@ Must not become:
 Rule:
 
 * if a storage abstraction is only used by one modality, keep it in that modality crate
+
+=== Future `proximadb-log-manifest`
+
+Purpose:
+
+* WAL/log/manifest contracts shared by recovery, CDC, branching, and distributed replication
+* snapshot and branch ancestry metadata that is not tied to one storage engine
+* idempotency, replay, and time-travel primitives used by storage and streaming planes
+
+Admission rule:
+
+* extract only when at least two of storage, branch manager, CDC/streaming, or distributed runtime
+  need the same contract without depending on root services
+
+=== Future `proximadb-catalog`
+
+Purpose:
+
+* xCatalog contracts for schemas, indexes, layout options, statistics, governance metadata,
+  lineage, branches, connector state, AI assets, and stream metadata
+* catalog introspection shapes consumed by pgwire, REST/gRPC, Arrow Flight, SDKs, and runtime
+  planning
+
+Must not contain:
+
+* concrete protocol handlers
+* storage engine implementations
+* UI/admin workflow code
+
+Rule:
+
+* keep catalog contracts below protocol/API crates; keep catalog service composition in platform
+  runtime until the service boundary is stable enough to extract
 
 === `proximadb-vector`
 
@@ -296,7 +379,12 @@ The workspace should enforce a mostly one-way flow:
 
 [source,text]
 ----
-foundation -> storage-common -> modality crates -> query/facade -> api/runtime -> apps/bindings
+foundation
+  -> storage-common / horizontal contracts
+  -> modality crates / catalog-policy-branch contracts
+  -> query runtime / control services
+  -> api/runtime / integrations
+  -> apps/bindings
 ----
 
 Detailed rules:
@@ -306,6 +394,14 @@ Detailed rules:
 * `proximadb-query` may depend on modality traits and shared contracts, but not server glue.
 * `proximadb-api` may depend on `proximadb-query` and `proximadb-runtime`, but not concrete engine internals directly.
 * bindings must depend on stable runtime/query/modality surfaces, not reach back into random internal modules.
+* catalog, policy, branch, log/manifest, and connector-state contracts must sit below protocol
+  adapters; pgwire/REST/gRPC/Flight/SDK layers may not each define their own source-of-truth metadata
+  shapes.
+* DataFusion, Spark, Trino, Ray, Flink, Kafka, Kinesis, Iceberg, Delta, and MLflow integration
+  crates are adapter or sidecar boundaries unless and until their contracts become internal
+  platform abstractions.
+* agent and MLOps APIs should start as SDK/API conveniences over cataloged schemas and shared
+  lifecycle contracts, not as hardcoded low-level source-of-truth schemas.
 
 == Transitional Compatibility Strategy
 
@@ -363,6 +459,18 @@ During transition:
 |Document, observability, and relational runtimes
 |These should move after graph/vector prove the pattern because they depend on query/runtime and storage contracts becoming stable.
 |Extract only after the common service and query adaptation layers are no longer root-owned.
+
+|6
+|Phase 5
+|xCatalog, policy, branch, and log/manifest contracts
+|The architecture anchor makes these the shared platform control plane across pgwire, REST/gRPC, Arrow Flight, SDKs, streaming, MLOps, and agent state.
+|Extract contracts before services; avoid moving root catalog/runtime composition until protocol consumers use shared contract shapes.
+
+|7
+|Phase 6
+|Integration and sidecar adapters
+|External compute, streaming, lakehouse, MLOps, and agent integrations carry heavy optional dependencies and should not leak into core modality/query crates.
+|Keep adapter crates at the edge behind planner/runtime contracts and feature gates.
 |===
 
 === Phase 0: Workspace Hygiene
@@ -432,7 +540,32 @@ Once modality crates are real:
 * move transport adapters into `proximadb-api`
 * move orchestration/security/cluster composition into `proximadb-runtime`
 
-=== Phase 6: Thin Root Crate and Direct App Wiring
+=== Phase 6: Isolate xCatalog, Branching, Policy, and Log/Manifest Contracts
+
+After modality/query/runtime dependency direction is stable:
+
+* extract catalog contract shapes used by schema, index, storage-layout, statistics, lineage,
+  branch, connector-state, MLOps, and agent metadata
+* extract policy context/enforcement contracts shared by query, storage, modality, and API layers
+* extract log/manifest/branch contract shapes only when recovery, CDC, snapshot/restore, and branch
+  management need the same lower abstraction
+* keep concrete catalog service composition and runtime wiring in `proximadb-runtime` until the
+  service boundary is independently testable
+
+This phase aligns the workspace with the anchor's "one catalog, one policy plane, one branch/log
+foundation" requirement without prematurely moving every control-plane service.
+
+=== Phase 7: Isolate External Integration and Sidecar Adapter Crates
+
+Once internal planning/catalog contracts are stable:
+
+* isolate DataFusion, Spark, Trino, Ray, Flink, Kafka/Kinesis, Iceberg/Delta/Hudi, MLflow, AutoML,
+  and agent-framework adapters behind feature-gated crates
+* keep adapter dependencies out of foundation, modality, storage-common, and query-contract crates
+* route external execution through planner/runtime contracts so `EXPLAIN`, policy, branch, and
+  catalog semantics remain deterministic across engines
+
+=== Phase 8: Thin Root Crate and Direct App Wiring
 
 Final state:
 
@@ -1302,6 +1435,13 @@ The graph query contract layer is now lower than the graph runtime:
   `crates/horizontal`, `crates/platform`, `crates/integrations`, `apps`, and `bindings` before those
   physical moves exist, so new crates are classified into the intended skeleton instead of falling
   into the generic application bucket
+* `proximadb-catalog` now exists as the first control-plane contract crate and owns the serializable
+  xCatalog schema/index/statistics/evolution contract types previously rooted under
+  `src/catalog/types.rs`; the root catalog module keeps a compatibility re-export while pgwire,
+  REST/gRPC, query, storage, and future integration crates migrate to the canonical crate directly
+* `workspace-boundaries-check` now has an explicit `control` layer for catalog/branch/policy/log
+  contract crates, with guardrails that keep control-plane contracts below runtime/protocol/adapters
+  and away from concrete modality or application implementations
 
 == Immediate Follow-Up Deliverables
 
@@ -1319,6 +1459,55 @@ The next concrete follow-ups should be:
   `make workspace-rebuild-baseline`; use a shared target dir to compare future extraction steps)
 * phase-1 implementation checklist for foundation crate extraction (captured below)
 * operator/runtime migration checklist for `proximadb-graph` (captured below)
+* vector, document, and observability runtime isolation checklist (captured below)
+* anchor-aligned control-plane contract isolation checklist for xCatalog, policy, branch, and
+  log/manifest boundaries (captured below)
+
+=== Anchor-Aligned Isolation Priorities
+
+The data and AI platform anchor changes the priority of some future workspace work. The next moves
+should keep local developer MVP surfaces moving while preventing protocol-specific metadata forks.
+
+[cols="1,2,2,3", options="header"]
+|===
+|Priority
+|Platform pressure
+|Workspace target
+|Acceptance gate
+
+|P0
+|single-device pgwire + embedded MVP needs shared schema, JSONB, VECTOR(n), storage options, and
+branch metadata
+|root-compatible catalog contracts first; future `proximadb-catalog` only after contract users are
+clear
+|pgwire, REST/gRPC, SDK, query planner, and storage selection consume one catalog-facing shape
+
+|P0
+|policy once across pgwire, REST/gRPC, Arrow Flight, SDK, streaming, and embedded execution
+|`proximadb-security` plus kernel policy context contracts
+|query/storage/modality callers receive policy context explicitly; protocols do not reimplement RLS
+
+|P1
+|branchable state depends on WAL/log/manifest semantics, not protocol handlers
+|`proximadb-storage-common` now; future `proximadb-log-manifest` when CDC/branch/recovery share it
+|snapshot, restore, branch, and CDC code reuse contract types without importing root services
+
+|P1
+|planner must explain native/DataFusion/external compute routing
+|`proximadb-query` for routing contracts; adapter crates at integration edge
+|planner contracts mention capability/cost/freshness/policy; DataFusion/Ray/Flink/etc. stay optional
+
+|P2
+|MLOps and agent runtime need cataloged state but should not become hardcoded source-of-truth schemas
+|SDK/API conveniences over catalog contracts; later `proximadb-mlops` / `proximadb-agent` adapters
+|feature/model/agent state is representable through cataloged schema and lifecycle metadata
+|===
+
+Rule:
+
+* isolate the contract before isolating the service
+* isolate adapter dependencies at the edge
+* keep catalog, policy, branch, and planner semantics shared before adding new protocol surfaces
 
 === Phase-1 Foundation Extraction Checklist
 
@@ -1434,6 +1623,112 @@ Graph migration rule:
   context, row, and parser contracts
 * before a physical move, run `python3 scripts/check_workspace_boundaries.py --src-map` to confirm
   the target stratum and `python3 scripts/check_workspace_boundaries.py --strict` after the move
+
+=== Vector, Document, and Observability Runtime Isolation Checklist
+
+Graph has proven the capability-trait and compatibility-adapter pattern. The next modality work
+should repeat that pattern without pulling catalog, protocol, or platform runtime concerns into the
+modality crates.
+
+[cols="1,2,2,2", options="header"]
+|===
+|Priority
+|Current gravity
+|Target
+|Acceptance gate
+
+|P0
+|vector query/search request shape and ANN capability contracts
+|`proximadb-vector-query` for reusable query shape; `proximadb-vector` for runtime/search behavior
+|query runtime depends on vector contracts/capabilities, not root vector services or concrete engines
+
+|P0
+|vector engines, quantization, scoring, and vector-index internals under root storage/index/search
+|`proximadb-vector`
+|ANN implementation changes do not rebuild graph/document/observability internals except through
+shared contracts
+
+|P1
+|document path filters, JSONB/document query shape, text-query helpers
+|`proximadb-document-query` for request shape; `proximadb-document` for document runtime and text
+indexing
+|cross-model query uses document query contracts; full-text implementation does not leak into root
+facade code
+
+|P1
+|logs, metrics, traces, event-style observability query shape
+|`proximadb-observability-query` for query shape; `proximadb-observability` for runtime behavior
+|platform telemetry contracts remain in `proximadb-telemetry`; observability-store runtime stays
+modality-owned
+
+|P1
+|shared storage helpers discovered during vector/document/observability moves
+|`proximadb-storage-common` only if used by multiple modalities
+|no single-modality helper is promoted to storage-common just because it is convenient
+
+|P2
+|relational/table/pgwire semantics that are not transport glue
+|future `proximadb-relational`
+|relational contracts align with ProximaRecord/ProximaType and xCatalog; pgwire handlers stay in API
+|===
+
+Modality migration rule:
+
+* query-contract crates own reusable request/result shapes
+* modality runtime crates own implementation behavior and modality-specific services
+* root modules remain compatibility shims until tests, binaries, and bindings consume canonical
+  crates directly
+* API/platform crates hold protocol/runtime composition, not modality implementation logic
+
+=== Control-Plane Contract Isolation Checklist
+
+The architecture anchor makes xCatalog, policy, branch/log, streaming state, MLOps metadata, and
+agent state shared platform surfaces. Isolate these as contracts before moving service composition.
+
+[cols="1,2,2,2", options="header"]
+|===
+|Priority
+|Current gravity
+|Target
+|Acceptance gate
+
+|P0
+|catalog-facing schema, index, storage layout, stats, and branch metadata structs
+|root-compatible contract module first; future `proximadb-catalog`
+|pgwire introspection, REST/gRPC lifecycle, query planning, and storage selection reuse the same
+catalog-facing types
+
+|P0
+|policy context, tenant/principal scope, masking/RLS hooks
+|`proximadb-security` plus foundation execution/policy context
+|policy context reaches query/storage/modality execution before protocol response shaping
+
+|P1
+|WAL/log/manifest snapshot and branch ancestry contracts
+|`proximadb-storage-common`; future `proximadb-log-manifest` when shared use is proven
+|recovery, CDC, branch, and snapshot/restore code share lower contracts without depending on one
+storage engine
+
+|P1
+|connector offsets, watermarks, schema drift, and dead-letter state
+|future integration/streaming contract crate after catalog contract shape is stable
+|connector state is catalog-visible and does not force Kafka/Kinesis/Flink dependencies into core
+runtime
+
+|P2
+|feature/model/run/registry metadata and agent memory/checkpoint/event lifecycle metadata
+|catalog-backed MLOps/agent contract modules; future adapter crates for MLflow, Ray, LangGraph, and
+Victor
+|agent and MLOps state is schema/catalog driven; adapters are optional edge crates
+|===
+
+Control-plane migration rule:
+
+* do not let pgwire, REST/gRPC, Arrow Flight, SDK, or streaming handlers define divergent metadata
+  sources of truth
+* do not extract a control-plane service crate until the contract is consumed by at least two
+  protocol/runtime surfaces
+* keep external adapter dependencies behind feature-gated integration crates or sidecars
 
 == Bottom Line
 
