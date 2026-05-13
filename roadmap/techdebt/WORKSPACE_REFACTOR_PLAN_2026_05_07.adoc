@@ -846,6 +846,14 @@ Current status after the first refinement:
 * `proximadb-config` now owns the root server identity and bind option contract (`ServerConfig`);
   root keeps a compatibility re-export while data-dir resolution, listener construction,
   CLI/runtime overrides, and server lifecycle remain in root/platform runtime code
+* `proximadb-config` now owns the Semantic Knowledge Store feature/storage option contract
+  (`SksConfig`); root keeps a compatibility re-export while entity storage, relationship
+  traversal, provenance handling, temporal behavior, SQL-extension execution, embedding model
+  integration, and SST/VIPER backend wiring remain in modality/runtime modules
+* `proximadb-config` now owns graph and hybrid runtime option contracts
+  (`GraphRuntimeConfig` and `HybridRuntimeConfig`); root keeps compatibility re-exports while
+  graph execution, embedding cache wiring, seeding, fusion, and query orchestration remain in
+  modality/query runtime modules
 * the full root `Config` remains in root for now because it still composes AI, network, security,
   query, storage-engine, and runtime conversion behavior; only validated, serializable, low-level
   config contracts should move into `proximadb-config` until those dependencies are split
@@ -890,6 +898,14 @@ Current status after the first refinement:
 * server config extraction gives server, branch, catalog, and connector sidecars a shared
   identity/bind/data-root contract without moving port binding, path canonicalization, or lifecycle
   orchestration into foundation
+* SKS config extraction aligns with the anchor's agentic runtime, xCatalog knowledge plane, and
+  semantic/provenance roadmap: sidecars and bindings can share feature/storage toggles without
+  pulling entity graph execution, embedding integration, or storage-engine runtime code into
+  foundation
+* graph/hybrid runtime config extraction aligns with the anchor's multimodal query roadmap:
+  sidecars, bindings, and query adapters can share traversal/fusion option shapes without pulling
+  graph execution engines, embedding cache management, or cross-model query orchestration into
+  foundation
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside

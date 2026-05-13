@@ -206,6 +206,134 @@ impl Default for ServerConfig {
     }
 }
 
+/// Semantic Knowledge Store feature and storage configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SksConfig {
+    /// Enable SKS features.
+    pub enabled: bool,
+
+    /// Enable entity storage.
+    pub enable_entities: bool,
+
+    /// Enable graph relationships.
+    pub enable_relations: bool,
+
+    /// Enable provenance tracking.
+    pub enable_provenance: bool,
+
+    /// Enable temporal versioning.
+    pub enable_temporal: bool,
+
+    /// Enable SQL extensions (SIMILAR, FOLLOW, ASSEMBLE).
+    pub enable_sql_extensions: bool,
+
+    /// Maximum embedding versions per entity.
+    pub max_embedding_versions: usize,
+
+    /// Maximum graph traversal depth.
+    pub max_traversal_depth: usize,
+
+    /// Cache size for entity store in MB.
+    pub entity_cache_mb: usize,
+
+    /// Cache size for relations in MB.
+    pub relations_cache_mb: usize,
+
+    /// Default embedding model for text-to-vector conversion.
+    pub default_embedding_model: String,
+
+    /// Storage backend for SKS data ("memory", "sst", "viper").
+    pub storage_backend: String,
+}
+
+impl Default for SksConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            enable_entities: true,
+            enable_relations: true,
+            enable_provenance: true,
+            enable_temporal: false,
+            enable_sql_extensions: true,
+            max_embedding_versions: 10,
+            max_traversal_depth: 5,
+            entity_cache_mb: 256,
+            relations_cache_mb: 128,
+            default_embedding_model: "openai/text-embedding-3-large".to_string(),
+            storage_backend: "sst".to_string(),
+        }
+    }
+}
+
+/// Graph runtime option contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphRuntimeConfig {
+    /// Enable bounded prefetch hints during traversals.
+    pub enable_prefetch: bool,
+
+    /// Per-node/iteration adjacency prefetch budget.
+    pub prefetch_budget: usize,
+
+    /// Select graph engine ("ORION"|"PULSAR"|"QUASAR").
+    pub engine: String,
+
+    /// Embedding storage mode: "none" (default), "cold", "memory".
+    #[serde(default = "default_embedding_mode")]
+    pub embedding_mode: String,
+
+    /// Vector engine for cold tier embeddings.
+    #[serde(default = "default_embedding_engine")]
+    pub embedding_engine: String,
+
+    /// Memory cache size in MB for embeddings.
+    #[serde(default)]
+    pub embedding_memory_cache_mb: Option<usize>,
+}
+
+impl Default for GraphRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            enable_prefetch: true,
+            prefetch_budget: 8,
+            engine: default_graph_engine(),
+            embedding_mode: default_embedding_mode(),
+            embedding_engine: default_embedding_engine(),
+            embedding_memory_cache_mb: None,
+        }
+    }
+}
+
+fn default_graph_engine() -> String {
+    "ORION".to_string()
+}
+
+fn default_embedding_mode() -> String {
+    "none".to_string()
+}
+
+fn default_embedding_engine() -> String {
+    "sst".to_string()
+}
+
+/// Hybrid query runtime option contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HybridRuntimeConfig {
+    /// Default seeding strategy ("AVERAGE"|"PER_SEED"|"NONE").
+    pub seeding_strategy: String,
+
+    /// Fusion weights for [vector, graph].
+    pub fusion_weights: Option<Vec<f64>>,
+}
+
+impl Default for HybridRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            seeding_strategy: "AVERAGE".to_string(),
+            fusion_weights: Some(vec![0.6, 0.4]),
+        }
+    }
+}
+
 /// Hardware acceleration configuration controlling SIMD and GPU features.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareConfig {
@@ -799,6 +927,47 @@ mod tests {
         assert_eq!(config.port, 5678);
         assert_eq!(config.grpc_port, None);
         assert_eq!(config.data_dir, PathBuf::from("./data"));
+    }
+
+    #[test]
+    fn sks_defaults_match_root_runtime_expectations() {
+        let config = SksConfig::default();
+
+        assert!(!config.enabled);
+        assert!(config.enable_entities);
+        assert!(config.enable_relations);
+        assert!(config.enable_provenance);
+        assert!(!config.enable_temporal);
+        assert!(config.enable_sql_extensions);
+        assert_eq!(config.max_embedding_versions, 10);
+        assert_eq!(config.max_traversal_depth, 5);
+        assert_eq!(config.entity_cache_mb, 256);
+        assert_eq!(config.relations_cache_mb, 128);
+        assert_eq!(
+            config.default_embedding_model,
+            "openai/text-embedding-3-large"
+        );
+        assert_eq!(config.storage_backend, "sst");
+    }
+
+    #[test]
+    fn graph_runtime_defaults_match_root_runtime_expectations() {
+        let config = GraphRuntimeConfig::default();
+
+        assert!(config.enable_prefetch);
+        assert_eq!(config.prefetch_budget, 8);
+        assert_eq!(config.engine, "ORION");
+        assert_eq!(config.embedding_mode, "none");
+        assert_eq!(config.embedding_engine, "sst");
+        assert_eq!(config.embedding_memory_cache_mb, None);
+    }
+
+    #[test]
+    fn hybrid_runtime_defaults_match_root_runtime_expectations() {
+        let config = HybridRuntimeConfig::default();
+
+        assert_eq!(config.seeding_strategy, "AVERAGE");
+        assert_eq!(config.fusion_weights, Some(vec![0.6, 0.4]));
     }
 
     #[test]
