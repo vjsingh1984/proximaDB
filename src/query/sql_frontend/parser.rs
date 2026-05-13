@@ -2,10 +2,11 @@
 
 use anyhow::{Result, anyhow};
 use sqlparser::ast::{
-    BinaryOperator, CreateTableOptions, Cte as SqlCte, Expr as SqlExpr, FunctionArg,
-    FunctionArgExpr, Join as SqlJoin, JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr,
-    Query as SqlQuery, Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator,
-    SqlOption, Statement, TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
+    BinaryOperator, ConflictTarget, CreateTableOptions, Cte as SqlCte, Expr as SqlExpr,
+    FunctionArg, FunctionArgExpr, Join as SqlJoin, JoinConstraint, JoinOperator, OnConflictAction,
+    OnInsert, OrderByExpr as SqlOrderByExpr, Query as SqlQuery, Select as SqlSelect, SelectItem,
+    SetExpr, SetOperator as SqlSetOperator, SqlOption, Statement, TableFactor, TableWithJoins,
+    UnaryOperator, Value, With as SqlWith,
 };
 use sqlparser::ast::{CreateIndex, IndexOption};
 use sqlparser::dialect::GenericDialect;
@@ -1013,15 +1014,15 @@ impl SqlFrontendParser {
             None => return Err(anyhow!("INSERT requires VALUES clause")),
         };
 
-        // Check for ON CONFLICT (UPSERT) - simplified, return basic insert for now
-        if insert.on.is_some() {
-            // For now, treat ON CONFLICT as upsert with empty conflict handling
+        if let Some(on_insert) = &insert.on {
+            let (conflict_columns, update_assignments) =
+                self.convert_insert_conflict_clause(on_insert)?;
             return Ok(DmlStatement::Upsert {
                 table_name,
                 columns,
                 values,
-                conflict_columns: Vec::new(),
-                update_assignments: Vec::new(),
+                conflict_columns,
+                update_assignments,
             });
         }
 
@@ -1048,6 +1049,55 @@ impl SqlFrontendParser {
                 })
                 .collect(),
             _ => Err(anyhow!("INSERT source must be VALUES clause")),
+        }
+    }
+
+    fn convert_insert_conflict_clause(
+        &self,
+        on_insert: &OnInsert,
+    ) -> Result<(Vec<String>, Vec<(String, SqlValueLiteral)>)> {
+        match on_insert {
+            OnInsert::OnConflict(on_conflict) => {
+                let conflict_columns = match &on_conflict.conflict_target {
+                    Some(ConflictTarget::Columns(columns)) => columns
+                        .iter()
+                        .map(|column| unquote_identifier_text(&column.to_string()))
+                        .collect(),
+                    Some(ConflictTarget::OnConstraint(name)) => {
+                        vec![unquote_object_name(&name.to_string())]
+                    }
+                    None => Vec::new(),
+                };
+
+                let update_assignments = match &on_conflict.action {
+                    OnConflictAction::DoNothing => Vec::new(),
+                    OnConflictAction::DoUpdate(update) => update
+                        .assignments
+                        .iter()
+                        .map(|assignment| {
+                            Ok((
+                                self.assignment_target_to_string(&assignment.target)?,
+                                self.convert_expr_to_dml_literal(&assignment.value)?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                };
+
+                Ok((conflict_columns, update_assignments))
+            }
+            OnInsert::DuplicateKeyUpdate(assignments) => {
+                let update_assignments = assignments
+                    .iter()
+                    .map(|assignment| {
+                        Ok((
+                            self.assignment_target_to_string(&assignment.target)?,
+                            self.convert_expr_to_dml_literal(&assignment.value)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((Vec::new(), update_assignments))
+            }
+            _ => Err(anyhow!("Unsupported INSERT conflict clause: {:?}", on_insert)),
         }
     }
 
@@ -1092,6 +1142,13 @@ impl SqlFrontendParser {
                     Ok(SqlValueLiteral::Column(ident.value.clone()))
                 }
             }
+            SqlExpr::CompoundIdentifier(parts) => Ok(SqlValueLiteral::Column(
+                parts
+                    .iter()
+                    .map(|part| unquote_identifier_text(&part.to_string()))
+                    .collect::<Vec<_>>()
+                    .join("."),
+            )),
             _ => Err(anyhow!("Unsupported expression in VALUES: {:?}", expr)),
         }
     }
@@ -1605,6 +1662,74 @@ mod tests {
                 assert!(matches!(values[0][2], SqlValueLiteral::String(_)));
             }
             other => panic!("expected insert statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_upsert_preserves_conflict_columns_and_update_assignments() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "INSERT INTO \"agent_store\" (\"record_id\", payload, embedding)
+                 VALUES ('r1', '{\"kind\":\"memory\"}'::jsonb, '[0.1, 0.2]'::vector(2))
+                 ON CONFLICT (\"record_id\") DO UPDATE
+                 SET \"payload\" = excluded.payload,
+                     \"embedding\" = excluded.embedding;",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected upsert dml");
+
+        match statement {
+            DmlStatement::Upsert {
+                table_name,
+                columns,
+                conflict_columns,
+                update_assignments,
+                ..
+            } => {
+                assert_eq!(table_name, "agent_store");
+                assert_eq!(columns, vec!["record_id", "payload", "embedding"]);
+                assert_eq!(conflict_columns, vec!["record_id"]);
+                assert_eq!(update_assignments.len(), 2);
+                assert_eq!(update_assignments[0].0, "payload");
+                assert!(matches!(
+                    &update_assignments[0].1,
+                    SqlValueLiteral::Column(column) if column == "excluded.payload"
+                ));
+                assert_eq!(update_assignments[1].0, "embedding");
+                assert!(matches!(
+                    &update_assignments[1].1,
+                    SqlValueLiteral::Column(column) if column == "excluded.embedding"
+                ));
+            }
+            other => panic!("expected upsert statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_upsert_do_nothing_preserves_conflict_columns() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "INSERT INTO agent_store (record_id, payload)
+                 VALUES ('r1', DEFAULT)
+                 ON CONFLICT (record_id) DO NOTHING;",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected upsert dml");
+
+        match statement {
+            DmlStatement::Upsert {
+                conflict_columns,
+                update_assignments,
+                ..
+            } => {
+                assert_eq!(conflict_columns, vec!["record_id"]);
+                assert!(update_assignments.is_empty());
+            }
+            other => panic!("expected upsert statement, got {other:?}"),
         }
     }
 
