@@ -679,70 +679,9 @@ impl Default for OptimizationConfig {
 }
 
 pub use proximadb_config::{
-    AzureConfig, CloudStorageConfig, GcsConfig, MetadataBackendConfig, S3Config,
+    AzureConfig, CloudStorageConfig, FilesystemOptimizationConfig, GcsConfig,
+    MetadataBackendConfig, S3Config, TempStrategy, TransactionalOperationsConfig,
 };
-
-/// Filesystem configuration for performance optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FilesystemOptimizationConfig {
-    /// Enable write strategy caching
-    pub enable_write_strategy_cache: bool,
-
-    /// Temp directory configuration
-    pub temp_strategy: TempStrategy,
-
-    /// Atomic operations configuration
-    pub atomic_config: TransactionalOperationsConfig,
-}
-
-/// Temp strategy configuration
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum TempStrategy {
-    /// Same directory temp (recommended for local filesystem)
-    SameDirectory,
-
-    /// Configured temp directory
-    ConfiguredTemp {
-        /// Path to the custom temporary directory
-        temp_dir: String,
-    },
-
-    /// System temp directory (fallback)
-    SystemTemp,
-}
-
-/// Atomic operations configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionalOperationsConfig {
-    /// Enable atomic writes for local filesystem
-    pub enable_local_atomic: bool,
-
-    /// Enable write-temp-rename for object stores
-    pub enable_object_store_atomic: bool,
-
-    /// Cleanup temp files on startup
-    pub cleanup_temp_on_startup: bool,
-}
-
-impl Default for FilesystemOptimizationConfig {
-    fn default() -> Self {
-        Self {
-            enable_write_strategy_cache: true,
-            temp_strategy: TempStrategy::SameDirectory,
-            atomic_config: TransactionalOperationsConfig::default(),
-        }
-    }
-}
-
-impl Default for TransactionalOperationsConfig {
-    fn default() -> Self {
-        Self {
-            enable_local_atomic: true,
-            enable_object_store_atomic: true,
-            cleanup_temp_on_startup: true,
-        }
-    }
-}
 
 impl StorageConfig {
     /// Get storage URLs from locations

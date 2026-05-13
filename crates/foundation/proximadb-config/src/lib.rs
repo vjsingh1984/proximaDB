@@ -137,6 +137,68 @@ pub struct GcsConfig {
     pub use_workload_identity: bool,
 }
 
+/// Filesystem configuration for performance optimization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilesystemOptimizationConfig {
+    /// Enable write strategy caching.
+    pub enable_write_strategy_cache: bool,
+
+    /// Temp directory configuration.
+    pub temp_strategy: TempStrategy,
+
+    /// Atomic operations configuration.
+    pub atomic_config: TransactionalOperationsConfig,
+}
+
+/// Temp strategy configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TempStrategy {
+    /// Same directory temp (recommended for local filesystem).
+    SameDirectory,
+
+    /// Configured temp directory.
+    ConfiguredTemp {
+        /// Path to the custom temporary directory.
+        temp_dir: String,
+    },
+
+    /// System temp directory (fallback).
+    SystemTemp,
+}
+
+/// Atomic operations configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionalOperationsConfig {
+    /// Enable atomic writes for local filesystem.
+    pub enable_local_atomic: bool,
+
+    /// Enable write-temp-rename for object stores.
+    pub enable_object_store_atomic: bool,
+
+    /// Cleanup temp files on startup.
+    pub cleanup_temp_on_startup: bool,
+}
+
+impl Default for FilesystemOptimizationConfig {
+    fn default() -> Self {
+        Self {
+            enable_write_strategy_cache: true,
+            temp_strategy: TempStrategy::SameDirectory,
+            atomic_config: TransactionalOperationsConfig::default(),
+        }
+    }
+}
+
+impl Default for TransactionalOperationsConfig {
+    fn default() -> Self {
+        Self {
+            enable_local_atomic: true,
+            enable_object_store_atomic: true,
+            cleanup_temp_on_startup: true,
+        }
+    }
+}
+
 /// WAL storage configuration supporting multiple directories and cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
@@ -249,5 +311,16 @@ mod tests {
         assert!(config.cloud_config.is_none());
         assert_eq!(config.cache_size_mb, Some(256));
         assert_eq!(config.flush_interval_secs, Some(60));
+    }
+
+    #[test]
+    fn filesystem_optimization_defaults_match_root_runtime_expectations() {
+        let config = FilesystemOptimizationConfig::default();
+
+        assert!(config.enable_write_strategy_cache);
+        assert!(matches!(config.temp_strategy, TempStrategy::SameDirectory));
+        assert!(config.atomic_config.enable_local_atomic);
+        assert!(config.atomic_config.enable_object_store_atomic);
+        assert!(config.atomic_config.cleanup_temp_on_startup);
     }
 }
