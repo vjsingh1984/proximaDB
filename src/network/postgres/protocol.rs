@@ -2756,6 +2756,14 @@ mod tests {
             ),
             DataModel::Document
         );
+        assert_eq!(
+            multimodal_router::detect_store_type_from_query(
+                "SELECT * FROM DOCUMENT_QUERY('agent_docs', '$.role = \"planner\"')",
+                "agent_queries",
+                None,
+            ),
+            DataModel::Document
+        );
 
         // CREATE with JSONB column
         assert_eq!(
@@ -2850,6 +2858,22 @@ mod tests {
             multimodal_router::detect_store_type_from_query(
                 "SELECT * FROM trace_spans WHERE service = 'gateway'",
                 "trace_spans",
+                None,
+            ),
+            DataModel::Observability
+        );
+        assert_eq!(
+            multimodal_router::detect_store_type_from_query(
+                "SELECT * FROM LOGS('production') WHERE severity = 'ERROR'",
+                "ops_queries",
+                None,
+            ),
+            DataModel::Observability
+        );
+        assert_eq!(
+            multimodal_router::detect_store_type_from_query(
+                "SELECT * FROM METRICS('system') WHERE metric_name = 'cpu_usage'",
+                "ops_queries",
                 None,
             ),
             DataModel::Observability

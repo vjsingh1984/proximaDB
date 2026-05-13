@@ -159,7 +159,7 @@ fn extract_option_value(sql: &str, key: &str) -> Option<String> {
 /// Priority:
 /// 1. Vector operators (<->, <=>, <#>) and lowered vector distance calls
 /// 2. JSON path expressions ($.) and lowered JSON helper calls
-/// 3. Graph SQL helpers (`GRAPH_QUERY`)
+/// 3. Multi-model SQL table helpers (`DOCUMENT_QUERY`, `GRAPH_QUERY`, `LOGS`, `METRICS`)
 /// 4. Table name prefix (graph_, log_, metric_, doc_)
 /// 5. Catalog lookup (via callback)
 /// 6. Default to Relational
@@ -189,9 +189,15 @@ pub fn detect_store_type_from_query(
         return DataModel::Document;
     }
 
-    // 3. Graph SQL helpers.
+    // 3. Multi-model SQL table helpers.
+    if upper.contains("DOCUMENT_QUERY") {
+        return DataModel::Document;
+    }
     if upper.contains("GRAPH_QUERY") {
         return DataModel::Graph;
+    }
+    if upper.contains("LOGS(") || upper.contains("METRICS(") {
+        return DataModel::Observability;
     }
 
     // 4. Table name prefix
@@ -384,6 +390,18 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_query_document_query_function() {
+        assert_eq!(
+            detect_store_type_from_query(
+                "SELECT * FROM DOCUMENT_QUERY('agent_docs', '$.role = \"planner\"')",
+                "agent_queries",
+                None
+            ),
+            DataModel::Document
+        );
+    }
+
+    #[test]
     fn test_detect_query_graph_prefix() {
         assert_eq!(
             detect_store_type_from_query(
@@ -417,6 +435,20 @@ mod tests {
             ),
             DataModel::Observability
         );
+    }
+
+    #[test]
+    fn test_detect_query_observability_functions() {
+        for sql in [
+            "SELECT * FROM LOGS('production') WHERE severity = 'ERROR'",
+            "SELECT * FROM METRICS('system') WHERE metric_name = 'cpu_usage'",
+        ] {
+            assert_eq!(
+                detect_store_type_from_query(sql, "ops_queries", None),
+                DataModel::Observability,
+                "{sql}"
+            );
+        }
     }
 
     #[test]
