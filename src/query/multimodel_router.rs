@@ -157,7 +157,7 @@ fn extract_option_value(sql: &str, key: &str) -> Option<String> {
 /// Detect the store type from a SQL SELECT/INSERT/UPDATE/DELETE statement.
 ///
 /// Priority:
-/// 1. Vector operators (<->, <=>, <#>)
+/// 1. Vector operators (<->, <=>, <#>) and lowered vector distance calls
 /// 2. JSON path expressions ($.)
 /// 3. Table name prefix (graph_, log_, metric_, doc_)
 /// 4. Catalog lookup (via callback)
@@ -169,8 +169,12 @@ pub fn detect_store_type_from_query(
 ) -> DataModel {
     let upper = sql.to_uppercase();
 
-    // 1. Vector operators
-    if upper.contains("<->") || upper.contains("<=>") || upper.contains("<#>") {
+    // 1. Vector operators and lowered pgwire/vector SQL helpers.
+    if upper.contains("<->")
+        || upper.contains("<=>")
+        || upper.contains("<#>")
+        || upper.contains("VECTOR_DISTANCE")
+    {
         return DataModel::Vector;
     }
 
@@ -325,6 +329,18 @@ mod tests {
         assert_eq!(
             detect_store_type_from_query(
                 "SELECT * FROM vecs ORDER BY embedding <-> '[0.1,0.2]' LIMIT 10",
+                "vecs",
+                None
+            ),
+            DataModel::Vector
+        );
+    }
+
+    #[test]
+    fn test_detect_query_lowered_vector_distance_function() {
+        assert_eq!(
+            detect_store_type_from_query(
+                "SELECT * FROM vecs ORDER BY VECTOR_DISTANCE(embedding, [0.1,0.2], 'l2') LIMIT 10",
                 "vecs",
                 None
             ),

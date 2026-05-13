@@ -2683,6 +2683,14 @@ mod tests {
             ),
             DataModel::Vector
         );
+        assert_eq!(
+            multimodal_router::detect_store_type_from_query(
+                "SELECT id FROM products ORDER BY VECTOR_DISTANCE(embedding, [0.1, 0.2], 'l2') LIMIT 5",
+                "products",
+                None,
+            ),
+            DataModel::Vector
+        );
 
         // CREATE TABLE with VECTOR column type
         assert_eq!(
