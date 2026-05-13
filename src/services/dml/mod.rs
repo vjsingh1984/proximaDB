@@ -372,8 +372,9 @@ impl DmlService {
 
         // For now, UPDATE is not fully implemented
         // Vector databases typically use delete + insert pattern
+        let table_schema = catalog.get_table(&table_id).await?;
         let _ids_to_update = if let Some(ref wc) = where_clause {
-            self.extract_ids_from_where(wc)?
+            self.extract_ids_from_where(wc, &table_schema)?
         } else {
             return Err(anyhow!("UPDATE without WHERE clause is not allowed"));
         };
@@ -400,12 +401,14 @@ impl DmlService {
             return Err(anyhow!("Table '{table_name}' does not exist"));
         }
 
+        let table_schema = catalog.get_table(&table_id).await?;
+
         // Get IDs to delete based on WHERE clause
         let ids_to_delete = if let Some(ref wc) = where_clause {
-            self.extract_ids_from_where(wc)?
+            self.extract_ids_from_where(wc, &table_schema)?
         } else {
             return Err(anyhow!(
-                "DELETE without WHERE clause is not allowed. Use WHERE id IN (...) to delete specific rows."
+                "DELETE without WHERE clause is not allowed. Use WHERE primary key IN (...) to delete specific rows."
             ));
         };
 
@@ -413,21 +416,32 @@ impl DmlService {
             return Ok(DmlResult::success(0, "No rows matched WHERE clause"));
         }
 
-        // Deferred: Implement actual delete through storage engine
-        // For now, we'll return the count of what would be deleted
         let deleted_count = ids_to_delete.len();
+        let batch_result = self
+            .vector_ops
+            .delete_records_with_tenant_context(&table_id.name, ids_to_delete, None)
+            .await?;
+        if !batch_result.success {
+            return Err(anyhow!(
+                "Delete failed: {}",
+                batch_result
+                    .errors
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "unknown error".to_string())
+            ));
+        }
 
         info!(
             table = %table_name,
             rows = deleted_count,
-            "Delete requested (implementation pending)"
+            "Deleted rows"
         );
 
         Ok(DmlResult::success(
             deleted_count as u64,
-            format!("Delete of {} rows requested", deleted_count),
-        )
-        .with_warning("Full DELETE implementation pending - records marked for deletion"))
+            format!("Deleted {} rows", deleted_count),
+        ))
     }
 
     /// Execute UPSERT statement
@@ -507,13 +521,7 @@ impl DmlService {
 
         self.validate_insert_columns(columns, values, table_schema)?;
 
-        let primary_key_column = table_schema.primary_key.first().cloned().or_else(|| {
-            table_schema
-                .columns
-                .iter()
-                .find(|column| column.name == "id" || column.name == "record_id")
-                .map(|column| column.name.clone())
-        });
+        let primary_key_column = Self::primary_key_column(table_schema);
         let vector_column = table_schema
             .columns
             .iter()
@@ -526,13 +534,15 @@ impl DmlService {
         let mut created_at_ns = None;
 
         for (col, val) in columns.iter().zip(values.iter()) {
+            let effective_value = self.effective_insert_literal(col, val, table_schema)?;
+
             if primary_key_column.as_deref() == Some(col.as_str()) {
-                id = Some(self.literal_to_string(val)?);
+                id = Some(self.literal_to_string(&effective_value)?);
                 props.insert(
                     col.clone(),
                     ProximaTreeNode::Value(self.literal_to_proxima_value_for_column(
                         col,
-                        val,
+                        &effective_value,
                         table_schema,
                     )?),
                 );
@@ -540,7 +550,7 @@ impl DmlService {
             }
 
             if vector_column.as_ref().is_some_and(|(name, _)| name == col) {
-                let vector = self.literal_to_vector(val)?;
+                let vector = self.literal_to_vector(&effective_value)?;
                 if let Some((_, properties)) = &vector_column {
                     if let Some(expected) = properties
                         .get("dimension")
@@ -567,7 +577,7 @@ impl DmlService {
 
             if col == "timestamp" {
                 created_at_ns = self
-                    .literal_to_timestamp(val)?
+                    .literal_to_timestamp(&effective_value)?
                     .map(|timestamp_ms| timestamp_ms.saturating_mul(1_000_000));
                 continue;
             }
@@ -576,7 +586,41 @@ impl DmlService {
                 col.clone(),
                 ProximaTreeNode::Value(self.literal_to_proxima_value_for_column(
                     col,
-                    val,
+                    &effective_value,
+                    table_schema,
+                )?),
+            );
+        }
+
+        for column in &table_schema.columns {
+            if columns.iter().any(|provided| provided == &column.name) {
+                continue;
+            }
+            let Some(default_value) = &column.default_value else {
+                continue;
+            };
+            let default_literal = Self::parse_default_literal(default_value)?;
+            if vector_column
+                .as_ref()
+                .is_some_and(|(name, _)| name == &column.name)
+            {
+                let vector = self.literal_to_vector(&default_literal)?;
+                embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: vector.len() as u32,
+                    values: vector,
+                });
+                continue;
+            }
+            if primary_key_column.as_deref() == Some(column.name.as_str()) {
+                id = Some(self.literal_to_string(&default_literal)?);
+            }
+            props.insert(
+                column.name.clone(),
+                ProximaTreeNode::Value(self.literal_to_proxima_value_for_column(
+                    &column.name,
+                    &default_literal,
                     table_schema,
                 )?),
             );
@@ -649,8 +693,28 @@ impl DmlService {
         matches!(value, SqlValueLiteral::Null)
     }
 
-    /// Extract IDs from WHERE clause (supports id = 'value' and id IN (...))
-    fn extract_ids_from_where(&self, where_clause: &WhereClause) -> Result<Vec<String>> {
+    fn primary_key_column(table_schema: &CatalogTableSchema) -> Option<String> {
+        table_schema.primary_key.first().cloned().or_else(|| {
+            table_schema
+                .columns
+                .iter()
+                .find(|column| column.name == "id" || column.name == "record_id")
+                .map(|column| column.name.clone())
+        })
+    }
+
+    /// Extract IDs from WHERE clause using the catalog primary key.
+    fn extract_ids_from_where(
+        &self,
+        where_clause: &WhereClause,
+        table_schema: &CatalogTableSchema,
+    ) -> Result<Vec<String>> {
+        let Some(primary_key_column) = Self::primary_key_column(table_schema) else {
+            return Err(anyhow!(
+                "Table '{}' has no single-column primary key/id column for DML key extraction",
+                table_schema.name
+            ));
+        };
         let mut ids = Vec::new();
 
         for condition in &where_clause.conditions {
@@ -660,7 +724,9 @@ impl DmlService {
                     operator,
                     value,
                 } => {
-                    if column == "id" && matches!(operator, ComparisonOperator::Equal) {
+                    if column == &primary_key_column
+                        && matches!(operator, ComparisonOperator::Equal)
+                    {
                         ids.push(self.literal_to_string(value)?);
                     }
                 }
@@ -669,7 +735,7 @@ impl DmlService {
                     values,
                     negated,
                 } => {
-                    if column == "id" && !negated {
+                    if column == &primary_key_column && !negated {
                         for v in values {
                             ids.push(self.literal_to_string(v)?);
                         }
@@ -681,11 +747,115 @@ impl DmlService {
 
         if ids.is_empty() {
             return Err(anyhow!(
-                "WHERE clause must include id = 'value' or id IN (...) for DML operations"
+                "WHERE clause must include {} = 'value' or {} IN (...) for DML operations",
+                primary_key_column,
+                primary_key_column
             ));
         }
 
         Ok(ids)
+    }
+
+    fn effective_insert_literal(
+        &self,
+        column_name: &str,
+        value: &SqlValueLiteral,
+        table_schema: &CatalogTableSchema,
+    ) -> Result<SqlValueLiteral> {
+        if !matches!(value, SqlValueLiteral::Default) {
+            return Ok(value.clone());
+        }
+
+        let Some(column) = table_schema
+            .columns
+            .iter()
+            .find(|column| column.name == column_name)
+        else {
+            return Err(anyhow!("Column '{}' does not exist", column_name));
+        };
+        let Some(default_value) = &column.default_value else {
+            return Err(anyhow!("Column '{}' has no DEFAULT value", column_name));
+        };
+
+        Self::parse_default_literal(default_value)
+    }
+
+    fn parse_default_literal(default_value: &str) -> Result<SqlValueLiteral> {
+        let without_cast = default_value
+            .split_once("::")
+            .map(|(value, _)| value)
+            .unwrap_or(default_value)
+            .trim();
+        let trimmed = without_cast
+            .strip_prefix('(')
+            .and_then(|value| value.strip_suffix(')'))
+            .unwrap_or(without_cast)
+            .trim();
+
+        if trimmed.eq_ignore_ascii_case("NULL") {
+            return Ok(SqlValueLiteral::Null);
+        }
+        if trimmed.eq_ignore_ascii_case("TRUE") {
+            return Ok(SqlValueLiteral::Boolean(true));
+        }
+        if trimmed.eq_ignore_ascii_case("FALSE") {
+            return Ok(SqlValueLiteral::Boolean(false));
+        }
+        if trimmed.eq_ignore_ascii_case("NOW()")
+            || trimmed.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
+            || trimmed.eq_ignore_ascii_case("CURRENT_TIMESTAMP()")
+        {
+            return Ok(SqlValueLiteral::Function {
+                name: "CURRENT_TIMESTAMP".to_string(),
+                args: Vec::new(),
+            });
+        }
+
+        if let Some(unquoted) = Self::unquote_sql_string(trimmed) {
+            let value = unquoted?;
+            if value.starts_with('{') || value.starts_with('[') {
+                if let Ok(json) = serde_json::from_str(&value) {
+                    return Ok(SqlValueLiteral::Json(json));
+                }
+            }
+            return Ok(SqlValueLiteral::String(value));
+        }
+
+        if let Ok(value) = trimmed.parse::<i64>() {
+            return Ok(SqlValueLiteral::Integer(value));
+        }
+        if let Ok(value) = trimmed.parse::<f64>() {
+            return Ok(SqlValueLiteral::Float(value));
+        }
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            if let Ok(json) = serde_json::from_str(trimmed) {
+                return Ok(SqlValueLiteral::Json(json));
+            }
+        }
+
+        Ok(SqlValueLiteral::String(trimmed.to_string()))
+    }
+
+    fn unquote_sql_string(value: &str) -> Option<Result<String>> {
+        if !(value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'')) {
+            return None;
+        }
+
+        let mut output = String::new();
+        let mut chars = value[1..value.len() - 1].chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    chars.next();
+                    output.push('\'');
+                } else {
+                    return Some(Err(anyhow!("Invalid SQL string literal: {}", value)));
+                }
+            } else {
+                output.push(ch);
+            }
+        }
+        Some(Ok(output))
     }
 
     /// Convert SqlValueLiteral to string
@@ -975,5 +1145,27 @@ mod tests {
         };
 
         assert_eq!(wc.conditions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_jsonb_default_literal() {
+        let literal = DmlService::parse_default_literal("'{}'::jsonb").unwrap();
+        match literal {
+            SqlValueLiteral::Json(value) => {
+                assert_eq!(value, serde_json::json!({}));
+            }
+            other => panic!("expected JSON default literal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_default_literal_unescapes_sql_string() {
+        let literal = DmlService::parse_default_literal("'agent''s note'").unwrap();
+        match literal {
+            SqlValueLiteral::String(value) => {
+                assert_eq!(value, "agent's note");
+            }
+            other => panic!("expected string default literal, got {other:?}"),
+        }
     }
 }
