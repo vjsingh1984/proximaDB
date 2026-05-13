@@ -10,10 +10,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use tracing::info;
 
-use crate::catalog::CatalogManager;
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
+use crate::catalog::types::CatalogTableSchema;
+use crate::catalog::{CatalogDataType, CatalogManager};
 use crate::services::operations::VectorOps;
 
 /// DML Statement types
@@ -311,22 +313,33 @@ impl DmlService {
         // Get table schema for column mapping
         let table_schema = catalog.get_table(&table_id).await?;
 
-        // Convert values to VectorRecords
+        // Convert SQL literals into canonical ProximaRecord envelopes.
         let mut records = Vec::new();
         let mut inserted_ids = Vec::new();
 
         for row in values {
-            let record = self.build_vector_record(&table_id.name, columns, &row, &table_schema)?;
-            inserted_ids.push(record.id.clone());
+            let record = self.build_proxima_record(columns, &row, &table_schema)?;
+            inserted_ids.push(record.oid.clone());
             records.push(record);
         }
 
-        // Insert via vector operations service
+        // Insert canonical records. VectorRecord adaptation remains behind VectorOps until
+        // storage/WAL accept ProximaRecord directly.
         let num_records = records.len();
-        let _batch_result = self
+        let batch_result = self
             .vector_ops
-            .insert_batch(&table_id.name, records)
+            .insert_records_with_tenant_context(&table_id.name, records, None)
             .await?;
+        if !batch_result.success {
+            return Err(anyhow!(
+                "Insert failed: {}",
+                batch_result
+                    .errors
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "unknown error".to_string())
+            ));
+        }
 
         info!(
             table = %table_name,
@@ -436,23 +449,30 @@ impl DmlService {
         // Get table schema
         let table_schema = catalog.get_table(&table_id).await?;
 
-        // For vector databases, upsert is typically insert with overwrite semantics
-        // The storage engine handles conflict resolution based on ID
         let mut records = Vec::new();
         let mut inserted_ids = Vec::new();
 
         for row in values {
-            let record = self.build_vector_record(&table_id.name, columns, &row, &table_schema)?;
-            inserted_ids.push(record.id.clone());
+            let record = self.build_proxima_record(columns, &row, &table_schema)?;
+            inserted_ids.push(record.oid.clone());
             records.push(record);
         }
 
-        // Insert via vector operations service (will overwrite on ID conflict)
         let num_records = records.len();
-        let _batch_result = self
+        let batch_result = self
             .vector_ops
-            .insert_batch(&table_id.name, records)
+            .insert_records_with_tenant_context(&table_id.name, records, None)
             .await?;
+        if !batch_result.success {
+            return Err(anyhow!(
+                "Upsert failed: {}",
+                batch_result
+                    .errors
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "unknown error".to_string())
+            ));
+        }
 
         info!(
             table = %table_name,
@@ -470,14 +490,13 @@ impl DmlService {
     // Helper Methods
     // ========================
 
-    /// Build a VectorRecord from column names and values
-    fn build_vector_record(
+    /// Build a canonical ProximaRecord from catalog schema and SQL literals.
+    fn build_proxima_record(
         &self,
-        _collection_name: &str,
         columns: &[String],
         values: &[SqlValueLiteral],
-        _table_schema: &crate::catalog::types::CatalogTableSchema,
-    ) -> Result<VectorRecord> {
+        table_schema: &CatalogTableSchema,
+    ) -> Result<ProximaRecord> {
         if columns.len() != values.len() {
             return Err(anyhow!(
                 "Column count ({}) doesn't match value count ({})",
@@ -486,43 +505,148 @@ impl DmlService {
             ));
         }
 
+        self.validate_insert_columns(columns, values, table_schema)?;
+
+        let primary_key_column = table_schema.primary_key.first().cloned().or_else(|| {
+            table_schema
+                .columns
+                .iter()
+                .find(|column| column.name == "id" || column.name == "record_id")
+                .map(|column| column.name.clone())
+        });
+        let vector_column = table_schema
+            .columns
+            .iter()
+            .find(|column| matches!(column.data_type, CatalogDataType::Vector))
+            .map(|column| (column.name.clone(), column.properties.clone()));
+
         let mut id = None;
-        let mut vector = Vec::new();
-        let mut metadata = HashMap::new();
-        let mut timestamp = None;
+        let mut props = HashMap::new();
+        let mut embeddings = Vec::new();
+        let mut created_at_ns = None;
 
         for (col, val) in columns.iter().zip(values.iter()) {
-            match col.as_str() {
-                "id" => {
-                    id = Some(self.literal_to_string(val)?);
-                }
-                "vector" => {
-                    vector = self.literal_to_vector(val)?;
-                }
-                "timestamp" => {
-                    timestamp = self.literal_to_timestamp(val)?;
-                }
-                _ => {
-                    // Add to metadata
-                    let sql_value = self.literal_to_sql_value(val)?;
-                    metadata.insert(col.clone(), sql_value);
-                }
+            if primary_key_column.as_deref() == Some(col.as_str()) {
+                id = Some(self.literal_to_string(val)?);
+                props.insert(
+                    col.clone(),
+                    ProximaTreeNode::Value(self.literal_to_proxima_value_for_column(
+                        col,
+                        val,
+                        table_schema,
+                    )?),
+                );
+                continue;
             }
+
+            if vector_column.as_ref().is_some_and(|(name, _)| name == col) {
+                let vector = self.literal_to_vector(val)?;
+                if let Some((_, properties)) = &vector_column {
+                    if let Some(expected) = properties
+                        .get("dimension")
+                        .and_then(|dimension| dimension.parse::<usize>().ok())
+                    {
+                        if vector.len() != expected {
+                            return Err(anyhow!(
+                                "Vector column '{}' expects dimension {}, got {}",
+                                col,
+                                expected,
+                                vector.len()
+                            ));
+                        }
+                    }
+                }
+                embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: vector.len() as u32,
+                    values: vector,
+                });
+                continue;
+            }
+
+            if col == "timestamp" {
+                created_at_ns = self
+                    .literal_to_timestamp(val)?
+                    .map(|timestamp_ms| timestamp_ms.saturating_mul(1_000_000));
+                continue;
+            }
+
+            props.insert(
+                col.clone(),
+                ProximaTreeNode::Value(self.literal_to_proxima_value_for_column(
+                    col,
+                    val,
+                    table_schema,
+                )?),
+            );
         }
 
         // Generate ID if not provided
         let record_id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let mut record = ProximaRecord {
+            oid: record_id.clone(),
+            local_id: Some(record_id),
+            props,
+            embeddings,
+            method: Some("sql_dml".to_string()),
+            ..ProximaRecord::default()
+        };
+        if let Some(created_at_ns) = created_at_ns {
+            record.created_at_ns = created_at_ns;
+            record.updated_at_ns = created_at_ns;
+        }
+        Ok(record)
+    }
 
-        Ok(VectorRecord {
-            id: record_id,
-            vector,
-            metadata,
-            timestamp,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
-        })
+    fn validate_insert_columns(
+        &self,
+        columns: &[String],
+        values: &[SqlValueLiteral],
+        table_schema: &CatalogTableSchema,
+    ) -> Result<()> {
+        for column in columns {
+            if !table_schema
+                .columns
+                .iter()
+                .any(|schema_column| schema_column.name == *column)
+            {
+                return Err(anyhow!(
+                    "Column '{}' does not exist in table '{}'",
+                    column,
+                    table_schema.name
+                ));
+            }
+        }
+
+        for schema_column in &table_schema.columns {
+            if schema_column.nullable || schema_column.default_value.is_some() {
+                continue;
+            }
+            let Some(position) = columns
+                .iter()
+                .position(|column| column == &schema_column.name)
+            else {
+                return Err(anyhow!(
+                    "Column '{}' is required for table '{}'",
+                    schema_column.name,
+                    table_schema.name
+                ));
+            };
+            if values.get(position).is_some_and(Self::literal_is_null) {
+                return Err(anyhow!(
+                    "Column '{}' cannot be NULL for table '{}'",
+                    schema_column.name,
+                    table_schema.name
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn literal_is_null(value: &SqlValueLiteral) -> bool {
+        matches!(value, SqlValueLiteral::Null)
     }
 
     /// Extract IDs from WHERE clause (supports id = 'value' and id IN (...))
@@ -587,6 +711,18 @@ impl DmlService {
                     _ => Err(anyhow!("Vector elements must be numeric")),
                 })
                 .collect(),
+            SqlValueLiteral::String(value) => value
+                .trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(',')
+                .filter(|part| !part.trim().is_empty())
+                .map(|part| {
+                    part.trim()
+                        .parse::<f32>()
+                        .map_err(|e| anyhow!("Invalid vector element '{}': {}", part, e))
+                })
+                .collect(),
             _ => Err(anyhow!("Vector column expects array value")),
         }
     }
@@ -610,48 +746,153 @@ impl DmlService {
         }
     }
 
-    /// Convert SqlValueLiteral to SqlValue
-    fn literal_to_sql_value(&self, val: &SqlValueLiteral) -> Result<SqlValue> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-
-        let value = match val {
-            SqlValueLiteral::Null => Value::NullValue(0),
-            SqlValueLiteral::Boolean(b) => Value::BoolValue(*b),
-            SqlValueLiteral::Integer(i) => Value::Int64Value(*i),
-            SqlValueLiteral::Float(f) => Value::NumberValue(*f),
-            SqlValueLiteral::String(s) => Value::StringValue(s.clone()),
-            SqlValueLiteral::Binary(b) => Value::BytesValue(b.clone()),
-            SqlValueLiteral::Json(j) => Value::StringValue(j.to_string()),
-            SqlValueLiteral::Array(arr) => {
-                // Convert to JSON array string
-                let json_arr: Vec<serde_json::Value> = arr
-                    .iter()
-                    .filter_map(|v| self.literal_to_json(v).ok())
-                    .collect();
-                Value::StringValue(serde_json::to_string(&json_arr).unwrap_or_default())
-            }
-            SqlValueLiteral::Default => {
-                return Err(anyhow!("DEFAULT value not supported in this context"));
-            }
-            SqlValueLiteral::Parameter(_) => {
-                return Err(anyhow!("Unbound parameter in literal conversion"));
-            }
-            SqlValueLiteral::Column(_) => {
-                return Err(anyhow!("Column reference not supported in value context"));
-            }
-            SqlValueLiteral::Function { name, .. } => {
-                // Evaluate simple functions
-                if name.eq_ignore_ascii_case("NOW")
-                    || name.eq_ignore_ascii_case("CURRENT_TIMESTAMP")
-                {
-                    Value::Int64Value(chrono::Utc::now().timestamp_millis())
-                } else {
-                    return Err(anyhow!("Unsupported function: {name}"));
-                }
-            }
+    fn literal_to_proxima_value_for_column(
+        &self,
+        column_name: &str,
+        val: &SqlValueLiteral,
+        table_schema: &CatalogTableSchema,
+    ) -> Result<ProximaValue> {
+        let Some(column) = table_schema
+            .columns
+            .iter()
+            .find(|column| column.name == column_name)
+        else {
+            return self.literal_to_proxima_value(val);
         };
 
-        Ok(SqlValue { value: Some(value) })
+        match column.data_type {
+            CatalogDataType::Boolean => match val {
+                SqlValueLiteral::Boolean(value) => Ok(ProximaValue::Boolean(*value)),
+                SqlValueLiteral::Null if column.nullable => Ok(ProximaValue::Null),
+                _ => Err(anyhow!("Column '{}' expects boolean", column_name)),
+            },
+            CatalogDataType::Int8 => self
+                .literal_to_i64(val)
+                .map(|v| ProximaValue::Int8(v as i8)),
+            CatalogDataType::Int16 => self
+                .literal_to_i64(val)
+                .map(|v| ProximaValue::Int16(v as i16)),
+            CatalogDataType::Int32 => self
+                .literal_to_i64(val)
+                .map(|v| ProximaValue::Int32(v as i32)),
+            CatalogDataType::Int64 => self.literal_to_i64(val).map(ProximaValue::Int64),
+            CatalogDataType::Float32 => self
+                .literal_to_f64(val)
+                .map(|v| ProximaValue::Float32(v as f32)),
+            CatalogDataType::Float64 => self.literal_to_f64(val).map(ProximaValue::Float64),
+            CatalogDataType::String | CatalogDataType::Uuid => {
+                self.literal_to_string(val).map(ProximaValue::String)
+            }
+            CatalogDataType::Json => {
+                let json = match val {
+                    SqlValueLiteral::Json(value) => value.clone(),
+                    SqlValueLiteral::String(value) => serde_json::from_str(value).map_err(|e| {
+                        anyhow!("Column '{}' expects valid JSON/JSONB: {}", column_name, e)
+                    })?,
+                    SqlValueLiteral::Null if column.nullable => serde_json::Value::Null,
+                    _ => self.literal_to_json(val)?,
+                };
+                if column.properties.get("json_encoding").map(String::as_str) == Some("jsonb") {
+                    Ok(ProximaValue::Jsonb(json))
+                } else {
+                    Ok(ProximaValue::Json(json))
+                }
+            }
+            CatalogDataType::Vector => self.literal_to_vector(val).map(ProximaValue::DenseVector),
+            CatalogDataType::Binary | CatalogDataType::BinaryVector => match val {
+                SqlValueLiteral::Binary(value) => Ok(ProximaValue::Binary(value.clone())),
+                SqlValueLiteral::Null if column.nullable => Ok(ProximaValue::Null),
+                _ => Err(anyhow!("Column '{}' expects binary", column_name)),
+            },
+            CatalogDataType::Date => self
+                .literal_to_i64(val)
+                .map(|value| ProximaValue::Date(value as i32)),
+            CatalogDataType::Time => self.literal_to_i64(val).map(|value| {
+                ProximaValue::Time(value, proximadb_data_model::TimeUnit::Millisecond)
+            }),
+            CatalogDataType::Timestamp => self.literal_to_timestamp(val).map(|value| {
+                value
+                    .map(|timestamp| {
+                        ProximaValue::Timestamp(
+                            timestamp,
+                            proximadb_data_model::TimeUnit::Millisecond,
+                        )
+                    })
+                    .unwrap_or(ProximaValue::Null)
+            }),
+            CatalogDataType::TimestampTz => self.literal_to_timestamp(val).map(|value| {
+                value
+                    .map(|timestamp| {
+                        ProximaValue::TimestampTz(
+                            timestamp,
+                            proximadb_data_model::TimeUnit::Millisecond,
+                        )
+                    })
+                    .unwrap_or(ProximaValue::Null)
+            }),
+            CatalogDataType::Decimal => self.literal_to_string(val).map(ProximaValue::Decimal),
+            CatalogDataType::SparseVector => Err(anyhow!(
+                "Sparse vector DML literal lowering is not implemented for column '{}'",
+                column_name
+            )),
+        }
+    }
+
+    fn literal_to_proxima_value(&self, val: &SqlValueLiteral) -> Result<ProximaValue> {
+        match val {
+            SqlValueLiteral::Null => Ok(ProximaValue::Null),
+            SqlValueLiteral::Boolean(value) => Ok(ProximaValue::Boolean(*value)),
+            SqlValueLiteral::Integer(value) => Ok(ProximaValue::Int64(*value)),
+            SqlValueLiteral::Float(value) => Ok(ProximaValue::Float64(*value)),
+            SqlValueLiteral::String(value) => Ok(ProximaValue::String(value.clone())),
+            SqlValueLiteral::Binary(value) => Ok(ProximaValue::Binary(value.clone())),
+            SqlValueLiteral::Json(value) => Ok(ProximaValue::Json(value.clone())),
+            SqlValueLiteral::Array(values) => values
+                .iter()
+                .map(|value| self.literal_to_proxima_value(value))
+                .collect::<Result<Vec<_>>>()
+                .map(ProximaValue::Array),
+            SqlValueLiteral::Function { name, .. }
+                if name.eq_ignore_ascii_case("NOW")
+                    || name.eq_ignore_ascii_case("CURRENT_TIMESTAMP") =>
+            {
+                Ok(ProximaValue::TimestampTz(
+                    chrono::Utc::now().timestamp_millis(),
+                    proximadb_data_model::TimeUnit::Millisecond,
+                ))
+            }
+            SqlValueLiteral::Default => Err(anyhow!("DEFAULT value is not supported yet")),
+            SqlValueLiteral::Parameter(_) => {
+                Err(anyhow!("Unbound parameter in literal conversion"))
+            }
+            SqlValueLiteral::Column(_) => {
+                Err(anyhow!("Column reference not supported in value context"))
+            }
+            SqlValueLiteral::Function { name, .. } => Err(anyhow!("Unsupported function: {name}")),
+        }
+    }
+
+    fn literal_to_i64(&self, val: &SqlValueLiteral) -> Result<i64> {
+        match val {
+            SqlValueLiteral::Integer(value) => Ok(*value),
+            SqlValueLiteral::String(value) => value
+                .parse()
+                .map_err(|e| anyhow!("Invalid integer literal '{}': {}", value, e)),
+            SqlValueLiteral::Null => Err(anyhow!("Cannot convert NULL to integer")),
+            _ => Err(anyhow!("Expected integer literal")),
+        }
+    }
+
+    fn literal_to_f64(&self, val: &SqlValueLiteral) -> Result<f64> {
+        match val {
+            SqlValueLiteral::Float(value) => Ok(*value),
+            SqlValueLiteral::Integer(value) => Ok(*value as f64),
+            SqlValueLiteral::String(value) => value
+                .parse()
+                .map_err(|e| anyhow!("Invalid float literal '{}': {}", value, e)),
+            SqlValueLiteral::Null => Err(anyhow!("Cannot convert NULL to float")),
+            _ => Err(anyhow!("Expected numeric literal")),
+        }
     }
 
     /// Convert SqlValueLiteral to JSON value

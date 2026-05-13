@@ -998,10 +998,14 @@ impl SqlFrontendParser {
     /// Convert INSERT statement to DmlStatement
     fn convert_insert(&self, insert: &sqlparser::ast::Insert) -> Result<DmlStatement> {
         // Get table name
-        let table_name = insert.table.to_string();
+        let table_name = unquote_object_name(&insert.table.to_string());
 
         // Get column names
-        let columns: Vec<String> = insert.columns.iter().map(|c| c.value.clone()).collect();
+        let columns: Vec<String> = insert
+            .columns
+            .iter()
+            .map(|c| unquote_identifier_text(&c.to_string()))
+            .collect();
 
         // Get values from source
         let values = match &insert.source {
@@ -1079,6 +1083,7 @@ impl SqlFrontendParser {
                 let args = self.extract_function_args_dml(&func.args)?;
                 Ok(SqlValueLiteral::Function { name, args })
             }
+            SqlExpr::Cast { expr, .. } => self.convert_expr_to_dml_literal(expr),
             SqlExpr::Identifier(ident) => {
                 // Could be DEFAULT or a column reference
                 if ident.value.eq_ignore_ascii_case("DEFAULT") {
@@ -2261,7 +2266,7 @@ fn sql_option_value_to_string(value: &SqlExpr) -> String {
     }
 }
 
-fn unquote_object_name(value: &str) -> String {
+pub fn unquote_object_name(value: &str) -> String {
     value
         .split('.')
         .map(unquote_identifier_text)
@@ -2269,7 +2274,7 @@ fn unquote_object_name(value: &str) -> String {
         .join(".")
 }
 
-fn unquote_identifier_text(value: &str) -> String {
+pub fn unquote_identifier_text(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
         trimmed[1..trimmed.len() - 1].replace("\"\"", "\"")

@@ -3760,6 +3760,7 @@ impl EmbeddedProximaDB {
             Ok(Some(statement)) => {
                 let start_time = std::time::Instant::now();
                 let catalog_manager = self.catalog_manager.clone();
+                let statement_for_backing_store = statement.clone();
                 let result = self
                     .runtime
                     .block_on(async {
@@ -3769,6 +3770,9 @@ impl EmbeddedProximaDB {
                     .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                         Box::new(std::io::Error::other(e.to_string()))
                     })?;
+                if result.success {
+                    self.ensure_catalog_vector_backing_collection(&statement_for_backing_store)?;
+                }
 
                 return Ok(EmbeddedSqlQueryResult {
                     rows: vec![serde_json::json!({
@@ -3805,6 +3809,62 @@ impl EmbeddedProximaDB {
             Err(_) => {}
         }
 
+        let dml_parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        match dml_parser.parse_dml(trimmed) {
+            Ok(Some(statement)) => {
+                let start_time = std::time::Instant::now();
+                self.ensure_dml_vector_backing_collection(&statement)?;
+                let catalog_manager = self.catalog_manager.clone();
+                let vector_ops = self.shared_services.vector_operations_service.clone();
+                let result = self
+                    .runtime
+                    .block_on(async {
+                        let dml_service =
+                            crate::services::DmlService::new(catalog_manager, vector_ops);
+                        dml_service.execute(statement).await
+                    })
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                        Box::new(std::io::Error::other(e.to_string()))
+                    })?;
+
+                return Ok(EmbeddedSqlQueryResult {
+                    rows: vec![serde_json::json!({
+                        "success": result.success,
+                        "message": result.message,
+                        "rows_affected": result.rows_affected,
+                        "inserted_ids": result.inserted_ids,
+                        "warnings": result.warnings
+                    })],
+                    columns: vec![
+                        "success".to_string(),
+                        "message".to_string(),
+                        "rows_affected".to_string(),
+                        "inserted_ids".to_string(),
+                        "warnings".to_string(),
+                    ],
+                    column_types: vec![
+                        "bool".to_string(),
+                        "text".to_string(),
+                        "int8".to_string(),
+                        "jsonb".to_string(),
+                        "jsonb".to_string(),
+                    ],
+                    row_count: 1,
+                    rows_scanned: 0,
+                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                });
+            }
+            Ok(None) => {}
+            Err(error)
+                if upper.starts_with("INSERT ")
+                    || upper.starts_with("UPDATE ")
+                    || upper.starts_with("DELETE ") =>
+            {
+                return Err(Box::new(std::io::Error::other(error.to_string())));
+            }
+            Err(_) => {}
+        }
+
         self.runtime.block_on(async {
             let proto_params = parameters.map(|values| {
                 values
@@ -3828,6 +3888,79 @@ impl EmbeddedProximaDB {
 
             Ok(Self::sql_response_to_embedded(response))
         })
+    }
+
+    fn ensure_catalog_vector_backing_collection(
+        &self,
+        statement: &crate::services::DdlStatement,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let crate::services::DdlStatement::CreateTable { table_name, .. } = statement else {
+            return Ok(());
+        };
+        self.ensure_vector_backing_collection_for_table(table_name)
+    }
+
+    fn ensure_dml_vector_backing_collection(
+        &self,
+        statement: &crate::services::DmlStatement,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let table_name = match statement {
+            crate::services::DmlStatement::Insert { table_name, .. }
+            | crate::services::DmlStatement::Update { table_name, .. }
+            | crate::services::DmlStatement::Delete { table_name, .. }
+            | crate::services::DmlStatement::Upsert { table_name, .. } => table_name,
+        };
+        self.ensure_vector_backing_collection_for_table(table_name)
+    }
+
+    fn ensure_vector_backing_collection_for_table(
+        &self,
+        table_name: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let Ok((catalog, table_id)) = self
+            .runtime
+            .block_on(self.catalog_manager.resolve_table(table_name))
+        else {
+            return Ok(());
+        };
+        let schema = self
+            .runtime
+            .block_on(catalog.get_table(&table_id))
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(e.to_string()))
+            })?;
+        let Some(vector_column) = schema
+            .columns
+            .iter()
+            .find(|column| matches!(column.data_type, crate::catalog::CatalogDataType::Vector))
+        else {
+            return Ok(());
+        };
+        let dimension = vector_column
+            .properties
+            .get("dimension")
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0);
+        if dimension == 0 {
+            return Ok(());
+        }
+
+        let exists = self
+            .runtime
+            .block_on(self.collection_service.collection(&table_id.name))
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(e.to_string()))
+            })?
+            .is_some();
+        if exists {
+            return Ok(());
+        }
+
+        self.create_collection(
+            &table_id.name,
+            dimension,
+            schema.properties.get("storage_engine").map(String::as_str),
+        )
     }
 
     /// Execute a unified multi-model query

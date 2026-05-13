@@ -119,6 +119,27 @@ class TestEmbeddedBasics:
                 for row in indexes["rows"]
             )
 
+            insert = db.execute_sql(
+                """
+                INSERT INTO agent_store (
+                    record_id,
+                    payload,
+                    embedding
+                ) VALUES (
+                    'record-1',
+                    '{"kind":"memory","score":7}'::jsonb,
+                    '[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
+                      0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6,
+                      1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4,
+                      2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 3.1, 3.2]'
+                );
+                """
+            )
+            assert insert["row_count"] == 1
+            assert insert["rows"][0]["success"] is True
+            assert insert["rows"][0]["rows_affected"] == 1
+            assert insert["rows"][0]["inserted_ids"] == ["record-1"]
+
 
 class TestVectorOperations:
     """Vector insert and search tests"""

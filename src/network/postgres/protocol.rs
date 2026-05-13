@@ -947,68 +947,6 @@ impl PostgresProtocol {
         serde_json::to_string(&serde_json::Value::Object(map)).unwrap_or_else(|_| "{}".to_string())
     }
 
-    fn json_value_to_sql_object(
-        &self,
-        value: &serde_json::Value,
-    ) -> Option<crate::proto::proximadb_v1::SqlObject> {
-        let serde_json::Value::Object(map) = value else {
-            return None;
-        };
-
-        let fields = map
-            .iter()
-            .filter_map(|(key, value)| {
-                self.json_value_to_sql_value(value)
-                    .map(|sql_value| (key.clone(), sql_value))
-            })
-            .collect();
-
-        Some(crate::proto::proximadb_v1::SqlObject { fields })
-    }
-
-    fn json_value_to_sql_value(
-        &self,
-        value: &serde_json::Value,
-    ) -> Option<crate::proto::proximadb_v1::SqlValue> {
-        use crate::proto::proximadb_v1::{SqlArray, SqlValue, sql_value::Value as SqlVal};
-
-        match value {
-            serde_json::Value::Null => Some(SqlValue {
-                value: Some(SqlVal::NullValue(0)),
-            }),
-            serde_json::Value::Bool(b) => Some(SqlValue {
-                value: Some(SqlVal::BoolValue(*b)),
-            }),
-            serde_json::Value::Number(n) => n
-                .as_i64()
-                .map(|i| SqlValue {
-                    value: Some(SqlVal::Int64Value(i)),
-                })
-                .or_else(|| {
-                    n.as_f64().map(|f| SqlValue {
-                        value: Some(SqlVal::NumberValue(f)),
-                    })
-                }),
-            serde_json::Value::String(s) => Some(SqlValue {
-                value: Some(SqlVal::StringValue(s.clone())),
-            }),
-            serde_json::Value::Array(values) => {
-                let values = values
-                    .iter()
-                    .filter_map(|item| self.json_value_to_sql_value(item))
-                    .collect();
-                Some(SqlValue {
-                    value: Some(SqlVal::ArrayValue(SqlArray { values })),
-                })
-            }
-            serde_json::Value::Object(_) => {
-                self.json_value_to_sql_object(value).map(|object| SqlValue {
-                    value: Some(SqlVal::ObjectValue(object)),
-                })
-            }
-        }
-    }
-
     /// Execute an observability store query (logs, metrics)
     async fn execute_observability_query(&mut self, table_name: &str, query: &str) -> Result<()> {
         use crate::observability::{LogQueryParams, ObservabilityService, ObservabilityStorage};
@@ -1605,50 +1543,20 @@ impl PostgresProtocol {
         after_vector[..dim_end].trim().parse().ok()
     }
 
-    /// Execute INSERT - supports multiple store types
-    /// - Vector: INSERT INTO table (id, embedding) VALUES ('id', '[0.1, 0.2, ...]')
-    /// - Document: INSERT INTO table (id, data) VALUES ('id', '{"key": "value"}')
-    /// - Observability: INSERT INTO table (timestamp, message) VALUES (NOW(), 'log message')
+    /// Execute INSERT through canonical catalog-backed DML.
     async fn execute_insert(&mut self, query: &str) -> Result<()> {
-        let upper = query.to_uppercase();
-
-        // Extract table name: INSERT INTO table
-        let into_pos = upper
-            .find("INTO ")
-            .ok_or_else(|| anyhow::anyhow!("Missing INTO clause"))?;
-        let after_into = query[into_pos + 5..].trim();
-        let table_end = after_into
-            .find(|c: char| c.is_whitespace() || c == '(')
-            .unwrap_or(after_into.len());
-        let table_name = after_into[..table_end].trim().to_lowercase();
-
-        if table_name.is_empty() {
-            return self.send_command_complete("INSERT 0 0").await;
+        if let Some(dml_service) = self.dml_service.clone() {
+            return self
+                .execute_insert_via_dml_service(query, &dml_service)
+                .await;
         }
 
-        // Detect store type from table name prefix or content
-        let store_type = self.detect_insert_store_type(&table_name, &upper);
-
-        match store_type {
-            DataModel::Vector => {
-                // Use DmlService for proper SQL DML execution if available
-                if let Some(dml_service) = self.dml_service.clone() {
-                    return self
-                        .execute_insert_via_dml_service(query, &dml_service)
-                        .await;
-                }
-                // Fall back to string parsing
-                self.insert_vector(&table_name, query).await
-            }
-            DataModel::Document => self.insert_document(&table_name, query).await,
-            DataModel::Graph => self.insert_graph_data(&table_name, query).await,
-            DataModel::Observability | DataModel::TimeSeries => {
-                self.insert_log(&table_name, query).await
-            }
-            DataModel::Relational | DataModel::Event => {
-                self.send_command_complete("INSERT 0 1").await
-            }
-        }
+        self.send_error(
+            "ERROR",
+            "0A000",
+            "Catalog-backed DML service is required for INSERT",
+        )
+        .await
     }
 
     /// Execute INSERT using the proper SQL parser and DmlService
@@ -1693,312 +1601,20 @@ impl PostgresProtocol {
         multimodal_router::detect_store_type_from_query(query, table_name, None)
     }
 
-    /// Insert vector into collection (existing behavior)
-    async fn insert_vector(&mut self, table_name: &str, query: &str) -> Result<()> {
-        let upper = query.to_uppercase();
-
-        // Extract id and vector from VALUES clause
-        let values_pos = upper
-            .find("VALUES")
-            .ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
-        let values_str = &query[values_pos + 6..];
-
-        // Parse VALUES (...) - simplified parser
-        let id = self.extract_string_value(values_str);
-        let vector = self.extract_vector_from_query(values_str);
-
-        if id.is_none() || vector.is_none() {
-            debug!("Could not parse INSERT values for table '{}'", table_name);
-            return self.send_command_complete("INSERT 0 1").await;
-        }
-
-        let (id, vector) = match (id, vector) {
-            (Some(id), Some(vector)) => (id, vector),
-            _ => return self.send_command_complete("INSERT 0 1").await,
-        };
-
-        debug!(
-            "Inserting vector '{}' into collection '{}' (dim={})",
-            id,
-            table_name,
-            vector.len()
-        );
-
-        // Insert via vector operations service
-        use crate::proto::proximadb_v1::VectorRecord;
-
-        let record = VectorRecord {
-            id: id.clone(),
-            vector: vector.clone(),
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            version: Some(1),
-            updated_at: None,
-            expires_at: None,
-            source: None,
-        };
-
-        match self.vector_ops.insert_batch(table_name, vec![record]).await {
-            Ok(_) => {
-                info!(
-                    "Inserted vector '{}' into '{}' via PostgreSQL",
-                    id, table_name
-                );
-                self.send_command_complete("INSERT 0 1").await
-            }
-            Err(e) => {
-                warn!("Failed to insert vector: {}", e);
-                self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
-                    .await
-            }
-        }
-    }
-
-    /// Insert document into document collection
-    async fn insert_document(&mut self, table_name: &str, query: &str) -> Result<()> {
-        let upper = query.to_uppercase();
-
-        // Extract id and JSON from VALUES clause
-        let values_pos = upper
-            .find("VALUES")
-            .ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
-        let values_str = &query[values_pos + 6..];
-
-        let id = self.extract_string_value(values_str);
-        let json_str = self.extract_json_value(values_str);
-
-        if id.is_none() {
-            debug!("Could not parse document ID for table '{}'", table_name);
-            return self.send_command_complete("INSERT 0 0").await;
-        }
-
-        let id = match id {
-            Some(id) => id,
-            None => return self.send_command_complete("INSERT 0 0").await,
-        };
-        let json_data = json_str.unwrap_or_else(|| "{}".to_string());
-
-        debug!(
-            "Inserting document '{}' into collection '{}'",
-            id, table_name
-        );
-
-        if let Some(document_service) = self.document_service.clone() {
-            let parsed = serde_json::from_str::<serde_json::Value>(&json_data)
-                .context("Failed to parse JSON document")?;
-            let Some(document) = self.json_value_to_sql_object(&parsed) else {
-                return self
-                    .send_error("ERROR", "22P02", "JSON document must be an object")
-                    .await;
-            };
-
-            return match document_service
-                .insert_document(table_name, Some(&id), document)
-                .await
-            {
-                Ok(_) => {
-                    info!(
-                        "Inserted document '{}' into '{}' via PostgreSQL DocumentService",
-                        id, table_name
-                    );
-                    self.send_command_complete("INSERT 0 1").await
-                }
-                Err(e) => {
-                    warn!("Failed to insert document via DocumentService: {}", e);
-                    self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
-                        .await
-                }
-            };
-        }
-
-        // For now, store documents as vectors with empty vector and JSON metadata
-        use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
-
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert(
-            "__document__".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue(json_data.clone())),
-            },
-        );
-
-        let record = VectorRecord {
-            id: id.clone(),
-            vector: vec![], // Documents have no vector
-            metadata,
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            version: Some(1),
-            updated_at: None,
-            expires_at: None,
-            source: None,
-        };
-
-        // Use doc_ prefix for document collection
-        let collection_name = if table_name.starts_with("doc_") {
-            table_name.to_string()
-        } else {
-            format!("doc_{}", table_name)
-        };
-
-        match self
-            .vector_ops
-            .insert_batch(&collection_name, vec![record])
-            .await
-        {
-            Ok(_) => {
-                info!(
-                    "Inserted document '{}' into '{}' via PostgreSQL",
-                    id, table_name
-                );
-                self.send_command_complete("INSERT 0 1").await
-            }
-            Err(e) => {
-                warn!("Failed to insert document: {}", e);
-                self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
-                    .await
-            }
-        }
-    }
-
-    /// Insert graph data (nodes/edges)
-    async fn insert_graph_data(&mut self, table_name: &str, _query: &str) -> Result<()> {
-        debug!("Inserting graph data into '{}'", table_name);
-        // Deferred: Integrate with graph service
-        info!(
-            "Graph INSERT acknowledged for '{}' (graph service integration pending)",
-            table_name
-        );
-        self.send_command_complete("INSERT 0 1").await
-    }
-
-    /// Insert log/metric/trace into observability namespace
-    async fn insert_log(&mut self, table_name: &str, query: &str) -> Result<()> {
-        let upper = query.to_uppercase();
-
-        // Extract values from VALUES clause
-        let values_pos = upper
-            .find("VALUES")
-            .ok_or_else(|| anyhow::anyhow!("Missing VALUES clause"))?;
-        let values_str = &query[values_pos + 6..];
-
-        let message = self.extract_string_value(values_str);
-
-        debug!("Inserting log into namespace '{}'", table_name);
-
-        if let Some(observability_service) = self.observability_service.clone() {
-            let Some(message) = message else {
-                return self.send_command_complete("INSERT 0 0").await;
-            };
-
-            let log = crate::proto::proximadb_v1::LogEntry {
-                timestamp_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
-                severity: crate::proto::proximadb_v1::Severity::Info as i32,
-                message,
-                fields: HashMap::new(),
-                source: Some("postgres".to_string()),
-                service: Some("proximadb".to_string()),
-            };
-
-            return match observability_service
-                .ingest_logs(table_name, vec![log], None)
-                .await
-            {
-                Ok(_) => {
-                    info!("Inserted log into '{}' via PostgreSQL", table_name);
-                    self.send_command_complete("INSERT 0 1").await
-                }
-                Err(e) => {
-                    warn!("Failed to insert log into '{}': {}", table_name, e);
-                    self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
-                        .await
-                }
-            };
-        }
-
-        info!(
-            "Log INSERT acknowledged for '{}': {:?}",
-            table_name, message
-        );
-        self.send_command_complete("INSERT 0 1").await
-    }
-
-    /// Extract JSON value from VALUES clause
-    fn extract_json_value(&self, values_str: &str) -> Option<String> {
-        // Look for JSON object or array
-        let json_start = values_str.find('{').or_else(|| values_str.find('['))?;
-        let start_char = values_str.chars().nth(json_start)?;
-        let end_char = if start_char == '{' { '}' } else { ']' };
-
-        // Find matching closing bracket (handle nesting)
-        let chars: Vec<char> = values_str.chars().collect();
-        let mut depth = 0;
-        let mut end_pos = None;
-
-        for (i, &c) in chars.iter().enumerate().skip(json_start) {
-            if c == start_char {
-                depth += 1;
-            } else if c == end_char {
-                depth -= 1;
-                if depth == 0 {
-                    end_pos = Some(i);
-                    break;
-                }
-            }
-        }
-
-        end_pos.map(|end| values_str[json_start..=end].to_string())
-    }
-
-    /// Execute DELETE - deletes vectors from a collection
-    /// Supports: DELETE FROM table WHERE id = 'value'
+    /// Execute DELETE through canonical catalog-backed DML.
     async fn execute_delete(&mut self, query: &str) -> Result<()> {
-        // Use DmlService for proper SQL DML execution if available
         if let Some(dml_service) = self.dml_service.clone() {
             return self
                 .execute_delete_via_dml_service(query, &dml_service)
                 .await;
         }
 
-        // Fall back to string parsing
-        let upper = query.to_uppercase();
-
-        // Extract table name: DELETE FROM table
-        let from_pos = upper
-            .find("FROM ")
-            .ok_or_else(|| anyhow::anyhow!("Missing FROM clause"))?;
-        let after_from = query[from_pos + 5..].trim();
-        let table_end = after_from
-            .find(|c: char| c.is_whitespace() || c == ';')
-            .unwrap_or(after_from.len());
-        let table_name = after_from[..table_end].trim().to_lowercase();
-
-        if table_name.is_empty() {
-            return self.send_command_complete("DELETE 0").await;
-        }
-
-        // Extract id from WHERE clause: WHERE id = 'value'
-        let where_pos = upper.find("WHERE");
-        let id = if let Some(pos) = where_pos {
-            let where_clause = &query[pos..];
-            self.extract_where_id(where_clause)
-        } else {
-            None
-        };
-
-        if let Some(id) = id {
-            debug!("Deleting vector '{}' from collection '{}'", id, table_name);
-
-            // Deferred: Implement proper vector deletion via tombstone/WAL
-            // For now, acknowledge the delete request
-            info!(
-                "DELETE acknowledged for vector '{}' in '{}' (tombstone write pending)",
-                id, table_name
-            );
-            self.send_command_complete("DELETE 1").await
-        } else {
-            // No WHERE clause or couldn't parse id - return 0 deleted
-            self.send_command_complete("DELETE 0").await
-        }
+        self.send_error(
+            "ERROR",
+            "0A000",
+            "Catalog-backed DML service is required for DELETE",
+        )
+        .await
     }
 
     /// Execute DELETE using the proper SQL parser and DmlService
@@ -2037,49 +1653,20 @@ impl PostgresProtocol {
         }
     }
 
-    /// Execute UPDATE - updates vector metadata
-    /// Supports: UPDATE table SET column = value WHERE id = 'value'
+    /// Execute UPDATE through canonical catalog-backed DML.
     async fn execute_update(&mut self, query: &str) -> Result<()> {
-        // Use DmlService for proper SQL DML execution if available
         if let Some(dml_service) = self.dml_service.clone() {
             return self
                 .execute_update_via_dml_service(query, &dml_service)
                 .await;
         }
 
-        // Fall back to string parsing
-        let upper = query.to_uppercase();
-
-        // Extract table name: UPDATE table SET
-        let set_pos = upper
-            .find(" SET ")
-            .ok_or_else(|| anyhow::anyhow!("Missing SET clause"))?;
-        let table_name = query[6..set_pos].trim().to_lowercase();
-
-        if table_name.is_empty() {
-            return self.send_command_complete("UPDATE 0").await;
-        }
-
-        // Extract id from WHERE clause
-        let where_pos = upper.find("WHERE");
-        let id = if let Some(pos) = where_pos {
-            let where_clause = &query[pos..];
-            self.extract_where_id(where_clause)
-        } else {
-            None
-        };
-
-        // For now, just acknowledge the update - full metadata update would require
-        // fetching the record, updating it, and re-inserting
-        if id.is_some() {
-            info!(
-                "UPDATE acknowledged for '{}' (metadata update not yet implemented)",
-                table_name
-            );
-            self.send_command_complete("UPDATE 1").await
-        } else {
-            self.send_command_complete("UPDATE 0").await
-        }
+        self.send_error(
+            "ERROR",
+            "0A000",
+            "Catalog-backed DML service is required for UPDATE",
+        )
+        .await
     }
 
     /// Execute UPDATE using the proper SQL parser and DmlService
@@ -2168,30 +1755,6 @@ impl PostgresProtocol {
                     .await
                 }
             }
-        }
-    }
-
-    /// Extract id from WHERE clause: WHERE id = 'value' -> value
-    fn extract_where_id(&self, where_clause: &str) -> Option<String> {
-        // Look for id = 'value' or id='value'
-        let upper = where_clause.to_uppercase();
-        let id_pos = upper.find("ID")?;
-        let after_id = &where_clause[id_pos + 2..];
-
-        // Skip whitespace and =
-        let eq_pos = after_id.find('=')?;
-        let after_eq = after_id[eq_pos + 1..].trim();
-
-        // Extract quoted value
-        if let Some(after_quote) = after_eq.strip_prefix('\'') {
-            let end = after_quote.find('\'')?;
-            Some(after_quote[..end + 1].to_string())
-        } else {
-            // Unquoted value - take until whitespace or semicolon
-            let end = after_eq
-                .find(|c: char| c.is_whitespace() || c == ';')
-                .unwrap_or(after_eq.len());
-            Some(after_eq[..end].to_string())
         }
     }
 
@@ -2632,14 +2195,6 @@ impl PostgresProtocol {
             Ok(_) => Ok(count),
             Err(e) => Err(anyhow::anyhow!("Binary COPY insert failed: {}", e)),
         }
-    }
-
-    /// Extract a string value from VALUES clause: ('value', ...) -> value
-    fn extract_string_value(&self, values: &str) -> Option<String> {
-        let start = values.find('\'')?;
-        let rest = &values[start + 1..];
-        let end = rest.find('\'')?;
-        Some(rest[..end].to_string())
     }
 
     /// Send a data row
