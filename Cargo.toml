@@ -78,7 +78,10 @@ clap = { version = "4.0", features = ["derive"] }
 hyper = { version = "0.14" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
+proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
+proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
+proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 prost = "0.14"
@@ -134,8 +137,11 @@ bytemuck = { version = "1.14", features = ["derive"] }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-document-query = { path = "crates/query/proximadb-document-query" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
+proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
+proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
+proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }

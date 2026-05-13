@@ -280,17 +280,9 @@ pub struct Snapshot {
     pub properties: HashMap<String, String>,
 }
 
-/// Compression codec options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum CompressionCodec {
-    None,
-    Snappy,
-    Gzip,
-    #[default]
-    Lz4,
-    Zstd,
-    Brotli,
-}
+// Re-export foundation compression algorithm type for backward compatibility
+// TODO: Migrate all uses to FoundationCompressionAlgorithm (Phase 2.2)
+pub use proximadb_compression_types::CompressionAlgorithm as CompressionCodec;
 
 /// Write mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

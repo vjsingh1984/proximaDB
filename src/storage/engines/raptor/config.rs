@@ -1,6 +1,9 @@
 use super::constants;
 use serde::{Deserialize, Serialize};
 
+// Foundation compression types
+use proximadb_compression_types::CompressionAlgorithm as FoundationCompressionAlgorithm;
+
 /// Accuracy level for search operations
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum AccuracyLevel {
@@ -51,8 +54,7 @@ pub enum CompressionStrategy {
 pub struct RaptorConfig {
     // Storage settings
     pub rowgroup_size: usize,
-    pub compression: CompressionCodec,
-    pub compression_level: u32,
+    pub compression: RaptorCompressionConfig,
     pub use_proximaencoder: bool, // Enable Proxima SIMD encoding
 
     // SIMD settings
@@ -94,14 +96,39 @@ pub struct RaptorConfig {
     pub enable_prefetching: bool,
 }
 
+/// RAPTOR-specific compression configuration with level support
+///
+/// Wraps foundation compression types with RAPTOR-specific level parameters
+/// for fine-tuned compression control.
 #[derive(Debug, Clone)]
-pub enum CompressionCodec {
+pub enum RaptorCompressionConfig {
+    /// No compression
     None,
+    /// LZ4 compression (fast, low compression)
     Lz4,
-    Zstd(i32), // compression level
+    /// Zstandard compression with level
+    Zstd(i32), // compression level (1-22)
+    /// Snappy compression (fast, moderate compression)
     Snappy,
-    Gzip(u32), // compression level
+    /// Gzip compression with level
+    Gzip(u32), // compression level (1-9)
 }
+
+impl From<RaptorCompressionConfig> for FoundationCompressionAlgorithm {
+    fn from(config: RaptorCompressionConfig) -> Self {
+        match config {
+            RaptorCompressionConfig::None => FoundationCompressionAlgorithm::None,
+            RaptorCompressionConfig::Lz4 => FoundationCompressionAlgorithm::Lz4,
+            RaptorCompressionConfig::Zstd(_) => FoundationCompressionAlgorithm::Zstd,
+            RaptorCompressionConfig::Snappy => FoundationCompressionAlgorithm::Snappy,
+            RaptorCompressionConfig::Gzip(_) => FoundationCompressionAlgorithm::Gzip,
+        }
+    }
+}
+
+/// Legacy type alias for backward compatibility
+/// TODO: Migrate all uses to RaptorCompressionConfig (Phase 3.1)
+pub type CompressionCodec = RaptorCompressionConfig;
 
 #[derive(Debug, Clone)]
 pub enum EvictionPolicy {
@@ -144,8 +171,7 @@ impl Default for RaptorConfig {
             // - Zstd level 3 gives 2-3x compression with fast decompression
             // - Applied per-column for selective decompression
             // - Graph edges use dictionary encoding
-            compression: CompressionCodec::Zstd(constants::compression::DEFAULT_ZSTD_LEVEL),
-            compression_level: constants::compression::DEFAULT_ZSTD_LEVEL as u32,
+            compression: RaptorCompressionConfig::Zstd(constants::compression::DEFAULT_ZSTD_LEVEL),
             use_proximaencoder: true, // Enable Proxima for SIMD-optimized encoding
 
             enable_simd: true,
@@ -232,7 +258,7 @@ impl RaptorConfig {
             enable_range_reads: true,
             prefetch_size_mb: 64,
             cache_size_mb: 2048,
-            compression: CompressionCodec::Zstd(6),
+            compression: RaptorCompressionConfig::Zstd(6),
             rowgroup_size: 1000, // Default for cloud
             ..Default::default()
         }
@@ -243,7 +269,7 @@ impl RaptorConfig {
             enable_range_reads: false,
             prefetch_size_mb: 16,
             cache_size_mb: 512,
-            compression: CompressionCodec::Lz4,
+            compression: RaptorCompressionConfig::Lz4,
             max_parallel_reads: 16,
             ..Default::default()
         }
@@ -252,7 +278,7 @@ impl RaptorConfig {
     pub fn for_high_performance() -> Self {
         Self {
             rowgroup_size: 5000,
-            compression: CompressionCodec::None,
+            compression: RaptorCompressionConfig::None,
             enable_simd: true,
             simd_lanes: 32,
             cache_size_mb: 4096,

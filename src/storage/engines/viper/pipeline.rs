@@ -33,6 +33,9 @@ use tokio::sync::{Mutex, Notify, RwLock, broadcast};
 use tokio::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
+// Foundation compression types
+use proximadb_compression_types::CompressionAlgorithm as FoundationCompressionAlgorithm;
+
 // use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
 // Quantization now handled by unified compute module
 use crate::core::{String, VectorRecord};
@@ -105,7 +108,7 @@ pub struct ProcessingConfig {
 #[derive(Debug, Clone)]
 pub struct FlushingConfig {
     /// Compression algorithm
-    pub compression_algorithm: CompressionAlgorithm,
+    pub compression_algorithm: ViperCompressionConfig,
 
     /// Compression level
     pub compression_level: u8,
@@ -206,21 +209,44 @@ pub enum CustomComparisonType {
     CompressionOptimal,
 }
 
-/// Compression algorithm options
+/// VIPER-specific compression configuration
+///
+/// Wraps foundation compression types with VIPER-specific "Mixed" strategy
+/// for optimal per-column compression.
 #[derive(Debug, Clone)]
-pub enum CompressionAlgorithm {
-    Snappy,
-    Zstd {
-        level: u8,
-    },
-    Lz4,
-    Brotli {
-        level: u8,
-    },
+pub enum ViperCompressionConfig {
+    /// Uniform compression using a single algorithm for all data
+    Uniform(FoundationCompressionAlgorithm),
+
     /// Mixed compression strategy - optimal per-column compression
     /// Uses different algorithms based on column data type for maximum efficiency
-    Mixed,
+    Mixed {
+        /// Default compression for untyped columns
+        default: FoundationCompressionAlgorithm,
+        /// Compression for text/string columns
+        text: Option<FoundationCompressionAlgorithm>,
+        /// Compression for numeric columns
+        numeric: Option<FoundationCompressionAlgorithm>,
+        /// Compression for vector columns
+        vector: Option<FoundationCompressionAlgorithm>,
+    },
 }
+
+impl Default for ViperCompressionConfig {
+    fn default() -> Self {
+        // Use Mixed strategy as recommended default
+        Self::Mixed {
+            default: FoundationCompressionAlgorithm::Lz4,
+            text: Some(FoundationCompressionAlgorithm::Snappy),
+            numeric: Some(FoundationCompressionAlgorithm::Zstd),
+            vector: Some(FoundationCompressionAlgorithm::Lz4),
+        }
+    }
+}
+
+/// Legacy type alias for backward compatibility
+/// TODO: Migrate all uses to ViperCompressionConfig (Phase 3.1)
+pub type CompressionAlgorithm = ViperCompressionConfig;
 
 /// Pipeline statistics
 #[derive(Debug, Default, Clone)]
@@ -457,7 +483,7 @@ pub enum CompactionType {
 
     /// Compression optimization
     CompressionOptimization {
-        target_algorithm: CompressionAlgorithm,
+        target_algorithm: ViperCompressionConfig,
         // quality_threshold removed -  f32,
     },
 
@@ -540,7 +566,7 @@ pub struct CompactionOptimizationModel {
 pub struct CompactionOptimizationHints {
     pub recommended_cluster_count: Option<usize>,
     pub important_features: Vec<usize>,
-    pub compression_algorithm: Option<CompressionAlgorithm>,
+    pub compression_algorithm: Option<ViperCompressionConfig>,
     pub estimated_improvement: f32,
 }
 
@@ -2088,20 +2114,32 @@ impl ParquetFlusher {
     }
 
     fn create_writer_properties(&self) -> Result<WriterProperties> {
-        let compression = match &self.config.compression_algorithm {
-            CompressionAlgorithm::Snappy => Compression::UNCOMPRESSED, // SNAPPY not supported, use uncompressed
-            CompressionAlgorithm::Zstd { level } => {
-                Compression::ZSTD(parquet::basic::ZstdLevel::try_new(*level as i32)?)
+        // Extract base compression algorithm from ViperCompressionConfig
+        // For Mixed mode, use the default algorithm as the base compression
+        let base_algorithm = match &self.config.compression_algorithm {
+            ViperCompressionConfig::Uniform(algo) => algo.clone(),
+            ViperCompressionConfig::Mixed { default, .. } => default.clone(),
+        };
+
+        let compression = match base_algorithm {
+            FoundationCompressionAlgorithm::Snappy => {
+                // SNAPPY not supported by Parquet, use uncompressed
+                Compression::UNCOMPRESSED
             }
-            CompressionAlgorithm::Lz4 => Compression::LZ4,
-            CompressionAlgorithm::Brotli { level } => {
-                Compression::BROTLI(parquet::basic::BrotliLevel::try_new(*level as u32)?)
-            }
-            CompressionAlgorithm::Mixed => {
-                // Mixed compression uses ZSTD level 3 as base, with per-column optimization
-                tracing::info!("🎯 VIPER Pipeline: Using Mixed compression search_strategy");
+            FoundationCompressionAlgorithm::Lz4 => Compression::LZ4,
+            FoundationCompressionAlgorithm::Zstd => {
+                // Use ZSTD level 3 as default
                 Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?)
             }
+            FoundationCompressionAlgorithm::Gzip => {
+                // Use Gzip level 6 as default
+                Compression::GZIP(parquet::basic::GzipLevel::try_new(6)?)
+            }
+            FoundationCompressionAlgorithm::Brotli => {
+                // Use Brotli level 3 as default
+                Compression::BROTLI(parquet::basic::BrotliLevel::try_new(3)?)
+            }
+            FoundationCompressionAlgorithm::None => Compression::UNCOMPRESSED,
         };
 
         let props = WriterProperties::builder()
@@ -2743,18 +2781,22 @@ impl CompactionEngine {
     /// Execute compression optimization compaction
     async fn execute_compression_optimization(
         _task: &CompactionTask,
-        target_algorithm: &CompressionAlgorithm,
+        target_algorithm: &ViperCompressionConfig,
         // quality_threshold removed -  f32,
     ) -> Result<CompactionExecutionResult> {
         tracing::debug!("Compression optimization: {:?}", target_algorithm);
 
         // Simulate compression optimization based on algorithm
         let compression_improvement = match target_algorithm {
-            CompressionAlgorithm::Snappy => 0.15, // 15% improvement
-            CompressionAlgorithm::Zstd { level } => 0.25 + (*level as f32 * 0.02), // 25-41% improvement
-            CompressionAlgorithm::Lz4 => 0.12, // 12% improvement
-            CompressionAlgorithm::Brotli { level } => 0.30 + (*level as f32 * 0.015), // 30-45% improvement
-            CompressionAlgorithm::Mixed => 0.40, // 40% improvement from optimal per-column compression
+            ViperCompressionConfig::Uniform(algo) => match algo {
+                FoundationCompressionAlgorithm::Snappy => 0.15, // 15% improvement
+                FoundationCompressionAlgorithm::Zstd => 0.35,   // 35% improvement (using level 3)
+                FoundationCompressionAlgorithm::Lz4 => 0.12,    // 12% improvement
+                FoundationCompressionAlgorithm::Gzip => 0.20,   // 20% improvement (using level 6)
+                FoundationCompressionAlgorithm::Brotli => 0.33, // 33% improvement (using level 3)
+                FoundationCompressionAlgorithm::None => 0.0,
+            },
+            ViperCompressionConfig::Mixed { .. } => 0.40, // 40% improvement from optimal per-column compression
         };
 
         let entries_processed = 5000; // Estimate
@@ -3578,7 +3620,7 @@ impl Default for ViperPipelineConfig {
                 ), // Default to 8-bit quantization
             },
             flushing_config: FlushingConfig {
-                compression_algorithm: CompressionAlgorithm::Mixed, // Use Mixed as the recommended default
+                compression_algorithm: ViperCompressionConfig::default(), // Use Mixed as the recommended default
                 compression_level: 3,
                 enable_dictionary_encoding: true,
                 row_group_size: 1000000,

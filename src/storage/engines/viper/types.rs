@@ -303,20 +303,6 @@ pub struct ClusterMetadata {
 /// Use proto-generated config directly - no more duplicates!
 pub use crate::proto::proximadb_v1::QuantizationConfig;
 
-/// DEPRECATED: Use proto-generated QuantizationType instead
-/// Keeping for backward compatibility only
-///
-/// Legacy quantization type enum. Use proto::proximadb_v1::QuantizationType instead.
-#[derive(Debug, Clone)]
-pub enum QuantizationType {
-    /// Product quantization (PQ)
-    ProductQuantization,
-    /// Scalar quantization (INT8)
-    ScalarQuantization,
-    /// Binary quantization (1-bit)
-    BinaryQuantization,
-}
-
 /// Quantization level
 ///
 /// Defines the aggressiveness of quantization compression.

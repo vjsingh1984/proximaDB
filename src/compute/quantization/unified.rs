@@ -315,11 +315,6 @@ impl UnifiedQuantizationEngine {
                 codebook_id: Some(format!("pq_{}_{}", level.level_id, level.bits)),
                 adaptive_subvectors: false,
             })),
-            QuantizationType::Uniform => Some(QuantizationLevel::Uniform(UniformQuantization {
-                bits: level.bits,
-                scale: None,
-                offset: None,
-            })),
         };
 
         Ok(UnifiedQuantizationLevel { level_type })

@@ -69,6 +69,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_distance_types::DistanceMetric as FoundationDistanceMetric;
 use proximadb_graph_query::service::GraphQueryService;
 use proximadb_vector_query::VectorQueryService;
 use serde::{Deserialize, Serialize};
@@ -139,18 +140,9 @@ pub struct VectorSearchQuery {
     pub request_id: Option<String>,
 }
 
-/// Distance metric
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum DistanceMetric {
-    /// Cosine similarity (angular distance)
-    Cosine,
-    /// Euclidean (L2) distance
-    Euclidean,
-    /// Dot product similarity
-    DotProduct,
-    /// Manhattan (L1) distance
-    Manhattan,
-}
+// Re-export foundation distance metric type for backward compatibility
+// TODO: Migrate all uses to FoundationDistanceMetric (Phase 2.2)
+pub use proximadb_distance_types::DistanceMetric;
 
 /// Search parameters
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -669,7 +661,7 @@ impl UnifiedQueryRequest {
             query_vectors: vec![query_vector],
             top_k,
             filters: HashMap::new(),
-            distance_metric: Some(DistanceMetric::Euclidean),
+            distance_metric: Some(DistanceMetric::L2),
             search_params: None,
             source: RequestProtocol::Postgres,
             request_id: None,
@@ -1150,7 +1142,7 @@ impl UnifiedQueryHandler {
         );
 
         // Convert UnifiedQueryRequest to VectorSearchRequest
-        use proximadb_vector_query::{DistanceMetric, VectorSearchRequest};
+        use proximadb_vector_query::VectorSearchRequest;
 
         let query_vector = query
             .query_vectors
@@ -1159,17 +1151,17 @@ impl UnifiedQueryHandler {
             .clone();
 
         let distance_metric = match query.distance_metric {
-            Some(crate::network::unified_handler::DistanceMetric::Cosine) => {
-                Some(DistanceMetric::Cosine)
+            Some(FoundationDistanceMetric::Cosine) => {
+                Some(proximadb_vector_query::DistanceMetric::Cosine)
             }
-            Some(crate::network::unified_handler::DistanceMetric::Euclidean) => {
-                Some(DistanceMetric::Euclidean)
+            Some(FoundationDistanceMetric::L2) => {
+                Some(proximadb_vector_query::DistanceMetric::Euclidean)
             }
-            Some(crate::network::unified_handler::DistanceMetric::DotProduct) => {
-                Some(DistanceMetric::DotProduct)
+            Some(FoundationDistanceMetric::InnerProduct) => {
+                Some(proximadb_vector_query::DistanceMetric::DotProduct)
             }
-            Some(crate::network::unified_handler::DistanceMetric::Manhattan) => {
-                Some(DistanceMetric::Manhattan)
+            Some(FoundationDistanceMetric::L1) => {
+                Some(proximadb_vector_query::DistanceMetric::Manhattan)
             }
             None => None,
         };

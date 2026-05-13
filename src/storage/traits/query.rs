@@ -6,6 +6,7 @@
 use crate::core::search::BlockPruneMode;
 use crate::proto::proximadb_v1::Collection;
 use crate::security::unified_rbac::{TenantContext, UnifiedUserContext};
+pub use proximadb_quantization_types::QuantizationType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -132,13 +133,16 @@ pub struct ParsedQuantizationConfig {
     pub optimize_for_memory: bool,
 }
 
+// Re-export foundation quantization types for backward compatibility
+// TODO: Migrate all uses to FoundationQuantizationType (Phase 2.2)
+
 /// Individual quantization level for progressive search.
 #[derive(Debug, Clone)]
 pub struct QuantizationLevel {
     /// Level identifier (e.g., "binary", "int8", "pq8")
     pub level_id: String,
 
-    /// Quantization type
+    /// Quantization type (using foundation type)
     pub quantization_type: QuantizationType,
 
     /// Bits per element
@@ -154,15 +158,13 @@ pub struct QuantizationLevel {
     pub min_recall: f32,
 }
 
-/// Quantization type enumeration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QuantizationType {
-    Binary,
-    Scalar,
-    Product,
-    Uniform,
-    None,
-}
+// NOTE: QuantizationType is now re-exported from the proximadb-quantization-types
+// foundation crate. The local QuantizationLevel struct remains the parsed
+// progressive-search level shape used by storage engines.
+//
+// Legacy migration:
+// - QuantizationType::Uniform → QuantizationType::None
+// - All other variants map directly to foundation types
 
 impl StorageQueryContext {
     /// Parse quantization config into ready-to-use format for progressive search.
@@ -219,7 +221,7 @@ impl StorageQueryContext {
                     ProtoQuantType::Binary => QuantizationType::Binary,
                     ProtoQuantType::Scalar => QuantizationType::Scalar,
                     ProtoQuantType::Product => QuantizationType::Product,
-                    ProtoQuantType::Uniform => QuantizationType::Uniform,
+                    ProtoQuantType::Uniform => QuantizationType::None,
                     ProtoQuantType::None => QuantizationType::None,
                 };
 

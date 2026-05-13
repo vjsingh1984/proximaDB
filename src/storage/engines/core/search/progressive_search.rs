@@ -388,12 +388,6 @@ impl ProgressiveSearchExecutor {
                 self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric())
                     .await?;
             }
-            _ => {
-                trace!(
-                    "Unsupported quantization type: {:?}",
-                    level.quantization_type
-                );
-            }
         }
 
         // Sort by score (ascending for distance, descending for similarity)
@@ -764,7 +758,6 @@ impl ProgressiveSearchExecutor {
             QuantizationType::Scalar => SearchStage::Int8Ranking,
             QuantizationType::Product => SearchStage::PqRanking,
             QuantizationType::None => SearchStage::FullPrecision,
-            _ => SearchStage::FullPrecision,
         }
     }
 

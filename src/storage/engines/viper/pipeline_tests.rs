@@ -6,6 +6,7 @@ pub mod viper_pipeline_tests {
     use crate::storage::engines::viper::pipeline::*;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use chrono::Utc;
+    use proximadb_compression_types::CompressionAlgorithm as FoundationCompressionAlgorithm;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -52,7 +53,9 @@ pub mod viper_pipeline_tests {
                 quantization_level: None,
             },
             flushing_config: FlushingConfig {
-                compression_algorithm: CompressionAlgorithm::Snappy,
+                compression_algorithm: CompressionAlgorithm::Uniform(
+                    FoundationCompressionAlgorithm::Snappy,
+                ),
                 compression_level: 6,
                 enable_dictionary_encoding: true,
                 row_group_size: 1000,
@@ -95,7 +98,7 @@ pub mod viper_pipeline_tests {
 
         assert!(matches!(
             config.flushing_config.compression_algorithm,
-            CompressionAlgorithm::Snappy
+            CompressionAlgorithm::Uniform(FoundationCompressionAlgorithm::Snappy)
         ));
         assert_eq!(config.flushing_config.compression_level, 6);
         assert!(config.flushing_config.enable_dictionary_encoding);
@@ -150,7 +153,9 @@ pub mod viper_pipeline_tests {
     #[test]
     fn test_flushing_config_compression_variants() {
         let mut config = FlushingConfig {
-            compression_algorithm: CompressionAlgorithm::Zstd { level: 3 },
+            compression_algorithm: CompressionAlgorithm::Uniform(
+                FoundationCompressionAlgorithm::Zstd,
+            ),
             compression_level: 9,
             enable_dictionary_encoding: false,
             row_group_size: 500,
@@ -160,27 +165,30 @@ pub mod viper_pipeline_tests {
 
         assert!(matches!(
             config.compression_algorithm,
-            CompressionAlgorithm::Zstd { level: 3 }
+            CompressionAlgorithm::Uniform(FoundationCompressionAlgorithm::Zstd)
         ));
         assert_eq!(config.compression_level, 9);
 
         // Test all compression algorithms
-        config.compression_algorithm = CompressionAlgorithm::Snappy;
+        config.compression_algorithm =
+            CompressionAlgorithm::Uniform(FoundationCompressionAlgorithm::Snappy);
         assert!(matches!(
             config.compression_algorithm,
-            CompressionAlgorithm::Snappy
+            CompressionAlgorithm::Uniform(FoundationCompressionAlgorithm::Snappy)
         ));
 
-        config.compression_algorithm = CompressionAlgorithm::Lz4;
+        config.compression_algorithm =
+            CompressionAlgorithm::Uniform(FoundationCompressionAlgorithm::Lz4);
         assert!(matches!(
             config.compression_algorithm,
-            CompressionAlgorithm::Lz4
+            CompressionAlgorithm::Uniform(FoundationCompressionAlgorithm::Lz4)
         ));
 
-        config.compression_algorithm = CompressionAlgorithm::Brotli { level: 6 };
+        config.compression_algorithm =
+            CompressionAlgorithm::Uniform(FoundationCompressionAlgorithm::Brotli);
         assert!(matches!(
             config.compression_algorithm,
-            CompressionAlgorithm::Brotli { level: 6 }
+            CompressionAlgorithm::Uniform(FoundationCompressionAlgorithm::Brotli)
         ));
     }
 
@@ -292,7 +300,9 @@ pub mod viper_pipeline_tests {
                 quantization_level: None,
             },
             flushing_config: FlushingConfig {
-                compression_algorithm: CompressionAlgorithm::Snappy,
+                compression_algorithm: CompressionAlgorithm::Uniform(
+                    FoundationCompressionAlgorithm::Snappy,
+                ),
                 compression_level: 0,
                 enable_dictionary_encoding: false,
                 row_group_size: 1,

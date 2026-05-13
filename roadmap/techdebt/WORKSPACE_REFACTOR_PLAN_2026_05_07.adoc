@@ -697,10 +697,9 @@ Current status after the first refinement:
 * the vector query IR (`VectorSearchExpr`, `VectorSearchParams`, `DistanceMetric`) now also lives in a new leaf crate, `proximadb-vector-query`, so the root unified AST no longer owns vector request shape either and is getting closer to a pure cross-model composition layer
 * `proximadb-vector-query`, `proximadb-document-query`, and `proximadb-observability-query` now also own narrow async service contracts for read/query execution; root runtime code can implement or adapt those contracts while protocol/query layers depend on capability views instead of concrete root services
 * vector REST/unified protocol wiring has started consuming the extracted `VectorQueryService` contract at the composition edge; the concrete `VectorOperationsService` remains available for legacy paths, but new vector-search routing can prefer the contract seam
-* document storage/runtime now implements the extracted `DocumentQueryService` contract directly, giving query/runtime callers a stable document capability view while concrete document indexing, filter parsing, and storage execution remain in the root document service for now
 * root `DocumentService` now implements the extracted `DocumentQueryService` contract for document
-  search and get-by-id, so query/runtime callers can begin depending on the document capability seam
-  without taking the broader root document runtime surface
+  search and get-by-id, giving query/runtime callers a stable document capability view while concrete
+  document indexing, filter parsing, and storage execution remain in the root document service for now
 * the generic cross-model clause IR (`Filter`, `OrderBy`) now also lives in a new leaf crate, `proximadb-query-clauses`, so the root unified AST is no longer the owner of generic reusable clause shape either
 * the canonical data-model discriminator (`StoreType`) now lives in a new foundation leaf crate, `proximadb-data-model`, so query, security, storage, and protocol layers no longer need the root multimodel router just to name a model kind
 * the shared search filter contract (`FilterExpression`, `ComparisonOperator`) now lives in a new foundation leaf crate, `proximadb-filter-expression`, so query planning/lowering, compute pipeline execution, storage filtering, and services can converge on one reusable contract instead of pulling those types through the root search module

@@ -51,21 +51,10 @@ pub type DistanceMetric = String;
 pub type IndexingAlgorithm = String;
 /// Storage engine name (e.g., "sst", "viper", "helix")
 pub type StorageEngine = String;
-/// Compression algorithms for data storage and transmission
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub enum CompressionAlgorithm {
-    /// No compression
-    None,
-    /// Snappy compression (default - fast with moderate ratio)
-    #[default]
-    Snappy,
-    /// LZ4 compression (very fast)
-    Lz4,
-    /// Zstandard compression (best ratio)
-    Zstd,
-    /// Gzip compression (widely compatible)
-    Gzip,
-}
+
+// Re-export foundation compression algorithm type for backward compatibility
+// TODO: Migrate all uses to FoundationCompressionAlgorithm (Phase 2.2)
+pub use proximadb_compression_types::CompressionAlgorithm;
 
 /// Compaction strategies for storage optimization
 #[derive(Debug, Clone, Default)]
