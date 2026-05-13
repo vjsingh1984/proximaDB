@@ -835,6 +835,10 @@ Current status after the first refinement:
 * `proximadb-config` now owns search pruning policy contracts (`PruneModeConfig` and
   `AdvancedPruneConfig`); root keeps compatibility re-exports while pruning algorithms, embedded
   binding translation, and query/storage execution remain in their runtime modules
+* `proximadb-config` now owns the API endpoint option contract (`ApiConfig`) for REST, gRPC, Arrow
+  Flight, compression, TLS enablement, and unified-port knobs; root keeps a compatibility re-export
+  while protocol handlers, server builders, listener lifecycle, and transport-specific TLS wiring
+  remain in network/runtime modules
 * the full root `Config` remains in root for now because it still composes AI, network, security,
   query, storage-engine, and runtime conversion behavior; only validated, serializable, low-level
   config contracts should move into `proximadb-config` until those dependencies are split
@@ -870,6 +874,9 @@ Current status after the first refinement:
 * pruning config extraction follows the same xCatalog/engine-autopilot direction: cataloged storage
   and query plans can share pruning policy descriptions without depending on modality-specific
   search implementations
+* API config extraction follows the anchor's compatibility-plane and sidecar roadmap: pgwire, REST,
+  gRPC, Arrow Flight, and streaming/control-plane sidecars can share endpoint options without
+  depending on root server bootstrap or protocol handler implementations
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside

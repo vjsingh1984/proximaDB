@@ -32,6 +32,117 @@ impl Default for TlsConfig {
     }
 }
 
+/// REST, gRPC, and Arrow Flight API endpoint configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiConfig {
+    /// gRPC listening port (used in multi-port mode).
+    pub grpc_port: u16,
+
+    /// REST listening port (used in multi-port mode).
+    pub rest_port: u16,
+
+    /// Maximum request body size in megabytes.
+    pub max_request_size_mb: u64,
+
+    /// Request timeout in seconds.
+    pub timeout_seconds: u64,
+
+    /// Whether TLS is enabled for API endpoints.
+    pub enable_tls: Option<bool>,
+
+    /// Interval for background TTL sweeper in seconds.
+    pub ttl_sweep_interval_seconds: u64,
+
+    /// Enable REST API compression.
+    pub rest_compression: bool,
+
+    /// Enable gRPC compression.
+    pub grpc_compression: bool,
+
+    /// Compression algorithm: "gzip", "deflate", "br".
+    pub compression_algorithm: String,
+
+    /// Compression level 1-9 for gzip, 1-11 for brotli.
+    pub compression_level: i32,
+
+    /// Enable unified port mode (REST + gRPC + Arrow Flight on single port).
+    #[serde(default)]
+    pub unified_mode: bool,
+
+    /// Unified port for all HTTP-based protocols.
+    #[serde(default = "default_unified_port")]
+    pub unified_port: u16,
+
+    /// Arrow Flight port (used when unified_mode = false).
+    #[serde(default = "default_arrow_flight_port")]
+    pub arrow_flight_port: u16,
+
+    /// Enable REST protocol in unified mode.
+    #[serde(default = "default_true")]
+    pub enable_rest: bool,
+
+    /// Enable gRPC protocol in unified mode.
+    #[serde(default = "default_true")]
+    pub enable_grpc: bool,
+
+    /// Enable Arrow Flight protocol in unified mode.
+    #[serde(default = "default_true")]
+    pub enable_arrow_flight: bool,
+
+    /// HTTP/2 max concurrent streams (for gRPC and Arrow Flight).
+    #[serde(default = "default_http2_max_concurrent_streams")]
+    pub http2_max_concurrent_streams: u32,
+
+    /// Maximum connections for unified server.
+    #[serde(default = "default_max_connections")]
+    pub max_connections: usize,
+}
+
+fn default_unified_port() -> u16 {
+    5678
+}
+
+fn default_arrow_flight_port() -> u16 {
+    5680
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_http2_max_concurrent_streams() -> u32 {
+    1000
+}
+
+fn default_max_connections() -> usize {
+    10000
+}
+
+impl Default for ApiConfig {
+    fn default() -> Self {
+        Self {
+            grpc_port: 5679,
+            rest_port: 5678,
+            max_request_size_mb: 100,
+            timeout_seconds: 60,
+            enable_tls: Some(false),
+            rest_compression: false,
+            grpc_compression: false,
+            compression_algorithm: "gzip".to_string(),
+            compression_level: 6,
+            ttl_sweep_interval_seconds: 900,
+            unified_mode: false,
+            unified_port: 5678,
+            arrow_flight_port: 5680,
+            enable_rest: true,
+            enable_grpc: true,
+            enable_arrow_flight: true,
+            http2_max_concurrent_streams: 1000,
+            max_connections: 10000,
+        }
+    }
+}
+
 /// Hardware acceleration configuration controlling SIMD and GPU features.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareConfig {
@@ -579,6 +690,30 @@ mod tests {
         assert!(config.cert_file.is_none());
         assert!(config.key_file.is_none());
         assert!(config.bind_interface.is_none());
+    }
+
+    #[test]
+    fn api_defaults_match_root_runtime_expectations() {
+        let config = ApiConfig::default();
+
+        assert_eq!(config.grpc_port, 5679);
+        assert_eq!(config.rest_port, 5678);
+        assert_eq!(config.max_request_size_mb, 100);
+        assert_eq!(config.timeout_seconds, 60);
+        assert_eq!(config.enable_tls, Some(false));
+        assert_eq!(config.ttl_sweep_interval_seconds, 900);
+        assert!(!config.rest_compression);
+        assert!(!config.grpc_compression);
+        assert_eq!(config.compression_algorithm, "gzip");
+        assert_eq!(config.compression_level, 6);
+        assert!(!config.unified_mode);
+        assert_eq!(config.unified_port, 5678);
+        assert_eq!(config.arrow_flight_port, 5680);
+        assert!(config.enable_rest);
+        assert!(config.enable_grpc);
+        assert!(config.enable_arrow_flight);
+        assert_eq!(config.http2_max_concurrent_streams, 1000);
+        assert_eq!(config.max_connections, 10000);
     }
 
     #[test]
