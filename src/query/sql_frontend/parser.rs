@@ -1097,7 +1097,10 @@ impl SqlFrontendParser {
                     .collect::<Result<Vec<_>>>()?;
                 Ok((Vec::new(), update_assignments))
             }
-            _ => Err(anyhow!("Unsupported INSERT conflict clause: {:?}", on_insert)),
+            _ => Err(anyhow!(
+                "Unsupported INSERT conflict clause: {:?}",
+                on_insert
+            )),
         }
     }
 
