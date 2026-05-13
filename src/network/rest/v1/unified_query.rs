@@ -88,6 +88,7 @@ use crate::security::unified_rbac::ConsolidatedRBACManager;
 use crate::services::VectorOperationsService;
 use crate::storage::document::DocumentService;
 use crate::storage::traits::UnifiedStorageEngine;
+use proximadb_vector_query::VectorQueryService;
 
 /// Unified Query API state with all services for cross-model queries
 ///
@@ -145,6 +146,8 @@ pub struct UnifiedQueryApiState {
     pub storage_engine: Arc<dyn UnifiedStorageEngine>,
     /// Vector operations service for vector searches (legacy mode)
     pub vector_ops: Option<Arc<VectorOperationsService>>,
+    /// Vector query service trait object (Phase 2.3 - preferred interface)
+    pub vector_query_service: Option<Arc<dyn VectorQueryService>>,
     /// Graph query/traversal service for graph requests (legacy mode)
     pub graph_service: Option<Arc<dyn GraphQueryService>>,
     /// Observability service for logs/metrics (legacy mode)
@@ -193,6 +196,7 @@ impl UnifiedQueryApiState {
             document_service,
             storage_engine,
             vector_ops: None,
+            vector_query_service: None,
             graph_service: None,
             observability_service: None,
             decomposer: Arc::new(QueryDecomposer::new()),
@@ -232,6 +236,7 @@ impl UnifiedQueryApiState {
             document_service,
             storage_engine,
             vector_ops: None,
+            vector_query_service: None,
             graph_service: None,
             observability_service: None,
             decomposer: Arc::new(QueryDecomposer::new()),
@@ -246,6 +251,19 @@ impl UnifiedQueryApiState {
     /// Set RBAC manager for permission validation
     pub fn with_rbac_manager(mut self, rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
         self.rbac_manager = Some(rbac_manager);
+        self
+    }
+
+    /// Attach the extracted vector query service contract for legacy REST state.
+    ///
+    /// Adapter mode should still be preferred for new query routes. This hook is
+    /// for protocol wiring that needs vector search capability without depending
+    /// on concrete vector operations beyond the composition root.
+    pub fn with_vector_query_service(
+        mut self,
+        vector_query_service: Arc<dyn VectorQueryService>,
+    ) -> Self {
+        self.vector_query_service = Some(vector_query_service);
         self
     }
 }

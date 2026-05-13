@@ -695,6 +695,8 @@ Current status after the first refinement:
 * the document query IR (`DocumentQueryExpr`, `PathFilter`, `DocumentSort`) now lives in a new leaf crate, `proximadb-document-query`, so the root unified AST no longer owns modality-specific document request shape either
 * the observability query IR (`LogQueryExpr`, `MetricQueryExpr`, `MetricAggregation`) now lives in a new leaf crate, `proximadb-observability-query`, so the root unified AST is continuing to shrink into a composition/re-export shell rather than a monolithic owner of every modality request shape
 * the vector query IR (`VectorSearchExpr`, `VectorSearchParams`, `DistanceMetric`) now also lives in a new leaf crate, `proximadb-vector-query`, so the root unified AST no longer owns vector request shape either and is getting closer to a pure cross-model composition layer
+* `proximadb-vector-query`, `proximadb-document-query`, and `proximadb-observability-query` now also own narrow async service contracts for read/query execution; root runtime code can implement or adapt those contracts while protocol/query layers depend on capability views instead of concrete root services
+* vector REST/unified protocol wiring has started consuming the extracted `VectorQueryService` contract at the composition edge; the concrete `VectorOperationsService` remains available for legacy paths, but new vector-search routing can prefer the contract seam
 * the generic cross-model clause IR (`Filter`, `OrderBy`) now also lives in a new leaf crate, `proximadb-query-clauses`, so the root unified AST is no longer the owner of generic reusable clause shape either
 * the canonical data-model discriminator (`StoreType`) now lives in a new foundation leaf crate, `proximadb-data-model`, so query, security, storage, and protocol layers no longer need the root multimodel router just to name a model kind
 * the shared search filter contract (`FilterExpression`, `ComparisonOperator`) now lives in a new foundation leaf crate, `proximadb-filter-expression`, so query planning/lowering, compute pipeline execution, storage filtering, and services can converge on one reusable contract instead of pulling those types through the root search module
@@ -1751,7 +1753,7 @@ modality crates.
 |P0
 |vector query/search request shape and ANN capability contracts
 |`proximadb-vector-query` for reusable query shape; `proximadb-vector` for runtime/search behavior
-|query runtime depends on vector contracts/capabilities, not root vector services or concrete engines
+|query/runtime/protocol callers can depend on `VectorQueryService`; root concrete vector services are adapted at the composition edge
 
 |P0
 |vector engines, quantization, scoring, and vector-index internals under root storage/index/search

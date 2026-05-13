@@ -570,6 +570,17 @@ fn sql_value_to_string(v: &proximadb_v1::SqlValue) -> String {
     }
 }
 
+fn score_from_metadata(metadata: &HashMap<String, proximadb_v1::SqlValue>) -> f64 {
+    metadata
+        .get("score")
+        .and_then(|v| v.value.as_ref())
+        .and_then(|v| match v {
+            proximadb_v1::sql_value::Value::NumberValue(f) => Some(*f),
+            _ => None,
+        })
+        .unwrap_or(0.0)
+}
+
 /// Convert JSON value to SqlValue proto
 fn json_to_sql_value(v: &serde_json::Value) -> proximadb_v1::SqlValue {
     use proximadb_v1::sql_value::Value;
@@ -1182,15 +1193,7 @@ impl UnifiedQueryHandler {
             .results
             .into_iter()
             .map(|record| {
-                let score = record
-                    .metadata
-                    .get("score")
-                    .and_then(|v| v.value.as_ref())
-                    .and_then(|v| match v {
-                        proximadb_v1::sql_value::Value::NumberValue(f) => Some(*f as f32),
-                        _ => None,
-                    })
-                    .unwrap_or(0.0);
+                let score = score_from_metadata(&record.metadata);
 
                 SearchResult {
                     id: record.id,
@@ -1702,5 +1705,18 @@ mod tests {
         let sql_val = json_to_sql_value(&json_val);
         let back = sql_value_to_json(&sql_val);
         assert_eq!(json_val, back);
+    }
+
+    #[test]
+    fn score_from_metadata_preserves_number_value_precision() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "score".to_string(),
+            proximadb_v1::SqlValue {
+                value: Some(proximadb_v1::sql_value::Value::NumberValue(0.1234567890123)),
+            },
+        );
+
+        assert_eq!(score_from_metadata(&metadata), 0.1234567890123);
     }
 }
