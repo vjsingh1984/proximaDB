@@ -158,7 +158,7 @@ fn extract_option_value(sql: &str, key: &str) -> Option<String> {
 ///
 /// Priority:
 /// 1. Vector operators (<->, <=>, <#>) and lowered vector distance calls
-/// 2. JSON path expressions ($.)
+/// 2. JSON path expressions ($.) and lowered JSON helper calls
 /// 3. Table name prefix (graph_, log_, metric_, doc_)
 /// 4. Catalog lookup (via callback)
 /// 5. Default to Relational
@@ -178,8 +178,13 @@ pub fn detect_store_type_from_query(
         return DataModel::Vector;
     }
 
-    // 2. JSON path expressions
-    if sql.contains("$.") {
+    // 2. JSON path expressions and lowered pgwire JSON helper calls.
+    if sql.contains("$.")
+        || upper.contains("JSON_EXTRACT")
+        || upper.contains("JSON_CONTAINS")
+        || upper.contains("JSON_EXISTS")
+        || upper.contains("JSON_PATH_EXISTS")
+    {
         return DataModel::Document;
     }
 
@@ -354,6 +359,22 @@ mod tests {
             detect_store_type_from_query("SELECT * FROM docs WHERE $.name = 'Alice'", "docs", None),
             DataModel::Document
         );
+    }
+
+    #[test]
+    fn test_detect_query_lowered_json_helpers() {
+        for sql in [
+            "SELECT * FROM docs WHERE JSON_EXTRACT_TEXT(metadata, 'tenant') = 'acme'",
+            "SELECT * FROM docs WHERE JSON_CONTAINS(metadata, '{\"role\":\"planner\"}')",
+            "SELECT * FROM docs WHERE JSON_EXISTS(metadata, 'skills')",
+            "SELECT * FROM docs WHERE JSON_PATH_EXISTS(metadata, '$.skills[*]')",
+        ] {
+            assert_eq!(
+                detect_store_type_from_query(sql, "docs", None),
+                DataModel::Document,
+                "{sql}"
+            );
+        }
     }
 
     #[test]

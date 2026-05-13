@@ -2740,6 +2740,22 @@ mod tests {
             ),
             DataModel::Document
         );
+        assert_eq!(
+            multimodal_router::detect_store_type_from_query(
+                "SELECT * FROM products WHERE JSON_EXTRACT_TEXT(metadata, 'tenant') = 'acme'",
+                "products",
+                None,
+            ),
+            DataModel::Document
+        );
+        assert_eq!(
+            multimodal_router::detect_store_type_from_query(
+                "SELECT * FROM products WHERE JSON_CONTAINS(metadata, '{\"role\":\"planner\"}')",
+                "products",
+                None,
+            ),
+            DataModel::Document
+        );
 
         // CREATE with JSONB column
         assert_eq!(
