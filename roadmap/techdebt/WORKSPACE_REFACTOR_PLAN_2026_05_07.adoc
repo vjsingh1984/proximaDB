@@ -828,6 +828,10 @@ Current status after the first refinement:
 * `proximadb-config` now owns the common compaction policy contract (`CompactionConfig`); root keeps
   a compatibility re-export while engine-specific compaction planners, scheduling, file rewrite
   execution, and storage-engine override behavior remain in storage runtime modules
+* `proximadb-config` now owns the storage/query optimization policy contract
+  (`OptimizationConfig`); root keeps a compatibility re-export while AXIS/index selection,
+  progressive search execution, bloom-filter application, mmap behavior, and optimizer/runtime
+  decisions remain in query, index, and storage runtime modules
 * the full root `Config` remains in root for now because it still composes AI, network, security,
   query, storage-engine, and runtime conversion behavior; only validated, serializable, low-level
   config contracts should move into `proximadb-config` until those dependencies are split
@@ -857,6 +861,9 @@ Current status after the first refinement:
 * compaction config extraction is aligned with the anchor's physical layout, object-store, and
   engine-autopilot direction: catalog and storage sidecars can share policy thresholds and strategy
   names without pulling compaction schedulers or engine rewrite code into foundation
+* optimization config extraction is aligned with the anchor's xCatalog physical layout and
+  engine-autopilot direction: catalog, storage, and compute sidecars can share tunable policy
+  options without depending on root search, index, or storage execution paths
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside

@@ -338,6 +338,71 @@ impl Default for CompactionConfig {
     }
 }
 
+/// Performance optimization configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationConfig {
+    /// Enable memory-mapped I/O for large files.
+    #[serde(default = "default_enable_mmap")]
+    pub enable_mmap: bool,
+
+    /// Enable zone map pruning to skip irrelevant blocks.
+    #[serde(default = "default_enable_zone_map_pruning")]
+    pub enable_zone_map_pruning: bool,
+
+    /// Enable AXIS indexes for approximate nearest neighbor search.
+    #[serde(default = "default_enable_axis_indexes")]
+    pub enable_axis_indexes: bool,
+
+    /// Default index type for new collections: flat, hnsw, ivf, lsh.
+    #[serde(default = "default_index_type")]
+    pub default_index_type: String,
+
+    /// Enable progressive quantization search (Binary -> INT8 -> FP32).
+    #[serde(default = "default_enable_progressive_search")]
+    pub enable_progressive_search: bool,
+
+    /// Enable block-level bloom filters for metadata filtering.
+    #[serde(default = "default_enable_bloom_filters")]
+    pub enable_bloom_filters: bool,
+}
+
+fn default_enable_mmap() -> bool {
+    true
+}
+
+fn default_enable_zone_map_pruning() -> bool {
+    true
+}
+
+fn default_enable_axis_indexes() -> bool {
+    true
+}
+
+fn default_index_type() -> String {
+    "hnsw".to_string()
+}
+
+fn default_enable_progressive_search() -> bool {
+    true
+}
+
+fn default_enable_bloom_filters() -> bool {
+    true
+}
+
+impl Default for OptimizationConfig {
+    fn default() -> Self {
+        Self {
+            enable_mmap: default_enable_mmap(),
+            enable_zone_map_pruning: default_enable_zone_map_pruning(),
+            enable_axis_indexes: default_enable_axis_indexes(),
+            default_index_type: default_index_type(),
+            enable_progressive_search: default_enable_progressive_search(),
+            enable_bloom_filters: default_enable_bloom_filters(),
+        }
+    }
+}
+
 /// WAL storage configuration supporting multiple directories and cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
@@ -520,5 +585,17 @@ mod tests {
         assert_eq!(config.max_levels, 7);
         assert_eq!(config.strategy, "hybrid");
         assert_eq!(config.target_file_size_mb, 128);
+    }
+
+    #[test]
+    fn optimization_defaults_match_root_runtime_expectations() {
+        let config = OptimizationConfig::default();
+
+        assert!(config.enable_mmap);
+        assert!(config.enable_zone_map_pruning);
+        assert!(config.enable_axis_indexes);
+        assert_eq!(config.default_index_type, "hnsw");
+        assert!(config.enable_progressive_search);
+        assert!(config.enable_bloom_filters);
     }
 }

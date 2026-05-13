@@ -546,75 +546,10 @@ fn default_prune_type() -> String {
     "sqrt".to_string()
 }
 
-/// Performance optimization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OptimizationConfig {
-    /// Enable memory-mapped I/O for large files (40-60% faster reads)
-    #[serde(default = "default_enable_mmap")]
-    pub enable_mmap: bool,
-
-    /// Enable zone map pruning to skip irrelevant blocks (30-50% faster search)
-    #[serde(default = "default_enable_zone_map_pruning")]
-    pub enable_zone_map_pruning: bool,
-
-    /// Enable AXIS indexes for approximate nearest neighbor search
-    #[serde(default = "default_enable_axis_indexes")]
-    pub enable_axis_indexes: bool,
-
-    /// Default index type for new collections: flat, hnsw, ivf, lsh
-    #[serde(default = "default_index_type")]
-    pub default_index_type: String,
-
-    /// Enable progressive quantization search (Binary → INT8 → FP32)
-    #[serde(default = "default_enable_progressive_search")]
-    pub enable_progressive_search: bool,
-
-    /// Enable block-level bloom filters for metadata filtering
-    #[serde(default = "default_enable_bloom_filters")]
-    pub enable_bloom_filters: bool,
-}
-
-fn default_enable_mmap() -> bool {
-    true
-}
-
-fn default_enable_zone_map_pruning() -> bool {
-    true
-}
-
-fn default_enable_axis_indexes() -> bool {
-    true
-}
-
-fn default_index_type() -> String {
-    "hnsw".to_string()
-}
-
-fn default_enable_progressive_search() -> bool {
-    true
-}
-
-fn default_enable_bloom_filters() -> bool {
-    true
-}
-
-impl Default for OptimizationConfig {
-    fn default() -> Self {
-        Self {
-            enable_mmap: default_enable_mmap(),
-            enable_zone_map_pruning: default_enable_zone_map_pruning(),
-            enable_axis_indexes: default_enable_axis_indexes(),
-            default_index_type: default_index_type(),
-            enable_progressive_search: default_enable_progressive_search(),
-            enable_bloom_filters: default_enable_bloom_filters(),
-        }
-    }
-}
-
 pub use proximadb_config::{
     AssignmentConfig, AzureConfig, CloudStorageConfig, CompactionConfig,
-    FilesystemOptimizationConfig, GcsConfig, MetadataBackendConfig, MonitoringConfig, S3Config,
-    StorageLocation, TempStrategy, TransactionalOperationsConfig,
+    FilesystemOptimizationConfig, GcsConfig, MetadataBackendConfig, MonitoringConfig,
+    OptimizationConfig, S3Config, StorageLocation, TempStrategy, TransactionalOperationsConfig,
 };
 
 impl StorageConfig {
