@@ -347,7 +347,26 @@ impl WALBehaviorWrapper {
     pub async fn add_vector_batch(
         &self,
         collection_id: &str,
+        batch: WALVectorBatch,
+    ) -> Result<Vec<u64>> {
+        self.add_vector_batch_internal(collection_id, batch, false)
+            .await
+    }
+
+    pub async fn add_vector_batch_insert_only(
+        &self,
+        collection_id: &str,
+        batch: WALVectorBatch,
+    ) -> Result<Vec<u64>> {
+        self.add_vector_batch_internal(collection_id, batch, true)
+            .await
+    }
+
+    async fn add_vector_batch_internal(
+        &self,
+        collection_id: &str,
         mut batch: WALVectorBatch,
+        insert_only: bool,
     ) -> Result<Vec<u64>> {
         // Backpressure: per-collection threshold check
         let current_usage = {
@@ -406,10 +425,15 @@ impl WALBehaviorWrapper {
 
         // STREAMLINED: Store batch natively in GlobalPartitionedMemtable (no duplication)
         tracing::debug!("🚀 WAL_BEHAVIOR: Calling inner.add_wal_batch()...");
-        let sequences = self
-            .inner
-            .add_wal_batch(collection_id, batch.clone())
-            .await?;
+        let sequences = if insert_only {
+            self.inner
+                .add_wal_batch_insert_only(collection_id, batch.clone())
+                .await?
+        } else {
+            self.inner
+                .add_wal_batch(collection_id, batch.clone())
+                .await?
+        };
         tracing::debug!(
             "🚀 WAL_BEHAVIOR: inner.add_wal_batch() returned sequences: {:?}",
             sequences

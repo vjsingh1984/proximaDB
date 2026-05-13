@@ -69,7 +69,7 @@
 //! - **AXIS Indexing**: Supplies vectors for index building
 
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -151,11 +151,47 @@ impl CollectionPartition {
     #[inline(always)]
     fn add_batch(
         &mut self,
+        batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+    ) -> Result<()> {
+        self.add_batch_internal(batch, false)
+    }
+
+    fn add_batch_insert_only(
+        &mut self,
+        batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+    ) -> Result<()> {
+        self.add_batch_internal(batch, true)
+    }
+
+    fn add_batch_internal(
+        &mut self,
         mut batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+        insert_only: bool,
     ) -> Result<()> {
         let batch_id = batch.batch_id.to_base62();
         let batch_size = batch.total_size_bytes;
         let vector_count = batch.vector_records.len();
+
+        if insert_only {
+            let mut request_ids = HashSet::new();
+            for vector_record in batch.vector_records.iter() {
+                if vector_record.id.is_empty() {
+                    continue;
+                }
+                if !request_ids.insert(vector_record.id.as_str()) {
+                    anyhow::bail!(
+                        "INSERT_CONFLICT: record '{}' appears more than once in insert batch",
+                        vector_record.id
+                    );
+                }
+                if self.vector_id_index.contains_key(&vector_record.id) {
+                    anyhow::bail!(
+                        "INSERT_CONFLICT: record '{}' already exists",
+                        vector_record.id
+                    );
+                }
+            }
+        }
 
         // Create bloom filter for this batch if not already present
         // Bloom filters enable fast metadata filtering without scanning all vectors.
@@ -621,6 +657,25 @@ impl GlobalPartitionedMemtable {
         collection_id: &str,
         wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
     ) -> Result<Vec<u64>> {
+        self.add_wal_batch_internal(collection_id, wal_batch, false)
+            .await
+    }
+
+    pub async fn add_wal_batch_insert_only(
+        &self,
+        collection_id: &str,
+        wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+    ) -> Result<Vec<u64>> {
+        self.add_wal_batch_internal(collection_id, wal_batch, true)
+            .await
+    }
+
+    async fn add_wal_batch_internal(
+        &self,
+        collection_id: &str,
+        wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+        insert_only: bool,
+    ) -> Result<Vec<u64>> {
         let batch_id = wal_batch.batch_id.to_base62();
         let vector_count = wal_batch.vector_records.len();
         let batch_size = wal_batch.total_size_bytes;
@@ -653,7 +708,11 @@ impl GlobalPartitionedMemtable {
         );
 
         // Store the batch natively in the partition
-        partition.add_batch(wal_batch)?;
+        if insert_only {
+            partition.add_batch_insert_only(wal_batch)?;
+        } else {
+            partition.add_batch(wal_batch)?;
+        }
 
         tracing::debug!(
             "🚀 GLOBAL_PARTITIONED_DEBUG: Updated partition stats - vector_count: {}, total_size: {}",
@@ -1752,6 +1811,69 @@ mod tests {
             !search_results
                 .iter()
                 .any(|(_, record)| record.id == vector_id.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_only_batch_rejects_duplicate_ids_in_request() {
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "insert_only_duplicate_request";
+        let first = create_vector_record("record_1", vec![1.0, 0.0], Some(1), None);
+        let second = create_vector_record("record_1", vec![0.0, 1.0], Some(1), None);
+        let batch = create_wal_batch(collection_id, 1, vec![first, second]);
+
+        let error = memtable
+            .add_wal_batch_insert_only(collection_id, batch)
+            .await
+            .expect_err("duplicate ids in an insert-only batch should fail");
+
+        assert!(error.to_string().contains("INSERT_CONFLICT"));
+        assert!(
+            memtable
+                .vector_by_id(collection_id, "record_1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_only_batch_rejects_existing_wal_id_atomically() {
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "insert_only_existing_wal";
+        let original = create_vector_record("record_1", vec![1.0, 0.0], Some(1), None);
+        let original_batch = create_wal_batch(collection_id, 1, vec![original]);
+        memtable
+            .add_wal_batch_insert_only(collection_id, original_batch)
+            .await
+            .unwrap();
+
+        let conflicting = create_vector_record("record_1", vec![0.0, 1.0], Some(1), None);
+        let new_record = create_vector_record("record_2", vec![0.5, 0.5], Some(1), None);
+        let conflicting_batch = create_wal_batch(collection_id, 2, vec![conflicting, new_record]);
+
+        let error = memtable
+            .add_wal_batch_insert_only(collection_id, conflicting_batch)
+            .await
+            .expect_err("existing ids in an insert-only batch should fail");
+
+        assert!(error.to_string().contains("INSERT_CONFLICT"));
+        assert!(
+            memtable
+                .vector_by_id(collection_id, "record_2")
+                .await
+                .unwrap()
+                .is_none(),
+            "failed insert-only batch must not partially add new records"
+        );
+        assert_eq!(
+            memtable
+                .vector_by_id(collection_id, "record_1")
+                .await
+                .unwrap()
+                .unwrap()
+                .vector,
+            vec![1.0, 0.0]
         );
     }
 

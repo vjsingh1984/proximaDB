@@ -2094,6 +2094,26 @@ impl WriteAheadLogManager {
         collection_id: &str,
         native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
     ) -> Result<Vec<u64>> {
+        self.write_vector_batch_native_arc_with_mode(collection_id, native_vectors, false)
+            .await
+    }
+
+    /// Write native VectorRecord batch with insert-only WAL/memtable semantics.
+    pub async fn write_vector_batch_native_arc_insert_only(
+        &self,
+        collection_id: &str,
+        native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
+    ) -> Result<Vec<u64>> {
+        self.write_vector_batch_native_arc_with_mode(collection_id, native_vectors, true)
+            .await
+    }
+
+    async fn write_vector_batch_native_arc_with_mode(
+        &self,
+        collection_id: &str,
+        native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
+        insert_only: bool,
+    ) -> Result<Vec<u64>> {
         debug!(
             "WAL write: {} vectors to collection {}",
             native_vectors.len(),
@@ -2119,9 +2139,15 @@ impl WriteAheadLogManager {
         let sequences = {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            wal_behavior
-                .add_vector_batch(collection_id, native_batch.clone())
-                .await
+            if insert_only {
+                wal_behavior
+                    .add_vector_batch_insert_only(collection_id, native_batch.clone())
+                    .await
+            } else {
+                wal_behavior
+                    .add_vector_batch(collection_id, native_batch.clone())
+                    .await
+            }
         }?;
 
         // Then, persist to disk if sync mode requires it

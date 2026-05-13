@@ -1258,6 +1258,25 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
     ) -> Result<BatchOperationResult> {
+        self.insert_vectors_via_wal_with_mode(collection_id, vectors, false)
+            .await
+    }
+
+    async fn insert_vectors_via_wal_insert_only(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+    ) -> Result<BatchOperationResult> {
+        self.insert_vectors_via_wal_with_mode(collection_id, vectors, true)
+            .await
+    }
+
+    async fn insert_vectors_via_wal_with_mode(
+        &self,
+        collection_id: &str,
+        vectors: Vec<VectorRecord>,
+        insert_only: bool,
+    ) -> Result<BatchOperationResult> {
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
@@ -1268,11 +1287,17 @@ impl VectorOperationsService {
         // Write vectors via WAL manager
         let vectors_arc = Arc::new(vectors);
 
-        match self
-            .wal_manager
-            .write_vector_batch_native_arc(collection_id, vectors_arc)
-            .await
-        {
+        let wal_result = if insert_only {
+            self.wal_manager
+                .write_vector_batch_native_arc_insert_only(collection_id, vectors_arc)
+                .await
+        } else {
+            self.wal_manager
+                .write_vector_batch_native_arc(collection_id, vectors_arc)
+                .await
+        };
+
+        match wal_result {
             Ok(_) => {
                 let duration = start_time.elapsed();
                 let _vectors_per_sec = if duration.as_secs_f64() > 0.0 {
@@ -1300,6 +1325,12 @@ impl VectorOperationsService {
                 ))
             }
             Err(e) => {
+                if insert_only && e.to_string().contains("INSERT_CONFLICT") {
+                    return Ok(BatchOperationResult::failure(
+                        format!("Record insert failed: {}", e),
+                        "INSERT_CONFLICT".to_string(),
+                    ));
+                }
                 warn!("WAL batch insert failed: {}", e);
                 Ok(BatchOperationResult::failure(
                     format!("Batch insert failed: {}", e),
@@ -1330,7 +1361,8 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<VectorRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_batch_internal(collection_id, vectors).await
+        self.insert_vectors_via_wal_insert_only(collection_id, vectors)
+            .await
     }
 
     /// Insert a batch of vectors after validating tenant access and injecting tenant metadata.
