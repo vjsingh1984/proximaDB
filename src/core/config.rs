@@ -612,9 +612,9 @@ impl Default for OptimizationConfig {
 }
 
 pub use proximadb_config::{
-    AssignmentConfig, AzureConfig, CloudStorageConfig, FilesystemOptimizationConfig, GcsConfig,
-    MetadataBackendConfig, MonitoringConfig, S3Config, StorageLocation, TempStrategy,
-    TransactionalOperationsConfig,
+    AssignmentConfig, AzureConfig, CloudStorageConfig, CompactionConfig,
+    FilesystemOptimizationConfig, GcsConfig, MetadataBackendConfig, MonitoringConfig, S3Config,
+    StorageLocation, TempStrategy, TransactionalOperationsConfig,
 };
 
 impl StorageConfig {
@@ -716,60 +716,6 @@ impl WriteBufferUserConfig {
             optimized_writer_batch_timeout_ms: None,
             optimized_writer_threads: None,
             optimized_writer_enable_combining: None,
-        }
-    }
-}
-
-/// Common compaction configuration shared across engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactionConfig {
-    /// L0 file count threshold for compaction (default: 5)
-    pub l0_file_threshold: usize,
-
-    /// L0 size threshold in MB for compaction (default: 256MB)
-    pub l0_size_threshold_mb: usize,
-
-    /// Multiplier for higher level thresholds (default: 2.0)
-    pub level_multiplier: f64,
-
-    /// Maximum number of levels (default: 7)
-    pub max_levels: u8,
-
-    /// Compaction strategy: "count", "size", or "hybrid" (default: "hybrid")
-    pub strategy: String,
-
-    /// Target output file size in MB for size-based compaction (default: 128MB)
-    pub target_file_size_mb: usize,
-}
-
-fn default_l0_file_threshold() -> usize {
-    5
-}
-fn default_l0_size_threshold_mb() -> usize {
-    256
-}
-fn default_level_multiplier() -> f64 {
-    2.0
-}
-fn default_max_levels() -> u8 {
-    7
-}
-fn default_compaction_strategy() -> String {
-    "hybrid".to_string()
-}
-fn default_target_file_size_mb() -> usize {
-    128
-}
-
-impl Default for CompactionConfig {
-    fn default() -> Self {
-        Self {
-            l0_file_threshold: default_l0_file_threshold(),
-            l0_size_threshold_mb: default_l0_size_threshold_mb(),
-            level_multiplier: default_level_multiplier(),
-            max_levels: default_max_levels(),
-            strategy: default_compaction_strategy(),
-            target_file_size_mb: default_target_file_size_mb(),
         }
     }
 }

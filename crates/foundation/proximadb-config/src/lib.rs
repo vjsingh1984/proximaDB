@@ -303,6 +303,41 @@ impl Default for AssignmentConfig {
     }
 }
 
+/// Common compaction configuration shared across storage engines.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionConfig {
+    /// L0 file count threshold for compaction.
+    pub l0_file_threshold: usize,
+
+    /// L0 size threshold in MB for compaction.
+    pub l0_size_threshold_mb: usize,
+
+    /// Multiplier for higher level thresholds.
+    pub level_multiplier: f64,
+
+    /// Maximum number of levels.
+    pub max_levels: u8,
+
+    /// Compaction strategy: "count", "size", or "hybrid".
+    pub strategy: String,
+
+    /// Target output file size in MB for size-based compaction.
+    pub target_file_size_mb: usize,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            l0_file_threshold: 5,
+            l0_size_threshold_mb: 256,
+            level_multiplier: 2.0,
+            max_levels: 7,
+            strategy: "hybrid".to_string(),
+            target_file_size_mb: 128,
+        }
+    }
+}
+
 /// WAL storage configuration supporting multiple directories and cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
@@ -473,5 +508,17 @@ mod tests {
 
         assert_eq!(config.strategy, "hash");
         assert!(config.affinity);
+    }
+
+    #[test]
+    fn compaction_defaults_match_root_runtime_expectations() {
+        let config = CompactionConfig::default();
+
+        assert_eq!(config.l0_file_threshold, 5);
+        assert_eq!(config.l0_size_threshold_mb, 256);
+        assert_eq!(config.level_multiplier, 2.0);
+        assert_eq!(config.max_levels, 7);
+        assert_eq!(config.strategy, "hybrid");
+        assert_eq!(config.target_file_size_mb, 128);
     }
 }
