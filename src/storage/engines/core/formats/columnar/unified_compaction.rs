@@ -312,15 +312,17 @@ impl UnifiedColumnarCompaction {
         if let Some(q_config) = quantization_config {
             // Parse quantization config to determine levels
             // Default: Binary + INT8 for fast pre-filtering
-            config.filter_level =
-                Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::Binary);
-            config.fast_level =
-                Some(crate::compute::quantization::unified::UnifiedQuantizationLevel::int8());
+            config.filter_level = Some(
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Binary,
+            );
+            config.fast_level = Some(
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
+            );
 
             // PQ only if explicitly enabled due to training cost
             if q_config.enable_pq.unwrap_or(false) {
                 config.primary_level = Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(
                         q_config.pq_segments.unwrap_or(1).max(1) as u8,
                     ),
                 );

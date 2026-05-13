@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
+    use crate::core::search::search_interface::{CollectionConfig, SearchPlan, StorageInfo};
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
     use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::engines::core::formats::columnar::CollectionContext;

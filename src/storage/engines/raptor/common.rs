@@ -1182,10 +1182,10 @@ impl InterCentroidMatrix {
         // Create required components for StorageQuantizationEngine
         use crate::compute::distance_computation::DistanceMetric;
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
         use crate::compute::quantization::storage_engine::StorageQuantizationConfig;
-        use crate::compute::quantization::unified::UnifiedQuantizationEngine;
 
-        use crate::compute::quantization::unified::InMemoryCodebookStore;
+        use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
         let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
             Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine)),
             Arc::new(InMemoryCodebookStore::new()),
@@ -1217,7 +1217,7 @@ impl InterCentroidMatrix {
         }
 
         // Create quantized vector wrapper for unified engine processing
-        use crate::compute::quantization::unified::QuantizationMetadata;
+        use crate::compute::quantization::quantization_engine::QuantizationMetadata;
         let _quantized_vector = QuantizedVector {
             data: quantized_values
                 .iter()

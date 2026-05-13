@@ -24,7 +24,7 @@ use tempfile::TempDir;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::{InMemoryCodebookStore, UnifiedQuantizationEngine};
+use crate::compute::quantization::quantization_engine::{InMemoryCodebookStore, UnifiedQuantizationEngine};
 use crate::core::SstConfig;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig, MetadataItem, VectorRecord};
@@ -363,7 +363,7 @@ pub async fn create_test_reader() -> UnifiedSstableReader {
 /// # Returns
 /// SearchPlan with default test values
 pub fn create_test_search_context() -> SearchPlan {
-    use crate::core::search::unified_interface::ColumnData;
+    use crate::core::search::search_interface::ColumnData;
 
     SearchPlan {
         collection_id: "test_collection".to_string(),

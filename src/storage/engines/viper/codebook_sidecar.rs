@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::storage::engines::core::formats::codebook_metadata::{
     CodebookSerializer, QuantizationCodebookMetadata,
 };

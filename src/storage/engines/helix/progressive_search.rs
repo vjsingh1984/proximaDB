@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 

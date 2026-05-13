@@ -797,7 +797,7 @@ mod tests {
     //     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
     //     let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
     //     let quantization_engine = Arc::new(
-    //         crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+    //         crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
     //             hardware.clone(),
     //             memory_pool.clone(),
     //         ),

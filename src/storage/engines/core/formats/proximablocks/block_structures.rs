@@ -264,7 +264,8 @@ pub struct ProximaDataBlock {
     /// Quantized vectors using unified engine
     pub quantized_vectors: Option<Vec<Vec<u8>>>,
     /// Quantization level used
-    pub quantization_level: Option<crate::compute::quantization::unified::UnifiedQuantizationLevel>,
+    pub quantization_level:
+        Option<crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel>,
 
     /// SIMD-encoded vector data (when layout != FullVector)
     /// Stores transposed and encoded dimensions for SIMD operations

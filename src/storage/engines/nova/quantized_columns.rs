@@ -11,7 +11,7 @@ use arrow_schema::{DataType, Field};
 use std::sync::Arc;
 
 // Use unified quantization from compute module
-use crate::compute::quantization::unified::{Codebook, UnifiedQuantizationEngine};
+use crate::compute::quantization::quantization_engine::{Codebook, UnifiedQuantizationEngine};
 
 /// Metadata for quantized columns in Parquet
 #[derive(Debug, Clone, Default)]

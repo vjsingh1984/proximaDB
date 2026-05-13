@@ -6,7 +6,7 @@
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::core::search::unified_interface::SearchPlan;
+use crate::core::search::search_interface::SearchPlan;
 use crate::proto::proximadb_v1::{MetadataFilter, VectorRecord};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use anyhow::Result;

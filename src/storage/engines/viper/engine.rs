@@ -243,7 +243,7 @@ pub struct ViperEngine {
     /// Falls back when collection doesn't have trained codebooks
     #[allow(dead_code)]
     fallback_quantization_engine:
-        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
+        Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine>,
 
     /// **Universal Performance Optimizer**
     ///
@@ -450,12 +450,13 @@ impl ViperEngine {
 
         // In-memory codebook store for PQ quantization
         // Codebooks are trained on sample data and cached for fast access
-        let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
 
         // Create the unified quantization engine that all storage engines share
         let unified_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
                 codebook_store,
             ),
@@ -467,15 +468,15 @@ impl ViperEngine {
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 // PQ8 with 32 subquantizers - achieves 32x compression for 768D vectors
                 primary_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(32),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(32),
                 ),
                 // Binary quantization for initial filtering - 32x reduction
                 filter_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::binary(),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::binary(),
                 ),
                 // INT8 for intermediate precision - 4x reduction with 98% recall
                 fast_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
                 ),
                 // Cosine is default, but can be overridden per collection
                 distance_metric:
@@ -503,10 +504,11 @@ impl ViperEngine {
         );
 
         // Create fallback stateless quantization engine for ad-hoc queries
-        let fallback_codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let fallback_codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let fallback_quantization_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
                 fallback_codebook_store,
             ),
@@ -1790,7 +1792,7 @@ impl ViperEngine {
         &self,
         operation_context: &str,
         collection_size: Option<usize>,
-    ) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+    ) -> Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine> {
         if self.should_use_persistent_quantization(operation_context, collection_size) {
             // Use global quantization cache for persistent operations
             if let Some(global_cache) =
@@ -2574,10 +2576,10 @@ impl UnifiedStorageEngine for ViperEngine {
         // Convert search_params to SearchPlan using unified_interface
         // Now directly passes FilterExpression - no conversion needed
         let search_plan =
-            crate::core::search::unified_interface::SearchPlan {
+            crate::core::search::search_interface::SearchPlan {
                 collection_id: collection_id.to_string(),
                 collection_config: collection_opt.as_ref().and_then(|c| c.config.as_ref()).map(
-                    |cfg| crate::core::search::unified_interface::CollectionConfig {
+                    |cfg| crate::core::search::search_interface::CollectionConfig {
                         default_distance_metric: distance_metric,
                         vector_dimension: dimension,
                         enable_quantization: cfg.quantization.is_some(),
@@ -2587,10 +2589,12 @@ impl UnifiedStorageEngine for ViperEngine {
                 ),
                 filterable_columns: Vec::new(), // Populated from collection config at query time
                 available_quantization: vec![
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(32),
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
-                ],
-                storage_info: crate::core::search::unified_interface::StorageInfo {
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(
+                    32,
+                ),
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
+            ],
+                storage_info: crate::core::search::search_interface::StorageInfo {
                     is_cloud_storage: true,
                     storage_type: "VIPER".to_string(),
                     estimated_size_mb: 100.0,

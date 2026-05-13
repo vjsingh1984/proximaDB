@@ -417,9 +417,9 @@ pub fn create_test_vector_with_metadata(
 pub fn convert_search_params_to_plan(
     params: &crate::core::search::SearchParams,
     collection_id: &str,
-) -> crate::core::search::unified_interface::SearchPlan {
+) -> crate::core::search::search_interface::SearchPlan {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::search::unified_interface::{CollectionConfig, SearchPlan, StorageInfo};
+    use crate::core::search::search_interface::{CollectionConfig, SearchPlan, StorageInfo};
 
     SearchPlan {
         collection_id: collection_id.to_string(),

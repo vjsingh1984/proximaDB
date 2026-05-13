@@ -10,7 +10,9 @@ use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+use crate::compute::quantization::quantization_engine::{
+    UnifiedQuantizationEngine, UnifiedQuantizationLevel,
+};
 use crate::core::search::{OptimizedSearchRecord, SearchParams, SearchResultSet};
 use crate::services::collection::manager::CollectionService;
 
@@ -315,9 +317,13 @@ impl IntegratedSearchOptimizer {
             collection_config,
             filterable_columns,
             available_quantization: vec![
-                crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(32),
-                crate::compute::quantization::unified::UnifiedQuantizationLevel::pq4(32),
-                crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(
+                    32,
+                ),
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq4(
+                    32,
+                ),
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
             ],
             storage_info,
             filter_expression: None, // Deferred: Extract from search request

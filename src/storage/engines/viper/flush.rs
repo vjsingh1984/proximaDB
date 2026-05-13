@@ -53,7 +53,7 @@ pub struct Flush {
 
     /// Quantization engine for unified quantization
     quantization_engine:
-        Option<Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>>,
+        Option<Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine>>,
 }
 
 impl std::fmt::Debug for Flush {
@@ -88,15 +88,16 @@ impl Flush {
         let compression_provider = StandardCompression;
 
         // Initialize quantization engine
-        let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
                 crate::proto::proximadb_v1::DistanceMetric::Cosine,
             ),
         );
         let quantization_engine = Some(Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute,
                 codebook_store,
             ),

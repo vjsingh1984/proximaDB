@@ -29,8 +29,10 @@ use tracing::{debug, trace};
 // Note: SearchResult is proto type, not in core::search anymore
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+use crate::compute::quantization::quantization_engine::{
+    QuantizedVector, UnifiedQuantizationEngine,
+};
 use crate::compute::quantization::storage_engine::StorageQuantizedData;
-use crate::compute::quantization::unified::{QuantizedVector, UnifiedQuantizationEngine};
 use crate::core::search::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{QuantizationLevel, QuantizationType, StorageQueryContext};
@@ -215,7 +217,7 @@ impl ProgressiveSearchExecutor {
                                 primary: None,
                                 filter: Some(QuantizedVector {
                                     data: binary_data,
-                                    quantization_level: crate::compute::quantization::unified::UnifiedQuantizationLevel::Binary,
+                                    quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Binary,
                                     metadata: crate::compute::quantization::QuantizationMetadata::default(),
                                 }),
                                 fast: None,
@@ -232,7 +234,7 @@ impl ProgressiveSearchExecutor {
                                 filter: None,
                                 fast: Some(QuantizedVector {
                                     data: int8_data,
-                                    quantization_level: crate::compute::quantization::unified::UnifiedQuantizationLevel::Int8,
+                                    quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Int8,
                                     metadata: crate::compute::quantization::QuantizationMetadata::default(),
                                 }),
                                 dimension: record.vector.len(),

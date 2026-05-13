@@ -7,7 +7,7 @@ use super::streaming_processor::{
     StreamingRowGroupProcessor,
 };
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;

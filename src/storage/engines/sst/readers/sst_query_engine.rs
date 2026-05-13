@@ -390,7 +390,7 @@ impl ModularBlockReader {
     ) -> Result<
         Option<(
             Vec<Vec<u8>>,
-            crate::compute::quantization::unified::UnifiedQuantizationLevel,
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel,
         )>,
     > {
         // For now, read the entire block and extract quantized section

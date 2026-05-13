@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 use crate::proto::proximadb_v1::VectorRecord;
 
@@ -358,7 +358,7 @@ impl UniversalSearchPipeline {
     ) -> Result<Vec<VectorRecord>> {
         // Use quantization engine for binary filtering
         // Create a binary quantization level
-        use crate::compute::quantization::unified::{
+        use crate::compute::quantization::quantization_engine::{
             BinaryQuantization, QuantizationLevel, UnifiedQuantizationLevel,
         };
         let binary_level = UnifiedQuantizationLevel {

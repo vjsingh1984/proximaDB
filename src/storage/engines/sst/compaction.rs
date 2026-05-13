@@ -271,10 +271,11 @@ impl Compaction {
             let distance_compute = Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
             );
-            let codebook_store =
-                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+            let codebook_store = Arc::new(
+                crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+            );
             let unified_engine = Arc::new(
-                crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                     distance_compute,
                     codebook_store,
                 ),

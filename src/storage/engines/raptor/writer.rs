@@ -2601,12 +2601,15 @@ impl RaptorWriter {
         ));
 
         // Initialize codebook store for quantization
-        let codebook_store: Arc<dyn crate::compute::quantization::unified::CodebookStore> =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let codebook_store: Arc<
+            dyn crate::compute::quantization::quantization_engine::CodebookStore,
+        > = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
 
         // Initialize unified quantization engine
         let unified_quantization = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
                 codebook_store,
             ),

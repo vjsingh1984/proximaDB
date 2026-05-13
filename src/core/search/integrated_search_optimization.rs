@@ -17,15 +17,16 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 
 // Re-export for public use
-pub use crate::compute::quantization::unified::UnifiedQuantizationLevel as UnifiedQuantizationLevelPublic;
+pub use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel as UnifiedQuantizationLevelPublic;
 use crate::core::search::{
     FilterExpression, SearchParams, metadata_filter_pushdown::MetadataFilterPushdown,
-    progressive_quantization::ProgressiveSearchConfig, query_preprocessing::QueryPreprocessor,
-    results::OptimizedSearchRecord, smart_execution_strategy::SmartExecutionStrategy,
-    unified_progressive_pipeline::UnifiedProgressiveSearchPipeline,
+    progressive_quantization::ProgressiveSearchConfig,
+    progressive_search_pipeline::UnifiedProgressiveSearchPipeline,
+    query_preprocessing::QueryPreprocessor, results::OptimizedSearchRecord,
+    smart_execution_strategy::SmartExecutionStrategy,
 };
 use crate::index::axis::management::manager::AxisManager;
 use crate::index::axis::storage::serialization::Index;

@@ -5,9 +5,9 @@
 //!
 //! Expected Performance Improvement: 15-25% reduction in repeated computation
 
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::QuantizationLevel;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
 use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
 use crate::proto::proximadb_v1::DistanceMetric;
 use crate::proto::proximadb_v1::QuantizationConfig;
@@ -90,7 +90,7 @@ impl QueryPreprocessor {
 
         trace!("Creating InMemoryCodebookStore");
         let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+            Arc::new(crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new());
 
         trace!("Creating UnifiedQuantizationEngine");
         let unified_engine = Arc::new(UnifiedQuantizationEngine::new(

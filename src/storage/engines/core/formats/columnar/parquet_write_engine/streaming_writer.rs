@@ -602,7 +602,7 @@ impl StreamingParquetWriter {
         records: &[VectorRecord],
     ) -> Result<()> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-        use crate::compute::quantization::unified::{
+        use crate::compute::quantization::quantization_engine::{
             InMemoryCodebookStore, UnifiedQuantizationEngine,
         };
         use arrow::array::BinaryBuilder;

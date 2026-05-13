@@ -1196,10 +1196,12 @@ struct WriterStats {
 mod tests {
     use super::*;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+    use crate::compute::quantization::quantization_engine::{
+        InMemoryCodebookStore, UnifiedQuantizationEngine,
+    };
     use crate::compute::quantization::storage_engine::{
         StorageQuantizationConfig, StorageQuantizationEngine,
     };
-    use crate::compute::quantization::unified::{InMemoryCodebookStore, UnifiedQuantizationEngine};
     // Note: Using StorageQuantizationConfig instead of removed SstQuantizationConfig
 
     #[tokio::test]
@@ -1254,10 +1256,11 @@ mod tests {
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
         );
-        let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let unified_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
                 codebook_store,
             ),
@@ -1266,13 +1269,13 @@ mod tests {
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 primary_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(32),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(32),
                 ),
                 filter_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::binary(),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::binary(),
                 ),
                 fast_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
                 ),
                 distance_metric:
                     crate::compute::distance_computation::engine::DistanceMetric::Cosine,

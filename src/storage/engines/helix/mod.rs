@@ -339,7 +339,7 @@ pub struct HelixEngine {
     /// Always available as fallback
     #[allow(dead_code)]
     fallback_quantization_engine:
-        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
+        Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine>,
 
     /// **Cache Orchestrator** (Optional)
     ///
@@ -486,7 +486,8 @@ impl HelixEngine {
         &self,
         operation_context: &str,
         collection_size: Option<usize>,
-    ) -> Option<Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>> {
+    ) -> Option<Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine>>
+    {
         if self.should_use_persistent_quantization(operation_context, collection_size) {
             // Use global quantization cache for persistent operations
             if let Some(global_cache) =
@@ -692,10 +693,11 @@ impl HelixEngine {
 
         // Initialize dual quantization architecture
         let storage_quantization_engine = if config.storage_quantization {
-            let codebook_store =
-                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+            let codebook_store = Arc::new(
+                crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+            );
             let unified_engine = Arc::new(
-                crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                     distance_compute.clone(),
                     codebook_store,
                 ),
@@ -715,9 +717,11 @@ impl HelixEngine {
 
         // Always create fallback quantization engine for ad-hoc operations
         let fallback_quantization_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
-                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
+                Arc::new(
+                    crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+                ),
             ),
         );
 

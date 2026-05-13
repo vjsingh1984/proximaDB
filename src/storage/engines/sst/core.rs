@@ -29,8 +29,8 @@ use tracing::info;
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::{
+    quantization_engine::{CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine},
     storage_engine::StorageQuantizationEngine,
-    unified::{CodebookStore, InMemoryCodebookStore, UnifiedQuantizationEngine},
 };
 use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer,

@@ -11,15 +11,15 @@ pub mod metadata_filter_pushdown;
 pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;
 pub mod progressive_quantization;
+pub mod progressive_search_pipeline;
 pub mod queries;
 pub mod query_preprocessing;
 pub mod results;
+pub mod search_interface;
 pub mod smart_execution_strategy;
 pub mod sql_value_filter;
 pub mod strategies;
 pub mod typesafe_filter;
-pub mod unified_interface;
-pub mod unified_progressive_pipeline;
 
 #[cfg(test)]
 mod early_termination_tests;
@@ -398,7 +398,7 @@ pub use results::{
 // NOTE: Proto types (SearchResult, SearchVectorRecord) should NOT be re-exported here.
 // They belong in the API layer only. Services should use OptimizedSearchRecord
 // and convert to proto types at the API boundary.
-pub use unified_interface::{
+pub use search_interface::{
     CollectionConfig, ColumnData, FilterableColumn, IntegratedSearchOptimizer, OptimizationHint,
     SearchPlan, StorageInfo, UnifiedSearchEngine,
 };

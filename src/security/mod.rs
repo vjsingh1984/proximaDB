@@ -5,20 +5,28 @@
 
 pub mod advanced_features;
 pub mod auth;
+pub mod auth_service;
 pub mod encryption;
 pub mod monitoring;
+pub mod rbac_service;
 pub mod rls;
 pub mod security_coordinator;
-pub mod unified_auth;
-pub mod unified_rbac;
 pub mod validation;
 
-pub use unified_rbac::{
+pub mod unified_auth {
+    pub use super::auth_service::*;
+}
+
+pub mod unified_rbac {
+    pub use super::rbac_service::*;
+}
+
+pub use rbac_service::{
     AuthMethod, AuthorizationResult, CollectionPermissionType, ConsolidatedRBACManager, RBACConfig,
     TenantContext, UnifiedAuthMethod, UnifiedPermission, UnifiedRole, UnifiedUserContext,
 };
 
-pub use unified_auth::{
+pub use auth_service::{
     AuthenticationConfig, AuthenticationData, AuthenticationMethod, AuthenticationResult,
     ClientCertificateData, ClientIdentity, MtlsConfig, SecurityAuthenticationResult,
     UnifiedAuthService,

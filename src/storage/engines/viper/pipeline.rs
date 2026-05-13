@@ -101,7 +101,8 @@ pub struct ProcessingConfig {
     pub sorting_strategy: SortingStrategy,
 
     /// Vector quantization level (None = no quantization)
-    pub quantization_level: Option<crate::compute::quantization::unified::UnifiedQuantizationLevel>,
+    pub quantization_level:
+        Option<crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel>,
 }
 
 /// Flushing configuration
@@ -726,10 +727,11 @@ impl VectorRecordProcessor {
                 let distance_compute = Arc::new(
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
                 );
-                let codebook_store =
-                    Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+                let codebook_store = Arc::new(
+                    crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+                );
                 let unified_engine = Arc::new(
-                    crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                         distance_compute,
                         codebook_store,
                     ),
@@ -1066,8 +1068,8 @@ impl VectorRecordProcessor {
     async fn apply_vector_quantization(
         &self,
         records: &[VectorRecord],
-        quantization_level: crate::compute::quantization::unified::UnifiedQuantizationLevel,
-    ) -> Result<Vec<crate::compute::quantization::unified::QuantizedVector>> {
+        quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel,
+    ) -> Result<Vec<crate::compute::quantization::quantization_engine::QuantizedVector>> {
         if records.is_empty() {
             return Ok(vec![]);
         }
@@ -1101,11 +1103,12 @@ impl VectorRecordProcessor {
                 );
 
                 // Convert StorageQuantizedData to QuantizedVector
-                let quantized_vectors: Vec<crate::compute::quantization::unified::QuantizedVector> =
-                    storage_quantized_data
-                        .into_iter()
-                        .filter_map(|data| data.primary)
-                        .collect();
+                let quantized_vectors: Vec<
+                    crate::compute::quantization::quantization_engine::QuantizedVector,
+                > = storage_quantized_data
+                    .into_iter()
+                    .filter_map(|data| data.primary)
+                    .collect();
 
                 // Log quantization success
                 debug!(
@@ -1132,7 +1135,7 @@ impl VectorRecordProcessor {
         records: &[VectorRecord],
     ) -> Result<(
         RecordBatch,
-        Option<Vec<crate::compute::quantization::unified::QuantizedVector>>,
+        Option<Vec<crate::compute::quantization::quantization_engine::QuantizedVector>>,
     )> {
         if records.is_empty() {
             return Err(anyhow::anyhow!("Cannot process empty record set"));
@@ -2054,7 +2057,9 @@ impl ParquetFlusher {
     pub async fn flush_batch_with_quantization(
         &self,
         batch: RecordBatch,
-        quantized_vectors: Option<Vec<crate::compute::quantization::unified::QuantizedVector>>,
+        quantized_vectors: Option<
+            Vec<crate::compute::quantization::quantization_engine::QuantizedVector>,
+        >,
         output_path: &str,
     ) -> Result<FlushResult> {
         // Augment batch with quantized vector columns if available
@@ -2162,7 +2167,7 @@ impl ParquetFlusher {
     fn augment_batch_with_quantized_vectors(
         &self,
         batch: RecordBatch,
-        quantized_vectors: &[crate::compute::quantization::unified::QuantizedVector],
+        quantized_vectors: &[crate::compute::quantization::quantization_engine::QuantizedVector],
     ) -> Result<RecordBatch> {
         // Quantization types now from unified compute module
         use arrow_array::{BinaryArray, UInt8Array};
@@ -2183,8 +2188,8 @@ impl ParquetFlusher {
 
         // Group quantized vectors by quantization level for efficient column storage
         let mut quantization_groups: std::collections::HashMap<
-            crate::compute::quantization::unified::UnifiedQuantizationLevel,
-            Vec<&crate::compute::quantization::unified::QuantizedVector>,
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel,
+            Vec<&crate::compute::quantization::quantization_engine::QuantizedVector>,
         > = std::collections::HashMap::new();
 
         for qvec in quantized_vectors {
@@ -3134,10 +3139,11 @@ impl CompactionEngine {
                 let distance_compute = Arc::new(
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
                 );
-                let codebook_store =
-                    Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+                let codebook_store = Arc::new(
+                    crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+                );
                 let unified_engine = Arc::new(
-                    crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                         distance_compute,
                         codebook_store,
                     ),

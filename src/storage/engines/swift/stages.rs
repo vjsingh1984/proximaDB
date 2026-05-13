@@ -52,7 +52,7 @@ use tracing::debug;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::storage::engines::core::progressive::{
     ProgressiveSearchStage, QuantizationLevel, ScoredCandidate,
 };
@@ -504,7 +504,7 @@ impl SwiftProgressivePipelineBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::quantization::unified::InMemoryCodebookStore;
+    use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
 
     fn create_test_quantization_engine() -> Arc<UnifiedQuantizationEngine> {
         Arc::new(UnifiedQuantizationEngine::new(

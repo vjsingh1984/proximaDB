@@ -203,12 +203,12 @@ impl SparseCoverageStorage {
                 let distance_compute =
                     std::sync::Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
                 let codebook_store: std::sync::Arc<
-                    dyn crate::compute::quantization::unified::CodebookStore,
+                    dyn crate::compute::quantization::quantization_engine::CodebookStore,
                 > = std::sync::Arc::new(
-                    crate::compute::quantization::unified::InMemoryCodebookStore::new(),
+                    crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
                 );
                 let unified_engine = std::sync::Arc::new(
-                    crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                         distance_compute.clone(),
                         codebook_store,
                     ),

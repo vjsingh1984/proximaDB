@@ -6,7 +6,7 @@ mod tests {
     use crate::core::search::query_preprocessing::QueryPreprocessor;
     use crate::core::search::results::OptimizedSearchRecord;
     use crate::core::search::{ComparisonOperator, FilterExpression};
-    // use crate::core::search::unified_progressive_pipeline::{
+    // use crate::core::search::progressive_search_pipeline::{
     //     PipelineConfig, UnifiedProgressiveSearchPipeline,
     // };
     // use crate::storage::persistence::write_ahead_log::parallel_search::ParallelWALSearch;

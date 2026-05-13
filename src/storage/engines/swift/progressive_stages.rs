@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::storage::engines::core::progressive::{
     ProgressiveSearchStage, QuantizationLevel, ScoredCandidate,
 };
@@ -235,12 +235,13 @@ pub fn create_swift_pipeline(
 mod tests {
     use super::*;
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::compute::quantization::unified::InMemoryCodebookStore;
+    use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
 
     fn create_test_engines() -> (Arc<UnifiedQuantizationEngine>, Arc<UnifiedDistanceCompute>) {
         let dist_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
-        let codebook_store: Arc<dyn crate::compute::quantization::unified::CodebookStore> =
-            Arc::new(InMemoryCodebookStore::new());
+        let codebook_store: Arc<
+            dyn crate::compute::quantization::quantization_engine::CodebookStore,
+        > = Arc::new(InMemoryCodebookStore::new());
         let quant_engine = Arc::new(UnifiedQuantizationEngine::new(
             dist_compute.clone(),
             codebook_store,

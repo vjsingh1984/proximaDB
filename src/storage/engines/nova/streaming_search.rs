@@ -194,7 +194,9 @@ impl StreamingSearchEngine {
         let unified_quantization_engine = Arc::new(
             crate::compute::quantization::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
-                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
+                Arc::new(
+                    crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+                ),
             ),
         );
         let _quantization_engine = Arc::new(

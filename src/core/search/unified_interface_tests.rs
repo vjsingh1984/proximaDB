@@ -8,7 +8,7 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::{SearchParams, SearchResult, SearchResultSet, SemanticDistance};
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+    use crate::compute::quantization::quantization_engine::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
     use crate::services::collection::manager::CollectionService;
 
     // Mock search engine for testing

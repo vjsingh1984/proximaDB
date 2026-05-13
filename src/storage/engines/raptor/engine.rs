@@ -193,7 +193,7 @@ pub struct RaptorEngine {
     ///
     /// Falls back when collection lacks trained codebooks
     fallback_quantization_engine:
-        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
+        Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine>,
 
     /// **Cluster Manager** (RwLock for concurrent access)
     ///
@@ -375,7 +375,7 @@ impl RaptorEngine {
         &self,
         operation_context: &str,
         collection_size: Option<usize>,
-    ) -> Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+    ) -> Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine> {
         if self.should_use_persistent_quantization(operation_context, collection_size) {
             // Use global quantization cache for persistent operations
             if let Some(global_cache) =
@@ -439,11 +439,13 @@ impl RaptorEngine {
             crate::compute::quantization::storage_engine::StorageQuantizationEngine::new_default(),
         );
         let fallback_quantization_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 Arc::new(
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
                 ),
-                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new()),
+                Arc::new(
+                    crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+                ),
             ),
         );
 

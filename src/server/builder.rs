@@ -496,10 +496,11 @@ impl ServerBuilder {
         );
 
         // Initialize unified quantization engine
-        let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let _quantization_engine =
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 _distance_engine.clone(),
                 codebook_store,
             );

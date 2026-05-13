@@ -199,7 +199,7 @@ pub struct NovaEngine {
     ///
     /// Falls back when storage engine doesn't have trained codebooks
     fallback_quantization_engine:
-        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
+        Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine>,
 
     /// **Distance Computation Engine**
     ///
@@ -255,10 +255,11 @@ impl NovaEngine {
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
         );
-        let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let unified_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
                 codebook_store,
             ),
@@ -268,13 +269,13 @@ impl NovaEngine {
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 primary_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::Pq8,
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Pq8,
                 ),
                 filter_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::Binary,
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Binary,
                 ),
                 fast_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::Int8,
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Int8,
                 ),
                 distance_metric: DistanceMetric::Cosine,
                 enable_progressive: true,
@@ -294,10 +295,11 @@ impl NovaEngine {
         );
 
         // Create fallback stateless quantization engine for ad-hoc queries
-        let fallback_codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let fallback_codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let fallback_quantization_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
                 fallback_codebook_store,
             ),
@@ -1175,7 +1177,7 @@ impl NovaEngine {
     /// Get the fallback quantization engine for stateless operations
     pub fn get_fallback_quantization_engine(
         &self,
-    ) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+    ) -> &Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine> {
         &self.fallback_quantization_engine
     }
 

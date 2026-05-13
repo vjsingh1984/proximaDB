@@ -6,13 +6,13 @@
 pub mod compile_time;
 pub mod global_cache;
 pub mod hardware_accelerated;
+pub mod quantization_engine;
 pub mod selection;
 pub mod smart_defaults;
 pub mod storage_engine;
 pub mod types;
-pub mod unified;
 
-pub use unified::{
+pub use quantization_engine::{
     BinaryQuantization, Codebook, CodebookData, CodebookStore, CustomQuantization,
     InMemoryCodebookStore, NoQuantization, ProductQuantization, QuantizationLevel,
     QuantizationMetadata, QuantizedVector, ScalarQuantization, TrainingConfig,

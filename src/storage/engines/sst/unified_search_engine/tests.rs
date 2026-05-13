@@ -9,7 +9,7 @@ use chrono::Utc;
 
 use super::*;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
+use crate::compute::quantization::quantization_engine::{UnifiedQuantizationEngine, InMemoryCodebookStore};
 use crate::core::search::{SearchParams, SearchPlan};
 
 use crate::storage::engines::sst::readers::sst_query_engine::{

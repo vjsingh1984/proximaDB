@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 
 /// Quantization level identifier for stages
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

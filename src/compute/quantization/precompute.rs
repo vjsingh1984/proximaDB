@@ -7,7 +7,7 @@ use crate::compute::quantization::selection::QuantizationSelector;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+use crate::compute::quantization::quantization_engine::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::core::{Collection, VectorRecord};
 

@@ -11,7 +11,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use super::unified::{Codebook, CodebookStore};
+use super::quantization_engine::{Codebook, CodebookStore};
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use crate::utils::hash::XxHash64;
 
@@ -287,7 +287,7 @@ impl GlobalQuantizationCache {
 
     /// Estimate codebook memory usage
     fn estimate_codebook_size(codebook: &Codebook) -> usize {
-        use super::unified::CodebookData;
+        use super::quantization_engine::CodebookData;
         // Rough estimation based on codebook structure
         // This is a simplified calculation - in production you'd want more precise measurement
         match &codebook.data {
@@ -825,14 +825,14 @@ impl GlobalQuantizationCache {
     pub async fn get_or_create_engine(
         &self,
         _collection_id: String,
-    ) -> Arc<super::unified::UnifiedQuantizationEngine> {
+    ) -> Arc<super::quantization_engine::UnifiedQuantizationEngine> {
         // For now, create a simple UnifiedQuantizationEngine with the global cache as codebook store
         // This provides the unified interface expected by the engines
-        Arc::new(super::unified::UnifiedQuantizationEngine::new(
+        Arc::new(super::quantization_engine::UnifiedQuantizationEngine::new(
             Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
             ),
-            Self::global() as Arc<dyn super::unified::CodebookStore>,
+            Self::global() as Arc<dyn super::quantization_engine::CodebookStore>,
         ))
     }
 

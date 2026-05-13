@@ -34,7 +34,7 @@ use crate::storage::engines::sst::search::optimizer::{OptimizationStrategy, Opti
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
+use crate::compute::quantization::quantization_engine::{UnifiedQuantizationEngine, InMemoryCodebookStore};
 
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy, MetadataBloomFilter};
 use crate::core::bloom::factory::BloomFilterFactory;

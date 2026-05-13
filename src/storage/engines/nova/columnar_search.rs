@@ -146,8 +146,9 @@ impl NovaColumnarSearch {
             let quant_config =
                 crate::compute::quantization::storage_engine::StorageQuantizationConfig::default();
             // Create codebook store for UnifiedQuantizationEngine
-            let codebook_store =
-                Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+            let codebook_store = Arc::new(
+                crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+            );
             let unified_quant_engine = Arc::new(
                 crate::compute::quantization::UnifiedQuantizationEngine::new(
                     quant_distance_compute.clone(),

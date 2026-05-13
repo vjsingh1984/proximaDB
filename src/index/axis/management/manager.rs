@@ -1870,16 +1870,17 @@ impl AxisManager {
         let storage_config = StorageQuantizationConfig {
             // Map to the actual fields available in storage engine config
             primary_level: Some(
-                crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(
                     // Default to dimension/4 with min 8 and max 64 subvectors
                     (collection_config.dimension / 4).clamp(8, 64).min(255) as u8,
                 ),
             ),
             filter_level: Some(
-                crate::compute::quantization::unified::UnifiedQuantizationLevel::binary(),
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::binary(
+                ),
             ),
             fast_level: Some(
-                crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
+                crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
             ),
             distance_metric,
             enable_progressive: true,
@@ -1897,10 +1898,11 @@ impl AxisManager {
                 distance_metric,
             ),
         );
-        let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let unified_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_compute.clone(),
                 codebook_store,
             ),

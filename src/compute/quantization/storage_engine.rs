@@ -9,7 +9,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use super::unified::{
+use super::quantization_engine::{
     InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata, QuantizedVector,
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
@@ -1151,7 +1151,7 @@ impl StorageQuantizationEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::quantization::unified::InMemoryCodebookStore;
+    use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
 
     fn generate_test_distances() -> Vec<f32> {
         vec![

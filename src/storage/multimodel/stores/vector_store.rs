@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::index::axis::AxisManager;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use crate::storage::traits::UnifiedStorageEngine;

@@ -261,7 +261,7 @@ pub struct SwiftEngine {
     ///
     /// Falls back when storage codebook unavailable
     fallback_quantization_engine:
-        Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine>,
+        Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine>,
 
     /// **Filesystem Factory**
     ///
@@ -376,10 +376,11 @@ impl SwiftEngine {
 
         // Initialize unified quantization engine from compute module
         // Use the provided distance engine instead of creating a new one
-        let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let unified_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_engine.clone(),
                 codebook_store,
             ),
@@ -389,13 +390,13 @@ impl SwiftEngine {
         let storage_config =
             crate::compute::quantization::storage_engine::StorageQuantizationConfig {
                 primary_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::pq8(16),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::pq8(16),
                 ),
                 filter_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::binary(),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::binary(),
                 ),
                 fast_level: Some(
-                    crate::compute::quantization::unified::UnifiedQuantizationLevel::int8(),
+                    crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::int8(),
                 ),
                 distance_metric:
                     crate::compute::distance_computation::engine::DistanceMetric::Cosine,
@@ -416,10 +417,11 @@ impl SwiftEngine {
         );
 
         // Create fallback stateless quantization engine for ad-hoc queries
-        let fallback_codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+        let fallback_codebook_store = Arc::new(
+            crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new(),
+        );
         let fallback_quantization_engine = Arc::new(
-            crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
                 distance_engine.clone(),
                 fallback_codebook_store,
             ),
@@ -789,7 +791,7 @@ impl SwiftEngine {
     /// Get the fallback quantization engine for stateless operations
     pub fn get_fallback_quantization_engine(
         &self,
-    ) -> &Arc<crate::compute::quantization::unified::UnifiedQuantizationEngine> {
+    ) -> &Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine> {
         &self.fallback_quantization_engine
     }
 

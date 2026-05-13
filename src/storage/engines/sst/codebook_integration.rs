@@ -7,7 +7,7 @@ use anyhow::Result;
 use bytes::{Bytes, BytesMut};
 use tracing::{debug, info};
 
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::storage::engines::core::formats::codebook_metadata::{
     CodebookSerializer, ProximaBlockFooter, QuantizationCodebookMetadata,
 };
