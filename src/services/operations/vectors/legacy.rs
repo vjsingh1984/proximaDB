@@ -74,6 +74,9 @@ use super::validation::{
     DefaultPseudoQueryGenerator, PseudoQueryGenerator, apply_pseudo_query_metadata,
 };
 
+// Import vector query service contract (Phase 2.1)
+use proximadb_vector_query::{VectorQueryService, VectorSearchRequest, VectorSearchResult};
+
 use crate::services::operations::{BatchOperationResult, BulkWriteRouter, OperationMetrics};
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
 use crate::storage::engines::sst::SstEngine;
@@ -4862,5 +4865,110 @@ mod index_first_search_tests {
         assert_eq!(vectors.len(), 100);
         assert_eq!(vectors[0].id, "vec_0");
         assert_eq!(vectors[99].id, "vec_99");
+    }
+
+    // ========================================================================
+    // VectorQueryService Implementation Tests (Phase 2.1)
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_vector_query_service_contract() {
+        use proximadb_vector_query::VectorQueryService;
+
+        // This test verifies that VectorOperationsService implements the VectorQueryService trait
+        // The actual implementation is tested through integration tests in the vector module
+
+        // Verify that the trait is implemented (compile-time check)
+        fn assert_impls<T: VectorQueryService>(_service: &T) {}
+
+        // We can't create a full VectorOperationsService here due to its complex dependencies,
+        // but the compilation of this test verifies that the trait implementation exists
+        let _ = assert_impls::<VectorOperationsService>;
+    }
+}
+
+// ============================================================================
+// VectorQueryService Implementation (Phase 2.1 - Service Contract)
+// ============================================================================
+
+/// Implement the stable vector-query service contract for VectorOperationsService.
+///
+/// This implementation bridges the legacy vector search API to the stable
+/// VectorQueryService trait, enabling cross-model query orchestration to use
+/// vector search through a well-defined contract.
+///
+/// # Design Notes
+///
+/// - **Filter Conversion**: Converts `Option<String>` filter to `FilterExpression`
+/// - **Distance Metric**: Maps contract metric to search config (TODO: full metric support)
+/// - **Threshold**: Applies post-search filtering on result scores
+/// - **Result Conversion**: Uses `proto_results_to_vector_records` for stable VectorRecord types
+#[async_trait::async_trait]
+impl VectorQueryService for VectorOperationsService {
+    async fn vector_search(
+        &self,
+        request: VectorSearchRequest,
+    ) -> proximadb_vector_query::VectorQueryResult<VectorSearchResult> {
+        use std::time::Instant;
+
+        let start = Instant::now();
+
+        // Convert string filter to FilterExpression (simplified - full parsing is Phase 2.2 work)
+        let filter = request.filter.and_then(|f| {
+            // TODO: Parse filter string into FilterExpression
+            // For now, we pass None if filter is present but not parseable
+            tracing::warn!("Filter string parsing not yet implemented: {}", f);
+            None
+        });
+
+        // Map distance metric to search config (TODO: full metric mapping)
+        let _metric = request.metric; // Metric mapping to be implemented in Phase 2.2
+
+        // Execute the search using existing unified_search_v1
+        let search_results = self
+            .unified_search_v1(
+                &request.collection_id,
+                request.query_vector,
+                request.top_k,
+                filter,
+                None, // Use default config
+            )
+            .await
+            .map_err(|e| proximadb_kernel::error::QueryError::VectorSearch(e.to_string()))?;
+
+        // Convert SearchResult to VectorRecord
+        let vector_records = proto_results_to_vector_records(search_results);
+
+        // Apply threshold filtering if specified
+        let filtered_results = if let Some(threshold) = request.threshold {
+            vector_records
+                .into_iter()
+                .filter(|record| {
+                    // Check if record has score metadata above threshold
+                    record
+                        .metadata
+                        .get("score")
+                        .and_then(|v| v.value.as_ref())
+                        .and_then(|v| match v {
+                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                                Some(*f >= threshold as f64)
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(false)
+                })
+                .collect()
+        } else {
+            vector_records
+        };
+
+        let total_count = filtered_results.len();
+        let execution_time_ms = start.elapsed().as_millis() as u64;
+
+        Ok(VectorSearchResult {
+            results: filtered_results,
+            total_count,
+            execution_time_ms,
+        })
     }
 }

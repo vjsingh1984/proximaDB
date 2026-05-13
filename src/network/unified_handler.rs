@@ -70,6 +70,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use proximadb_graph_query::service::GraphQueryService;
+use proximadb_vector_query::VectorQueryService;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
 
@@ -937,8 +938,10 @@ pub enum PostgresValue {
 pub struct UnifiedQueryHandler {
     /// Compute scheduler for query execution
     scheduler: Option<Arc<ComputeScheduler>>,
-    /// Vector operations service
+    /// Vector operations service (legacy - for backward compatibility)
     vector_ops: Arc<VectorOperationsService>,
+    /// Vector query service trait object (Phase 2.3 - preferred interface)
+    vector_query_service: Option<Arc<dyn VectorQueryService>>,
     /// Collection service
     collection_service: Arc<CollectionService>,
     /// Graph query/traversal service
@@ -946,7 +949,7 @@ pub struct UnifiedQueryHandler {
 }
 
 impl UnifiedQueryHandler {
-    /// Create a new unified query handler
+    /// Create a new unified query handler (legacy interface)
     pub fn new(
         vector_ops: Arc<VectorOperationsService>,
         collection_service: Arc<CollectionService>,
@@ -954,12 +957,31 @@ impl UnifiedQueryHandler {
         Self {
             scheduler: None,
             vector_ops,
+            vector_query_service: None,
             collection_service,
             graph_service: None,
         }
     }
 
-    /// Create with compute scheduler for advanced query planning
+    /// Create with vector query service trait object (Phase 2.3)
+    ///
+    /// This is the preferred constructor for new code, as it uses the stable
+    /// service contract trait rather than concrete VectorOperationsService.
+    pub fn with_vector_query_service(
+        vector_query_service: Arc<dyn VectorQueryService>,
+        vector_ops: Arc<VectorOperationsService>,
+        collection_service: Arc<CollectionService>,
+    ) -> Self {
+        Self {
+            scheduler: None,
+            vector_ops,
+            vector_query_service: Some(vector_query_service),
+            collection_service,
+            graph_service: None,
+        }
+    }
+
+    /// Create with compute scheduler for advanced query planning (legacy interface)
     pub fn with_scheduler(
         scheduler: Arc<ComputeScheduler>,
         vector_ops: Arc<VectorOperationsService>,
@@ -968,6 +990,23 @@ impl UnifiedQueryHandler {
         Self {
             scheduler: Some(scheduler),
             vector_ops,
+            vector_query_service: None,
+            collection_service,
+            graph_service: None,
+        }
+    }
+
+    /// Create with scheduler and vector query service trait object (Phase 2.3)
+    pub fn with_scheduler_and_vector_service(
+        scheduler: Arc<ComputeScheduler>,
+        vector_query_service: Arc<dyn VectorQueryService>,
+        vector_ops: Arc<VectorOperationsService>,
+        collection_service: Arc<CollectionService>,
+    ) -> Self {
+        Self {
+            scheduler: Some(scheduler),
+            vector_ops,
+            vector_query_service: Some(vector_query_service),
             collection_service,
             graph_service: None,
         }
@@ -1027,12 +1066,17 @@ impl UnifiedQueryHandler {
             "Executing vector search"
         );
 
+        // Phase 2.3: Prefer trait object if available
+        if self.vector_query_service.is_some() {
+            return self.execute_vector_search_via_trait(query).await;
+        }
+
         // If scheduler is available, use compute plan
         if let Some(scheduler) = &self.scheduler {
             return self.execute_search_via_scheduler(scheduler, query).await;
         }
 
-        // Direct execution via VectorOperationsService
+        // Direct execution via VectorOperationsService (legacy)
         let search_request = self.build_search_request(query)?;
         let response = self
             .vector_ops
@@ -1069,6 +1113,110 @@ impl UnifiedQueryHandler {
             error: None,
             data: ResponseData::SearchResults(results),
             metadata: ResponseMetadata::default(),
+        })
+    }
+
+    /// Execute vector search using trait object (Phase 2.3)
+    ///
+    /// This method uses the stable VectorQueryService trait contract instead of
+    /// the concrete VectorOperationsService implementation. This is the preferred
+    /// method for new code and will eventually replace execute_vector_search.
+    #[instrument(skip(self, query), fields(collection = %query.collection_id, top_k = query.top_k))]
+    async fn execute_vector_search_via_trait(
+        &self,
+        query: &VectorSearchQuery,
+    ) -> Result<UnifiedQueryResponse> {
+        let vector_service = self
+            .vector_query_service
+            .as_ref()
+            .ok_or_else(|| anyhow!("VectorQueryService trait object not available"))?;
+
+        debug!(
+            collection = %query.collection_id,
+            top_k = query.top_k,
+            num_queries = query.query_vectors.len(),
+            "Executing vector search via trait object"
+        );
+
+        // Convert UnifiedQueryRequest to VectorSearchRequest
+        use proximadb_vector_query::{DistanceMetric, VectorSearchRequest};
+
+        let query_vector = query
+            .query_vectors
+            .first()
+            .ok_or_else(|| anyhow!("No query vectors provided"))?
+            .clone();
+
+        let distance_metric = match query.distance_metric {
+            Some(crate::network::unified_handler::DistanceMetric::Cosine) => {
+                Some(DistanceMetric::Cosine)
+            }
+            Some(crate::network::unified_handler::DistanceMetric::Euclidean) => {
+                Some(DistanceMetric::Euclidean)
+            }
+            Some(crate::network::unified_handler::DistanceMetric::DotProduct) => {
+                Some(DistanceMetric::DotProduct)
+            }
+            Some(crate::network::unified_handler::DistanceMetric::Manhattan) => {
+                Some(DistanceMetric::Manhattan)
+            }
+            None => None,
+        };
+
+        let request = VectorSearchRequest {
+            collection_id: query.collection_id.clone(),
+            query_vector,
+            top_k: query.top_k as usize,
+            threshold: None, // TODO: extract from query.search_params
+            metric: distance_metric.unwrap_or_default(),
+            filter: None, // TODO: convert query.filters to filter expression
+        };
+
+        let response = vector_service
+            .vector_search(request)
+            .await
+            .map_err(|e| anyhow!("Vector search via trait failed: {:?}", e))?;
+
+        // Convert VectorSearchResult to UnifiedQueryResponse
+        let results: Vec<SearchResult> = response
+            .results
+            .into_iter()
+            .map(|record| {
+                let score = record
+                    .metadata
+                    .get("score")
+                    .and_then(|v| v.value.as_ref())
+                    .and_then(|v| match v {
+                        proximadb_v1::sql_value::Value::NumberValue(f) => Some(*f as f32),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0);
+
+                SearchResult {
+                    id: record.id,
+                    score,
+                    vector: if record.vector.is_empty() {
+                        None
+                    } else {
+                        Some(record.vector)
+                    },
+                    metadata: record
+                        .metadata
+                        .into_iter()
+                        .map(|(k, v)| (k, sql_value_to_json(&v)))
+                        .collect(),
+                }
+            })
+            .collect();
+
+        Ok(UnifiedQueryResponse {
+            success: true,
+            error: None,
+            data: ResponseData::SearchResults(results),
+            metadata: ResponseMetadata {
+                execution_time_ms: response.execution_time_ms,
+                ..Default::default()
+            },
         })
     }
 
