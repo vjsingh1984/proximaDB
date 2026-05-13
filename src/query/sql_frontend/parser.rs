@@ -1579,6 +1579,68 @@ mod tests {
     }
 
     #[test]
+    fn parse_dml_insert_supports_jsonb_cast_default_and_vector_literal() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "INSERT INTO \"agent_store\" (\"record_id\", payload, embedding)
+                 VALUES ('r1', '{}'::jsonb, '[0.1, 0.2]'::vector(2)),
+                        ('r2', DEFAULT, '[0.3, 0.4]'::vector);",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected insert dml");
+
+        match statement {
+            DmlStatement::Insert {
+                table_name,
+                columns,
+                values,
+            } => {
+                assert_eq!(table_name, "agent_store");
+                assert_eq!(columns, vec!["record_id", "payload", "embedding"]);
+                assert_eq!(values.len(), 2);
+                assert!(matches!(values[0][1], SqlValueLiteral::String(_)));
+                assert!(matches!(values[1][1], SqlValueLiteral::Default));
+                assert!(matches!(values[0][2], SqlValueLiteral::String(_)));
+            }
+            other => panic!("expected insert statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_delete_preserves_catalog_primary_key_column() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml("DELETE FROM agent_store WHERE record_id IN ('r1', 'r2');")
+            .expect("expected dml parse to succeed")
+            .expect("expected delete dml");
+
+        match statement {
+            DmlStatement::Delete {
+                table_name,
+                where_clause: Some(where_clause),
+            } => {
+                assert_eq!(table_name, "agent_store");
+                match &where_clause.conditions[0] {
+                    Condition::In {
+                        column,
+                        values,
+                        negated,
+                    } => {
+                        assert_eq!(column, "record_id");
+                        assert_eq!(values.len(), 2);
+                        assert!(!negated);
+                    }
+                    other => panic!("expected IN condition, got {other:?}"),
+                }
+            }
+            other => panic!("expected delete statement, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_ddl_create_index_supports_default_btree() {
         let parser = SqlFrontendParser::new();
 

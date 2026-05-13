@@ -346,8 +346,8 @@ impl FederatedParser {
                 .unwrap_or("embedding")
                 .to_string();
 
-            // Get first token after <->
-            let right_literal = after.split_whitespace().next().unwrap_or("[]").to_string();
+            let right_literal =
+                Self::parse_vector_distance_rhs(after).unwrap_or_else(|| "[]".to_string());
 
             return Some((
                 SqlExtension::VectorDistance {
@@ -358,6 +358,71 @@ impl FederatedParser {
             ));
         }
         None
+    }
+
+    fn parse_vector_distance_rhs(after_operator: &str) -> Option<String> {
+        let trimmed = after_operator.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if let Some(rest) = trimmed.strip_prefix('\'') {
+            let mut escaped = false;
+            for (idx, ch) in rest.char_indices() {
+                if ch == '\'' && !escaped {
+                    let literal_end = 1 + idx + ch.len_utf8();
+                    let mut end = literal_end;
+                    let suffix = trimmed[literal_end..].trim_start();
+                    if suffix.to_ascii_lowercase().starts_with("::vector") {
+                        end = literal_end + (trimmed[literal_end..].len() - suffix.len());
+                        let cast_suffix = &trimmed[end..];
+                        let cast_len = Self::vector_cast_len(cast_suffix).unwrap_or(0);
+                        end += cast_len;
+                    }
+                    return Some(trimmed[..end].trim().to_string());
+                }
+                escaped = ch == '\\' && !escaped;
+            }
+            return None;
+        }
+
+        if trimmed.starts_with('[') {
+            let mut depth = 0;
+            for (idx, ch) in trimmed.char_indices() {
+                match ch {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            let mut end = idx + ch.len_utf8();
+                            let suffix = trimmed[end..].trim_start();
+                            if suffix.to_ascii_lowercase().starts_with("::vector") {
+                                end += trimmed[end..].len() - suffix.len();
+                                let cast_len = Self::vector_cast_len(&trimmed[end..]).unwrap_or(0);
+                                end += cast_len;
+                            }
+                            return Some(trimmed[..end].trim().to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        trimmed.split_whitespace().next().map(str::to_string)
+    }
+
+    fn vector_cast_len(value: &str) -> Option<usize> {
+        let lower = value.to_ascii_lowercase();
+        let vector = lower.strip_prefix("::vector")?;
+        let mut len = "::vector".len();
+        let rest = vector.trim_start();
+        len += vector.len() - rest.len();
+        if rest.starts_with('(') {
+            let close = rest.find(')')?;
+            len += close + 1;
+        }
+        Some(len)
     }
 
     /// Parse FROM clause to extract table targets
@@ -658,11 +723,7 @@ impl FederatedParser {
 
     fn parse_vector_literal(raw: &str) -> Option<Vec<f32>> {
         let trimmed = raw.trim();
-        let without_cast = trimmed
-            .strip_suffix("::vector")
-            .or_else(|| trimmed.strip_suffix("::VECTOR"))
-            .unwrap_or(trimmed)
-            .trim();
+        let without_cast = Self::strip_vector_cast(trimmed);
         let unquoted = without_cast.trim_matches('\'').trim_matches('"').trim();
 
         if !(unquoted.starts_with('[') && unquoted.ends_with(']')) {
@@ -678,6 +739,26 @@ impl FederatedParser {
             .split(',')
             .map(|value| value.trim().parse::<f32>().ok())
             .collect()
+    }
+
+    fn strip_vector_cast(value: &str) -> &str {
+        let trimmed = value.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let Some(cast_start) = lower.rfind("::vector") else {
+            return trimmed;
+        };
+        let suffix = lower[cast_start + "::vector".len()..].trim();
+        if suffix.is_empty()
+            || (suffix.starts_with('(')
+                && suffix.ends_with(')')
+                && suffix[1..suffix.len() - 1]
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit()))
+        {
+            trimmed[..cast_start].trim()
+        } else {
+            trimmed
+        }
     }
 
     /// Resolve model types for targets using catalog
@@ -779,10 +860,57 @@ mod tests {
         assert_eq!(query.query_type, QueryType::VectorSearch);
         assert_eq!(query.extensions.len(), 1);
         match &query.extensions[0] {
-            SqlExtension::VectorDistance { left_column, .. } => {
+            SqlExtension::VectorDistance {
+                left_column,
+                right_literal,
+            } => {
                 assert_eq!(left_column, "embedding");
+                assert_eq!(right_literal, "'[0.1,0.2]'::vector");
             }
             _ => panic!("Expected VectorDistance extension"),
+        }
+    }
+
+    #[test]
+    fn test_parse_pgvector_distance_with_spaced_literal_and_dimension() {
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse(
+                "SELECT id FROM memories ORDER BY embedding <-> '[0.1, 0.2, -0.3]'::vector(3) LIMIT 5",
+            )
+            .unwrap();
+
+        assert_eq!(query.query_type, QueryType::VectorSearch);
+        match &query.extensions[0] {
+            SqlExtension::VectorDistance {
+                left_column,
+                right_literal,
+            } => {
+                assert_eq!(left_column, "embedding");
+                assert_eq!(right_literal, "'[0.1, 0.2, -0.3]'::vector(3)");
+            }
+            other => panic!("expected vector distance, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_vector_search_accepts_pgvector_cast_dimension() {
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse("SELECT * FROM VECTOR_SEARCH('memories', '[0.1, 0.2]'::vector(2), 3)")
+            .unwrap();
+
+        match &query.extensions[0] {
+            SqlExtension::VectorSearch {
+                collection,
+                query_vector,
+                top_k,
+            } => {
+                assert_eq!(collection, "memories");
+                assert_eq!(query_vector, &VectorQuery::Literal(vec![0.1, 0.2]));
+                assert_eq!(*top_k, 3);
+            }
+            other => panic!("expected vector search, got {other:?}"),
         }
     }
 

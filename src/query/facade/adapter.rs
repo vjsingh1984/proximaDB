@@ -643,7 +643,9 @@ mod tests {
     use std::sync::Mutex;
 
     use crate::proto::proximadb_v1::SearchQuery;
-    use crate::query::facade::{FacadeConfig, QueryContext, QueryStrategy, QueryType, VectorMatch};
+    use crate::query::facade::{
+        FacadeConfig, QueryContent, QueryContext, QueryStrategy, QueryType, VectorMatch,
+    };
     use async_trait::async_trait;
 
     /// Mock strategy for testing
@@ -708,9 +710,14 @@ mod tests {
         }
 
         async fn execute(&self, request: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
+            let sql = match &request.content {
+                QueryContent::Sql(sql) => sql.clone(),
+                _ => String::new(),
+            };
             Ok(QueryResult {
                 data: QueryResultData::Rows(vec![serde_json::json!({
-                    "query_type": format!("{:?}", request.query_type)
+                    "query_type": format!("{:?}", request.query_type),
+                    "sql": sql
                 })]),
                 metrics: None,
             })
@@ -890,6 +897,28 @@ mod tests {
         match result.data {
             QueryResultData::Rows(rows) => {
                 assert_eq!(rows[0]["query_type"], serde_json::json!("Federated"));
+            }
+            other => panic!("expected rows, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sql_query_routes_cross_modal_extensions_through_unified_facade() {
+        let adapter = create_sql_routing_adapter();
+        let sql = "\
+            SELECT *
+            FROM DOCUMENT_QUERY('profiles', 'tier = gold') p
+            JOIN LATERAL VECTOR_SEARCH('memories', '[0.1, 0.2]'::vector(2), 3) v ON true
+            JOIN LATERAL GRAPH_QUERY('MATCH (n:Agent) FROM agent_graph RETURN n') g ON true";
+
+        let result = adapter.sql_query(sql).await.unwrap();
+
+        match result.data {
+            QueryResultData::Rows(rows) => {
+                assert_eq!(rows[0]["query_type"], serde_json::json!("Federated"));
+                assert!(rows[0]["sql"].as_str().unwrap().contains("DOCUMENT_QUERY"));
+                assert!(rows[0]["sql"].as_str().unwrap().contains("VECTOR_SEARCH"));
+                assert!(rows[0]["sql"].as_str().unwrap().contains("GRAPH_QUERY"));
             }
             other => panic!("expected rows, got {:?}", other),
         }

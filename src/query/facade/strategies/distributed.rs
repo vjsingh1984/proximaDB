@@ -283,7 +283,13 @@ impl DistributedQueryStrategy {
     }
 
     fn parse_vector_literal(&self, raw: &str) -> Result<Vec<f32>> {
-        let trimmed = raw.trim().trim_start_matches('[').trim_end_matches(']');
+        let normalized = Self::strip_pgvector_cast(raw.trim());
+        let trimmed = normalized
+            .trim_matches('\'')
+            .trim_matches('"')
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']');
         if trimmed.is_empty() {
             return Ok(Vec::new());
         }
@@ -300,6 +306,25 @@ impl DistributedQueryStrategy {
                 })
             })
             .collect()
+    }
+
+    fn strip_pgvector_cast(value: &str) -> &str {
+        let lower = value.to_ascii_lowercase();
+        let Some(cast_start) = lower.rfind("::vector") else {
+            return value;
+        };
+        let suffix = lower[cast_start + "::vector".len()..].trim();
+        if suffix.is_empty()
+            || (suffix.starts_with('(')
+                && suffix.ends_with(')')
+                && suffix[1..suffix.len() - 1]
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit()))
+        {
+            value[..cast_start].trim()
+        } else {
+            value
+        }
     }
 
     fn query_to_multimodal(&self, request: &QueryRequest, sql: &str) -> Result<MultiModelQuery> {
@@ -609,6 +634,65 @@ mod tests {
             .expect_err("expression vectors should remain unsupported for distributed execution");
 
         assert!(error.to_string().contains("expression-based query vectors"));
+    }
+
+    #[test]
+    fn test_query_to_multimodal_lowers_pgvector_distance_cast() {
+        let strategy = DistributedQueryStrategy::new(
+            "test-node".to_string(),
+            DistributedStrategyConfig::default(),
+        );
+        let sql =
+            "SELECT id FROM memories ORDER BY embedding <-> '[0.1, 0.2, -0.3]'::vector(3) LIMIT 5";
+        let request = QueryRequest::federated(sql);
+
+        let query = strategy
+            .query_to_multimodal(&request, sql)
+            .expect("pgvector distance query should lower");
+
+        assert_eq!(query.components.len(), 1);
+        match &query.components[0].operation {
+            ModelOperation::VectorSearch(expr) => {
+                assert_eq!(expr.collection, "memories");
+                assert_eq!(expr.query_vector, vec![0.1, 0.2, -0.3]);
+                assert_eq!(expr.top_k, 5);
+            }
+            other => panic!("expected vector search component, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_query_to_multimodal_lowers_cross_modal_components() {
+        let strategy = DistributedQueryStrategy::new(
+            "test-node".to_string(),
+            DistributedStrategyConfig::default(),
+        );
+        let sql = "\
+            SELECT *
+            FROM DOCUMENT_QUERY('profiles', 'tier = gold') p
+            JOIN LATERAL VECTOR_SEARCH('memories', '[0.1, 0.2]'::vector(2), 3) v ON true
+            JOIN LATERAL GRAPH_QUERY('MATCH (n:Agent) FROM agent_graph RETURN n') g ON true
+            LIMIT 3";
+        let request = QueryRequest::federated(sql);
+
+        let query = strategy
+            .query_to_multimodal(&request, sql)
+            .expect("cross-modal query should lower through unified query components");
+
+        assert_eq!(query.components.len(), 3);
+        assert_eq!(query.limit, Some(3));
+        assert!(matches!(
+            query.components[0].operation,
+            ModelOperation::DocumentQuery(_)
+        ));
+        assert!(matches!(
+            query.components[1].operation,
+            ModelOperation::VectorSearch(_)
+        ));
+        assert!(matches!(
+            query.components[2].operation,
+            ModelOperation::GraphQuery(_)
+        ));
     }
 
     #[test]
