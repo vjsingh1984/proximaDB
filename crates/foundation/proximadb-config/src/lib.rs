@@ -5,6 +5,33 @@
 
 use serde::{Deserialize, Serialize};
 
+/// TLS transport security configuration shared by protocol listeners.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsConfig {
+    /// Path to the PEM-encoded TLS certificate file.
+    pub cert_file: Option<String>,
+
+    /// Path to the PEM-encoded TLS private key file.
+    pub key_file: Option<String>,
+
+    /// Whether TLS is enabled.
+    pub enabled: bool,
+
+    /// Network interface to bind the TLS listener to.
+    pub bind_interface: Option<String>,
+}
+
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            cert_file: None,
+            key_file: None,
+            enabled: false,
+            bind_interface: None,
+        }
+    }
+}
+
 /// Hardware acceleration configuration controlling SIMD and GPU features.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareConfig {
@@ -357,6 +384,16 @@ mod tests {
         assert!(config.atomic_config.enable_local_atomic);
         assert!(config.atomic_config.enable_object_store_atomic);
         assert!(config.atomic_config.cleanup_temp_on_startup);
+    }
+
+    #[test]
+    fn tls_defaults_match_root_runtime_expectations() {
+        let config = TlsConfig::default();
+
+        assert!(!config.enabled);
+        assert!(config.cert_file.is_none());
+        assert!(config.key_file.is_none());
+        assert!(config.bind_interface.is_none());
     }
 
     #[test]

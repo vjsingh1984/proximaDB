@@ -42,20 +42,7 @@ pub struct Config {
     pub llm: Option<LLMConfig>,
 }
 
-/// TLS transport security configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TlsConfig {
-    /// Path to the PEM-encoded TLS certificate file
-    pub cert_file: Option<String>,
-    /// Path to the PEM-encoded TLS private key file
-    pub key_file: Option<String>,
-    /// Whether TLS is enabled
-    pub enabled: bool,
-    /// Network interface to bind the TLS listener to
-    pub bind_interface: Option<String>,
-}
-
-pub use proximadb_config::HardwareConfig;
+pub use proximadb_config::{HardwareConfig, TlsConfig};
 
 /// Semantic Knowledge Store (SKS) configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
