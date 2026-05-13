@@ -4,6 +4,7 @@
 //! bootstrap stay in platform/root layers until those boundaries are independently extracted.
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// TLS transport security configuration shared by protocol listeners.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +171,37 @@ impl Default for ConsensusConfig {
             election_timeout_ms: 5000,
             heartbeat_interval_ms: 1000,
             snapshot_threshold: 10000,
+        }
+    }
+}
+
+/// Server identity and network bind configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ServerConfig {
+    /// Unique node identifier within the cluster.
+    pub node_id: String,
+
+    /// IP address or hostname to bind the server to.
+    pub bind_address: String,
+
+    /// Primary listening port (REST/unified).
+    pub port: u16,
+
+    /// Optional gRPC port for convenience; if not set, ApiConfig.grpc_port is used.
+    pub grpc_port: Option<u16>,
+
+    /// Root directory for persistent data files.
+    pub data_dir: PathBuf,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            node_id: "node-1".to_string(),
+            bind_address: "127.0.0.1".to_string(),
+            port: 5678,
+            grpc_port: None,
+            data_dir: PathBuf::from("./data"),
         }
     }
 }
@@ -756,6 +788,17 @@ mod tests {
         assert_eq!(config.election_timeout_ms, 5000);
         assert_eq!(config.heartbeat_interval_ms, 1000);
         assert_eq!(config.snapshot_threshold, 10000);
+    }
+
+    #[test]
+    fn server_defaults_match_root_runtime_expectations() {
+        let config = ServerConfig::default();
+
+        assert_eq!(config.node_id, "node-1");
+        assert_eq!(config.bind_address, "127.0.0.1");
+        assert_eq!(config.port, 5678);
+        assert_eq!(config.grpc_port, None);
+        assert_eq!(config.data_dir, PathBuf::from("./data"));
     }
 
     #[test]

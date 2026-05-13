@@ -2,7 +2,6 @@ use crate::ai::LLMConfig;
 use crate::network::NetworkConfig;
 use crate::security::SecurityConfig;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use tracing::info;
 
 /// Top-level application configuration loaded from `config.toml`
@@ -430,18 +429,6 @@ impl Default for HybridRuntimeConfig {
     }
 }
 
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            node_id: "node-1".to_string(),
-            bind_address: "127.0.0.1".to_string(),
-            port: 5678,
-            grpc_port: None,
-            data_dir: PathBuf::from("./data"),
-        }
-    }
-}
-
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
@@ -462,20 +449,7 @@ impl Default for StorageConfig {
     }
 }
 
-/// Server identity and network bind configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ServerConfig {
-    /// Unique node identifier within the cluster
-    pub node_id: String,
-    /// IP address or hostname to bind the server to
-    pub bind_address: String,
-    /// Primary listening port (REST/unified)
-    pub port: u16,
-    /// Optional gRPC port for convenience; if not set, ApiConfig.grpc_port is used
-    pub grpc_port: Option<u16>,
-    /// Root directory for persistent data files
-    pub data_dir: PathBuf,
-}
+pub use proximadb_config::ServerConfig;
 
 /// Storage engine layout, WAL, compaction, and filesystem optimization settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
