@@ -159,9 +159,10 @@ fn extract_option_value(sql: &str, key: &str) -> Option<String> {
 /// Priority:
 /// 1. Vector operators (<->, <=>, <#>) and lowered vector distance calls
 /// 2. JSON path expressions ($.) and lowered JSON helper calls
-/// 3. Table name prefix (graph_, log_, metric_, doc_)
-/// 4. Catalog lookup (via callback)
-/// 5. Default to Relational
+/// 3. Graph SQL helpers (`GRAPH_QUERY`)
+/// 4. Table name prefix (graph_, log_, metric_, doc_)
+/// 5. Catalog lookup (via callback)
+/// 6. Default to Relational
 pub fn detect_store_type_from_query(
     sql: &str,
     table_name: &str,
@@ -188,7 +189,12 @@ pub fn detect_store_type_from_query(
         return DataModel::Document;
     }
 
-    // 3. Table name prefix
+    // 3. Graph SQL helpers.
+    if upper.contains("GRAPH_QUERY") {
+        return DataModel::Graph;
+    }
+
+    // 4. Table name prefix
     let lower_table = table_name.to_lowercase();
     if lower_table.starts_with("graph_")
         || lower_table.starts_with("node_")
@@ -206,14 +212,14 @@ pub fn detect_store_type_from_query(
         return DataModel::Observability;
     }
 
-    // 4. Catalog lookup
+    // 5. Catalog lookup
     if let Some(lookup) = catalog_lookup
         && let Some(store_type) = lookup(table_name)
     {
         return store_type;
     }
 
-    // 5. Default to Relational
+    // 6. Default to Relational
     DataModel::Relational
 }
 
@@ -383,6 +389,18 @@ mod tests {
             detect_store_type_from_query(
                 "SELECT * FROM graph_social WHERE label = 'Person'",
                 "graph_social",
+                None
+            ),
+            DataModel::Graph
+        );
+    }
+
+    #[test]
+    fn test_detect_query_graph_query_function() {
+        assert_eq!(
+            detect_store_type_from_query(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Agent)-[:CALLS]->(m) RETURN m')",
+                "agent_queries",
                 None
             ),
             DataModel::Graph

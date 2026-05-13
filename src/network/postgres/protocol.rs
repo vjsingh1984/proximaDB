@@ -2805,6 +2805,14 @@ mod tests {
             ),
             DataModel::Graph
         );
+        assert_eq!(
+            multimodal_router::detect_store_type_from_query(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Agent)-[:CALLS]->(m) RETURN m')",
+                "agent_queries",
+                None,
+            ),
+            DataModel::Graph
+        );
 
         // CREATE with explicit USING GRAPH
         assert_eq!(
