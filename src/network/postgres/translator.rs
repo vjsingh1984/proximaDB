@@ -184,12 +184,18 @@ impl QueryTranslator {
 
     /// Translate distance operator to function call
     fn translate_distance_operator(&self, query: &str, op: &str, metric: &str) -> String {
-        // Simplified translation - full implementation would parse SQL properly
-        // Example: embedding <-> '[1,2,3]' ORDER BY 1 LIMIT 10
-        // Becomes: VECTOR_DISTANCE(embedding, [1,2,3], 'l2') ORDER BY 1 LIMIT 10
+        // Keep this pgwire compatibility layer intentionally conservative:
+        // full SQL expression normalization belongs in the SQL frontend.
+        let escaped_op = regex::escape(op);
+        let Ok(re) = regex::Regex::new(&format!(
+            r"([A-Za-z_][A-Za-z0-9_\.]*)\s*{}\s*(\[[^\]]+\]|\$\d+|[A-Za-z_][A-Za-z0-9_\.]*)",
+            escaped_op
+        )) else {
+            return query.to_string();
+        };
 
-        // For now, just mark it for later processing
-        query.replace(op, &format!(" /* {} distance */ {} ", metric, op))
+        re.replace_all(query, format!("VECTOR_DISTANCE($1, $2, '{}')", metric))
+            .to_string()
     }
 
     /// Translate PostgreSQL-specific functions
@@ -357,6 +363,32 @@ mod tests {
     }
 
     #[test]
+    fn test_translate_pgvector_distance_operators_to_functions() {
+        let translator = QueryTranslator::new();
+
+        let l2 = translator
+            .translate("SELECT id FROM docs ORDER BY embedding <-> '[0.1, 0.2]'::vector LIMIT 5")
+            .unwrap();
+        assert!(l2.contains("ORDER BY VECTOR_DISTANCE(embedding, [0.1, 0.2], 'l2') LIMIT 5"));
+        assert!(!l2.contains("<->"));
+
+        let cosine = translator
+            .translate("SELECT id, vec <=> $1 AS distance FROM docs")
+            .unwrap();
+        assert!(cosine.contains("VECTOR_DISTANCE(vec, $1, 'cosine') AS distance"));
+        assert!(!cosine.contains("<=>"));
+
+        let inner_product = translator
+            .translate("SELECT id FROM docs ORDER BY doc.embedding <#> query.embedding")
+            .unwrap();
+        assert!(
+            inner_product
+                .contains("ORDER BY VECTOR_DISTANCE(doc.embedding, query.embedding, 'ip')")
+        );
+        assert!(!inner_product.contains("<#>"));
+    }
+
+    #[test]
     fn test_translate_pgwire_jsonb_vector_and_cypher_extensions() {
         let translator = QueryTranslator::new();
         let result = translator
@@ -376,9 +408,10 @@ mod tests {
         assert!(result.contains("JSON_EXISTS(metadata, 'skills')"));
         assert!(result.contains("JSON_PATH_EXISTS(metadata, '$.skills[*]')"));
         assert!(result.contains("[0.1, 0.2, 0.3]"));
-        assert!(result.contains("/* l2 distance */ <->"));
+        assert!(result.contains("VECTOR_DISTANCE(embedding, [0.1, 0.2, 0.3], 'l2')"));
         assert!(!result.contains("::jsonb"));
         assert!(!result.contains("::vector"));
+        assert!(!result.contains("<->"));
 
         let cypher = translator
             .translate("SELECT * FROM GRAPH_QUERY('MATCH (n)-[:CALLS]->(m) RETURN m')")
