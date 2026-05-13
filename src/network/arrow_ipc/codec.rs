@@ -314,12 +314,11 @@ impl ArrowProtoCodec {
         let mut records = Vec::with_capacity(batch.num_rows());
 
         // Extract id column
-        let id_array = batch
-            .column_by_name("id")
-            .context("Missing 'id' column")?
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .context("'id' column is not StringArray")?;
+        let ids = Self::required_string_column_values(
+            batch.column_by_name("id").context("Missing 'id' column")?,
+            "id",
+            batch.num_rows(),
+        )?;
 
         // Extract vector column (supports FixedSizeList or Binary)
         let vector_array = batch
@@ -381,7 +380,7 @@ impl ArrowProtoCodec {
                 .collect();
 
             records.push(VectorRecord {
-                id: id_array.value(i).to_string(),
+                id: ids[i].clone(),
                 vector: vectors[i].clone(),
                 metadata: metadata_map,
                 timestamp: timestamps[i],
@@ -1716,6 +1715,37 @@ mod tests {
         assert_eq!(records[0].timestamp, Some(0));
         assert_eq!(records[1].timestamp, Some(1000));
         assert_eq!(records[2].timestamp, Some(2000));
+    }
+
+    #[test]
+    fn test_arrow_batch_to_vector_records_accepts_large_utf8_ids() {
+        let ids = LargeStringArray::from(vec!["vec_large_1", "vec_large_2"]);
+        let flat_values = Arc::new(Float32Array::from(vec![0.1, 0.2, 0.3, 0.4])) as ArrayRef;
+        let vector_array = FixedSizeListArray::new(
+            Arc::new(Field::new("item", DataType::Float32, false)),
+            2,
+            flat_values,
+            None,
+        );
+
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::LargeUtf8, false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, false)), 2),
+                false,
+            ),
+        ]));
+        let batch =
+            RecordBatch::try_new(schema, vec![Arc::new(ids), Arc::new(vector_array)]).unwrap();
+
+        let records = ArrowProtoCodec::batch_to_vector_records(&batch)
+            .expect("LargeUtf8 ids should decode for vector Flight clients");
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].id, "vec_large_1");
+        assert_eq!(records[1].id, "vec_large_2");
+        assert_eq!(records[1].vector, vec![0.3, 0.4]);
     }
 
     #[test]
