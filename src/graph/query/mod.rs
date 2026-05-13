@@ -56,11 +56,11 @@ pub mod cypher_functions;
 pub mod cypher_parser;
 pub mod execution_traits;
 pub mod executor;
+pub mod graph_parser;
 pub mod operators;
 pub mod parser;
 pub mod pattern;
 pub mod planner;
-pub mod unified_parser;
 
 // Re-export public types
 pub use ast::{CompiledPattern, FoundPath, MatchResult};
@@ -71,13 +71,13 @@ pub use execution_traits::{
     ColumnSpec, ExecutionContext, ExecutionStats, PathElement, PhysicalOperator, QueryValue,
     ResultTuple, ValueType,
 };
+pub use graph_parser::{parse_cypher, parse_cypher_with_context};
 pub use pattern::PatternMatcher;
 pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
 pub use proximadb_graph_query::{
     GraphQueryContext as QueryContext, GraphQueryExecutionResult as QueryExecutionResult,
     GraphQueryStats as QueryStats,
 };
-pub use unified_parser::{parse_cypher, parse_cypher_with_context};
 
 /// Result type for query operations
 pub type QueryResult<T> = proximadb_graph_query::GraphQueryResult<T>;

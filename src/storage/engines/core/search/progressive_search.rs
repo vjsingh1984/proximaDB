@@ -19,7 +19,7 @@
 //!    - Read Path: Query → Runtime quantization → Slower but acceptable
 //!    - Use case: Streaming data where storage cost matters more than latency
 //!
-//! The unified query optimizer and search hints determine which path to use.
+//! The query optimizer and search hints determine which path to use.
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -191,7 +191,7 @@ impl ProgressiveSearchExecutor {
                 // Check if runtime quantization should be allowed based on:
                 // 1. Collection configuration
                 // 2. Search hints
-                // 3. Unified query optimizer recommendations
+                // 3. Query optimizer recommendations
 
                 let should_runtime_quantize = self.should_allow_runtime_quantization(ctx)?;
 

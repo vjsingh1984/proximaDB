@@ -12,8 +12,8 @@
 #[cfg(test)]
 mod cache_consolidation_tests {
     use proximadb::storage::cache::{
-        unified_cache::{CacheId, UnifiedCache, UnifiedCacheCoordinator},
-        unified_eviction::{EvictionConfig, PressureStatus, UnifiedEvictionPolicy},
+        CacheId, CachePriority, EvictionConfig, PressureStatus, UnifiedCacheCoordinator,
+        UnifiedEvictionPolicy,
     };
     use std::sync::Arc;
 
@@ -44,15 +44,15 @@ mod cache_consolidation_tests {
         // Verify policy is created with default config
         assert_eq!(
             policy.get_cache_priority(CacheId::Metadata),
-            proximadb::storage::cache::unified_eviction::CachePriority::Critical
+            CachePriority::Critical
         );
         assert_eq!(
             policy.get_cache_priority(CacheId::VectorData),
-            proximadb::storage::cache::unified_eviction::CachePriority::High
+            CachePriority::High
         );
         assert_eq!(
             policy.get_cache_priority(CacheId::BitmapFilter),
-            proximadb::storage::cache::unified_eviction::CachePriority::Low
+            CachePriority::Low
         );
     }
 
@@ -96,8 +96,6 @@ mod cache_consolidation_tests {
     /// Test cache priority ordering
     #[test]
     fn test_cache_priority_ordering() {
-        use proximadb::storage::cache::unified_eviction::CachePriority;
-
         // Verify priority ordering
         assert!(CachePriority::Critical > CachePriority::High);
         assert!(CachePriority::High > CachePriority::Medium);

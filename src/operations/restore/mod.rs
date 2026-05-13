@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::operations::backup::{BackupManifest, BackupTarget, DataFileMetadata};
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
 
 /// Restore manager for recovering from backups
 #[allow(dead_code)]

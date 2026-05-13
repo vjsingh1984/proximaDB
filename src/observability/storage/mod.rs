@@ -29,7 +29,7 @@ use tracing::info;
 
 use self::traces::TraceSpan;
 use crate::proto::proximadb_v1::{LogEntry, MetricSample, ObservabilityNamespaceConfig};
-use crate::storage::persistence::write_ahead_log::unified_operations::{
+use crate::storage::persistence::write_ahead_log::wal_operations::{
     ObservabilityOperation, UnifiedWALOperation, UnifiedWALReader, UnifiedWALWriter,
 };
 

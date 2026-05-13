@@ -60,7 +60,9 @@ pub async fn check_bloom_filter(
 
 /// Search an SSTable for nearest vectors with type-safe FilterExpression support
 pub async fn search_sstable(
-    filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem: &Arc<
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+    >,
     sstable: &SStableMetadata,
     query_vector: &[f32],
     _query_hilbert_key: Option<u64>,
@@ -133,7 +135,9 @@ pub async fn search_sstable(
 
 /// Find a specific vector by ID
 pub async fn find_vector_by_id(
-    filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem: &Arc<
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+    >,
     sstable: &SStableMetadata,
     vector_id: &str,
 ) -> Result<Option<VectorRecord>> {
@@ -194,7 +198,9 @@ pub async fn find_vector_by_id(
 /// This function distributes the search across multiple threads, with each
 /// thread searching one or more SSTables in parallel for maximum performance.
 pub async fn parallel_search(
-    filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem: Arc<
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+    >,
     sstables: Vec<SStableMetadata>,
     query_vector: Vec<f32>,
     query_hilbert_key: Option<u64>,
@@ -309,7 +315,9 @@ pub struct QueryStats {
 
 /// Advanced search with statistics
 pub async fn search_with_stats(
-    filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem: &Arc<
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+    >,
     sstables: &[SStableMetadata],
     query_vector: &[f32],
     query_hilbert_key: Option<u64>,
@@ -394,7 +402,9 @@ pub async fn search_with_stats(
 /// vectors for fast approximate distance computation. This is 10-50x faster than
 /// FP32 search for initial candidate filtering.
 pub async fn search_sstable_quantized(
-    filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem: &Arc<
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+    >,
     sstable: &SStableMetadata,
     query_vector: &[f32],
     _query_hilbert_key: Option<u64>,

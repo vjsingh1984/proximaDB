@@ -8,8 +8,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::proto::proximadb_v1::Collection;
+use crate::storage::scan_strategy::{ScanCapabilities, ScanIterator, ScanStrategy};
 use crate::storage::traits::StorageEngineStrategy;
-use crate::storage::unified_scan_strategy::{ScanCapabilities, ScanIterator, ScanStrategy};
 
 /// Scan operations for storage engines
 ///

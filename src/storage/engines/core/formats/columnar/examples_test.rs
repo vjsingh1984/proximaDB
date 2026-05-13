@@ -451,7 +451,7 @@ pub async fn nova_optimization_example() -> Result<()> {
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = filesystem.get_filesystem("file://").unwrap();
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "nova_collection".to_string(),
                 "nova".to_string(),

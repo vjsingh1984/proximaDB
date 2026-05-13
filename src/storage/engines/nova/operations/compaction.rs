@@ -224,7 +224,7 @@ impl NovaCompactionOperations {
 
         // Create unified caching filesystem
         let unified_fs = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                 fs,
                 collection_id.to_string(),
                 "nova".to_string(),

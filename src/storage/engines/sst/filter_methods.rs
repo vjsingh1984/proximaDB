@@ -3,7 +3,7 @@
 //! Implements the missing set_scan_filter and set_index_filter methods
 //! needed by VectorOperationsService for proper metadata filtering.
 
-use crate::query::unified_query_optimizer::UnifiedMetadataFilter;
+use crate::query::query_optimizer::UnifiedMetadataFilter;
 use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -61,18 +61,16 @@ impl crate::storage::engines::sst::SstEngine {
 
         for condition in &filter.conditions {
             let field_name = match condition {
-                crate::query::unified_query_optimizer::FilterCondition::Equals {
-                    column, ..
-                } => column.clone(),
-                crate::query::unified_query_optimizer::FilterCondition::Range {
-                    column, ..
-                } => column.clone(),
-                crate::query::unified_query_optimizer::FilterCondition::In { column, .. } => {
+                crate::query::query_optimizer::FilterCondition::Equals { column, .. } => {
                     column.clone()
                 }
-                crate::query::unified_query_optimizer::FilterCondition::Contains {
-                    column, ..
-                } => column.clone(),
+                crate::query::query_optimizer::FilterCondition::Range { column, .. } => {
+                    column.clone()
+                }
+                crate::query::query_optimizer::FilterCondition::In { column, .. } => column.clone(),
+                crate::query::query_optimizer::FilterCondition::Contains { column, .. } => {
+                    column.clone()
+                }
                 _ => continue, // Skip unsupported filter types
             };
 

@@ -189,7 +189,7 @@ pub struct SearchParams {
 
     /// Runtime optimization hints for search strategy selection
     #[serde(skip)]
-    pub runtime_hints: Option<crate::query::unified_query_optimizer::FilterOptimizationHints>,
+    pub runtime_hints: Option<crate::query::query_optimizer::FilterOptimizationHints>,
 
     /// Hint to enable/disable metadata filtering optimization
     pub enable_metadata_filtering_hint: Option<bool>,

@@ -60,7 +60,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 
 // Using UnifiedCachingFilesystem instead of ZeroCopyIOSystem
 use crate::storage::persistence::filesystem::FileSystem;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
 
 // Vectorized execution imports (TD-041)
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::evaluate_predicate_vectorized;

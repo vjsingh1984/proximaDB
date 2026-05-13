@@ -1610,7 +1610,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     // Unified Multi-Model Query API endpoints
     // Routes all queries through QueryFacadeAdapter for consistent execution
     let unified_query_router_opt = {
-        use crate::network::rest::v1::unified_query::{self, UnifiedQueryApiState};
+        use crate::network::rest::v1::multimodal_query::{self, UnifiedQueryApiState};
         use crate::storage::document::DocumentService;
 
         let engine = state
@@ -1642,7 +1642,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         query_adapter_opt.map(|adapter| {
             let unified_state =
                 UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine);
-            unified_query::create_router().with_state(unified_state)
+            multimodal_query::create_router().with_state(unified_state)
         })
     };
 

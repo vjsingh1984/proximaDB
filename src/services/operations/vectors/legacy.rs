@@ -60,7 +60,7 @@ use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::Collection;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::query::unified_query_optimizer::{
+use crate::query::query_optimizer::{
     ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType, UnifiedExecutionPlan,
     UnifiedQueryContext, UnifiedQueryOptimizer,
 };
@@ -445,7 +445,7 @@ pub struct VectorOperationsService {
     /// WAL/Memtable for unflushed vectors (required for two-stage search)
     wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
 
-    /// SINGLE unified query optimizer (replaced two separate optimizers)
+    /// SINGLE query optimizer (replaced two separate optimizers)
     query_optimizer: Arc<UnifiedQueryOptimizer>,
 
     /// Collection cache (unchanged)
@@ -795,7 +795,7 @@ impl VectorOperationsService {
         let include_metadata = req.include_fields.as_ref().is_none_or(|f| f.metadata);
 
         let cfg = Some(UnifiedSearchConfig {
-            optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+            optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
             progressive_search: true,
             progressive_recalls: None,
             include_vectors,
@@ -1057,8 +1057,7 @@ impl VectorOperationsService {
         info!("   ✅ Progressive quantization-aware search enabled");
         info!("   ✅ Two-stage search: WAL/memtable → Storage engine");
 
-        let optimizer_config =
-            crate::query::unified_query_optimizer::UnifiedOptimizerConfig::default();
+        let optimizer_config = crate::query::query_optimizer::UnifiedOptimizerConfig::default();
 
         // Initialize query cache with 512MB memory budget (configurable)
         let query_cache = Arc::new(QueryCache::new(512));
@@ -1838,7 +1837,7 @@ impl VectorOperationsService {
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
-        let search_params = crate::query::unified_query_optimizer::SearchParams {
+        let search_params = crate::query::query_optimizer::SearchParams {
             top_k: Some(k),
             ..Default::default()
         };
@@ -1918,7 +1917,7 @@ impl VectorOperationsService {
         // CRITICAL FIX: Use actual k value in search_params, not the default (10).
         // Without this, the query optimizer uses default top_k=10, and candidates = 10*10 = 100,
         // which incorrectly limits all searches to 100 results regardless of the requested k.
-        let search_params = crate::query::unified_query_optimizer::SearchParams {
+        let search_params = crate::query::query_optimizer::SearchParams {
             top_k: Some(k),
             ..Default::default()
         };
@@ -2526,9 +2525,9 @@ impl VectorOperationsService {
     async fn apply_filter_pushdown(
         &self,
         _collection_id: &str,
-        pushdown_op: crate::query::unified_query_optimizer::FilterPushdownOperation,
+        pushdown_op: crate::query::query_optimizer::FilterPushdownOperation,
     ) -> Result<()> {
-        use crate::query::unified_query_optimizer::FilterPushdownOperation;
+        use crate::query::query_optimizer::FilterPushdownOperation;
 
         match pushdown_op {
             FilterPushdownOperation::StorageLevel {
@@ -2540,17 +2539,15 @@ impl VectorOperationsService {
                     estimated_reduction * 100.0
                 );
                 // Convert FilterCondition to UnifiedMetadataFilter
-                let _unified_filter =
-                    crate::query::unified_query_optimizer::UnifiedMetadataFilter {
-                        conditions: vec![filter],
-                        logic: crate::query::unified_query_optimizer::FilterLogic::And,
-                        optimization_hints:
-                            crate::query::unified_query_optimizer::FilterOptimizationHints {
-                                expected_selectivity: Some(estimated_reduction),
-                                preferred_index: None,
-                                allow_parallel: true,
-                            },
-                    };
+                let _unified_filter = crate::query::query_optimizer::UnifiedMetadataFilter {
+                    conditions: vec![filter],
+                    logic: crate::query::query_optimizer::FilterLogic::And,
+                    optimization_hints: crate::query::query_optimizer::FilterOptimizationHints {
+                        expected_selectivity: Some(estimated_reduction),
+                        preferred_index: None,
+                        allow_parallel: true,
+                    },
+                };
                 // Filter pushdown: engine applies filter during scan via search params.
                 // Direct set_scan_filter deferred until UnifiedStorageEngine trait exposes it.
                 let _ = _unified_filter; // Filter prepared but applied via search params path
@@ -2558,17 +2555,15 @@ impl VectorOperationsService {
             FilterPushdownOperation::IndexLevel { filter, index_name } => {
                 debug!("⬇️ Pushing filter to index: {:?}", index_name);
                 // Convert FilterCondition to UnifiedMetadataFilter
-                let _unified_filter =
-                    crate::query::unified_query_optimizer::UnifiedMetadataFilter {
-                        conditions: vec![filter],
-                        logic: crate::query::unified_query_optimizer::FilterLogic::And,
-                        optimization_hints:
-                            crate::query::unified_query_optimizer::FilterOptimizationHints {
-                                expected_selectivity: None,
-                                preferred_index: index_name.clone(),
-                                allow_parallel: true,
-                            },
-                    };
+                let _unified_filter = crate::query::query_optimizer::UnifiedMetadataFilter {
+                    conditions: vec![filter],
+                    logic: crate::query::query_optimizer::FilterLogic::And,
+                    optimization_hints: crate::query::query_optimizer::FilterOptimizationHints {
+                        expected_selectivity: None,
+                        preferred_index: index_name.clone(),
+                        allow_parallel: true,
+                    },
+                };
                 // Configure index to apply filter during lookup
                 if let Some(_index) = index_name {
                     // Index filter pushdown: applied via AXIS search params path.
@@ -2585,8 +2580,8 @@ impl VectorOperationsService {
     async fn execute_two_stage_search(
         &self,
         collection_id: &str,
-        method: crate::query::unified_query_optimizer::SearchExecutionMethod,
-        _quantization: Option<crate::query::unified_query_optimizer::QuantizationStrategy>,
+        method: crate::query::query_optimizer::SearchExecutionMethod,
+        _quantization: Option<crate::query::query_optimizer::QuantizationStrategy>,
         candidates: usize,
         query_vector: Vec<f32>,
         filter: Option<FilterExpression>,
@@ -2976,8 +2971,8 @@ impl VectorOperationsService {
     async fn execute_filter(
         &self,
         collection_id: &str,
-        conditions: Vec<crate::query::unified_query_optimizer::FilterCondition>,
-        _method: crate::query::unified_query_optimizer::FilterExecutionMethod,
+        conditions: Vec<crate::query::query_optimizer::FilterCondition>,
+        _method: crate::query::query_optimizer::FilterExecutionMethod,
         _input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
@@ -2991,7 +2986,7 @@ impl VectorOperationsService {
         let filter_expressions: Vec<crate::core::search::FilterExpression> = conditions
             .into_iter()
             .map(|condition| {
-                use crate::query::unified_query_optimizer::FilterCondition;
+                use crate::query::query_optimizer::FilterCondition;
                 match condition {
                     FilterCondition::Equals { column, value } => {
                         crate::core::search::FilterExpression::Comparison {
@@ -3055,8 +3050,8 @@ impl VectorOperationsService {
     async fn execute_index_lookup(
         &self,
         collection_id: &str,
-        index_type: crate::query::unified_query_optimizer::Index,
-        params: crate::query::unified_query_optimizer::IndexLookupParams,
+        index_type: crate::query::query_optimizer::Index,
+        params: crate::query::query_optimizer::IndexLookupParams,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "📚 Executing index lookup for collection {} with index type {:?}",
@@ -3113,7 +3108,7 @@ impl VectorOperationsService {
     async fn apply_bloom_filter(
         &self,
         collection_id: &str,
-        filter_type: crate::query::unified_query_optimizer::BloomFilter,
+        filter_type: crate::query::query_optimizer::BloomFilter,
         input: Option<&Vec<crate::core::search::results::OptimizedSearchRecord>>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
@@ -4288,7 +4283,7 @@ mod migration_example {
     /// OLD WAY - Using separate optimizers
     #[allow(dead_code)]
     struct OldVectorOperationsService {
-        search_optimizer: crate::query::unified_query_optimizer::UnifiedQueryOptimizer,
+        search_optimizer: crate::query::query_optimizer::UnifiedQueryOptimizer,
         filter_optimizer: String, // Placeholder for migration example
     }
 

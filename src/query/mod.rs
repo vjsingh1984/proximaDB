@@ -123,6 +123,7 @@ pub mod ddl_dml; // DDL/DML execution (CREATE TABLE, INSERT, UPDATE, DELETE)
 pub mod distributed; // Distributed query coordination across cluster nodes
 pub mod execution; // New unified execution engine
 pub mod explain;
+pub mod explain_schema; // Explain schema for API parity (Issue #47, SB-17)
 pub mod facade; // Unified query facade - single entry point for all queries (consolidates 5 parallel paths)
 pub mod federated; // Federated multi-model query engine (cross-model joins, SQL extensions)
 pub mod graph_lowering; // Shared lowering from supported graph queries into multimodal IR
@@ -137,19 +138,18 @@ pub mod multimodel_router; // Canonical multi-model SQL router implementation
 pub mod nl; // AV-SQL (TD-048) — 3-Agent Decomposition
 pub mod parsers; // Query language parsers (MongoDB, etc.)
 pub mod prepared; // Prepared statements for parse-once-execute-many pattern
+pub mod query_optimizer;
+pub mod query_router; // Query routing (Issue #46, SB-16)
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
 pub mod sql_frontend;
 pub mod unified; // Multi-model query engine (vector, document, graph, observability)
-pub mod unified_explain; // Unified explain schema for API parity (Issue #47, SB-17)
-pub mod unified_query_optimizer;
-pub mod unified_routing; // Unified query routing (Issue #46, SB-16)
 pub mod utils;
 pub mod validator; // Plan validation for capability checking
 pub mod vector_search;
 
 // Re-export main types
-pub use unified_query_optimizer::{
+pub use query_optimizer::{
     UnifiedCostWeights, UnifiedExecutionPlan as QueryPlan, UnifiedMetadataFilter as MetadataFilter,
     UnifiedOptimizerConfig, UnifiedQueryOptimizer as QueryOptimizer,
 };

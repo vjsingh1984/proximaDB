@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::persistence::write_ahead_log::unified_operations::{
+use crate::storage::persistence::write_ahead_log::wal_operations::{
     TimeSeriesOperation, UnifiedWALOperation, UnifiedWALReader, UnifiedWALWriter,
 };
 
@@ -438,7 +438,7 @@ mod tests {
             let wal_path_str = wal_dir.to_str().unwrap().to_string();
             let mut writer = UnifiedWALWriter::new(wal_path_str).await.unwrap();
 
-            use crate::storage::persistence::write_ahead_log::unified_operations::VectorOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::VectorOperation;
             let vector_op = UnifiedWALOperation::VectorOp(VectorOperation::AddVector {
                 collection_id: "vec_coll".to_string(),
                 vector: VectorRecord {

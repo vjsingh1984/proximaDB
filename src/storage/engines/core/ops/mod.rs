@@ -163,7 +163,7 @@ pub mod proxima_tensor_encoding;
 // (compression_adapter already declared above)
 
 // DEPRECATED: These types now live in unified_query_optimizer
-// Removed deprecated metadata_filters module - import from crate::query::unified_query_optimizer instead
+// Removed deprecated metadata_filters module - import from crate::query::query_optimizer instead
 // NOTE: Quantization exports removed - use compute::quantization module directly
 pub use compression_common::{
     AdaptiveCompressionSettings, CompressionCapabilities, CompressionStats, CompressionStrategy,

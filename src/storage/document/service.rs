@@ -21,7 +21,7 @@ use crate::metrics::collectors::DocumentMetricsCollector;
 use crate::proto::proximadb_v1::{
     DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue, UpdateOperation,
 };
-use crate::storage::persistence::write_ahead_log::unified_operations::{
+use crate::storage::persistence::write_ahead_log::wal_operations::{
     DocumentOperation, UnifiedWALOperation, UnifiedWALWriter,
 };
 use crate::storage::traits::UnifiedStorageEngine;
@@ -188,7 +188,7 @@ impl DocumentService {
 
     /// Recover state from WAL on startup
     async fn recover_from_wal(&mut self) -> Result<()> {
-        use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALReader;
+        use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALReader;
 
         info!("Recovering document service from WAL at: {}", self.wal_path);
         let reader = UnifiedWALReader::new(self.wal_path.clone()).await?;

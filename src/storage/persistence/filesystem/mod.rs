@@ -191,15 +191,15 @@ pub mod orchestrator_integration;
 pub mod prefetch_engine;
 pub mod range_optimizer;
 pub mod smart_io;
-pub mod unified;
 pub mod unified_cache;
 pub mod unified_config;
+pub mod unified_filesystem;
 
 // Filesystem implementations
 pub use local::LocalFileSystem;
 
 // Unified caching filesystem
-pub use unified::UnifiedCachingFilesystem;
+pub use unified_filesystem::UnifiedCachingFilesystem;
 
 // Re-export centralized scheme validation functions
 pub use scheme_validation::{
@@ -1049,12 +1049,12 @@ impl FilesystemFactory {
         // Get the metadata serializer for this engine type
         let metadata_serializer: Arc<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
             match engine_type.as_str() {
-                "sst" => Arc::new(crate::storage::engines::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
-                "viper" => Arc::new(crate::storage::engines::viper::unified_metadata_serializer::ViperMetadataSerializer::new()),
-                "raptor" => Arc::new(crate::storage::engines::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
-                "nova" => Arc::new(crate::storage::engines::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
-                "swift" => Arc::new(crate::storage::engines::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
-                "helix" => Arc::new(crate::storage::engines::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
+                "sst" => Arc::new(crate::storage::engines::core::sst_unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
+                "viper" => Arc::new(crate::storage::engines::core::viper_unified_metadata_serializer::ViperMetadataSerializer::new()),
+                "raptor" => Arc::new(crate::storage::engines::core::raptor_unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
+                "nova" => Arc::new(crate::storage::engines::core::nova_unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
+                "swift" => Arc::new(crate::storage::engines::core::swift_unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
+                "helix" => Arc::new(crate::storage::engines::core::helix_unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
                 _ => {
                     // Default serializer for other engines
                     #[derive(Debug)]
@@ -1077,7 +1077,7 @@ impl FilesystemFactory {
             };
 
         // Wrap it with UnifiedCachingFilesystem for caching
-        let unified_fs = crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+        let unified_fs = crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::with_serializer(
             fs,
             collection_id.to_string(),
             engine_type.to_string(),

@@ -31,7 +31,7 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use proximadb::storage::cache::{
-    unified_cache::{CacheId, UnifiedCache, UnifiedCacheCoordinator},
+    cache_coordinator::{CacheId, UnifiedCache, UnifiedCacheCoordinator},
     unified_eviction::{EvictionConfig, UnifiedEvictionPolicy},
 };
 use std::sync::Arc;

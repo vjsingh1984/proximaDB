@@ -294,8 +294,8 @@ pub struct ClusterMetadata {
     pub last_updated: SystemTime,
     /// Compression ratio achieved for this cluster
     pub compression_ratio: f32,
-    /// Quantization level used for vectors in this cluster
-    pub quantization_level: QuantizationLevel,
+    /// Quantization aggressiveness used for vectors in this cluster
+    pub quantization_level: QuantizationAggressiveness,
     /// List of partition files containing cluster data
     pub partition_files: Vec<String>,
 }
@@ -303,12 +303,25 @@ pub struct ClusterMetadata {
 /// Use proto-generated config directly - no more duplicates!
 pub use crate::proto::proximadb_v1::QuantizationConfig;
 
-/// Quantization level
+/// Quantization aggressiveness level
 ///
-/// Defines the aggressiveness of quantization compression.
-/// Higher levels provide more compression but may reduce accuracy.
-#[derive(Debug, Clone)]
-pub enum QuantizationLevel {
+/// Defines the **compression aggressiveness** tradeoff, NOT the precision or storage format.
+/// Higher aggressiveness provides more compression but may reduce accuracy.
+///
+/// ## Layer Distinction
+///
+/// This enum describes **compression aggressiveness** (user-facing configuration), NOT:
+/// - **API precision** (`proximadb_quantization_types::QuantizationLevel`): Int4, Int8, FP32
+/// - **Storage format** (`StorageQuantizationFormat`): Binary, PQ4, PQ8
+///
+/// ## Aggressiveness Levels
+///
+/// - **None**: No quantization (full FP32 precision)
+/// - **Low**: Minimal compression, highest accuracy (e.g., FP16 or light scalar)
+/// - **Medium**: Balanced compression/accuracy (e.g., Int8 scalar or PQ8)
+/// - **High**: Maximum compression, lower accuracy (e.g., binary or heavy PQ)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuantizationAggressiveness {
     /// No quantization (full precision FP32)
     None,
     /// Low compression (minimal accuracy loss)
@@ -318,6 +331,10 @@ pub enum QuantizationLevel {
     /// High compression (maximum space savings)
     High,
 }
+
+/// Legacy type alias for backward compatibility
+/// TODO: Migrate all uses to QuantizationAggressiveness (Phase 3.2)
+pub type QuantizationLevel = QuantizationAggressiveness;
 
 /// Vector storage format
 ///

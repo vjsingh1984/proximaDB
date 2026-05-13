@@ -14,8 +14,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 // Import from local modules instead of extracted crates
+use super::graph_parser::QueryContext;
 use super::planner::QueryPlan;
-use super::unified_parser::QueryContext;
 
 /// Query result type
 pub type QueryResult<T> = Result<T, String>;

@@ -72,9 +72,9 @@ pub mod backends;
 pub mod checkpoint;
 // universal_backend moved to backends/universal_backend.rs
 pub mod indexes;
+pub mod metadata_index;
 pub mod single_index;
 pub mod store;
-pub mod unified_index;
 pub mod write_ahead_log;
 
 #[cfg(test)]

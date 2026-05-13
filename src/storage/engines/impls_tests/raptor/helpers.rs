@@ -516,8 +516,8 @@ pub fn create_research_adls_sizer()
 /// Source: unified_metadata_serializer.rs
 #[allow(dead_code)]
 pub fn create_test_raptor_metadata()
--> crate::storage::engines::raptor::unified_metadata_serializer::RaptorCachedMetadata {
-    crate::storage::engines::raptor::unified_metadata_serializer::RaptorCachedMetadata {
+-> crate::storage::engines::core::raptor_unified_metadata_serializer::RaptorCachedMetadata {
+    crate::storage::engines::core::raptor_unified_metadata_serializer::RaptorCachedMetadata {
         file_size: 1024000,
         vector_count: 10000,
         dimension: 768,

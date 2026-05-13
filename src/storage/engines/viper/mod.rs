@@ -244,7 +244,9 @@ pub mod codebook_sidecar;
 pub mod compaction;
 pub mod engine;
 pub mod flush;
-pub mod unified_metadata_serializer;
+pub mod unified_metadata_serializer {
+    pub use crate::storage::engines::core::viper_unified_metadata_serializer::*;
+}
 pub mod unified_strategy_reader;
 pub mod viper_meta_collector;
 

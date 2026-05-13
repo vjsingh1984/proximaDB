@@ -417,7 +417,9 @@ pub struct ClusteringHints {
 ///
 /// Note: Despite the name, all ProximaDataBlock encoding uses SIMD (NEON/AVX)
 pub async fn write_helix_sstable(
-    filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem: &Arc<
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+    >,
     path: &Path,
     records: &[VectorRecord],
     block_size: usize,
@@ -631,7 +633,9 @@ pub async fn write_helix_sstable(
 /// - Savings: 50% API call reduction on first query
 /// - Subsequent queries: 100% savings (filesystem caches it)
 pub(crate) async fn read_helix_header_optimized(
-    filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem: &Arc<
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+    >,
     path: &Path,
 ) -> Result<HelixFileHeader> {
     use crate::storage::persistence::filesystem::FileSystem;
@@ -809,7 +813,9 @@ pub(crate) async fn read_helix_header_optimized(
 
 /// Read and search a HELIX SSTable with bloom filter pruning and type-safe filtering
 pub async fn search_helix_sstable(
-    filesystem: &Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem: &Arc<
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+    >,
     path: &Path,
     query_vector: &[f32],
     query_hilbert_key: Option<u64>,

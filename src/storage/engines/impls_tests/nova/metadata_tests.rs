@@ -98,7 +98,7 @@ fn test_superblock_creation() {
 // Tests disabled: serialize, deserialize, extract_cacheable_component, and should_cache_metadata are private/trait methods
 // #[test]
 // fn test_nova_metadata_serialization() {
-//     use crate::storage::engines::nova::unified_metadata_serializer::*;
+//     use crate::storage::engines::core::nova_unified_metadata_serializer::*;
 //     use std::collections::HashMap;
 //
 //     let metadata = NovaCachedMetadata {
@@ -164,7 +164,7 @@ fn test_superblock_creation() {
 //
 // #[test]
 // fn test_parquet_footer_extraction() {
-//     use crate::storage::engines::nova::unified_metadata_serializer::*;
+//     use crate::storage::engines::core::nova_unified_metadata_serializer::*;
 //
 //     let serializer = NovaUnifiedMetadataSerializer::new();
 //
@@ -199,7 +199,7 @@ fn test_superblock_creation() {
 //
 // #[test]
 // fn test_should_cache_metadata() {
-//     use crate::storage::engines::nova::unified_metadata_serializer::*;
+//     use crate::storage::engines::core::nova_unified_metadata_serializer::*;
 //
 //     let serializer = NovaUnifiedMetadataSerializer::new();
 //

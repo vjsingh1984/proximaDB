@@ -745,7 +745,7 @@ impl QueryExecutor {
         // Convert FilterExpression to VOS-compatible format
         // The FilterExpression already represents HashMap.get() patterns from lowering
         let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
-            optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+            optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
             progressive_search: true, // Enable 7-phase progressive optimization
             progressive_recalls: None, // Use default progressive recall targets
             include_vectors: false,   // Don't return vectors unless explicitly requested

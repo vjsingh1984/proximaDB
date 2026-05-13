@@ -37,7 +37,7 @@
 use std::collections::HashSet;
 
 use crate::proto::proximadb_v1::CompressionAlgorithm;
-use crate::storage::unified_scan_strategy::ScanCapabilities;
+use crate::storage::scan_strategy::ScanCapabilities;
 
 /// Flush thresholds configuration
 #[derive(Debug, Clone)]

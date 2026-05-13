@@ -675,9 +675,9 @@ pub trait UnifiedStorageEngine: Send + Sync {
     async fn create_scan(
         &self,
         _collection_id: &str,
-        _strategy: crate::storage::unified_scan_strategy::ScanStrategy,
+        _strategy: crate::storage::scan_strategy::ScanStrategy,
         _collection_config: Option<&Collection>,
-    ) -> Result<Box<dyn crate::storage::unified_scan_strategy::ScanIterator>> {
+    ) -> Result<Box<dyn crate::storage::scan_strategy::ScanIterator>> {
         // Default implementation - engines should override with their specific implementation
         Err(anyhow::anyhow!(
             "{} engine does not yet implement unified scan strategy. Use search_vectors_unified for now.",
@@ -689,7 +689,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
     ///
     /// Delegates to `CapabilityFactory` for OCP-compliant capability lookup.
     /// Each engine's capabilities are defined in `trait_components::capabilities`.
-    fn scan_capabilities(&self) -> crate::storage::unified_scan_strategy::ScanCapabilities {
+    fn scan_capabilities(&self) -> crate::storage::scan_strategy::ScanCapabilities {
         // OCP: Delegate to CapabilityFactory instead of hardcoded match
         CapabilityFactory::create(self.strategy()).scan_capabilities()
     }

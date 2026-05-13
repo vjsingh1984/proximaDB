@@ -25,9 +25,9 @@ use crate::core::error::ProximaDBError;
 use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::engines::orion::OrionGraphEngine;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
+use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -444,7 +444,7 @@ impl OrionPersistence {
     /// Write node operation to WAL
     pub async fn write_node_operation(&self, node: Node) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             tracing::debug!("Writing node operation to WAL for node: {}", node.id);
 
@@ -477,7 +477,7 @@ impl OrionPersistence {
     /// Write edge operation to WAL
     pub async fn write_edge_operation(&self, edge: Edge) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             let graph_op = GraphOperation::CreateEdge {
                 graph_id: self.graph_id.clone(),
@@ -507,7 +507,7 @@ impl OrionPersistence {
         }
 
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             // Wrap all CreateEdge operations in a single batch GraphOp to reduce WAL traffic
             let batch = GraphOperation::BatchOperation {
@@ -544,7 +544,7 @@ impl OrionPersistence {
         }
 
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             // Wrap all CreateNode operations in a single batch GraphOp to reduce WAL traffic
             let batch = GraphOperation::BatchOperation {
@@ -578,7 +578,7 @@ impl OrionPersistence {
     /// For updates, we write the full updated node (upsert semantic)
     pub async fn write_update_node_operation(&self, node: Node) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             tracing::debug!("Writing update node operation to WAL for node: {}", node.id);
 
@@ -614,7 +614,7 @@ impl OrionPersistence {
     /// Write node delete operation to WAL
     pub async fn write_delete_node_operation(&self, node_id: &NodeId) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             tracing::debug!("Writing delete node operation to WAL for node: {}", node_id);
 
@@ -650,7 +650,7 @@ impl OrionPersistence {
     /// For updates, we write the full updated edge (upsert semantic)
     pub async fn write_update_edge_operation(&self, edge: Edge) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             tracing::debug!("Writing update edge operation to WAL for edge: {}", edge.id);
 
@@ -686,7 +686,7 @@ impl OrionPersistence {
     /// Write edge delete operation to WAL
     pub async fn write_delete_edge_operation(&self, edge_id: &EdgeId) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             tracing::debug!("Writing delete edge operation to WAL for edge: {}", edge_id);
 
@@ -721,7 +721,7 @@ impl OrionPersistence {
     /// Log a generic graph operation to WAL
     pub async fn log_operation(&self, op: GraphOperation) -> Result<()> {
         if let Some(ref wal_writer) = self.wal_writer {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation;
 
             let unified_op = UnifiedWALOperation::GraphOp(op);
             wal_writer
@@ -756,7 +756,7 @@ impl OrionPersistence {
     /// Replay WAL operations from all segments
     pub async fn replay_wal(&self, engine: &OrionGraphEngine) -> Result<()> {
         if let Some(ref wal_path) = self.wal_path {
-            use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALReader;
+            use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALReader;
 
             let wal_path_str = wal_path.to_string_lossy().to_string();
             tracing::debug!("Attempting WAL recovery from path: {}", wal_path_str);
@@ -782,7 +782,7 @@ impl OrionPersistence {
 
             for entry in entries {
                 if entry.is_graph_operation()
-                    && let crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALOperation::GraphOp(graph_op) = entry.operation {
+                    && let crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALOperation::GraphOp(graph_op) = entry.operation {
                         self.apply_graph_operation(engine, graph_op).await?;
                     }
             }

@@ -17,7 +17,7 @@ use crate::storage::engines::sst::readers::sst_query_engine::{
     CollectionContext, UnifiedSstableReader,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
 
 /// Helper to create a test reader
 async fn create_test_reader() -> Arc<UnifiedSstableReader> {

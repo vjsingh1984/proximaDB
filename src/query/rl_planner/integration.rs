@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
 use super::{ExecutionAction, ExecutionLog, PlannerState, RLPlanner, RLPlannerConfig, StageLog};
-use crate::query::unified_query_optimizer::{
+use crate::query::query_optimizer::{
     ExecutionStep, Index, SearchExecutionMethod, UnifiedExecutionPlan, UnifiedQueryContext,
 };
 use crate::storage::engine_capabilities::{
@@ -444,7 +444,7 @@ mod tests {
             collection,
             search_params: None,
             filter_params: None,
-            optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+            optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
             available_files: vec![],
             total_vectors: 10000,
             total_columns: 5,

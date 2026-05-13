@@ -1262,7 +1262,7 @@ impl SharedServices {
             ..Default::default()
         };
         let event_log_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                 filesystem_factory.get_filesystem(&storage_config.metadata_url)?,
                 "auditlog".to_string(),
                 "eventlog".to_string(),
@@ -1510,7 +1510,7 @@ impl SharedServices {
     /// Create a QueryFacadeAdapter for protocol handlers
     ///
     /// The adapter provides protocol-agnostic methods that convert proto types
-    /// to/from QueryRequest/QueryResult, enabling unified query routing.
+    /// to/from QueryRequest/QueryResult, enabling query routing.
     pub fn query_adapter(&self) -> Arc<QueryFacadeAdapter> {
         Arc::new(QueryFacadeAdapter::new(self.query_facade.clone()))
     }
@@ -2165,8 +2165,8 @@ impl MultiServer {
                 builder::MultiplexServiceBuilder,
                 detectors::RestDetector,
                 handlers::{RestHandler, RestHandlerConfig},
+                protocol_multiplexer::{UnifiedServer, UnifiedServerConfig},
                 traits::DetectedProtocol,
-                unified_server::{UnifiedServer, UnifiedServerConfig},
             };
 
             let services = self.shared_services.clone();

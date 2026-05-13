@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::storage::engines::core::formats::columnar::constants::*;
-use crate::storage::engines::core::formats::common_quantization::QuantizationFileConfig;
-use crate::storage::engines::core::formats::common_quantization::QuantizationLevel;
+use crate::storage::engines::core::formats::common_quantization::ProductQuantizationBits;
+use crate::storage::engines::core::formats::common_quantization::{
+    QuantizationFileConfig, ScalarQuantizationBits, StorageQuantizationFormat,
+};
 
 /// Schema definition for quantized vector storage
 ///
@@ -31,8 +33,8 @@ pub struct QuantizedVectorSchema {
     /// Schema version (for evolution)
     pub schema_version: u32,
 
-    /// Enabled quantization levels
-    pub enabled_levels: Vec<QuantizationLevel>,
+    /// Enabled quantization storage formats
+    pub enabled_levels: Vec<StorageQuantizationFormat>,
 
     /// Vector dimension (constant across collection)
     pub dimension: usize,
@@ -96,7 +98,7 @@ pub enum RowGroupStrategy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantizedFieldDefinition {
     /// Quantization level
-    pub level: QuantizationLevel,
+    pub level: StorageQuantizationFormat,
 
     /// Logical field name
     pub field_name: String,
@@ -238,7 +240,7 @@ pub struct SparsityInfo {
 pub struct QuantizedVectorSchemaBuilder {
     collection_id: String,
     dimension: usize,
-    enabled_levels: Vec<QuantizationLevel>,
+    enabled_levels: Vec<StorageQuantizationFormat>,
     storage_type: SchemaStorageType,
 }
 
@@ -262,7 +264,7 @@ impl QuantizedVectorSchemaBuilder {
     }
 
     /// Add quantization level to schema
-    pub fn add_quantization_level(mut self, level: QuantizationLevel) -> Self {
+    pub fn add_quantization_level(mut self, level: StorageQuantizationFormat) -> Self {
         if !self.enabled_levels.contains(&level) {
             self.enabled_levels.push(level);
         }
@@ -270,7 +272,7 @@ impl QuantizedVectorSchemaBuilder {
     }
 
     /// Add multiple quantization levels
-    pub fn add_quantization_levels(mut self, levels: Vec<QuantizationLevel>) -> Self {
+    pub fn add_quantization_levels(mut self, levels: Vec<StorageQuantizationFormat>) -> Self {
         for level in levels {
             self = self.add_quantization_level(level);
         }
@@ -324,46 +326,64 @@ impl QuantizedVectorSchemaBuilder {
     /// Build field definition for quantization level using columnar constants
     fn build_field_definition(
         &self,
-        level: &QuantizationLevel,
+        level: &StorageQuantizationFormat,
     ) -> Result<QuantizedFieldDefinition> {
         // Use constants from columnar module for consistent naming
         let field_name = match level {
-            QuantizationLevel::Binary => FIELD_Q_BINARY.to_string(),
-            QuantizationLevel::Int8 => FIELD_Q_INT8.to_string(),
-            QuantizationLevel::PQ4 => FIELD_Q_PQ4.to_string(),
-            QuantizationLevel::PQ8 => FIELD_Q_PQ8.to_string(),
-            QuantizationLevel::PQ16 => FIELD_Q_PQ16.to_string(),
-            QuantizationLevel::PQ32 => FIELD_Q_PQ32.to_string(),
+            StorageQuantizationFormat::BinaryFormat => FIELD_Q_BINARY.to_string(),
+            StorageQuantizationFormat::ScalarFormat(bits) => match bits {
+                ScalarQuantizationBits::Int4 => FIELD_Q_INT8.to_string(), // TODO: Add FIELD_Q_INT4 constant
+                ScalarQuantizationBits::Int8 => FIELD_Q_INT8.to_string(),
+                ScalarQuantizationBits::UInt8 => FIELD_Q_INT8.to_string(), // TODO: Add FIELD_Q_UINT8 constant
+            },
+            StorageQuantizationFormat::ProductFormat(bits) => match bits {
+                ProductQuantizationBits::PQ4 => FIELD_Q_PQ4.to_string(),
+                ProductQuantizationBits::PQ8 => FIELD_Q_PQ8.to_string(),
+                ProductQuantizationBits::PQ16 => FIELD_Q_PQ16.to_string(),
+                ProductQuantizationBits::PQ32 => FIELD_Q_PQ32.to_string(),
+            },
         };
 
         let physical_spec = match level {
-            QuantizationLevel::Binary => PhysicalFieldSpec::Binary {
+            StorageQuantizationFormat::BinaryFormat => PhysicalFieldSpec::Binary {
                 bits_per_dimension: 1,
                 packing_strategy: BitPackingStrategy::Sequential,
             },
-            QuantizationLevel::Int8 => PhysicalFieldSpec::Int8 {
-                signed: true,
-                scale_encoding: ScaleEncoding::PerFile,
+            StorageQuantizationFormat::ScalarFormat(bits) => match bits {
+                ScalarQuantizationBits::Int4 => PhysicalFieldSpec::Int8 {
+                    signed: true,
+                    scale_encoding: ScaleEncoding::PerFile,
+                }, // TODO: Add Int4 support
+                ScalarQuantizationBits::Int8 => PhysicalFieldSpec::Int8 {
+                    signed: true,
+                    scale_encoding: ScaleEncoding::PerFile,
+                },
+                ScalarQuantizationBits::UInt8 => PhysicalFieldSpec::Int8 {
+                    signed: false,
+                    scale_encoding: ScaleEncoding::PerFile,
+                },
             },
-            QuantizationLevel::PQ4 => PhysicalFieldSpec::ProductQuantization {
-                bits_per_code: 4,
-                num_subquantizers: self.calculate_subquantizers(4)?,
-                code_packing: Some(CodePackingStrategy::FourBit { codes_per_byte: 2 }),
-            },
-            QuantizationLevel::PQ8 => PhysicalFieldSpec::ProductQuantization {
-                bits_per_code: 8,
-                num_subquantizers: self.calculate_subquantizers(8)?,
-                code_packing: None,
-            },
-            QuantizationLevel::PQ16 => PhysicalFieldSpec::ProductQuantization {
-                bits_per_code: 16,
-                num_subquantizers: self.calculate_subquantizers(16)?,
-                code_packing: None,
-            },
-            QuantizationLevel::PQ32 => PhysicalFieldSpec::ProductQuantization {
-                bits_per_code: 32,
-                num_subquantizers: self.calculate_subquantizers(32)?,
-                code_packing: None,
+            StorageQuantizationFormat::ProductFormat(bits) => match bits {
+                ProductQuantizationBits::PQ4 => PhysicalFieldSpec::ProductQuantization {
+                    bits_per_code: 4,
+                    num_subquantizers: self.calculate_subquantizers(4)?,
+                    code_packing: Some(CodePackingStrategy::FourBit { codes_per_byte: 2 }),
+                },
+                ProductQuantizationBits::PQ8 => PhysicalFieldSpec::ProductQuantization {
+                    bits_per_code: 8,
+                    num_subquantizers: self.calculate_subquantizers(8)?,
+                    code_packing: None,
+                },
+                ProductQuantizationBits::PQ16 => PhysicalFieldSpec::ProductQuantization {
+                    bits_per_code: 16,
+                    num_subquantizers: self.calculate_subquantizers(16)?,
+                    code_packing: None,
+                },
+                ProductQuantizationBits::PQ32 => PhysicalFieldSpec::ProductQuantization {
+                    bits_per_code: 32,
+                    num_subquantizers: self.calculate_subquantizers(32)?,
+                    code_packing: None,
+                },
             },
         };
 
@@ -378,15 +398,15 @@ impl QuantizedVectorSchemaBuilder {
         })
     }
 
-    /// Check if quantization level requires codebook
+    /// Check if quantization storage format requires codebook
     #[allow(dead_code)]
-    fn requires_codebook(&self, level: &QuantizationLevel) -> bool {
+    fn requires_codebook(&self, level: &StorageQuantizationFormat) -> bool {
         matches!(
             level,
-            QuantizationLevel::PQ4
-                | QuantizationLevel::PQ8
-                | QuantizationLevel::PQ16
-                | QuantizationLevel::PQ32
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4)
+                | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8)
+                | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16)
+                | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32)
         )
     }
 
@@ -395,7 +415,7 @@ impl QuantizedVectorSchemaBuilder {
     #[allow(dead_code)]
     fn build_codebook_definition(
         &self,
-        level: &QuantizationLevel,
+        level: &StorageQuantizationFormat,
     ) -> Result<QuantizedFieldDefinition> {
         // Codebooks are now stored as file-level metadata, not per-row columns
         // For ProximaBlock engines: stored in footer
@@ -411,20 +431,24 @@ impl QuantizedVectorSchemaBuilder {
     /// Build parameter field definitions using columnar constants
     fn build_parameter_definitions(
         &self,
-        level: &QuantizationLevel,
+        level: &StorageQuantizationFormat,
     ) -> Result<Vec<QuantizedFieldDefinition>> {
         let mut param_defs = Vec::new();
 
         // Use constants for consistent parameter column naming
         match level {
-            QuantizationLevel::Binary => {
+            StorageQuantizationFormat::BinaryFormat => {
                 param_defs.push(self.build_parameter_field(
                     level,
                     FIELD_QP_BINARY_THRESHOLD,
                     ParameterType::BinaryThreshold,
                 )?);
             }
-            QuantizationLevel::Int8 => {
+            StorageQuantizationFormat::ScalarFormat(
+                ScalarQuantizationBits::Int4
+                | ScalarQuantizationBits::Int8
+                | ScalarQuantizationBits::UInt8,
+            ) => {
                 param_defs.push(self.build_parameter_field(
                     level,
                     FIELD_QP_INT8_MIN,
@@ -441,10 +465,10 @@ impl QuantizedVectorSchemaBuilder {
                     ParameterType::Int8ScaleFactor,
                 )?);
             }
-            QuantizationLevel::PQ4
-            | QuantizationLevel::PQ8
-            | QuantizationLevel::PQ16
-            | QuantizationLevel::PQ32 => {
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4)
+            | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8)
+            | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16)
+            | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32) => {
                 param_defs.push(self.build_parameter_field(
                     level,
                     FIELD_QP_PQ_SUBQUANTIZERS,
@@ -464,7 +488,7 @@ impl QuantizedVectorSchemaBuilder {
     /// Build single parameter field
     fn build_parameter_field(
         &self,
-        level: &QuantizationLevel,
+        level: &StorageQuantizationFormat,
         name: &str,
         param_type: ParameterType,
     ) -> Result<QuantizedFieldDefinition> {
@@ -508,20 +532,23 @@ impl QuantizedVectorSchemaBuilder {
 
     /// Get bits per code for quantization level
     #[allow(dead_code)]
-    fn get_bits_per_code(&self, level: &QuantizationLevel) -> u8 {
+    fn get_bits_per_code(&self, level: &StorageQuantizationFormat) -> u8 {
         match level {
-            QuantizationLevel::PQ4 => 4,
-            QuantizationLevel::PQ8 => 8,
-            QuantizationLevel::PQ16 => 16,
-            QuantizationLevel::PQ32 => 32,
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4) => 4,
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8) => 8,
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16) => 16,
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32) => 32,
             _ => 8, // Default
         }
     }
 
     /// Estimate data characteristics for quantization level
-    fn estimate_data_characteristics(&self, level: &QuantizationLevel) -> DataCharacteristics {
+    fn estimate_data_characteristics(
+        &self,
+        level: &StorageQuantizationFormat,
+    ) -> DataCharacteristics {
         match level {
-            QuantizationLevel::Binary => DataCharacteristics {
+            StorageQuantizationFormat::BinaryFormat => DataCharacteristics {
                 expected_compression_ratio: 32.0, // 32x compression vs FP32
                 expected_memory_per_vector: self.dimension.div_ceil(8), // Bit-packed
                 expected_search_speedup: 15.0,
@@ -530,36 +557,54 @@ impl QuantizedVectorSchemaBuilder {
                     use_sparse_encoding: false, // Bit-packing already efficient
                 }),
             },
-            QuantizationLevel::Int8 => DataCharacteristics {
-                expected_compression_ratio: 4.0, // 4x compression vs FP32
-                expected_memory_per_vector: self.dimension,
-                expected_search_speedup: 8.0,
-                sparsity_info: None,
+            StorageQuantizationFormat::ScalarFormat(bits) => match bits {
+                ScalarQuantizationBits::Int4 => DataCharacteristics {
+                    expected_compression_ratio: 8.0, // 8x compression vs FP32
+                    expected_memory_per_vector: self.dimension.div_ceil(2),
+                    expected_search_speedup: 10.0,
+                    sparsity_info: None,
+                },
+                ScalarQuantizationBits::Int8 | ScalarQuantizationBits::UInt8 => {
+                    DataCharacteristics {
+                        expected_compression_ratio: 4.0, // 4x compression vs FP32
+                        expected_memory_per_vector: self.dimension,
+                        expected_search_speedup: 8.0,
+                        sparsity_info: None,
+                    }
+                }
             },
-            QuantizationLevel::PQ8 => DataCharacteristics {
-                expected_compression_ratio: 4.0, // Depends on subquantizers
-                expected_memory_per_vector: self.calculate_subquantizers(8).unwrap_or(8),
-                expected_search_speedup: 5.0,
-                sparsity_info: None,
-            },
-            QuantizationLevel::PQ4 => DataCharacteristics {
-                expected_compression_ratio: 8.0, // Better compression with 4-bit codes
-                expected_memory_per_vector: self.calculate_subquantizers(4).unwrap_or(4) / 2,
-                expected_search_speedup: 6.0,
-                sparsity_info: None,
-            },
-            QuantizationLevel::PQ16 => DataCharacteristics {
-                expected_compression_ratio: 2.0, // Less compression with 16-bit codes
-                expected_memory_per_vector: self.calculate_subquantizers(16).unwrap_or(16) * 2,
-                expected_search_speedup: 3.0,
-                sparsity_info: None,
-            },
-            QuantizationLevel::PQ32 => DataCharacteristics {
-                expected_compression_ratio: 1.0, // No compression gain with 32-bit codes
-                expected_memory_per_vector: self.calculate_subquantizers(32).unwrap_or(32) * 4,
-                expected_search_speedup: 1.5,
-                sparsity_info: None,
-            },
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8) => {
+                DataCharacteristics {
+                    expected_compression_ratio: 4.0, // Depends on subquantizers
+                    expected_memory_per_vector: self.calculate_subquantizers(8).unwrap_or(8),
+                    expected_search_speedup: 5.0,
+                    sparsity_info: None,
+                }
+            }
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4) => {
+                DataCharacteristics {
+                    expected_compression_ratio: 8.0, // Better compression with 4-bit codes
+                    expected_memory_per_vector: self.calculate_subquantizers(4).unwrap_or(4) / 2,
+                    expected_search_speedup: 6.0,
+                    sparsity_info: None,
+                }
+            }
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16) => {
+                DataCharacteristics {
+                    expected_compression_ratio: 2.0, // Less compression with 16-bit codes
+                    expected_memory_per_vector: self.calculate_subquantizers(16).unwrap_or(16) * 2,
+                    expected_search_speedup: 3.0,
+                    sparsity_info: None,
+                }
+            }
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32) => {
+                DataCharacteristics {
+                    expected_compression_ratio: 1.0, // No compression gain with 32-bit codes
+                    expected_memory_per_vector: self.calculate_subquantizers(32).unwrap_or(32) * 4,
+                    expected_search_speedup: 1.5,
+                    sparsity_info: None,
+                }
+            }
         }
     }
 
@@ -573,12 +618,24 @@ impl QuantizedVectorSchemaBuilder {
                 let mut quantized_fields = Vec::new();
                 for level in &self.enabled_levels {
                     let field_name = match level {
-                        QuantizationLevel::Binary => FIELD_Q_BINARY.to_string(),
-                        QuantizationLevel::Int8 => FIELD_Q_INT8.to_string(),
-                        QuantizationLevel::PQ4 => FIELD_Q_PQ4.to_string(),
-                        QuantizationLevel::PQ8 => FIELD_Q_PQ8.to_string(),
-                        QuantizationLevel::PQ16 => FIELD_Q_PQ16.to_string(),
-                        QuantizationLevel::PQ32 => FIELD_Q_PQ32.to_string(),
+                        StorageQuantizationFormat::BinaryFormat => FIELD_Q_BINARY.to_string(),
+                        StorageQuantizationFormat::ScalarFormat(
+                            ScalarQuantizationBits::Int4
+                            | ScalarQuantizationBits::Int8
+                            | ScalarQuantizationBits::UInt8,
+                        ) => FIELD_Q_INT8.to_string(),
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4) => {
+                            FIELD_Q_PQ4.to_string()
+                        }
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8) => {
+                            FIELD_Q_PQ8.to_string()
+                        }
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16) => {
+                            FIELD_Q_PQ16.to_string()
+                        }
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32) => {
+                            FIELD_Q_PQ32.to_string()
+                        }
                     };
                     quantized_fields.push(field_name);
                 }
@@ -599,12 +656,24 @@ impl QuantizedVectorSchemaBuilder {
                 // Quantized columns - use constants for same names as ProximaBlock
                 for level in &self.enabled_levels {
                     let column_name = match level {
-                        QuantizationLevel::Binary => FIELD_Q_BINARY.to_string(),
-                        QuantizationLevel::Int8 => FIELD_Q_INT8.to_string(),
-                        QuantizationLevel::PQ4 => FIELD_Q_PQ4.to_string(),
-                        QuantizationLevel::PQ8 => FIELD_Q_PQ8.to_string(),
-                        QuantizationLevel::PQ16 => FIELD_Q_PQ16.to_string(),
-                        QuantizationLevel::PQ32 => FIELD_Q_PQ32.to_string(),
+                        StorageQuantizationFormat::BinaryFormat => FIELD_Q_BINARY.to_string(),
+                        StorageQuantizationFormat::ScalarFormat(
+                            ScalarQuantizationBits::Int4
+                            | ScalarQuantizationBits::Int8
+                            | ScalarQuantizationBits::UInt8,
+                        ) => FIELD_Q_INT8.to_string(),
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4) => {
+                            FIELD_Q_PQ4.to_string()
+                        }
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8) => {
+                            FIELD_Q_PQ8.to_string()
+                        }
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16) => {
+                            FIELD_Q_PQ16.to_string()
+                        }
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32) => {
+                            FIELD_Q_PQ32.to_string()
+                        }
                     };
                     // Logical name = Physical name for consistency
                     column_mapping.insert(column_name.clone(), column_name);
@@ -616,14 +685,19 @@ impl QuantizedVectorSchemaBuilder {
                 // Parameter columns - use constants
                 for level in &self.enabled_levels {
                     let param_columns = match level {
-                        QuantizationLevel::Binary => vec![FIELD_QP_BINARY_THRESHOLD],
-                        QuantizationLevel::Int8 => {
+                        StorageQuantizationFormat::BinaryFormat => vec![FIELD_QP_BINARY_THRESHOLD],
+                        StorageQuantizationFormat::ScalarFormat(
+                            ScalarQuantizationBits::Int4
+                            | ScalarQuantizationBits::Int8
+                            | ScalarQuantizationBits::UInt8,
+                        ) => {
                             vec![FIELD_QP_INT8_MIN, FIELD_QP_INT8_MAX, FIELD_QP_INT8_SCALE]
                         }
-                        QuantizationLevel::PQ4
-                        | QuantizationLevel::PQ8
-                        | QuantizationLevel::PQ16
-                        | QuantizationLevel::PQ32 => {
+                        StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4)
+                        | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8)
+                        | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16)
+                        | StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32) =>
+                        {
                             vec![FIELD_QP_PQ_SUBQUANTIZERS, FIELD_QP_PQ_CENTROIDS]
                         }
                     };
@@ -661,14 +735,14 @@ impl QuantizedVectorSchemaBuilder {
 
 impl QuantizedVectorSchema {
     /// Check if schema supports quantization level
-    pub fn supports_level(&self, level: &QuantizationLevel) -> bool {
+    pub fn supports_level(&self, level: &StorageQuantizationFormat) -> bool {
         self.enabled_levels.contains(level)
     }
 
     /// Get field definition for quantization level
     pub fn get_field_definition(
         &self,
-        level: &QuantizationLevel,
+        level: &StorageQuantizationFormat,
     ) -> Option<&QuantizedFieldDefinition> {
         self.field_definitions
             .iter()
@@ -753,16 +827,26 @@ mod tests {
             128,
             SchemaStorageType::ProximaBlock,
         )
-        .add_quantization_level(QuantizationLevel::Binary)
-        .add_quantization_level(QuantizationLevel::Int8)
+        .add_quantization_level(StorageQuantizationFormat::BinaryFormat)
+        .add_quantization_level(StorageQuantizationFormat::ScalarFormat(
+            ScalarQuantizationBits::Int8,
+        ))
         .build()?;
 
         assert_eq!(schema.collection_id, "test_collection");
         assert_eq!(schema.dimension, 128);
         assert_eq!(schema.enabled_levels.len(), 2);
-        assert!(schema.supports_level(&QuantizationLevel::Binary));
-        assert!(schema.supports_level(&QuantizationLevel::Int8));
-        assert!(!schema.supports_level(&QuantizationLevel::PQ8));
+        assert!(schema.supports_level(&StorageQuantizationFormat::BinaryFormat));
+        assert!(
+            schema.supports_level(&StorageQuantizationFormat::ScalarFormat(
+                ScalarQuantizationBits::Int8
+            ))
+        );
+        assert!(
+            !schema.supports_level(&StorageQuantizationFormat::ProductFormat(
+                ProductQuantizationBits::PQ8
+            ))
+        );
 
         schema.validate()?;
         Ok(())
@@ -784,7 +868,7 @@ mod tests {
     fn test_storage_mapping_parquet() -> Result<()> {
         let schema =
             QuantizedVectorSchemaBuilder::new("test".to_string(), 128, SchemaStorageType::Parquet)
-                .add_quantization_level(QuantizationLevel::Binary)
+                .add_quantization_level(StorageQuantizationFormat::BinaryFormat)
                 .build()?;
 
         match &schema.storage_mapping {
@@ -805,8 +889,10 @@ mod tests {
             128,
             SchemaStorageType::ProximaBlock,
         )
-        .add_quantization_level(QuantizationLevel::Binary)
-        .add_quantization_level(QuantizationLevel::Int8)
+        .add_quantization_level(StorageQuantizationFormat::BinaryFormat)
+        .add_quantization_level(StorageQuantizationFormat::ScalarFormat(
+            ScalarQuantizationBits::Int8,
+        ))
         .build()?;
 
         let savings = schema.estimated_storage_savings();

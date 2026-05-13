@@ -15,9 +15,9 @@ pub mod graph;
 pub mod handlers;
 /// REST handlers for hybrid (vector + BM25) search
 pub mod hybrid;
+/// REST handlers for unified multi-model query execution
+pub mod multimodal_query;
 /// REST handlers for Natural Language query translation (AV-SQL)
 pub mod nl;
 /// REST handlers for observability queries (logs, metrics, traces)
 pub mod observability;
-/// REST handlers for unified multi-model query execution
-pub mod unified_query;

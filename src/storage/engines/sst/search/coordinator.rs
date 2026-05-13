@@ -284,7 +284,7 @@ mod tests {
     use super::*;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::proto::proximadb_v1::DistanceMetric;
-    use crate::query::unified_query_optimizer::SearchParams;
+    use crate::query::query_optimizer::SearchParams;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
 

@@ -183,6 +183,7 @@ pub mod hybrid_search;
 pub mod metrics_service;
 /// HTTP middleware stack (auth, CORS, rate limiting, TLS)
 pub mod middleware;
+pub mod multi_protocol_handler;
 /// Multi-protocol server orchestration (REST + gRPC + Arrow Flight)
 pub mod multi_server;
 /// Unified port protocol multiplexer (HTTP/gRPC auto-detection)
@@ -192,10 +193,13 @@ pub mod postgres;
 pub mod rest;
 pub mod server_builder;
 pub mod tls;
-pub mod unified_handler;
 
 pub use metrics_service::*;
 pub use middleware::*;
+pub use multi_protocol_handler::{
+    RequestProtocol, ResponseData, ResponseMetadata, UnifiedQueryHandler, UnifiedQueryRequest,
+    UnifiedQueryResponse,
+};
 pub use multi_server::{
     ArrowIpcServerConfig, GrpcHttpServerConfig, MultiServer, MultiServerConfig,
     RestHttpServerConfig,
@@ -203,10 +207,6 @@ pub use multi_server::{
 use serde::{Deserialize, Serialize};
 pub use server_builder::{
     ArrowIpcServerBuilder, GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder,
-};
-pub use unified_handler::{
-    RequestProtocol, ResponseData, ResponseMetadata, UnifiedQueryHandler, UnifiedQueryRequest,
-    UnifiedQueryResponse,
 };
 
 /// Network server configuration

@@ -10,7 +10,7 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::trace;
 
-use crate::storage::persistence::filesystem::unified::CacheType;
+use crate::storage::persistence::filesystem::unified_filesystem::CacheType;
 
 /// Comprehensive cache metrics collector
 pub struct CacheMetrics {

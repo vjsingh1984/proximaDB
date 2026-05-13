@@ -10,7 +10,8 @@ mod tests {
     };
     use crate::storage::engines::core::formats::columnar::constants::*;
     use crate::storage::engines::core::formats::common_quantization::{
-        QuantizationLevel, QuantizedVectorData,
+        ProductQuantizationBits, QuantizedVectorData, ScalarQuantizationBits,
+        StorageQuantizationFormat,
     };
     use std::collections::HashMap;
 
@@ -106,24 +107,37 @@ mod tests {
 
     #[test]
     fn test_quantization_level_compatibility() {
-        // Verify our QuantizationLevel enum works with the schema
+        // Verify storage quantization formats work with the schema constants.
         let levels = vec![
-            QuantizationLevel::Binary,
-            QuantizationLevel::Int8,
-            QuantizationLevel::PQ4,
-            QuantizationLevel::PQ8,
-            QuantizationLevel::PQ16,
-            QuantizationLevel::PQ32,
+            StorageQuantizationFormat::BinaryFormat,
+            StorageQuantizationFormat::ScalarFormat(ScalarQuantizationBits::Int8),
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4),
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8),
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16),
+            StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32),
         ];
 
         for level in levels {
             let field_name = match level {
-                QuantizationLevel::Binary => FIELD_Q_BINARY,
-                QuantizationLevel::Int8 => FIELD_Q_INT8,
-                QuantizationLevel::PQ4 => FIELD_Q_PQ4,
-                QuantizationLevel::PQ8 => FIELD_Q_PQ8,
-                QuantizationLevel::PQ16 => FIELD_Q_PQ16,
-                QuantizationLevel::PQ32 => FIELD_Q_PQ32,
+                StorageQuantizationFormat::BinaryFormat => FIELD_Q_BINARY,
+                StorageQuantizationFormat::ScalarFormat(ScalarQuantizationBits::Int8) => {
+                    FIELD_Q_INT8
+                }
+                StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ4) => {
+                    FIELD_Q_PQ4
+                }
+                StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8) => {
+                    FIELD_Q_PQ8
+                }
+                StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ16) => {
+                    FIELD_Q_PQ16
+                }
+                StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ32) => {
+                    FIELD_Q_PQ32
+                }
+                StorageQuantizationFormat::ScalarFormat(
+                    ScalarQuantizationBits::Int4 | ScalarQuantizationBits::UInt8,
+                ) => FIELD_Q_INT8,
             };
 
             assert!(field_name.starts_with("q_"));

@@ -46,7 +46,7 @@ impl ProgressiveSearchCoordinator {
         k: usize,
         distance_metric: DistanceMetric,
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
         >,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         info!(
@@ -136,7 +136,7 @@ impl ProgressiveSearchCoordinator {
         k: usize,
         distance_metric: DistanceMetric,
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
         >,
         _quant_engine: &Arc<StorageQuantizationEngine>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
@@ -205,7 +205,7 @@ impl ProgressiveSearchCoordinator {
         k: usize,
         distance_metric: DistanceMetric,
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
         >,
         quantization_level: UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {
@@ -302,7 +302,7 @@ impl ProgressiveSearchCoordinator {
         k: usize,
         distance_metric: DistanceMetric,
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
         >,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut priority_queue = BoundedPriorityQueue::new(k);
@@ -346,7 +346,7 @@ impl ProgressiveSearchCoordinator {
         k: usize,
         distance_metric: DistanceMetric,
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
         >,
         quantization_level: &UnifiedQuantizationLevel,
     ) -> Result<Vec<OptimizedSearchRecord>> {

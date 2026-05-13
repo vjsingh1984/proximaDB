@@ -70,7 +70,7 @@ use tracing::{debug, info, instrument, trace, warn};
 use crate::compute::plan::{BinaryOp, ComputePlan, Expr, LiteralValue, PlanHints, PlanNode};
 use crate::compute::provider::traits::{ExecutionContext, RecordBatchStream};
 use crate::compute::scheduler::ComputeScheduler;
-use crate::query::unified_query_optimizer::{
+use crate::query::query_optimizer::{
     ExecutionStep, FilterCondition, SearchExecutionMethod, UnifiedExecutionPlan,
 };
 
@@ -506,9 +506,9 @@ impl ComputeBridge {
 
                 // Use the index type to determine distance metric
                 let metric = match index_type {
-                    crate::query::unified_query_optimizer::Index::HNSW => "euclidean",
-                    crate::query::unified_query_optimizer::Index::IVF => "cosine",
-                    crate::query::unified_query_optimizer::Index::LSH => "hamming",
+                    crate::query::query_optimizer::Index::HNSW => "euclidean",
+                    crate::query::query_optimizer::Index::IVF => "cosine",
+                    crate::query::query_optimizer::Index::LSH => "hamming",
                     _ => "euclidean",
                 };
 
@@ -532,9 +532,9 @@ impl ComputeBridge {
     fn method_to_metric(&self, method: &SearchExecutionMethod) -> String {
         match method {
             SearchExecutionMethod::IndexBased { index_type } => match index_type {
-                crate::query::unified_query_optimizer::Index::HNSW => "euclidean".to_string(),
-                crate::query::unified_query_optimizer::Index::IVF => "cosine".to_string(),
-                crate::query::unified_query_optimizer::Index::LSH => "hamming".to_string(),
+                crate::query::query_optimizer::Index::HNSW => "euclidean".to_string(),
+                crate::query::query_optimizer::Index::IVF => "cosine".to_string(),
+                crate::query::query_optimizer::Index::LSH => "hamming".to_string(),
                 _ => "euclidean".to_string(),
             },
             _ => "cosine".to_string(), // Default
@@ -699,16 +699,14 @@ impl ComputeBridge {
     /// Convert pushdown operation to filter condition
     fn pushdown_to_condition(
         &self,
-        pushdown: &crate::query::unified_query_optimizer::FilterPushdownOperation,
+        pushdown: &crate::query::query_optimizer::FilterPushdownOperation,
     ) -> Option<FilterCondition> {
         match pushdown {
-            crate::query::unified_query_optimizer::FilterPushdownOperation::StorageLevel {
-                filter,
-                ..
+            crate::query::query_optimizer::FilterPushdownOperation::StorageLevel {
+                filter, ..
             } => Some(filter.clone()),
-            crate::query::unified_query_optimizer::FilterPushdownOperation::IndexLevel {
-                filter,
-                ..
+            crate::query::query_optimizer::FilterPushdownOperation::IndexLevel {
+                filter, ..
             } => Some(filter.clone()),
         }
     }
@@ -884,7 +882,7 @@ impl BridgeStatistics {
 mod tests {
     use super::*;
     use crate::compute::provider::LocalComputeProvider;
-    use crate::query::unified_query_optimizer::{
+    use crate::query::query_optimizer::{
         ParallelismConfig, ResourceAllocation, UnifiedPerformanceEstimate,
     };
 

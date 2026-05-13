@@ -48,8 +48,8 @@ use crate::storage::traits::StorageQueryContext;
 
 use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value, MetadataItem};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig, FileSystem};
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-use crate::query::unified_query_optimizer::SearchParams as QuerySearchParams;
+use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::query::query_optimizer::SearchParams as QuerySearchParams;
 
 // ============================================================================
 // SECTION 1: Unified Search Engine Tests (19 tests)

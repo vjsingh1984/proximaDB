@@ -188,7 +188,7 @@ async fn test_parquet_flush_and_read_pattern() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -319,7 +319,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -597,7 +597,7 @@ async fn test_multi_file_directory_scan() {
         .get_filesystem(data_dir.to_str().unwrap())
         .unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -718,7 +718,7 @@ async fn test_dictionary_encoding_optimization() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -824,7 +824,7 @@ async fn test_customer_api_compatibility() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -940,7 +940,7 @@ async fn test_row_group_offset_optimization() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),

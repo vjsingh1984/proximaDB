@@ -10,7 +10,7 @@ use std::sync::Arc;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
 
 use super::zone_maps::PruningStrategy;
 
@@ -393,7 +393,7 @@ impl DirectNOVAReader {
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = self.filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 self.collection_id.clone(),
                 "nova".to_string(),

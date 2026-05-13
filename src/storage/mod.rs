@@ -182,10 +182,10 @@
 
 pub mod builder;
 pub mod error;
+pub mod scan_strategy;
 pub mod trait_components;
 pub mod traits;
 pub mod types;
-pub mod unified_scan_strategy;
 pub mod validation;
 
 // Common reusable components

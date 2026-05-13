@@ -332,7 +332,7 @@ impl UnifiedHandlers {
         }
     }
 
-    /// Set the query facade adapter for unified query routing (thread-safe; callable post-initialization)
+    /// Set the query facade adapter for query routing (thread-safe; callable post-initialization)
     ///
     /// When set, SQL queries will be routed through the unified facade for:
     /// - Consistent query metrics across all query types

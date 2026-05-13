@@ -213,7 +213,7 @@ pub use clustering::{
 pub use index_factory::{AxisIndexCreationResult, AxisVectorIndex, IndexFactory, IndexStats};
 
 // Migration helpers and monitor exports
-pub use crate::query::unified_query_optimizer::IndexCapabilities;
+pub use crate::query::query_optimizer::IndexCapabilities;
 pub use management::migration_engine::{MigrationEngine, MigrationPhase, MigrationPlan};
 pub use management::monitor::{AxisMonitor, MonitoringMetrics};
 pub use management::strategy::{IndexStrategy, StrategyRecommendation, StrategySelector};

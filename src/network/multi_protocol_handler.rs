@@ -44,7 +44,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use proximadb::network::unified_handler::{UnifiedQueryHandler, UnifiedQueryRequest};
+//! use proximadb::network::multi_protocol_handler::{UnifiedQueryHandler, UnifiedQueryRequest};
 //!
 //! // Create handler with services
 //! let handler = UnifiedQueryHandler::new(vector_ops, collection_service);

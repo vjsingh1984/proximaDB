@@ -39,7 +39,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::constants::{
     DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
 };
-use crate::storage::unified_scan_strategy::{ScanIterator, ScanStrategy};
+use crate::storage::scan_strategy::{ScanIterator, ScanStrategy};
 
 /// Unified columnar I/O configuration
 #[derive(Debug, Clone)]
@@ -689,7 +689,7 @@ impl ScanIterator for IpcStreamIterator {
         Ok(None)
     }
 
-    fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
+    fn statistics(&self) -> crate::storage::scan_strategy::ScanStatistics {
         Default::default()
     }
 
@@ -721,7 +721,7 @@ impl ScanIterator for IpcFileIterator {
         Ok(None)
     }
 
-    fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
+    fn statistics(&self) -> crate::storage::scan_strategy::ScanStatistics {
         Default::default()
     }
 
@@ -763,7 +763,7 @@ impl ScanIterator for ParquetFilteredIterator {
         Ok(None)
     }
 
-    fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
+    fn statistics(&self) -> crate::storage::scan_strategy::ScanStatistics {
         Default::default()
     }
 
@@ -792,7 +792,7 @@ impl ScanIterator for ParquetStandardIterator {
         Ok(None)
     }
 
-    fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
+    fn statistics(&self) -> crate::storage::scan_strategy::ScanStatistics {
         Default::default()
     }
 

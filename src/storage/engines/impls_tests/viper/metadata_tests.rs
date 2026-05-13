@@ -4,7 +4,7 @@
 
 #[test]
 fn test_viper_metadata_serialization() {
-    use crate::storage::engines::viper::unified_metadata_serializer::{
+    use crate::storage::engines::core::viper_unified_metadata_serializer::{
         ClusterInfo, RowGroupMetadata, ViperCachedMetadata, ViperMetadataSerializer,
     };
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
@@ -52,7 +52,7 @@ fn test_viper_metadata_serialization() {
 
 #[test]
 fn test_parquet_footer_extraction() {
-    use crate::storage::engines::viper::unified_metadata_serializer::ViperMetadataSerializer;
+    use crate::storage::engines::core::viper_unified_metadata_serializer::ViperMetadataSerializer;
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 
     let serializer = ViperMetadataSerializer::new();
@@ -76,7 +76,7 @@ fn test_parquet_footer_extraction() {
 
 #[test]
 fn test_should_cache_metadata() {
-    use crate::storage::engines::viper::unified_metadata_serializer::ViperMetadataSerializer;
+    use crate::storage::engines::core::viper_unified_metadata_serializer::ViperMetadataSerializer;
     use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 
     let serializer = ViperMetadataSerializer::new();

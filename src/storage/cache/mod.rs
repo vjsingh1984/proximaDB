@@ -185,8 +185,10 @@
 
 pub mod backend;
 pub mod base;
+pub mod cache_coordinator; // TD-042: Cache coordinator
 pub mod config;
 pub mod eviction;
+pub mod eviction_policy; // TD-042: Eviction policies
 pub mod health_monitor;
 pub mod metrics;
 pub mod metrics_integration;
@@ -194,23 +196,12 @@ pub mod orchestrator;
 pub mod performance_optimizer;
 pub mod specialized;
 pub mod traits;
-pub mod unified_cache; // TD-042: Unified cache interface
-pub mod unified_eviction; // TD-042: Unified eviction policies
 pub mod warming;
 
 // Re-export main types
 pub use backend::{CacheTier, StorageBackend};
 pub use base::BaseCacheImpl;
-pub use config::{CacheConfig, GlobalCacheConfig};
-pub use eviction::{AccessTracker, CacheEvictionConfig, CacheEvictor, EvictionPolicy};
-pub use health_monitor::{CacheMonitoringDashboard, DashboardState};
-pub use metrics::CacheMetrics;
-pub use orchestrator::{
-    AccessPatternTracker, CacheType, CrossCacheOrchestrator, DynamicMemoryAllocator,
-};
-pub use performance_optimizer::{CacheOptimizer, OptimizationReport};
-pub use traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
-pub use unified_cache::{
+pub use cache_coordinator::{
     // TD-042: Unified cache interface
     CacheDependency,
     CacheId,
@@ -218,7 +209,9 @@ pub use unified_cache::{
     UnifiedCache,
     UnifiedCacheCoordinator,
 };
-pub use unified_eviction::{
+pub use config::{CacheConfig, GlobalCacheConfig};
+pub use eviction::{AccessTracker, CacheEvictionConfig, CacheEvictor, EvictionPolicy};
+pub use eviction_policy::{
     // TD-042: Unified eviction policies
     CachePriority,
     EvictionConfig,
@@ -226,6 +219,13 @@ pub use unified_eviction::{
     PressureStatus,
     UnifiedEvictionPolicy,
 };
+pub use health_monitor::{CacheMonitoringDashboard, DashboardState};
+pub use metrics::CacheMetrics;
+pub use orchestrator::{
+    AccessPatternTracker, CacheType, CrossCacheOrchestrator, DynamicMemoryAllocator,
+};
+pub use performance_optimizer::{CacheOptimizer, OptimizationReport};
+pub use traits::{BaseCache, CacheEntry, CacheKey, CacheValue};
 
 // Re-export specialized caches
 pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCache, VectorCache};

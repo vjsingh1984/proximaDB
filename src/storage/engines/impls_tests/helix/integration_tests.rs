@@ -1187,7 +1187,7 @@ async fn test_proxima_integration() {
 
     // Wrap in UnifiedCachingFilesystem for production-like behavior
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_filesystem,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1359,7 +1359,7 @@ async fn test_block_sizes_serialization_roundtrip() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1438,7 +1438,7 @@ async fn test_large_dimension_blocks_1536d() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1530,7 +1530,7 @@ async fn test_extreme_dimension_blocks_4096d() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1595,7 +1595,7 @@ async fn test_exact_size_eliminates_rereads() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1680,7 +1680,7 @@ async fn test_header_size_mismatch_detection() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1744,7 +1744,7 @@ async fn test_block_sizes_no_compression() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1814,7 +1814,7 @@ async fn test_varying_block_sizes() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1897,7 +1897,7 @@ async fn test_hilbert_range_in_header() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),
@@ -1977,7 +1977,7 @@ async fn test_complete_query_flow_with_pruning() {
         .unwrap();
 
     let filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "helix".to_string(),

@@ -39,7 +39,7 @@ use crate::storage::engines::helix::pca_impl::{EnhancedPCAModel, PCAModelManager
 use crate::storage::engines::helix::progressive_search::{ProgressiveSearchCoordinator, ProgressiveSearchStats};
 use crate::storage::engines::helix::query_optimization::{PredictivePrefetcher, SmartResultCache, QueryPattern};
 use crate::storage::engines::helix::readers::QueryStats;
-use crate::storage::engines::helix::unified_metadata_serializer::{
+use crate::storage::engines::core::helix_unified_metadata_serializer::{
     HelixUnifiedMetadataSerializer, HelixCachedMetadata, HilbertConfig,
     PcaModelMetadata, LiquidClusteringMetadata, ZoneMapEntry, SstableMetadata, QueryOptimizationStats,
 };

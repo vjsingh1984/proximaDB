@@ -19,7 +19,7 @@
 //! Simple timing-based benchmarks to establish baseline performance measurements.
 //! These benchmarks use std::time::Instant to measure actual operation timings.
 
-use proximadb::storage::cache::unified_cache::UnifiedCacheCoordinator;
+use proximadb::storage::cache::UnifiedCacheCoordinator;
 use std::sync::Arc;
 use std::time::Instant;
 

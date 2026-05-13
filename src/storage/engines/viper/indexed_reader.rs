@@ -71,7 +71,7 @@ impl VIPERParquetMetadataSource {
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "viper_collection".to_string(),
                 "viper".to_string(),
@@ -227,7 +227,7 @@ impl VIPERIndexBasedReader {
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = self.filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "viper_collection".to_string(),
                 "viper".to_string(),
@@ -266,7 +266,7 @@ impl VIPERIndexBasedReader {
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = self.filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "viper_collection".to_string(),
                 "viper".to_string(),

@@ -11,7 +11,7 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
-use crate::storage::persistence::filesystem::unified::AccessOperation;
+use crate::storage::persistence::filesystem::unified_filesystem::AccessOperation;
 
 /// Tracks access patterns for intelligent caching decisions
 pub struct AccessPatternTracker {

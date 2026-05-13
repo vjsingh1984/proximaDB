@@ -1,6 +1,6 @@
 //! Configuration types for vector search operations.
 
-use crate::query::unified_query_optimizer::OptimizationGoal;
+use crate::query::query_optimizer::OptimizationGoal;
 
 /// Unified search configuration that works for SQL, REST, and gRPC.
 #[derive(Debug, Clone)]

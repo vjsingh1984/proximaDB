@@ -152,7 +152,9 @@ pub mod zone_maps;
 
 // Unified columnar infrastructure integration
 pub mod unified_columnar_integration;
-pub mod unified_metadata_serializer;
+pub mod unified_metadata_serializer {
+    pub use crate::storage::engines::core::nova_unified_metadata_serializer::*;
+}
 pub mod unified_strategy_reader;
 
 // Reader modules (re-exports UnifiedParquetReader from columnar module)

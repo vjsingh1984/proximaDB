@@ -12,7 +12,9 @@ use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
-use crate::storage::persistence::filesystem::{FileSystem, unified::UnifiedCachingFilesystem};
+use crate::storage::persistence::filesystem::{
+    FileSystem, unified_filesystem::UnifiedCachingFilesystem,
+};
 
 use super::clustering::{
     HilbertKey, LiquidClusteringConfig, PCAModel, QueryPatternTracker, sort_by_hilbert,

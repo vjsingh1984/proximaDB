@@ -523,7 +523,7 @@ impl RaptorEngine {
         // Initialize UnifiedCachingFilesystem with RAPTOR metadata serializer
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
-        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+        use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
         use crate::storage::transaction_coordinator::TransactionCoordinator;
 
         // Create filesystem factory first

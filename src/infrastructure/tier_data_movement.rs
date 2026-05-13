@@ -31,7 +31,7 @@ use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::sst::writer::SstableWriter;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
 // Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
 // use crate::storage::engines::viper::flush::ViperFlushOperation; // Deferred: Import correct flush module

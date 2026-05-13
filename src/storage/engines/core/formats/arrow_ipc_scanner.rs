@@ -25,7 +25,7 @@ use tracing::{debug, info, trace};
 use async_trait::async_trait;
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::unified_scan_strategy::{ScanIterator, ScanStatistics};
+use crate::storage::scan_strategy::{ScanIterator, ScanStatistics};
 use super::VectorSerializer;
 
 /// Configuration for Arrow IPC scanning

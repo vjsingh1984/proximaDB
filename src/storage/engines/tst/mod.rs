@@ -121,6 +121,7 @@ use crate::index::axis::eventlog::StorageEngineType;
 use crate::proto::proximadb_v1::{Collection, VectorRecord};
 use crate::storage::StorageEngineStrategy;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::storage::scan_strategy::ScanIterator;
 use crate::storage::traits::EngineHealth;
 use crate::storage::traits::StorageQueryContext;
 use crate::storage::traits::{
@@ -130,7 +131,6 @@ use crate::storage::traits::{
     StorageIdentity, StorageLifecycle, StorageMetrics, StorageReader, StorageWriter,
     UnifiedStorageEngine,
 };
-use crate::storage::unified_scan_strategy::ScanIterator;
 
 // Re-export key types
 pub use asof_join::{ASOFJoin, ASOFJoinQuery, ASOFJoinResult};
@@ -1482,9 +1482,9 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
     async fn create_scan(
         &self,
         collection_id: &str,
-        strategy: crate::storage::unified_scan_strategy::ScanStrategy,
+        strategy: crate::storage::scan_strategy::ScanStrategy,
         _collection_config: Option<&Collection>,
-    ) -> Result<Box<dyn crate::storage::unified_scan_strategy::ScanIterator>> {
+    ) -> Result<Box<dyn crate::storage::scan_strategy::ScanIterator>> {
         // Create a time-series scan iterator
         let iterator = TimeSeriesScanIterator {
             engine: self.clone(),
@@ -1514,7 +1514,7 @@ struct TimeSeriesScanIterator {
     collection_id: String,
 
     /// Scan strategy filter
-    strategy: crate::storage::unified_scan_strategy::ScanStrategy,
+    strategy: crate::storage::scan_strategy::ScanStrategy,
 
     /// Current partition key being scanned
     current_partition_key: Option<DateTime<Utc>>,
@@ -1590,8 +1590,8 @@ impl ScanIterator for TimeSeriesScanIterator {
         }
     }
 
-    fn statistics(&self) -> crate::storage::unified_scan_strategy::ScanStatistics {
-        crate::storage::unified_scan_strategy::ScanStatistics {
+    fn statistics(&self) -> crate::storage::scan_strategy::ScanStatistics {
+        crate::storage::scan_strategy::ScanStatistics {
             records_scanned: self.current_index * 100, // Approximate
             records_matched: 0,
             bytes_read: 0,

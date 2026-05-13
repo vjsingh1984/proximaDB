@@ -38,7 +38,7 @@ mod tests {
         );
         let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "test_collection".to_string(),
                 "viper".to_string(),

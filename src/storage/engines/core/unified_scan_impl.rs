@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::unified_scan_strategy::{ScanStrategy, ScanIterator, ScanStatistics};
+use crate::storage::scan_strategy::{ScanStrategy, ScanIterator, ScanStatistics};
 use crate::storage::traits::UnifiedStorageEngine;
 
 /// Unified scan implementation that all engines can use

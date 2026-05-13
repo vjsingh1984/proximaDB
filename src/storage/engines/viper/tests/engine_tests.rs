@@ -935,7 +935,7 @@ mod tests {
             // Create UnifiedCachingFilesystem for testing
             let base_fs = filesystem.get_filesystem("file://").unwrap();
             let cached_filesystem = Arc::new(
-                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
                     base_fs,
                     collection_id.to_string(),
                     "viper".to_string(),

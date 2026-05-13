@@ -135,7 +135,8 @@ pub struct ViperEngine {
     /// - **Prefetch Engine**: Predictive loading based on access patterns
     ///
     /// Critical for cloud storage performance (S3/Azure/GCS latency hiding)
-    filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+    filesystem:
+        Arc<crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem>,
 
     /// **Filesystem Factory**
     ///
@@ -322,7 +323,7 @@ impl ViperEngine {
         // - Parquet metadata/footers cached separately for fast columnar access
         // - Hot files remain in cache based on LRU policy
         let unified_fs = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::with_serializer(
                 base_fs,
                 "default".to_string(),
                 "viper".to_string(),
@@ -336,7 +337,9 @@ impl ViperEngine {
     /// Create a new VIPER engine from user-facing core config
     pub async fn from_unified_filesystem(
         core_config: crate::core::config::ViperConfig,
-        filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: Arc<
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+        >,
     ) -> Result<Self> {
         // Create a dummy filesystem factory for backward compatibility
         let filesystem_factory = Arc::new(FilesystemFactory::create_default().await?);
@@ -346,7 +349,9 @@ impl ViperEngine {
     /// Create a new VIPER engine with both filesystems
     pub async fn from_unified_filesystem_and_factory(
         core_config: crate::core::config::ViperConfig,
-        filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: Arc<
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+        >,
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         let config = ViperEngineConfig::from_core_config(&core_config);
@@ -386,7 +391,7 @@ impl ViperEngine {
         // Create UnifiedCachingFilesystem without collection_id
         // Collection ID will come from runtime parameters
         let unified_fs = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::with_serializer(
                 base_fs,
                 String::new(), // No collection_id - gets from parameters
                 "viper".to_string(),
@@ -429,7 +434,9 @@ impl ViperEngine {
     async fn new_internal(
         config: ViperEngineConfig,
         core_config: crate::core::config::ViperConfig,
-        filesystem: Arc<crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem>,
+        filesystem: Arc<
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+        >,
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         let collection_service = Arc::new(RwLock::new(None));
@@ -763,7 +770,7 @@ impl ViperEngine {
         column_idx: usize,
         filesystem_factory: Arc<FilesystemFactory>,
         cached_filesystem: Arc<
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
         >,
         collection_id: &str,
     ) -> Result<Vec<u8>> {
@@ -884,7 +891,7 @@ impl ViperEngine {
         _optimizer: &UniversalPerformanceOptimizer,
         filesystem_factory: Arc<FilesystemFactory>,
         cached_filesystem: Arc<
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
         >,
         collection_id: &str,
     ) -> Result<Vec<u8>> {
@@ -1839,7 +1846,7 @@ impl Default for ViperEngine {
 
             // Create UnifiedCachingFilesystem
             let unified_fs = Arc::new(
-                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+                crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::with_serializer(
                     base_fs,
                     "default".to_string(),
                     "viper".to_string(),

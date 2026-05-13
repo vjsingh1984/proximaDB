@@ -48,7 +48,7 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::storage::cache::unified_cache::{CacheId, UnifiedCacheCoordinator};
+use crate::storage::cache::cache_coordinator::{CacheId, UnifiedCacheCoordinator};
 
 /// Unified eviction policy for coordinated cache management
 pub struct UnifiedEvictionPolicy {
@@ -397,7 +397,7 @@ pub use crate::core::error::VectorDBError;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::cache::unified_cache::UnifiedCacheCoordinator;
+    use crate::storage::cache::cache_coordinator::UnifiedCacheCoordinator;
 
     #[test]
     fn test_eviction_config_default() {

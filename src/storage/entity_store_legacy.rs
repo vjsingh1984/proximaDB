@@ -641,8 +641,7 @@ impl EntityStore for ProximaEntityStore {
         if let Some(vector) = query_vector {
             if let Some(vs) = &self.vector_service {
                 let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
-                    optimization_goal:
-                        crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+                    optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
                     progressive_search: true,
                     progressive_recalls: None, // Use default recalls
                     include_vectors: false,

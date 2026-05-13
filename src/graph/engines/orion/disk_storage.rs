@@ -58,7 +58,7 @@
 
 use crate::core::error::{ProximaDBError, StorageError};
 use crate::graph::EdgeId;
-use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
+use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
 use memmap2::MmapMut;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

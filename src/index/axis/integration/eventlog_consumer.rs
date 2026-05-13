@@ -650,7 +650,7 @@ impl AxisEventLogConsumer {
         storage_engine: StorageEngineType,
         collection_id: &str,
     ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
-        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+        use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
         use crate::storage::trait_components::extractor::{
             ExtractionFactory, ExtractionMode as TraitMode, ExtractionRequest,
         };
