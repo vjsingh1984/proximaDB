@@ -12,3 +12,7 @@ description = "Shared ProximaDB observability query IR contracts"
 [lib]
 name = "proximadb_observability_query"
 path = "src/lib.rs"
+
+[dependencies]
+async-trait.workspace = true
+proximadb-kernel = { path = "../../foundation/proximadb-kernel" }

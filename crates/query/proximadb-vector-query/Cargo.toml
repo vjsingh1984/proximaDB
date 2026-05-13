@@ -12,3 +12,8 @@ description = "Shared ProximaDB vector query IR contracts"
 [lib]
 name = "proximadb_vector_query"
 path = "src/lib.rs"
+
+[dependencies]
+async-trait.workspace = true
+proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
+proximadb-proto = { workspace = true }

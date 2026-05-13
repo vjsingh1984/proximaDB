@@ -5766,6 +5766,9 @@ dependencies = [
 name = "proximadb-document-query"
 version = "0.2.0"
 dependencies = [
+ "async-trait",
+ "proximadb-kernel",
+ "proximadb-proto",
  "proximadb-query-filter",
 ]
 
@@ -5911,6 +5914,10 @@ dependencies = [
 [[package]]
 name = "proximadb-observability-query"
 version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "proximadb-kernel",
+]
 
 [[package]]
 name = "proximadb-pipeline-operator"
@@ -6092,6 +6099,11 @@ dependencies = [
 [[package]]
 name = "proximadb-vector-query"
 version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "proximadb-kernel",
+ "proximadb-proto",
+]
 
 [[package]]
 name = "psm"
