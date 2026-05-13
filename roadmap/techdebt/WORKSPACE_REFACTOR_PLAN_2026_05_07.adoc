@@ -798,6 +798,17 @@ Current status after the first refinement:
 * root audit/security/service runtime code now consumes audit event/resource/result contracts from
   `proximadb-security` directly; `src/audit/types.rs` remains a public compatibility shim rather
   than an internal dependency path
+* `proximadb-config` now exists as a foundation config-contract crate and owns the
+  transport-neutral WAL storage configuration contract (`WalStorageConfig` and
+  `WalDistributionStrategy`) previously embedded in the root `core::config` monolith; root keeps a
+  compatibility re-export while WAL/storage callers continue to compile through existing paths
+* the full root `Config` remains in root for now because it still composes AI, network, security,
+  query, storage-engine, and runtime conversion behavior; only validated, serializable, low-level
+  config contracts should move into `proximadb-config` until those dependencies are split
+* config extraction is aligned with the data/AI platform anchor's sidecar roadmap: catalog,
+  log/manifest, pgwire, Arrow Flight, streaming connector, compute adapter, and branch-manager
+  sidecars may share typed config contracts, but their lifecycle, runtime clients, and bootstrap
+  wiring must stay in platform/runtime/application crates rather than foundation
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside
@@ -815,7 +826,10 @@ Next implementation targets, in order:
 2. trim root-only bridge conversions out of compatibility shims until `proto` and `kernel` are fully leaf-like
 3. expand `proximadb-query` from lowering into the remaining query runtime behavior (`fusion`, result shaping, orchestration, and additional unified execution helpers) instead of creating more micro query crates
 4. push graph/vector/query/storage code to depend on `kernel` and `proto` surfaces instead of root-local modules
-5. avoid extracting `config` until it no longer depends on `ai`, `network`, and `security`
+5. continue extracting only leaf config contracts into `proximadb-config` when they are serializable,
+   transport-neutral, and reusable by sidecars or heavier crates; avoid moving the full root `Config`
+   until it no longer depends on `ai`, `network`, `security`, storage-engine runtime conversion, and
+   query/runtime bootstrap code
 6. expand `proximadb-graph` from execution contracts, operators, parser-language modules, planner, pattern runtime, and executor runtime into the remaining graph runtime helpers, then engine/service contracts
 7. only then start the larger `proximadb-vector` extraction
 
