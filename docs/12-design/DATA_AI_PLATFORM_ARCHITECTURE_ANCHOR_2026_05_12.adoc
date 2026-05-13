@@ -59,6 +59,353 @@ ProximaDB should provide:
 * **AI lifecycle**: feature store, experiment tracking, MLflow-compatible registry metadata,
   AutoML orchestration, model serving metadata, evaluation, drift, feedback, and agent traces.
 
+== Visual Architecture Anchors
+
+These diagrams are the visual companion to this anchor. They are intentionally high-level and
+should remain stable as implementation details move during the workspace refactor.
+
+=== Platform Layer Map
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+flowchart TB
+    subgraph Apps["Apps, Tools, and Workflows"]
+        AgentApps["Agent apps\nLangGraph, Victor, custom agents"]
+        MLApps["ML/AutoML/MLOps\nAutoGluon, PyCaret, MLflow, Ray"]
+        DataApps["Data apps\nBI, dbt, notebooks, services"]
+        AdminApps["Admin and platform ops\npolicy, lineage, branching"]
+    end
+
+    subgraph Compat["Compatibility Plane"]
+        Pgwire["PostgreSQL wire\nSQLAlchemy, JDBC, ODBC, psql, dbt"]
+        SDKs["SDKs\nPython, Rust, embedded"]
+        RestGrpc["REST/gRPC\nlifecycle and admin APIs"]
+        Flight["Arrow Flight\nbulk columnar exchange"]
+        StreamsApi["Streaming APIs\nCDC, Kafka/Kinesis/Flink adapters"]
+    end
+
+    subgraph Logical["Logical and Semantic Plane"]
+        SQL["SQL\nrelational, JSONB, vector"]
+        Cypher["Cypher/GQL\ngraph traversal"]
+        UQL["UQL/AQL/vector APIs\ncross-modal query"]
+        AgentApi["Agent APIs\nmemory, checkpoint, events, traces"]
+        MLOpsApi["MLOps APIs\nfeatures, experiments, registry"]
+    end
+
+    subgraph Control["xCatalog Control Plane"]
+        Catalog["xCatalog\nschemas, types, indexes, storage options"]
+        Governance["Policy and governance\nRLS, masking, audit, retention"]
+        Lineage["Lineage and provenance\nconnectors, transforms, models, agents"]
+        Branches["Branch and snapshot metadata\nPITR, TTL, masked, schema-only"]
+        Stats["Stats and optimization metadata\ncardinality, JSONB paths, vector stats"]
+    end
+
+    subgraph Runtime["Planning and Runtime Plane"]
+        Algebra["Logical algebra\nProximaRecord + ProximaType"]
+        Planner["Planner and router\ncost, policy, modality, branch, freshness"]
+        Native["Native Rust runtime\nOLTP, vector, graph, events, embedded"]
+        DataFusion["DataFusion\nlocal/server OLAP"]
+        ExternalCompute["External compute\nSpark, Trino, Ray, Flink"]
+    end
+
+    subgraph Storage["Storage and Format Plane"]
+        WAL["WAL, log, manifest\nrecovery, CDC, branching"]
+        ContextSeg["Proxima Context Segment\nhot mutable multi-modal state"]
+        Row["Row/record layout\nOLTP, online features, agent state"]
+        Hybrid["Hybrid PAX layout\nmixed OLTP/OLAP"]
+        Columnar["Columnar layout\nVIPER, Parquet, Arrow"]
+        Modal["Modal indexes\nHNSW/IVF, JSONB, graph topology, time"]
+        Lake["Open lake formats\nParquet, Avro, Iceberg, Delta, Hudi"]
+    end
+
+    Apps --> Compat
+    Compat --> Logical
+    Logical --> Control
+    Logical --> Runtime
+    Control <--> Runtime
+    Runtime --> Storage
+    Storage --> Control
+----
+
+=== Component Architecture
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+flowchart LR
+    subgraph Clients["Client Entry Points"]
+        PgClients["Postgres clients\npsql, JDBC, ODBC, SQLAlchemy"]
+        PyEmbed["Embedded Python\nmaturin/PyO3"]
+        RustEmbed["Embedded Rust"]
+        RestClients["REST/gRPC clients"]
+        FlightClients["Arrow Flight clients"]
+        StreamClients["Connectors and streams"]
+    end
+
+    subgraph API["Protocol and SDK Layer"]
+        PgServer["pgwire server"]
+        PyModule["proximadb_embedded module"]
+        RestServer["REST/gRPC handlers"]
+        FlightServer["Arrow Flight service"]
+        ConnectorSidecars["Connector sidecars"]
+    end
+
+    subgraph Services["Service Layer"]
+        DDL["DdlService\nCREATE/ALTER/DROP"]
+        DML["DmlService\nINSERT/UPDATE/DELETE"]
+        Introspect["CatalogIntrospectionService\nxcatalog.*, information_schema"]
+        QueryFacade["Unified query facade\nSQL, vector, graph, document"]
+        BranchSvc["Branch/snapshot service"]
+        AgentSvc["Agent store service\nmemory, checkpoints, events"]
+        MLOpsSvc["MLOps services\nfeatures, runs, registry"]
+    end
+
+    subgraph Core["Core Contracts"]
+        ProximaRecord["ProximaRecord envelope"]
+        ProximaType["ProximaType/ProximaValue"]
+        Algebra["Logical operators"]
+        Policy["Policy context"]
+    end
+
+    subgraph CatalogPlane["xCatalog"]
+        Schema["Schemas and constraints"]
+        Physical["Storage engine, layout, format"]
+        IndexMeta["Index metadata\nGIN, HNSW, IVF, graph, time"]
+        AssetMeta["AI, stream, branch, lineage metadata"]
+    end
+
+    subgraph Engines["Execution and Storage"]
+        NativeRuntime["Native Rust engines"]
+        DataFusionEngine["DataFusion"]
+        ExternalEngines["Spark, Trino, Ray, Flink"]
+        StorageEngines["SST, VIPER, HELIX, SWIFT, NOVA, RAPTOR"]
+        ExternalStores["Object stores and lake tables"]
+    end
+
+    PgClients --> PgServer
+    PyEmbed --> PyModule
+    RustEmbed --> QueryFacade
+    RestClients --> RestServer
+    FlightClients --> FlightServer
+    StreamClients --> ConnectorSidecars
+
+    PgServer --> DDL
+    PgServer --> DML
+    PgServer --> Introspect
+    PgServer --> QueryFacade
+    PyModule --> DDL
+    PyModule --> Introspect
+    PyModule --> QueryFacade
+    RestServer --> BranchSvc
+    RestServer --> AgentSvc
+    RestServer --> MLOpsSvc
+    FlightServer --> QueryFacade
+    ConnectorSidecars --> DML
+
+    DDL --> CatalogPlane
+    DML --> CatalogPlane
+    Introspect --> CatalogPlane
+    QueryFacade --> Core
+    BranchSvc --> CatalogPlane
+    AgentSvc --> CatalogPlane
+    MLOpsSvc --> CatalogPlane
+
+    Core --> CatalogPlane
+    Core --> Engines
+    CatalogPlane --> Engines
+    Engines --> CatalogPlane
+----
+
+=== Schema-First Multi-Model DDL Path
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+sequenceDiagram
+    participant SDK as Python SDK / ORM helper
+    participant PG as pgwire or embedded execute_sql
+    participant Parser as SQL frontend parser
+    participant DDL as DdlService
+    participant Catalog as xCatalog
+    participant Runtime as Query/storage runtime
+    participant Client as SQL client introspection
+
+    SDK->>PG: CREATE TABLE ... JSONB, VECTOR(n), PRIMARY KEY WITH (storage_engine, layout, schema_kind)
+    PG->>Parser: parse DDL
+    Parser->>DDL: DdlStatement::CreateTable
+    DDL->>Catalog: persist logical schema, JSONB encoding, vector dimensions, physical options
+    SDK->>PG: CREATE INDEX ... USING GIN/HNSW/IVF
+    PG->>Parser: parse index DDL
+    Parser->>DDL: DdlStatement::CreateIndex
+    DDL->>Catalog: persist index metadata
+    Client->>PG: SELECT * FROM xcatalog.tables / columns / indexes
+    PG->>Catalog: CatalogIntrospectionService
+    Catalog-->>Client: catalog-backed SQL rows
+    Runtime->>Catalog: plan/query using schema, policy, layout, and index metadata
+----
+
+=== Query Lowering and Engine Routing
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+flowchart TB
+    SQLText["SQL / Cypher / UQL / vector API / agent API"] --> Parse["Parse and normalize"]
+    Parse --> Resolve["Resolve names, branch, time, tenant, schema"]
+    Resolve --> CatalogRead["Read xCatalog\nschema, stats, policy, indexes, layout"]
+    CatalogRead --> AlgebraPlan["Build logical algebra\nrecords, paths, vectors, graph edges, events"]
+    AlgebraPlan --> Optimize["Optimize\npredicate pushdown, ANN filters, graph expansion, projection"]
+    Optimize --> Route{"Route by workload shape"}
+
+    Route -->|low-latency point/write/vector| Native["Native Rust runtime"]
+    Route -->|local scans/aggregates/Arrow| DataFusion["DataFusion"]
+    Route -->|large lakehouse/offline ML| Spark["Spark"]
+    Route -->|federated SQL/BI| Trino["Trino"]
+    Route -->|Python ML/AutoML/evals| Ray["Ray"]
+    Route -->|stateful streams| Flink["Flink"]
+
+    Native --> Merge["Result merge and policy enforcement"]
+    DataFusion --> Merge
+    Spark --> Merge
+    Trino --> Merge
+    Ray --> Merge
+    Flink --> Merge
+
+    Merge --> Explain["EXPLAIN\nengine, layout, index, policy, branch"]
+    Merge --> Results["Rows, Arrow batches, stream events, SDK objects"]
+----
+
+=== Storage, Format, and Branching Model
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+flowchart LR
+    Writes["Writes\nrecords, vectors, docs, graph edges, events"] --> WAL["WAL / event log"]
+    WAL --> Manifest["Versioned manifest\nsnapshots, branches, PITR"]
+    Manifest --> Hot["Hot record segments\nrow/record"]
+    Manifest --> PAX["Hybrid PAX segments"]
+    Manifest --> Col["Columnar segments\nVIPER, Parquet, Arrow"]
+    Manifest --> Indexes["Index fragments\nGIN/JSONB, HNSW/IVF, graph topology, time"]
+    Manifest --> Events["Append-only event streams"]
+
+    Hot --> Context["Proxima Context Segment"]
+    PAX --> Context
+    Col --> Context
+    Indexes --> Context
+    Events --> Context
+
+    Context --> Export["Open-format export/publication"]
+    Export --> Parquet["Parquet/Arrow"]
+    Export --> Avro["Avro"]
+    Export --> Iceberg["Iceberg/Polaris"]
+    Export --> Delta["Delta/Hudi"]
+
+    Manifest --> BranchMain["main branch"]
+    Manifest --> BranchDev["developer branch"]
+    Manifest --> BranchEval["agent/model eval branch"]
+    Manifest --> BranchMasked["masked/TTL branch"]
+
+    BranchMain --> Merge["diff, reset, merge, restore"]
+    BranchDev --> Merge
+    BranchEval --> Merge
+    BranchMasked --> Merge
+----
+
+=== Data, Agentic, and ML Planes
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+flowchart TB
+    subgraph DataPlane["Data Platform Workloads"]
+        Rel["Relational tables"]
+        Doc["Documents and JSONB"]
+        Vec["Vectors and ANN"]
+        Graph["Graphs and relationships"]
+        Event["Events, logs, streams"]
+        Feature["Feature tables"]
+    end
+
+    subgraph AgentPlane["Agentic Workloads"]
+        Memory["Memory store\nJSONB + optional embeddings"]
+        Checkpoint["Checkpoint store\nthread, parent, pending writes"]
+        Trace["Trace/event store\nprompts, tools, cost, latency"]
+        CodeGraph["Code/symbol store\ndocs, graph, embeddings"]
+        Eval["Agent evals\nbranch compare, replay"]
+    end
+
+    subgraph MLPlane["ML and MLOps Workloads"]
+        Runs["Experiment runs\nparams, metrics, artifacts"]
+        Registry["Model registry\nversions, aliases, signatures"]
+        AutoML["AutoML orchestration\nAutoGluon, PyCaret, Ray Tune"]
+        Predict["Batch/online prediction metadata"]
+        Drift["Monitoring\ndrift, quality, feedback"]
+    end
+
+    DataPlane --> Catalog["xCatalog\nshared schema, lineage, policy, branches"]
+    AgentPlane --> Catalog
+    MLPlane --> Catalog
+
+    Catalog --> Query["Unified query and lifecycle APIs"]
+    Query --> SQL["SQL/pgwire"]
+    Query --> SDK["Python/Rust SDK"]
+    Query --> Rest["REST/gRPC"]
+    Query --> Flight["Arrow Flight"]
+----
+
+=== Roadmap Progression
+
+[source,mermaid]
+----
+%%{init: {"theme": "default"}}%%
+flowchart LR
+    P0["Phase 0\nAnchor and guardrails\nspecs, ADRs, workspace shape"]
+    P1["Phase 1\nSingle-device MVP\npgwire DDL, xCatalog schema, JSONB, vector, embedded"]
+    P2["Phase 2\nMulti-machine platform\ncatalog/log sidecars, object storage, connectors, branches"]
+    P3["Phase 3\nEnterprise warehouse/global DB inheritance\nMVCC, materialized views, federation"]
+    P4["Phase 4\nFull multi-modal runtime\ngraph, event, time-series, observability, geospatial"]
+    P5["Phase 5\nMLOps and AutoML\nfeatures, MLflow, registry, Ray, batch inference"]
+    P6["Phase 6\nAgentic runtime and autopilot\nLangGraph/Victor, replay, advisor, auto-indexing"]
+    P7["Phase 7\nEcosystem and enterprise control plane\nPolaris/Iceberg facade, marketplace, governance"]
+
+    P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7
+
+    P1 -. foundation .-> P4
+    P1 -. schema/catalog .-> P5
+    P1 -. branch/log .-> P6
+    P2 -. sidecars .-> P7
+----
+
+=== ASCII Layer Summary
+
+[source,text]
+----
++--------------------------------------------------------------------------------------+
+| Apps and Workflows                                                                    |
+| Agents | LangGraph | Victor | dbt | BI | notebooks | AutoML | MLflow | services       |
++--------------------------------------------------------------------------------------+
+| Compatibility Plane                                                                    |
+| pgwire | SQLAlchemy/JDBC/ODBC | Python/Rust SDK | REST/gRPC | Arrow Flight | Streams |
++--------------------------------------------------------------------------------------+
+| Logical and Semantic Plane                                                             |
+| SQL | JSONB | VECTOR(n) | Cypher/GQL | UQL | Agent APIs | MLOps APIs | Transform APIs |
++--------------------------------------------------------------------------------------+
+| xCatalog Control Plane                                                                 |
+| schemas | ProximaType | indexes | storage options | policies | lineage | branches      |
+| connector state | model metadata | feature definitions | agent checkpoints/events      |
++--------------------------------------------------------------------------------------+
+| Planning and Runtime Plane                                                             |
+| logical algebra | optimizer | policy enforcement | native Rust | DataFusion | adapters |
+| Spark | Trino | Ray | Flink | Kafka/Kinesis sidecars                                    |
++--------------------------------------------------------------------------------------+
+| Storage and Format Plane                                                               |
+| WAL/log/manifest | Proxima Context Segment | row | PAX | columnar | graph topology    |
+| vector fragments | event streams | Parquet | Avro | Iceberg | Delta | object storage   |
++--------------------------------------------------------------------------------------+
+----
+
 == Competitive Lessons To Absorb
 
 === Databricks
