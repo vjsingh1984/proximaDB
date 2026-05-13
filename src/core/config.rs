@@ -520,8 +520,8 @@ pub struct StorageConfig {
 
 pub use proximadb_config::{
     AdvancedPruneConfig, AssignmentConfig, AzureConfig, CloudStorageConfig, CompactionConfig,
-    FilesystemOptimizationConfig, GcsConfig, MetadataBackendConfig, MonitoringConfig,
-    OptimizationConfig, PruneModeConfig, S3Config, StorageLocation, TempStrategy,
+    ConsensusConfig, FilesystemOptimizationConfig, GcsConfig, MetadataBackendConfig,
+    MonitoringConfig, OptimizationConfig, PruneModeConfig, S3Config, StorageLocation, TempStrategy,
     TransactionalOperationsConfig,
 };
 
@@ -968,33 +968,6 @@ impl SstConfig {
             compression: "zstd".to_string(), // Zstd compression for tests
             compression_level: 3,            // Balanced compression level
             ..Default::default()
-        }
-    }
-}
-
-/// Raft consensus configuration for clustered deployments
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusConfig {
-    /// Raft node identifier (unique within the cluster)
-    pub node_id: Option<u64>,
-    /// Addresses of other cluster peers
-    pub cluster_peers: Vec<String>,
-    /// Election timeout in milliseconds
-    pub election_timeout_ms: u64,
-    /// Heartbeat interval in milliseconds
-    pub heartbeat_interval_ms: u64,
-    /// Number of log entries before taking a snapshot
-    pub snapshot_threshold: u64,
-}
-
-impl Default for ConsensusConfig {
-    fn default() -> Self {
-        Self {
-            node_id: None,
-            cluster_peers: Vec::new(),
-            election_timeout_ms: 5000,
-            heartbeat_interval_ms: 1000,
-            snapshot_threshold: 10000,
         }
     }
 }

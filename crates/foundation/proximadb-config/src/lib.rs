@@ -143,6 +143,37 @@ impl Default for ApiConfig {
     }
 }
 
+/// Cluster bootstrap and peer discovery configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConsensusConfig {
+    /// Raft node identifier (unique within the cluster).
+    pub node_id: Option<u64>,
+
+    /// Addresses of other cluster peers.
+    pub cluster_peers: Vec<String>,
+
+    /// Election timeout in milliseconds.
+    pub election_timeout_ms: u64,
+
+    /// Heartbeat interval in milliseconds.
+    pub heartbeat_interval_ms: u64,
+
+    /// Number of log entries before taking a snapshot.
+    pub snapshot_threshold: u64,
+}
+
+impl Default for ConsensusConfig {
+    fn default() -> Self {
+        Self {
+            node_id: None,
+            cluster_peers: Vec::new(),
+            election_timeout_ms: 5000,
+            heartbeat_interval_ms: 1000,
+            snapshot_threshold: 10000,
+        }
+    }
+}
+
 /// Hardware acceleration configuration controlling SIMD and GPU features.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HardwareConfig {
@@ -714,6 +745,17 @@ mod tests {
         assert!(config.enable_arrow_flight);
         assert_eq!(config.http2_max_concurrent_streams, 1000);
         assert_eq!(config.max_connections, 10000);
+    }
+
+    #[test]
+    fn consensus_defaults_match_root_runtime_expectations() {
+        let config = ConsensusConfig::default();
+
+        assert!(config.node_id.is_none());
+        assert!(config.cluster_peers.is_empty());
+        assert_eq!(config.election_timeout_ms, 5000);
+        assert_eq!(config.heartbeat_interval_ms, 1000);
+        assert_eq!(config.snapshot_threshold, 10000);
     }
 
     #[test]

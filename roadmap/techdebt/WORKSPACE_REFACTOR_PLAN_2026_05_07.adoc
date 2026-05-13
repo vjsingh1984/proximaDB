@@ -839,6 +839,10 @@ Current status after the first refinement:
   Flight, compression, TLS enablement, and unified-port knobs; root keeps a compatibility re-export
   while protocol handlers, server builders, listener lifecycle, and transport-specific TLS wiring
   remain in network/runtime modules
+* `proximadb-config` now owns the root cluster bootstrap option contract (`ConsensusConfig`) for
+  node identity, peer addresses, election timing, heartbeat timing, and snapshot thresholds; root
+  keeps a compatibility re-export while Raft runtime tuning, membership, quorum behavior, transport,
+  failover, and control-plane orchestration remain in cluster/runtime modules
 * the full root `Config` remains in root for now because it still composes AI, network, security,
   query, storage-engine, and runtime conversion behavior; only validated, serializable, low-level
   config contracts should move into `proximadb-config` until those dependencies are split
@@ -877,6 +881,9 @@ Current status after the first refinement:
 * API config extraction follows the anchor's compatibility-plane and sidecar roadmap: pgwire, REST,
   gRPC, Arrow Flight, and streaming/control-plane sidecars can share endpoint options without
   depending on root server bootstrap or protocol handler implementations
+* consensus bootstrap config extraction follows the anchor's multi-machine platform and HA
+  control-plane roadmap: catalog, branch/log, streaming, and placement sidecars can share node/peer
+  option shapes without depending on the Raft engine, peer transport, or root cluster orchestration
 * `scripts/measure_workspace_rebuild.py` now includes `proximadb-telemetry`,
   `proximadb-runtime-common`, `proximadb-security`, and `proximadb-storage-common` in the default
   rebuild baseline package list, so telemetry, horizontal, and storage-common changes are measured alongside
