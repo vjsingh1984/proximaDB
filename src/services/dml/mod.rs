@@ -1302,6 +1302,7 @@ impl DmlService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_catalog::CatalogColumn;
 
     fn update_test_schema() -> CatalogTableSchema {
         CatalogTableSchema::new("agent_store")
