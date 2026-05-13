@@ -20,6 +20,7 @@ members = [
     "apps/proximadb-server",
     ".",
     "clients/rust",
+    "crates/foundation/proximadb-config",
     "crates/foundation/proximadb-data-model",
     "crates/foundation/proximadb-filter-expression",
     "crates/foundation/proximadb-kernel",
@@ -72,6 +73,7 @@ chrono = { version = "0.4.31", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }
 hyper = { version = "0.14" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
+proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
@@ -127,6 +129,7 @@ rmp-serde = "1.1"  # MessagePack serialization
 bytemuck = { version = "1.14", features = ["derive"] }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-document-query = { path = "crates/query/proximadb-document-query" }
+proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }

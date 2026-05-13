@@ -5602,6 +5602,7 @@ dependencies = [
  "prost",
  "prost-types",
  "proximadb-catalog",
+ "proximadb-config",
  "proximadb-data-model",
  "proximadb-document-query",
  "proximadb-filter-expression",
@@ -5722,6 +5723,13 @@ version = "0.2.0"
 dependencies = [
  "arrow-schema",
  "proximadb-data-model",
+ "serde",
+]
+
+[[package]]
+name = "proximadb-config"
+version = "0.2.0"
+dependencies = [
  "serde",
 ]
 
