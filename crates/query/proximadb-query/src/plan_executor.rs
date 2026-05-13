@@ -10,8 +10,9 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use proximadb_data_model::DataModel;
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use proximadb_multimodel_plan::{MultiModelPlan, Operator};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::operators::{
     hybrid_traverse::{AnnSeedProvider, GraphNeighbourProvider, HybridTraverseExecutor},
@@ -172,11 +173,40 @@ impl PlanExecutor {
             }
 
             // ── Passthrough operators (storage-engine pipeline handles these) ───
-            Operator::Scan { source, .. } => {
+            Operator::Scan {
+                source,
+                filter,
+                columns,
+                ..
+            } => {
                 // The data model name drives the scan; full engine dispatch is in
                 // `compute::pipeline_executor`. Here we emit a placeholder scan.
                 let model = Self::data_model_from_source(source);
                 ctx.current_rows = ctx.data_source.scan(model, None)?;
+                if let Some(filter) = filter {
+                    ctx.current_rows
+                        .retain(|row| Self::row_matches(row, filter));
+                }
+                if let Some(columns) = columns {
+                    ctx.current_rows = ctx
+                        .current_rows
+                        .iter()
+                        .map(|row| Self::project_row(row, columns))
+                        .collect();
+                }
+            }
+
+            Operator::Filter { expression } => {
+                ctx.current_rows
+                    .retain(|row| Self::row_matches(row, expression));
+            }
+
+            Operator::Project { columns } => {
+                ctx.current_rows = ctx
+                    .current_rows
+                    .iter()
+                    .map(|row| Self::project_row(row, columns))
+                    .collect();
             }
 
             Operator::Limit { n, offset } => {
@@ -200,6 +230,135 @@ impl PlanExecutor {
         Ok(())
     }
 
+    fn project_row(row: &Value, columns: &[String]) -> Value {
+        let mut out = Map::new();
+        for column in columns {
+            if let Some(value) = Self::field_value(row, column) {
+                out.insert(column.clone(), value.clone());
+            }
+        }
+        Value::Object(out)
+    }
+
+    fn row_matches(row: &Value, expression: &FilterExpression) -> bool {
+        match expression {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => Self::compare_value(Self::field_value(row, field), operator, value),
+            FilterExpression::And(expressions) => {
+                expressions.iter().all(|expr| Self::row_matches(row, expr))
+            }
+            FilterExpression::Or(expressions) => {
+                expressions.iter().any(|expr| Self::row_matches(row, expr))
+            }
+            FilterExpression::Not(expression) => !Self::row_matches(row, expression),
+        }
+    }
+
+    fn field_value<'a>(row: &'a Value, field: &str) -> Option<&'a Value> {
+        let mut current = row;
+        for part in field.split('.') {
+            current = current.get(part)?;
+        }
+        Some(current)
+    }
+
+    fn compare_value(
+        field_value: Option<&Value>,
+        operator: &ComparisonOperator,
+        expected: &Value,
+    ) -> bool {
+        match operator {
+            ComparisonOperator::IsNull => field_value.is_none_or(Value::is_null),
+            ComparisonOperator::IsNotNull => field_value.is_some_and(|value| !value.is_null()),
+            ComparisonOperator::Equals => field_value == Some(expected),
+            ComparisonOperator::NotEquals => field_value != Some(expected),
+            ComparisonOperator::GreaterThan => {
+                Self::compare_ordering(field_value, expected, |ord| ord.is_gt())
+            }
+            ComparisonOperator::GreaterThanOrEqual => {
+                Self::compare_ordering(field_value, expected, |ord| ord.is_ge())
+            }
+            ComparisonOperator::LessThan => {
+                Self::compare_ordering(field_value, expected, |ord| ord.is_lt())
+            }
+            ComparisonOperator::LessThanOrEqual => {
+                Self::compare_ordering(field_value, expected, |ord| ord.is_le())
+            }
+            ComparisonOperator::In => match (field_value, expected) {
+                (Some(value), Value::Array(values)) => values.contains(value),
+                _ => false,
+            },
+            ComparisonOperator::NotIn => match (field_value, expected) {
+                (Some(value), Value::Array(values)) => !values.contains(value),
+                _ => true,
+            },
+            ComparisonOperator::Contains => match (field_value, expected) {
+                (Some(Value::String(text)), Value::String(needle)) => text.contains(needle),
+                (Some(Value::Array(values)), needle) => values.contains(needle),
+                _ => false,
+            },
+            ComparisonOperator::StartsWith => match (field_value, expected) {
+                (Some(Value::String(text)), Value::String(prefix)) => text.starts_with(prefix),
+                _ => false,
+            },
+            ComparisonOperator::EndsWith => match (field_value, expected) {
+                (Some(Value::String(text)), Value::String(suffix)) => text.ends_with(suffix),
+                _ => false,
+            },
+            ComparisonOperator::Between => match (field_value, expected) {
+                (Some(value), Value::Array(bounds)) if bounds.len() == 2 => {
+                    Self::compare_ordering(Some(value), &bounds[0], |ord| ord.is_ge())
+                        && Self::compare_ordering(Some(value), &bounds[1], |ord| ord.is_le())
+                }
+                _ => false,
+            },
+            ComparisonOperator::Like => match (field_value, expected) {
+                (Some(Value::String(text)), Value::String(pattern)) => {
+                    Self::matches_like_pattern(text, pattern)
+                }
+                _ => false,
+            },
+        }
+    }
+
+    fn compare_ordering<F>(field_value: Option<&Value>, expected: &Value, predicate: F) -> bool
+    where
+        F: FnOnce(std::cmp::Ordering) -> bool,
+    {
+        let Some(field_value) = field_value else {
+            return false;
+        };
+        let ordering = match (field_value, expected) {
+            (Value::Number(left), Value::Number(right)) => left
+                .as_f64()
+                .zip(right.as_f64())
+                .and_then(|(left, right)| left.partial_cmp(&right)),
+            (Value::String(left), Value::String(right)) => Some(left.cmp(right)),
+            _ => None,
+        };
+        ordering.is_some_and(predicate)
+    }
+
+    fn matches_like_pattern(text: &str, pattern: &str) -> bool {
+        if pattern == "%" {
+            return true;
+        }
+
+        let starts_with_wildcard = pattern.starts_with('%');
+        let ends_with_wildcard = pattern.ends_with('%');
+        let needle = pattern.trim_matches('%');
+
+        match (starts_with_wildcard, ends_with_wildcard) {
+            (true, true) => text.contains(needle),
+            (true, false) => text.ends_with(needle),
+            (false, true) => text.starts_with(needle),
+            (false, false) => text == needle,
+        }
+    }
+
     fn data_model_from_source(source: &str) -> DataModel {
         match source.to_lowercase().as_str() {
             "vector" | "vectors" => DataModel::Vector,
@@ -221,6 +380,7 @@ impl PlanExecutor {
 mod tests {
     use super::*;
     use proximadb_data_model::DataModel as PlanDataModel;
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
     use proximadb_multimodel_plan::{
         EdgePattern, JoinCondition, PlanContext, TraversalDirection, VectorMetric,
     };
@@ -415,5 +575,114 @@ mod tests {
         let result = PlanExecutor::execute(&plan, &mut ctx).unwrap();
         assert_eq!(result.rows.len(), 3);
         assert_eq!(result.rows[0]["id"], "v2"); // offset 2
+    }
+
+    #[test]
+    fn test_filter_operator_applies_json_row_predicates() {
+        let vector_rows = vec![
+            serde_json::json!({
+                "id": "v1",
+                "tenant": "acme",
+                "score": 0.91,
+                "payload": { "kind": "checkpoint" }
+            }),
+            serde_json::json!({
+                "id": "v2",
+                "tenant": "acme",
+                "score": 0.42,
+                "payload": { "kind": "event" }
+            }),
+            serde_json::json!({
+                "id": "v3",
+                "tenant": "globex",
+                "score": 0.99,
+                "payload": { "kind": "checkpoint" }
+            }),
+        ];
+
+        let plan = MultiModelPlan::new(
+            vec![
+                Operator::Scan {
+                    source: "vector".to_string(),
+                    data_model: PlanDataModel::Vector,
+                    filter: None,
+                    columns: None,
+                },
+                Operator::Filter {
+                    expression: FilterExpression::And(vec![
+                        FilterExpression::Comparison {
+                            field: "tenant".to_string(),
+                            operator: ComparisonOperator::Equals,
+                            value: serde_json::json!("acme"),
+                        },
+                        FilterExpression::Comparison {
+                            field: "score".to_string(),
+                            operator: ComparisonOperator::GreaterThan,
+                            value: serde_json::json!(0.5),
+                        },
+                        FilterExpression::Comparison {
+                            field: "payload.kind".to_string(),
+                            operator: ComparisonOperator::Equals,
+                            value: serde_json::json!("checkpoint"),
+                        },
+                    ]),
+                },
+            ],
+            plan_ctx(),
+        );
+
+        let mut ctx = make_context(vector_rows, vec![]);
+        let result = PlanExecutor::execute(&plan, &mut ctx).unwrap();
+
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0]["id"], "v1");
+        assert_eq!(result.operator_stats[1].rows_in, 3);
+        assert_eq!(result.operator_stats[1].rows_out, 1);
+    }
+
+    #[test]
+    fn test_scan_filter_and_project_shape_rows() {
+        let vector_rows = vec![
+            serde_json::json!({
+                "id": "v1",
+                "tenant": "acme",
+                "score": 0.91,
+                "discard": "hidden"
+            }),
+            serde_json::json!({
+                "id": "v2",
+                "tenant": "globex",
+                "score": 0.99,
+                "discard": "hidden"
+            }),
+        ];
+
+        let plan = MultiModelPlan::new(
+            vec![
+                Operator::Scan {
+                    source: "vector".to_string(),
+                    data_model: PlanDataModel::Vector,
+                    filter: Some(FilterExpression::Comparison {
+                        field: "tenant".to_string(),
+                        operator: ComparisonOperator::Equals,
+                        value: serde_json::json!("acme"),
+                    }),
+                    columns: Some(vec!["id".to_string(), "score".to_string()]),
+                },
+                Operator::Project {
+                    columns: vec!["id".to_string()],
+                },
+            ],
+            plan_ctx(),
+        );
+
+        let mut ctx = make_context(vector_rows, vec![]);
+        let result = PlanExecutor::execute(&plan, &mut ctx).unwrap();
+
+        assert_eq!(result.rows, vec![serde_json::json!({ "id": "v1" })]);
+        assert_eq!(result.operator_stats[0].rows_in, 0);
+        assert_eq!(result.operator_stats[0].rows_out, 1);
+        assert_eq!(result.operator_stats[1].rows_in, 1);
+        assert_eq!(result.operator_stats[1].rows_out, 1);
     }
 }
