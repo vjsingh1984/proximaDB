@@ -403,6 +403,49 @@ impl Default for OptimizationConfig {
     }
 }
 
+/// Configuration for search pruning, allowing for simple or advanced setup.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum PruneModeConfig {
+    /// Simple pruning mode specified by a single strategy name.
+    Simple(String),
+
+    /// Advanced pruning mode with fine-grained control.
+    Advanced(AdvancedPruneConfig),
+}
+
+/// Advanced configuration for search pruning.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AdvancedPruneConfig {
+    /// Pruning algorithm type (e.g., "sqrt", "log").
+    #[serde(default = "default_prune_type")]
+    pub r#type: String,
+
+    /// Minimum number of candidates to keep after pruning.
+    pub min_keep: Option<usize>,
+
+    /// Maximum number of candidates to keep after pruning.
+    pub max_keep: Option<usize>,
+
+    /// Pruning ratio controlling aggressiveness (0.0 to 1.0).
+    pub ratio: Option<f32>,
+}
+
+fn default_prune_type() -> String {
+    "sqrt".to_string()
+}
+
+impl Default for AdvancedPruneConfig {
+    fn default() -> Self {
+        Self {
+            r#type: default_prune_type(),
+            min_keep: None,
+            max_keep: None,
+            ratio: None,
+        }
+    }
+}
+
 /// WAL storage configuration supporting multiple directories and cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
@@ -597,5 +640,15 @@ mod tests {
         assert_eq!(config.default_index_type, "hnsw");
         assert!(config.enable_progressive_search);
         assert!(config.enable_bloom_filters);
+    }
+
+    #[test]
+    fn advanced_prune_defaults_match_root_runtime_expectations() {
+        let config = AdvancedPruneConfig::default();
+
+        assert_eq!(config.r#type, "sqrt");
+        assert!(config.min_keep.is_none());
+        assert!(config.max_keep.is_none());
+        assert!(config.ratio.is_none());
     }
 }

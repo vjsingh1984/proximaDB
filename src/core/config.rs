@@ -518,38 +518,11 @@ pub struct StorageConfig {
     pub optimization: OptimizationConfig,
 }
 
-/// Configuration for search pruning, allowing for simple or advanced setup.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum PruneModeConfig {
-    /// Simple pruning mode specified by a single strategy name
-    Simple(String),
-    /// Advanced pruning mode with fine-grained control
-    Advanced(AdvancedPruneConfig),
-}
-
-/// Advanced configuration for search pruning.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct AdvancedPruneConfig {
-    /// Pruning algorithm type (e.g., "sqrt", "log")
-    #[serde(default = "default_prune_type")]
-    pub r#type: String,
-    /// Minimum number of candidates to keep after pruning
-    pub min_keep: Option<usize>,
-    /// Maximum number of candidates to keep after pruning
-    pub max_keep: Option<usize>,
-    /// Pruning ratio controlling aggressiveness (0.0 to 1.0)
-    pub ratio: Option<f32>,
-}
-
-fn default_prune_type() -> String {
-    "sqrt".to_string()
-}
-
 pub use proximadb_config::{
-    AssignmentConfig, AzureConfig, CloudStorageConfig, CompactionConfig,
+    AdvancedPruneConfig, AssignmentConfig, AzureConfig, CloudStorageConfig, CompactionConfig,
     FilesystemOptimizationConfig, GcsConfig, MetadataBackendConfig, MonitoringConfig,
-    OptimizationConfig, S3Config, StorageLocation, TempStrategy, TransactionalOperationsConfig,
+    OptimizationConfig, PruneModeConfig, S3Config, StorageLocation, TempStrategy,
+    TransactionalOperationsConfig,
 };
 
 impl StorageConfig {
