@@ -48,6 +48,95 @@ impl Default for HardwareConfig {
     }
 }
 
+/// Metadata backend configuration for cloud and local storage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetadataBackendConfig {
+    /// Backend type (filestore, memory).
+    pub backend_type: String,
+
+    /// Storage URL (file://, s3://, adls://, gcs://).
+    pub storage_url: String,
+
+    /// Cloud-specific configuration.
+    pub cloud_config: Option<CloudStorageConfig>,
+
+    /// In-memory cache size in megabytes for metadata.
+    pub cache_size_mb: Option<u64>,
+
+    /// Interval in seconds between metadata flush operations.
+    pub flush_interval_secs: Option<u64>,
+}
+
+impl Default for MetadataBackendConfig {
+    fn default() -> Self {
+        Self {
+            backend_type: "filestore".to_string(),
+            storage_url: "file://./metadata".to_string(),
+            cloud_config: None,
+            cache_size_mb: Some(256),
+            flush_interval_secs: Some(60),
+        }
+    }
+}
+
+/// Cloud storage configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudStorageConfig {
+    /// AWS S3 configuration.
+    pub s3_config: Option<S3Config>,
+
+    /// Azure Blob Storage configuration.
+    pub azure_config: Option<AzureConfig>,
+
+    /// Google Cloud Storage configuration.
+    pub gcs_config: Option<GcsConfig>,
+}
+
+/// AWS S3 configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct S3Config {
+    /// AWS region (e.g., "us-east-1").
+    pub region: String,
+    /// S3 bucket name.
+    pub bucket: String,
+    /// AWS access key ID (optional if using IAM role).
+    pub access_key_id: Option<String>,
+    /// AWS secret access key (optional if using IAM role).
+    pub secret_access_key: Option<String>,
+    /// Use IAM role-based authentication instead of static keys.
+    pub use_iam_role: bool,
+    /// Custom S3-compatible endpoint URL (e.g., MinIO).
+    pub endpoint: Option<String>,
+}
+
+/// Azure Blob Storage configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AzureConfig {
+    /// Azure Storage account name.
+    pub account_name: String,
+    /// Blob container name.
+    pub container: String,
+    /// Storage account access key (optional if using managed identity).
+    pub access_key: Option<String>,
+    /// Shared Access Signature token (optional).
+    pub sas_token: Option<String>,
+    /// Use Azure Managed Identity for authentication.
+    pub use_managed_identity: bool,
+}
+
+/// Google Cloud Storage configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GcsConfig {
+    /// Google Cloud project ID.
+    pub project_id: String,
+    /// GCS bucket name.
+    pub bucket: String,
+    /// Path to the service account JSON key file.
+    pub service_account_path: Option<String>,
+    /// Use GKE Workload Identity for authentication.
+    pub use_workload_identity: bool,
+}
+
 /// WAL storage configuration supporting multiple directories and cloud storage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalStorageConfig {
@@ -149,5 +238,16 @@ mod tests {
         assert!(config.enable_gpu_similarity);
         assert_eq!(config.gpu_min_vector_size, 64);
         assert_eq!(config.gpu_min_batch_size, 100);
+    }
+
+    #[test]
+    fn metadata_backend_defaults_match_root_runtime_expectations() {
+        let config = MetadataBackendConfig::default();
+
+        assert_eq!(config.backend_type, "filestore");
+        assert_eq!(config.storage_url, "file://./metadata");
+        assert!(config.cloud_config.is_none());
+        assert_eq!(config.cache_size_mb, Some(256));
+        assert_eq!(config.flush_interval_secs, Some(60));
     }
 }
