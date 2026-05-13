@@ -37,10 +37,9 @@ pub mod registry;
 
 use anyhow::Result;
 use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
+use proximadb_catalog::{CatalogColumn, CatalogIndex, CatalogTableSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-use super::types::{CatalogColumn, CatalogIndex, CatalogTableSchema};
 
 // Re-exports
 pub use enforcement::{ConstraintEnforcer, ConstraintViolation, EnforcementResult};
@@ -747,7 +746,7 @@ impl CatalogObject {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::types::CatalogDataType;
+    use proximadb_catalog::CatalogDataType;
 
     #[test]
     fn test_object_type_display() {

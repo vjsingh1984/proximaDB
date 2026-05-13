@@ -7,10 +7,12 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
+use proximadb_catalog::{
+    CatalogIndex, CatalogNamespace, CatalogTableSchema, CatalogTableStatistics,
+};
 use tracing::{debug, trace};
 
 use super::TableIdentifier;
-use super::types::{CatalogIndex, CatalogNamespace, CatalogTableSchema, CatalogTableStatistics};
 
 /// Cache entry with TTL tracking
 #[derive(Debug, Clone)]

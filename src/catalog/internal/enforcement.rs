@@ -623,7 +623,7 @@ mod tests {
     use crate::catalog::internal::{
         CatalogObject, ObjectSchema, ObjectType, SchemaEnforcementMode, TableConstraint,
     };
-    use crate::catalog::types::{CatalogColumn, CatalogDataType};
+    use proximadb_catalog::{CatalogColumn, CatalogDataType};
 
     fn create_test_object() -> CatalogObject {
         let schema = ObjectSchema {

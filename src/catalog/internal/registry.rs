@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_catalog::CatalogTableSchema;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -15,7 +16,6 @@ use super::{
     TableConstraint,
 };
 use crate::catalog::TableIdentifier;
-use crate::catalog::types::CatalogTableSchema;
 
 /// Internal schema registry for multi-model objects
 pub struct InternalSchemaRegistry {
@@ -119,7 +119,7 @@ impl InternalSchemaRegistry {
         distance_metric: &str,
     ) -> Result<Arc<CatalogObject>> {
         use super::{ModelProperties, VectorProperties};
-        use crate::catalog::types::{CatalogColumn, CatalogDataType};
+        use proximadb_catalog::{CatalogColumn, CatalogDataType};
 
         let object_schema = ObjectSchema {
             columns: vec![
@@ -155,7 +155,7 @@ impl InternalSchemaRegistry {
         json_schema: Option<&str>,
     ) -> Result<Arc<CatalogObject>> {
         use super::{DocumentProperties, ModelProperties};
-        use crate::catalog::types::{CatalogColumn, CatalogDataType};
+        use proximadb_catalog::{CatalogColumn, CatalogDataType};
 
         let object_schema = ObjectSchema {
             columns: vec![
@@ -226,7 +226,7 @@ impl InternalSchemaRegistry {
         retention_seconds: u64,
     ) -> Result<Arc<CatalogObject>> {
         use super::{ModelProperties, ObservabilityProperties};
-        use crate::catalog::types::{CatalogColumn, CatalogDataType};
+        use proximadb_catalog::{CatalogColumn, CatalogDataType};
 
         let object_schema = ObjectSchema {
             columns: vec![
@@ -503,7 +503,7 @@ impl Default for InternalSchemaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::types::{CatalogColumn, CatalogDataType};
+    use proximadb_catalog::{CatalogColumn, CatalogDataType};
 
     #[tokio::test]
     async fn test_registry_creation() {

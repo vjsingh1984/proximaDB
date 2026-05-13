@@ -80,11 +80,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use chrono::{DateTime, Datelike, Utc};
+use proximadb_catalog::{CatalogPartitionSpec, PartitionTransform};
 use serde::{Deserialize, Serialize};
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
-
-use super::types::{CatalogPartitionSpec, PartitionTransform};
 
 /// Partition pruning result with statistics
 #[derive(Debug, Clone)]
@@ -761,7 +760,7 @@ mod tests {
     }
 
     fn create_test_partition_spec() -> CatalogPartitionSpec {
-        use super::super::types::{CatalogPartitionField, PartitionTransform};
+        use proximadb_catalog::{CatalogPartitionField, PartitionTransform};
         CatalogPartitionSpec {
             spec_id: 0,
             fields: vec![

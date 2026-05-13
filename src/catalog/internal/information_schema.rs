@@ -64,6 +64,7 @@
 
 use std::sync::Arc;
 
+use proximadb_catalog::{CatalogColumn, CatalogDataType};
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -287,9 +288,7 @@ pub struct ColumnRow {
 
 impl ColumnRow {
     /// Create from a catalog object and column
-    pub fn from_column(obj: &CatalogObject, col: &crate::catalog::types::CatalogColumn) -> Self {
-        use crate::catalog::types::CatalogDataType;
-
+    pub fn from_column(obj: &CatalogObject, col: &CatalogColumn) -> Self {
         let data_type = match col.data_type {
             CatalogDataType::Boolean => "boolean",
             CatalogDataType::Int8 => "smallint",
