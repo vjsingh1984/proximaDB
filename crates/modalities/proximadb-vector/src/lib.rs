@@ -11,6 +11,7 @@
 //! - **`quantization`** - Vector quantization (Scalar, Product, Binary)
 //! - **`index`** - Vector indexing algorithms (HNSW, IVF, PQ, Annoy, LSH)
 //! - **`search`** - Vector similarity search and ANN algorithms
+//! - **`service`** - Vector service implementing VectorQueryService trait (Phase 3)
 //!
 //! ## Foundation
 //!
@@ -21,17 +22,27 @@
 //! - Query executors that need vector operations
 //! - Index builders that need quantization and distance metrics
 //!
+//! ## Phase 3: Modality Runtime Extraction
+//!
+//! As of Phase 3, this crate now provides a complete vector runtime through the `service` module:
+//! - `VectorServiceImpl` implements the stable `VectorQueryService` trait
+//! - Uses only vector modality components (distance, index, quantization, search)
+//! - Enables clean separation from legacy VectorOperationsService
+//! - Supports gradual migration through trait object injection
+//!
 //! ## Dependencies
 //!
 //! - `proximadb-kernel` - Core error types and foundational contracts
 //! - `proximadb-proto` - Protocol buffer types for VectorRecord
 //! - `proximadb-query-filter` - Filter expression contracts
+//! - `proximadb-vector-query` - Vector query service contract
 //! - `arrow` - Columnar data structures for vector operations
 
 pub mod distance;
 pub mod index;
 pub mod quantization;
 pub mod search;
+pub mod service;
 
 // Re-export common types for convenience
 pub use distance::{
@@ -52,6 +63,9 @@ pub use search::{
     BruteForceSearch, SearchConfig, SearchError, SearchParams, SearchParams as VectorSearchParams,
     SearchStats, VectorSearchEngine,
 };
+
+// Re-export Phase 3 service implementation
+pub use service::VectorServiceImpl;
 
 #[cfg(test)]
 mod tests {

@@ -20,6 +20,7 @@ async-trait.workspace = true
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
+proximadb-vector-query = { path = "../../query/proximadb-vector-query" }
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true

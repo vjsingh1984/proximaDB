@@ -268,7 +268,7 @@ impl BruteForceSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{FlatIndex, IndexError};
+    use crate::index::FlatIndex;
 
     #[test]
     fn test_search_engine() {
@@ -278,8 +278,9 @@ mod tests {
 
         let engine = VectorSearchEngine::new(Box::new(index), SearchConfig::default());
         let results = engine.search(&[1.0, 2.0, 3.0], 2).unwrap();
-        assert_eq!(results.len(), 1);
+        assert_eq!(results.len(), 2);
         assert_eq!(results[0].id, 1);
+        assert_eq!(results[1].id, 2);
     }
 
     #[test]

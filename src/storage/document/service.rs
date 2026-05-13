@@ -1739,6 +1739,11 @@ use crate::storage::traits::{
     DocumentStorageOperations,
 };
 use async_trait::async_trait;
+use proximadb_document_query::{
+    DocumentQueryResult as ContractDocumentQueryResult, DocumentQueryService,
+    DocumentSearchRequest, DocumentSearchResult, SortDirection,
+};
+use proximadb_kernel::error::ProximaDBError;
 
 /// Convert internal DocumentRecord to trait DocumentRecord
 fn to_trait_doc_record(doc: &DocumentRecord) -> TraitDocRecord {
@@ -1849,6 +1854,73 @@ impl DocumentStorageOperations for DocumentService {
                 indexes: coll.indexes,
             })
             .collect())
+    }
+}
+
+#[async_trait]
+impl DocumentQueryService for DocumentService {
+    async fn document_search(
+        &self,
+        request: DocumentSearchRequest,
+    ) -> ContractDocumentQueryResult<DocumentSearchResult> {
+        if request.filter.is_some() {
+            return Err(ProximaDBError::Query(
+                proximadb_kernel::error::QueryError::InvalidFilter(
+                    "string document filters are not yet parsed by DocumentQueryService adapter"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        let sort = request
+            .sort
+            .map(|sort| crate::proto::proximadb_v1::SortField {
+                path: sort.field,
+                order: match sort.direction {
+                    SortDirection::Ascending => crate::proto::proximadb_v1::SortOrder::Asc as i32,
+                    SortDirection::Descending => crate::proto::proximadb_v1::SortOrder::Desc as i32,
+                },
+            })
+            .into_iter()
+            .collect();
+
+        let params = DocumentQueryParams {
+            filter: None,
+            projection: request.projection.unwrap_or_default(),
+            sort,
+            limit: request.limit as u32,
+            offset: request.offset as u32,
+            include_count: true,
+        };
+
+        let query_result = DocumentService::query_documents(self, &request.collection_id, params)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+
+        let total_count = query_result
+            .total_count
+            .unwrap_or(query_result.documents.len() as u64) as usize;
+
+        Ok(DocumentSearchResult {
+            results: query_result
+                .documents
+                .iter()
+                .map(|document| document.to_proto_result(None))
+                .collect(),
+            total_count,
+            execution_time_ms: query_result.query_time_ms,
+        })
+    }
+
+    async fn get_document(
+        &self,
+        collection_id: String,
+        document_id: String,
+    ) -> ContractDocumentQueryResult<Option<proximadb_document_query::DocumentRecord>> {
+        DocumentService::get_document(self, &collection_id, &document_id, None)
+            .await
+            .map(|document| document.map(|document| document.to_proto_result(None)))
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))
     }
 }
 
@@ -2447,6 +2519,73 @@ mod tests {
 
         assert!(result.documents.is_empty(), "should return no documents");
         assert_eq!(result.total_count, Some(0));
+    }
+
+    #[tokio::test]
+    async fn document_query_service_searches_via_contract() {
+        use proximadb_document_query::{
+            DocumentQueryService, DocumentSearchRequest, DocumentSortOrder, SortDirection,
+        };
+
+        let svc = service_with_collection("contract_docs").await;
+
+        for i in 0..3 {
+            svc.insert_document(
+                "contract_docs",
+                Some(&format!("doc-{i}")),
+                make_document(vec![("seq", sql_int(i))]),
+            )
+            .await
+            .expect("insert should succeed");
+        }
+
+        let result = DocumentQueryService::document_search(
+            &svc,
+            DocumentSearchRequest {
+                collection_id: "contract_docs".to_string(),
+                filter: None,
+                limit: 2,
+                offset: 1,
+                projection: None,
+                sort: Some(DocumentSortOrder {
+                    field: "seq".to_string(),
+                    direction: SortDirection::Ascending,
+                }),
+            },
+        )
+        .await
+        .expect("contract search should succeed");
+
+        assert_eq!(result.total_count, 3);
+        assert_eq!(result.results.len(), 2);
+        assert_eq!(result.results[0].id, "doc-1");
+        assert_eq!(result.results[1].id, "doc-2");
+    }
+
+    #[tokio::test]
+    async fn document_query_service_gets_document_via_contract() {
+        use proximadb_document_query::DocumentQueryService;
+
+        let svc = service_with_collection("contract_get").await;
+        svc.insert_document(
+            "contract_get",
+            Some("doc-1"),
+            make_document(vec![("title", sql_string("Contract"))]),
+        )
+        .await
+        .expect("insert should succeed");
+
+        let result = DocumentQueryService::get_document(
+            &svc,
+            "contract_get".to_string(),
+            "doc-1".to_string(),
+        )
+        .await
+        .expect("contract get should succeed")
+        .expect("document should exist");
+
+        assert_eq!(result.id, "doc-1");
+        assert_eq!(result.version, 1);
     }
 
     // =========================================================================

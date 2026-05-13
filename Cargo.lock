@@ -5727,6 +5727,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-compression-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "proximadb-config"
 version = "0.2.0"
 dependencies = [
@@ -5742,6 +5751,15 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-distance-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -5770,6 +5788,15 @@ dependencies = [
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-query-filter",
+]
+
+[[package]]
+name = "proximadb-encoding-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -5941,6 +5968,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-quantization-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "proximadb-query"
 version = "0.2.0"
 dependencies = [
@@ -6088,6 +6124,7 @@ dependencies = [
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-query-filter",
+ "proximadb-vector-query",
  "rand 0.8.5",
  "serde",
  "serde_json",

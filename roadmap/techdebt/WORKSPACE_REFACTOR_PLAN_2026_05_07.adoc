@@ -697,6 +697,10 @@ Current status after the first refinement:
 * the vector query IR (`VectorSearchExpr`, `VectorSearchParams`, `DistanceMetric`) now also lives in a new leaf crate, `proximadb-vector-query`, so the root unified AST no longer owns vector request shape either and is getting closer to a pure cross-model composition layer
 * `proximadb-vector-query`, `proximadb-document-query`, and `proximadb-observability-query` now also own narrow async service contracts for read/query execution; root runtime code can implement or adapt those contracts while protocol/query layers depend on capability views instead of concrete root services
 * vector REST/unified protocol wiring has started consuming the extracted `VectorQueryService` contract at the composition edge; the concrete `VectorOperationsService` remains available for legacy paths, but new vector-search routing can prefer the contract seam
+* document storage/runtime now implements the extracted `DocumentQueryService` contract directly, giving query/runtime callers a stable document capability view while concrete document indexing, filter parsing, and storage execution remain in the root document service for now
+* root `DocumentService` now implements the extracted `DocumentQueryService` contract for document
+  search and get-by-id, so query/runtime callers can begin depending on the document capability seam
+  without taking the broader root document runtime surface
 * the generic cross-model clause IR (`Filter`, `OrderBy`) now also lives in a new leaf crate, `proximadb-query-clauses`, so the root unified AST is no longer the owner of generic reusable clause shape either
 * the canonical data-model discriminator (`StoreType`) now lives in a new foundation leaf crate, `proximadb-data-model`, so query, security, storage, and protocol layers no longer need the root multimodel router just to name a model kind
 * the shared search filter contract (`FilterExpression`, `ComparisonOperator`) now lives in a new foundation leaf crate, `proximadb-filter-expression`, so query planning/lowering, compute pipeline execution, storage filtering, and services can converge on one reusable contract instead of pulling those types through the root search module
@@ -706,6 +710,7 @@ Current status after the first refinement:
 * the UQL parser and regex-based query decomposition layer (`UQLParser`, `UQLStatement`, `QueryDecomposer`, and the UQL statement AST) now also live in a new leaf crate, `proximadb-uql`, so the root unified module no longer owns parsing and decomposition logic just to expose those public query surfaces
 * `proximadb-multimodel-plan` is now explicitly treated as query-planner support rather than a pure query-contract crate: it owns `MultiModelPlan`, `Operator`, `PlanContext`, join/aggregate operator IR, validation, and optimization helpers while root `query::multimodal::plan` remains a compatibility shell
 * a first real cross-model query runtime crate, `proximadb-query`, now exists and owns UQL-to-plan lowering (`UQLLowerer`, `lower_uql_to_plan`, and related lowering helpers); the root `query::unified::lower` module is now reduced to a compatibility re-export instead of owning lowering behavior directly
+* `proximadb-query` now also executes row-local sort, top-k, and basic aggregate operators in its extracted `PlanExecutor`, moving more deterministic query-runtime behavior behind the workspace query crate while leaving storage-engine scans and modality service calls at their existing runtime boundaries
 * `proximadb-query` now also owns the shared unified result/fusion runtime contracts (`QueryResult`, `UnifiedRecord`, `QueryMetrics`, `SubQueryResult`, `ResultFuser`, and fusion utilities); the root `query::unified::fusion` module and root unified result structs are reduced to compatibility re-exports instead of remaining another cross-model runtime ownership island
 * `proximadb-query` now also owns the cross-modal reranking behavior layer (`CrossModalReranker`, `RerankConfig`, `QueryContext`, `QueryIntent`, `TemporalPreference`, explanations, and reranked-result contracts); the root `query::unified::reranking` module is reduced to a compatibility re-export instead of owning another pure query-runtime behavior surface
 * `proximadb-query` now also owns the learned-fusion behavior layer (`LearnedFusion`, `LearnedFusionConfig`, model abstractions, feature extraction, training samples/feedback, and training metrics); the root `query::unified::learned_fusion` module is reduced to a compatibility re-export and no longer anchors that behavior to root-only error types
@@ -1765,8 +1770,8 @@ shared contracts
 |document path filters, JSONB/document query shape, text-query helpers
 |`proximadb-document-query` for request shape; `proximadb-document` for document runtime and text
 indexing
-|cross-model query uses document query contracts; full-text implementation does not leak into root
-facade code
+|cross-model query can depend on `DocumentQueryService`; full-text implementation does not leak into
+root facade code
 
 |P1
 |logs, metrics, traces, event-style observability query shape
