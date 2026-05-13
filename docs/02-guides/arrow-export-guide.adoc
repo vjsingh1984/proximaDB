@@ -162,9 +162,9 @@ logical operations are normalized: `insert` -> `bulk_insert`, `upsert` ->
 `bulk_upsert`, and `delete` -> `bulk_delete`.
 
 `insert` is insert-only at the request boundary: duplicate IDs within the
-streamed request return a failed `BatchOperationResult` with `error_code`
-`INSERT_CONFLICT`. Use `upsert`/`bulk_upsert` when replacing existing records
-is intended.
+streamed request, or IDs that already exist before the write is dispatched,
+return a failed `BatchOperationResult` with `error_code` `INSERT_CONFLICT`.
+Use `upsert`/`bulk_upsert` when replacing existing records is intended.
 
 `write_mode` accepts `wal` and `direct`; `direct` is reserved for a future
 WAL-bypass path and currently falls back to WAL-backed writes on the server.

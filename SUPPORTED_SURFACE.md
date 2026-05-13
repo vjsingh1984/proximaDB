@@ -414,7 +414,7 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 - Progress-aware batch writes via `DoExchange` (`bulk_insert`/`bulk_upsert`/`bulk_delete`)
 
 **Current limitations**:
-- Arrow Flight `insert` rejects duplicate IDs in the request, but existing-record detection is not yet an atomic compare-and-insert storage primitive.
+- Arrow Flight `insert` rejects duplicate IDs in the request and pre-existing IDs before dispatch, but the existing-record check is not yet an atomic compare-and-insert storage primitive.
 - Arrow Flight `write_mode=direct` is accepted for forward compatibility, but currently falls back to WAL-backed writes.
 - Flight write handlers validate API-key/JWT metadata and Tonic-exposed mTLS peer certificates when the shared security coordinator is enabled.
 

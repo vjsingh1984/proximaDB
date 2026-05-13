@@ -846,6 +846,96 @@ impl UnifiedHandlers {
         }
     }
 
+    /// Canonical insert-only rich-record handler used when callers require
+    /// existing records to be rejected instead of upserted.
+    pub async fn handle_record_insert_batch_for_tenant(
+        &self,
+        request: RichRecordBatchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<BatchOperationResult> {
+        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
+        let collection_id = match self
+            .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
+            .await?
+        {
+            Some(id) => id,
+            None => {
+                return Ok(BatchOperationResult::failure(
+                    format!("Collection '{}' not found", request.collection_id),
+                    "NOT_FOUND".to_string(),
+                ));
+            }
+        };
+
+        if let Some(conflict) = self
+            .existing_record_insert_conflict_result(
+                &collection_id,
+                &request.records,
+                tenant_context.as_ref(),
+            )
+            .await?
+        {
+            return Ok(conflict);
+        }
+
+        match self
+            .vector_operations_service
+            .insert_records_with_tenant_context(
+                &collection_id,
+                request.records,
+                tenant_context.as_ref(),
+            )
+            .await
+        {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                tracing::error!(
+                    "Failed to process insert-only rich record batch: {:?}",
+                    error
+                );
+                Ok(BatchOperationResult::failure(
+                    format!("Record insert failed: {}", error),
+                    "RECORD_INSERT_FAILED".to_string(),
+                ))
+            }
+        }
+    }
+
+    async fn existing_record_insert_conflict_result(
+        &self,
+        collection_id: &str,
+        records: &[proximadb_records::ProximaRecord],
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Option<BatchOperationResult>> {
+        for record in records {
+            if self
+                .vector_operations_service
+                .record_exists_with_tenant_context(collection_id, &record.oid, tenant_context)
+                .await?
+            {
+                return Ok(Some(Self::insert_existing_record_conflict_result(
+                    collection_id,
+                    &record.oid,
+                )));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn insert_existing_record_conflict_result(
+        collection_id: &str,
+        record_id: &str,
+    ) -> BatchOperationResult {
+        BatchOperationResult::failure(
+            format!(
+                "Record '{}' already exists in collection '{}'",
+                record_id, collection_id
+            ),
+            "INSERT_CONFLICT".to_string(),
+        )
+    }
+
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response
     ///
     /// REFACTORED: Now uses clean typed insert_batch() instead of JSON serialization
@@ -2322,6 +2412,19 @@ mod tests {
     fn test_collection_id_cache_new() {
         let cache = CollectionIdCache::new();
         assert!(cache.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_insert_existing_record_conflict_result() {
+        let result =
+            UnifiedHandlers::insert_existing_record_conflict_result("collection-1", "record-1");
+
+        assert!(!result.success);
+        assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
+        assert_eq!(
+            result.errors,
+            vec!["Record 'record-1' already exists in collection 'collection-1'".to_string()]
+        );
     }
 
     #[test]

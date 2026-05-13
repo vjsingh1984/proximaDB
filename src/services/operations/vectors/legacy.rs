@@ -1362,6 +1362,40 @@ impl VectorOperationsService {
             .await
     }
 
+    /// Check whether a rich record ID already exists in WAL or the collection's
+    /// configured storage engine.
+    pub async fn record_exists_with_tenant_context(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<bool> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+
+        if self
+            .wal_manager
+            .search_vector_by_id(collection_id, &record_id.to_string())
+            .await?
+            .is_some()
+        {
+            return Ok(true);
+        }
+
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let base_path = collection
+            .storage_assignment
+            .as_ref()
+            .map(|assignment| assignment.base_location.as_str())
+            .unwrap_or("");
+        let engine = self.get_engine_for_collection(collection_id).await?;
+
+        Ok(engine
+            .vector_by_id(collection_id, base_path, record_id)
+            .await?
+            .is_some())
+    }
+
     async fn insert_batch_internal(
         &self,
         collection_id: &str,

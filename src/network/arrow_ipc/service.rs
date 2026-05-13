@@ -441,15 +441,19 @@ impl ProximaFlightService {
         let result = match write_mode {
             WriteMode::WAL => {
                 // Use standard WAL-backed insertion (reuses existing path)
-                self.unified_handlers
-                    .handle_record_batch_for_tenant(
-                        RichRecordBatchRequest {
-                            collection_id: collection_id.clone(),
-                            records,
-                        },
-                        tenant_id.as_deref(),
-                    )
-                    .await?
+                let request = RichRecordBatchRequest {
+                    collection_id: collection_id.clone(),
+                    records,
+                };
+                if operation == FlightWriteOperation::Insert {
+                    self.unified_handlers
+                        .handle_record_insert_batch_for_tenant(request, tenant_id.as_deref())
+                        .await?
+                } else {
+                    self.unified_handlers
+                        .handle_record_batch_for_tenant(request, tenant_id.as_deref())
+                        .await?
+                }
             }
             WriteMode::Direct => {
                 // Direct engine write (future enhancement)
@@ -458,15 +462,19 @@ impl ProximaFlightService {
                     collection_id = %collection_id,
                     "Direct write mode not yet implemented, using WAL"
                 );
-                self.unified_handlers
-                    .handle_record_batch_for_tenant(
-                        RichRecordBatchRequest {
-                            collection_id: collection_id.clone(),
-                            records,
-                        },
-                        tenant_id.as_deref(),
-                    )
-                    .await?
+                let request = RichRecordBatchRequest {
+                    collection_id: collection_id.clone(),
+                    records,
+                };
+                if operation == FlightWriteOperation::Insert {
+                    self.unified_handlers
+                        .handle_record_insert_batch_for_tenant(request, tenant_id.as_deref())
+                        .await?
+                } else {
+                    self.unified_handlers
+                        .handle_record_batch_for_tenant(request, tenant_id.as_deref())
+                        .await?
+                }
             }
         };
 
@@ -1837,7 +1845,7 @@ impl ProximaFlightService {
                             Some(result) => Ok(result),
                             None => {
                                 self.unified_handlers
-                                    .handle_record_batch_for_tenant(
+                                    .handle_record_insert_batch_for_tenant(
                                         RichRecordBatchRequest {
                                             collection_id: collection_id.clone(),
                                             records,
