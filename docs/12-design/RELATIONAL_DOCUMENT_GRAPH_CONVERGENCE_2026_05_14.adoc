@@ -909,7 +909,13 @@ Tasks:
 ** `push_rls_predicates(plan, ctx)` ANDs the RLS filter into every `Scan.filter` and `VectorTopK.predicate` at planning time (no post-hoc application-layer filtering).
 ** 7 tests: empty ctx is noop, non-Scan operators untouched, tenant+principals→And, existing filters preserved via And.
 ** Per spec §8: `tenant_id`/`permitted_principals` are record fields pushed into scan iterators.
-* [ ] Align REST/gRPC/Arrow Flight/PostgreSQL wire behavior for document and graph result shapes.
+* [x] Align REST/gRPC/Arrow Flight/PostgreSQL wire behavior for document and graph result shapes.
+** `UnifiedRecord::to_canonical_envelope()` in `results.rs` produces a stable `{ _id, _model, _score, <payload_key> }` shape for all modalities.
+** `payload_key_for(model)` assigns `_data` for documents, `_node` for graph, `_vector` for vector, `_row` for relational — consumers can rely on these keys without branching on `_model`.
+** `normalize_document_result_shape()` hoists and strips inner `_id`/`id`/`_model`/`_score` fields from the `_data` payload so the envelope `_id` is the single authoritative identity.
+** `normalize_graph_result_shape()` normalises the `_node` sub-object: `labels` always an array, `properties` always an object (debug-string payloads become `{}`), `id` always present (falls back to envelope `_id`).
+** 14 tests covering: standard fields present, score null/present, metadata included, graph uses `_node` key, document strips duplicate ids, labels string→array, debug-string properties→empty object, structured properties preserved, missing node key, cross-model envelope key parity.
+** All 151 `proximadb-query` tests pass.
 
 Acceptance:
 
