@@ -4,12 +4,11 @@
 //! engines, configuration, and compaction settings.
 
 pub mod compaction;
-pub mod compression;
 pub mod configuration;
 pub mod engines;
 
 // Re-export all storage types
 pub use compaction::*;
-pub use compression::*;
 pub use configuration::*;
 pub use engines::*;
+pub use proximadb_compression_types::{CompressionAlgorithm, CompressionConfig};

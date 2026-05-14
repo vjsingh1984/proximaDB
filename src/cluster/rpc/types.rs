@@ -22,6 +22,7 @@
 //! - Efficient for in-memory operations
 //! - Serializable when needed
 
+pub use proximadb_distance_types::DistanceMetric;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -381,20 +382,6 @@ pub struct SearchParams {
     pub n_probes: Option<u32>,
 }
 
-/// Distance metrics
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum DistanceMetric {
-    /// Euclidean (L2) distance
-    #[default]
-    Euclidean,
-    /// Cosine similarity
-    Cosine,
-    /// Dot product
-    DotProduct,
-    /// Manhattan (L1) distance
-    Manhattan,
-}
-
 /// Response for shard search
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShardSearchResponse {
@@ -661,7 +648,7 @@ mod tests {
     #[test]
     fn test_search_params_default() {
         let params: SearchParams = Default::default();
-        assert_eq!(params.metric, DistanceMetric::Euclidean);
+        assert_eq!(params.metric, DistanceMetric::L2);
         assert!(params.min_score.is_none());
     }
 

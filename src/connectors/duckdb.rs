@@ -65,6 +65,7 @@ use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+use proximadb_distance_types::DistanceMetric;
 use serde::{Deserialize, Serialize};
 
 use crate::storage::formats::{FileSplit, SplitStatistics, SplitType};
@@ -320,25 +321,11 @@ pub struct DuckDBVectorSearchParams {
     /// Number of results
     pub top_k: usize,
     /// Distance metric
-    pub metric: DuckDBDistanceMetric,
+    pub metric: DistanceMetric,
     /// Optional filter
     pub filter: Option<DuckDBFilter>,
     /// Include distances in output
     pub include_distances: bool,
-}
-
-/// DuckDB distance metrics
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub enum DuckDBDistanceMetric {
-    /// Euclidean (L2) distance
-    L2,
-    /// Cosine similarity
-    #[default]
-    Cosine,
-    /// Dot product
-    DotProduct,
-    /// Inner product
-    InnerProduct,
 }
 
 /// DuckDB table scan function
@@ -707,7 +694,7 @@ mod tests {
             collection: "embeddings".to_string(),
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 10,
-            metric: DuckDBDistanceMetric::Cosine,
+            metric: DistanceMetric::Cosine,
             filter: None,
             include_distances: true,
         };
@@ -795,9 +782,6 @@ mod tests {
 
     #[test]
     fn test_duckdb_distance_metric() {
-        assert_eq!(
-            DuckDBDistanceMetric::default(),
-            DuckDBDistanceMetric::Cosine
-        );
+        assert_eq!(DistanceMetric::default(), DistanceMetric::L2);
     }
 }

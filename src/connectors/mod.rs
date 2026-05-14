@@ -129,10 +129,10 @@ pub use trino::{
 // DuckDB extension connector
 pub use duckdb::{
     DuckDBBindData, DuckDBColumnRef, DuckDBColumnStats, DuckDBConnectorConfig, DuckDBCopy,
-    DuckDBCopyResult, DuckDBDistanceMetric, DuckDBError, DuckDBErrorType, DuckDBFilter,
-    DuckDBFilterType, DuckDBGlobalState, DuckDBInitData, DuckDBInsert, DuckDBInsertResult,
-    DuckDBLocalState, DuckDBScanStatistics, DuckDBTableScan, DuckDBVectorSearch,
-    DuckDBVectorSearchParams, DuckDBWriteMode,
+    DuckDBCopyResult, DuckDBError, DuckDBErrorType, DuckDBFilter, DuckDBFilterType,
+    DuckDBGlobalState, DuckDBInitData, DuckDBInsert, DuckDBInsertResult, DuckDBLocalState,
+    DuckDBScanStatistics, DuckDBTableScan, DuckDBVectorSearch, DuckDBVectorSearchParams,
+    DuckDBWriteMode,
 };
 
 // Hadoop compatibility shim (for Hive, EMR, legacy MapReduce)

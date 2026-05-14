@@ -6,6 +6,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+// Re-export foundation compression type
+pub use proximadb_compression_types::CompressionAlgorithm;
+
 /// Unified cache configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UnifiedCacheConfig {
@@ -154,15 +157,6 @@ pub enum InvalidationStrategy {
     Delayed(u64),
     /// Invalidate on next access
     LazyInvalidation,
-}
-
-/// Compression algorithm
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum CompressionAlgorithm {
-    None,
-    Lz4,
-    Zstd,
-    Snappy,
 }
 
 /// Workload type for preset configurations

@@ -517,11 +517,11 @@ mod duckdb_tests {
     use super::*;
     use arrow::datatypes::Schema as ArrowSchema;
     use proximadb::connectors::{
-        DuckDBColumnRef, DuckDBConnectorConfig, DuckDBDistanceMetric, DuckDBFilter,
-        DuckDBFilterType, DuckDBGlobalState, DuckDBInitData, DuckDBLocalState, DuckDBTableScan,
-        DuckDBVectorSearchParams,
+        DuckDBColumnRef, DuckDBConnectorConfig, DuckDBFilter, DuckDBFilterType, DuckDBGlobalState,
+        DuckDBInitData, DuckDBLocalState, DuckDBTableScan, DuckDBVectorSearchParams,
     };
     use proximadb::storage::formats::{FileSplit, SplitLocality, SplitStatistics, SplitType};
+    use proximadb_distance_types::DistanceMetric;
 
     #[test]
     fn test_duckdb_config_default() {
@@ -577,7 +577,7 @@ mod duckdb_tests {
             collection: "embeddings".to_string(),
             query_vector: vec![0.1, 0.2, 0.3, 0.4],
             top_k: 10,
-            metric: DuckDBDistanceMetric::Cosine,
+            metric: DistanceMetric::Cosine,
             filter: None,
             include_distances: true,
         };
@@ -590,16 +590,12 @@ mod duckdb_tests {
 
     #[test]
     fn test_duckdb_distance_metrics() {
-        assert_eq!(
-            DuckDBDistanceMetric::default(),
-            DuckDBDistanceMetric::Cosine
-        );
+        assert_eq!(DistanceMetric::default(), DistanceMetric::L2);
 
-        // Test all variants exist
-        let _l2 = DuckDBDistanceMetric::L2;
-        let _cosine = DuckDBDistanceMetric::Cosine;
-        let _dot = DuckDBDistanceMetric::DotProduct;
-        let _inner = DuckDBDistanceMetric::InnerProduct;
+        let _l2 = DistanceMetric::L2;
+        let _cosine = DistanceMetric::Cosine;
+        let _inner = DistanceMetric::InnerProduct;
+        let _l1 = DistanceMetric::L1;
     }
 
     #[test]

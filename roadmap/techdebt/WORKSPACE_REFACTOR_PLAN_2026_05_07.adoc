@@ -773,6 +773,17 @@ Current status after the first refinement:
 * the shared tenant-aware `StoragePath` helper now also lives in `proximadb-storage-common`; root
   `utils::storage_path` and `utils::StoragePath` remain compatibility re-exports for existing
   engine/service callers
+* root `core::storage` no longer owns a duplicate storage-specific compression enum/config; its
+  storage config now consumes the foundation `proximadb-compression-types::CompressionConfig` and
+  validates algorithm-specific level ranges locally
+* filesystem cache config now reuses the foundation compression algorithm instead of carrying a
+  cache-local duplicate enum
+* DuckDB connector search params and cluster RPC search params now consume the foundation
+  `proximadb-distance-types::DistanceMetric`; connector/root re-exports no longer expose a
+  connector-owned metric enum
+* multimodal and multimodel vector store configs now retain storage-local config wrappers while
+  using foundation `proximadb-quantization-types` for quantization kind/level, which preserves the
+  planned foundation-to-storage boundary without keeping duplicate modality enums
 * the shared glob matcher used by columnar storage file filtering now lives in
   `proximadb-storage-common`; root `utils::glob` remains a compatibility re-export
 * `proximadb-runtime-common` now exists as the first horizontal runtime-helper crate and owns the

@@ -16,6 +16,8 @@ use super::persistence::write_ahead_log::config::{MemTableType, WriteBufferStrat
 use super::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::core::CompressionAlgorithm;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+// Re-export foundation quantization types
+pub use proximadb_quantization_types::{QuantizationLevel, QuantizationType};
 
 /// Storage layout strategy
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -67,8 +69,8 @@ pub struct DataCompressionConfig {
     /// Enable compression for metadata
     pub compress_metadata: bool,
 
-    /// Compression algorithm for vectors
-    pub vector_compression: VectorCompressionAlgorithm,
+    /// Vector quantization configuration
+    pub vector_quantization: VectorQuantizationConfig,
 
     /// Compression algorithm for metadata
     pub metadata_compression: CompressionLevel,
@@ -77,22 +79,84 @@ pub struct DataCompressionConfig {
     pub compression_level: u8,
 }
 
+impl Default for DataCompressionConfig {
+    fn default() -> Self {
+        Self {
+            compress_vectors: false,
+            compress_metadata: false,
+            vector_quantization: VectorQuantizationConfig::none(),
+            metadata_compression: CompressionLevel::None,
+            compression_level: 6,
+        }
+    }
+}
+
+/// Vector quantization configuration
+///
+/// Uses foundation QuantizationType and QuantizationLevel for consistency.
 #[derive(Debug, Clone)]
-pub enum VectorCompressionAlgorithm {
-    /// No compression (fastest)
-    None,
-    /// Product Quantization
-    PQ,
-    /// Optimized Product Quantization
-    OPQ,
-    /// Scalar Quantization
-    SQ,
-    /// Binary Quantization
-    BQ,
-    /// Half-precision floats
-    FP16,
-    /// 8-bit quantization
-    INT8,
+pub struct VectorQuantizationConfig {
+    /// Quantization type
+    pub quantization_type: QuantizationType,
+
+    /// Quantization level (precision)
+    pub quantization_level: QuantizationLevel,
+}
+
+impl VectorQuantizationConfig {
+    /// Create a new vector quantization config
+    pub fn new(quantization_type: QuantizationType, quantization_level: QuantizationLevel) -> Self {
+        Self {
+            quantization_type,
+            quantization_level,
+        }
+    }
+
+    /// No quantization (fastest, highest precision)
+    pub fn none() -> Self {
+        Self {
+            quantization_type: QuantizationType::None,
+            quantization_level: QuantizationLevel::None,
+        }
+    }
+
+    /// Product quantization (good compression ratio)
+    pub fn product_quantization() -> Self {
+        Self {
+            quantization_type: QuantizationType::Product,
+            quantization_level: QuantizationLevel::Int8,
+        }
+    }
+
+    /// Scalar quantization (fast compression/decompression)
+    pub fn scalar_quantization() -> Self {
+        Self {
+            quantization_type: QuantizationType::Scalar,
+            quantization_level: QuantizationLevel::Int8,
+        }
+    }
+
+    /// Binary quantization (highest compression, fastest)
+    pub fn binary_quantization() -> Self {
+        Self {
+            quantization_type: QuantizationType::Binary,
+            quantization_level: QuantizationLevel::Int4,
+        }
+    }
+
+    /// FP16 quantization (half precision)
+    pub fn fp16() -> Self {
+        Self {
+            quantization_type: QuantizationType::Scalar,
+            quantization_level: QuantizationLevel::FP16,
+        }
+    }
+}
+
+impl Default for VectorQuantizationConfig {
+    fn default() -> Self {
+        Self::none()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +245,7 @@ impl Default for StorageSystemConfig {
                 compression: DataCompressionConfig {
                     compress_vectors: true,
                     compress_metadata: true,
-                    vector_compression: VectorCompressionAlgorithm::PQ,
+                    vector_quantization: VectorQuantizationConfig::product_quantization(),
                     metadata_compression: CompressionLevel::Fast,
                     compression_level: 3,
                 },
@@ -294,7 +358,7 @@ impl StorageSystemBuilder {
         self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
-            vector_compression: VectorCompressionAlgorithm::OPQ,
+            vector_quantization: VectorQuantizationConfig::product_quantization(),
             metadata_compression: CompressionLevel::High,
             compression_level: 6,
         };
@@ -306,7 +370,7 @@ impl StorageSystemBuilder {
         self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
-            vector_compression: VectorCompressionAlgorithm::PQ,
+            vector_quantization: VectorQuantizationConfig::product_quantization(),
             metadata_compression: CompressionLevel::Fast,
             compression_level: 1,
         };
@@ -318,7 +382,7 @@ impl StorageSystemBuilder {
         self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: false,
             compress_metadata: false,
-            vector_compression: VectorCompressionAlgorithm::None,
+            vector_quantization: VectorQuantizationConfig::none(),
             metadata_compression: CompressionLevel::None,
             compression_level: 0,
         };
@@ -900,7 +964,7 @@ impl Default for DataStorageConfig {
             compression: DataCompressionConfig {
                 compress_vectors: false,
                 compress_metadata: false,
-                vector_compression: VectorCompressionAlgorithm::None,
+                vector_quantization: VectorQuantizationConfig::none(),
                 metadata_compression: CompressionLevel::None,
                 compression_level: 0,
             },
