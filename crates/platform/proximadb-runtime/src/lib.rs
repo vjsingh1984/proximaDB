@@ -3,6 +3,7 @@
 //! This crate owns host/runtime policy that composes lower contract crates without
 //! pushing system inspection, tracing, or bootstrap behavior into foundation crates.
 
+pub mod cluster_port;
 pub mod composition;
 pub mod hardware;
 pub mod handlers;
@@ -14,6 +15,7 @@ pub mod security_port;
 pub mod service_ports;
 
 // Re-exports
+pub use cluster_port::{ClusterHealthStatus, ClusterPort};
 pub use composition::{DIContainer, ServiceComposer};
 pub use hardware::{HardwareCapabilities, SimdLevel, best_simd_level, hardware_capabilities};
 pub use handlers::{CollectionIdCache, UnifiedHandlers};

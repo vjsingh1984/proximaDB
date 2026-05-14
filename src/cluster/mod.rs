@@ -297,6 +297,35 @@ pub struct ClusterHealth {
     pub shard_count: usize,
 }
 
+// ── ClusterPort ───────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::ClusterPort for ClusterManager {
+    async fn is_leader(&self) -> bool {
+        ClusterManager::is_leader(self).await
+    }
+
+    async fn health(&self) -> proximadb_runtime::ClusterHealthStatus {
+        let h = ClusterManager::health(self).await;
+        proximadb_runtime::ClusterHealthStatus {
+            cluster_id: h.cluster_id,
+            is_leader: h.is_leader,
+            total_nodes: h.total_nodes,
+            healthy_nodes: h.healthy_nodes,
+            unhealthy_nodes: h.unhealthy_nodes,
+            shard_count: h.shard_count,
+        }
+    }
+
+    async fn start(&self) -> anyhow::Result<()> {
+        ClusterManager::start(self).await
+    }
+
+    async fn stop(&self) -> anyhow::Result<()> {
+        ClusterManager::stop(self).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
