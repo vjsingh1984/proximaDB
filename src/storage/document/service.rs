@@ -32,7 +32,6 @@ use proximadb_records::{RecordKey, RecordStorage};
 
 use super::DocumentStorageEngine;
 use super::aggregation_extensions::LookupFetcher;
-#[cfg(feature = "canonical-document-store")]
 use super::canonical_adapter::{
     legacy_document_to_proxima_record, proxima_record_to_legacy_document,
 };
@@ -260,6 +259,22 @@ impl DocumentService {
                         collection_docs.insert(document.id.clone(), document);
                         recovered_docs += 1;
                     }
+                    DocumentOperation::UpsertCanonicalDocumentRecord {
+                        collection_id,
+                        record,
+                    } => {
+                        if let Some(document) = proxima_record_to_legacy_document(&record) {
+                            let mut documents = self.documents.write().await;
+                            let collection_docs = documents.entry(collection_id).or_default();
+                            collection_docs.insert(document.id.clone(), document);
+                            recovered_docs += 1;
+                        } else {
+                            warn!(
+                                "Skipping canonical WAL record '{}' because it is not a document",
+                                record.oid
+                            );
+                        }
+                    }
                     DocumentOperation::UpdateDocument {
                         collection_id,
                         document_id,
@@ -279,6 +294,16 @@ impl DocumentService {
                         document_id,
                     } => {
                         // Replay delete
+                        let mut documents = self.documents.write().await;
+                        if let Some(collection_docs) = documents.get_mut(&collection_id) {
+                            collection_docs.remove(&document_id);
+                        }
+                    }
+                    DocumentOperation::DeleteCanonicalDocumentRecord {
+                        collection_id,
+                        document_id,
+                        ..
+                    } => {
                         let mut documents = self.documents.write().await;
                         if let Some(collection_docs) = documents.get_mut(&collection_id) {
                             collection_docs.remove(&document_id);
@@ -336,6 +361,103 @@ impl DocumentService {
             writer.append(wal_op).await?;
         }
         Ok(())
+    }
+
+    /// Write a document upsert to WAL using canonical record intent when the
+    /// canonical store is active, otherwise use the legacy document entry.
+    async fn write_document_upsert_to_wal(
+        &self,
+        collection: &str,
+        record: &DocumentRecord,
+    ) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            return self
+                .write_to_wal(DocumentOperation::UpsertCanonicalDocumentRecord {
+                    collection_id: collection.to_string(),
+                    record: legacy_document_to_proxima_record(record),
+                })
+                .await;
+        }
+
+        self.write_to_wal(DocumentOperation::InsertDocument {
+            collection_id: collection.to_string(),
+            document: record.clone(),
+        })
+        .await
+    }
+
+    /// Write a document delete to WAL using canonical record identity when the
+    /// canonical store is active, otherwise use the legacy document entry.
+    async fn write_document_delete_to_wal(&self, collection: &str, id: &str) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            let record_oid = DocumentRecordKey::new(collection, id).canonical_oid();
+            return self
+                .write_to_wal(DocumentOperation::DeleteCanonicalDocumentRecord {
+                    collection_id: collection.to_string(),
+                    document_id: id.to_string(),
+                    record_oid,
+                })
+                .await;
+        }
+
+        self.write_to_wal(DocumentOperation::DeleteDocument {
+            collection_id: collection.to_string(),
+            document_id: id.to_string(),
+        })
+        .await
+    }
+
+    /// Apply insert projection maintenance using canonical record-shaped input
+    /// when the canonical store is active.
+    async fn index_document_projection(
+        &self,
+        collection: &str,
+        record: &DocumentRecord,
+    ) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            self.index_manager
+                .index_record_projection(&legacy_document_to_proxima_record(record))
+                .await?;
+            return Ok(());
+        }
+
+        self.index_manager.index_document(collection, record).await
+    }
+
+    /// Refresh projection maintenance using canonical record-shaped input when
+    /// the canonical store is active.
+    async fn reindex_document_projection(
+        &self,
+        collection: &str,
+        record: &DocumentRecord,
+    ) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            self.index_manager
+                .reindex_record_projection(&legacy_document_to_proxima_record(record))
+                .await?;
+            return Ok(());
+        }
+
+        self.index_manager
+            .reindex_document(collection, record)
+            .await
+    }
+
+    /// Remove projection entries for a document facade id.
+    async fn remove_document_projection(&self, collection: &str, id: &str) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            self.index_manager
+                .remove_record_projection(collection, id)
+                .await?;
+            return Ok(());
+        }
+
+        self.index_manager.remove_document(collection, id).await
     }
 
     /// Flush WAL to disk
@@ -787,13 +909,7 @@ impl DocumentService {
         let mut record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
 
         // Write to WAL first (durability before in-memory update)
-        if let Err(e) = self
-            .write_to_wal(DocumentOperation::InsertDocument {
-                collection_id: collection.to_string(),
-                document: record.clone(),
-            })
-            .await
-        {
+        if let Err(e) = self.write_document_upsert_to_wal(collection, &record).await {
             self.record_insert_metrics(start, true).await;
             return Err(e);
         }
@@ -816,7 +932,7 @@ impl DocumentService {
         }
 
         // Update indexes
-        if let Err(e) = self.index_manager.index_document(collection, &record).await {
+        if let Err(e) = self.index_document_projection(collection, &record).await {
             self.record_insert_metrics(start, true).await;
             return Err(e);
         }
@@ -1004,13 +1120,7 @@ impl DocumentService {
 
         // Write to WAL first (durability before in-memory update)
         // Store full updated document for proper recovery replay
-        if let Err(e) = self
-            .write_to_wal(DocumentOperation::InsertDocument {
-                collection_id: collection.to_string(),
-                document: record.clone(),
-            })
-            .await
-        {
+        if let Err(e) = self.write_document_upsert_to_wal(collection, &record).await {
             self.record_update_metrics(start, true).await;
             return Err(e);
         }
@@ -1033,11 +1143,7 @@ impl DocumentService {
         }
 
         // Update indexes
-        if let Err(e) = self
-            .index_manager
-            .reindex_document(collection, &record)
-            .await
-        {
+        if let Err(e) = self.reindex_document_projection(collection, &record).await {
             self.record_update_metrics(start, true).await;
             return Err(e);
         }
@@ -1483,13 +1589,7 @@ impl DocumentService {
         }
 
         // Write to WAL first (durability before in-memory update)
-        if let Err(e) = self
-            .write_to_wal(DocumentOperation::DeleteDocument {
-                collection_id: collection.to_string(),
-                document_id: id.to_string(),
-            })
-            .await
-        {
+        if let Err(e) = self.write_document_delete_to_wal(collection, id).await {
             self.record_delete_metrics(start, true).await;
             return Err(e);
         }
@@ -1503,7 +1603,7 @@ impl DocumentService {
         }
 
         // Remove from indexes
-        if let Err(e) = self.index_manager.remove_document(collection, id).await {
+        if let Err(e) = self.remove_document_projection(collection, id).await {
             self.record_delete_metrics(start, true).await;
             return Err(e);
         }

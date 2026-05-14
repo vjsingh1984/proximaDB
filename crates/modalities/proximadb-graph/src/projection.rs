@@ -16,9 +16,8 @@ use proximadb_kernel::error::ProximaDBError;
 use proximadb_records::ProximaRecord;
 
 use crate::record::{
-    GRAPH_EDGE_DST_PROP, GRAPH_EDGE_LABEL, GRAPH_EDGE_SRC_PROP, GRAPH_ID_PROP,
-    GRAPH_NODE_LABEL, GraphEdgeKey, GraphNodeKey, canonical_edge_from_record,
-    canonical_node_from_record,
+    GRAPH_EDGE_DST_PROP, GRAPH_EDGE_LABEL, GRAPH_EDGE_SRC_PROP, GRAPH_ID_PROP, GRAPH_NODE_LABEL,
+    GraphEdgeKey, GraphNodeKey, canonical_edge_from_record, canonical_node_from_record,
 };
 
 /// Result type for topology projection operations.
@@ -111,8 +110,8 @@ pub fn filter_graph_edges<'a>(
     records: &'a [ProximaRecord],
     graph_id: &str,
 ) -> Vec<&'a ProximaRecord> {
-    use proximadb_records::ProximaTreeNode;
     use proximadb_data_model::ProximaValue;
+    use proximadb_records::ProximaTreeNode;
 
     records
         .iter()
@@ -133,8 +132,8 @@ pub fn filter_graph_nodes<'a>(
     records: &'a [ProximaRecord],
     graph_id: &str,
 ) -> Vec<&'a ProximaRecord> {
-    use proximadb_records::ProximaTreeNode;
     use proximadb_data_model::ProximaValue;
+    use proximadb_records::ProximaTreeNode;
 
     records
         .iter()
@@ -154,9 +153,10 @@ pub fn filter_graph_nodes<'a>(
 ///
 /// Returns `(src_node_oid, dst_node_oid)` if the record is a valid edge record.
 pub fn edge_endpoints(record: &ProximaRecord) -> Option<(String, String)> {
-    record.edge.as_ref().map(|edge_shape| {
-        (edge_shape.source_id.clone(), edge_shape.target_id.clone())
-    })
+    record
+        .edge
+        .as_ref()
+        .map(|edge_shape| (edge_shape.source_id.clone(), edge_shape.target_id.clone()))
 }
 
 #[cfg(test)]
@@ -166,15 +166,21 @@ mod tests {
     use proximadb_records::ProximaTree;
 
     fn make_node(graph_id: &str, node_id: &str) -> ProximaRecord {
-        CanonicalNode::new(graph_id, node_id, "Person", ProximaTree::new())
-            .into_proxima_record()
+        CanonicalNode::new(graph_id, node_id, "Person", ProximaTree::new()).into_proxima_record()
     }
 
     fn make_edge(graph_id: &str, edge_id: &str, src: &str, dst: &str) -> ProximaRecord {
         let src_oid = GraphNodeKey::new(graph_id, src).canonical_oid();
         let dst_oid = GraphNodeKey::new(graph_id, dst).canonical_oid();
-        CanonicalEdge::new(graph_id, edge_id, src_oid, dst_oid, "KNOWS", ProximaTree::new())
-            .into_proxima_record()
+        CanonicalEdge::new(
+            graph_id,
+            edge_id,
+            src_oid,
+            dst_oid,
+            "KNOWS",
+            ProximaTree::new(),
+        )
+        .into_proxima_record()
     }
 
     #[test]

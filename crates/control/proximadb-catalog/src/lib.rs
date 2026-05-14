@@ -436,6 +436,278 @@ pub enum CatalogIndexType {
     Pq,
 }
 
+/// Source-of-truth mode for a cataloged table, stream, projection, or external format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CatalogAuthorityMode {
+    /// ProximaRecord plus WAL/log/manifest own durable truth.
+    #[default]
+    InternalCanonical,
+    /// An external table/source owns durable truth; ProximaDB maps and governs access.
+    ExternalAuthoritative,
+    /// Point-in-time import from an external source.
+    ImportedSnapshot,
+    /// Publication generated from canonical records.
+    ExportedPublication,
+    /// Rebuildable structure derived from canonical records or events.
+    RebuildableProjection,
+}
+
+/// Physical layout family selected for a cataloged object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CatalogStorageLayoutKind {
+    /// Mutable record/row-oriented layout.
+    #[default]
+    RowRecord,
+    /// Log-structured merge layout for write-heavy data.
+    LsmRecord,
+    /// Partition Attributes Across hybrid row/column layout.
+    Pax,
+    /// Columnar segment layout.
+    Columnar,
+    /// Append-only event stream layout.
+    AppendOnlyEvent,
+    /// Vector ANN projection or fragment layout.
+    VectorAnn,
+    /// Graph topology projection such as adjacency, CSR, or COO.
+    GraphTopology,
+    /// Time-series compression or partition block.
+    TimeSeriesBlock,
+    /// Externally owned or externally formatted table.
+    ExternalTable,
+}
+
+/// Physical format used by a storage layout or projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CatalogPhysicalFormat {
+    /// Native ProximaDB record/block format.
+    #[default]
+    ProximaBlock,
+    /// Sorted string table or SST-family layout.
+    Sst,
+    /// Apache Arrow in-memory or IPC format.
+    Arrow,
+    /// Apache Parquet file format.
+    Parquet,
+    /// Apache ORC file format.
+    Orc,
+    /// Apache Iceberg table format.
+    Iceberg,
+    /// Delta Lake table format.
+    Delta,
+    /// Apache Hudi table format.
+    Hudi,
+    /// GraphAr-style graph lake format.
+    GraphAr,
+    /// Format not yet modeled as a first-class enum variant.
+    External(String),
+}
+
+/// Write and refresh behavior for a cataloged layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CatalogWriteMode {
+    /// In-place or logically mutable writes are accepted.
+    #[default]
+    Mutable,
+    /// Writes append immutable records/events.
+    AppendOnly,
+    /// Writes create new snapshots or file sets.
+    CopyOnWrite,
+    /// Data is refreshed from an external authority.
+    ExternalRefresh,
+    /// Data arrives through a stream/CDC connector.
+    StreamingIngest,
+    /// Read-only mapping.
+    ReadOnly,
+}
+
+/// Freshness semantics for a rebuildable projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ProjectionFreshness {
+    /// Projection is updated in the same write transaction as canonical records.
+    Synchronous,
+    /// Projection may lag but must stay within a declared bound.
+    BoundedLag,
+    /// Projection is refreshed lazily on demand or by background work.
+    #[default]
+    Lazy,
+    /// Projection is refreshed only by explicit command.
+    Manual,
+}
+
+/// Projection or access-method family cataloged below xCatalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CatalogProjectionKind {
+    /// JSON path or generated-column projection.
+    JsonPath,
+    /// Full-text or lexical search projection.
+    FullText,
+    /// Dense/sparse/binary vector ANN projection.
+    VectorAnn,
+    /// Graph adjacency, CSR, COO, or graph algorithm projection.
+    GraphTopology,
+    /// Columnar materialization.
+    Columnar,
+    /// Time-series rollup or compression projection.
+    TimeSeries,
+    /// Trace assembly, service map, or observability correlation projection.
+    Observability,
+    /// Materialized SQL/logical view.
+    MaterializedView,
+    /// Generic projection until a more specific family is introduced.
+    #[default]
+    Other,
+}
+
+/// Catalog metadata shared by internal layouts and external table mappings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogStorageLayout {
+    /// Stable layout identifier inside the table/profile/collection.
+    pub name: String,
+    /// Source-of-truth role for this layout.
+    pub authority: CatalogAuthorityMode,
+    /// Physical layout family.
+    pub layout_kind: CatalogStorageLayoutKind,
+    /// Concrete physical format.
+    pub physical_format: CatalogPhysicalFormat,
+    /// Write/refresh behavior.
+    pub write_mode: CatalogWriteMode,
+    /// Optional URI/path/catalog identifier for the physical data.
+    pub location: Option<String>,
+    /// Snapshot or isolation semantics, e.g. "mvcc", "iceberg-snapshot", "external-latest".
+    pub snapshot_semantics: Option<String>,
+    /// Whether policy/RLS enforcement happens inside ProximaDB before rows leave this layout.
+    pub policy_enforced_in_proxima: bool,
+    /// Names of ProximaType fields that require lossy conversion in this format, if any.
+    pub lossy_type_mappings: Vec<String>,
+    /// Additional implementation-specific metadata.
+    pub properties: HashMap<String, String>,
+}
+
+impl Default for CatalogStorageLayout {
+    fn default() -> Self {
+        Self {
+            name: "primary".to_string(),
+            authority: CatalogAuthorityMode::InternalCanonical,
+            layout_kind: CatalogStorageLayoutKind::RowRecord,
+            physical_format: CatalogPhysicalFormat::ProximaBlock,
+            write_mode: CatalogWriteMode::Mutable,
+            location: None,
+            snapshot_semantics: None,
+            policy_enforced_in_proxima: true,
+            lossy_type_mappings: Vec::new(),
+            properties: HashMap::new(),
+        }
+    }
+}
+
+impl CatalogStorageLayout {
+    /// Create an internal canonical layout with default policy enforcement.
+    pub fn internal(name: impl Into<String>, layout_kind: CatalogStorageLayoutKind) -> Self {
+        Self {
+            name: name.into(),
+            layout_kind,
+            ..Default::default()
+        }
+    }
+
+    /// Create an external authoritative table mapping.
+    pub fn external_authoritative(
+        name: impl Into<String>,
+        format: CatalogPhysicalFormat,
+        location: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            authority: CatalogAuthorityMode::ExternalAuthoritative,
+            layout_kind: CatalogStorageLayoutKind::ExternalTable,
+            physical_format: format,
+            write_mode: CatalogWriteMode::ExternalRefresh,
+            location: Some(location.into()),
+            policy_enforced_in_proxima: false,
+            ..Default::default()
+        }
+    }
+}
+
+/// Catalog metadata for a rebuildable projection/access method.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CatalogProjection {
+    /// Projection name.
+    pub name: String,
+    /// Projection family.
+    pub kind: CatalogProjectionKind,
+    /// Physical format backing the projection.
+    pub physical_format: CatalogPhysicalFormat,
+    /// Canonical layout/table/stream used to rebuild this projection.
+    pub rebuild_source: String,
+    /// Freshness semantics.
+    pub freshness: ProjectionFreshness,
+    /// Optional maximum accepted lag in milliseconds for bounded-lag projections.
+    pub max_lag_ms: Option<i64>,
+    /// Whether the projection can be rebuilt without data loss.
+    pub rebuildable: bool,
+    /// Whether using this projection can change recall or ranking quality.
+    pub lossy: bool,
+    /// Human-readable support status: experimental, beta, supported, deprecated.
+    pub support_status: String,
+    /// Additional implementation-specific metadata.
+    pub properties: HashMap<String, String>,
+}
+
+impl CatalogProjection {
+    /// Create a rebuildable projection with lazy freshness by default.
+    pub fn rebuildable(
+        name: impl Into<String>,
+        kind: CatalogProjectionKind,
+        rebuild_source: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            physical_format: CatalogPhysicalFormat::ProximaBlock,
+            rebuild_source: rebuild_source.into(),
+            freshness: ProjectionFreshness::Lazy,
+            max_lag_ms: None,
+            rebuildable: true,
+            lossy: false,
+            support_status: "experimental".to_string(),
+            properties: HashMap::new(),
+        }
+    }
+}
+
+/// Optional relational semantics for a table/profile.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RelationalCapabilities {
+    /// Primary key columns, if enforced.
+    pub primary_key: Vec<String>,
+    /// Unique indexes or constraints.
+    pub unique_indexes: Vec<CatalogIndex>,
+    /// Non-unique secondary indexes.
+    pub secondary_indexes: Vec<CatalogIndex>,
+    /// Foreign-key and check constraints.
+    pub constraints: Vec<ColumnConstraint>,
+    /// Materialized view names derived from this table/profile.
+    pub materialized_views: Vec<String>,
+    /// Transaction/isolation profile name.
+    pub transaction_profile: Option<String>,
+    /// Schema evolution policy name.
+    pub schema_evolution_policy: Option<String>,
+}
+
+impl RelationalCapabilities {
+    /// Returns true when this table opts into any relational integrity semantics.
+    pub fn has_enforced_semantics(&self) -> bool {
+        !self.primary_key.is_empty()
+            || !self.unique_indexes.is_empty()
+            || !self.secondary_indexes.is_empty()
+            || !self.constraints.is_empty()
+            || !self.materialized_views.is_empty()
+            || self.transaction_profile.is_some()
+            || self.schema_evolution_policy.is_some()
+    }
+}
+
 /// Table statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CatalogTableStatistics {
@@ -850,5 +1122,63 @@ mod tests {
     fn test_catalog_uuid_pgwire_oid() {
         let oid = CatalogDataType::Uuid.to_proxima_type().pgwire_oid();
         assert_eq!(oid, 2950, "UUID OID must be 2950");
+    }
+
+    #[test]
+    fn test_storage_layout_defaults_to_internal_authority() {
+        let layout = CatalogStorageLayout::default();
+
+        assert_eq!(layout.authority, CatalogAuthorityMode::InternalCanonical);
+        assert_eq!(layout.layout_kind, CatalogStorageLayoutKind::RowRecord);
+        assert_eq!(layout.physical_format, CatalogPhysicalFormat::ProximaBlock);
+        assert_eq!(layout.write_mode, CatalogWriteMode::Mutable);
+        assert!(layout.policy_enforced_in_proxima);
+        assert!(layout.lossy_type_mappings.is_empty());
+    }
+
+    #[test]
+    fn test_external_authoritative_layout_declares_boundary() {
+        let layout = CatalogStorageLayout::external_authoritative(
+            "iceberg_orders",
+            CatalogPhysicalFormat::Iceberg,
+            "s3://warehouse/orders",
+        );
+
+        assert_eq!(
+            layout.authority,
+            CatalogAuthorityMode::ExternalAuthoritative
+        );
+        assert_eq!(layout.layout_kind, CatalogStorageLayoutKind::ExternalTable);
+        assert_eq!(layout.physical_format, CatalogPhysicalFormat::Iceberg);
+        assert_eq!(layout.write_mode, CatalogWriteMode::ExternalRefresh);
+        assert_eq!(layout.location.as_deref(), Some("s3://warehouse/orders"));
+        assert!(!layout.policy_enforced_in_proxima);
+    }
+
+    #[test]
+    fn test_projection_records_rebuild_source_and_freshness() {
+        let projection = CatalogProjection::rebuildable(
+            "orders_hnsw",
+            CatalogProjectionKind::VectorAnn,
+            "orders.primary",
+        );
+
+        assert_eq!(projection.kind, CatalogProjectionKind::VectorAnn);
+        assert_eq!(projection.rebuild_source, "orders.primary");
+        assert_eq!(projection.freshness, ProjectionFreshness::Lazy);
+        assert!(projection.rebuildable);
+        assert!(!projection.lossy);
+    }
+
+    #[test]
+    fn test_relational_capabilities_are_optional() {
+        let empty = RelationalCapabilities::default();
+        assert!(!empty.has_enforced_semantics());
+
+        let with_pk = RelationalCapabilities {
+            primary_key: vec!["id".to_string()],
+            ..Default::default()
+        };
+        assert!(with_pk.has_enforced_semantics());
     }
 }

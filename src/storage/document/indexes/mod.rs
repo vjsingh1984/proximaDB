@@ -18,11 +18,13 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::{DocIndexType, IndexDefinition};
+use proximadb_records::ProximaRecord;
 
 use self::array_index::ArrayIndex;
 use self::fulltext::FullTextIndex;
 use self::path_index::PathIndex;
 use super::DocumentRecord;
+use super::canonical_adapter::proxima_record_to_legacy_document;
 
 /// Index type wrapper for different index implementations
 #[allow(clippy::large_enum_variant)]
@@ -155,6 +157,22 @@ impl IndexManager {
         Ok(())
     }
 
+    /// Apply document projection indexes from a canonical record.
+    ///
+    /// This is the Phase 2 convergence boundary: JSON path, array, and
+    /// full-text structures are rebuildable projections over `ProximaRecord`.
+    /// During migration the projection key remains the document facade id so
+    /// existing document query execution keeps its public behavior.
+    pub async fn index_record_projection(&self, record: &ProximaRecord) -> Result<Option<String>> {
+        let Some(document) = proxima_record_to_legacy_document(record) else {
+            return Ok(None);
+        };
+
+        self.index_document(&document.collection_id, &document)
+            .await?;
+        Ok(Some(document.id))
+    }
+
     /// Reindex a document after update
     pub async fn reindex_document(
         &self,
@@ -168,6 +186,20 @@ impl IndexManager {
         self.index_document(collection, document).await?;
 
         Ok(())
+    }
+
+    /// Rebuild projection entries for one canonical record after an update.
+    pub async fn reindex_record_projection(
+        &self,
+        record: &ProximaRecord,
+    ) -> Result<Option<String>> {
+        let Some(document) = proxima_record_to_legacy_document(record) else {
+            return Ok(None);
+        };
+
+        self.reindex_document(&document.collection_id, &document)
+            .await?;
+        Ok(Some(document.id))
     }
 
     /// Remove a document from all indexes
@@ -193,6 +225,39 @@ impl IndexManager {
         }
 
         Ok(())
+    }
+
+    /// Remove projection entries by facade document id.
+    ///
+    /// Canonical storage owns durable truth; this only removes rebuildable
+    /// projection state for the document facade.
+    pub async fn remove_record_projection(&self, collection: &str, id: &str) -> Result<()> {
+        self.remove_document(collection, id).await
+    }
+
+    /// Rebuild projection entries for a collection from canonical records.
+    ///
+    /// Existing entries for supplied records are replaced. A future full
+    /// rebuild path should clear all collection projection state before replay,
+    /// but this helper gives canonical recovery/query paths a record-shaped
+    /// projection API today.
+    pub async fn rebuild_record_projections(
+        &self,
+        collection: &str,
+        records: &[ProximaRecord],
+    ) -> Result<usize> {
+        let mut projected = 0;
+
+        for record in records {
+            if let Some(document) = proxima_record_to_legacy_document(record)
+                && document.collection_id == collection
+            {
+                self.reindex_document(collection, &document).await?;
+                projected += 1;
+            }
+        }
+
+        Ok(projected)
     }
 
     /// Query a path index for documents matching a condition

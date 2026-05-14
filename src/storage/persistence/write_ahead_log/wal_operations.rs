@@ -23,6 +23,7 @@ use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, VectorR
 use crate::storage::document::DocumentRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb_records::ProximaRecord;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -115,6 +116,17 @@ pub enum DocumentOperation {
         collection_id: String,
         document: DocumentRecord,
     },
+    /// Insert or update a document as canonical durable record state.
+    ///
+    /// This is the Phase 2 document rebase WAL shape from
+    /// `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`.
+    /// The document facade may still rebuild legacy `DocumentRecord`
+    /// projections during recovery, but durable intent is expressed as a
+    /// `ProximaRecord`.
+    UpsertCanonicalDocumentRecord {
+        collection_id: String,
+        record: ProximaRecord,
+    },
     /// Update a document with patch operations
     UpdateDocument {
         collection_id: String,
@@ -126,6 +138,12 @@ pub enum DocumentOperation {
     DeleteDocument {
         collection_id: String,
         document_id: String,
+    },
+    /// Delete a document by canonical record identity.
+    DeleteCanonicalDocumentRecord {
+        collection_id: String,
+        document_id: String,
+        record_oid: String,
     },
     /// Batch insert documents
     BatchDocuments {

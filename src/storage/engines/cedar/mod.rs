@@ -1,12 +1,19 @@
 //! # CEDAR Document Storage Engine
 //!
-//! **STATUS**: Phase 1 (Apr 2026)
+//! **STATUS**: compatibility projection/access method (May 2026)
 //!
-//! Columnar Extensible Document Archive -- LSM-based document engine.
+//! Columnar Extensible Document Archive -- document-oriented access method.
 //!
-//! CEDAR implements `DocumentStorageEngine` (the document-native trait) for
-//! efficient JSON document CRUD with secondary indexes, MVCC versioning,
-//! and aggregation pipelines.
+//! Architectural role:
+//! - canonical durable truth is `ProximaRecord` storage;
+//! - CEDAR's document-shaped memtables are compatibility/projection state;
+//! - CEDAR must not grow a separate durable WAL/recovery or record envelope.
+//!
+//! This follows
+//! `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`.
+//! CEDAR still implements `DocumentStorageEngine` for legacy callers, and also
+//! implements the canonical `RecordStore`/`RecordScan` traits by adapting
+//! through the document compatibility boundary.
 //!
 //! It also implements `UnifiedStorageEngine` as a thin stub for factory
 //! registration, but all real document operations go through `DocumentStorageEngine`.
@@ -23,12 +30,14 @@ use crate::proto::proximadb_v1::{AggregationStage, DocumentUpdate, IndexDefiniti
 use crate::storage::document::{
     AggregateResult, DocumentQueryParams, DocumentQueryResult, DocumentRecord,
     DocumentStorageEngine, FlushToStorageResult,
+    canonical_adapter::{legacy_document_to_proxima_record, proxima_record_to_legacy_document},
 };
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
+use proximadb_records::{ProximaRecord, RecordKey, RecordScan, RecordStore, RecordStoreResult};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -56,7 +65,7 @@ impl Default for CedarConfig {
 // Engine
 // ---------------------------------------------------------------------------
 
-/// CEDAR storage engine -- document-oriented LSM store.
+/// CEDAR storage engine -- document-oriented compatibility access method.
 ///
 /// Uses DashMap for lock-free concurrent document access in the memtable.
 /// Each collection gets its own DashMap partition.
@@ -95,7 +104,82 @@ impl CedarEngine {
 }
 
 // ---------------------------------------------------------------------------
-// DocumentStorageEngine implementation (the real document interface)
+// Canonical RecordStore implementation
+// ---------------------------------------------------------------------------
+
+#[async_trait]
+impl RecordStore for CedarEngine {
+    async fn upsert_record(&self, record: ProximaRecord) -> RecordStoreResult<ProximaRecord> {
+        let document = proxima_record_to_legacy_document(&record)
+            .ok_or_else(|| anyhow::anyhow!("CEDAR can only project document records"))?;
+        let collection_id = document.collection_id.clone();
+        self.insert_document(&collection_id, document).await?;
+        Ok(record)
+    }
+
+    async fn get_record(&self, key: &RecordKey) -> RecordStoreResult<Option<ProximaRecord>> {
+        for collection in self.collections.iter() {
+            for document in collection.value().iter() {
+                let record = legacy_document_to_proxima_record(document.value());
+                if record.oid == key.oid {
+                    return Ok(Some(record));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn delete_record(&self, key: &RecordKey) -> RecordStoreResult<bool> {
+        let mut target: Option<(String, String)> = None;
+
+        for collection in self.collections.iter() {
+            let collection_id = collection.key().clone();
+            for document in collection.value().iter() {
+                let record = legacy_document_to_proxima_record(document.value());
+                if record.oid == key.oid {
+                    let document_id = document.key().clone();
+                    target = Some((collection_id, document_id));
+                    break;
+                }
+            }
+
+            if target.is_some() {
+                break;
+            }
+        }
+
+        if let Some((collection_id, document_id)) = target {
+            return self
+                .delete_document(&collection_id, &document_id)
+                .await
+                .map_err(Into::into);
+        }
+
+        Ok(false)
+    }
+}
+
+#[async_trait]
+impl RecordScan for CedarEngine {
+    async fn scan_records(&self, limit: usize) -> RecordStoreResult<Vec<ProximaRecord>> {
+        let mut records = Vec::new();
+
+        for collection in self.collections.iter() {
+            for document in collection.value().iter() {
+                records.push(legacy_document_to_proxima_record(document.value()));
+                if records.len() >= limit {
+                    return Ok(records);
+                }
+            }
+        }
+
+        Ok(records)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DocumentStorageEngine implementation (legacy document facade interface)
 // ---------------------------------------------------------------------------
 
 #[async_trait]
@@ -484,5 +568,39 @@ mod tests {
 
         assert_eq!(result.documents.len(), 3);
         assert_eq!(result.total_count, Some(10));
+    }
+
+    #[tokio::test]
+    async fn test_cedar_projects_canonical_document_record_store() {
+        let engine = CedarEngine::new().unwrap();
+        let document = make_doc("doc1", "col");
+        let record = legacy_document_to_proxima_record(&document);
+        let key = RecordKey::from(&record);
+
+        let written = engine.upsert_record(record.clone()).await.unwrap();
+        assert_eq!(written.oid, record.oid);
+
+        let fetched = engine.get_record(&key).await.unwrap().expect("record");
+        assert_eq!(fetched.oid, record.oid);
+
+        let documents = engine.scan_records(10).await.unwrap();
+        assert_eq!(documents.len(), 1);
+        assert_eq!(documents[0].oid, record.oid);
+
+        assert!(engine.delete_record(&key).await.unwrap());
+        assert!(engine.get_record(&key).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cedar_rejects_non_document_canonical_record() {
+        let engine = CedarEngine::new().unwrap();
+        let result = engine
+            .upsert_record(ProximaRecord {
+                oid: "plain-record".to_string(),
+                ..ProximaRecord::default()
+            })
+            .await;
+
+        assert!(result.is_err());
     }
 }
