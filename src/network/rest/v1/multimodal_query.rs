@@ -76,6 +76,7 @@ use tracing::{debug, info, warn};
 use crate::errors::{ApiError, ApiResult};
 use crate::observability::ObservabilityService;
 use crate::query::QueryFacadeAdapter;
+use crate::query::explain::StorageAuthorityExplanation;
 use crate::query::federated::{
     FederatedParser, FederatedQueryContext, QueryType as FederatedQueryType,
 };
@@ -121,6 +122,9 @@ pub struct UnifiedQueryApiState {
     /// When set, all queries route through this adapter, making the legacy
     /// fields below unnecessary. This is the preferred mode.
     pub query_adapter: Option<Arc<QueryFacadeAdapter>>,
+
+    /// Optional catalog manager for EXPLAIN storage-authority metadata.
+    pub catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
 
     // =========================================================================
     // SECURITY - RBAC Manager for permission validation
@@ -187,6 +191,7 @@ impl UnifiedQueryApiState {
         let config = UnifiedQueryConfig::default();
         Self {
             query_adapter: Some(adapter),
+            catalog_manager: None,
             rbac_manager: None, // RBAC manager can be added later
             // Prepared statement cache with default configuration
             prepared_statement_cache: Arc::new(PreparedStatementCache::new(
@@ -231,6 +236,7 @@ impl UnifiedQueryApiState {
         let config = UnifiedQueryConfig::default();
         Self {
             query_adapter: Some(adapter),
+            catalog_manager: None,
             rbac_manager: None,
             prepared_statement_cache: Arc::new(PreparedStatementCache::new(prepared_config)),
             document_service,
@@ -264,6 +270,15 @@ impl UnifiedQueryApiState {
         vector_query_service: Arc<dyn VectorQueryService>,
     ) -> Self {
         self.vector_query_service = Some(vector_query_service);
+        self
+    }
+
+    /// Attach catalog metadata resolution for EXPLAIN storage-authority output.
+    pub fn with_catalog_manager(
+        mut self,
+        catalog_manager: Arc<crate::catalog::CatalogManager>,
+    ) -> Self {
+        self.catalog_manager = Some(catalog_manager);
         self
     }
 }
@@ -374,6 +389,9 @@ pub struct ExplainResponse {
     pub fusion_strategy: String,
     /// Estimated total cost
     pub estimated_total_cost: f64,
+    /// Cataloged storage authority metadata for referenced targets, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage_authority: Option<Vec<StorageAuthorityExplanation>>,
 }
 
 /// Component plan info
@@ -828,6 +846,8 @@ async fn explain_query(
     let explain_result = adapter
         .explain(&request.query)
         .map_err(|e| ApiError::Internal(format!("Explain failed: {}", e)))?;
+    let storage_authority =
+        explain_storage_authorities(state.catalog_manager.as_ref(), &request.query).await;
 
     let response = ExplainResponse {
         components: explain_result
@@ -841,9 +861,124 @@ async fn explain_query(
             .collect(),
         fusion_strategy: explain_result.fusion_strategy,
         estimated_total_cost: explain_result.estimated_total_cost,
+        storage_authority: if storage_authority.is_empty() {
+            None
+        } else {
+            Some(storage_authority)
+        },
     };
 
     Ok(JsonResponse(response))
+}
+
+async fn explain_storage_authorities(
+    catalog_manager: Option<&Arc<crate::catalog::CatalogManager>>,
+    sql: &str,
+) -> Vec<StorageAuthorityExplanation> {
+    let Some(catalog_manager) = catalog_manager else {
+        return Vec::new();
+    };
+
+    let mut authorities = Vec::new();
+    for target in explain_catalog_targets(sql) {
+        let (catalog, table_id) = match catalog_manager.resolve_table(&target).await {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                debug!(
+                    table = %target,
+                    error = %error,
+                    "Unified EXPLAIN storage authority metadata unavailable during catalog resolution"
+                );
+                continue;
+            }
+        };
+
+        match catalog.get_table(&table_id).await {
+            Ok(schema) => authorities.push(StorageAuthorityExplanation::from_catalog_table_schema(
+                &schema,
+            )),
+            Err(error) => {
+                debug!(
+                    table = %target,
+                    resolved_table = %table_id,
+                    error = %error,
+                    "Unified EXPLAIN storage authority metadata unavailable during catalog lookup"
+                );
+            }
+        }
+    }
+
+    authorities
+}
+
+fn explain_catalog_targets(sql: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+
+    for function_name in ["VECTOR_SEARCH", "DOCUMENT_QUERY", "LOGS", "METRICS"] {
+        collect_quoted_first_args(sql, function_name, &mut targets);
+    }
+
+    collect_from_targets(sql, &mut targets);
+    targets.dedup();
+    targets
+}
+
+fn collect_quoted_first_args(sql: &str, function_name: &str, targets: &mut Vec<String>) {
+    let upper = sql.to_uppercase();
+    let mut search_start = 0;
+
+    while let Some(relative_pos) = upper[search_start..].find(function_name) {
+        let name_start = search_start + relative_pos;
+        let after_name = name_start + function_name.len();
+        let Some(open_relative) = sql[after_name..].find('(') else {
+            break;
+        };
+        let mut arg_start = after_name + open_relative + 1;
+        while let Some(ch) = sql[arg_start..].chars().next() {
+            if !ch.is_whitespace() {
+                break;
+            }
+            arg_start += ch.len_utf8();
+        }
+        if sql[arg_start..].starts_with('\'') {
+            let value_start = arg_start + 1;
+            if let Some(close_relative) = sql[value_start..].find('\'') {
+                let value = sql[value_start..value_start + close_relative].trim();
+                if !value.is_empty() {
+                    push_unique_target(targets, value);
+                }
+                search_start = value_start + close_relative + 1;
+                continue;
+            }
+        }
+        search_start = after_name;
+    }
+}
+
+fn collect_from_targets(sql: &str, targets: &mut Vec<String>) {
+    let mut previous_was_from = false;
+    for token in sql.split_whitespace() {
+        if previous_was_from {
+            let candidate =
+                token.trim_matches(|ch: char| matches!(ch, ',' | ';' | '"' | '`' | '[' | ']'));
+            if !candidate.is_empty()
+                && !candidate.contains('(')
+                && !candidate.eq_ignore_ascii_case("SELECT")
+            {
+                push_unique_target(targets, candidate);
+            }
+            previous_was_from = false;
+            continue;
+        }
+
+        previous_was_from = token.eq_ignore_ascii_case("FROM")
+    }
+}
+
+fn push_unique_target(targets: &mut Vec<String>, value: &str) {
+    if !targets.iter().any(|existing| existing == value) {
+        targets.push(value.to_string());
+    }
 }
 
 /// Parse fusion strategy from string
@@ -2139,6 +2274,7 @@ mod tests {
             ],
             fusion_strategy: "rrf".into(),
             estimated_total_cost: 6.0,
+            storage_authority: None,
         };
 
         let json = serde_json::to_value(&explain).expect("should serialize");
@@ -2160,5 +2296,23 @@ mod tests {
             .expect("explain input should parse as ExecuteQueryRequest");
         assert!(req.query.contains("VECTOR_SEARCH"));
         assert!(req.query.contains("GRAPH_QUERY"));
+    }
+
+    #[test]
+    fn test_explain_catalog_targets_from_multimodel_sql() {
+        let targets = explain_catalog_targets(
+            "SELECT * FROM VECTOR_SEARCH('products', '[0.5]', 5) \
+             UNION ALL SELECT * FROM DOCUMENT_QUERY('docs', '$.kind = article') \
+             UNION ALL SELECT * FROM events",
+        );
+
+        assert_eq!(
+            targets,
+            vec![
+                "products".to_string(),
+                "docs".to_string(),
+                "events".to_string()
+            ]
+        );
     }
 }

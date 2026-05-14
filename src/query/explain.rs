@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use proximadb_catalog::{
-    CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout, RelationalCapabilities,
+    CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout, CatalogTableSchema,
+    RelationalCapabilities,
 };
 
 // TODO: Move to proximadb-graph crate
@@ -183,6 +184,15 @@ pub struct StorageAuthorityExplanation {
 }
 
 impl StorageAuthorityExplanation {
+    /// Build EXPLAIN metadata from a catalog table schema.
+    pub fn from_catalog_table_schema(schema: &CatalogTableSchema) -> Self {
+        Self::from_catalog_metadata(
+            &schema.storage_layouts,
+            &schema.projections,
+            &schema.relational_capabilities,
+        )
+    }
+
     /// Build EXPLAIN metadata from xCatalog layout/projection/capability records.
     pub fn from_catalog_metadata(
         layouts: &[CatalogStorageLayout],
@@ -1607,11 +1617,7 @@ mod tests {
                 ..Default::default()
             });
 
-        let authority = StorageAuthorityExplanation::from_catalog_metadata(
-            &schema.storage_layouts,
-            &schema.projections,
-            &schema.relational_capabilities,
-        );
+        let authority = StorageAuthorityExplanation::from_catalog_table_schema(&schema);
 
         assert_eq!(authority.layouts.len(), 3);
         assert_eq!(authority.projections.len(), 1);

@@ -32,7 +32,7 @@ use crate::query::aql::sources::graph::GraphAqlSource;
 use crate::query::aql::sources::observability::ObservabilityAqlSource;
 use crate::query::aql::sources::vector::VectorAqlSource;
 use crate::query::execution::QueryEngine;
-use crate::query::explain::ExplainPlan;
+use crate::query::explain::{ExplainPlan, StorageAuthorityExplanation};
 use serde::{Deserialize, Serialize};
 
 /// Shared application state
@@ -1000,6 +1000,68 @@ fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
     }
 }
 
+async fn explain_storage_authority(
+    catalog_manager: &Arc<crate::catalog::CatalogManager>,
+    explicit_collection: Option<&str>,
+    parsed_query: &crate::query::ast::Query,
+) -> Option<StorageAuthorityExplanation> {
+    let target = explicit_collection
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| first_table_name(parsed_query));
+
+    let Some(target) = target else {
+        return None;
+    };
+
+    let (catalog, table_id) = match catalog_manager.resolve_table(&target).await {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            debug!(
+                table = %target,
+                error = %error,
+                "EXPLAIN storage authority metadata unavailable during catalog resolution"
+            );
+            return None;
+        }
+    };
+
+    match catalog.get_table(&table_id).await {
+        Ok(schema) => Some(StorageAuthorityExplanation::from_catalog_table_schema(
+            &schema,
+        )),
+        Err(error) => {
+            debug!(
+                table = %target,
+                resolved_table = %table_id,
+                error = %error,
+                "EXPLAIN storage authority metadata unavailable during catalog lookup"
+            );
+            None
+        }
+    }
+}
+
+fn first_table_name(query: &crate::query::ast::Query) -> Option<String> {
+    match query {
+        crate::query::ast::Query::Select(select) => select
+            .from
+            .iter()
+            .find_map(|table| table.name.clone())
+            .or_else(|| {
+                select
+                    .joins
+                    .iter()
+                    .find_map(|join| join.right_table.name.clone())
+            }),
+        crate::query::ast::Query::With { query, .. } => first_table_name(query),
+        crate::query::ast::Query::Set { left, right, .. } => {
+            first_table_name(left).or_else(|| first_table_name(right))
+        }
+    }
+}
+
 /// EXPLAIN query response
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExplainQueryResponse {
@@ -1040,6 +1102,12 @@ pub async fn explain_sql(
     let parsed = parser
         .parse(&request.query)
         .map_err(|e| ApiError::Internal(format!("Failed to parse SQL: {}", e)))?;
+    let storage_authority = explain_storage_authority(
+        &state.catalog_manager,
+        request.collection.as_deref(),
+        &parsed,
+    )
+    .await;
 
     let explain_result = qe
         .explain_frontend(parsed)
@@ -1058,7 +1126,7 @@ pub async fn explain_sql(
         cost_breakdown: None,
         join_strategy: None,
         fusion_strategy: None,
-        storage_authority: None,
+        storage_authority,
     };
 
     let response = ExplainQueryResponse {
@@ -1642,7 +1710,8 @@ pub fn create_router(state: AppState) -> axum::Router {
         // Use new_with_adapter to route all queries through QueryFacadeAdapter
         query_adapter_opt.map(|adapter| {
             let unified_state =
-                UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine);
+                UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine)
+                    .with_catalog_manager(state.catalog_manager.clone());
             multimodal_query::create_router().with_state(unified_state)
         })
     };
@@ -1830,6 +1899,10 @@ mod tests {
     use crate::network::rest::proto_json::ProtoApiResponse;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use proximadb_catalog::{
+        CatalogColumn, CatalogDataType, CatalogPhysicalFormat, CatalogStorageLayout,
+        CatalogTableSchema,
+    };
     use std::collections::HashMap;
     use std::path::Path;
     use tempfile::TempDir;
@@ -1885,6 +1958,52 @@ mod tests {
         let response = ProtoApiResponse::<()>::error(err);
         assert!(!response.success);
         assert!(response.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_explain_storage_authority_resolves_catalog_table() {
+        let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
+        let manager = Arc::new(crate::catalog::CatalogManager::new());
+        let catalog = manager
+            .create_native_catalog("testcat", &file_url(temp_dir.path()))
+            .await
+            .expect("native catalog should be created");
+        catalog
+            .create_namespace(&["default".to_string()], HashMap::new())
+            .await
+            .expect("default namespace should be created");
+
+        let table_id =
+            crate::catalog::TableIdentifier::new(vec!["default".to_string()], "events".to_string());
+        let schema = CatalogTableSchema::new("events")
+            .with_column(CatalogColumn::new(1, "event_id", CatalogDataType::String))
+            .with_storage_layout(CatalogStorageLayout::external_authoritative(
+                "iceberg_lake",
+                CatalogPhysicalFormat::Iceberg,
+                "s3://bucket/events",
+            ));
+        catalog
+            .create_table(&table_id, schema)
+            .await
+            .expect("table should be registered");
+
+        let parser = crate::query::sql_frontend::parser::SqlFrontendParser::new();
+        let parsed = parser
+            .parse("SELECT * FROM events")
+            .expect("query should parse");
+
+        let authority = explain_storage_authority(&manager, None, &parsed)
+            .await
+            .expect("authority metadata should resolve");
+
+        assert_eq!(authority.layouts.len(), 2);
+        assert!(!authority.policy_safe_inside_proxima());
+        assert!(
+            authority
+                .layouts
+                .iter()
+                .any(|layout| layout.authority == "ExternalAuthoritative")
+        );
     }
 
     #[test]

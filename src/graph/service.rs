@@ -98,7 +98,9 @@ pub use service_transactions::{
 use crate::core::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
-    adjacency_projection::{InMemoryGraphAdjacencyProjection, edge_to_canonical_record},
+    adjacency_projection::{
+        InMemoryGraphAdjacencyProjection, edge_to_canonical_record, node_to_canonical_record,
+    },
     engines::{GraphEngine, orion::OrionGraphEngine},
 };
 use crate::security::rbac_service::{
@@ -109,6 +111,7 @@ use crate::storage::cache::orchestrator::{
 };
 use dashmap::DashMap;
 use proximadb_graph::projection::GraphTopologyProjection;
+use proximadb_records::{RecordKey, RecordStore};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -125,6 +128,8 @@ pub struct GraphOperationsService {
 
     /// Graph registry for multi-graph support - maps graph_id to engine (polymorphic)
     graphs: Arc<DashMap<String, Arc<crate::graph::engines::GraphEngineImpl>>>,
+    /// Optional canonical record store for durable graph node/edge records.
+    canonical_record_store: Option<Arc<dyn RecordStore>>,
     /// Rebuildable adjacency projections over canonical edge records, keyed by graph id.
     adjacency_projections: Arc<DashMap<String, Arc<InMemoryGraphAdjacencyProjection>>>,
 
@@ -168,6 +173,7 @@ impl GraphOperationsService {
             mode: OperationMode::Unified,
             collection_service,
             graphs: Arc::new(DashMap::new()),
+            canonical_record_store: None,
             adjacency_projections: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(), // Default storage URL
             memory_pool,
@@ -244,6 +250,7 @@ impl GraphOperationsService {
             mode: OperationMode::Unified,
             collection_service,
             graphs: Arc::new(DashMap::new()),
+            canonical_record_store: None,
             adjacency_projections: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(),
             memory_pool,
@@ -296,6 +303,14 @@ impl GraphOperationsService {
         let mut service = Self::new();
         service.base_storage_url = base_storage_url;
         service
+    }
+
+    /// Inject the canonical record store used as durable graph node/edge truth.
+    ///
+    /// Graph engines and adjacency/CSR structures remain projection consumers.
+    pub fn with_canonical_record_store(mut self, record_store: Arc<dyn RecordStore>) -> Self {
+        self.canonical_record_store = Some(record_store);
+        self
     }
 
     /// Create a new GraphOperationsService with RBAC enabled
@@ -406,6 +421,66 @@ impl GraphOperationsService {
             Some(projection) => projection.edge_count(),
             None => Ok(0),
         }
+    }
+
+    pub(crate) async fn upsert_canonical_node_record(
+        &self,
+        graph_id: &str,
+        node: &Node,
+    ) -> Result<()> {
+        if let Some(record_store) = &self.canonical_record_store {
+            record_store
+                .upsert_record(node_to_canonical_record(graph_id, node))
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn upsert_canonical_edge_record(
+        &self,
+        graph_id: &str,
+        edge: &Edge,
+    ) -> Result<()> {
+        if let Some(record_store) = &self.canonical_record_store {
+            record_store
+                .upsert_record(edge_to_canonical_record(graph_id, edge))
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn delete_canonical_node_record(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<()> {
+        if let Some(record_store) = &self.canonical_record_store {
+            let key =
+                RecordKey::new(proximadb_graph::record::GraphNodeKey::new(graph_id, node_id).canonical_oid());
+            record_store
+                .delete_record(&key)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn delete_canonical_edge_record(
+        &self,
+        graph_id: &str,
+        edge_id: &str,
+    ) -> Result<()> {
+        if let Some(record_store) = &self.canonical_record_store {
+            let key =
+                RecordKey::new(proximadb_graph::record::GraphEdgeKey::new(graph_id, edge_id).canonical_oid());
+            record_store
+                .delete_record(&key)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Recover all graphs from persistent storage

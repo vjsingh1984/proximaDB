@@ -32,10 +32,10 @@ use proximadb_graph::projection::{
     ProjectionResult, TopologyApplyResult, TopologyEpoch, TopologyFormat,
     adjacency_entries_for_edge,
 };
-use proximadb_graph::record::{CanonicalEdge, GraphNodeKey};
+use proximadb_graph::record::{CanonicalEdge, CanonicalNode, GraphNodeKey};
 use proximadb_records::{ProximaRecord, ProximaTree, ProximaTreeNode};
 
-use crate::graph::Edge;
+use crate::graph::{Edge, Node};
 use crate::proto::proximadb_v1::{PropertyValue, property_value};
 
 /// In-memory adjacency table projection for one graph dataset.
@@ -170,6 +170,22 @@ pub fn edge_to_canonical_record(graph_id: &str, edge: &Edge) -> ProximaRecord {
 
     canonical.created_at_ns = edge.created_at_ms.saturating_mul(1_000_000);
     canonical.updated_at_ns = edge.updated_at_ms.saturating_mul(1_000_000);
+    canonical.into_proxima_record()
+}
+
+/// Convert the root graph node compatibility shape into a canonical node
+/// record for durable record-store writes.
+pub fn node_to_canonical_record(graph_id: &str, node: &Node) -> ProximaRecord {
+    let node_label = node.labels.first().cloned().unwrap_or_default();
+    let mut canonical = CanonicalNode::new(
+        graph_id,
+        node.id.clone(),
+        node_label,
+        property_map_to_tree(&node.properties),
+    );
+
+    canonical.created_at_ns = node.created_at_ms.saturating_mul(1_000_000);
+    canonical.updated_at_ns = node.updated_at_ms.saturating_mul(1_000_000);
     canonical.into_proxima_record()
 }
 
@@ -352,6 +368,37 @@ mod tests {
         assert_eq!(
             record.props.get("rank"),
             Some(&ProximaTreeNode::Value(ProximaValue::Int64(7)))
+        );
+    }
+
+    #[test]
+    fn root_node_maps_to_canonical_node_record() {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "name".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::StringValue("Ada".to_string())),
+            },
+        );
+        let node = Node {
+            id: "n1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties,
+            embedding: None,
+            created_at_ms: 10,
+            updated_at_ms: 20,
+        };
+
+        let record = node_to_canonical_record("g1", &node);
+
+        assert_eq!(record.oid, "graph/g1/node/n1");
+        assert_eq!(record.created_at_ns, 10_000_000);
+        assert_eq!(record.updated_at_ns, 20_000_000);
+        assert_eq!(
+            record.props.get("name"),
+            Some(&ProximaTreeNode::Value(ProximaValue::String(
+                "Ada".to_string()
+            )))
         );
     }
 
