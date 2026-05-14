@@ -5,10 +5,12 @@
 
 pub mod composition;
 pub mod hardware;
+pub mod handlers;
 pub mod proto_defaults;
 pub mod resources;
 
 // Re-exports
 pub use composition::{DIContainer, ServiceComposer};
 pub use hardware::{HardwareCapabilities, SimdLevel, best_simd_level, hardware_capabilities};
+pub use handlers::{CollectionIdCache, UnifiedHandlers};
 pub use resources::{MemoryBudget, ResourceManager};

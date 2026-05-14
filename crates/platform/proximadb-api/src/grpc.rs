@@ -2,15 +2,19 @@
 //!
 //! Protocol Buffers API handlers via Tonic framework.
 
+pub mod builder;
 pub mod v1;
 pub mod v2;
 
 // Re-export v1 services
 pub use v1::{
-    CollectionService, DocumentService, EntityService, GraphService, GraphTraversalService,
-    HybridSearchService, LogsService, MetricsService, SecurityService, StreamingService,
-    VectorService,
+    CollectionServiceImpl, DocumentServiceImpl, EntityServiceImpl, GraphServiceImpl,
+    HybridSearchServiceImpl, ObservabilityServiceImpl, SecurityServiceImpl, SqlServiceImpl,
+    StreamingServiceImpl, VectorServiceImpl,
 };
+
+// Re-export builder types
+pub use builder::{GrpcServiceBuilder, GrpcServiceConfig, GrpcServiceFactory, GrpcServices};
 
 /// gRPC API request context
 #[derive(Debug, Clone)]

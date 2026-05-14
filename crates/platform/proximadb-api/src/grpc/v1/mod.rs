@@ -9,16 +9,18 @@ pub mod graph;
 pub mod hybrid;
 pub mod observability;
 pub mod security;
+pub mod sql;
 pub mod streaming;
 pub mod vector;
 
 // Re-exports
-pub use collection::CollectionService;
-pub use document::DocumentService;
-pub use entity::EntityService;
-pub use graph::{GraphService, GraphTraversalService};
-pub use hybrid::HybridSearchService;
-pub use observability::{LogsService, MetricsService};
-pub use security::SecurityService;
-pub use streaming::StreamingService;
-pub use vector::VectorService;
+pub use collection::CollectionServiceImpl;
+pub use document::DocumentServiceImpl;
+pub use entity::EntityServiceImpl;
+pub use graph::GraphServiceImpl;
+pub use hybrid::HybridSearchServiceImpl;
+pub use observability::ObservabilityServiceImpl;
+pub use security::SecurityServiceImpl;
+pub use sql::SqlServiceImpl;
+pub use streaming::StreamingServiceImpl;
+pub use vector::VectorServiceImpl;

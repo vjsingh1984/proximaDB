@@ -14,7 +14,12 @@ name = "proximadb_runtime"
 path = "src/lib.rs"
 
 [dependencies]
+anyhow.workspace = true
+proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
+proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto.workspace = true
 num_cpus = "1.16"
 sysinfo = "0.30"
+thiserror.workspace = true
+tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1"

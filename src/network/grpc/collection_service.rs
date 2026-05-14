@@ -1,3 +1,12 @@
+// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/collection.rs
+// Please use: use proximadb_api::grpc::CollectionServiceImpl;
+// This compatibility shim will be removed in version 0.3.0
+
+#![deprecated(
+    since = "0.2.0",
+    note = "gRPC services moved to proximadb-api crate. Use `proximadb_api::grpc::CollectionServiceImpl` instead."
+)]
+
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
@@ -8,6 +17,7 @@ use crate::proto::proximadb_v1::collection_service_server::{
 };
 
 /// gRPC implementation of the CollectionService for managing vector collections
+#[deprecated(since = "0.2.0", note = "Use proximadb_api::grpc::CollectionServiceImpl")]
 pub struct CollectionServiceImpl {
     /// Shared unified handlers for business logic delegation
     request_handlers: Arc<UnifiedHandlers>,

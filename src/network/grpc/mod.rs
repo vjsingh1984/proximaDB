@@ -9,6 +9,12 @@
 //!
 //! - **V1 Services** (root level): Original gRPC services for vector, collection, graph operations
 //! - **V2 Services** (`v2/`): New V2 API with ProximaRecord, typed fields, and schema support
+//!
+//! ## Status
+//!
+//! These services remain in the root crate during the workspace refactor. They will be
+//! migrated to `crates/platform/proximadb-api/src/grpc/` after UnifiedHandlers moves to
+//! `crates/platform/proximadb-runtime` to avoid circular dependencies.
 
 // V1 services (original API)
 /// gRPC service for collection management operations
