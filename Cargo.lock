@@ -6058,6 +6058,7 @@ dependencies = [
  "proximadb-graph-query",
  "proximadb-kernel",
  "proximadb-proto",
+ "serde_json",
  "sysinfo",
  "thiserror 1.0.69",
  "tokio",

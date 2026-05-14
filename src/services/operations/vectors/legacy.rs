@@ -4967,3 +4967,49 @@ impl VectorQueryService for VectorOperationsService {
         })
     }
 }
+
+// ── VectorOpsPort impl ────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
+    async fn search(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+        _tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.search_v1(request).await
+    }
+
+    async fn batch_upsert(
+        &self,
+        request: crate::proto::proximadb_v1::VectorBatchRequest,
+        _tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        self.vector_batch_v1(request).await
+    }
+
+    async fn get_vector(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+        include_vector: bool,
+        include_metadata: bool,
+        _tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        let req = crate::proto::proximadb_v1::VectorGetRequest {
+            collection_id: collection_id.to_string(),
+            vector_id: vector_id.to_string(),
+            include_vector: Some(include_vector),
+            include_metadata: Some(include_metadata),
+        };
+        self.vector_get_v1(req).await
+    }
+
+    async fn flush_all(&self) -> anyhow::Result<()> {
+        self.force_flush_all().await
+    }
+
+    async fn metrics(&self) -> anyhow::Result<serde_json::Value> {
+        VectorOperationsService::metrics(self).await
+    }
+}

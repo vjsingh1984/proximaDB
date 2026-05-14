@@ -633,6 +633,51 @@ impl QueryFacadeAdapter {
     }
 }
 
+// ── QueryAdapterPort impl ─────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
+    async fn vector_search(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        QueryFacadeAdapter::vector_search(self, request).await
+    }
+
+    async fn execute_hybrid(
+        &self,
+        _request: crate::proto::proximadb_v1::HybridSearchRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::HybridSearchResponse> {
+        Err(anyhow::anyhow!("Hybrid search via QueryFacadeAdapter is not yet implemented"))
+    }
+
+    async fn execute_sql(
+        &self,
+        query: String,
+        _collection: Option<String>,
+    ) -> anyhow::Result<serde_json::Value> {
+        use crate::query::QueryResultData;
+
+        let query_result = self.sql_query(&query).await?;
+
+        let rows: Vec<serde_json::Value> = match query_result.data {
+            QueryResultData::Rows(rows) => rows,
+            QueryResultData::VectorResults(matches) => matches
+                .into_iter()
+                .map(|m| serde_json::json!({"id": m.id, "score": m.score, "metadata": m.metadata}))
+                .collect(),
+            QueryResultData::Empty => vec![],
+            QueryResultData::Graph(g) => g
+                .nodes
+                .into_iter()
+                .map(|n| serde_json::to_value(n).unwrap_or_default())
+                .collect(),
+        };
+
+        Ok(serde_json::json!({"rows": rows}))
+    }
+}
+
 // ================================================================================
 // TESTS
 // ================================================================================

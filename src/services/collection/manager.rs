@@ -2217,3 +2217,64 @@ mod tests {
 // The backend (LocalRocksDbBackend or UniversalMetadataBackend) implements MetadataProvider.
 // CollectionService can implement InternalCollectionProvider if needed for backward compatibility,
 // but it delegates to its metadata_backend which is the actual MetadataProvider.
+
+// ── CollectionPort impl ───────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::CollectionPort for CollectionService {
+    async fn get_collection(
+        &self,
+        identifier: &str,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Option<crate::proto::proximadb_v1::Collection>> {
+        let ctx = self.load_tenant_context(tenant_id)?;
+        self.get_collection_with_tenant_context(identifier, ctx.as_ref()).await
+    }
+
+    async fn create_collection(
+        &self,
+        config: crate::proto::proximadb_v1::CollectionConfig,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::Collection> {
+        let ctx = self.load_tenant_context(tenant_id)?;
+        let resp = self.create_collection_with_tenant_context(&config, ctx.as_ref()).await?;
+        resp.collection
+            .ok_or_else(|| anyhow::anyhow!("create_collection returned no collection: error_code={:?}", resp.error_code))
+    }
+
+    async fn update_collection(
+        &self,
+        id: &str,
+        config: crate::proto::proximadb_v1::CollectionConfig,
+        _tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::Collection> {
+        let resp = CollectionService::update_collection(self, id, Some(config)).await?;
+        resp.collection
+            .ok_or_else(|| anyhow::anyhow!("update_collection returned no collection: error_code={:?}", resp.error_code))
+    }
+
+    async fn delete_collection(
+        &self,
+        id: &str,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        let ctx = self.load_tenant_context(tenant_id)?;
+        let resp = self.delete_collection_with_tenant_context(id, ctx.as_ref()).await?;
+        Ok(resp.success)
+    }
+
+    async fn list_collections(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::proto::proximadb_v1::Collection>> {
+        let ctx = self.load_tenant_context(tenant_id)?;
+        self.list_collections_with_tenant_context(ctx.as_ref()).await
+    }
+
+    async fn resolve_collection_id(
+        &self,
+        identifier: &str,
+    ) -> anyhow::Result<Option<String>> {
+        CollectionService::resolve_collection_id(self, identifier).await
+    }
+}

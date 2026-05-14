@@ -16,6 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+serde_json.workspace = true
 proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto.workspace = true
