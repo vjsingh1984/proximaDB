@@ -2180,65 +2180,42 @@ impl MultiServer {
         // 2. Start gRPC server on internal port (HTTP/2)
         if self.config.grpc_config.enable_grpc {
             let services = self.shared_services.clone();
-            let compression = self.config.grpc_config.compression;
+            let compress = self.config.grpc_config.compression;
 
-            let vector_service_impl =
-                crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
+            // ── Build core gRPC services via factory ──────────────────────────
+            let graph_port: Arc<dyn proximadb_runtime::GraphPort> = Arc::new(
+                crate::network::grpc::GraphServiceImpl::with_adapter(
                     services.request_handlers.clone(),
-                    Some(services.query_adapter()),
-                );
-            let mut vector_service =
-                crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
-                    vector_service_impl,
-                )
-                .max_decoding_message_size(64 * 1024 * 1024)
-                .max_encoding_message_size(64 * 1024 * 1024);
-            if compression {
-                use tonic::codec::CompressionEncoding;
-                vector_service = vector_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
-            }
-
-            let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
-                services.request_handlers.clone(),
+                    services.query_adapter(),
+                ),
             );
-            let mut sql_service =
-                crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
-                    sql_service_impl,
-                )
-                .max_decoding_message_size(64 * 1024 * 1024)
-                .max_encoding_message_size(64 * 1024 * 1024);
-            if compression {
-                use tonic::codec::CompressionEncoding;
-                sql_service = sql_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
+            let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
+                services.request_handlers.clone();
+            let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
+            let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
+                .with_graph(graph_port)
+                .with_config(grpc_cfg)
+                .create_all_services_sync();
+
+            const MSG_64MB: usize = 64 * 1024 * 1024;
+            use tonic::codec::CompressionEncoding;
+
+            macro_rules! apply_limits {
+                ($svc:expr) => {{
+                    let s = $svc.max_decoding_message_size(MSG_64MB).max_encoding_message_size(MSG_64MB);
+                    if compress {
+                        s.accept_compressed(CompressionEncoding::Gzip)
+                         .send_compressed(CompressionEncoding::Gzip)
+                    } else {
+                        s
+                    }
+                }};
             }
 
-            let col_service_impl =
-                crate::network::grpc::collection_service::CollectionServiceImpl::new(
-                    services.request_handlers.clone(),
-                );
-            let mut col_service =
-                crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
-                    col_service_impl,
-                );
-            if compression {
-                use tonic::codec::CompressionEncoding;
-                col_service = col_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
-            }
-
-            let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
-                services.request_handlers.clone(),
-                services.query_adapter(),
-            );
-            let graph_service =
-                crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(
-                    graph_service_impl,
-                );
+            let vector_service = apply_limits!(grpc_svcs.vector);
+            let sql_service    = apply_limits!(grpc_svcs.sql);
+            let col_service    = grpc_svcs.collection;
+            let graph_service  = grpc_svcs.graph;
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
@@ -2251,7 +2228,7 @@ impl MultiServer {
             });
             let flight_server =
                 arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
-                    .max_encoding_message_size(512 * 1024 * 1024) // 512MB for large vector batches
+                    .max_encoding_message_size(512 * 1024 * 1024)
                     .max_decoding_message_size(512 * 1024 * 1024);
 
             let server = tonic::transport::Server::builder()
@@ -2519,66 +2496,41 @@ impl MultiServer {
                 tonic::transport::Server::builder()
             };
 
-            // Build standard services
-            let vector_service_impl =
-                crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
+            // ── Build standard services via factory ───────────────────────────
+            let graph_port: Arc<dyn proximadb_runtime::GraphPort> = Arc::new(
+                crate::network::grpc::GraphServiceImpl::with_adapter(
                     services.request_handlers.clone(),
-                    Some(services.query_adapter()),
-                );
-            let mut vector_service =
-                crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
-                    vector_service_impl,
-                )
-                .max_decoding_message_size(64 * 1024 * 1024)
-                .max_encoding_message_size(64 * 1024 * 1024);
-
-            if self.config.grpc_config.compression {
-                use tonic::codec::CompressionEncoding;
-                vector_service = vector_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
-            }
-
-            let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
-                services.request_handlers.clone(),
+                    services.query_adapter(),
+                ),
             );
-            let mut sql_service =
-                crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
-                    sql_service_impl,
-                )
-                .max_decoding_message_size(64 * 1024 * 1024)
-                .max_encoding_message_size(64 * 1024 * 1024);
+            let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
+                services.request_handlers.clone();
+            let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
+            let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
+                .with_graph(graph_port)
+                .with_config(grpc_cfg)
+                .create_all_services_sync();
 
-            if self.config.grpc_config.compression {
-                use tonic::codec::CompressionEncoding;
-                sql_service = sql_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
+            let compress = self.config.grpc_config.compression;
+            const MSG_64MB: usize = 64 * 1024 * 1024;
+            use tonic::codec::CompressionEncoding;
+
+            macro_rules! apply_limits {
+                ($svc:expr) => {{
+                    let s = $svc.max_decoding_message_size(MSG_64MB).max_encoding_message_size(MSG_64MB);
+                    if compress {
+                        s.accept_compressed(CompressionEncoding::Gzip)
+                         .send_compressed(CompressionEncoding::Gzip)
+                    } else {
+                        s
+                    }
+                }};
             }
 
-            let col_service_impl =
-                crate::network::grpc::collection_service::CollectionServiceImpl::new(
-                    services.request_handlers.clone(),
-                );
-            let mut col_service =
-                crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
-                    col_service_impl,
-                );
-            if self.config.grpc_config.compression {
-                use tonic::codec::CompressionEncoding;
-                col_service = col_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
-            }
-
-            let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
-                services.request_handlers.clone(),
-                services.query_adapter(),
-            );
-            let graph_service =
-                crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(
-                    graph_service_impl,
-                );
+            let vector_service = apply_limits!(grpc_svcs.vector);
+            let sql_service    = apply_limits!(grpc_svcs.sql);
+            let col_service    = grpc_svcs.collection;
+            let graph_service  = grpc_svcs.graph;
 
             // Build cluster services
             let mut server = server_builder
