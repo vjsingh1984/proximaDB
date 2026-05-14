@@ -3,59 +3,37 @@
 //! gRPC implementations for graph database operations including nodes, edges,
 //! traversals, and advanced graph algorithms.
 //!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor. The actual implementations exist in `src/network/grpc/graph_service.rs`.
+//! `execute_hybrid_query` routes through `ApiHandlersPort`. All graph CRUD operations
+//! (create/get/update/delete node/edge, traversal, etc.) remain unimplemented until the
+//! graph execution service is extracted to the runtime crate.
 
 use std::sync::Arc;
 use std::pin::Pin;
 use tonic::{Request, Response, Status};
 
-// Use runtime UnifiedHandlers
-use proximadb_runtime::UnifiedHandlers;
-
-// Placeholder types for graph canonical module
-// TODO: Replace with actual types after migration
-pub struct QueryFacadeAdapter;
-
 use proximadb_proto::v1::{
     graph_service_server::{GraphService as GraphServiceTrait, GraphServiceServer},
     *
 };
+use proximadb_runtime::ApiHandlersPort;
 
 /// Streaming response type for stream_traverse
 pub type StreamTraverseStream = Pin<
     Box<dyn tokio_stream::Stream<Item = Result<TraversalChunk, Status>> + Send>,
 >;
 
-/// Graph service implementation
+/// Graph service implementation.
 pub struct GraphServiceImpl {
-    _request_handlers: Arc<UnifiedHandlers>,
-    _query_adapter: Option<Arc<QueryFacadeAdapter>>,
+    port: Arc<dyn ApiHandlersPort>,
 }
 
 impl GraphServiceImpl {
-    /// Create a new graph service
-    pub fn new(_request_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self {
-            _request_handlers,
-            _query_adapter: None,
-        }
+    /// Create a new graph service backed by the given port.
+    pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
+        Self { port }
     }
 
-    /// Create with query adapter
-    pub fn with_adapter(
-        _request_handlers: Arc<UnifiedHandlers>,
-        _query_adapter: Option<Arc<QueryFacadeAdapter>>,
-    ) -> Self {
-        Self {
-            _request_handlers,
-            _query_adapter,
-        }
-    }
-
-    /// Convert to tonic server
+    /// Convert to tonic server.
     pub fn into_server(self) -> GraphServiceServer<Self> {
         GraphServiceServer::new(self)
     }
@@ -222,8 +200,13 @@ impl GraphServiceTrait for GraphServiceImpl {
 
     async fn execute_hybrid_query(
         &self,
-        _request: Request<HybridSearchRequest>,
+        request: Request<HybridSearchRequest>,
     ) -> Result<Response<HybridSearchResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let req = request.into_inner();
+        self.port
+            .execute_hybrid_query(req)
+            .await
+            .map(Response::new)
+            .map_err(|e| Status::internal(format!("Hybrid query failed: {e}")))
     }
 }

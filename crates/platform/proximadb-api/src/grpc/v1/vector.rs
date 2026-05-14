@@ -1,62 +1,34 @@
 //! # Vector Service (gRPC)
 //!
 //! gRPC implementation for vector CRUD and search operations.
-//!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor. The actual implementations exist in `src/network/grpc/vector_service.rs`.
+//! Routes through `ApiHandlersPort` — the seam between this protocol adapter and
+//! the business logic in `proximadb-runtime`.
 
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
-use tracing::debug;
 
-// Use runtime UnifiedHandlers
-use proximadb_runtime::UnifiedHandlers;
-
-// Placeholder type for query facade adapter
-// TODO: Replace with actual type after migration
-pub struct QueryFacadeAdapter;
-
-use proximadb_proto::v1;
+use proximadb_proto::v1::{self as v1};
 use proximadb_proto::v1::vector_service_server::{VectorService, VectorServiceServer};
+use proximadb_runtime::ApiHandlersPort;
 
-/// gRPC implementation of the VectorService for vector CRUD and search operations
+/// gRPC implementation of the VectorService for vector CRUD and search operations.
 pub struct VectorServiceImpl {
-    /// Shared unified handlers for business logic delegation
-    _request_handlers: Arc<UnifiedHandlers>,
-    /// Optional query facade adapter for unified routing through the query planner
-    _query_adapter: Option<Arc<QueryFacadeAdapter>>,
+    port: Arc<dyn ApiHandlersPort>,
 }
 
-/// Streaming response type for VectorSearchStream
+/// Streaming response type for VectorSearchStream.
 pub type VectorSearchStreamStream = Pin<
     Box<dyn tokio_stream::Stream<Item = Result<v1::SearchVectorRecord, Status>> + Send>,
 >;
 
 impl VectorServiceImpl {
-    /// Create a new vector service backed by unified handlers
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self {
-            _request_handlers: request_handlers,
-            _query_adapter: None,
-        }
+    /// Create a new vector service backed by the given port.
+    pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
+        Self { port }
     }
 
-    /// Create a new VectorServiceImpl with optional facade adapter for unified routing
-    pub fn with_adapter(
-        request_handlers: Arc<UnifiedHandlers>,
-        query_adapter: Option<Arc<QueryFacadeAdapter>>,
-    ) -> Self {
-        Self {
-            _request_handlers: request_handlers,
-            _query_adapter: query_adapter,
-        }
-    }
-
-    /// Convert this implementation into a tonic gRPC server
+    /// Convert this implementation into a tonic gRPC server.
     pub fn into_server(self) -> VectorServiceServer<Self> {
         VectorServiceServer::new(self)
     }
@@ -65,9 +37,9 @@ impl VectorServiceImpl {
         request
             .metadata()
             .get("x-tenant-id")
-            .and_then(|value| value.to_str().ok())
+            .and_then(|v| v.to_str().ok())
             .map(str::trim)
-            .filter(|tenant_id| !tenant_id.is_empty())
+            .filter(|t| !t.is_empty())
             .map(ToOwned::to_owned)
     }
 }
@@ -76,38 +48,65 @@ impl VectorServiceImpl {
 impl VectorService for VectorServiceImpl {
     async fn vector_batch(
         &self,
-        _request: Request<v1::VectorBatchRequest>,
+        request: Request<v1::VectorBatchRequest>,
     ) -> Result<Response<v1::VectorOperationResponse>, Status> {
-        Err(Status::unimplemented("Vector batch: use root crate implementation"))
+        let tenant_id = Self::extract_tenant_id(&request);
+        let req = request.into_inner();
+        self.port
+            .handle_vector_batch_v1_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map(Response::new)
+            .map_err(|e| Status::internal(format!("Vector batch failed: {e}")))
     }
 
     async fn vector_search(
         &self,
-        _request: Request<v1::VectorSearchRequest>,
+        request: Request<v1::VectorSearchRequest>,
     ) -> Result<Response<v1::VectorOperationResponse>, Status> {
-        Err(Status::unimplemented("Vector search: use root crate implementation"))
+        let tenant_id = Self::extract_tenant_id(&request);
+        let req = request.into_inner();
+        if tenant_id.is_some() {
+            self.port
+                .handle_vector_search_v1_for_tenant(req, tenant_id.as_deref())
+                .await
+                .map(Response::new)
+                .map_err(|e| Status::internal(format!("Vector search failed: {e}")))
+        } else {
+            self.port
+                .handle_vector_search_v1(req)
+                .await
+                .map(Response::new)
+                .map_err(|e| Status::internal(format!("Vector search failed: {e}")))
+        }
     }
 
     async fn vector_get(
         &self,
-        _request: Request<v1::VectorGetRequest>,
+        request: Request<v1::VectorGetRequest>,
     ) -> Result<Response<v1::VectorOperationResponse>, Status> {
-        Err(Status::unimplemented("Vector get: use root crate implementation"))
+        let tenant_id = Self::extract_tenant_id(&request);
+        let req = request.into_inner();
+        self.port
+            .handle_vector_v1_for_tenant(
+                &req.collection_id,
+                &req.vector_id,
+                req.include_vector.unwrap_or(false),
+                req.include_metadata.unwrap_or(true),
+                tenant_id.as_deref(),
+            )
+            .await
+            .map(Response::new)
+            .map_err(|e| Status::internal(format!("Vector get failed: {e}")))
     }
 
-    /// Streaming vector search - returns results as a stream for large result sets
-    ///
-    /// This method performs the same search as `vector_search` but streams
-    /// individual results back to the client, which is useful for:
-    /// - Large result sets that might exceed message size limits
-    /// - Progressive rendering of search results
-    /// - Lower latency for first results
     type VectorSearchStreamStream = VectorSearchStreamStream;
 
     async fn vector_search_stream(
         &self,
         _request: Request<v1::VectorSearchRequest>,
     ) -> Result<Response<Self::VectorSearchStreamStream>, Status> {
-        Err(Status::unimplemented("Vector search stream: use root crate implementation"))
+        Err(Status::unimplemented(
+            "Streaming vector search is not yet available via this endpoint",
+        ))
     }
 }

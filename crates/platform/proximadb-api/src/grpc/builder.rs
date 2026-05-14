@@ -2,19 +2,9 @@
 //!
 //! Builder patterns for constructing and configuring gRPC services.
 //!
-//! ## Usage
-//!
-//! ```rust
-//! use proximadb_api::grpc::GrpcServiceBuilder;
-//! use proximadb_api::grpc::v1::*;
-//!
-//! let builder = GrpcServiceBuilder::new()
-//!     .with_compression(true)
-//!     .with_max_message_size(128 * 1024 * 1024);
-//!
-//! let vector_server = builder.build_vector_service(request_handlers)?;
-//! let collection_server = builder.build_collection_service(request_handlers)?;
-//! ```
+//! Services that route through `ApiHandlersPort` accept `Arc<dyn ApiHandlersPort>`.
+//! Services with their own concrete dependencies (document, entity, observability,
+//! security, streaming) accept those dependencies directly.
 
 use std::sync::Arc;
 
@@ -22,15 +12,15 @@ use crate::grpc::v1::{
     collection::CollectionServiceImpl,
     document::{DocumentServiceImpl, DocStorageService},
     entity::{EntityServiceImpl, ProximaEntityStore},
-    graph::{GraphServiceImpl, QueryFacadeAdapter as GraphQueryFacadeAdapter},
+    graph::GraphServiceImpl,
     hybrid::HybridSearchServiceImpl,
     observability::{ObservabilityServiceImpl, ObservabilityStorage},
     security::SecurityServiceImpl,
     sql::SqlServiceImpl,
     streaming::{StreamingServiceImpl, StreamCoordinator},
-    vector::{VectorServiceImpl, QueryFacadeAdapter as VectorQueryFacadeAdapter},
+    vector::VectorServiceImpl,
 };
-use proximadb_runtime::UnifiedHandlers;
+use proximadb_runtime::ApiHandlersPort;
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
 use proximadb_proto::v1::{
     collection_service_server::CollectionServiceServer,
@@ -111,16 +101,9 @@ impl GrpcServiceBuilder {
     /// Build vector service
     pub fn build_vector_service(
         &self,
-        handlers: Arc<UnifiedHandlers>,
-        query_adapter: Option<Arc<VectorQueryFacadeAdapter>>,
+        port: Arc<dyn ApiHandlersPort>,
     ) -> VectorServiceServer<VectorServiceImpl> {
-        let service_impl = if let Some(adapter) = query_adapter {
-            VectorServiceImpl::with_adapter(handlers, Some(adapter))
-        } else {
-            VectorServiceImpl::new(handlers)
-        };
-
-        let server = VectorServiceServer::new(service_impl);
+        let server = VectorServiceServer::new(VectorServiceImpl::new(port));
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -132,10 +115,9 @@ impl GrpcServiceBuilder {
     /// Build collection service
     pub fn build_collection_service(
         &self,
-        handlers: Arc<UnifiedHandlers>,
+        port: Arc<dyn ApiHandlersPort>,
     ) -> CollectionServiceServer<CollectionServiceImpl> {
-        let service_impl = CollectionServiceImpl::new(handlers);
-        let server = CollectionServiceServer::new(service_impl);
+        let server = CollectionServiceServer::new(CollectionServiceImpl::new(port));
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -146,14 +128,12 @@ impl GrpcServiceBuilder {
 
     /// Build document service with specialized dependencies
     ///
-    /// DocumentServiceImpl requires Arc<DocStorageService>, not Arc<UnifiedHandlers>.
-    /// Use this method when you have the document storage service available.
+    /// DocumentServiceImpl requires Arc<DocStorageService>, not Arc<dyn ApiHandlersPort>.
     pub fn build_document_service(
         &self,
         doc_storage: Arc<DocStorageService>,
     ) -> DocumentServiceServer<DocumentServiceImpl> {
-        let service_impl = DocumentServiceImpl::new(doc_storage);
-        let server = DocumentServiceServer::new(service_impl);
+        let server = DocumentServiceServer::new(DocumentServiceImpl::new(doc_storage));
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -164,14 +144,12 @@ impl GrpcServiceBuilder {
 
     /// Build entity service with specialized dependencies
     ///
-    /// EntityServiceImpl requires Arc<ProximaEntityStore>, not Arc<UnifiedHandlers>.
-    /// Use this method when you have the entity store available.
+    /// EntityServiceImpl requires Arc<ProximaEntityStore>, not Arc<dyn ApiHandlersPort>.
     pub fn build_entity_service(
         &self,
         entity_store: Arc<ProximaEntityStore>,
     ) -> EntityServiceServer<EntityServiceImpl> {
-        let service_impl = EntityServiceImpl::new(entity_store);
-        let server = EntityServiceServer::new(service_impl);
+        let server = EntityServiceServer::new(EntityServiceImpl::new(entity_store));
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -183,16 +161,9 @@ impl GrpcServiceBuilder {
     /// Build graph service
     pub fn build_graph_service(
         &self,
-        handlers: Arc<UnifiedHandlers>,
-        query_adapter: Option<Arc<GraphQueryFacadeAdapter>>,
+        port: Arc<dyn ApiHandlersPort>,
     ) -> GraphServiceServer<GraphServiceImpl> {
-        let service_impl = if let Some(adapter) = query_adapter {
-            GraphServiceImpl::with_adapter(handlers, Some(adapter))
-        } else {
-            GraphServiceImpl::new(handlers)
-        };
-
-        let server = GraphServiceServer::new(service_impl);
+        let server = GraphServiceServer::new(GraphServiceImpl::new(port));
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -201,13 +172,9 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Build hybrid search service
-    pub fn build_hybrid_search_service(
-        &self,
-        _handlers: Arc<UnifiedHandlers>,
-    ) -> HybridSearchServiceServer<HybridSearchServiceImpl> {
-        let service_impl = HybridSearchServiceImpl::new();
-        let server = HybridSearchServiceServer::new(service_impl);
+    /// Build hybrid search service (stateless — no port needed)
+    pub fn build_hybrid_search_service(&self) -> HybridSearchServiceServer<HybridSearchServiceImpl> {
+        let server = HybridSearchServiceServer::new(HybridSearchServiceImpl::new());
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -219,10 +186,9 @@ impl GrpcServiceBuilder {
     /// Build SQL service
     pub fn build_sql_service(
         &self,
-        handlers: Arc<UnifiedHandlers>,
+        port: Arc<dyn ApiHandlersPort>,
     ) -> SqlServiceServer<SqlServiceImpl> {
-        let service_impl = SqlServiceImpl::new(handlers);
-        let server = SqlServiceServer::new(service_impl);
+        let server = SqlServiceServer::new(SqlServiceImpl::new(port));
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -232,13 +198,9 @@ impl GrpcServiceBuilder {
     }
 
     /// Build streaming service
-    pub fn build_streaming_service(
-        &self,
-        _config: Option<()>,
-    ) -> StreamingServiceServer<StreamingServiceImpl> {
-        let service_impl = StreamingServiceImpl::new(Arc::new(StreamCoordinator));
-
-        let server = StreamingServiceServer::new(service_impl);
+    pub fn build_streaming_service(&self) -> StreamingServiceServer<StreamingServiceImpl> {
+        let server =
+            StreamingServiceServer::new(StreamingServiceImpl::new(Arc::new(StreamCoordinator)));
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -247,13 +209,9 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Build security service
-    pub fn build_security_service(
-        &self,
-        _handlers: Arc<UnifiedHandlers>,
-    ) -> SecurityServiceServer<SecurityServiceImpl> {
-        let service_impl = SecurityServiceImpl::with_default_config();
-        let server = SecurityServiceServer::new(service_impl);
+    /// Build security service (stateless — no port needed)
+    pub fn build_security_service(&self) -> SecurityServiceServer<SecurityServiceImpl> {
+        let server = SecurityServiceServer::new(SecurityServiceImpl::with_default_config());
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -262,20 +220,11 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Configure a service server with compression and message size limits
-    fn configure_server<S>(&self, server: S) -> S {
-        server
-    }
-
-    /// Apply compression configuration to a service server
     fn apply_compression<S>(server: S, _enabled: bool) -> S {
-        // Compression is applied in each build method
         server
     }
 
-    /// Apply message size configuration to a service server
     fn apply_message_limits<S>(server: S, _max_decoding: usize, _max_encoding: usize) -> S {
-        // Message limits are applied in each build method
         server
     }
 }
@@ -286,17 +235,17 @@ impl Default for GrpcServiceBuilder {
     }
 }
 
-/// Helper to create all gRPC services with default configuration
+/// Helper to create all gRPC services with a single port reference.
 pub struct GrpcServiceFactory {
-    handlers: Arc<UnifiedHandlers>,
+    port: Arc<dyn ApiHandlersPort>,
     config: GrpcServiceConfig,
 }
 
 impl GrpcServiceFactory {
-    /// Create a new factory with default configuration
-    pub fn new(handlers: Arc<UnifiedHandlers>) -> Self {
+    /// Create a new factory backed by the given port.
+    pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
         Self {
-            handlers,
+            port,
             config: GrpcServiceConfig::default(),
         }
     }
@@ -313,76 +262,48 @@ impl GrpcServiceFactory {
             config: self.config.clone(),
         };
 
-        // Observability service requires async construction - create separately
-        // TODO: Replace with actual observability service after migration
         let obs_storage = Arc::new(ObservabilityStorage);
-
         let obs_server = ObservabilityServiceServer::new(ObservabilityServiceImpl::new(obs_storage));
-        let obs_server = Self::apply_compression(obs_server, builder.config.compression_enabled);
 
         Ok(GrpcServices {
-            vector: builder.build_vector_service(
-                self.handlers.clone(),
-                None,
-            ),
-            collection: builder.build_collection_service(self.handlers.clone()),
-            document: None, // Requires Arc<DocStorageService> - use direct constructor
-            entity: None, // Requires Arc<ProximaEntityStore> - use direct constructor
-            graph: builder.build_graph_service(
-                self.handlers.clone(),
-                None,
-            ),
-            hybrid_search: builder.build_hybrid_search_service(self.handlers.clone()),
-            sql: builder.build_sql_service(self.handlers.clone()),
-            streaming: builder.build_streaming_service(None),
+            vector: builder.build_vector_service(self.port.clone()),
+            collection: builder.build_collection_service(self.port.clone()),
+            document: None,
+            entity: None,
+            graph: builder.build_graph_service(self.port.clone()),
+            hybrid_search: builder.build_hybrid_search_service(),
+            sql: builder.build_sql_service(self.port.clone()),
+            streaming: builder.build_streaming_service(),
             observability: Some(obs_server),
-            security: builder.build_security_service(self.handlers.clone()),
+            security: builder.build_security_service(),
         })
     }
 
-    /// Create all gRPC services except observability (synchronous version)
+    /// Create all gRPC services (synchronous)
     pub fn create_all_services_sync(&self) -> GrpcServices {
         let builder = GrpcServiceBuilder {
             config: self.config.clone(),
         };
 
         GrpcServices {
-            vector: builder.build_vector_service(
-                self.handlers.clone(),
-                None,
-            ),
-            collection: builder.build_collection_service(self.handlers.clone()),
-            document: None, // Requires Arc<DocStorageService> - use direct constructor
-            entity: None, // Requires Arc<ProximaEntityStore> - use direct constructor
-            graph: builder.build_graph_service(
-                self.handlers.clone(),
-                None,
-            ),
-            hybrid_search: builder.build_hybrid_search_service(self.handlers.clone()),
-            sql: builder.build_sql_service(self.handlers.clone()),
-            streaming: builder.build_streaming_service(None),
-            observability: None, // Observability requires async constructor
-            security: builder.build_security_service(self.handlers.clone()),
+            vector: builder.build_vector_service(self.port.clone()),
+            collection: builder.build_collection_service(self.port.clone()),
+            document: None,
+            entity: None,
+            graph: builder.build_graph_service(self.port.clone()),
+            hybrid_search: builder.build_hybrid_search_service(),
+            sql: builder.build_sql_service(self.port.clone()),
+            streaming: builder.build_streaming_service(),
+            observability: None,
+            security: builder.build_security_service(),
         }
-    }
-
-    /// Apply compression configuration to a service server
-    fn apply_compression<S>(server: S, _enabled: bool) -> S {
-        // Note: Compression applied directly in build methods
-        server
-    }
-
-    /// Apply message size configuration to a service server
-    fn apply_message_limits<S>(server: S, _max_decoding: usize, _max_encoding: usize) -> S {
-        // Note: Message limits applied directly in build methods
-        server
     }
 }
 
-/// Collection of all gRPC services
+/// Collection of all gRPC services.
 ///
-/// Some services are Option because they require specialized dependencies
-/// beyond Arc<UnifiedHandlers>. Use direct constructors for those services.
+/// `document` and `entity` are `Option` because they require specialized dependencies
+/// beyond `Arc<dyn ApiHandlersPort>`; use their direct constructors.
 pub struct GrpcServices {
     pub vector: VectorServiceServer<VectorServiceImpl>,
     pub collection: CollectionServiceServer<CollectionServiceImpl>,

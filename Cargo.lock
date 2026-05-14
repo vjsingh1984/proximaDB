@@ -6053,6 +6053,7 @@ name = "proximadb-runtime"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "num_cpus",
  "proximadb-graph-query",
  "proximadb-kernel",

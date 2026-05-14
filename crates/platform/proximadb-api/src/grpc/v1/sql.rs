@@ -1,44 +1,49 @@
 //! # SQL Service (gRPC)
 //!
 //! gRPC implementation for SQL query execution.
-//!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor. The actual implementations exist in `src/network/grpc/sql_service.rs`.
+//! Routes through `ApiHandlersPort` — the seam between this protocol adapter and
+//! the business logic in `proximadb-runtime`.
 
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-// Use runtime UnifiedHandlers
-use proximadb_runtime::UnifiedHandlers;
-use proximadb_proto::v1::{self, sql_service_server::{SqlService, SqlServiceServer}};
+use proximadb_proto::v1::{self as v1};
+use proximadb_proto::v1::sql_service_server::{SqlService, SqlServiceServer};
+use proximadb_runtime::ApiHandlersPort;
 
-/// gRPC implementation of the SqlService for executing SQL queries
+/// gRPC implementation of the SqlService for executing SQL queries.
 pub struct SqlServiceImpl {
-    /// Shared unified handlers for query execution delegation
-    _request_handlers: Arc<UnifiedHandlers>,
+    port: Arc<dyn ApiHandlersPort>,
 }
 
 impl SqlServiceImpl {
-    /// Create a new SQL service backed by unified handlers
-    pub fn new(_request_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { _request_handlers }
+    /// Create a new SQL service backed by the given port.
+    pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
+        Self { port }
     }
 
-    /// Convert this implementation into a tonic gRPC server
+    /// Convert this implementation into a tonic gRPC server.
     pub fn into_server(self) -> SqlServiceServer<Self> {
         SqlServiceServer::new(self)
     }
 }
 
-// Placeholder trait implementation - will be implemented after migration
 #[tonic::async_trait]
 impl SqlService for SqlServiceImpl {
     async fn execute_sql(
         &self,
-        _request: Request<v1::ExecuteSqlRequest>,
+        request: Request<v1::ExecuteSqlRequest>,
     ) -> Result<Response<v1::ExecuteSqlResponse>, Status> {
-        Err(Status::unimplemented("SQL service migration in progress"))
+        let req = request.into_inner();
+        let parameters = if req.parameters.is_empty() {
+            None
+        } else {
+            Some(req.parameters)
+        };
+        self.port
+            .execute_sql_v1(req.query, parameters, req.collection)
+            .await
+            .map(Response::new)
+            .map_err(|e| Status::internal(format!("SQL execution failed: {e}")))
     }
 }

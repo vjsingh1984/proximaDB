@@ -3430,3 +3430,80 @@ pub struct SqlQueryResult {
     /// Query execution wall-clock time in milliseconds.
     pub execution_time_ms: u64,
 }
+
+// ── ApiHandlersPort implementation ────────────────────────────────────────────
+//
+// Bridges the platform-level `ApiHandlersPort` trait (defined in `proximadb-runtime`)
+// to the concrete `UnifiedHandlers` business logic. Protocol adapters in
+// `proximadb-api` hold an `Arc<dyn ApiHandlersPort>` and call through this seam,
+// so they never import root-crate concrete types directly.
+
+#[async_trait::async_trait]
+impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
+    async fn handle_collection_operation_for_tenant(
+        &self,
+        request: crate::proto::proximadb_v1::CollectionRequest,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::CollectionResponse> {
+        // Inherent method has the same signature — delegate directly.
+        UnifiedHandlers::handle_collection_operation_for_tenant(self, request, tenant_id).await
+    }
+
+    async fn handle_vector_search_v1_for_tenant(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        UnifiedHandlers::handle_vector_search_v1_for_tenant(self, request, tenant_id).await
+    }
+
+    async fn handle_vector_search_v1(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        UnifiedHandlers::handle_vector_search_v1(self, request).await
+    }
+
+    async fn handle_vector_batch_v1_for_tenant(
+        &self,
+        request: crate::proto::proximadb_v1::VectorBatchRequest,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        UnifiedHandlers::handle_vector_batch_v1_for_tenant(self, request, tenant_id).await
+    }
+
+    async fn handle_vector_v1_for_tenant(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+        include_vector: bool,
+        include_metadata: bool,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        UnifiedHandlers::handle_vector_v1_for_tenant(
+            self,
+            collection_id,
+            vector_id,
+            include_vector,
+            include_metadata,
+            tenant_id,
+        )
+        .await
+    }
+
+    async fn execute_hybrid_query(
+        &self,
+        request: crate::proto::proximadb_v1::HybridSearchRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::HybridSearchResponse> {
+        UnifiedHandlers::execute_hybrid_query(self, request).await
+    }
+
+    async fn execute_sql_v1(
+        &self,
+        query: String,
+        parameters: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
+        collection: Option<String>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
+        UnifiedHandlers::execute_sql_v1(self, query, parameters, collection).await
+    }
+}

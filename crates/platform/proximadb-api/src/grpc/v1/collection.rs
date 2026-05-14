@@ -1,72 +1,139 @@
 //! # Collection Service (gRPC)
 //!
 //! gRPC implementation for collection management operations.
-//!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor to avoid circular dependencies. The actual implementations exist in
-//! `src/network/grpc/collection_service.rs` and will be migrated here after UnifiedHandlers
-//! moves to `crates/platform/proximadb-runtime`.
+//! Routes through `ApiHandlersPort` — the seam between this protocol adapter and
+//! the business logic in `proximadb-runtime`.
 
+use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-// Use UnifiedHandlers from runtime crate instead of root crate
-use proximadb_runtime::UnifiedHandlers;
+use proximadb_proto::v1::{self as v1, CollectionOperation};
+use proximadb_runtime::ApiHandlersPort;
 
-/// gRPC implementation of the CollectionService for managing vector collections
+/// gRPC implementation of the CollectionService for managing vector collections.
 ///
-/// **TEMPORARY PLACEHOLDER**: This is a placeholder implementation during the workspace refactor.
-/// The actual implementation is in `src/network/grpc/collection_service.rs`.
+/// Holds a port reference so the actual business logic can live in the root crate's
+/// `UnifiedHandlers` (or any other `ApiHandlersPort` implementation) without this
+/// crate importing root-crate concrete types.
 pub struct CollectionServiceImpl {
-    /// Shared unified handlers for business logic delegation
-    _request_handlers: std::sync::Arc<UnifiedHandlers>,
+    port: Arc<dyn ApiHandlersPort>,
 }
 
 impl CollectionServiceImpl {
-    /// Create a new collection service backed by unified handlers
-    ///
-    /// **TEMPORARY PLACEHOLDER**: This constructor will be updated after UnifiedHandlers migration.
-    pub fn new(_request_handlers: std::sync::Arc<UnifiedHandlers>) -> Self {
-        Self { _request_handlers }
+    /// Create a new collection service backed by the given port.
+    pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
+        Self { port }
     }
 
-    /// Convert this implementation into a tonic gRPC server
-    ///
-    /// **TEMPORARY PLACEHOLDER**: This method will be updated after migration.
-    pub fn into_server(self) -> proximadb_proto::v1::collection_service_server::CollectionServiceServer<Self> {
-        proximadb_proto::v1::collection_service_server::CollectionServiceServer::new(self)
+    /// Convert this implementation into a tonic gRPC server.
+    pub fn into_server(
+        self,
+    ) -> v1::collection_service_server::CollectionServiceServer<Self> {
+        v1::collection_service_server::CollectionServiceServer::new(self)
+    }
+
+    fn extract_tenant_id<T>(request: &Request<T>) -> Option<String> {
+        request
+            .metadata()
+            .get("x-tenant-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(ToOwned::to_owned)
     }
 }
 
-// Placeholder trait implementation - will be implemented after migration
 #[tonic::async_trait]
-impl proximadb_proto::v1::collection_service_server::CollectionService for CollectionServiceImpl {
+impl v1::collection_service_server::CollectionService for CollectionServiceImpl {
     async fn create_collection(
         &self,
-        _request: Request<proximadb_proto::v1::CollectionConfig>,
-    ) -> Result<Response<proximadb_proto::v1::Collection>, Status> {
-        Err(Status::unimplemented("Collection service migration in progress"))
+        request: Request<v1::CollectionConfig>,
+    ) -> Result<Response<v1::Collection>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let cfg = request.into_inner();
+        let req = v1::CollectionRequest {
+            operation: CollectionOperation::CollectionCreate as i32,
+            collection_id: Some(cfg.name.clone()),
+            collection_config: Some(cfg),
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        let resp = self
+            .port
+            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(format!("CreateCollection failed: {e}")))?;
+        resp.collection
+            .ok_or_else(|| Status::internal("CreateCollection returned no collection"))
+            .map(Response::new)
     }
 
     async fn get_collection(
         &self,
-        _request: Request<proximadb_proto::v1::GetCollectionRequest>,
-    ) -> Result<Response<proximadb_proto::v1::Collection>, Status> {
-        Err(Status::unimplemented("Collection service migration in progress"))
+        request: Request<v1::GetCollectionRequest>,
+    ) -> Result<Response<v1::Collection>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let inner = request.into_inner();
+        let req = v1::CollectionRequest {
+            operation: CollectionOperation::CollectionGet as i32,
+            collection_id: Some(inner.collection_id),
+            collection_config: None,
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        let resp = self
+            .port
+            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(format!("GetCollection failed: {e}")))?;
+        resp.collection
+            .ok_or_else(|| Status::not_found("Collection not found"))
+            .map(Response::new)
     }
 
     async fn list_collections(
         &self,
-        _request: Request<proximadb_proto::v1::ListCollectionsRequest>,
-    ) -> Result<Response<proximadb_proto::v1::ListCollectionsResponse>, Status> {
-        Err(Status::unimplemented("Collection service migration in progress"))
+        request: Request<v1::ListCollectionsRequest>,
+    ) -> Result<Response<v1::ListCollectionsResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let req = v1::CollectionRequest {
+            operation: CollectionOperation::CollectionList as i32,
+            collection_id: None,
+            collection_config: None,
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        let resp = self
+            .port
+            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(format!("ListCollections failed: {e}")))?;
+        Ok(Response::new(v1::ListCollectionsResponse {
+            collections: resp.collections,
+        }))
     }
 
     async fn delete_collection(
         &self,
-        _request: Request<proximadb_proto::v1::DeleteCollectionRequest>,
-    ) -> Result<Response<proximadb_proto::v1::DeleteCollectionResponse>, Status> {
-        Err(Status::unimplemented("Collection service migration in progress"))
+        request: Request<v1::DeleteCollectionRequest>,
+    ) -> Result<Response<v1::DeleteCollectionResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let inner = request.into_inner();
+        let req = v1::CollectionRequest {
+            operation: CollectionOperation::CollectionDelete as i32,
+            collection_id: Some(inner.collection_id),
+            collection_config: None,
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        self.port
+            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(format!("DeleteCollection failed: {e}")))?;
+        Ok(Response::new(v1::DeleteCollectionResponse { success: true }))
     }
 }
