@@ -90,12 +90,15 @@ The workspace refactor has achieved substantial completion with proper architect
 - ✅ pgwire service placeholder (`crates/platform/proximadb-api/src/pgwire/`)
 - ✅ `apps/proximadb-server` binary crate with proper entrypoint
 - ✅ Zero circular dependencies, zero compilation errors workspace-wide
+- ✅ Phase 9.14: All 9 root-crate gRPC service files have 3-line deprecation headers pointing to `proximadb-api`
+- ✅ Phase 9.15: Workspace compiles clean; `check_workspace_boundaries.py --strict` passes with zero findings
+- ✅ `scripts/check_workspace_boundaries.py`: fixed hidden-dir false-positives, classified `crates/contracts/` as `control` layer
 
 **Remaining for Full Migration**:
 - ⏳ Phase 9.9: Move actual `UnifiedHandlers` implementation to `proximadb-runtime` (~3,400 lines)
+  - **Blocker**: depends on `crate::services::collection`, `crate::observability`, `crate::metrics`, `crate::storage::document`, `crate::query::QueryFacadeAdapter` — requires moving those first
 - ⏳ Phase 9.10: Move service composition (CollectionService, VectorOps, etc.) to `proximadb-runtime`
-- ⏳ Phase 9.14: Update root crate gRPC services to re-export from `proximadb-api`
-- ⏳ Phase 9.15: Full integration test with new crate boundaries
+- ⏳ Phase 9.11/9.12: Security + cluster orchestration to runtime crate
 
 **Architecture Established**:
 - `proximadb-api` depends on: `proximadb-runtime`, `proximadb-proto`, `proximadb-kernel`
