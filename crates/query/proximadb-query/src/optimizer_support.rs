@@ -495,6 +495,268 @@ pub fn select_fusion_strategy(
     }
 }
 
+// =========== Phase 4: Convergence access-path cost rules ===========
+//
+// These functions encode the four cost trade-offs from the convergence spec
+// (Phase 4 §4.3): the planner calls them to decide which physical access path
+// to use for graph, document, full-text, and variation-projection queries.
+// Each function returns an `AccessPathCostEstimate` that the EXPLAIN output
+// surfaces to the user.
+
+/// Physical access path choices available to the convergence query planner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AccessPath {
+    /// Full canonical scan over `ProximaRecord` storage (always available).
+    CanonicalScan,
+    /// Relational adjacency table index lookup for graph traversal.
+    AdjacencyTable,
+    /// In-memory CSR projection for read-heavy graph traversal.
+    CsrProjection,
+    /// JSON-path index (`$.field` lookup) for document filtering.
+    JsonPathIndex,
+    /// Inverted full-text index for text search predicates.
+    FullTextIndex,
+    /// Columnar variation projection for field subset queries.
+    ColumnarProjection,
+}
+
+/// Cost estimate for a chosen access path, returned by the convergence cost rules.
+#[derive(Debug, Clone)]
+pub struct AccessPathCostEstimate {
+    /// Chosen access path.
+    pub path: AccessPath,
+    /// Relative cost unit (lower is better; comparable only within the same rule).
+    pub cost: f64,
+    /// Estimated output selectivity (0.0 – 1.0).
+    pub selectivity: f64,
+    /// Human-readable reason for the choice — surfaces in EXPLAIN output.
+    pub reason: String,
+}
+
+/// Cost rule 1: Adjacency table vs CSR projection for graph traversal.
+///
+/// Choose `CsrProjection` when the graph is read-heavy and the CSR epoch is
+/// fresh enough to be trusted. Fall back to `AdjacencyTable` (canonical row
+/// lookup) when the workload has high write frequency or the CSR is stale.
+///
+/// Parameters:
+/// - `csr_epoch_age_secs`: seconds since the CSR was last rebuilt.
+/// - `write_ops_per_min`: recent write rate on this graph's edge set.
+/// - `expected_hop_fan_out`: average out-degree (neighbours per node).
+pub fn graph_traversal_access_path(
+    csr_epoch_age_secs: u64,
+    write_ops_per_min: u64,
+    expected_hop_fan_out: f64,
+) -> AccessPathCostEstimate {
+    // Heuristic thresholds (tunable via statistics later).
+    const MAX_STALE_SECS: u64 = 300; // 5-minute freshness window
+    const MAX_WRITE_RATE: u64 = 10; // writes/min above which CSR is unreliable
+
+    let csr_is_fresh = csr_epoch_age_secs < MAX_STALE_SECS;
+    let workload_is_read_heavy = write_ops_per_min < MAX_WRITE_RATE;
+
+    if csr_is_fresh && workload_is_read_heavy {
+        // CSR O(1) neighbour fetch; significantly cheaper than row scan for fan-out > 5.
+        let cost = 1.0 + expected_hop_fan_out * 0.1;
+        AccessPathCostEstimate {
+            path: AccessPath::CsrProjection,
+            cost,
+            selectivity: 1.0,
+            reason: format!(
+                "CSR projection chosen: epoch age {csr_epoch_age_secs}s < {MAX_STALE_SECS}s, \
+                 write rate {write_ops_per_min}/min < {MAX_WRITE_RATE}/min"
+            ),
+        }
+    } else {
+        // Adjacency table row lookup: O(degree) index scan, but always consistent.
+        let cost = 2.0 + expected_hop_fan_out * 0.5;
+        let reason = if !csr_is_fresh {
+            format!(
+                "Adjacency table chosen: CSR stale ({csr_epoch_age_secs}s ≥ {MAX_STALE_SECS}s)"
+            )
+        } else {
+            format!(
+                "Adjacency table chosen: write-heavy workload ({write_ops_per_min}/min ≥ {MAX_WRITE_RATE}/min)"
+            )
+        };
+        AccessPathCostEstimate {
+            path: AccessPath::AdjacencyTable,
+            cost,
+            selectivity: 1.0,
+            reason,
+        }
+    }
+}
+
+/// Cost rule 2: JSON path index vs full row scan for document field filtering.
+///
+/// Choose `JsonPathIndex` when a path index exists and the predicate is
+/// selective enough to make the index cheaper than a full scan. Fall back to
+/// `CanonicalScan` (full row scan with inline JSON parsing) otherwise.
+///
+/// Parameters:
+/// - `has_path_index`: whether a `$.field` path index exists for this predicate.
+/// - `predicate_selectivity`: fraction of rows estimated to match (0.0 – 1.0).
+/// - `collection_size`: number of records in the collection.
+pub fn document_filter_access_path(
+    has_path_index: bool,
+    predicate_selectivity: f64,
+    collection_size: u64,
+) -> AccessPathCostEstimate {
+    const INDEX_OVERHEAD: f64 = 10.0; // fixed cost to use the index (B-tree traversal)
+    const JSON_PARSE_COST: f64 = 5.0; // per-row JSON parsing cost relative to row read
+
+    let selectivity = predicate_selectivity.clamp(0.0, 1.0);
+
+    if has_path_index {
+        let index_cost = INDEX_OVERHEAD + selectivity * collection_size as f64;
+        let scan_cost = collection_size as f64 * (1.0 + JSON_PARSE_COST * 0.1);
+
+        if index_cost < scan_cost {
+            return AccessPathCostEstimate {
+                path: AccessPath::JsonPathIndex,
+                cost: index_cost,
+                selectivity,
+                reason: format!(
+                    "JSON path index chosen: index_cost={index_cost:.1} < scan_cost={scan_cost:.1} \
+                     (selectivity={selectivity:.3}, n={collection_size})"
+                ),
+            };
+        }
+    }
+
+    let scan_cost = collection_size as f64 * (1.0 + JSON_PARSE_COST * selectivity);
+    AccessPathCostEstimate {
+        path: AccessPath::CanonicalScan,
+        cost: scan_cost,
+        selectivity,
+        reason: if has_path_index {
+            format!(
+                "Canonical scan chosen: index not selective enough \
+                 (selectivity={selectivity:.3} → scan cheaper)"
+            )
+        } else {
+            "Canonical scan chosen: no JSON path index available".to_string()
+        },
+    }
+}
+
+/// Cost rule 3: Full-text index vs row scan for text search predicates.
+///
+/// Choose `FullTextIndex` when an inverted index exists and the term is
+/// selective (uncommon). Fall back to `CanonicalScan` with LIKE for high-
+/// frequency terms or when no full-text index is available.
+///
+/// Parameters:
+/// - `has_fulltext_index`: whether an inverted text index is available.
+/// - `term_selectivity`: fraction of documents containing the search term (0.0 – 1.0).
+/// - `collection_size`: total number of documents.
+pub fn fulltext_access_path(
+    has_fulltext_index: bool,
+    term_selectivity: f64,
+    collection_size: u64,
+) -> AccessPathCostEstimate {
+    const FTS_OVERHEAD: f64 = 20.0; // posting-list decode + merge overhead
+    const LIKE_SCAN_FACTOR: f64 = 8.0; // per-row regex/pattern match cost
+    // Above this selectivity, the posting list is so large that merging it is
+    // more expensive than a sequential LIKE scan.
+    const MAX_FTS_SELECTIVITY: f64 = 0.5;
+
+    let selectivity = term_selectivity.clamp(0.0, 1.0);
+
+    if has_fulltext_index && selectivity < MAX_FTS_SELECTIVITY {
+        let fts_cost = FTS_OVERHEAD + selectivity * collection_size as f64;
+        let scan_cost = collection_size as f64 * LIKE_SCAN_FACTOR;
+
+        if fts_cost < scan_cost {
+            return AccessPathCostEstimate {
+                path: AccessPath::FullTextIndex,
+                cost: fts_cost,
+                selectivity,
+                reason: format!(
+                    "Full-text index chosen: fts_cost={fts_cost:.1} < scan_cost={scan_cost:.1} \
+                     (term_selectivity={selectivity:.3} < {MAX_FTS_SELECTIVITY})"
+                ),
+            };
+        }
+    }
+
+    let scan_cost = collection_size as f64 * LIKE_SCAN_FACTOR;
+    AccessPathCostEstimate {
+        path: AccessPath::CanonicalScan,
+        cost: scan_cost,
+        selectivity,
+        reason: if has_fulltext_index && selectivity >= MAX_FTS_SELECTIVITY {
+            format!(
+                "Canonical scan chosen: high-frequency term (selectivity={selectivity:.2} ≥ {MAX_FTS_SELECTIVITY}), \
+                 posting list merge more expensive than sequential scan"
+            )
+        } else if has_fulltext_index {
+            "Canonical scan chosen: small collection, FTS overhead not amortised".to_string()
+        } else {
+            "Canonical scan chosen: no full-text index available".to_string()
+        },
+    }
+}
+
+/// Cost rule 4: Columnar variation projection vs JSON payload scan.
+///
+/// Choose `ColumnarProjection` when a columnar physical layout exists for the
+/// requested fields and the output is a small fraction of the document size.
+/// Fall back to `CanonicalScan` (deserialize full JSON, project in memory)
+/// when fewer fields are stored columnarly or the document is small enough
+/// that the deserialization overhead is negligible.
+///
+/// Parameters:
+/// - `has_columnar`: whether columnar physical layout is available for these fields.
+/// - `projected_field_count`: number of fields to project.
+/// - `total_field_count`: total fields in the document schema.
+/// - `avg_doc_size_bytes`: average serialized document size.
+pub fn variation_projection_access_path(
+    has_columnar: bool,
+    projected_field_count: usize,
+    total_field_count: usize,
+    avg_doc_size_bytes: usize,
+) -> AccessPathCostEstimate {
+    const COLUMNAR_OVERHEAD: f64 = 5.0; // per-query columnar reader setup
+    const JSON_DESER_PER_BYTE: f64 = 0.001; // relative JSON deserialization cost
+
+    let projection_ratio = if total_field_count > 0 {
+        projected_field_count as f64 / total_field_count as f64
+    } else {
+        1.0
+    };
+
+    if has_columnar && projection_ratio < 0.5 {
+        let columnar_cost = COLUMNAR_OVERHEAD + projected_field_count as f64 * 1.0;
+        AccessPathCostEstimate {
+            path: AccessPath::ColumnarProjection,
+            cost: columnar_cost,
+            selectivity: projection_ratio,
+            reason: format!(
+                "Columnar projection chosen: projecting {projected_field_count}/{total_field_count} fields \
+                 (ratio={projection_ratio:.2} < 0.5)"
+            ),
+        }
+    } else {
+        let json_cost = avg_doc_size_bytes as f64 * JSON_DESER_PER_BYTE
+            + projected_field_count as f64 * 0.5;
+        AccessPathCostEstimate {
+            path: AccessPath::CanonicalScan,
+            cost: json_cost,
+            selectivity: projection_ratio,
+            reason: if has_columnar {
+                format!(
+                    "Canonical scan chosen: projecting {projected_field_count}/{total_field_count} fields \
+                     (ratio={projection_ratio:.2} ≥ 0.5, JSON deserialization cheaper than columnar overhead)"
+                )
+            } else {
+                "Canonical scan chosen: no columnar physical layout available".to_string()
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,5 +854,115 @@ mod tests {
             join_field: "id".to_string(),
             join_type: JoinType::Inner,
         };
+    }
+
+    // ── Phase 4: convergence cost rule tests ─────────────────────────────────
+
+    #[test]
+    fn graph_traversal_prefers_csr_when_fresh_and_read_heavy() {
+        let est = graph_traversal_access_path(60, 2, 5.0);
+        assert_eq!(est.path, AccessPath::CsrProjection);
+        assert!(est.reason.contains("CSR projection chosen"));
+    }
+
+    #[test]
+    fn graph_traversal_falls_back_to_adjacency_when_stale() {
+        let est = graph_traversal_access_path(600, 2, 5.0);
+        assert_eq!(est.path, AccessPath::AdjacencyTable);
+        assert!(est.reason.contains("stale"));
+    }
+
+    #[test]
+    fn graph_traversal_falls_back_to_adjacency_when_write_heavy() {
+        let est = graph_traversal_access_path(60, 50, 5.0);
+        assert_eq!(est.path, AccessPath::AdjacencyTable);
+        assert!(est.reason.contains("write-heavy"));
+    }
+
+    #[test]
+    fn document_filter_prefers_path_index_when_selective() {
+        // 0.1% selectivity on 1M rows → index is cheaper
+        let est = document_filter_access_path(true, 0.001, 1_000_000);
+        assert_eq!(est.path, AccessPath::JsonPathIndex);
+        assert!(est.reason.contains("JSON path index chosen"));
+    }
+
+    #[test]
+    fn document_filter_falls_back_to_scan_when_no_index() {
+        let est = document_filter_access_path(false, 0.001, 100_000);
+        assert_eq!(est.path, AccessPath::CanonicalScan);
+        assert!(est.reason.contains("no JSON path index"));
+    }
+
+    #[test]
+    fn document_filter_falls_back_to_scan_when_not_selective() {
+        // 80% selectivity → scan is cheaper than index overhead
+        let est = document_filter_access_path(true, 0.8, 10);
+        assert_eq!(est.path, AccessPath::CanonicalScan);
+        assert!(est.reason.contains("not selective enough"));
+    }
+
+    #[test]
+    fn fulltext_prefers_index_for_rare_terms() {
+        // 0.1% term frequency on 1M docs → FTS is cheaper
+        let est = fulltext_access_path(true, 0.001, 1_000_000);
+        assert_eq!(est.path, AccessPath::FullTextIndex);
+        assert!(est.reason.contains("Full-text index chosen"));
+    }
+
+    #[test]
+    fn fulltext_falls_back_to_scan_for_common_terms() {
+        // 90% term frequency → posting list is nearly the whole collection, scan wins
+        let est = fulltext_access_path(true, 0.9, 1_000_000);
+        assert_eq!(est.path, AccessPath::CanonicalScan);
+        assert!(est.reason.contains("high-frequency term"));
+    }
+
+    #[test]
+    fn fulltext_falls_back_to_scan_without_index() {
+        let est = fulltext_access_path(false, 0.001, 1_000_000);
+        assert_eq!(est.path, AccessPath::CanonicalScan);
+        assert!(est.reason.contains("no full-text index"));
+    }
+
+    #[test]
+    fn variation_prefers_columnar_for_sparse_projection() {
+        // Projecting 2 of 20 fields (10%) with columnar available
+        let est = variation_projection_access_path(true, 2, 20, 4096);
+        assert_eq!(est.path, AccessPath::ColumnarProjection);
+        assert!(est.reason.contains("Columnar projection chosen"));
+    }
+
+    #[test]
+    fn variation_falls_back_to_scan_for_dense_projection() {
+        // Projecting 15 of 20 fields (75%) → JSON deserialization cheaper
+        let est = variation_projection_access_path(true, 15, 20, 512);
+        assert_eq!(est.path, AccessPath::CanonicalScan);
+        assert!(est.reason.contains("ratio"));
+    }
+
+    #[test]
+    fn variation_falls_back_to_scan_without_columnar() {
+        let est = variation_projection_access_path(false, 2, 20, 4096);
+        assert_eq!(est.path, AccessPath::CanonicalScan);
+        assert!(est.reason.contains("no columnar physical layout"));
+    }
+
+    #[test]
+    fn cost_rule_reasons_are_non_empty() {
+        let rules = [
+            graph_traversal_access_path(60, 2, 5.0),
+            graph_traversal_access_path(600, 50, 5.0),
+            document_filter_access_path(true, 0.001, 1_000_000),
+            document_filter_access_path(false, 0.5, 100),
+            fulltext_access_path(true, 0.001, 1_000_000),
+            fulltext_access_path(false, 0.5, 100),
+            variation_projection_access_path(true, 2, 20, 4096),
+            variation_projection_access_path(false, 5, 10, 512),
+        ];
+        for est in &rules {
+            assert!(!est.reason.is_empty(), "reason must not be empty: {:?}", est.path);
+            assert!(est.cost > 0.0, "cost must be positive: {:?}", est.path);
+        }
     }
 }

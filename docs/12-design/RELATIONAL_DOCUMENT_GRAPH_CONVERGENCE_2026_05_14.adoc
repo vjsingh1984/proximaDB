@@ -896,11 +896,13 @@ Tasks:
 ** `graph_traversal_expr_to_operators(expr)`: traversal expressions → `Scan + HybridTraverse` with `EdgePattern{edge_type, min_hops, max_hops, direction}`.
 ** `where_clause_to_filter_expression(clause)`: Cypher WHERE (Property/And/Or/Not) → `FilterExpression`; property constraints mapped to `ComparisonOperator`.
 ** 7 new tests in `graph_adapter::tests`; all 16 graph-adapter tests pass.
-* [ ] Add cost rules:
-** [ ] adjacency index vs CSR projection;
-** [ ] JSON path index vs row scan;
-** [ ] full-text index vs row scan;
-** [ ] columnar variation projection vs JSON payload scan.
+* [x] Add cost rules:
+** [x] adjacency index vs CSR projection: `graph_traversal_access_path(epoch_age, write_rate, fan_out)` — CSR when fresh+read-heavy, AdjacencyTable otherwise.
+** [x] JSON path index vs row scan: `document_filter_access_path(has_index, selectivity, n)` — index when `index_cost < scan_cost`.
+** [x] full-text index vs row scan: `fulltext_access_path(has_index, term_selectivity, n)` — FTS only when selectivity < 50%; high-frequency terms fall back to CanonicalScan.
+** [x] columnar variation projection vs JSON payload scan: `variation_projection_access_path(has_columnar, projected, total, doc_size)` — columnar when projecting < 50% of fields.
+** `AccessPath` enum and `AccessPathCostEstimate` struct in `optimizer_support.rs`; `AccessPathCostEstimate::reason` surfaces choice rationale in EXPLAIN output.
+** 12 cost-rule tests added; all 18 optimizer_support tests pass.
 * [ ] Ensure engine-level RLS predicates are pushed into every scan/projection.
 * [ ] Align REST/gRPC/Arrow Flight/PostgreSQL wire behavior for document and graph result shapes.
 
