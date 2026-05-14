@@ -4,9 +4,11 @@
 //! single-field and multi-field unique constraints for per-graph scopes.
 
 use super::Result;
+use crate::graph::adjacency_projection::edge_to_canonical_record;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Node, NodeId};
 use crate::proto::proximadb_v1::NodeQuery;
+use proximadb_graph::projection::GraphTopologyProjection;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -401,6 +403,10 @@ impl super::GraphOperationsService {
             if let Some(edge) =
                 crate::graph::engines::GraphEngine::delete_edge(&*engine, &eid).await?
             {
+                let edge_record = edge_to_canonical_record(graph_id, &edge);
+                self.adjacency_projection(graph_id)
+                    .remove_edge(&edge_record)
+                    .await?;
                 self.stats_edges
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {

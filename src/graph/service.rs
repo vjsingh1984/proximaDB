@@ -98,6 +98,7 @@ pub use service_transactions::{
 use crate::core::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
+    adjacency_projection::{InMemoryGraphAdjacencyProjection, edge_to_canonical_record},
     engines::{GraphEngine, orion::OrionGraphEngine},
 };
 use crate::security::rbac_service::{
@@ -107,6 +108,7 @@ use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
 };
 use dashmap::DashMap;
+use proximadb_graph::projection::GraphTopologyProjection;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -123,6 +125,8 @@ pub struct GraphOperationsService {
 
     /// Graph registry for multi-graph support - maps graph_id to engine (polymorphic)
     graphs: Arc<DashMap<String, Arc<crate::graph::engines::GraphEngineImpl>>>,
+    /// Rebuildable adjacency projections over canonical edge records, keyed by graph id.
+    adjacency_projections: Arc<DashMap<String, Arc<InMemoryGraphAdjacencyProjection>>>,
 
     /// Configuration for graph storage base URL
     base_storage_url: String,
@@ -164,6 +168,7 @@ impl GraphOperationsService {
             mode: OperationMode::Unified,
             collection_service,
             graphs: Arc::new(DashMap::new()),
+            adjacency_projections: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(), // Default storage URL
             memory_pool,
             metrics_updater: None,
@@ -239,6 +244,7 @@ impl GraphOperationsService {
             mode: OperationMode::Unified,
             collection_service,
             graphs: Arc::new(DashMap::new()),
+            adjacency_projections: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(),
             memory_pool,
             metrics_updater: None,
@@ -381,7 +387,25 @@ impl GraphOperationsService {
         &self,
         graph_id: &str,
     ) -> Option<Arc<crate::graph::engines::GraphEngineImpl>> {
+        self.adjacency_projections.remove(graph_id);
         self.graphs.remove(graph_id).map(|(_, engine)| engine)
+    }
+
+    pub(crate) fn adjacency_projection(
+        &self,
+        graph_id: &str,
+    ) -> Arc<InMemoryGraphAdjacencyProjection> {
+        self.adjacency_projections
+            .entry(graph_id.to_string())
+            .or_insert_with(|| Arc::new(InMemoryGraphAdjacencyProjection::new(graph_id)))
+            .clone()
+    }
+
+    pub fn adjacency_projection_edge_count(&self, graph_id: &str) -> Result<usize> {
+        match self.adjacency_projections.get(graph_id) {
+            Some(projection) => projection.edge_count(),
+            None => Ok(0),
+        }
     }
 
     /// Recover all graphs from persistent storage
@@ -1992,6 +2016,16 @@ impl GraphOperationsService {
         let inserted = engine.bulk_insert_edges(edges).await?;
         let engine_time = engine_start.elapsed();
 
+        let projection_start = std::time::Instant::now();
+        if !inserted.is_empty() {
+            let projection = self.adjacency_projection(graph_id);
+            for edge in &inserted {
+                let edge_record = edge_to_canonical_record(graph_id, edge);
+                projection.apply_edge(&edge_record).await?;
+            }
+        }
+        let projection_time = projection_start.elapsed();
+
         // Update edge stats and per-type counters
         let stats_start = std::time::Instant::now();
         self.stats_edges
@@ -2014,10 +2048,11 @@ impl GraphOperationsService {
         let service_total = service_start.elapsed();
         if edge_count >= 100 {
             tracing::debug!(
-                "batch_create_edges timing for {} edges: composite={:?} engine={:?} stats={:?} total={:?}",
+                "batch_create_edges timing for {} edges: composite={:?} engine={:?} projection={:?} stats={:?} total={:?}",
                 edge_count,
                 composite_time,
                 engine_time,
+                projection_time,
                 stats_time,
                 service_total
             );

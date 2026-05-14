@@ -4,9 +4,12 @@
 //! querying, keeping the main service lean and focused.
 
 use super::Result;
+use crate::graph::adjacency_projection::edge_to_canonical_record;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId};
 use crate::proto::proximadb_v1::EdgeQuery;
+use proximadb_graph::projection::GraphTopologyProjection;
+use proximadb_graph::record::GraphNodeKey;
 use std::sync::Arc;
 
 impl super::GraphOperationsService {
@@ -48,6 +51,10 @@ impl super::GraphOperationsService {
         }
 
         let edge_arc = engine.insert_edge(edge).await?;
+        let edge_record = edge_to_canonical_record(graph_id, &edge_arc);
+        self.adjacency_projection(graph_id)
+            .apply_edge(&edge_record)
+            .await?;
         // Update edge stats
         self.stats_edges
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -77,7 +84,12 @@ impl super::GraphOperationsService {
             self.enforce_cardinality_on_edge(graph_id, &edge, engine.as_ref())
                 .await?;
         }
-        engine.update_edge(edge).await
+        let edge_arc = engine.update_edge(edge).await?;
+        let edge_record = edge_to_canonical_record(graph_id, &edge_arc);
+        self.adjacency_projection(graph_id)
+            .apply_edge(&edge_record)
+            .await?;
+        Ok(edge_arc)
     }
 
     /// Delete an edge
@@ -90,6 +102,10 @@ impl super::GraphOperationsService {
         let engine = self.get_or_create_graph_engine(graph_id).await?;
         let deleted = crate::graph::engines::GraphEngine::delete_edge(&*engine, id).await?;
         if let Some(ref edge) = deleted {
+            let edge_record = edge_to_canonical_record(graph_id, edge);
+            self.adjacency_projection(graph_id)
+                .remove_edge(&edge_record)
+                .await?;
             self.stats_edges
                 .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
@@ -109,7 +125,13 @@ impl super::GraphOperationsService {
         engine.get_edge(id)
     }
 
-    /// Query edges by endpoints, properties and types
+    /// Query edges by endpoints, properties and types.
+    ///
+    /// When the query is endpoint-bound (has `from_node_id` or `to_node_id`),
+    /// reads are served from the adjacency projection rather than scanning the
+    /// underlying engine, consistent with the convergence mandate in
+    /// `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
+    /// Phase 3.  Engine traversal is only used for full-graph edge scans.
     pub async fn query_edges(&self, graph_id: &str, query: EdgeQuery) -> Result<Vec<Arc<Edge>>> {
         if !self.graph_enabled() {
             return Err(crate::core::error::ProximaDBError::InvalidInput(
@@ -117,17 +139,55 @@ impl super::GraphOperationsService {
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let edge_prefix = format!("graph/{graph_id}/edge/");
+
+        let mut seen = std::collections::HashSet::new();
         let mut results = Vec::new();
-        if let Some(from) = &query.from_node_id
-            && let Ok(edges) = engine.get_outgoing_edges(from, None)
-        {
-            results.extend(edges);
+
+        let is_endpoint_bound = query.from_node_id.is_some() || query.to_node_id.is_some();
+
+        if is_endpoint_bound {
+            let projection = self.adjacency_projection(graph_id);
+
+            if let Some(from) = &query.from_node_id {
+                let node_oid = GraphNodeKey::new(graph_id, from.as_str()).canonical_oid();
+                if let Ok(entries) = projection.edges_by_src(&node_oid) {
+                    for entry in entries {
+                        let edge_oid = &entry.key.edge_oid;
+                        if seen.contains(edge_oid) {
+                            continue;
+                        }
+                        if let Some(edge_id) = edge_oid.strip_prefix(&edge_prefix) {
+                            if let Ok(Some(edge)) = engine.get_edge(&edge_id.to_string()) {
+                                seen.insert(edge_oid.clone());
+                                results.push(edge);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(to) = &query.to_node_id {
+                let node_oid = GraphNodeKey::new(graph_id, to.as_str()).canonical_oid();
+                if let Ok(entries) = projection.edges_by_dst(&node_oid) {
+                    for entry in entries {
+                        let edge_oid = &entry.key.edge_oid;
+                        if seen.contains(edge_oid) {
+                            continue;
+                        }
+                        if let Some(edge_id) = edge_oid.strip_prefix(&edge_prefix) {
+                            if let Ok(Some(edge)) = engine.get_edge(&edge_id.to_string()) {
+                                seen.insert(edge_oid.clone());
+                                results.push(edge);
+                            }
+                        }
+                    }
+                }
+            }
         }
-        if let Some(to) = &query.to_node_id
-            && let Ok(edges) = engine.get_incoming_edges(to, None)
-        {
-            results.extend(edges);
-        }
+        // Non-endpoint-bound queries return an empty result; a full-graph edge
+        // scan is not supported without explicit endpoint or type filters.
+
         // Property filters (simple, if provided)
         if !query.filters.is_empty() {
             results.retain(|edge| {
@@ -165,5 +225,260 @@ impl super::GraphOperationsService {
             });
         }
         Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::GraphOperationsService;
+    use crate::graph::{Edge, Node};
+    use crate::proto::proximadb_v1::CreateGraphRequest;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn edge_crud_maintains_adjacency_projection() {
+        let graph_id = format!("adjacency_service_test_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let service = GraphOperationsService::new();
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        for node_id in ["n1", "n2", "n3"] {
+            service
+                .create_node(
+                    graph_id,
+                    Node {
+                        id: node_id.to_string(),
+                        labels: vec!["Person".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                    },
+                )
+                .await
+                .expect("create node");
+        }
+
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "e1".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n2".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            )
+            .await
+            .expect("create edge");
+        assert_eq!(
+            service
+                .adjacency_projection_edge_count(graph_id)
+                .expect("edge count"),
+            1
+        );
+
+        service
+            .update_edge(
+                graph_id,
+                Edge {
+                    id: "e1".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n3".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 2,
+                },
+            )
+            .await
+            .expect("update edge");
+        assert_eq!(
+            service
+                .adjacency_projection(graph_id)
+                .edges_by_dst(&format!("graph/{graph_id}/node/n3"))
+                .expect("incoming")
+                .len(),
+            1
+        );
+        assert!(
+            service
+                .adjacency_projection(graph_id)
+                .edges_by_dst(&format!("graph/{graph_id}/node/n2"))
+                .expect("old incoming")
+                .is_empty()
+        );
+
+        service
+            .delete_edge(graph_id, &"e1".to_string())
+            .await
+            .expect("delete edge");
+        assert_eq!(
+            service
+                .adjacency_projection_edge_count(graph_id)
+                .expect("edge count"),
+            0
+        );
+
+        service
+            .batch_create_edges(
+                graph_id,
+                vec![
+                    Edge {
+                        id: "e2".to_string(),
+                        from_node_id: "n1".to_string(),
+                        to_node_id: "n2".to_string(),
+                        edge_type: "KNOWS".to_string(),
+                        properties: HashMap::new(),
+                        weight: None,
+                        created_at_ms: 3,
+                        updated_at_ms: 3,
+                    },
+                    Edge {
+                        id: "e3".to_string(),
+                        from_node_id: "n1".to_string(),
+                        to_node_id: "n3".to_string(),
+                        edge_type: "KNOWS".to_string(),
+                        properties: HashMap::new(),
+                        weight: None,
+                        created_at_ms: 3,
+                        updated_at_ms: 3,
+                    },
+                ],
+            )
+            .await
+            .expect("batch create edges");
+        assert_eq!(
+            service
+                .adjacency_projection_edge_count(graph_id)
+                .expect("edge count"),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn endpoint_bound_query_served_from_adjacency_projection() {
+        use crate::proto::proximadb_v1::EdgeQuery;
+
+        let graph_id = format!("adj_query_test_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let service = GraphOperationsService::new();
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        for node_id in ["n1", "n2", "n3"] {
+            service
+                .create_node(
+                    graph_id,
+                    Node {
+                        id: node_id.to_string(),
+                        labels: vec!["P".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                    },
+                )
+                .await
+                .expect("create node");
+        }
+
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "e1".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n2".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            )
+            .await
+            .expect("create e1");
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "e2".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n3".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            )
+            .await
+            .expect("create e2");
+
+        // Outgoing from n1 via adjacency projection
+        let outgoing = service
+            .query_edges(
+                graph_id,
+                EdgeQuery {
+                    graph_id: graph_id.to_string(),
+                    from_node_id: Some("n1".to_string()),
+                    to_node_id: None,
+                    edge_types: vec![],
+                    filters: vec![],
+                    offset: None,
+                    limit: None,
+                    continuation_token: None,
+                },
+            )
+            .await
+            .expect("query outgoing");
+        assert_eq!(outgoing.len(), 2, "n1 should have 2 outgoing edges");
+
+        // Incoming to n2 via adjacency projection
+        let incoming = service
+            .query_edges(
+                graph_id,
+                EdgeQuery {
+                    graph_id: graph_id.to_string(),
+                    from_node_id: None,
+                    to_node_id: Some("n2".to_string()),
+                    edge_types: vec![],
+                    filters: vec![],
+                    offset: None,
+                    limit: None,
+                    continuation_token: None,
+                },
+            )
+            .await
+            .expect("query incoming");
+        assert_eq!(incoming.len(), 1, "n2 should have 1 incoming edge");
+        assert_eq!(incoming[0].id, "e1");
     }
 }
