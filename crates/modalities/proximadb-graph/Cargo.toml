@@ -18,8 +18,10 @@ anyhow.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 nom = "7"
+proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
+proximadb-records = { path = "../../foundation/proximadb-records" }
 proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
 regex = "1.10"

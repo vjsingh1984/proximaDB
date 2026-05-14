@@ -20,10 +20,13 @@
 //!
 //! - `proximadb-kernel` - Core error types and foundational contracts
 //! - `proximadb-proto` - Protocol buffer types
+//! - `proximadb-records` - Canonical `ProximaRecord` envelope
+//! - `proximadb-data-model` - Canonical `ProximaValue` rich type system
 //! - `proximadb-graph-query` - Graph query contracts
 
 pub mod core;
 pub mod query;
+pub mod record;
 pub mod storage;
 pub mod traversal;
 
