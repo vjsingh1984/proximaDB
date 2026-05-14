@@ -1877,6 +1877,8 @@ impl MultiServer {
             let security_port: Arc<dyn proximadb_runtime::SecurityPort> = Arc::new(
                 crate::network::grpc::SecurityServiceImpl::with_default_config(),
             );
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+                Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
 
             // ── Build all gRPC services through the port-based factory ─────────
 
@@ -1889,6 +1891,7 @@ impl MultiServer {
                 .with_observability(obs_port)
                 .with_streaming(streaming_port)
                 .with_security(security_port)
+                .with_hybrid(hybrid_port)
                 .with_config(grpc_cfg)
                 .create_all_services_sync();
 
@@ -2201,11 +2204,14 @@ impl MultiServer {
                     services.query_adapter(),
                 ),
             );
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+                Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
                 services.request_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
             let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
                 .with_graph(graph_port)
+                .with_hybrid(hybrid_port)
                 .with_config(grpc_cfg)
                 .create_all_services_sync();
 
@@ -2519,11 +2525,14 @@ impl MultiServer {
                     services.query_adapter(),
                 ),
             );
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+                Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
                 services.request_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
             let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
                 .with_graph(graph_port)
+                .with_hybrid(hybrid_port)
                 .with_config(grpc_cfg)
                 .create_all_services_sync();
 
