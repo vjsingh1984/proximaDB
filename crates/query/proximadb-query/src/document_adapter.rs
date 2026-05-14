@@ -2,6 +2,7 @@
 
 use proximadb_data_model::DataModel;
 use proximadb_document_query::PathFilter;
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use proximadb_proto::proximadb_v1::{
     DocFilterCondition, DocFilterOperator, DocumentFilter, SqlObject, SqlValue,
     sql_value::Value as SqlValueVariant,
@@ -108,6 +109,107 @@ pub fn convert_filter_value_to_sql(value: &FilterValue) -> SqlValue {
     }
 }
 
+/// Lower a protobuf `DocumentFilter` to the shared `FilterExpression` algebra.
+///
+/// This is the Phase 4 lowering bridge from the document-specific wire format
+/// into the plan-level algebra used by `Operator::Filter` in `MultiModelPlan`.
+/// The output can be pushed into a `Scan` operator's `filter` field or wrapped
+/// in an explicit `Filter` operator for cross-model plan composition.
+///
+/// Semantics:
+/// - `conditions` list is treated as implicit AND (all must match).
+/// - `or_filters` are recursively lowered and combined with `FilterExpression::Or`.
+/// - `and_filters` are recursively lowered and combined with `FilterExpression::And`.
+/// - A mix of conditions + or_filters + and_filters is wrapped in an outer AND.
+/// - Returns `None` for an empty filter (no conditions, no sub-filters).
+pub fn document_filter_to_filter_expression(
+    filter: &DocumentFilter,
+) -> Option<FilterExpression> {
+    let mut parts: Vec<FilterExpression> = Vec::new();
+
+    // Lower each condition to a Comparison leaf.
+    if !filter.conditions.is_empty() {
+        let condition_exprs: Vec<FilterExpression> = filter
+            .conditions
+            .iter()
+            .filter_map(doc_filter_condition_to_expression)
+            .collect();
+        match condition_exprs.len() {
+            0 => {}
+            1 => parts.push(condition_exprs.into_iter().next().unwrap()),
+            _ => parts.push(FilterExpression::And(condition_exprs)),
+        }
+    }
+
+    // Recursively lower OR sub-filters.
+    if !filter.or_filters.is_empty() {
+        let or_exprs: Vec<FilterExpression> = filter
+            .or_filters
+            .iter()
+            .filter_map(document_filter_to_filter_expression)
+            .collect();
+        if !or_exprs.is_empty() {
+            parts.push(FilterExpression::Or(or_exprs));
+        }
+    }
+
+    // Recursively lower AND sub-filters.
+    if !filter.and_filters.is_empty() {
+        let and_exprs: Vec<FilterExpression> = filter
+            .and_filters
+            .iter()
+            .filter_map(document_filter_to_filter_expression)
+            .collect();
+        if !and_exprs.is_empty() {
+            parts.push(FilterExpression::And(and_exprs));
+        }
+    }
+
+    match parts.len() {
+        0 => None,
+        1 => Some(parts.into_iter().next().unwrap()),
+        _ => Some(FilterExpression::And(parts)),
+    }
+}
+
+/// Lower one `DocFilterCondition` to a `FilterExpression::Comparison`.
+fn doc_filter_condition_to_expression(cond: &DocFilterCondition) -> Option<FilterExpression> {
+    let op = DocFilterOperator::try_from(cond.operator).unwrap_or(DocFilterOperator::Eq);
+
+    let shared_op = match op {
+        DocFilterOperator::Eq | DocFilterOperator::Unspecified => ComparisonOperator::Equals,
+        DocFilterOperator::Ne => ComparisonOperator::NotEquals,
+        DocFilterOperator::Gt => ComparisonOperator::GreaterThan,
+        DocFilterOperator::Gte => ComparisonOperator::GreaterThanOrEqual,
+        DocFilterOperator::Lt => ComparisonOperator::LessThan,
+        DocFilterOperator::Lte => ComparisonOperator::LessThanOrEqual,
+        DocFilterOperator::In => ComparisonOperator::In,
+        DocFilterOperator::NotIn => ComparisonOperator::NotIn,
+        DocFilterOperator::Contains | DocFilterOperator::Fulltext => ComparisonOperator::Contains,
+        DocFilterOperator::Regex => ComparisonOperator::Like,
+        DocFilterOperator::Exists => ComparisonOperator::IsNotNull,
+        // Type check: approximate as Equals with the type string as value.
+        DocFilterOperator::Type => ComparisonOperator::Equals,
+    };
+
+    // For IN/NOT_IN, use the multi-value list; otherwise use the single value.
+    let value = if !cond.values.is_empty() {
+        let arr: Vec<serde_json::Value> = cond.values.iter().map(sql_value_to_json).collect();
+        serde_json::Value::Array(arr)
+    } else {
+        cond.value
+            .as_ref()
+            .map(sql_value_to_json)
+            .unwrap_or(serde_json::Value::Null)
+    };
+
+    Some(FilterExpression::Comparison {
+        field: cond.path.clone(),
+        operator: shared_op,
+        value,
+    })
+}
+
 /// Build a unified record from a document query result.
 pub fn build_document_query_record(id: &str, document: &SqlObject) -> UnifiedRecord {
     UnifiedRecord {
@@ -122,7 +224,8 @@ pub fn build_document_query_record(id: &str, document: &SqlObject) -> UnifiedRec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_proto::proximadb_v1::{SqlObject, sql_value::Value};
+    use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+    use proximadb_proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, SqlObject, sql_value::Value};
 
     #[test]
     fn sql_value_to_json_primitives() {
@@ -214,5 +317,111 @@ mod tests {
         assert_eq!(record.source_model, DataModel::Document);
         assert_eq!(record.data["title"], "Doc");
         assert!(record.score.is_none());
+    }
+
+    fn make_cond(path: &str, op: DocFilterOperator, val: &str) -> DocFilterCondition {
+        DocFilterCondition {
+            path: path.to_string(),
+            operator: op as i32,
+            value: Some(SqlValue {
+                value: Some(Value::StringValue(val.to_string())),
+            }),
+            values: vec![],
+        }
+    }
+
+    #[test]
+    fn document_filter_single_eq_lowers_to_comparison() {
+        let filter = DocumentFilter {
+            conditions: vec![make_cond("$.status", DocFilterOperator::Eq, "active")],
+            or_filters: vec![],
+            and_filters: vec![],
+        };
+        let expr = document_filter_to_filter_expression(&filter).expect("non-empty filter");
+        match expr {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                assert_eq!(field, "$.status");
+                assert_eq!(operator, ComparisonOperator::Equals);
+                assert_eq!(value, serde_json::json!("active"));
+            }
+            other => panic!("expected Comparison, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn document_filter_multiple_conditions_become_and() {
+        let filter = DocumentFilter {
+            conditions: vec![
+                make_cond("$.a", DocFilterOperator::Eq, "1"),
+                make_cond("$.b", DocFilterOperator::Gt, "2"),
+            ],
+            or_filters: vec![],
+            and_filters: vec![],
+        };
+        let expr = document_filter_to_filter_expression(&filter).expect("non-empty filter");
+        match expr {
+            FilterExpression::And(parts) => assert_eq!(parts.len(), 2),
+            other => panic!("expected And, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn document_filter_or_sub_filters_become_or_expression() {
+        let filter = DocumentFilter {
+            conditions: vec![],
+            or_filters: vec![
+                DocumentFilter {
+                    conditions: vec![make_cond("$.x", DocFilterOperator::Eq, "p")],
+                    or_filters: vec![],
+                    and_filters: vec![],
+                },
+                DocumentFilter {
+                    conditions: vec![make_cond("$.x", DocFilterOperator::Eq, "q")],
+                    or_filters: vec![],
+                    and_filters: vec![],
+                },
+            ],
+            and_filters: vec![],
+        };
+        let expr = document_filter_to_filter_expression(&filter).expect("non-empty filter");
+        match expr {
+            FilterExpression::Or(parts) => assert_eq!(parts.len(), 2),
+            other => panic!("expected Or, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn document_filter_exists_lowers_to_is_not_null() {
+        let filter = DocumentFilter {
+            conditions: vec![DocFilterCondition {
+                path: "$.email".to_string(),
+                operator: DocFilterOperator::Exists as i32,
+                value: None,
+                values: vec![],
+            }],
+            or_filters: vec![],
+            and_filters: vec![],
+        };
+        let expr = document_filter_to_filter_expression(&filter).expect("non-empty filter");
+        match expr {
+            FilterExpression::Comparison { operator, .. } => {
+                assert_eq!(operator, ComparisonOperator::IsNotNull);
+            }
+            other => panic!("expected Comparison, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn empty_document_filter_produces_none() {
+        let filter = DocumentFilter {
+            conditions: vec![],
+            or_filters: vec![],
+            and_filters: vec![],
+        };
+        assert!(document_filter_to_filter_expression(&filter).is_none());
     }
 }
