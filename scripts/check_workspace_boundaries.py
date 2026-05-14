@@ -698,7 +698,11 @@ def print_dependency_map(crates: dict[str, Crate]) -> None:
 def source_modules() -> tuple[str, ...]:
     src_dir = ROOT / "src"
     return tuple(
-        sorted(path.name for path in src_dir.iterdir() if path.is_dir() and path.name != "tests")
+        sorted(
+            path.name
+            for path in src_dir.iterdir()
+            if path.is_dir() and not path.name.startswith(".") and path.name != "tests"
+        )
     )
 
 
