@@ -1897,6 +1897,63 @@ Control-plane migration rule:
   protocol/runtime surfaces
 * keep external adapter dependencies behind feature-gated integration crates or sidecars
 
+=== Storage Layout And External Format Isolation Checklist
+
+Storage fungibility is a platform requirement, but it must not recreate hidden durable truth in
+format-specific crates. Internal and external formats should plug into shared record, catalog,
+policy, log/manifest, and projection contracts.
+
+[cols="1,2,2,2", options="header"]
+|===
+|Priority
+|Current gravity
+|Target
+|Acceptance gate
+
+|P0
+|physical layout selection scattered across storage engines and service options
+|catalog-facing `StorageLayout` / `Projection` / `AuthorityMode` contracts in root-compatible modules first; future `proximadb-storage-common`
+|query planner, storage engines, imports/exports, and protocol introspection describe layouts with one vocabulary
+
+|P0
+|ANN, JSON path, full-text, graph topology, time, and rollup indexes as engine-specific metadata
+|cataloged projection metadata with freshness, rebuild source, invalidation, retention impact, and benchmark status
+|`EXPLAIN` can report projection authority/freshness and whether a result came from a fallback
+
+|P1
+|Parquet/Arrow import/export and columnar internals coupled to individual engines
+|format adapters behind `proximadb-storage-common` contracts; Arrow remains interchange, Parquet remains file layout
+|format code does not own record/type/policy semantics and can be feature-gated independently
+
+|P1
+|Iceberg/Delta/Hudi integration pressure
+|future integration crates or sidecars for external table/catalog adapters
+|external tables declare ownership mode, snapshot semantics, type mapping, policy boundary, write/refresh mode, and repair source in xCatalog
+
+|P1
+|relational index and constraint semantics emerging inside SQL/pgwire paths
+|future `proximadb-relational` plus lower catalog/storage contracts for keys, unique indexes, secondary indexes, FKs, checks, materialized views, and transaction profiles
+|constraints are enforced below protocols and recovered through WAL/log/manifest when enabled
+
+|P2
+|observability/SIEM structures mixed between storage, services, and query paths
+|`proximadb-observability` owns log/metric/span/profile semantics and projection builders; shared time/full-text/rollup contracts stay lower
+|alerts, anomalies, rollups, and service maps are catalog-visible projections or canonical derived records with provenance
+|===
+
+Storage-layout migration rule:
+
+* physical flexibility is encouraged; semantic authority is centralized
+* LSM, row/record, PAX, columnar, Arrow, Parquet, Iceberg, Delta, Hudi, graph topology, vector, and
+  observability formats are access methods, projections, or external authority modes declared in
+  xCatalog
+* do not introduce a format-specific crate that defines its own record envelope, scalar type system,
+  policy model, WAL/recovery semantics, or catalog
+* optional relational constraints are table capabilities and durable semantics when enabled; they
+  belong below protocol handlers and above physical index/layout details
+* feature-gate heavyweight external format dependencies until more than one runtime or protocol
+  surface consumes the contract
+
 == Bottom Line
 
 Refactor into a deeper workspace, yes.

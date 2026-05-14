@@ -256,6 +256,32 @@ Logical surfaces:
 This keeps ProximaDB competitive with specialized databases without inheriting their worst
 maintenance property: separate durable semantics for every modality.
 
+=== Format Fungibility Rule
+
+Stacked durability is not a mandate to force all data into one physical layout. It is a mandate to
+keep authority, policy, type semantics, and recovery coherent while allowing the physical shape to
+vary by workload.
+
+Accepted physical families include:
+
+* LSM or row/record segments for write-heavy OLTP, vector metadata, events, and hot agent state;
+* B-tree/range/hash-style secondary indexes where relational constraints or point lookups need
+  them;
+* PAX and columnar segments for mixed OLTP/OLAP workloads;
+* Arrow batches for in-memory exchange and Arrow Flight transport;
+* Parquet/ORC-style files for analytical/cold projections;
+* Iceberg/Delta/Hudi tables as external snapshot/table formats when registered in xCatalog;
+* HNSW/IVF/PQ/DiskANN/LSM-vector fragments for vector search;
+* adjacency tables, CSR/COO, and graph lake files for graph access;
+* time-series compression blocks, trace indexes, rollups, and event streams for observability.
+
+These layouts may be plugins or access methods. They MUST NOT define their own durable record
+envelope, scalar type system, RLS rules, branch semantics, WAL/recovery model, or hidden catalog.
+
+External formats may be authoritative only when xCatalog explicitly records ownership mode,
+snapshot/isolation semantics, `ProximaType` mapping and lossy conversions, policy enforcement
+boundary, write/refresh mode, and rebuild or repair source.
+
 == Source-Of-Truth Matrix
 
 [cols="1,2,2,2"]
@@ -279,7 +305,7 @@ maintenance property: separate durable semantics for every modality.
 
 | Relational
 | typed rows represented as `ProximaRecord`/`ProximaValue` under closed-shape catalog schemas
-| row/column physical layouts, B-tree/range indexes, materialized views
+| row/record, LSM, PAX, columnar, B-tree/range/hash indexes, materialized views, optional constraint indexes
 | SQL, PostgreSQL wire, relational query APIs
 
 | Observability logs
@@ -403,6 +429,23 @@ Relational storage is the canonical durable substrate for:
 
 `SequoiaEngine` and the broader `ProximaRecord` storage work should absorb the durable responsibilities currently duplicated in document and graph paths.
 
+Relational rigor is a set of cataloged table capabilities, not a global cost imposed on every
+collection. A table/profile may opt into:
+
+* primary key enforcement;
+* unique indexes;
+* non-unique secondary indexes;
+* foreign key/reference constraints;
+* check constraints;
+* materialized views;
+* transaction/isolation profiles;
+* stricter schema evolution rules.
+
+When enabled, these capabilities are durable semantics and must be enforced below all protocol
+surfaces. Their physical implementation may use B-tree/range/hash indexes, LSM-friendly uniqueness
+checks, deferred validation, or materialized reference indexes, but the semantics are declared in
+xCatalog and recovered through WAL/log/manifest.
+
 === Vector
 
 Vector data is already the historical core of ProximaDB, but it still needs the same layered discipline as newer modalities.
@@ -426,6 +469,12 @@ Physical vector engines are access methods/layouts:
 * quantized codes as search/storage encodings with explicit quality policy.
 
 HNSW/IVF/PQ indexes MUST be rebuildable from canonical vector records. If lossy quantized data becomes the only retained vector representation, that is no longer just a projection; it must be represented as an explicit canonical retention/compression policy with recall/error metadata.
+
+Filtered vector search is a correctness surface, not just a performance feature. Tenant/RLS,
+permitted principals, branch/time, retention, and typed metadata predicates must be available to the
+ANN candidate-generation path where the chosen index family can support it. Post-filter and
+overfetch strategies are compatibility fallbacks and must be visible in `EXPLAIN` with recall/failure
+risk where they can return fewer than the requested matching top-k.
 
 === Observability
 
@@ -465,6 +514,20 @@ Traces map to canonical span records with:
 Time partitions, label indexes, Tantivy log indexes, PromQL acceleration, trace assembly, and metric rollups are Layer 2 projections. Rollups become canonical only when a retention policy intentionally drops raw samples and preserves aggregate records with explicit window, aggregation, source range, and provenance metadata.
 
 CHRONO/TST-style engines should become observability/time-series access methods over canonical records or retained aggregate records, not independent observability truth.
+
+SIEM and observability competitiveness requires more than storing OTLP-shaped data. The long-term
+surface should include:
+
+* log search with full-text/analyzer support and structured predicates;
+* metric rollups, downsampling, label indexes, and PromQL-style adapters;
+* trace assembly, service maps, critical path lookup, and span/event correlation;
+* profiles and high-cardinality event streams;
+* alert/anomaly projections with explicit derivation and retention metadata;
+* LLM/agent observability records for prompts, tool calls, retrieval evidence, token/cost metrics,
+  evaluations, and safety events.
+
+All of those are canonical records plus projections. Alerts, anomalies, and rollups become durable
+facts only when written as canonical derived records with provenance.
 
 === SKS And Entity
 
@@ -519,6 +582,12 @@ If event replay produces current entity/document/graph state, that state is a ma
 6. No new durable graph/document engine without ADR: a proposal must prove why relational/record storage plus adaptive projections cannot satisfy correctness and performance.
 7. Protocol parity is required: REST, gRPC, Arrow Flight, PostgreSQL wire, and SDK behavior must resolve through the same logical model.
 8. Performance claims require benchmarks: keeping ORION/CSR, CEDAR, or any separate projection requires workload-specific evidence.
+9. Physical format flexibility is allowed; semantic fragmentation is not. LSM, row, PAX,
+   columnar, Arrow, Parquet, Iceberg, Delta, graph, vector, and observability layouts are
+   access methods/projections unless xCatalog marks a different authority mode with explicit
+   snapshot, type, policy, write, and recovery semantics.
+10. Optional relational constraints are real durable semantics when enabled. They must be
+    cataloged, recovered, and protocol-consistent rather than implemented as API-layer checks.
 
 == Target Technical Design
 
@@ -743,12 +812,19 @@ Tasks:
 ** [x] Add canonical `delete_document` path when a `RecordStore` is injected.
 ** [x] Add canonical `update_document` path when a `RecordStore` is injected.
 ** [x] Add canonical `query_documents` path when a scan-capable `RecordStorage` is injected.
-* [ ] Move WAL/recovery responsibilities out of document-only logic or make document WAL entries encode canonical record operations.
-* [ ] Convert JSON path index maintenance into a rebuildable projection keyed by record id.
-* [ ] Convert full-text index maintenance into a rebuildable projection keyed by record id.
-* [ ] Decide CEDAR fate:
-** [ ] access-method/projection over canonical records; or
-** [ ] compatibility adapter pending removal.
+* [x] Make document WAL entries encode canonical record operations when canonical document storage is active.
+** [x] Add canonical document upsert/delete WAL variants carrying `ProximaRecord` / canonical record id.
+** [x] Replay canonical document WAL entries into legacy hot projections during migration.
+** [ ] Extract document WAL ownership fully into shared canonical record-store recovery.
+* [x] Convert JSON path index maintenance into a rebuildable projection over canonical records.
+* [x] Convert full-text index maintenance into a rebuildable projection over canonical records.
+** [x] Add `IndexManager` canonical-record projection entry points for JSON path, array, and full-text indexes.
+** [x] Route canonical `DocumentService` insert/update/delete projection maintenance through those entry points.
+** [ ] Switch projection keys from facade document id to canonical record oid after query executor supports record-id candidate sets.
+* [x] Decide CEDAR fate:
+** [x] access-method/projection over canonical records.
+** [x] implement canonical `RecordStore`/`RecordScan` adapter for CEDAR while keeping its document memtables as compatibility projection state.
+** [ ] remove any future CEDAR plan that would add independent durable WAL/recovery semantics.
 * [ ] Add parity tests: old `DocumentService` behavior vs canonical record-backed behavior.
 
 Acceptance:

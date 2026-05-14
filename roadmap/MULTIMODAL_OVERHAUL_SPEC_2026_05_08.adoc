@@ -197,6 +197,39 @@ on services that depend on X") need a unified spine. The Knows model (arXiv:2604
 and the Stonebraker RUBICON model (arXiv:2604.21413) both argue for one structured record
 with explicit relations.
 
+==== G11: Storage Layout And External Format Authority Are Underspecified [P0]
+
+The current code has multiple internal engines and already uses Arrow/Parquet-related paths, while
+the platform roadmap calls for Delta/Iceberg/Hudi and object-store interoperability. Without a
+cataloged authority model, format support can accidentally become another source-of-truth split.
+
+ProximaDB needs explicit catalog contracts for:
+
+* authority mode: internal canonical, external authoritative, imported snapshot, exported
+  publication, or rebuildable projection;
+* storage layout: row/record, LSM, PAX, columnar, append-only event, graph topology, ANN, time
+  block, or external table;
+* snapshot/isolation semantics;
+* `ProximaType` mapping and lossy conversion flags;
+* policy/RLS enforcement boundary;
+* freshness, rebuild, repair, and retention behavior.
+
+==== G12: Relational Integrity Is Not Yet A First-Class Capability Set [P1]
+
+The platform direction includes PostgreSQL/Oracle-style adoption paths, but relational semantics
+cannot be treated as pgwire-only behavior. Primary keys, unique indexes, secondary indexes, foreign
+keys, check constraints, materialized views, transaction profiles, and stricter schema evolution
+must be optional cataloged capabilities. When enabled, they are durable semantics enforced below all
+protocols and recovered through WAL/log/manifest.
+
+==== G13: Hybrid Retrieval, Reranking, And Observability/SIEM Product Surfaces Are Not Yet Unified [P1]
+
+Competitive systems increasingly combine BM25/full-text, dense and sparse vectors, filters, graph
+context, recency, and semantic reranking. Observability/SIEM systems combine logs, metrics, traces,
+profiles, alerts, anomaly detection, retention tiers, service maps, and now LLM/agent
+observability. ProximaDB has the ingredients but needs shared operators, catalog metadata, and
+projection families so these surfaces do not grow as separate products inside the codebase.
+
 === 1.3 Source-of-Truth Index
 
 |===
@@ -767,6 +800,77 @@ background compaction merges levels. **Sampling-aware reordering** records actua
 trace edges and co-locates frequently-traversed neighbors. ProximaDB's HELIX engine is
 the right starting point; the code already has Hilbert-curve locality and can be extended
 with the LSM layout.
+
+=== 5.6 Storage Layout And External Format Authority Model
+
+The three-layer storage model permits many physical formats, but only one semantic spine. Every
+table, collection, stream, projection, and external table must be describable by xCatalog using the
+same authority vocabulary.
+
+[source,rust]
+----
+pub enum AuthorityMode {
+    InternalCanonical,       // ProximaRecord + WAL/log/manifest own truth
+    ExternalAuthoritative,   // external table owns truth; xCatalog maps and governs access
+    ImportedSnapshot,        // point-in-time import from an external source
+    ExportedPublication,     // generated publication from canonical records
+    RebuildableProjection,   // derived from canonical records/events
+}
+
+pub enum StorageLayoutKind {
+    RowRecord,
+    LsmRecord,
+    Pax,
+    Columnar,
+    AppendOnlyEvent,
+    VectorAnn,
+    GraphTopology,
+    TimeSeriesBlock,
+    ExternalTable,
+}
+----
+
+Required metadata:
+
+* `authority_mode`;
+* `layout_kind`;
+* physical format (`ProximaBlock`, `SST`, `Parquet`, `Arrow`, `Iceberg`, `Delta`, `Hudi`,
+  `GraphAr`, etc.);
+* `ProximaType` mapping and lossy conversion flags;
+* snapshot/isolation semantics;
+* tenant/RLS enforcement boundary;
+* write mode: mutable, append-only, copy-on-write, external refresh, streaming ingest;
+* freshness/rebuild/invalidation policy for projections;
+* retention impact;
+* benchmark and support status.
+
+Arrow is the primary in-memory and transport format. Parquet is a columnar file layout. Iceberg,
+Delta, and Hudi are external table/snapshot interoperability formats. None of these replace
+`ProximaRecord`/`ProximaType` as the internal semantic model unless xCatalog marks an external table
+as authoritative with explicit policy and snapshot semantics.
+
+=== 5.7 Optional Relational Capability Model
+
+Relational correctness features are table/profile capabilities. They are optional by workload, but
+when enabled they are durable semantics.
+
+[source,rust]
+----
+pub struct RelationalCapabilities {
+    pub primary_key: Option<KeySpec>,
+    pub unique_indexes: Vec<IndexSpec>,
+    pub secondary_indexes: Vec<IndexSpec>,
+    pub foreign_keys: Vec<ForeignKeySpec>,
+    pub check_constraints: Vec<CheckConstraint>,
+    pub materialized_views: Vec<MaterializedViewSpec>,
+    pub transaction_profile: TransactionProfile,
+    pub schema_evolution_policy: SchemaEvolutionPolicy,
+}
+----
+
+Implementation can choose B-tree/range/hash indexes, LSM-friendly uniqueness checks, deferred
+validation, or materialized reference indexes. The semantics live in xCatalog and recovery/log
+contracts, not inside pgwire handlers.
 
 == Section 6: Modality-Specific Specifications
 
@@ -1354,6 +1458,30 @@ Validation:
 
 Owns: G2 fully, G10 fully.
 
+=== Phase B2: Storage Layout, Projection, And Constraint Contracts (1-2 months)
+
+Goal: prevent format and constraint work from creating new durable truth.
+
+. Define xCatalog contracts for `AuthorityMode`, `StorageLayoutKind`, projection metadata,
+  freshness, rebuild source, invalidation, retention impact, and support status.
+. Define `RelationalCapabilities` for optional primary keys, unique indexes, secondary indexes,
+  FKs, checks, materialized views, transaction profiles, and schema evolution policy.
+. Add `EXPLAIN` visibility for layout choice, projection freshness, authority mode, and fallback
+  filtering behavior.
+. Register Arrow/Parquet import/export as format adapters, not semantic authority.
+. Add external table contract stubs for Iceberg/Delta/Hudi with explicit snapshot/type/policy
+  metadata before enabling write paths.
+
+Validation:
+
+* Every storage/projection/external-table path can state whether it is canonical, external
+  authoritative, imported, exported, or rebuildable.
+* Relational constraints are enforced below protocol handlers when enabled.
+* No format-specific code defines its own record envelope, type system, policy model, or recovery
+  model.
+
+Owns: G11 fully, G12 partially.
+
 === Phase C: Filter-Aware Vector Search (2 months)
 
 Goal: predicate-aware HNSW with adaptive-local heuristic.
@@ -1471,12 +1599,13 @@ gantt
     section Foundation
     Phase A: Type System            :a1, 2026-05-15, 90d
     Phase B: Record Envelope        :a2, after a1, 90d
+    Phase B2: Layout/Constraints    :b2, after a2, 45d
 
     section Performance
     Phase H: Vectorized Executor    :h1, 2026-05-15, 180d
 
     section Modality
-    Phase C: Filter-Aware Vector    :c1, after a2, 60d
+    Phase C: Filter-Aware Vector    :c1, after b2, 60d
     Phase D: Cross-Model Operators  :d1, after c1, 90d
 
     section Security
@@ -1628,6 +1757,10 @@ Each ADR is a sticky decision; new turns should not relitigate without explicit 
 | Post-filter only
 | ≥ 10× over post-filter at p99
 
+| Filtered top-k correctness under tenant/RLS and typed predicates
+| Unspecified for ANN fallback paths
+| Query plan states exact, predicate-aware ANN, prefilter-exact, or post-filter fallback with recall risk
+
 | Cross-model query latency (vector × graph × document × log)
 | Untested
 | ≤ 50 ms p99 at 10M-record scale per modality
@@ -1651,6 +1784,18 @@ Each ADR is a sticky decision; new turns should not relitigate without explicit 
 | Schema evolution audit trail completeness
 | Partial
 | 100% (10 EvoSchema op types tracked with lineage)
+
+| Storage layout authority coverage
+| Engine-specific metadata
+| 100% of layouts/projections/external tables have xCatalog authority/freshness/type/policy metadata
+
+| Optional relational constraint recovery
+| Unspecified
+| Keys, unique indexes, FKs, checks, and materialized views recover consistently when enabled
+
+| Observability/SIEM cross-correlation
+| Separate log/metric/trace paths
+| Logs, metrics, traces, profiles, alerts, anomalies, and agent events query through shared algebra
 |===
 
 == Section 15: Cross-References to Existing Strategic Docs
@@ -1672,7 +1817,7 @@ Each ADR is a sticky decision; new turns should not relitigate without explicit 
 | Add Phase 6: Multi-Model Overhaul (Phases A-G from this spec) at end of current phase chain. Cross-reference TD-IDs as they are created.
 
 | link:../docs/10-quality/TECHNICAL_DEBT.adoc[TECHNICAL_DEBT.adoc]
-| Open new TD entries: TD-053 Type System Unification, TD-054 ProximaRecord Envelope, TD-055 Predicate-Aware HNSW, TD-056 Engine-Level RLS, TD-057 MSHJ + Hybrid Traverse, TD-058 PAX Co-location, TD-059 Disaggregated WAL.
+| Track completed Phase A/B/E scaffolding through the existing resolved entries (`TD-R25` through `TD-R27`). Track the new competitive architecture gaps as TD-060 Storage Layout Authority, TD-061 Optional Relational Capabilities, TD-062 Hybrid Retrieval/Reranking, TD-063 Observability/SIEM Convergence, and TD-064 Predicate-Aware Vector Search Correctness.
 
 | link:techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc[WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc]
 | Add `proximadb-records`, `proximadb-types`, `proximadb-buffer-pool` to the new-foundation-crates list. Add `proximadb-relational` to the modality-runtime list. Confirm the cleanup items in §10.4 of this spec.

@@ -913,3 +913,65 @@ The following items represent the frontier of AI database research, aligned with
 | 5-6 weeks
 | **Verified**: May 10, 2026. From March 2026 Reference Architecture (arXiv:2604.16394). **Implementation**: `PseudoQueryGenerator` in `VectorOperationsService` ingestion paths (`insert_batch_internal`, `insert_vectors_via_*`), storing auto-derived `proximadb.pseudo_query` metadata. **Tests**: `src/services/operations/vectors.rs` (`pseudo_query_tests`).
 |===
+
+== Phase 7: Competitive Platform Architecture And Storage Authority (2026+)
+
+The following items track the architecture gaps added by
+`docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc`,
+`docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`,
+`roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`, and
+`roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc`.
+
+These are not claims about the current supported surface. They are the next implementation seams
+that keep ProximaDB competitive while preserving the broader mandate: one semantic spine, many
+physical layouts.
+
+[cols="1,3,1,1,1,4,2,4", options="header"]
+|===
+| ID | Area | Phase | Priority | Status | Impact | Effort | Notes
+
+| TD-060
+| Storage Layout Authority And External Format Semantics
+| P7
+| CRITICAL
+| Open - contract skeleton landed May 14, 2026
+| Without an explicit authority model, Arrow/Parquet/Iceberg/Delta/Hudi and internal engines can drift into hidden sources of truth with separate type, policy, freshness, and recovery semantics.
+| 4-6 weeks
+| **May 14, 2026**: contract skeleton added to `crates/control/proximadb-catalog/src/lib.rs`: `CatalogAuthorityMode`, `CatalogStorageLayoutKind`, `CatalogPhysicalFormat`, `CatalogWriteMode`, `ProjectionFreshness`, `CatalogProjectionKind`, `CatalogStorageLayout`, `CatalogProjection`, and `RelationalCapabilities`. Tests cover default internal authority, external authoritative boundaries, rebuildable projection metadata, and optional relational semantics. Remaining: persist these contracts in xCatalog table/profile metadata, expose through introspection, and add `EXPLAIN` visibility. See `MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` §5.6 and Phase B2.
+
+| TD-061
+| Optional Relational Capabilities
+| P7
+| HIGH
+| Open
+| PostgreSQL/Oracle adoption paths require keys, unique indexes, secondary indexes, FKs, checks, materialized views, transaction profiles, and stricter schema evolution, but forcing those costs onto every vector/document/observability workload would be wrong.
+| 6-8 weeks
+| Model relational rigor as cataloged table/profile capabilities. When enabled, constraints are durable semantics enforced below REST/gRPC/Arrow Flight/PostgreSQL wire handlers and recovered through WAL/log/manifest. Start with catalog shape and validation hooks before full FK enforcement. See overhaul spec §5.7.
+
+| TD-062
+| Hybrid Retrieval And Reranking Planner Surface
+| P7
+| HIGH
+| Open
+| Competitive search/RAG systems increasingly combine BM25/full-text, dense vectors, sparse vectors, metadata filters, graph context, recency, and rerankers. Treating these as separate API paths leaves quality and explainability on the table.
+| 6-10 weeks
+| Add planner-level representation for lexical, dense, sparse, graph, document path, time, and rerank stages. `EXPLAIN` must show fusion/rerank strategy and any post-filter fallback. Reuse existing hybrid search work, but move the durable direction into shared algebra/catalog/projection metadata.
+
+| TD-063
+| Observability/SIEM Convergence
+| P7
+| HIGH
+| Open
+| Splunk, Datadog, Elastic, and OpenSearch compete on operational workflows: log search, metrics, traces, profiles, service maps, alerts, anomaly detection, retention tiers, and now LLM/agent observability.
+| 8-12 weeks
+| Normalize logs, metric samples, spans, profiles, alerts, anomalies, agent traces, prompts, tool calls, retrieval evidence, token/cost metrics, and eval events as `ProximaRecord` profiles plus cataloged projections. Rollups/anomalies/alerts become durable only when written as canonical derived records with provenance.
+
+| TD-064
+| Predicate-Aware Vector Search Correctness And Fallback Reporting
+| P7
+| CRITICAL
+| Open
+| Post-filtered ANN can return fewer than the requested matching top-k under tenant/RLS, time, branch, and typed metadata filters. This is a correctness and security surface, not just a latency issue.
+| 6-8 weeks
+| Extend `VectorTopK` planning to state exact, predicate-aware ANN, prefilter-exact, or post-filter fallback. Push tenant/RLS and typed predicates into candidate generation where supported. `EXPLAIN` must disclose recall/failure risk for fallback plans. Coordinates with Phase C in the overhaul spec.
+|===

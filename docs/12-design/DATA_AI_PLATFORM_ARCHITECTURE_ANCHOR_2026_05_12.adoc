@@ -496,6 +496,46 @@ Design response:
 * Transform execution can route to native Rust/DataFusion locally, then Spark/Trino/Ray/Flink
   in distributed phases.
 
+=== Vector, Graph, Search, Document, OLAP, And Observability Platforms
+
+The 2026 competitive landscape is converging on a common pattern: specialized physical access
+methods are moving closer to general-purpose data systems, not farther away from them.
+
+Vector systems such as Pinecone, Qdrant, Milvus, pgvector, Oracle AI Vector Search, MongoDB Atlas
+Vector Search, Elasticsearch/OpenSearch, Neo4j vector indexes, Databricks Vector Search, Snowflake
+Cortex Search, and S3 Vectors all validate that vector search is now a table/document/graph/search
+capability. The durable authority varies by vendor: relational tables, Delta tables, document
+collections, Lucene segments, graph nodes, object-store vector buckets, or managed service indexes.
+The common feature pressure is filtered ANN, hybrid lexical+semantic retrieval, reranking,
+freshness, multi-tenancy, and cost-controlled object-storage-backed serving.
+
+Graph systems show the value of graph-native APIs, graph algorithms, and vector-on-graph
+retrieval. OLAP systems show the value of columnar/vectorized execution, rollups, materialized
+views, and real-time ingest. Document/search systems show the value of JSON/document ergonomics,
+full-text search, analyzers, faceting, and aggregation. SIEM and observability systems show that
+logs, metrics, traces, profiles, alerts, anomaly detection, retention tiers, dashboards, and
+AI/LLM observability are product surfaces, not just storage schemas.
+
+Design response:
+
+* ProximaDB should not become a clone of any one category. It should be a typed context data
+  platform where relational, document, graph, vector, event, observability, feature, model, and
+  agent state share one catalog and policy plane.
+* Vector search must be predicate-aware by default for tenant/RLS, branch/time, and typed metadata.
+  Post-filter or overfetch approaches are compatibility fallbacks, not the long-term correctness
+  path.
+* Hybrid retrieval must be a first-class query plan shape: BM25/full-text, dense/sparse vectors,
+  graph neighborhood, document paths, time predicates, and rerankers should compose through one
+  logical algebra and one explainable optimizer.
+* Observability/SIEM workloads require canonical log/metric/span/profile records plus rebuildable
+  time, full-text, trace-assembly, rollup, anomaly, service-map, and alert projections.
+* OLAP credibility requires Arrow-native batches, vectorized execution, column pruning,
+  statistics, late materialization, spill, materialized views, and workload-aware row/PAX/columnar
+  layout selection.
+* Document/search credibility requires JSON path indexes, variation-aware schema discovery,
+  full-text analyzers, faceting/aggregation, and lexical+semantic ranking without splitting
+  document truth from canonical records.
+
 === Neon and Supabase
 
 Neon and Supabase teach that developer workflow is a product surface: branch data like code,
@@ -509,6 +549,47 @@ Design response:
 * Branches can be data-full, schema-only, masked, seeded, or TTL-based.
 * Branches cover records, vector index manifests, graph topology deltas, event streams,
   feature/model metadata, and agent checkpoint history.
+
+== Storage And Format Fungibility
+
+The platform should be strict about semantic authority and flexible about physical shape.
+ProximaDB should not enforce one internal format, one row store, one column store, or one external
+lake format for every workload.
+
+The invariant is:
+
+[source,text]
+----
+semantic authority:
+  xCatalog + ProximaRecord + ProximaType/ProximaValue + WAL/log/manifest +
+  tenant/RLS + version/time/provenance + retention policy
+
+physical choices:
+  LSM row/record, B-tree/range indexes, PAX, columnar segments, Parquet files,
+  Arrow batches, ANN fragments, graph topology projections, time-series blocks,
+  event streams, external Iceberg/Delta/Hudi tables
+----
+
+Design response:
+
+* Internal hot-state layouts may be LSM, row/record, PAX, columnar, append-only event, or
+  workload-specific projection families.
+* Relational features such as primary keys, unique indexes, secondary indexes, referential
+  integrity, check constraints, materialized views, and stronger transaction/isolation modes are
+  table capabilities declared in xCatalog. They are optional by workload, but when enabled they are
+  enforced below protocols and consistently exposed through pgwire, REST/gRPC, Arrow Flight, and
+  SDKs.
+* Columnar and record-oriented stores are layout plugins/access methods below xCatalog. They should
+  not introduce separate record envelopes, type systems, policy rules, or recovery semantics.
+* Arrow is the primary in-memory and wire interchange shape. Parquet is an analytical file layout.
+  Iceberg/Delta/Hudi are external table/snapshot interoperability layers. None of these should be
+  treated as the universal internal ceiling.
+* External tables can be authoritative only when xCatalog explicitly registers their ownership,
+  snapshot semantics, schema/type mapping, policy enforcement boundary, and write/refresh mode.
+  Otherwise they are imports, exports, publications, or rebuildable projections over ProximaDB
+  canonical records.
+* Every non-canonical projection must declare freshness, rebuild source, invalidation policy,
+  retention impact, and benchmark criteria before it becomes a default path.
 
 == Strategic Moat
 
@@ -529,6 +610,61 @@ not provide as a coherent unit:
   native context format for hot mutable multi-modal state that table formats do not optimize for.
 * **Policy once**: RLS, masking, tenancy, retention, audit, and egress controls enforced across
   pgwire, REST, gRPC, Arrow Flight, SDK, streaming, and embedded execution.
+* **Optional relational rigor**: tables can opt into keys, uniqueness, referential integrity,
+  constraints, materialized views, and stronger isolation without forcing OLAP, vector, document,
+  or observability workloads into the same cost profile.
+* **Observability plus AI context**: logs, metrics, traces, profiles, agent traces, evaluations,
+  prompts, tool calls, and retrieval evidence can be queried together under one policy model.
+
+== Competitive Gap Register
+
+These gaps should remain visible until the corresponding capabilities become real and supported.
+They are strategy inputs, not claims about the current supported surface.
+
+[cols="1,3,3,2", options="header"]
+|===
+| Priority | Gap | Competitive reason | Architecture response
+
+| P0
+| Predicate-aware vector search for tenant/RLS, branch/time, and typed metadata
+| Vector databases and search engines increasingly compete on filtered ANN correctness and latency
+| Push predicates into `VectorTopK`; catalog filterable typed columns; benchmark against post-filter
+
+| P0
+| xCatalog maturity for layouts, constraints, projections, freshness, retention, lineage, and external tables
+| Lakehouse, warehouse, SIEM, and MLOps platforms win through governance and lifecycle metadata
+| Make xCatalog the single control plane below every protocol
+
+| P0
+| Arrow-native vectorized execution and columnar scan path
+| OLAP competitors win on vectorized execution, pruning, late materialization, and spill
+| Route analytic scans through Arrow/DataFusion-native batches while preserving record semantics
+
+| P1
+| Optional relational integrity and indexing
+| PostgreSQL/Oracle users expect keys, unique indexes, FKs, checks, transactions, and MVCC semantics
+| Add table capability flags and enforcement contracts rather than global mandatory cost
+
+| P1
+| Hybrid retrieval and reranking as a planner primitive
+| Search, vector, and RAG systems increasingly combine BM25, vectors, filters, graph, and rerankers
+| Model lexical, dense, sparse, graph, path, time, and rerank operations in shared algebra
+
+| P1
+| Observability/SIEM workload surface
+| Splunk, Datadog, Elastic, and OpenSearch own operational data workflows
+| Canonical logs/metrics/traces/profiles plus time/full-text/trace/rollup/alert projections
+
+| P1
+| Open table/storage interoperability
+| Databricks, Snowflake/Polaris, Iceberg, Delta, and object stores define enterprise integration
+| Register external formats in xCatalog with explicit ownership/snapshot/type/policy semantics
+
+| P2
+| Branchable AI/data workflows
+| Developer workflow and AI eval platforms make state branching sticky
+| Branch records, events, indexes, agent state, feature/model metadata, and eval outputs
+|===
 
 == Required Platform Planes
 
