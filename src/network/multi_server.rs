@@ -1874,6 +1874,9 @@ impl MultiServer {
             );
             let streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
                 Arc::new(crate::network::grpc::StreamingServiceImpl::new());
+            let security_port: Arc<dyn proximadb_runtime::SecurityPort> = Arc::new(
+                crate::network::grpc::SecurityServiceImpl::with_default_config(),
+            );
 
             // ── Build all gRPC services through the port-based factory ─────────
 
@@ -1885,6 +1888,7 @@ impl MultiServer {
                 .with_document(doc_port)
                 .with_observability(obs_port)
                 .with_streaming(streaming_port)
+                .with_security(security_port)
                 .with_config(grpc_cfg)
                 .create_all_services_sync();
 
@@ -1909,13 +1913,15 @@ impl MultiServer {
                 }};
             }
 
-            let vector_service    = apply_limits!(grpc_svcs.vector);
-            let sql_service       = apply_limits!(grpc_svcs.sql);
-            let col_service       = grpc_svcs.collection;  // no bulk ops, skip 64MB override
-            let graph_service     = grpc_svcs.graph;
-            let document_service  = grpc_svcs.document.expect("document port was wired");
+            let vector_service        = apply_limits!(grpc_svcs.vector);
+            let sql_service           = apply_limits!(grpc_svcs.sql);
+            let col_service           = grpc_svcs.collection;
+            let graph_service         = grpc_svcs.graph;
+            let hybrid_search_service = grpc_svcs.hybrid_search;
+            let security_service      = grpc_svcs.security;
+            let document_service      = grpc_svcs.document.expect("document port was wired");
             let observability_service = grpc_svcs.observability.expect("observability port was wired");
-            let streaming_service = grpc_svcs.streaming;
+            let streaming_service     = grpc_svcs.streaming;
 
             // Add V2 ProximaRecordService for typed fields and schema support
             let proxima_record_service_impl =
@@ -1923,18 +1929,24 @@ impl MultiServer {
                     services.request_handlers.clone(),
                 );
             let proxima_record_service = proxima_record_service_impl.into_server();
-            debug!("✅ Added V2 ProximaRecordService to gRPC server");
 
             // Build server with all services
-            let server = server_builder
+            let mut server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
                 .add_service(col_service)
                 .add_service(graph_service)
+                .add_service(hybrid_search_service)
+                .add_service(security_service)
                 .add_service(document_service)
                 .add_service(observability_service)
                 .add_service(streaming_service)
                 .add_service(proxima_record_service);
+
+            if let Some(entity_svc) = grpc_svcs.entity {
+                server = server.add_service(entity_svc);
+            }
+            let server = server;
 
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {
@@ -2212,10 +2224,12 @@ impl MultiServer {
                 }};
             }
 
-            let vector_service = apply_limits!(grpc_svcs.vector);
-            let sql_service    = apply_limits!(grpc_svcs.sql);
-            let col_service    = grpc_svcs.collection;
-            let graph_service  = grpc_svcs.graph;
+            let vector_service        = apply_limits!(grpc_svcs.vector);
+            let sql_service           = apply_limits!(grpc_svcs.sql);
+            let col_service           = grpc_svcs.collection;
+            let graph_service         = grpc_svcs.graph;
+            let hybrid_search_service = grpc_svcs.hybrid_search;
+            let security_service      = grpc_svcs.security;
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
@@ -2236,6 +2250,8 @@ impl MultiServer {
                 .add_service(sql_service)
                 .add_service(col_service)
                 .add_service(graph_service)
+                .add_service(hybrid_search_service)
+                .add_service(security_service)
                 .add_service(flight_server);
 
             info!(
@@ -2527,17 +2543,21 @@ impl MultiServer {
                 }};
             }
 
-            let vector_service = apply_limits!(grpc_svcs.vector);
-            let sql_service    = apply_limits!(grpc_svcs.sql);
-            let col_service    = grpc_svcs.collection;
-            let graph_service  = grpc_svcs.graph;
+            let vector_service        = apply_limits!(grpc_svcs.vector);
+            let sql_service           = apply_limits!(grpc_svcs.sql);
+            let col_service           = grpc_svcs.collection;
+            let graph_service         = grpc_svcs.graph;
+            let hybrid_search_service = grpc_svcs.hybrid_search;
+            let security_service      = grpc_svcs.security;
 
             // Build cluster services
             let mut server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
                 .add_service(col_service)
-                .add_service(graph_service);
+                .add_service(graph_service)
+                .add_service(hybrid_search_service)
+                .add_service(security_service);
 
             // Add consensus service if enabled
             if cluster_config.enable_consensus {
