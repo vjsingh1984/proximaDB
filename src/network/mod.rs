@@ -188,6 +188,10 @@ pub mod multi_protocol_handler;
 pub mod multi_server;
 /// Unified port protocol multiplexer (HTTP/gRPC auto-detection)
 pub mod multiplex;
+/// Server configuration types (MultiServerConfig, TLSConfig, etc.)
+pub mod server_config;
+/// Shared business-logic service composition layer (SharedServices)
+pub mod shared_services;
 /// PostgreSQL wire protocol server (pgvector compatibility)
 pub mod postgres;
 pub mod rest;

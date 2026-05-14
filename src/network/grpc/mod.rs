@@ -12,31 +12,25 @@
 //!
 //! ## Status
 //!
-//! These services remain in the root crate during the workspace refactor. They will be
-//! migrated to `crates/platform/proximadb-api/src/grpc/` after UnifiedHandlers moves to
-//! `crates/platform/proximadb-runtime` to avoid circular dependencies.
+//! These port-implementing services remain in the root crate. Collection, vector, and SQL
+//! protocol adapters live in `crates/platform/proximadb-api`. Port traits live in
+//! `crates/platform/proximadb-runtime`.
 
-// V1 services (original API)
-/// gRPC service for collection management operations
-pub mod collection_service;
-/// gRPC service for document CRUD operations
+// Port implementations: root crate provides concrete types that implement runtime port traits
+/// gRPC service for document CRUD operations (implements DocumentPort)
 pub mod document_service;
-/// gRPC service for SKS entity operations
+/// gRPC service for SKS entity operations (implements EntityPort)
 pub mod entity_service;
-/// gRPC service for graph database operations
+/// gRPC service for graph database operations (implements GraphPort)
 pub mod graph_service;
-/// gRPC service for hybrid (vector + BM25) search
+/// gRPC service for hybrid (vector + BM25) search (implements HybridPort)
 pub mod hybrid_search_service;
-/// gRPC service for observability (logs, metrics, traces)
+/// gRPC service for observability (logs, metrics, traces) (implements ObservabilityPort)
 pub mod observability_service;
-/// gRPC service for security and authentication management
+/// gRPC service for security and authentication management (implements SecurityPort)
 pub mod security_service;
-/// gRPC service for SQL query execution
-pub mod sql_service;
-/// gRPC service for bidirectional streaming operations
+/// gRPC service for bidirectional streaming operations (implements StreamingPort)
 pub mod streaming_service;
-/// gRPC service for vector CRUD and search operations
-pub mod vector_service;
 
 // V2 services (new API with ProximaRecord support)
 /// V2 gRPC services with ProximaRecord typed field support
