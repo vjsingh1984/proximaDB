@@ -97,6 +97,27 @@ Implication for isolation:
 * protocol crates may shape requests and responses, but they must not become the source of truth for
   catalog, policy, branch, connector, agent, or MLOps state
 
+=== 9. Split modality facades from durable authority
+
+The convergence mandate in
+link:../../docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc[RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14]
+is now an explicit workspace constraint. Modality crates should isolate behavior that is truly
+modality-specific, but they must not recreate isolated durable systems.
+
+Implication for isolation:
+
+* `proximadb-document` owns document API semantics, JSON path/update behavior, full-text/path
+  projection logic, and document query adaptation; canonical document writes flow through record
+  store/catalog/log contracts.
+* `proximadb-graph` owns graph AST/planner/runtime behavior, traversal capability contracts, and
+  topology projection APIs; durable nodes and edges remain canonical records/tables.
+* `proximadb-vector` owns ANN index families, scoring, quantization, and freshness/rebuild policy;
+  vector metadata and embeddings remain record fields with cataloged index manifests.
+* `proximadb-observability` owns log/metric/span/profile facades, compression, rollup, and trace
+  projection logic; raw and retained aggregate facts remain canonical records/events.
+* future catalog, policy, branch, log/manifest, and record crates must sit below these modality crates
+  so the root crate does not merely move duplicated durable semantics into smaller boxes.
+
 == Non-Goals
 
 * No big-bang rewrite.

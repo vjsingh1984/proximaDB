@@ -5607,6 +5607,7 @@ dependencies = [
  "proximadb-config",
  "proximadb-data-model",
  "proximadb-distance-types",
+ "proximadb-document",
  "proximadb-document-query",
  "proximadb-filter-expression",
  "proximadb-graph",
@@ -5776,10 +5777,11 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
+ "proximadb-data-model",
  "proximadb-document-query",
  "proximadb-kernel",
- "proximadb-proto",
  "proximadb-query-filter",
+ "proximadb-records",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -6043,10 +6045,12 @@ name = "proximadb-records"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "proximadb-data-model",
  "proximadb-proto",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

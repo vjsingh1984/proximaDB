@@ -620,6 +620,31 @@ ProximaDB should define a native **Proxima Context Segment** format:
 The native format is the moat for context workloads. Open formats remain interoperability
 surfaces.
 
+==== Research-Grounded Storage Stance
+
+The current paper review in
+link:RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc[RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14]
+sharpens the storage-plane rule:
+
+* **Canonical durability is stacked, not isolated.** Records, types, catalog metadata, WAL/log/manifest,
+  tenant/RLS, version/time, provenance, and retention rules are shared across relational, document,
+  graph, vector, observability, SKS/entity, agent, and event workloads.
+* **Physical specialization is mandatory.** LSM levels, PAX, columnar segments, adjacency tables,
+  CSR/COO, GraphAr-style lake projections, HNSW/IVF/PQ/DiskANN-style ANN fragments, time-series
+  compression blocks, trace indexes, and event streams are valid storage/index families when they are
+  cataloged and rebuildable from canonical truth.
+* **Open lake formats are publication and analytic surfaces.** Parquet, Avro, Iceberg, Delta, and
+  Hudi are important interoperability targets, but they should not replace the native hot-state format
+  for low-latency mutable context, graph traversal, ANN freshness, branches, and agent checkpoints.
+* **No modality creates a hidden source of truth.** `DocumentService`, graph services, observability
+  services, vector indexes, SKS/entity services, and protocol handlers may own facade behavior and
+  projection maintenance, but durable semantics flow through `ProximaRecord`/`ProximaType`, xCatalog,
+  WAL/log/manifest, and policy contracts.
+* **Every default projection needs evidence.** The planner may auto-materialize JSON path indexes,
+  columnar variation projections, CSR/COO, vector index fragments, time-series rollups, or trace
+  assembly indexes only when catalog statistics, workload observations, and benchmarks justify the
+  freshness and rebuild cost.
+
 === 4. Compute and Execution Plane
 
 Purpose: route work transparently across engines.
