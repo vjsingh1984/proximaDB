@@ -1,124 +1,168 @@
 //! # Security Service (gRPC)
 //!
-//! gRPC implementation for RBAC operations, permission validation, and audit logging.
-//!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor. The actual implementations exist in `src/network/grpc/security_service.rs`.
+//! gRPC implementation for RBAC operations, permission validation, and audit
+//! logging.  Each RPC delegates to the injected `SecurityPort`; when no port
+//! is provided the service returns a safe "not configured" status so the
+//! server can start without a security backend.
 
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
 
-// Placeholder types for security services
-// TODO: Replace with actual types after migration
-pub struct ConsolidatedRBACManager;
+use tonic::{Request, Response, Status};
 
 use proximadb_proto::v1;
 use proximadb_proto::v1::security_service_server::{SecurityService, SecurityServiceServer};
+use proximadb_runtime::SecurityPort;
 
-/// Security service implementation for RBAC operations
+/// gRPC SecurityService implementation backed by a `SecurityPort`.
 pub struct SecurityServiceImpl {
-    /// RBAC manager for permission validation
-    _rbac_manager: Arc<ConsolidatedRBACManager>,
+    port: Option<Arc<dyn SecurityPort>>,
 }
 
 impl SecurityServiceImpl {
-    /// Create a new security service
-    pub fn new(_rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
-        Self { _rbac_manager }
+    /// Construct with a concrete security port.
+    pub fn new(port: Arc<dyn SecurityPort>) -> Self {
+        Self { port: Some(port) }
     }
 
-    /// Create a new security service with default config
+    /// Construct without a security backend (all RPCs return NOT_FOUND).
     pub fn with_default_config() -> Self {
-        Self {
-            _rbac_manager: Arc::new(ConsolidatedRBACManager),
-        }
+        Self { port: None }
     }
 
-    /// Convert this implementation into a tonic gRPC server
+    /// Convert into a tonic gRPC server.
     pub fn into_server(self) -> SecurityServiceServer<Self> {
         SecurityServiceServer::new(self)
     }
+
+    fn not_configured() -> Status {
+        Status::not_found("Security service not configured on this node")
+    }
+
+    fn port_err(e: anyhow::Error) -> Status {
+        Status::internal(e.to_string())
+    }
 }
 
-// Placeholder trait implementation - will be implemented after migration
 #[tonic::async_trait]
 impl SecurityService for SecurityServiceImpl {
     async fn validate_access(
         &self,
-        _request: Request<v1::ValidateAccessRequest>,
+        request: Request<v1::ValidateAccessRequest>,
     ) -> Result<Response<v1::ValidateAccessResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.validate_access(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn batch_validate_access(
         &self,
-        _request: Request<v1::BatchValidateAccessRequest>,
+        request: Request<v1::BatchValidateAccessRequest>,
     ) -> Result<Response<v1::BatchValidateAccessResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.batch_validate_access(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn create_role(
         &self,
-        _request: Request<v1::CreateRoleRequest>,
+        request: Request<v1::CreateRoleRequest>,
     ) -> Result<Response<v1::CreateRoleResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.create_role(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn list_roles(
         &self,
-        _request: Request<v1::ListRolesRequest>,
+        request: Request<v1::ListRolesRequest>,
     ) -> Result<Response<v1::ListRolesResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.list_roles(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn delete_role(
         &self,
-        _request: Request<v1::DeleteRoleRequest>,
+        request: Request<v1::DeleteRoleRequest>,
     ) -> Result<Response<v1::DeleteRoleResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.delete_role(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn assign_role(
         &self,
-        _request: Request<v1::AssignRoleRequest>,
+        request: Request<v1::AssignRoleRequest>,
     ) -> Result<Response<v1::AssignRoleResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.assign_role(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn revoke_role(
         &self,
-        _request: Request<v1::RevokeRoleRequest>,
+        request: Request<v1::RevokeRoleRequest>,
     ) -> Result<Response<v1::RevokeRoleResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.revoke_role(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn list_user_roles(
         &self,
-        _request: Request<v1::ListUserRolesRequest>,
+        request: Request<v1::ListUserRolesRequest>,
     ) -> Result<Response<v1::ListUserRolesResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.list_user_roles(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn list_audit_events(
         &self,
-        _request: Request<v1::ListAuditEventsRequest>,
+        request: Request<v1::ListAuditEventsRequest>,
     ) -> Result<Response<v1::ListAuditEventsResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.list_audit_events(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn get_tenant_security_policy(
         &self,
-        _request: Request<v1::GetTenantSecurityPolicyRequest>,
+        request: Request<v1::GetTenantSecurityPolicyRequest>,
     ) -> Result<Response<v1::GetTenantSecurityPolicyResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_tenant_security_policy(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn set_tenant_security_policy(
         &self,
-        _request: Request<v1::SetTenantSecurityPolicyRequest>,
+        request: Request<v1::SetTenantSecurityPolicyRequest>,
     ) -> Result<Response<v1::SetTenantSecurityPolicyResponse>, Status> {
-        Err(Status::unimplemented("Security service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.set_tenant_security_policy(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 }

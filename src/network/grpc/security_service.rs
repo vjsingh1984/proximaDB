@@ -451,6 +451,124 @@ impl SecurityService for SecurityServiceImpl {
     }
 }
 
+// ── SecurityPort impl ─────────────────────────────────────────────────────────
+//
+// Delegates every port method to the real tonic SecurityService impl above,
+// so the logic is written once and the port is a thin unwrap/wrap layer.
+
+#[async_trait::async_trait]
+impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
+    async fn validate_access(
+        &self,
+        request: crate::proto::proximadb_v1::ValidateAccessRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ValidateAccessResponse> {
+        SecurityService::validate_access(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn batch_validate_access(
+        &self,
+        request: crate::proto::proximadb_v1::BatchValidateAccessRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::BatchValidateAccessResponse> {
+        SecurityService::batch_validate_access(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn create_role(
+        &self,
+        request: crate::proto::proximadb_v1::CreateRoleRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::CreateRoleResponse> {
+        SecurityService::create_role(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_roles(
+        &self,
+        request: crate::proto::proximadb_v1::ListRolesRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ListRolesResponse> {
+        SecurityService::list_roles(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_role(
+        &self,
+        request: crate::proto::proximadb_v1::DeleteRoleRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::DeleteRoleResponse> {
+        SecurityService::delete_role(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn assign_role(
+        &self,
+        request: crate::proto::proximadb_v1::AssignRoleRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::AssignRoleResponse> {
+        SecurityService::assign_role(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn revoke_role(
+        &self,
+        request: crate::proto::proximadb_v1::RevokeRoleRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::RevokeRoleResponse> {
+        SecurityService::revoke_role(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_user_roles(
+        &self,
+        request: crate::proto::proximadb_v1::ListUserRolesRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ListUserRolesResponse> {
+        SecurityService::list_user_roles(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_audit_events(
+        &self,
+        request: crate::proto::proximadb_v1::ListAuditEventsRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ListAuditEventsResponse> {
+        SecurityService::list_audit_events(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_tenant_security_policy(
+        &self,
+        request: crate::proto::proximadb_v1::GetTenantSecurityPolicyRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::GetTenantSecurityPolicyResponse> {
+        SecurityService::get_tenant_security_policy(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn set_tenant_security_policy(
+        &self,
+        request: crate::proto::proximadb_v1::SetTenantSecurityPolicyRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::SetTenantSecurityPolicyResponse> {
+        SecurityService::set_tenant_security_policy(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

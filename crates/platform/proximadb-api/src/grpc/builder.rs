@@ -20,7 +20,7 @@ use crate::grpc::v1::{
     streaming::{StreamingServiceImpl, StreamCoordinator},
     vector::VectorServiceImpl,
 };
-use proximadb_runtime::ApiHandlersPort;
+use proximadb_runtime::{ApiHandlersPort, SecurityPort};
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
 use proximadb_proto::v1::{
     collection_service_server::CollectionServiceServer,
@@ -209,9 +209,20 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Build security service (stateless — no port needed)
-    pub fn build_security_service(&self) -> SecurityServiceServer<SecurityServiceImpl> {
-        let server = SecurityServiceServer::new(SecurityServiceImpl::with_default_config());
+    /// Build security service.
+    ///
+    /// When `port` is `None` the service starts but returns `NOT_FOUND` for
+    /// every RPC; this allows the server to run without a security backend
+    /// configured (e.g., development mode).
+    pub fn build_security_service(
+        &self,
+        port: Option<Arc<dyn SecurityPort>>,
+    ) -> SecurityServiceServer<SecurityServiceImpl> {
+        let impl_ = match port {
+            Some(p) => SecurityServiceImpl::new(p),
+            None => SecurityServiceImpl::with_default_config(),
+        };
+        let server = SecurityServiceServer::new(impl_);
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -238,6 +249,7 @@ impl Default for GrpcServiceBuilder {
 /// Helper to create all gRPC services with a single port reference.
 pub struct GrpcServiceFactory {
     port: Arc<dyn ApiHandlersPort>,
+    security_port: Option<Arc<dyn SecurityPort>>,
     config: GrpcServiceConfig,
 }
 
@@ -246,8 +258,15 @@ impl GrpcServiceFactory {
     pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
         Self {
             port,
+            security_port: None,
             config: GrpcServiceConfig::default(),
         }
+    }
+
+    /// Attach a security port so the factory can wire the security service.
+    pub fn with_security(mut self, security: Arc<dyn SecurityPort>) -> Self {
+        self.security_port = Some(security);
+        self
     }
 
     /// Set service configuration
@@ -275,7 +294,7 @@ impl GrpcServiceFactory {
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(),
             observability: Some(obs_server),
-            security: builder.build_security_service(),
+            security: builder.build_security_service(self.security_port.clone()),
         })
     }
 
@@ -295,7 +314,7 @@ impl GrpcServiceFactory {
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(),
             observability: None,
-            security: builder.build_security_service(),
+            security: builder.build_security_service(self.security_port.clone()),
         }
     }
 }
