@@ -15,6 +15,7 @@
 //! This will be migrated to vector modality in Phase 6B after dependency untangling.
 
 pub mod binary;
+pub mod internal_types;
 pub mod product;
 pub mod scalar;
 

@@ -784,6 +784,10 @@ Current status after the first refinement:
 * multimodal and multimodel vector store configs now retain storage-local config wrappers while
   using foundation `proximadb-quantization-types` for quantization kind/level, which preserves the
   planned foundation-to-storage boundary without keeping duplicate modality enums
+* quantization internal level/config structs now live in the extracted vector modality as
+  `proximadb_vector::quantization::internal_types`; root `compute::quantization::types` remains a
+  compatibility re-export while the rest of Phase 6 untangles engine, cache, hardware, and storage
+  dependencies
 * the shared glob matcher used by columnar storage file filtering now lives in
   `proximadb-storage-common`; root `utils::glob` remains a compatibility re-export
 * `proximadb-runtime-common` now exists as the first horizontal runtime-helper crate and owns the
