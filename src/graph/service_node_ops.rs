@@ -328,6 +328,7 @@ impl super::GraphOperationsService {
         self.enforce_schema_on_node(graph_id, &node).await?;
         self.enforce_unique_constraints_on_node(graph_id, &node)?;
         self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;
+        self.upsert_canonical_node_record(graph_id, &node).await?;
 
         tracing::debug!("Calling engine.insert_node for node: {}", node.id);
         let node_arc = engine.insert_node(node).await?;
@@ -359,6 +360,7 @@ impl super::GraphOperationsService {
         self.enforce_schema_on_node(graph_id, &node).await?;
         self.enforce_unique_constraints_on_node(graph_id, &node)?;
         self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;
+        self.upsert_canonical_node_record(graph_id, &node).await?;
         let node_arc = engine.update_node(node).await?;
         self.register_node_in_unique_constraints(graph_id, &node_arc);
         self.register_node_in_multi_unique_constraints(graph_id, &node_arc);
@@ -377,7 +379,11 @@ impl super::GraphOperationsService {
             self.unregister_node_from_unique_constraints(graph_id, &node);
             self.unregister_node_from_multi_unique_constraints(graph_id, &node);
         }
-        crate::graph::engines::GraphEngine::delete_node(&*engine, id).await
+        let deleted = crate::graph::engines::GraphEngine::delete_node(&*engine, id).await?;
+        if deleted.is_some() {
+            self.delete_canonical_node_record(graph_id, id).await?;
+        }
+        Ok(deleted)
     }
 
     /// Delete a node and detach all incident edges (DETACH mode)
@@ -407,6 +413,9 @@ impl super::GraphOperationsService {
                 self.adjacency_projection(graph_id)
                     .remove_edge(&edge_record)
                     .await?;
+                self.delete_canonical_edge_record(graph_id, &edge.id)
+                    .await?;
+                self.advance_edge_epoch(graph_id);
                 self.stats_edges
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
@@ -418,7 +427,11 @@ impl super::GraphOperationsService {
             self.unregister_node_from_unique_constraints(graph_id, &node);
             self.unregister_node_from_multi_unique_constraints(graph_id, &node);
         }
-        crate::graph::engines::GraphEngine::delete_node(&*engine, id).await
+        let deleted = crate::graph::engines::GraphEngine::delete_node(&*engine, id).await?;
+        if deleted.is_some() {
+            self.delete_canonical_node_record(graph_id, id).await?;
+        }
+        Ok(deleted)
     }
 
     // ===== Unique constraints (single-field) =====

@@ -110,7 +110,7 @@ use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
 };
 use dashmap::DashMap;
-use proximadb_graph::projection::GraphTopologyProjection;
+use proximadb_graph::projection::{GraphTopologyProjection, TopologyEpoch};
 use proximadb_records::{RecordKey, RecordStore};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -132,6 +132,9 @@ pub struct GraphOperationsService {
     canonical_record_store: Option<Arc<dyn RecordStore>>,
     /// Rebuildable adjacency projections over canonical edge records, keyed by graph id.
     adjacency_projections: Arc<DashMap<String, Arc<InMemoryGraphAdjacencyProjection>>>,
+    /// Monotonic edge-mutation epoch per graph, used to invalidate CSR/topology projections.
+    /// Advances on every create_edge, update_edge, delete_edge, and batch_create_edges call.
+    edge_epochs: Arc<DashMap<String, AtomicU64>>,
 
     /// Configuration for graph storage base URL
     base_storage_url: String,
@@ -175,6 +178,7 @@ impl GraphOperationsService {
             graphs: Arc::new(DashMap::new()),
             canonical_record_store: None,
             adjacency_projections: Arc::new(DashMap::new()),
+            edge_epochs: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(), // Default storage URL
             memory_pool,
             metrics_updater: None,
@@ -252,6 +256,7 @@ impl GraphOperationsService {
             graphs: Arc::new(DashMap::new()),
             canonical_record_store: None,
             adjacency_projections: Arc::new(DashMap::new()),
+            edge_epochs: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(),
             memory_pool,
             metrics_updater: None,
@@ -403,7 +408,31 @@ impl GraphOperationsService {
         graph_id: &str,
     ) -> Option<Arc<crate::graph::engines::GraphEngineImpl>> {
         self.adjacency_projections.remove(graph_id);
+        self.edge_epochs.remove(graph_id);
         self.graphs.remove(graph_id).map(|(_, engine)| engine)
+    }
+
+    /// Return the current edge-mutation epoch for the given graph.
+    ///
+    /// CSR consumers can snapshot this epoch before building/loading a CSR and compare
+    /// with `freshness_epoch` to detect stale topology: if the returned epoch is greater
+    /// than the epoch at CSR-build time, the CSR must be rebuilt.
+    pub fn edge_epoch(&self, graph_id: &str) -> TopologyEpoch {
+        self.edge_epochs
+            .get(graph_id)
+            .map(|v| TopologyEpoch(v.load(Ordering::Acquire)))
+            .unwrap_or_else(TopologyEpoch::initial)
+    }
+
+    /// Advance the edge-mutation epoch for the given graph.
+    ///
+    /// Called internally by every create_edge, update_edge, delete_edge, and
+    /// batch_create_edges path so CSR freshness checks are accurate.
+    pub(crate) fn advance_edge_epoch(&self, graph_id: &str) {
+        self.edge_epochs
+            .entry(graph_id.to_string())
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Release);
     }
 
     pub(crate) fn adjacency_projection(
@@ -457,8 +486,9 @@ impl GraphOperationsService {
         node_id: &str,
     ) -> Result<()> {
         if let Some(record_store) = &self.canonical_record_store {
-            let key =
-                RecordKey::new(proximadb_graph::record::GraphNodeKey::new(graph_id, node_id).canonical_oid());
+            let key = RecordKey::new(
+                proximadb_graph::record::GraphNodeKey::new(graph_id, node_id).canonical_oid(),
+            );
             record_store
                 .delete_record(&key)
                 .await
@@ -473,8 +503,9 @@ impl GraphOperationsService {
         edge_id: &str,
     ) -> Result<()> {
         if let Some(record_store) = &self.canonical_record_store {
-            let key =
-                RecordKey::new(proximadb_graph::record::GraphEdgeKey::new(graph_id, edge_id).canonical_oid());
+            let key = RecordKey::new(
+                proximadb_graph::record::GraphEdgeKey::new(graph_id, edge_id).canonical_oid(),
+            );
             record_store
                 .delete_record(&key)
                 .await
@@ -1933,10 +1964,19 @@ impl GraphOperationsService {
             ));
         }
 
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        if let Some(record_store) = &self.canonical_record_store {
+            let records = nodes
+                .iter()
+                .map(|node| node_to_canonical_record(graph_id, node))
+                .collect();
+            record_store
+                .upsert_records(records)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
 
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
         // Use bulk API for optimal performance (100-500x faster than individual inserts)
-        // Single WAL write instead of N WAL writes
         let inserted = engine.bulk_insert_nodes(nodes).await?;
         Ok(inserted)
     }
@@ -1954,27 +1994,28 @@ impl GraphOperationsService {
             ));
         }
 
+        if let Some(record_store) = &self.canonical_record_store {
+            let records = nodes
+                .iter()
+                .map(|node| node_to_canonical_record(graph_id, node))
+                .collect();
+            record_store
+                .upsert_records(records)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
         let mut results = Vec::with_capacity(nodes.len());
         for node in nodes {
             match if_exists {
-                "update" => {
-                    // Upsert: insert or update existing node
-                    results.push(engine.insert_node(node).await?);
-                }
-                "skip" => {
-                    // Skip if exists: engine handles duplicate IDs gracefully
-                    results.push(engine.insert_node(node).await?);
-                }
-                "error" => {
-                    // Error if exists: engine returns error on duplicate ID
+                "update" | "skip" | "error" => {
                     results.push(engine.insert_node(node).await?);
                 }
                 _ => {
                     return Err(ProximaDBError::InvalidInput(format!(
-                        "Invalid if_exists strategy: {}",
-                        if_exists
+                        "Invalid if_exists strategy: {if_exists}"
                     )));
                 }
             }
@@ -2086,6 +2127,17 @@ impl GraphOperationsService {
         }
         // If no schema, skip validation entirely - major performance win for bulk inserts
 
+        if let Some(record_store) = &self.canonical_record_store {
+            let records = edges
+                .iter()
+                .map(|edge| edge_to_canonical_record(graph_id, edge))
+                .collect();
+            record_store
+                .upsert_records(records)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+
         let edge_count = edges.len();
         let engine_start = std::time::Instant::now();
         let inserted = engine.bulk_insert_edges(edges).await?;
@@ -2098,6 +2150,7 @@ impl GraphOperationsService {
                 let edge_record = edge_to_canonical_record(graph_id, edge);
                 projection.apply_edge(&edge_record).await?;
             }
+            self.advance_edge_epoch(graph_id);
         }
         let projection_time = projection_start.elapsed();
 

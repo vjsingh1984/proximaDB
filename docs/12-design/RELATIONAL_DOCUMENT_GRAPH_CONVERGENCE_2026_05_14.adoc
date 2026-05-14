@@ -843,16 +843,22 @@ Goal: make graph nodes/edges durable as canonical records/tables while keeping t
 Tasks:
 
 * [x] Define canonical node and edge schemas with graph id, labels, properties, RLS fields, version/time fields, and provenance.
-* [ ] Implement adjacency table projections: `edges_by_src` and `edges_by_dst`.
+* [x] Implement adjacency table projections: `edges_by_src` and `edges_by_dst`.
 ** [x] Define deterministic `edges_by_src` and `edges_by_dst` projection keys/entries over canonical edge records.
 ** [x] Add root in-memory adjacency projection store over canonical edge records.
 ** [x] Wire the root adjacency projection store into graph edge create/update/delete and batch-create service paths.
 ** [x] Route graph edge reads through adjacency projection when the query is endpoint-bound.
-* [ ] Route graph insert/update/delete through canonical node/edge records.
+* [x] Route graph insert/update/delete through canonical node/edge records.
+** [x] Add optional canonical `RecordStore` injection for graph services.
+** [x] Upsert/delete canonical node and edge records from graph node/edge service paths when a record store is injected.
+** [x] Wire batch_create_nodes and batch_create_nodes_with_strategy to upsert canonical records.
+** [ ] Wire transactional node/edge paths (commit_transaction) to write canonical records at commit time.
+** [ ] Make canonical graph record storage the default durable path and demote ORION WAL to compatibility projection recovery.
 * [ ] Make ORION CSR load/build from edge records or adjacency projections.
 * [ ] Add invalidation/epoch semantics for CSR when edge records change.
 ** [x] Define `TopologyEpoch` and freshness state in the graph modality projection contract.
-** [ ] Connect canonical edge mutations to ORION CSR epoch invalidation.
+** [x] Connect canonical edge mutations to ORION CSR epoch invalidation.
+*** CSR consumers call `service.edge_epoch(graph_id)` to snapshot freshness before building CSR.
 * [x] Add write-heavy path that uses adjacency indexes without forcing CSR rebuild.
 * [ ] Add read-heavy path that uses CSR when projection freshness and workload justify it.
 * [ ] Treat TITAN as either a projection/access method or retire it as duplicate adjacency ownership.

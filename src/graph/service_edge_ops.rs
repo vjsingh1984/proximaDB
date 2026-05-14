@@ -50,11 +50,13 @@ impl super::GraphOperationsService {
                 .await?;
         }
 
+        self.upsert_canonical_edge_record(graph_id, &edge).await?;
         let edge_arc = engine.insert_edge(edge).await?;
         let edge_record = edge_to_canonical_record(graph_id, &edge_arc);
         self.adjacency_projection(graph_id)
             .apply_edge(&edge_record)
             .await?;
+        self.advance_edge_epoch(graph_id);
         // Update edge stats
         self.stats_edges
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -84,11 +86,13 @@ impl super::GraphOperationsService {
             self.enforce_cardinality_on_edge(graph_id, &edge, engine.as_ref())
                 .await?;
         }
+        self.upsert_canonical_edge_record(graph_id, &edge).await?;
         let edge_arc = engine.update_edge(edge).await?;
         let edge_record = edge_to_canonical_record(graph_id, &edge_arc);
         self.adjacency_projection(graph_id)
             .apply_edge(&edge_record)
             .await?;
+        self.advance_edge_epoch(graph_id);
         Ok(edge_arc)
     }
 
@@ -106,6 +110,9 @@ impl super::GraphOperationsService {
             self.adjacency_projection(graph_id)
                 .remove_edge(&edge_record)
                 .await?;
+            self.delete_canonical_edge_record(graph_id, &edge.id)
+                .await?;
+            self.advance_edge_epoch(graph_id);
             self.stats_edges
                 .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
@@ -233,7 +240,44 @@ mod tests {
     use super::super::GraphOperationsService;
     use crate::graph::{Edge, Node};
     use crate::proto::proximadb_v1::CreateGraphRequest;
+    use async_trait::async_trait;
+    use proximadb_records::{ProximaRecord, RecordKey, RecordStore, RecordStoreResult};
     use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
+
+    #[derive(Default)]
+    struct MemoryRecordStore {
+        records: RwLock<HashMap<String, ProximaRecord>>,
+    }
+
+    #[async_trait]
+    impl RecordStore for MemoryRecordStore {
+        async fn upsert_record(&self, record: ProximaRecord) -> RecordStoreResult<ProximaRecord> {
+            self.records
+                .write()
+                .expect("record store write lock")
+                .insert(record.oid.clone(), record.clone());
+            Ok(record)
+        }
+
+        async fn get_record(&self, key: &RecordKey) -> RecordStoreResult<Option<ProximaRecord>> {
+            Ok(self
+                .records
+                .read()
+                .expect("record store read lock")
+                .get(&key.oid)
+                .cloned())
+        }
+
+        async fn delete_record(&self, key: &RecordKey) -> RecordStoreResult<bool> {
+            Ok(self
+                .records
+                .write()
+                .expect("record store write lock")
+                .remove(&key.oid)
+                .is_some())
+        }
+    }
 
     #[tokio::test]
     async fn edge_crud_maintains_adjacency_projection() {
@@ -480,5 +524,111 @@ mod tests {
             .expect("query incoming");
         assert_eq!(incoming.len(), 1, "n2 should have 1 incoming edge");
         assert_eq!(incoming[0].id, "e1");
+    }
+
+    #[tokio::test]
+    async fn canonical_record_store_receives_graph_writes() {
+        let graph_id = format!("canonical_graph_store_test_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let record_store = Arc::new(MemoryRecordStore::default());
+        let service =
+            GraphOperationsService::new().with_canonical_record_store(record_store.clone());
+
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        service
+            .create_node(
+                graph_id,
+                Node {
+                    id: "n1".to_string(),
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            )
+            .await
+            .expect("create n1");
+        service
+            .create_node(
+                graph_id,
+                Node {
+                    id: "n2".to_string(),
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            )
+            .await
+            .expect("create n2");
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "e1".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n2".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+            )
+            .await
+            .expect("create edge");
+
+        assert!(
+            record_store
+                .get_record(&RecordKey::new(format!("graph/{graph_id}/node/n1")))
+                .await
+                .expect("get node record")
+                .is_some()
+        );
+        assert!(
+            record_store
+                .get_record(&RecordKey::new(format!("graph/{graph_id}/edge/e1")))
+                .await
+                .expect("get edge record")
+                .is_some()
+        );
+
+        service
+            .delete_edge(graph_id, &"e1".to_string())
+            .await
+            .expect("delete edge");
+        assert!(
+            record_store
+                .get_record(&RecordKey::new(format!("graph/{graph_id}/edge/e1")))
+                .await
+                .expect("get deleted edge")
+                .is_none()
+        );
+
+        service
+            .delete_node(graph_id, &"n1".to_string())
+            .await
+            .expect("delete node");
+        assert!(
+            record_store
+                .get_record(&RecordKey::new(format!("graph/{graph_id}/node/n1")))
+                .await
+                .expect("get deleted node")
+                .is_none()
+        );
     }
 }
