@@ -23,23 +23,26 @@
 //! - `proximadb-proto` - Protocol buffer types
 //! - `proximadb-kernel` - Core error types
 
+pub mod arrow_flight;
 pub mod grpc;
 pub mod middleware;
+pub mod pgwire;
 pub mod rest;
 
-// TODO: Move these from src/network and src/api_handlers
-// pub mod pgwire;
-// pub mod arrow_flight;
+// Re-export Arrow Flight and pgwire types
+pub use arrow_flight::ProximaFlightService;
+pub use pgwire::{PostgresServer, PostgresSession};
 
 // Re-export common types
 pub use grpc::{GrpcApiHandler, GrpcRequest, GrpcResponse};
+pub use grpc::{GrpcServiceBuilder, GrpcServiceConfig, GrpcServiceFactory, GrpcServices};
 pub use rest::{RestApiHandler, RestRequest, RestResponse};
 
 // Re-export v1 handlers
 pub use grpc::v1::{
-    CollectionService, DocumentService, EntityService, GraphService, GraphTraversalService,
-    HybridSearchService, LogsService, MetricsService, SecurityService, StreamingService,
-    VectorService,
+    CollectionServiceImpl, DocumentServiceImpl, EntityServiceImpl, GraphServiceImpl,
+    HybridSearchServiceImpl, ObservabilityServiceImpl, SecurityServiceImpl, SqlServiceImpl,
+    StreamingServiceImpl, VectorServiceImpl,
 };
 pub use rest::v1::{
     AnalyticsHandler, AqlHandler, CatalogHandler, CollectionHandler, DocumentHandler,
