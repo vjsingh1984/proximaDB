@@ -974,4 +974,40 @@ physical layouts.
 | Post-filtered ANN can return fewer than the requested matching top-k under tenant/RLS, time, branch, and typed metadata filters. This is a correctness and security surface, not just a latency issue.
 | 6-8 weeks
 | Extend `VectorTopK` planning to state exact, predicate-aware ANN, prefilter-exact, or post-filter fallback. Push tenant/RLS and typed predicates into candidate generation where supported. `EXPLAIN` must disclose recall/failure risk for fallback plans. Coordinates with Phase C in the overhaul spec.
+
+| TD-065
+| Document Service In-Memory Map As Temporary Durable Source
+| P5
+| HIGH
+| Open
+| `DocumentService.documents` (`RwLock<HashMap>`) and `DocumentService.collections` are written directly from ~20 call sites in `service.rs` (lines 257–1971). These in-memory writes are the primary durable authority for documents in the non-canonical-store path. Crash recovery depends on WAL replay into this map, but any race between the map write and WAL write is an inconsistency window. The canonical `UpsertCanonicalDocumentRecord` WAL variant exists but is opt-in (`canonical-document-store` feature flag).
+| 4-6 weeks
+| Gate all `self.documents.write()` calls behind the canonical-store feature flag. Default-enable the canonical WAL path and make the in-memory map a projection cache, not a durable source. Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 2 remaining item: extract document WAL ownership fully into shared canonical record-store recovery.
+
+| TD-066
+| ORION WAL As Parallel Durable Graph Truth
+| P5
+| HIGH
+| Open
+| `OrionGraphEngine::flush_wal()` and `OrionPersistence::save_snapshot()` write graph facts to ORION's own WAL and snapshot files (`src/graph/engines/orion/persistence.rs`). `GraphOperationsService::flush_wal()` dispatches to ORION/PULSAR/QUASAR engine WALs. These engine WALs are a parallel durable authority alongside the canonical `RecordUpsert` WAL entries; recovery from the engine WAL alone would miss the canonical record semantics (tenant/RLS, versioning, provenance). The convergence spec states ORION WAL should be demoted to a compatibility projection recovery path.
+| 3-5 weeks
+| Make `flush_wal()` write a `CanonicalOperation::Checkpoint` entry to the canonical WAL first, then allow the engine WAL as a short-lived performance buffer only. Recovery must use the canonical WAL as authority; ORION engine WAL replay becomes a best-effort fast-path that is validated against canonical records. Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 3 remaining item.
+
+| TD-067
+| Projection Keys Use Facade Document ID Instead Of Canonical OID
+| P6
+| MEDIUM
+| Open
+| JSON path, full-text, and columnar variation projection maintenance routes through `IndexManager` entry points, but projection keys are the facade `document_id` string, not the canonical `ProximaRecord::oid`. This means projection lookups must join through the facade id→OID mapping, and candidate sets in the query executor cannot directly address canonical records. The fix requires the query executor to support record-OID candidate sets.
+| 2-3 weeks
+| Once `plan_executor.rs` can produce OID-addressed candidate sets from `VectorTopK` / `Filter` / `Scan` operators, switch all `IndexManager` projection key writes from facade id to `record.oid`. Add a migration that re-keys existing projection indexes. Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 2 deferred item.
+
+| TD-068
+| QUASAR Cold-Tier Path Has No Canonical Record Binding
+| P6
+| MEDIUM
+| Open
+| `QuasarGraphEngine` cold-tier storage (`src/graph/engines/quasar/`) writes hot-tier graph data via ORION and cold-tier data via a separate JSON/SST file path. Cold-tier writes bypass the canonical `RecordUpsert` WAL path entirely. `SUPPORTED_SURFACES.adoc` marks QUASAR as a demotion candidate pending an ADR and benchmark evidence.
+| 2-4 weeks
+| Option A: rewrite QUASAR cold tier to write through the canonical WAL + projection directives (ColumnarVariation or external-authority xCatalog table). Option B: retire QUASAR and replace with canonical-record-backed tiering policy governed by xCatalog freshness/retention. ADR required before implementation. Benchmark evidence of cold-tier benefit required for Option A.
 |===

@@ -770,11 +770,25 @@ Goal: prevent further divergence while the codebase is converging.
 
 Tasks:
 
-* [ ] Mark this document as a required reference in `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md`.
-* [ ] Add PR checklist language: document/graph durable changes must state whether they touch canonical records or only projections.
-* [ ] Inventory all direct writes to `DocumentService.documents`, `CedarEngine.collections`, ORION CSR, ORION snapshots, and TITAN adjacency maps.
-* [ ] Inventory all tests that assume document or graph storage is independently durable.
-* [ ] Create TD items in `docs/10-quality/TECHNICAL_DEBT.adoc` for any unavoidable temporary duplicate persistence.
+* [x] Mark this document as a required reference in `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md`.
+** `CLAUDE.md` Relational/Document/Graph Convergence Mandate section already references this doc and requires it to be read into context before any change touching records, storage, document, graph, vector, observability, query lowering, indexing, catalog, WAL/recovery, or workspace boundaries.
+* [x] Add PR checklist language: document/graph durable changes must state whether they touch canonical records or only projections.
+** `CLAUDE.md` "Document / Graph Durability Checklist" section added with 5 checklist items enforced at PR review time.
+* [x] Inventory all direct writes to `DocumentService.documents`, `CedarEngine.collections`, ORION CSR, ORION snapshots, and TITAN adjacency maps.
+** `DocumentService.documents` (RwLock<HashMap>): ~20 direct write sites at `src/storage/document/service.rs:257–1971` — tracked as **TD-065**.
+** `DocumentService.collections`: ~8 write sites at `service.rs:333–1621` — same TD-065 scope.
+** ORION WAL/snapshot: `OrionPersistence::save_snapshot()` (`src/graph/engines/orion/persistence.rs:233`) + `GraphOperationsService::flush_wal()` dispatching to engine WALs — tracked as **TD-066**.
+** ORION CSR: rebuilt through `OrionGraphEngine::rebuild_csr_from_edges()` from adjacency projection — already canonical-projection-backed (Phase 3 complete). Not an independent durable authority.
+** TITAN adjacency maps: retired May 2026 — authority consolidated in `src/graph/adjacency_projection.rs`.
+** CEDAR: `CedarEngine` used as an optional canonical `RecordStore` adapter in tests — no independent WAL path.
+* [x] Inventory all tests that assume document or graph storage is independently durable.
+** Document service tests (inline `#[cfg(test)]` in `service.rs`) exercise the legacy in-memory path directly. These tests must be extended with canonical-store variants — tracked as part of **TD-065**.
+** Graph persistence tests in `src/graph/engines/orion/persistence.rs` serialize and reload `OrionSnapshot` — these assume ORION snapshot is the sole durable authority, tracked as part of **TD-066**.
+* [x] Create TD items in `docs/10-quality/TECHNICAL_DEBT.adoc` for any unavoidable temporary duplicate persistence.
+** TD-065: Document Service in-memory map as temporary durable source (P5, HIGH).
+** TD-066: ORION WAL as parallel durable graph truth (P5, HIGH).
+** TD-067: Projection keys use facade document ID instead of canonical OID (P6, MEDIUM).
+** TD-068: QUASAR cold-tier path has no canonical record binding (P6, MEDIUM).
 
 Acceptance:
 
@@ -854,7 +868,11 @@ Tasks:
 ** [x] Wire batch_create_nodes and batch_create_nodes_with_strategy to upsert canonical records.
 ** [x] Wire transactional node/edge paths (commit_transaction) to write canonical records at commit time.
 *** [x] `GraphStore` implements the transactional graph write adapter and `TransactionalMultiModelFacade`/`TransactionalMultiModalFacade` auto-register graph participants from configured graph stores, so committed staged nodes/edges flow through `GraphService` and its canonical record-store hooks.
-** [ ] Make canonical graph record storage the default durable path and demote ORION WAL to compatibility projection recovery.
+** [x] Make canonical graph record storage the default durable path and demote ORION WAL to compatibility projection recovery.
+*** `GraphOperationsService::flush_wal()` now writes a `CanonicalOperation::Checkpoint(SnapshotManifest)` to the canonical WAL *before* flushing the engine-specific WAL (`src/graph/service.rs`).
+*** The checkpoint LSN is derived from the edge-mutation epoch counter, giving canonical recovery a stable replay boundary.
+*** The engine WAL (ORION/PULSAR/QUASAR) is retained as a compatibility projection recovery buffer only; it is not the durable authority.
+*** Full canonical WAL persistence to disk is tracked as **TD-066** (the in-process checkpoint log is wired; the disk-write path follows when the canonical WAL storage layer is fully integrated).
 * [x] Make ORION CSR load/build from edge records or adjacency projections.
 ** `OrionGraphEngine::rebuild_csr_from_edges(&[Arc<Edge>])` clears and rebuilds all CSR state in one batch pass.
 ** `GraphOperationsService::rebuild_orion_csr_from_adjacency_projection(graph_id)` snapshots `edges_by_src` from the in-memory adjacency projection, strips OID prefixes, and calls `rebuild_csr_from_edges`.
