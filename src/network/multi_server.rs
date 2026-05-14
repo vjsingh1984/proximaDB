@@ -1799,73 +1799,8 @@ impl MultiServer {
                 tonic::transport::Server::builder()
             };
 
-            // Add versioned VectorService (v1)
-            let vector_service_impl =
-                crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
-                    services.request_handlers.clone(),
-                    Some(services.query_adapter()),
-                );
-            let mut vector_service =
-                crate::proto::proximadb_v1::vector_service_server::VectorServiceServer::new(
-                    vector_service_impl,
-                )
-                .max_decoding_message_size(64 * 1024 * 1024) // 64MB for bulk vector inserts
-                .max_encoding_message_size(64 * 1024 * 1024); // 64MB for bulk vector responses
+            // ── Create backend services (doc + observability need data-dir paths) ──
 
-            if self.config.grpc_config.compression {
-                use tonic::codec::CompressionEncoding;
-                vector_service = vector_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
-            }
-
-            // Add versioned SqlService (v1)
-            let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
-                services.request_handlers.clone(),
-            );
-            let mut sql_service =
-                crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
-                    sql_service_impl,
-                )
-                .max_decoding_message_size(64 * 1024 * 1024) // 64MB for bulk SQL queries
-                .max_encoding_message_size(64 * 1024 * 1024); // 64MB for large result sets
-
-            if self.config.grpc_config.compression {
-                use tonic::codec::CompressionEncoding;
-                sql_service = sql_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
-            }
-
-            // Add versioned CollectionService (v1)
-            let col_service_impl =
-                crate::network::grpc::collection_service::CollectionServiceImpl::new(
-                    services.request_handlers.clone(),
-                );
-            let mut col_service =
-                crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
-                    col_service_impl,
-                );
-            if self.config.grpc_config.compression {
-                use tonic::codec::CompressionEncoding;
-                col_service = col_service
-                    .accept_compressed(CompressionEncoding::Gzip)
-                    .send_compressed(CompressionEncoding::Gzip);
-            }
-
-            // Add GraphService for native graph database operations
-            let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
-                services.request_handlers.clone(),
-                services.query_adapter(),
-            );
-            let graph_service =
-                crate::proto::proximadb_v1::graph_service_server::GraphServiceServer::new(
-                    graph_service_impl,
-                );
-            debug!("✅ Added GraphService to gRPC server");
-
-            // Add DocumentService for MongoDB-like document operations (with WAL for durability)
-            // data_dir comes from TOML config (server.data_dir)
             let doc_base_path = self.config.data_dir.join("documents");
             let doc_path_str = doc_base_path.to_string_lossy().to_string();
             let doc_storage_service = {
@@ -1885,16 +1820,7 @@ impl MultiServer {
                     }
                 }
             };
-            let document_service_impl =
-                crate::network::grpc::DocumentServiceImpl::new(doc_storage_service);
-            let document_service =
-                crate::proto::proximadb_v1::document_service_server::DocumentServiceServer::new(
-                    document_service_impl,
-                );
-            debug!("✅ Added DocumentService to gRPC server (WAL-enabled)");
 
-            // Add ObservabilityService for logs/metrics/traces (with WAL for durability)
-            // data_dir comes from TOML config (server.data_dir)
             let obs_base_path = self.config.data_dir.join("observability");
             let obs_path_str = obs_base_path.to_string_lossy().to_string();
             let obs_storage = match crate::observability::ObservabilityStorage::new_with_wal(
@@ -1908,9 +1834,7 @@ impl MultiServer {
                         "Failed to create ObservabilityStorage with WAL: {}. Using non-durable storage.",
                         e
                     );
-                    Arc::new(crate::observability::ObservabilityStorage::new(
-                        &obs_path_str,
-                    ))
+                    Arc::new(crate::observability::ObservabilityStorage::new(&obs_path_str))
                 }
             };
             let obs_service = match crate::observability::ObservabilityService::new(obs_storage)
@@ -1918,11 +1842,7 @@ impl MultiServer {
             {
                 Ok(svc) => Arc::new(svc),
                 Err(e) => {
-                    warn!(
-                        "Failed to create ObservabilityService: {}. Creating minimal instance.",
-                        e
-                    );
-                    // Create a minimal instance with WAL if possible
+                    warn!("Failed to create ObservabilityService: {}. Creating minimal instance.", e);
                     let fallback_storage = Arc::new(
                         crate::observability::ObservabilityStorage::new(&obs_path_str),
                     );
@@ -1937,18 +1857,65 @@ impl MultiServer {
                     }
                 }
             };
-            let observability_service_impl =
-                crate::network::grpc::ObservabilityServiceImpl::new(obs_service);
-            let observability_service =
-                crate::proto::proximadb_v1::observability_service_server::ObservabilityServiceServer::new(
-                    observability_service_impl,
-                );
-            debug!("✅ Added ObservabilityService to gRPC server");
 
-            // Add StreamingService for real-time vector ingestion
-            let streaming_service_impl = crate::network::grpc::StreamingServiceImpl::new();
-            let streaming_service = streaming_service_impl.into_server();
-            debug!("✅ Added StreamingService to gRPC server");
+            // ── Wrap concrete impls as port objects for the factory ────────────
+
+            let graph_port: Arc<dyn proximadb_runtime::GraphPort> = Arc::new(
+                crate::network::grpc::GraphServiceImpl::with_adapter(
+                    services.request_handlers.clone(),
+                    services.query_adapter(),
+                ),
+            );
+            let doc_port: Arc<dyn proximadb_runtime::DocumentPort> = Arc::new(
+                crate::network::grpc::DocumentServiceImpl::new(doc_storage_service),
+            );
+            let obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
+                crate::network::grpc::ObservabilityServiceImpl::new(obs_service),
+            );
+            let streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
+                Arc::new(crate::network::grpc::StreamingServiceImpl::new());
+
+            // ── Build all gRPC services through the port-based factory ─────────
+
+            let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
+                services.request_handlers.clone();
+            let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
+            let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
+                .with_graph(graph_port)
+                .with_document(doc_port)
+                .with_observability(obs_port)
+                .with_streaming(streaming_port)
+                .with_config(grpc_cfg)
+                .create_all_services_sync();
+
+            debug!("✅ All gRPC services created via GrpcServiceFactory");
+
+            // Apply 64 MB message limits and optional gzip compression per service.
+            // The factory intentionally omits these — they are protocol-transport
+            // concerns applied here at the composition root.
+            const MSG_64MB: usize = 64 * 1024 * 1024;
+            use tonic::codec::CompressionEncoding;
+            let compress = self.config.grpc_config.compression;
+
+            macro_rules! apply_limits {
+                ($svc:expr) => {{
+                    let s = $svc.max_decoding_message_size(MSG_64MB).max_encoding_message_size(MSG_64MB);
+                    if compress {
+                        s.accept_compressed(CompressionEncoding::Gzip)
+                         .send_compressed(CompressionEncoding::Gzip)
+                    } else {
+                        s
+                    }
+                }};
+            }
+
+            let vector_service    = apply_limits!(grpc_svcs.vector);
+            let sql_service       = apply_limits!(grpc_svcs.sql);
+            let col_service       = grpc_svcs.collection;  // no bulk ops, skip 64MB override
+            let graph_service     = grpc_svcs.graph;
+            let document_service  = grpc_svcs.document.expect("document port was wired");
+            let observability_service = grpc_svcs.observability.expect("observability port was wired");
+            let streaming_service = grpc_svcs.streaming;
 
             // Add V2 ProximaRecordService for typed fields and schema support
             let proxima_record_service_impl =

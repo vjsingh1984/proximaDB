@@ -5601,6 +5601,7 @@ dependencies = [
  "proptest",
  "prost",
  "prost-types",
+ "proximadb-api",
  "proximadb-catalog",
  "proximadb-compression-types",
  "proximadb-config",

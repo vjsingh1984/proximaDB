@@ -144,6 +144,7 @@ proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types"
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
