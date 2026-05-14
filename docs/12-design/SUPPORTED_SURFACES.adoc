@@ -1,0 +1,177 @@
+= Supported Surfaces: API vs. Physical Projection Status
+:toc:
+:toclevels: 3
+:doctype: article
+
+== Purpose
+
+This document distinguishes two orthogonal axes for every capability in ProximaDB:
+
+* **API support** — whether a capability is reachable from REST, gRPC, Arrow Flight, or PostgreSQL wire.
+* **Physical projection status** — whether the capability is backed by a dedicated durable projection/engine, or whether it runs over canonical `ProximaRecord` storage with a derived projection that is _rebuildable_.
+
+The distinction matters because a capability can be fully API-supported while its backing physical structure is scheduled for demotion to a rebuildable projection (or full retirement). Engineering work that touches a demoted surface must route writes through the canonical WAL path defined in `crates/storage/proximadb-storage-common/src/wal_entry.rs`.
+
+Mandate: `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
+
+---
+
+== Document Storage
+
+=== API Support
+
+[cols="2,1,1,1,1", options="header"]
+|===
+| Operation | REST | gRPC | Arrow Flight | pgwire
+| Insert / Upsert document | ✅ | ✅ | ✅ | ✅ (SQL INSERT)
+| Get document by ID | ✅ | ✅ | ✅ | ✅ (SQL SELECT)
+| Delete document | ✅ | ✅ | — | ✅ (SQL DELETE)
+| JSON path filter query | ✅ | ✅ | ✅ | ✅ (SQL WHERE)
+| Full-text search | ✅ | ✅ | — | ✅ (SQL LIKE / FTS extension)
+| Aggregation | ✅ | — | ✅ | ✅ (SQL GROUP BY)
+| Schema evolution (ADD/DROP field) | ✅ | ✅ | — | ✅ (SQL ALTER TABLE)
+|===
+
+=== Physical Projection Status
+
+[cols="2,1,3", options="header"]
+|===
+| Projection | Status | Notes
+| Canonical `ProximaRecord` spine | ✅ Retained (durable authority) | Every document write goes through `CanonicalOperation::RecordUpsert`. The JSON payload lives in `props`.
+| JSON path index | ✅ Retained (rebuildable) | `ProjectionDirective::DocumentJsonPathIndex` drives rebuild during WAL recovery. Requires index-creation DDL; rebuildable from canonical records at any time.
+| Full-text index | ✅ Retained (rebuildable) | `ProjectionDirective::FullTextIndex`. Cost rule in `optimizer_support::fulltext_access_path` governs when it is consulted vs. canonical scan.
+| Columnar variation projection | ✅ Retained (rebuildable) | `ProjectionDirective::ColumnarVariation`. Used when field projection ratio < 0.5 (see `optimizer_support::variation_projection_access_path`).
+| Legacy `DocumentRecord` durable path | ⚠️ Compatibility only | `DocumentOperation::InsertDocument` in `src/storage/persistence/write_ahead_log/wal_operations.rs` kept for in-flight migration. New writes MUST use `UpsertCanonicalDocumentRecord`. Retirement target: Phase 6 completion.
+| CEDAR document engine (if instantiated) | 🔴 Retirement candidate | Any standalone CEDAR instances that maintain separate WAL/recovery semantics independent of canonical records must be migrated to projection mode or removed. ADR required before removal.
+|===
+
+---
+
+== Graph Storage
+
+=== API Support
+
+[cols="2,1,1,1,1", options="header"]
+|===
+| Operation | REST | gRPC | Arrow Flight | pgwire
+| Create / Upsert node | ✅ | ✅ | — | ✅ (SQL INSERT INTO nodes)
+| Create / Upsert edge | ✅ | ✅ | — | ✅ (SQL INSERT INTO edges)
+| Delete node / edge | ✅ | ✅ | — | ✅ (SQL DELETE)
+| Neighbour lookup (1-hop) | ✅ | ✅ | ✅ | ✅ (Cypher via pgwire extension)
+| Path expansion (k-hop) | ✅ | ✅ | — | ✅
+| Cypher query | ✅ | ✅ | — | ✅ (PGQ extension)
+| PageRank / centrality | ✅ (async) | ✅ (async) | — | —
+| Mixed vector + graph hybrid | ✅ | ✅ | ✅ | —
+|===
+
+=== Physical Projection Status
+
+[cols="2,1,3", options="header"]
+|===
+| Projection / Engine | Status | Notes
+| Canonical `ProximaRecord` adjacency rows | ✅ Retained (durable authority) | Node and edge writes use `CanonicalOperation::RecordUpsert`. `edge` fields in `ProximaRecord` carry relationship metadata.
+| Relational adjacency table | ✅ Retained (rebuildable) | `ProjectionDirective::AdjacencyTableRow` fires per-node rebuild. Default access path for write-heavy workloads or CSR-stale graphs.
+| CSR in-memory projection | ✅ Retained (conditional) | `ProjectionDirective::CsrRebuild`. Auto-materialization governed by `csr_auto_materialize_decision()` thresholds: ≥100 k nodes, write rate ≤10/min, ≥5 queries/min, or epoch age > 300 s. Read path controlled by `graph_traversal_access_path()`.
+| **ORION** (default graph engine) | ✅ Retained as topology projection cache | ORION in-memory store + CSR is a _projection_ over canonical records. ORION WAL logs (`GraphOperation::CreateNode`, etc.) are kept for compatibility recovery only. New writes must produce `CanonicalOperation::RecordUpsert` entries first; ORION applies them as derived state.
+| **QUASAR** (tiered storage) | ⚠️ Experimental — demotion candidate | QUASAR hot/cold tiering is not fully integrated and not production-ready (see engine doc warnings). Cold tier uses a separate file-based path with no canonical record binding. If cold tier materialisation cannot be rewritten as a `ColumnarVariation` or adjacency projection over canonical records, QUASAR should be retired. +
+ +
+_Retirement condition_: remove or demote to adapter wrapper when: (a) hot tier is confirmed to be ORION-as-projection, and (b) cold tier storage is replaced by xCatalog-tracked external table or columnar projection. Target: Phase 6 completion.
+| **PULSAR** (distributed, experimental) | ⚠️ ~75% complete — demotion candidate | PULSAR distributed graph engine lacks distributed transactions and automatic failover. Sharding logic is application-level. If the distributed path cannot be completed and validated by end of Phase 6, PULSAR must be demoted to a compatibility wrapper with a documented retirement plan (maintenance cost exceeds utility). +
+ +
+_Retirement condition_: remove or demote when Phase 6 benchmarks show that ORION with application-level sharding meets latency/throughput targets for all tested workloads, or when distributed Raft-based consensus replaces PULSAR's role. Target: Phase 6 completion.
+|===
+
+---
+
+== Vector Storage
+
+=== API Support
+
+[cols="2,1,1,1,1", options="header"]
+|===
+| Operation | REST | gRPC | Arrow Flight | pgwire
+| Insert vector | ✅ | ✅ | ✅ | ✅ (pgvector `<->`)
+| ANN / top-K search | ✅ | ✅ | ✅ | ✅
+| Filtered vector search | ✅ | ✅ | ✅ | ✅
+| Hybrid BM25 + dense | ✅ | ✅ | — | —
+| Vector + graph hybrid | ✅ | ✅ | ✅ | —
+|===
+
+=== Physical Projection Status
+
+[cols="2,1,3", options="header"]
+|===
+| Projection | Status | Notes
+| HNSW index | ✅ Retained (rebuildable) | `ProjectionDirective::HnswIndex`. Rebuilt from canonical `ProximaRecord::embeddings` fields. Predicate-aware ACORN construction per spec §6.1.
+| IVF / PQ quantized index | ✅ Retained (rebuildable) | Quantization lives in `proximadb-vector` modality crate. Foundation types from `proximadb-quantization-types`.
+| Storage engine vector layouts (SST/HELIX/VIPER/NOVA) | ✅ Retained | Use foundation types (`proximadb-quantization-types`, `proximadb-distance-types`) — no engine-local duplicates since Phase 3 refactor.
+|===
+
+---
+
+== Observability Storage
+
+=== API Support
+
+[cols="2,1,1,1,1", options="header"]
+|===
+| Operation | REST | gRPC | Arrow Flight | pgwire
+| Write log entry | ✅ | ✅ | — | —
+| Write metric sample | ✅ | ✅ | ✅ | ✅
+| Write trace span | ✅ | ✅ | — | —
+| Query logs (LOGS()) | ✅ | ✅ | — | ✅
+| Query metrics (METRICS()) | ✅ | ✅ | ✅ | ✅
+|===
+
+=== Physical Projection Status
+
+[cols="2,1,3", options="header"]
+|===
+| Projection | Status | Notes
+| Canonical `ProximaRecord` log/metric/span storage | ✅ Retained (durable authority) | Observability records are `ProximaRecord` instances. No separate durable truth.
+| Time-series compression blocks | ✅ Retained (rebuildable) | Compression metadata tracked in xCatalog. Rebuildable from canonical records.
+| SIEM adapter projections | ✅ Retained (external authority) | 6 SIEM adapters (`src/observability/`) push events to external sinks. External tables marked as external-authority in xCatalog when ownership is delegated.
+|===
+
+---
+
+== Benchmark Evidence Baseline (Phase 6)
+
+These baselines will be filled with actual Criterion measurements as Phase 6 progresses. The benchmark harness is in `crates/storage/proximadb-storage-common/benches/wal_throughput.rs`.
+
+[cols="3,2,2,2", options="header"]
+|===
+| Workload | Canonical WAL layer overhead | Pre-canonical baseline | Speedup / Regression
+| WAL entry construction (1 directive) | _TBD_ | N/A (new) | —
+| WAL serialization (3 directives, JSON) | _TBD_ | N/A (new) | —
+| Recovery replay (1 000 entries, noop rebuilder) | _TBD_ | N/A (new) | —
+| Recovery replay (10 000 entries after checkpoint) | _TBD_ | N/A (new) | —
+| CSR decision function (100 k calls) | _TBD_ | N/A (new) | —
+| Document CRUD round-trip (canonical path) | _TBD_ | _TBD_ | —
+| Graph 1-hop traversal: adjacency table vs CSR | _TBD_ | _TBD_ | —
+| Graph k-hop path expansion (k=3, fan-out=10) | _TBD_ | _TBD_ | —
+|===
+
+Threshold criteria for retaining a physical projection:
+
+* A retained projection must demonstrate ≥ 2× speedup over canonical scan for the workload it targets.
+* Build/rebuild cost must be amortized within 1 000 subsequent reads.
+* Stale-rebuild latency must not degrade P99 write latency by more than 5%.
+
+---
+
+== Retirement Checklist
+
+Use this checklist when retiring a durable path or demoting an engine to projection/adapter status:
+
+* [ ] ADR accepted that proves canonical records + projection cannot meet correctness or performance needs.
+* [ ] All writes migrated to `CanonicalOperation::RecordUpsert` / `RecordDelete`.
+* [ ] Legacy WAL entries drained (no entries older than the migration LSN in production logs).
+* [ ] `ProjectionDirective` added so recovery rebuilds the equivalent projection.
+* [ ] Benchmark evidence attached to the ADR showing the retained projection meets the speedup threshold.
+* [ ] `SUPPORTED_SURFACES.adoc` updated to reflect new status.
+* [ ] Compatibility wrapper (if needed) wraps only the API surface; no independent durable semantics.
+
+---
+
+_Last updated: Phase 6 of RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc_

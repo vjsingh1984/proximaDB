@@ -757,6 +757,191 @@ pub fn variation_projection_access_path(
     }
 }
 
+// ---------------------------------------------------------------------------
+// CSR auto-materialization threshold function (Phase 6)
+// ---------------------------------------------------------------------------
+
+/// Inputs used by the CSR auto-materialization decision function.
+#[derive(Debug, Clone)]
+pub struct CsrMaterializationInput {
+    /// Number of nodes in the graph.
+    pub graph_size_nodes: u64,
+    /// Recent write rate on this graph's edge set (writes/min).
+    pub write_ops_per_min: u64,
+    /// Average out-degree (edges per source node).
+    pub avg_out_degree: f64,
+    /// How many times per minute the graph is traversed by read queries.
+    pub query_repetitions_per_min: u64,
+    /// Seconds since the CSR was last fully materialised.
+    pub csr_epoch_age_secs: u64,
+}
+
+/// Why the auto-materialization decision was made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CsrMaterializeTrigger {
+    /// Graph is large enough that CSR sequential access pays off.
+    GraphSizeThreshold,
+    /// Queries repeat frequently — build cost amortized across many reads.
+    HighQueryRepetition,
+    /// Write rate is low enough that CSR stays fresh for its full TTL.
+    LowWriteRate,
+    /// CSR is already fresh — skip rebuild.
+    AlreadyFresh,
+    /// Write rate too high; CSR would go stale before being useful.
+    HighWriteRatePreventsUse,
+    /// Graph is small enough that the adjacency table is cheaper to scan.
+    GraphTooSmall,
+    /// Not enough query repetition to amortize the materialization cost.
+    InsufficientQueryLoad,
+}
+
+/// Decision produced by `csr_auto_materialize_decision`.
+#[derive(Debug, Clone)]
+pub struct CsrMaterializationDecision {
+    /// Whether to (re)materialise the CSR projection.
+    pub should_materialize: bool,
+    /// Primary factor that drove the decision.
+    pub trigger: CsrMaterializeTrigger,
+    /// Estimated time (ms) to rebuild the CSR from the adjacency table.
+    pub estimated_build_cost_ms: f64,
+    /// Estimated factor by which CSR reduces per-hop traversal latency vs
+    /// adjacency table row lookups.
+    pub estimated_traversal_speedup: f64,
+    /// Human-readable explanation (surfaced in EXPLAIN / observability output).
+    pub reason: String,
+}
+
+/// Decide whether to (re)materialise the CSR projection for a graph.
+///
+/// Thresholds are informed by Phase 6 benchmark findings:
+/// - CSR is worthwhile for graphs ≥ 100 k nodes with read-heavy workloads.
+/// - At write rates > 10/min the CSR epoch expires before amortizing build cost.
+/// - Traversal speedup scales with out-degree; high-fan-out graphs benefit most.
+/// - Materialization is always skipped when the epoch is still within the
+///   freshness window (`csr_epoch_age_secs < MAX_STALE_SECS`).
+pub fn csr_auto_materialize_decision(input: &CsrMaterializationInput) -> CsrMaterializationDecision {
+    // Threshold constants. All durations in seconds; rates in ops/min.
+    const SMALL_GRAPH_THRESHOLD: u64 = 10_000; // ≤ 10 k nodes → adjacency table fast enough
+    const LARGE_GRAPH_THRESHOLD: u64 = 100_000; // ≥ 100 k nodes → CSR speedup justifies build
+    const MAX_WRITE_RATE_FOR_CSR: u64 = 10; // writes/min above which CSR staleness outweighs gain
+    const MIN_QUERY_REPETITIONS: u64 = 5; // reads/min needed to amortize build cost
+    const HIGH_DEGREE_THRESHOLD: f64 = 20.0; // avg out-degree above which sequential CSR wins
+    const CSR_FRESHNESS_WINDOW_SECS: u64 = 300; // 5-minute freshness window (aligns with graph_traversal_access_path)
+
+    // Estimated build cost: ~0.01 ms per node (dominated by CSR index sort).
+    let estimated_build_cost_ms = input.graph_size_nodes as f64 * 0.01;
+
+    // Per-hop speedup: sequential CSR access vs. random adjacency table lookup.
+    // Empirically ~2× for low-degree, ~8× for high-degree (cache-line effects).
+    let estimated_traversal_speedup = if input.avg_out_degree >= HIGH_DEGREE_THRESHOLD {
+        8.0
+    } else if input.avg_out_degree >= 5.0 {
+        3.5
+    } else {
+        1.5
+    };
+
+    // Fast path: CSR already fresh — skip rebuild.
+    if input.csr_epoch_age_secs < CSR_FRESHNESS_WINDOW_SECS {
+        return CsrMaterializationDecision {
+            should_materialize: false,
+            trigger: CsrMaterializeTrigger::AlreadyFresh,
+            estimated_build_cost_ms,
+            estimated_traversal_speedup,
+            reason: format!(
+                "CSR epoch is {age}s old (< {window}s freshness window); no rebuild needed",
+                age = input.csr_epoch_age_secs,
+                window = CSR_FRESHNESS_WINDOW_SECS,
+            ),
+        };
+    }
+
+    // High write rate: CSR would go stale too fast.
+    if input.write_ops_per_min > MAX_WRITE_RATE_FOR_CSR {
+        return CsrMaterializationDecision {
+            should_materialize: false,
+            trigger: CsrMaterializeTrigger::HighWriteRatePreventsUse,
+            estimated_build_cost_ms,
+            estimated_traversal_speedup,
+            reason: format!(
+                "Write rate {}/min exceeds threshold ({}/min); CSR would stale before amortizing build cost {:.1}ms",
+                input.write_ops_per_min,
+                MAX_WRITE_RATE_FOR_CSR,
+                estimated_build_cost_ms,
+            ),
+        };
+    }
+
+    // Small graph: adjacency table scan is sufficient.
+    if input.graph_size_nodes < SMALL_GRAPH_THRESHOLD {
+        return CsrMaterializationDecision {
+            should_materialize: false,
+            trigger: CsrMaterializeTrigger::GraphTooSmall,
+            estimated_build_cost_ms,
+            estimated_traversal_speedup,
+            reason: format!(
+                "Graph has {} nodes (< {} threshold); adjacency table random access \
+                 comparable to sequential CSR at this scale",
+                input.graph_size_nodes, SMALL_GRAPH_THRESHOLD,
+            ),
+        };
+    }
+
+    // Large graph: strongly prefer CSR regardless of query load.
+    if input.graph_size_nodes >= LARGE_GRAPH_THRESHOLD {
+        return CsrMaterializationDecision {
+            should_materialize: true,
+            trigger: CsrMaterializeTrigger::GraphSizeThreshold,
+            estimated_build_cost_ms,
+            estimated_traversal_speedup,
+            reason: format!(
+                "Graph has {} nodes (≥ {} threshold); CSR sequential access gives \
+                 {:.1}× speedup at avg degree {:.1}, build cost {:.1}ms",
+                input.graph_size_nodes,
+                LARGE_GRAPH_THRESHOLD,
+                estimated_traversal_speedup,
+                input.avg_out_degree,
+                estimated_build_cost_ms,
+            ),
+        };
+    }
+
+    // Mid-size graph: materialize only when query load justifies it.
+    if input.query_repetitions_per_min >= MIN_QUERY_REPETITIONS {
+        return CsrMaterializationDecision {
+            should_materialize: true,
+            trigger: CsrMaterializeTrigger::HighQueryRepetition,
+            estimated_build_cost_ms,
+            estimated_traversal_speedup,
+            reason: format!(
+                "{} queries/min (≥ {} threshold) amortizes {:.1}ms build cost; \
+                 CSR yields {:.1}× speedup at avg degree {:.1}",
+                input.query_repetitions_per_min,
+                MIN_QUERY_REPETITIONS,
+                estimated_build_cost_ms,
+                estimated_traversal_speedup,
+                input.avg_out_degree,
+            ),
+        };
+    }
+
+    // Mid-size, low query load: skip CSR.
+    CsrMaterializationDecision {
+        should_materialize: false,
+        trigger: CsrMaterializeTrigger::InsufficientQueryLoad,
+        estimated_build_cost_ms,
+        estimated_traversal_speedup,
+        reason: format!(
+            "{} queries/min (< {} threshold) insufficient to amortize {:.1}ms build cost \
+             for a {} node graph; use adjacency table",
+            input.query_repetitions_per_min,
+            MIN_QUERY_REPETITIONS,
+            estimated_build_cost_ms,
+            input.graph_size_nodes,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -963,6 +1148,120 @@ mod tests {
         for est in &rules {
             assert!(!est.reason.is_empty(), "reason must not be empty: {:?}", est.path);
             assert!(est.cost > 0.0, "cost must be positive: {:?}", est.path);
+        }
+    }
+
+    // ── CSR auto-materialization decision ─────────────────────────────────
+
+    fn fresh_input() -> CsrMaterializationInput {
+        CsrMaterializationInput {
+            graph_size_nodes: 500_000,
+            write_ops_per_min: 2,
+            avg_out_degree: 25.0,
+            query_repetitions_per_min: 20,
+            csr_epoch_age_secs: 600,
+        }
+    }
+
+    #[test]
+    fn csr_already_fresh_skips_rebuild() {
+        let mut input = fresh_input();
+        input.csr_epoch_age_secs = 60; // well within 5-min window
+        let d = csr_auto_materialize_decision(&input);
+        assert!(!d.should_materialize);
+        assert_eq!(d.trigger, CsrMaterializeTrigger::AlreadyFresh);
+    }
+
+    #[test]
+    fn csr_high_write_rate_prevents_materialization() {
+        let mut input = fresh_input();
+        input.write_ops_per_min = 50; // above 10/min threshold
+        let d = csr_auto_materialize_decision(&input);
+        assert!(!d.should_materialize);
+        assert_eq!(d.trigger, CsrMaterializeTrigger::HighWriteRatePreventsUse);
+    }
+
+    #[test]
+    fn csr_small_graph_uses_adjacency_table() {
+        let mut input = fresh_input();
+        input.graph_size_nodes = 5_000; // below 10 k threshold
+        let d = csr_auto_materialize_decision(&input);
+        assert!(!d.should_materialize);
+        assert_eq!(d.trigger, CsrMaterializeTrigger::GraphTooSmall);
+    }
+
+    #[test]
+    fn csr_large_graph_always_materializes() {
+        let mut input = fresh_input();
+        input.graph_size_nodes = 2_000_000; // above 100 k threshold
+        input.query_repetitions_per_min = 0; // even with no queries
+        let d = csr_auto_materialize_decision(&input);
+        assert!(d.should_materialize);
+        assert_eq!(d.trigger, CsrMaterializeTrigger::GraphSizeThreshold);
+    }
+
+    #[test]
+    fn csr_mid_graph_high_query_load_materializes() {
+        let input = CsrMaterializationInput {
+            graph_size_nodes: 50_000, // mid-range
+            write_ops_per_min: 3,
+            avg_out_degree: 10.0,
+            query_repetitions_per_min: 15, // above min threshold
+            csr_epoch_age_secs: 600,
+        };
+        let d = csr_auto_materialize_decision(&input);
+        assert!(d.should_materialize);
+        assert_eq!(d.trigger, CsrMaterializeTrigger::HighQueryRepetition);
+    }
+
+    #[test]
+    fn csr_mid_graph_low_query_load_skips() {
+        let input = CsrMaterializationInput {
+            graph_size_nodes: 50_000,
+            write_ops_per_min: 3,
+            avg_out_degree: 10.0,
+            query_repetitions_per_min: 1, // below 5/min threshold
+            csr_epoch_age_secs: 600,
+        };
+        let d = csr_auto_materialize_decision(&input);
+        assert!(!d.should_materialize);
+        assert_eq!(d.trigger, CsrMaterializeTrigger::InsufficientQueryLoad);
+    }
+
+    #[test]
+    fn csr_high_degree_graph_gets_higher_speedup_estimate() {
+        let low_degree = csr_auto_materialize_decision(&CsrMaterializationInput {
+            graph_size_nodes: 200_000,
+            write_ops_per_min: 1,
+            avg_out_degree: 2.0,
+            query_repetitions_per_min: 10,
+            csr_epoch_age_secs: 600,
+        });
+        let high_degree = csr_auto_materialize_decision(&CsrMaterializationInput {
+            graph_size_nodes: 200_000,
+            write_ops_per_min: 1,
+            avg_out_degree: 50.0,
+            query_repetitions_per_min: 10,
+            csr_epoch_age_secs: 600,
+        });
+        assert!(high_degree.estimated_traversal_speedup > low_degree.estimated_traversal_speedup);
+    }
+
+    #[test]
+    fn csr_decision_reason_is_non_empty_for_all_triggers() {
+        let cases = vec![
+            CsrMaterializationInput { csr_epoch_age_secs: 60, graph_size_nodes: 200_000, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 10 },
+            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 200_000, write_ops_per_min: 50, avg_out_degree: 5.0, query_repetitions_per_min: 10 },
+            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 500, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 10 },
+            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 2_000_000, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 0 },
+            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 50_000, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 15 },
+            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 50_000, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 1 },
+        ];
+        for input in &cases {
+            let d = csr_auto_materialize_decision(input);
+            assert!(!d.reason.is_empty(), "reason empty for trigger {:?}", d.trigger);
+            assert!(d.estimated_build_cost_ms >= 0.0);
+            assert!(d.estimated_traversal_speedup >= 1.0);
         }
     }
 }

@@ -358,7 +358,6 @@ pub fn latest_checkpoint(entries: &[CanonicalWalEntry]) -> Option<&SnapshotManif
 mod tests {
     use super::*;
     use proximadb_records::ProximaRecord;
-    use std::collections::HashMap;
 
     // ── test double ──────────────────────────────────────────────────────
 

@@ -17,3 +17,10 @@ path = "src/lib.rs"
 proximadb-records = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "wal_throughput"
+harness = false

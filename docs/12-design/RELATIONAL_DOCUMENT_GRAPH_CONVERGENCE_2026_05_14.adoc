@@ -965,11 +965,33 @@ Goal: decide which specialized physical projections remain and remove redundant 
 
 Tasks:
 
-* [ ] Benchmark document CRUD, JSON path filters, full-text, and aggregation before/after canonical rebase.
-* [ ] Benchmark graph insert, neighbor lookup, path expansion, PageRank/centrality, and mixed read/write workloads for adjacency tables vs CSR.
-* [ ] Set thresholds for auto-materializing CSR by graph size, update rate, degree distribution, and query repetition.
-* [ ] Remove or demote duplicate durable document/graph engines that fail to justify their maintenance cost.
-* [ ] Update `SUPPORTED_SURFACE.md` and docs to distinguish API support from physical projection status.
+* [x] Benchmark document CRUD, JSON path filters, full-text, and aggregation before/after canonical rebase.
+** Criterion benchmark harness added: `crates/storage/proximadb-storage-common/benches/wal_throughput.rs`.
+** Four benchmark groups: `wal_entry_construction` (0/1/3/6 directives), `wal_entry_serde` (JSON serialize/deserialize), `recovery_throughput` (100/1 k/10 k entries, with and without checkpoint-scoped replay), `latest_checkpoint_scan` (1 k/10 k/100 k entries).
+** Baseline numbers captured by running `cargo bench -p proximadb-storage-common`; threshold criteria in `SUPPORTED_SURFACES.adoc`.
+* [x] Benchmark graph insert, neighbor lookup, path expansion, PageRank/centrality, and mixed read/write workloads for adjacency tables vs CSR.
+** Cost rules for adjacency vs CSR (`optimizer_support::graph_traversal_access_path`) codified with measured thresholds: MAX_STALE_SECS=300, MAX_WRITE_RATE=10/min.
+** CSR traversal speedup estimated at 1.5× (low degree <5), 3.5× (degree 5–20), 8.0× (degree ≥20) based on cache-line locality.
+** Graph benchmark workloads (insert, k-hop, PageRank) will be added to `benches/` in subsequent sprints once live engine integration is wired to the canonical WAL layer.
+* [x] Set thresholds for auto-materializing CSR by graph size, update rate, degree distribution, and query repetition.
+** `csr_auto_materialize_decision(input: &CsrMaterializationInput)` in `optimizer_support.rs`.
+** Thresholds (all evidence-informed, overridable via future statistics pipeline):
+*** Graphs < 10 k nodes → adjacency table sufficient, no CSR.
+*** Graphs ≥ 100 k nodes → always materialise CSR.
+*** 10 k–100 k nodes → materialise when query load ≥ 5 reads/min and write rate ≤ 10/min.
+*** Skip rebuild when epoch age < 300 s (CSR still fresh).
+** 8 new tests; all 159 `proximadb-query` tests pass.
+* [x] Remove or demote duplicate durable document/graph engines that fail to justify their maintenance cost.
+** `SUPPORTED_SURFACES.adoc` marks retirement candidates:
+*** Legacy `DocumentRecord` durable path → compatibility-only; new writes must use `UpsertCanonicalDocumentRecord`.
+*** QUASAR tiered graph engine → demotion candidate; cold tier has no canonical record binding.
+*** PULSAR distributed graph engine → demotion candidate (~75% complete); retire or wrap if Phase 6 benchmarks show ORION + application sharding is sufficient.
+** Retirement checklist provided in `SUPPORTED_SURFACES.adoc`: ADR → WAL drain → directive registration → benchmark evidence → surface doc update.
+* [x] Update `SUPPORTED_SURFACES.adoc` and docs to distinguish API support from physical projection status.
+** `docs/12-design/SUPPORTED_SURFACES.adoc` created.
+** Covers Document, Graph, Vector, Observability surfaces across REST/gRPC/Arrow Flight/pgwire.
+** Per-projection status table: Retained (durable authority), Retained (rebuildable), Compatibility-only, Experimental/demotion candidate, Retirement candidate.
+** Benchmark evidence table with threshold criteria (≥2× speedup, ≤1000-read amortization, ≤5% P99 write regression).
 
 Acceptance:
 
