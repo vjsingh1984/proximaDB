@@ -80,6 +80,16 @@ pub trait RecordScan: Send + Sync {
     async fn scan_records(&self, limit: usize) -> RecordStoreResult<Vec<ProximaRecord>>;
 }
 
+/// Composite canonical storage contract for services that need both point
+/// operations and scans.
+///
+/// Keep document/graph/vector semantics out of this trait. Facades filter and
+/// project records after scanning, while the durable contract remains a shared
+/// `ProximaRecord` spine.
+pub trait RecordStorage: RecordStore + RecordScan {}
+
+impl<T> RecordStorage for T where T: RecordStore + RecordScan + ?Sized {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +130,20 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl RecordScan for MemoryRecordStore {
+        async fn scan_records(&self, limit: usize) -> RecordStoreResult<Vec<ProximaRecord>> {
+            Ok(self
+                .records
+                .read()
+                .expect("memory record store read lock")
+                .values()
+                .take(limit)
+                .cloned()
+                .collect())
+        }
+    }
+
     #[tokio::test]
     async fn record_store_contract_supports_point_lifecycle() {
         let store = MemoryRecordStore::default();
@@ -156,5 +180,23 @@ mod tests {
         let result = store.upsert_records(records).await.expect("batch upsert");
         assert_eq!(result.records_written, 2);
         assert_eq!(result.record_oids, vec!["r1", "r2"]);
+    }
+
+    #[tokio::test]
+    async fn record_storage_composes_point_and_scan_contracts() {
+        let store = MemoryRecordStore::default();
+        let storage: &dyn RecordStorage = &store;
+
+        storage
+            .upsert_record(ProximaRecord {
+                oid: "r1".to_string(),
+                ..ProximaRecord::default()
+            })
+            .await
+            .expect("upsert");
+
+        let records = storage.scan_records(10).await.expect("scan");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].oid, "r1");
     }
 }

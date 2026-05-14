@@ -35,7 +35,9 @@ pub mod conversions;
 pub mod proto_v2;
 pub mod store;
 
-pub use store::{RecordKey, RecordScan, RecordStore, RecordStoreResult, RecordWriteResult};
+pub use store::{
+    RecordKey, RecordScan, RecordStorage, RecordStore, RecordStoreResult, RecordWriteResult,
+};
 
 // ---------------------------------------------------------------------------
 // NF² Property Tree

@@ -25,9 +25,17 @@ use crate::storage::persistence::write_ahead_log::wal_operations::{
     DocumentOperation, UnifiedWALOperation, UnifiedWALWriter,
 };
 use crate::storage::traits::UnifiedStorageEngine;
+#[cfg(feature = "canonical-document-store")]
+use proximadb_document::DocumentRecordKey;
+#[cfg(feature = "canonical-document-store")]
+use proximadb_records::{RecordKey, RecordStorage};
 
 use super::DocumentStorageEngine;
 use super::aggregation_extensions::LookupFetcher;
+#[cfg(feature = "canonical-document-store")]
+use super::canonical_adapter::{
+    legacy_document_to_proxima_record, proxima_record_to_legacy_document,
+};
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -54,6 +62,13 @@ pub struct DocumentService {
     /// In-memory document store (hot cache, backed by WAL)
     /// Used when document_engine is None (legacy mode)
     documents: Arc<RwLock<HashMap<String, HashMap<String, DocumentRecord>>>>,
+    /// Canonical durable record store for the Phase 2 document rebase.
+    /// When the `canonical-document-store` feature is enabled and this is
+    /// configured, document writes/read-throughs use `ProximaRecord` as the
+    /// source of durable truth. The in-memory map and indexes remain hot
+    /// compatibility/projection surfaces during migration.
+    #[cfg(feature = "canonical-document-store")]
+    canonical_record_store: Option<Arc<dyn RecordStorage>>,
     /// WAL writer for durability
     wal_writer: Arc<Mutex<Option<UnifiedWALWriter>>>,
     /// Base path for WAL files
@@ -72,6 +87,8 @@ impl DocumentService {
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             documents: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "canonical-document-store")]
+            canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: None,
@@ -93,6 +110,8 @@ impl DocumentService {
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             documents: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "canonical-document-store")]
+            canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: None,
@@ -111,9 +130,36 @@ impl DocumentService {
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             documents: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "canonical-document-store")]
+            canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: Some(metrics_collector),
+        }
+    }
+
+    /// Create a document service backed by canonical `ProximaRecord` storage.
+    ///
+    /// This is the Phase 2 migration path from
+    /// `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`.
+    /// The service API still accepts/returns legacy document protocol shapes,
+    /// but durable state is written/read as `ProximaRecord`.
+    #[cfg(feature = "canonical-document-store")]
+    pub fn with_canonical_record_store(
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        record_store: Arc<dyn RecordStorage>,
+    ) -> Self {
+        Self {
+            storage_engine,
+            document_engine: None,
+            index_manager: Arc::new(IndexManager::new()),
+            query_executor: Arc::new(QueryExecutor::new()),
+            collections: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(RwLock::new(HashMap::new())),
+            canonical_record_store: Some(record_store),
+            wal_writer: Arc::new(Mutex::new(None)),
+            wal_path: String::new(),
+            metrics_collector: None,
         }
     }
 
@@ -143,6 +189,8 @@ impl DocumentService {
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             documents: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "canonical-document-store")]
+            canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
             wal_path,
             metrics_collector,
@@ -736,7 +784,7 @@ impl DocumentService {
         let doc_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), |s| s.to_string());
 
         // Create document record
-        let record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
+        let mut record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
 
         // Write to WAL first (durability before in-memory update)
         if let Err(e) = self
@@ -748,6 +796,23 @@ impl DocumentService {
         {
             self.record_insert_metrics(start, true).await;
             return Err(e);
+        }
+
+        // Phase 2 migration path: when configured, canonical records are the
+        // durable truth and legacy maps/indexes are compatibility projections.
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            let stored = record_store
+                .upsert_record(legacy_document_to_proxima_record(&record))
+                .await
+                .context("Failed to upsert canonical document record")?;
+
+            record = proxima_record_to_legacy_document(&stored).ok_or_else(|| {
+                anyhow!(
+                    "Canonical document record '{}' could not be rebuilt",
+                    stored.oid
+                )
+            })?;
         }
 
         // Update indexes
@@ -813,6 +878,36 @@ impl DocumentService {
         self.get_collection(collection)
             .await?
             .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
+
+        // Phase 2 migration path: canonical record store is authoritative when
+        // supplied. The legacy in-memory map remains the fallback path.
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            let key = DocumentRecordKey::new(collection, id);
+            let record = record_store
+                .get_record(&RecordKey::new(key.canonical_oid()))
+                .await
+                .context("Failed to get canonical document record")?;
+
+            if let Some(record) = record {
+                let mut result = proxima_record_to_legacy_document(&record).ok_or_else(|| {
+                    anyhow!(
+                        "Canonical document record '{}' could not be rebuilt",
+                        record.oid
+                    )
+                })?;
+
+                if let Some(fields) = projection
+                    && !fields.is_empty()
+                {
+                    result.document = self.apply_projection(&result.document, &fields);
+                }
+
+                return Ok(Some(result));
+            }
+
+            return Ok(None);
+        }
 
         // Retrieve from in-memory store
         let documents = self.documents.read().await;
@@ -918,6 +1013,23 @@ impl DocumentService {
         {
             self.record_update_metrics(start, true).await;
             return Err(e);
+        }
+
+        // Phase 2 migration path: when configured, persist the updated
+        // document as canonical durable state before refreshing projections.
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            let stored = record_store
+                .upsert_record(legacy_document_to_proxima_record(&record))
+                .await
+                .context("Failed to upsert updated canonical document record")?;
+
+            record = proxima_record_to_legacy_document(&stored).ok_or_else(|| {
+                anyhow!(
+                    "Canonical document record '{}' could not be rebuilt",
+                    stored.oid
+                )
+            })?;
         }
 
         // Update indexes
@@ -1336,12 +1448,33 @@ impl DocumentService {
             return Err(e);
         }
 
-        // Check if document exists before WAL write
+        // Check if document exists before WAL write. In canonical mode the
+        // RecordStore is authoritative; otherwise use the legacy hot map.
+        #[cfg(feature = "canonical-document-store")]
+        let canonical_key = RecordKey::new(DocumentRecordKey::new(collection, id).canonical_oid());
+
         let exists = {
-            let documents = self.documents.read().await;
-            documents
-                .get(collection)
-                .is_some_and(|docs| docs.contains_key(id))
+            #[cfg(feature = "canonical-document-store")]
+            if let Some(record_store) = &self.canonical_record_store {
+                record_store
+                    .get_record(&canonical_key)
+                    .await
+                    .context("Failed to check canonical document record existence")?
+                    .is_some()
+            } else {
+                let documents = self.documents.read().await;
+                documents
+                    .get(collection)
+                    .is_some_and(|docs| docs.contains_key(id))
+            }
+
+            #[cfg(not(feature = "canonical-document-store"))]
+            {
+                let documents = self.documents.read().await;
+                documents
+                    .get(collection)
+                    .is_some_and(|docs| docs.contains_key(id))
+            }
         };
 
         if !exists {
@@ -1359,6 +1492,14 @@ impl DocumentService {
         {
             self.record_delete_metrics(start, true).await;
             return Err(e);
+        }
+
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            record_store
+                .delete_record(&canonical_key)
+                .await
+                .context("Failed to delete canonical document record")?;
         }
 
         // Remove from indexes
@@ -1414,6 +1555,26 @@ impl DocumentService {
         };
 
         // Execute query
+        #[cfg(feature = "canonical-document-store")]
+        let documents: Vec<DocumentRecord> =
+            if let Some(record_store) = &self.canonical_record_store {
+                record_store
+                    .scan_records(usize::MAX)
+                    .await
+                    .context("Failed to scan canonical document records")?
+                    .iter()
+                    .filter_map(proxima_record_to_legacy_document)
+                    .filter(|document| document.collection_id == collection)
+                    .collect()
+            } else {
+                let docs = self.documents.read().await;
+                match docs.get(collection) {
+                    Some(collection_docs) => collection_docs.values().cloned().collect(),
+                    None => Vec::new(),
+                }
+            };
+
+        #[cfg(not(feature = "canonical-document-store"))]
         let documents: Vec<DocumentRecord> = {
             let docs = self.documents.read().await;
             match docs.get(collection) {

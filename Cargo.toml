@@ -462,6 +462,11 @@ sql_frontend = []
 # When disabled, uses legacy direct handler paths for backward compatibility.
 unified-facade-routing = []
 
+# Canonical document CRUD path. When enabled and a RecordStore is injected,
+# DocumentService writes/reads durable document state through ProximaRecord while
+# keeping legacy v1 document API shapes at the service edge.
+canonical-document-store = []
+
 # SKS Graph-First Architecture (default on for production)
 # When enabled, uses OrionBackedEntityStore for 3-6x better performance
 # When disabled, falls back to legacy split storage

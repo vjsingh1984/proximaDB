@@ -737,8 +737,12 @@ Goal: make document storage use canonical records for durable CRUD.
 
 Tasks:
 
-* [ ] Route `DocumentService.insert_document` through the canonical record store behind a feature flag.
-* [ ] Route `get_document`, `update_document`, `delete_document`, and `query_documents` through canonical records.
+* [x] Route `DocumentService.insert_document` through the canonical record store behind a feature flag (`canonical-document-store`).
+* [x] Route `get_document`, `update_document`, `delete_document`, and `query_documents` through canonical records.
+** [x] Add canonical `get_document` read-through when a `RecordStore` is injected.
+** [x] Add canonical `delete_document` path when a `RecordStore` is injected.
+** [x] Add canonical `update_document` path when a `RecordStore` is injected.
+** [x] Add canonical `query_documents` path when a scan-capable `RecordStorage` is injected.
 * [ ] Move WAL/recovery responsibilities out of document-only logic or make document WAL entries encode canonical record operations.
 * [ ] Convert JSON path index maintenance into a rebuildable projection keyed by record id.
 * [ ] Convert full-text index maintenance into a rebuildable projection keyed by record id.
