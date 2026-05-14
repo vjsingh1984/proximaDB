@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::grpc::v1::{
     collection::CollectionServiceImpl,
-    document::{DocumentServiceImpl, DocStorageService},
+    document::DocumentServiceImpl,
     entity::{EntityServiceImpl, ProximaEntityStore},
     graph::GraphServiceImpl,
     hybrid::HybridSearchServiceImpl,
@@ -20,7 +20,7 @@ use crate::grpc::v1::{
     streaming::{StreamingServiceImpl, StreamCoordinator},
     vector::VectorServiceImpl,
 };
-use proximadb_runtime::{ApiHandlersPort, ObservabilityPort, SecurityPort};
+use proximadb_runtime::{ApiHandlersPort, DocumentPort, ObservabilityPort, SecurityPort};
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
 use proximadb_proto::v1::{
     collection_service_server::CollectionServiceServer,
@@ -126,14 +126,19 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Build document service with specialized dependencies
+    /// Build document service.
     ///
-    /// DocumentServiceImpl requires Arc<DocStorageService>, not Arc<dyn ApiHandlersPort>.
+    /// When `port` is `None` the service returns `UNIMPLEMENTED` for every RPC,
+    /// allowing the server to start without a document backend.
     pub fn build_document_service(
         &self,
-        doc_storage: Arc<DocStorageService>,
+        port: Option<Arc<dyn DocumentPort>>,
     ) -> DocumentServiceServer<DocumentServiceImpl> {
-        let server = DocumentServiceServer::new(DocumentServiceImpl::new(doc_storage));
+        let impl_ = match port {
+            Some(p) => DocumentServiceImpl::new(p),
+            None => DocumentServiceImpl::without_backend(),
+        };
+        let server = DocumentServiceServer::new(impl_);
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -270,8 +275,9 @@ impl Default for GrpcServiceBuilder {
 /// Helper to create all gRPC services with a single port reference.
 pub struct GrpcServiceFactory {
     port: Arc<dyn ApiHandlersPort>,
-    security_port: Option<Arc<dyn SecurityPort>>,
+    document_port: Option<Arc<dyn DocumentPort>>,
     observability_port: Option<Arc<dyn ObservabilityPort>>,
+    security_port: Option<Arc<dyn SecurityPort>>,
     config: GrpcServiceConfig,
 }
 
@@ -280,21 +286,28 @@ impl GrpcServiceFactory {
     pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
         Self {
             port,
-            security_port: None,
+            document_port: None,
             observability_port: None,
+            security_port: None,
             config: GrpcServiceConfig::default(),
         }
     }
 
-    /// Attach a security port so the factory can wire the security service.
-    pub fn with_security(mut self, security: Arc<dyn SecurityPort>) -> Self {
-        self.security_port = Some(security);
+    /// Attach a document port so the factory can wire the document service.
+    pub fn with_document(mut self, document: Arc<dyn DocumentPort>) -> Self {
+        self.document_port = Some(document);
         self
     }
 
     /// Attach an observability port so the factory can wire the observability service.
     pub fn with_observability(mut self, observability: Arc<dyn ObservabilityPort>) -> Self {
         self.observability_port = Some(observability);
+        self
+    }
+
+    /// Attach a security port so the factory can wire the security service.
+    pub fn with_security(mut self, security: Arc<dyn SecurityPort>) -> Self {
+        self.security_port = Some(security);
         self
     }
 
@@ -313,7 +326,7 @@ impl GrpcServiceFactory {
         Ok(GrpcServices {
             vector: builder.build_vector_service(self.port.clone()),
             collection: builder.build_collection_service(self.port.clone()),
-            document: None,
+            document: Some(builder.build_document_service(self.document_port.clone())),
             entity: None,
             graph: builder.build_graph_service(self.port.clone()),
             hybrid_search: builder.build_hybrid_search_service(),
@@ -333,7 +346,7 @@ impl GrpcServiceFactory {
         GrpcServices {
             vector: builder.build_vector_service(self.port.clone()),
             collection: builder.build_collection_service(self.port.clone()),
-            document: None,
+            document: Some(builder.build_document_service(self.document_port.clone())),
             entity: None,
             graph: builder.build_graph_service(self.port.clone()),
             hybrid_search: builder.build_hybrid_search_service(),

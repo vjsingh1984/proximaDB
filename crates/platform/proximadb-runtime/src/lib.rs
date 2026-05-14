@@ -5,6 +5,7 @@
 
 pub mod cluster_port;
 pub mod composition;
+pub mod document_port;
 pub mod hardware;
 pub mod handlers;
 pub mod observability_port;
@@ -17,6 +18,7 @@ pub mod service_ports;
 // Re-exports
 pub use cluster_port::{ClusterHealthStatus, ClusterPort};
 pub use composition::{DIContainer, ServiceComposer};
+pub use document_port::DocumentPort;
 pub use hardware::{HardwareCapabilities, SimdLevel, best_simd_level, hardware_capabilities};
 pub use handlers::{CollectionIdCache, UnifiedHandlers};
 pub use observability_port::ObservabilityPort;

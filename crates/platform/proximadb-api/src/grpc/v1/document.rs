@@ -1,102 +1,153 @@
 //! # Document Service (gRPC)
 //!
-//! gRPC implementation for document storage operations.
-//!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor. The actual implementations exist in `src/network/grpc/document_service.rs`.
+//! gRPC implementation for document storage operations.  Each RPC delegates
+//! to the injected `DocumentPort`; when no port is provided the service
+//! returns `UNIMPLEMENTED` so the server can start without a document backend.
 
 use std::sync::Arc;
+
 use tonic::{Request, Response, Status};
 
-// Placeholder types for document services
-// TODO: Replace with actual types after migration
-pub struct DocStorageService;
+use proximadb_proto::v1::{
+    document_service_server::{DocumentService, DocumentServiceServer},
+    *,
+};
+use proximadb_runtime::DocumentPort;
 
-use proximadb_proto::v1;
-use proximadb_proto::v1::document_service_server::{DocumentService, DocumentServiceServer};
-
-/// Document gRPC service implementation
+/// gRPC DocumentService backed by a `DocumentPort`.
 pub struct DocumentServiceImpl {
-    _document_service: Arc<DocStorageService>,
+    port: Option<Arc<dyn DocumentPort>>,
 }
 
 impl DocumentServiceImpl {
-    /// Create a new document service with the given storage service
-    pub fn new(_document_service: Arc<DocStorageService>) -> Self {
-        Self { _document_service }
+    /// Construct with a concrete document port.
+    pub fn new(port: Arc<dyn DocumentPort>) -> Self {
+        Self { port: Some(port) }
     }
 
-    /// Convert to tonic server
+    /// Construct without a document backend (all RPCs return UNIMPLEMENTED).
+    pub fn without_backend() -> Self {
+        Self { port: None }
+    }
+
+    /// Convert into a tonic gRPC server.
     pub fn into_server(self) -> DocumentServiceServer<Self> {
         DocumentServiceServer::new(self)
     }
+
+    fn not_configured() -> Status {
+        Status::unimplemented("Document service not configured on this node")
+    }
+
+    fn port_err(e: anyhow::Error) -> Status {
+        Status::internal(e.to_string())
+    }
 }
 
-// Placeholder trait implementation - will be implemented after migration
 #[tonic::async_trait]
 impl DocumentService for DocumentServiceImpl {
+    // ── Collections ───────────────────────────────────────────────────────
+
     async fn create_collection(
         &self,
-        _request: Request<v1::CreateDocumentCollectionRequest>,
-    ) -> Result<Response<v1::CreateDocumentCollectionResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<CreateDocumentCollectionRequest>,
+    ) -> Result<Response<CreateDocumentCollectionResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.create_collection(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn list_collections(
         &self,
-        _request: Request<v1::ListDocumentCollectionsRequest>,
-    ) -> Result<Response<v1::ListDocumentCollectionsResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<ListDocumentCollectionsRequest>,
+    ) -> Result<Response<ListDocumentCollectionsResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.list_collections(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn delete_collection(
         &self,
-        _request: Request<v1::DeleteDocumentCollectionRequest>,
-    ) -> Result<Response<v1::DeleteDocumentCollectionResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<DeleteDocumentCollectionRequest>,
+    ) -> Result<Response<DeleteDocumentCollectionResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.delete_collection(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
+
+    // ── Documents ─────────────────────────────────────────────────────────
 
     async fn insert_document(
         &self,
-        _request: Request<v1::InsertDocumentRequest>,
-    ) -> Result<Response<v1::InsertDocumentResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<InsertDocumentRequest>,
+    ) -> Result<Response<InsertDocumentResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.insert_document(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn get_document(
         &self,
-        _request: Request<v1::GetDocumentRequest>,
-    ) -> Result<Response<v1::GetDocumentResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<GetDocumentRequest>,
+    ) -> Result<Response<GetDocumentResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_document(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn update_document(
         &self,
-        _request: Request<v1::UpdateDocumentRequest>,
-    ) -> Result<Response<v1::UpdateDocumentResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<UpdateDocumentRequest>,
+    ) -> Result<Response<UpdateDocumentResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.update_document(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn delete_document(
         &self,
-        _request: Request<v1::DeleteDocumentRequest>,
-    ) -> Result<Response<v1::DeleteDocumentResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<DeleteDocumentRequest>,
+    ) -> Result<Response<DeleteDocumentResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.delete_document(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
+
+    // ── Queries ───────────────────────────────────────────────────────────
 
     async fn query_documents(
         &self,
-        _request: Request<v1::QueryDocumentsRequest>,
-    ) -> Result<Response<v1::QueryDocumentsResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<QueryDocumentsRequest>,
+    ) -> Result<Response<QueryDocumentsResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.query_documents(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn aggregate_documents(
         &self,
-        _request: Request<v1::AggregateDocumentsRequest>,
-    ) -> Result<Response<v1::AggregateDocumentsResponse>, Status> {
-        Err(Status::unimplemented("Document service migration in progress"))
+        request: Request<AggregateDocumentsRequest>,
+    ) -> Result<Response<AggregateDocumentsResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.aggregate_documents(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 }
