@@ -15,10 +15,7 @@ use async_trait::async_trait;
 use proximadb_kernel::error::ProximaDBError;
 use proximadb_records::ProximaRecord;
 
-use crate::record::{
-    GRAPH_EDGE_DST_PROP, GRAPH_EDGE_LABEL, GRAPH_EDGE_SRC_PROP, GRAPH_ID_PROP, GRAPH_NODE_LABEL,
-    GraphEdgeKey, GraphNodeKey, canonical_edge_from_record, canonical_node_from_record,
-};
+use crate::record::{GRAPH_EDGE_LABEL, GRAPH_ID_PROP, GRAPH_NODE_LABEL, GraphNodeKey};
 
 /// Result type for topology projection operations.
 pub type ProjectionResult<T> = Result<T, ProximaDBError>;

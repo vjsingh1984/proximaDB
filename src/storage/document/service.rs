@@ -32,9 +32,9 @@ use proximadb_records::{RecordKey, RecordStorage};
 
 use super::DocumentStorageEngine;
 use super::aggregation_extensions::LookupFetcher;
-use super::canonical_adapter::{
-    legacy_document_to_proxima_record, proxima_record_to_legacy_document,
-};
+use super::canonical_adapter::proxima_record_to_legacy_document;
+#[cfg(feature = "canonical-document-store")]
+use super::canonical_adapter::legacy_document_to_proxima_record;
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
