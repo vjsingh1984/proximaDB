@@ -5687,11 +5687,14 @@ dependencies = [
  "arrow-flight",
  "async-trait",
  "axum 0.6.20",
+ "chrono",
+ "futures",
  "hyper 0.14.32",
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-query",
  "proximadb-query-filter",
+ "proximadb-runtime",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -6049,9 +6052,14 @@ dependencies = [
 name = "proximadb-runtime"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "num_cpus",
+ "proximadb-graph-query",
+ "proximadb-kernel",
  "proximadb-proto",
  "sysinfo",
+ "thiserror 1.0.69",
+ "tokio",
  "tracing",
 ]
 
