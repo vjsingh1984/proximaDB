@@ -1678,6 +1678,25 @@ impl SharedServices {
     }
 }
 
+/// Apply 64 MB message limits and optional gzip compression to a tonic service.
+///
+/// Defines a local `compress` binding that must be in scope at each use site.
+macro_rules! apply_limits {
+    ($svc:expr, $compress:expr) => {{
+        use tonic::codec::CompressionEncoding;
+        const MSG_64MB: usize = 64 * 1024 * 1024;
+        let s = $svc
+            .max_decoding_message_size(MSG_64MB)
+            .max_encoding_message_size(MSG_64MB);
+        if $compress {
+            s.accept_compressed(CompressionEncoding::Gzip)
+             .send_compressed(CompressionEncoding::Gzip)
+        } else {
+            s
+        }
+    }};
+}
+
 /// Multi-server manager that coordinates HTTP and gRPC servers with thin handlers
 /// Responsibilities: ports, TLS, server lifecycle, protocol orchestration
 pub struct MultiServer {
@@ -1898,26 +1917,12 @@ impl MultiServer {
             debug!("✅ All gRPC services created via GrpcServiceFactory");
 
             // Apply 64 MB message limits and optional gzip compression per service.
-            // The factory intentionally omits these — they are protocol-transport
-            // concerns applied here at the composition root.
-            const MSG_64MB: usize = 64 * 1024 * 1024;
-            use tonic::codec::CompressionEncoding;
+            // Transport-level concerns (message size limits, gzip) applied here
+            // at the composition root; the factory is protocol-agnostic.
             let compress = self.config.grpc_config.compression;
 
-            macro_rules! apply_limits {
-                ($svc:expr) => {{
-                    let s = $svc.max_decoding_message_size(MSG_64MB).max_encoding_message_size(MSG_64MB);
-                    if compress {
-                        s.accept_compressed(CompressionEncoding::Gzip)
-                         .send_compressed(CompressionEncoding::Gzip)
-                    } else {
-                        s
-                    }
-                }};
-            }
-
-            let vector_service        = apply_limits!(grpc_svcs.vector);
-            let sql_service           = apply_limits!(grpc_svcs.sql);
+            let vector_service        = apply_limits!(grpc_svcs.vector, compress);
+            let sql_service           = apply_limits!(grpc_svcs.sql, compress);
             let col_service           = grpc_svcs.collection;
             let graph_service         = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
@@ -2212,23 +2217,8 @@ impl MultiServer {
                 .with_config(grpc_cfg)
                 .create_all_services_sync();
 
-            const MSG_64MB: usize = 64 * 1024 * 1024;
-            use tonic::codec::CompressionEncoding;
-
-            macro_rules! apply_limits {
-                ($svc:expr) => {{
-                    let s = $svc.max_decoding_message_size(MSG_64MB).max_encoding_message_size(MSG_64MB);
-                    if compress {
-                        s.accept_compressed(CompressionEncoding::Gzip)
-                         .send_compressed(CompressionEncoding::Gzip)
-                    } else {
-                        s
-                    }
-                }};
-            }
-
-            let vector_service        = apply_limits!(grpc_svcs.vector);
-            let sql_service           = apply_limits!(grpc_svcs.sql);
+            let vector_service        = apply_limits!(grpc_svcs.vector, compress);
+            let sql_service           = apply_limits!(grpc_svcs.sql, compress);
             let col_service           = grpc_svcs.collection;
             let graph_service         = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
@@ -2534,23 +2524,9 @@ impl MultiServer {
                 .create_all_services_sync();
 
             let compress = self.config.grpc_config.compression;
-            const MSG_64MB: usize = 64 * 1024 * 1024;
-            use tonic::codec::CompressionEncoding;
 
-            macro_rules! apply_limits {
-                ($svc:expr) => {{
-                    let s = $svc.max_decoding_message_size(MSG_64MB).max_encoding_message_size(MSG_64MB);
-                    if compress {
-                        s.accept_compressed(CompressionEncoding::Gzip)
-                         .send_compressed(CompressionEncoding::Gzip)
-                    } else {
-                        s
-                    }
-                }};
-            }
-
-            let vector_service        = apply_limits!(grpc_svcs.vector);
-            let sql_service           = apply_limits!(grpc_svcs.sql);
+            let vector_service        = apply_limits!(grpc_svcs.vector, compress);
+            let sql_service           = apply_limits!(grpc_svcs.sql, compress);
             let col_service           = grpc_svcs.collection;
             let graph_service         = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
