@@ -1922,8 +1922,9 @@ impl MultiServer {
             let graph_service         = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
             let security_service      = grpc_svcs.security;
-            let document_service      = grpc_svcs.document.expect("document port was wired");
-            let observability_service = grpc_svcs.observability.expect("observability port was wired");
+            let document_service      = grpc_svcs.document;
+            let entity_service        = grpc_svcs.entity;
+            let observability_service = grpc_svcs.observability;
             let streaming_service     = grpc_svcs.streaming;
 
             // Add V2 ProximaRecordService for typed fields and schema support
@@ -1934,7 +1935,7 @@ impl MultiServer {
             let proxima_record_service = proxima_record_service_impl.into_server();
 
             // Build server with all services
-            let mut server = server_builder
+            let server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
                 .add_service(col_service)
@@ -1942,14 +1943,10 @@ impl MultiServer {
                 .add_service(hybrid_search_service)
                 .add_service(security_service)
                 .add_service(document_service)
+                .add_service(entity_service)
                 .add_service(observability_service)
                 .add_service(streaming_service)
                 .add_service(proxima_record_service);
-
-            if let Some(entity_svc) = grpc_svcs.entity {
-                server = server.add_service(entity_svc);
-            }
-            let server = server;
 
             // Add reflection if enabled
             if self.config.grpc_config.enable_reflection {

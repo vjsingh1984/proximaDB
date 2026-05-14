@@ -387,13 +387,13 @@ impl GrpcServiceFactory {
         Ok(GrpcServices {
             vector: builder.build_vector_service(self.port.clone()),
             collection: builder.build_collection_service(self.port.clone()),
-            document: Some(builder.build_document_service(self.document_port.clone())),
-            entity: Some(builder.build_entity_service(self.entity_port.clone())),
+            document: builder.build_document_service(self.document_port.clone()),
+            entity: builder.build_entity_service(self.entity_port.clone()),
             graph: builder.build_graph_service(self.graph_port.clone()),
             hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(self.streaming_port.clone()),
-            observability: Some(builder.build_observability_service(self.observability_port.clone())),
+            observability: builder.build_observability_service(self.observability_port.clone()),
             security: builder.build_security_service(self.security_port.clone()),
         })
     }
@@ -407,32 +407,33 @@ impl GrpcServiceFactory {
         GrpcServices {
             vector: builder.build_vector_service(self.port.clone()),
             collection: builder.build_collection_service(self.port.clone()),
-            document: Some(builder.build_document_service(self.document_port.clone())),
-            entity: Some(builder.build_entity_service(self.entity_port.clone())),
+            document: builder.build_document_service(self.document_port.clone()),
+            entity: builder.build_entity_service(self.entity_port.clone()),
             graph: builder.build_graph_service(self.graph_port.clone()),
             hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(self.streaming_port.clone()),
-            observability: Some(builder.build_observability_service(self.observability_port.clone())),
+            observability: builder.build_observability_service(self.observability_port.clone()),
             security: builder.build_security_service(self.security_port.clone()),
         }
     }
 }
 
-/// Collection of all gRPC services.
+/// Collection of all gRPC services created by the factory.
 ///
-/// `document` and `entity` are `Option` because they require specialized dependencies
-/// beyond `Arc<dyn ApiHandlersPort>`; use their direct constructors.
+/// All services are unconditionally present — those without an injected port
+/// return safe UNIMPLEMENTED responses.  No `Option` wrapping needed; the
+/// factory always produces a value regardless of port injection.
 pub struct GrpcServices {
     pub vector: VectorServiceServer<VectorServiceImpl>,
     pub collection: CollectionServiceServer<CollectionServiceImpl>,
-    pub document: Option<DocumentServiceServer<DocumentServiceImpl>>,
-    pub entity: Option<EntityServiceServer<EntityServiceImpl>>,
+    pub document: DocumentServiceServer<DocumentServiceImpl>,
+    pub entity: EntityServiceServer<EntityServiceImpl>,
     pub graph: GraphServiceServer<GraphServiceImpl>,
     pub hybrid_search: HybridSearchServiceServer<HybridSearchServiceImpl>,
     pub sql: SqlServiceServer<SqlServiceImpl>,
     pub streaming: StreamingServiceServer<StreamingServiceImpl>,
-    pub observability: Option<ObservabilityServiceServer<ObservabilityServiceImpl>>,
+    pub observability: ObservabilityServiceServer<ObservabilityServiceImpl>,
     pub security: SecurityServiceServer<SecurityServiceImpl>,
 }
 
