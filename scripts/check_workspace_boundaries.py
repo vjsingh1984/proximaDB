@@ -514,6 +514,8 @@ def crate_layer(member_path: Path, name: str) -> str:
         return "storage"
     if parts[:2] == ("crates", "control"):
         return "control"
+    if parts[:2] == ("crates", "contracts"):
+        return "control"
     if parts[:2] == ("crates", "horizontal"):
         return "horizontal"
     if parts[:2] == ("crates", "modalities"):
