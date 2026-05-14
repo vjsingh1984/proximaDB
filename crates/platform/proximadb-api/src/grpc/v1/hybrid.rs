@@ -1,58 +1,70 @@
 //! # Hybrid Search Service (gRPC)
 //!
-//! gRPC implementation for hybrid BM25 + vector search fusion.
-//!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor. The actual implementations exist in `src/network/grpc/hybrid_search_service.rs`.
+//! gRPC implementation for BM25 + vector hybrid search fusion.  Each RPC
+//! delegates to the injected `HybridPort`; when no port is provided the
+//! service returns `UNIMPLEMENTED`.
+
+use std::sync::Arc;
 
 use tonic::{Request, Response, Status};
 
-// Placeholder types for hybrid search
-// TODO: Replace with actual types after migration
-pub struct FusionStrategy;
-
-use proximadb_proto::v1;
-use proximadb_proto::v1::hybrid_search_service_server::{
-    HybridSearchService, HybridSearchServiceServer,
+use proximadb_proto::v1::{
+    hybrid_search_service_server::{HybridSearchService, HybridSearchServiceServer},
+    *,
 };
+use proximadb_runtime::HybridPort;
 
-/// gRPC service implementation for Hybrid Search
-pub struct HybridSearchServiceImpl;
+/// gRPC HybridSearchService backed by a `HybridPort`.
+pub struct HybridSearchServiceImpl {
+    port: Option<Arc<dyn HybridPort>>,
+}
 
 impl HybridSearchServiceImpl {
-    /// Create a new hybrid search service
-    pub fn new() -> Self {
-        Self {}
+    /// Construct with a concrete hybrid search port.
+    pub fn new(port: Arc<dyn HybridPort>) -> Self {
+        Self { port: Some(port) }
     }
 
-    /// Convert the service into a tonic server
+    /// Construct without a backend (all RPCs return UNIMPLEMENTED).
+    pub fn without_backend() -> Self {
+        Self { port: None }
+    }
+
+    /// Convert into a tonic gRPC server.
     pub fn into_server(self) -> HybridSearchServiceServer<Self> {
         HybridSearchServiceServer::new(self)
     }
-}
 
-impl Default for HybridSearchServiceImpl {
-    fn default() -> Self {
-        Self::new()
+    fn not_configured() -> Status {
+        Status::unimplemented("Hybrid search service not configured on this node")
+    }
+
+    fn port_err(e: anyhow::Error) -> Status {
+        Status::internal(e.to_string())
     }
 }
 
-// Placeholder trait implementation - will be implemented after migration
 #[tonic::async_trait]
 impl HybridSearchService for HybridSearchServiceImpl {
     async fn hybrid_search(
         &self,
-        _request: Request<v1::HybridFusionSearchRequest>,
-    ) -> Result<Response<v1::HybridFusionSearchResponse>, Status> {
-        Err(Status::unimplemented("Hybrid search service migration in progress"))
+        request: Request<HybridFusionSearchRequest>,
+    ) -> Result<Response<HybridFusionSearchResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.hybrid_search(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn list_fusion_strategies(
         &self,
-        _request: Request<v1::ListFusionStrategiesRequest>,
-    ) -> Result<Response<v1::ListFusionStrategiesResponse>, Status> {
-        Err(Status::unimplemented("Hybrid search service migration in progress"))
+        request: Request<ListFusionStrategiesRequest>,
+    ) -> Result<Response<ListFusionStrategiesResponse>, Status> {
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.list_fusion_strategies(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 }

@@ -1,69 +1,92 @@
 //! # Entity Service (gRPC)
 //!
 //! gRPC implementation for entity operations in Semantic Knowledge Store (SKS).
-//!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor. The actual implementations exist in `src/network/grpc/entity_service.rs`.
+//! Each RPC delegates to the injected `EntityPort`; when no port is provided
+//! the service returns `UNIMPLEMENTED`.
 
 use std::sync::Arc;
-use tonic::{Request, Response, Status};
 
-// Placeholder types for entity services
-// TODO: Replace with actual types after migration
-pub struct ProximaEntityStore;
+use tonic::{Request, Response, Status};
 
 use proximadb_proto::v1::{
     entity_service_server::{EntityService, EntityServiceServer},
-    *
+    *,
 };
+use proximadb_runtime::EntityPort;
 
-/// gRPC implementation of the EntityService
+/// gRPC EntityService backed by an `EntityPort`.
 pub struct EntityServiceImpl {
-    _store: Arc<ProximaEntityStore>,
+    port: Option<Arc<dyn EntityPort>>,
 }
 
 impl EntityServiceImpl {
-    /// Create a new EntityService implementation
-    pub fn new(_store: Arc<ProximaEntityStore>) -> Self {
-        Self { _store }
+    /// Construct with a concrete entity port.
+    pub fn new(port: Arc<dyn EntityPort>) -> Self {
+        Self { port: Some(port) }
     }
 
-    /// Create a tonic service from this implementation
+    /// Construct without a backend (all RPCs return UNIMPLEMENTED).
+    pub fn without_backend() -> Self {
+        Self { port: None }
+    }
+
+    /// Convert into a tonic gRPC server.
     pub fn into_service(self) -> EntityServiceServer<Self> {
         EntityServiceServer::new(self)
     }
+
+    fn not_configured() -> Status {
+        Status::unimplemented("Entity service not configured on this node")
+    }
+
+    fn port_err(e: anyhow::Error) -> Status {
+        Status::internal(e.to_string())
+    }
 }
 
-// Placeholder trait implementation - will be implemented after migration
 #[tonic::async_trait]
 impl EntityService for EntityServiceImpl {
     async fn upsert_entity(
         &self,
-        _request: Request<UpsertEntityRequest>,
+        request: Request<UpsertEntityRequest>,
     ) -> Result<Response<UpsertEntityResponse>, Status> {
-        Err(Status::unimplemented("Entity service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.upsert_entity(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn get_entity(
         &self,
-        _request: Request<GetEntityRequest>,
+        request: Request<GetEntityRequest>,
     ) -> Result<Response<GetEntityResponse>, Status> {
-        Err(Status::unimplemented("Entity service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_entity(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn delete_entity(
         &self,
-        _request: Request<DeleteEntityRequest>,
+        request: Request<DeleteEntityRequest>,
     ) -> Result<Response<DeleteEntityResponse>, Status> {
-        Err(Status::unimplemented("Entity service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.delete_entity(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn search_entities(
         &self,
-        _request: Request<SearchEntitiesRequest>,
+        request: Request<SearchEntitiesRequest>,
     ) -> Result<Response<SearchEntitiesResponse>, Status> {
-        Err(Status::unimplemented("Entity service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.search_entities(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 }

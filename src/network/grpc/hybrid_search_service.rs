@@ -329,6 +329,31 @@ fn create_mock_results(
     (bm25_results, vector_results)
 }
 
+// ── HybridPort ────────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::HybridPort for HybridSearchServiceImpl {
+    async fn hybrid_search(
+        &self,
+        request: proximadb_v1::HybridFusionSearchRequest,
+    ) -> anyhow::Result<proximadb_v1::HybridFusionSearchResponse> {
+        HybridSearchService::hybrid_search(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_fusion_strategies(
+        &self,
+        request: proximadb_v1::ListFusionStrategiesRequest,
+    ) -> anyhow::Result<proximadb_v1::ListFusionStrategiesResponse> {
+        HybridSearchService::list_fusion_strategies(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

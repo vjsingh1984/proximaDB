@@ -261,13 +261,55 @@ impl EntityService for EntityServiceImpl {
     }
 }
 
+// ── EntityPort ────────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::EntityPort for EntityServiceImpl {
+    async fn upsert_entity(
+        &self,
+        request: UpsertEntityRequest,
+    ) -> anyhow::Result<UpsertEntityResponse> {
+        EntityService::upsert_entity(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_entity(
+        &self,
+        request: GetEntityRequest,
+    ) -> anyhow::Result<GetEntityResponse> {
+        EntityService::get_entity(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_entity(
+        &self,
+        request: DeleteEntityRequest,
+    ) -> anyhow::Result<DeleteEntityResponse> {
+        EntityService::delete_entity(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn search_entities(
+        &self,
+        request: SearchEntitiesRequest,
+    ) -> anyhow::Result<SearchEntitiesResponse> {
+        EntityService::search_entities(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    // Deferred: Add unit tests for EntityServiceImpl
-
     #[test]
     fn test_entity_service_creation() {
-        // This test would require a mock EntityStore
-        // Will be implemented when the storage layer is complete
+        // Deferred: requires mock EntityStore
     }
 }

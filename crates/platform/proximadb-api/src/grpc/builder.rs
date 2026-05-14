@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::grpc::v1::{
     collection::CollectionServiceImpl,
     document::DocumentServiceImpl,
-    entity::{EntityServiceImpl, ProximaEntityStore},
+    entity::EntityServiceImpl,
     graph::GraphServiceImpl,
     hybrid::HybridSearchServiceImpl,
     observability::ObservabilityServiceImpl,
@@ -20,7 +20,7 @@ use crate::grpc::v1::{
     streaming::{StreamingServiceImpl, StreamCoordinator},
     vector::VectorServiceImpl,
 };
-use proximadb_runtime::{ApiHandlersPort, DocumentPort, ObservabilityPort, SecurityPort};
+use proximadb_runtime::{ApiHandlersPort, DocumentPort, EntityPort, HybridPort, ObservabilityPort, SecurityPort};
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
 use proximadb_proto::v1::{
     collection_service_server::CollectionServiceServer,
@@ -147,14 +147,18 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Build entity service with specialized dependencies
+    /// Build entity service.
     ///
-    /// EntityServiceImpl requires Arc<ProximaEntityStore>, not Arc<dyn ApiHandlersPort>.
+    /// When `port` is `None` the service returns `UNIMPLEMENTED` for every RPC.
     pub fn build_entity_service(
         &self,
-        entity_store: Arc<ProximaEntityStore>,
+        port: Option<Arc<dyn EntityPort>>,
     ) -> EntityServiceServer<EntityServiceImpl> {
-        let server = EntityServiceServer::new(EntityServiceImpl::new(entity_store));
+        let impl_ = match port {
+            Some(p) => EntityServiceImpl::new(p),
+            None => EntityServiceImpl::without_backend(),
+        };
+        let server = EntityServiceServer::new(impl_);
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -177,9 +181,18 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Build hybrid search service (stateless — no port needed)
-    pub fn build_hybrid_search_service(&self) -> HybridSearchServiceServer<HybridSearchServiceImpl> {
-        let server = HybridSearchServiceServer::new(HybridSearchServiceImpl::new());
+    /// Build hybrid search service.
+    ///
+    /// When `port` is `None` the service returns `UNIMPLEMENTED` for every RPC.
+    pub fn build_hybrid_search_service(
+        &self,
+        port: Option<Arc<dyn HybridPort>>,
+    ) -> HybridSearchServiceServer<HybridSearchServiceImpl> {
+        let impl_ = match port {
+            Some(p) => HybridSearchServiceImpl::new(p),
+            None => HybridSearchServiceImpl::without_backend(),
+        };
+        let server = HybridSearchServiceServer::new(impl_);
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -276,6 +289,8 @@ impl Default for GrpcServiceBuilder {
 pub struct GrpcServiceFactory {
     port: Arc<dyn ApiHandlersPort>,
     document_port: Option<Arc<dyn DocumentPort>>,
+    entity_port: Option<Arc<dyn EntityPort>>,
+    hybrid_port: Option<Arc<dyn HybridPort>>,
     observability_port: Option<Arc<dyn ObservabilityPort>>,
     security_port: Option<Arc<dyn SecurityPort>>,
     config: GrpcServiceConfig,
@@ -287,6 +302,8 @@ impl GrpcServiceFactory {
         Self {
             port,
             document_port: None,
+            entity_port: None,
+            hybrid_port: None,
             observability_port: None,
             security_port: None,
             config: GrpcServiceConfig::default(),
@@ -296,6 +313,18 @@ impl GrpcServiceFactory {
     /// Attach a document port so the factory can wire the document service.
     pub fn with_document(mut self, document: Arc<dyn DocumentPort>) -> Self {
         self.document_port = Some(document);
+        self
+    }
+
+    /// Attach an entity port so the factory can wire the entity service.
+    pub fn with_entity(mut self, entity: Arc<dyn EntityPort>) -> Self {
+        self.entity_port = Some(entity);
+        self
+    }
+
+    /// Attach a hybrid port so the factory can wire the hybrid search service.
+    pub fn with_hybrid(mut self, hybrid: Arc<dyn HybridPort>) -> Self {
+        self.hybrid_port = Some(hybrid);
         self
     }
 
@@ -327,9 +356,9 @@ impl GrpcServiceFactory {
             vector: builder.build_vector_service(self.port.clone()),
             collection: builder.build_collection_service(self.port.clone()),
             document: Some(builder.build_document_service(self.document_port.clone())),
-            entity: None,
+            entity: Some(builder.build_entity_service(self.entity_port.clone())),
             graph: builder.build_graph_service(self.port.clone()),
-            hybrid_search: builder.build_hybrid_search_service(),
+            hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(),
             observability: Some(builder.build_observability_service(self.observability_port.clone())),
@@ -347,9 +376,9 @@ impl GrpcServiceFactory {
             vector: builder.build_vector_service(self.port.clone()),
             collection: builder.build_collection_service(self.port.clone()),
             document: Some(builder.build_document_service(self.document_port.clone())),
-            entity: None,
+            entity: Some(builder.build_entity_service(self.entity_port.clone())),
             graph: builder.build_graph_service(self.port.clone()),
-            hybrid_search: builder.build_hybrid_search_service(),
+            hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(),
             observability: Some(builder.build_observability_service(self.observability_port.clone())),
