@@ -508,3 +508,176 @@ impl ObservabilityService for ObservabilityServiceImpl {
         Err(Status::unimplemented("Alerts not yet implemented"))
     }
 }
+
+// ── ObservabilityPort ─────────────────────────────────────────────────────────
+//
+// Tonic delegation: each port method wraps the request in a tonic::Request,
+// calls the gRPC handler (which holds the real observability logic), then
+// unwraps the response.  `stream_logs` delegates to `query_logs` because the
+// port returns a plain Vec<LogEntry>; the gRPC adapter in `proximadb-api`
+// converts that to a ReceiverStream.
+
+use proximadb_v1::{
+    AggregateMetricsRequest, AggregateMetricsResponse, CreateObservabilityNamespaceRequest,
+    CreateObservabilityNamespaceResponse, DeleteAlertRuleRequest, DeleteAlertRuleResponse,
+    DeleteNamespaceRequest, DeleteNamespaceResponse, GetTraceRequest, GetTraceResponse,
+    IngestLogsRequest, IngestLogsResponse, IngestMetricsRequest, IngestMetricsResponse,
+    IngestTracesRequest, IngestTracesResponse, ListAlertsRequest, ListAlertsResponse,
+    ListNamespacesRequest, ListNamespacesResponse, LogEntry, QueryLogsRequest, QueryLogsResponse,
+    QueryMetricsRequest, QueryMetricsResponse, QueryTracesRequest, QueryTracesResponse,
+    UpsertAlertRuleRequest, UpsertAlertRuleResponse,
+};
+
+#[async_trait::async_trait]
+impl proximadb_runtime::ObservabilityPort for ObservabilityServiceImpl {
+    async fn create_namespace(
+        &self,
+        request: CreateObservabilityNamespaceRequest,
+    ) -> anyhow::Result<CreateObservabilityNamespaceResponse> {
+        ObservabilityService::create_namespace(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_namespaces(
+        &self,
+        request: ListNamespacesRequest,
+    ) -> anyhow::Result<ListNamespacesResponse> {
+        ObservabilityService::list_namespaces(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_namespace(
+        &self,
+        request: DeleteNamespaceRequest,
+    ) -> anyhow::Result<DeleteNamespaceResponse> {
+        ObservabilityService::delete_namespace(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn ingest_logs(
+        &self,
+        request: IngestLogsRequest,
+    ) -> anyhow::Result<IngestLogsResponse> {
+        ObservabilityService::ingest_logs(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn query_logs(
+        &self,
+        request: QueryLogsRequest,
+    ) -> anyhow::Result<QueryLogsResponse> {
+        ObservabilityService::query_logs(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn stream_logs(
+        &self,
+        request: QueryLogsRequest,
+    ) -> anyhow::Result<Vec<LogEntry>> {
+        // Delegate to query_logs; the gRPC adapter wraps the Vec in a ReceiverStream.
+        ObservabilityService::query_logs(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner().logs)
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn ingest_metrics(
+        &self,
+        request: IngestMetricsRequest,
+    ) -> anyhow::Result<IngestMetricsResponse> {
+        ObservabilityService::ingest_metrics(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn query_metrics(
+        &self,
+        request: QueryMetricsRequest,
+    ) -> anyhow::Result<QueryMetricsResponse> {
+        ObservabilityService::query_metrics(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn aggregate_metrics(
+        &self,
+        request: AggregateMetricsRequest,
+    ) -> anyhow::Result<AggregateMetricsResponse> {
+        ObservabilityService::aggregate_metrics(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn ingest_traces(
+        &self,
+        request: IngestTracesRequest,
+    ) -> anyhow::Result<IngestTracesResponse> {
+        ObservabilityService::ingest_traces(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn query_traces(
+        &self,
+        request: QueryTracesRequest,
+    ) -> anyhow::Result<QueryTracesResponse> {
+        ObservabilityService::query_traces(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_trace(
+        &self,
+        request: GetTraceRequest,
+    ) -> anyhow::Result<GetTraceResponse> {
+        ObservabilityService::get_trace(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn upsert_alert_rule(
+        &self,
+        request: UpsertAlertRuleRequest,
+    ) -> anyhow::Result<UpsertAlertRuleResponse> {
+        ObservabilityService::upsert_alert_rule(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_alert_rule(
+        &self,
+        request: DeleteAlertRuleRequest,
+    ) -> anyhow::Result<DeleteAlertRuleResponse> {
+        ObservabilityService::delete_alert_rule(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_alerts(
+        &self,
+        request: ListAlertsRequest,
+    ) -> anyhow::Result<ListAlertsResponse> {
+        ObservabilityService::list_alerts(self, Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+}

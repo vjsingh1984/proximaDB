@@ -6,6 +6,7 @@
 pub mod composition;
 pub mod hardware;
 pub mod handlers;
+pub mod observability_port;
 pub mod port;
 pub mod proto_defaults;
 pub mod resources;
@@ -16,6 +17,7 @@ pub mod service_ports;
 pub use composition::{DIContainer, ServiceComposer};
 pub use hardware::{HardwareCapabilities, SimdLevel, best_simd_level, hardware_capabilities};
 pub use handlers::{CollectionIdCache, UnifiedHandlers};
+pub use observability_port::ObservabilityPort;
 pub use port::ApiHandlersPort;
 pub use resources::{MemoryBudget, ResourceManager};
 pub use security_port::SecurityPort;

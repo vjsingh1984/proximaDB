@@ -14,13 +14,13 @@ use crate::grpc::v1::{
     entity::{EntityServiceImpl, ProximaEntityStore},
     graph::GraphServiceImpl,
     hybrid::HybridSearchServiceImpl,
-    observability::{ObservabilityServiceImpl, ObservabilityStorage},
+    observability::ObservabilityServiceImpl,
     security::SecurityServiceImpl,
     sql::SqlServiceImpl,
     streaming::{StreamingServiceImpl, StreamCoordinator},
     vector::VectorServiceImpl,
 };
-use proximadb_runtime::{ApiHandlersPort, SecurityPort};
+use proximadb_runtime::{ApiHandlersPort, ObservabilityPort, SecurityPort};
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
 use proximadb_proto::v1::{
     collection_service_server::CollectionServiceServer,
@@ -209,6 +209,27 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
+    /// Build observability service.
+    ///
+    /// When `port` is `None` the service starts but returns `UNIMPLEMENTED` for
+    /// every RPC; this allows the server to run without an observability backend.
+    pub fn build_observability_service(
+        &self,
+        port: Option<Arc<dyn ObservabilityPort>>,
+    ) -> ObservabilityServiceServer<ObservabilityServiceImpl> {
+        let impl_ = match port {
+            Some(p) => ObservabilityServiceImpl::new(p),
+            None => ObservabilityServiceImpl::without_backend(),
+        };
+        let server = ObservabilityServiceServer::new(impl_);
+        let server = Self::apply_message_limits(
+            server,
+            self.config.max_decoding_message_size,
+            self.config.max_encoding_message_size,
+        );
+        Self::apply_compression(server, self.config.compression_enabled)
+    }
+
     /// Build security service.
     ///
     /// When `port` is `None` the service starts but returns `NOT_FOUND` for
@@ -250,6 +271,7 @@ impl Default for GrpcServiceBuilder {
 pub struct GrpcServiceFactory {
     port: Arc<dyn ApiHandlersPort>,
     security_port: Option<Arc<dyn SecurityPort>>,
+    observability_port: Option<Arc<dyn ObservabilityPort>>,
     config: GrpcServiceConfig,
 }
 
@@ -259,6 +281,7 @@ impl GrpcServiceFactory {
         Self {
             port,
             security_port: None,
+            observability_port: None,
             config: GrpcServiceConfig::default(),
         }
     }
@@ -266,6 +289,12 @@ impl GrpcServiceFactory {
     /// Attach a security port so the factory can wire the security service.
     pub fn with_security(mut self, security: Arc<dyn SecurityPort>) -> Self {
         self.security_port = Some(security);
+        self
+    }
+
+    /// Attach an observability port so the factory can wire the observability service.
+    pub fn with_observability(mut self, observability: Arc<dyn ObservabilityPort>) -> Self {
+        self.observability_port = Some(observability);
         self
     }
 
@@ -281,9 +310,6 @@ impl GrpcServiceFactory {
             config: self.config.clone(),
         };
 
-        let obs_storage = Arc::new(ObservabilityStorage);
-        let obs_server = ObservabilityServiceServer::new(ObservabilityServiceImpl::new(obs_storage));
-
         Ok(GrpcServices {
             vector: builder.build_vector_service(self.port.clone()),
             collection: builder.build_collection_service(self.port.clone()),
@@ -293,7 +319,7 @@ impl GrpcServiceFactory {
             hybrid_search: builder.build_hybrid_search_service(),
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(),
-            observability: Some(obs_server),
+            observability: Some(builder.build_observability_service(self.observability_port.clone())),
             security: builder.build_security_service(self.security_port.clone()),
         })
     }
@@ -313,7 +339,7 @@ impl GrpcServiceFactory {
             hybrid_search: builder.build_hybrid_search_service(),
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(),
-            observability: None,
+            observability: Some(builder.build_observability_service(self.observability_port.clone())),
             security: builder.build_security_service(self.security_port.clone()),
         }
     }
