@@ -496,6 +496,7 @@ impl Catalog for HiveCatalog {
             location: Some(table.location.clone()),
             created_at_ms: table.created_at,
             updated_at_ms: table.created_at,
+            ..Default::default()
         };
 
         // Update cache

@@ -37,7 +37,10 @@ pub mod registry;
 
 use anyhow::Result;
 use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
-use proximadb_catalog::{CatalogColumn, CatalogIndex, CatalogTableSchema};
+use proximadb_catalog::{
+    CatalogColumn, CatalogIndex, CatalogProjection, CatalogStorageLayout, CatalogTableSchema,
+    RelationalCapabilities,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -186,6 +189,15 @@ pub struct ObjectSchema {
     pub constraints: Vec<TableConstraint>,
     /// Indexes
     pub indexes: Vec<CatalogIndex>,
+    /// Cataloged storage layouts and authority modes.
+    #[serde(default)]
+    pub storage_layouts: Vec<CatalogStorageLayout>,
+    /// Cataloged rebuildable projections/access methods.
+    #[serde(default)]
+    pub projections: Vec<CatalogProjection>,
+    /// Optional relational integrity and transaction capabilities.
+    #[serde(default)]
+    pub relational_capabilities: RelationalCapabilities,
     /// Model-specific properties
     pub model_properties: ModelProperties,
 }
@@ -197,6 +209,9 @@ impl Default for ObjectSchema {
             primary_key: Vec::new(),
             constraints: Vec::new(),
             indexes: Vec::new(),
+            storage_layouts: Vec::new(),
+            projections: Vec::new(),
+            relational_capabilities: RelationalCapabilities::default(),
             model_properties: ModelProperties::None,
         }
     }
@@ -210,6 +225,9 @@ impl ObjectSchema {
             primary_key: schema.primary_key.clone(),
             constraints: Vec::new(),
             indexes: schema.indexes.clone(),
+            storage_layouts: schema.storage_layouts.clone(),
+            projections: schema.projections.clone(),
+            relational_capabilities: schema.relational_capabilities.clone(),
             model_properties: ModelProperties::Rdbms(RdbmsProperties::default()),
         }
     }

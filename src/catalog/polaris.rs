@@ -695,6 +695,7 @@ impl Catalog for PolarisCatalog {
             location: Some(response.metadata.location.clone()),
             created_at_ms: 0,
             updated_at_ms: response.metadata.last_updated_ms,
+            ..Default::default()
         };
 
         // Update cache
@@ -828,6 +829,7 @@ impl Catalog for PolarisCatalog {
                         location: None,
                         created_at_ms: 0,
                         updated_at_ms: response.metadata.last_updated_ms,
+                        ..Default::default()
                     });
                 }
             }

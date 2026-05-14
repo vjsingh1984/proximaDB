@@ -32,9 +32,9 @@ use proximadb_records::{RecordKey, RecordStorage};
 
 use super::DocumentStorageEngine;
 use super::aggregation_extensions::LookupFetcher;
-use super::canonical_adapter::proxima_record_to_legacy_document;
 #[cfg(feature = "canonical-document-store")]
 use super::canonical_adapter::legacy_document_to_proxima_record;
+use super::canonical_adapter::proxima_record_to_legacy_document;
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
 use super::query::path_parser::JsonPath;
@@ -2406,6 +2406,38 @@ mod tests {
         svc
     }
 
+    /// Set up a canonical-record-backed service with a pre-created collection.
+    #[cfg(feature = "canonical-document-store")]
+    async fn canonical_service_with_collection(collection_name: &str) -> DocumentService {
+        use crate::storage::engines::cedar::CedarEngine;
+        use proximadb_records::RecordStorage;
+
+        let cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
+        let storage_engine: Arc<dyn UnifiedStorageEngine> = cedar.clone();
+        let record_store: Arc<dyn RecordStorage> = cedar;
+        let svc = DocumentService::with_canonical_record_store(storage_engine, record_store);
+
+        svc.create_collection(
+            collection_name,
+            DocumentCollectionConfig {
+                name: collection_name.to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("collection creation should succeed");
+        svc
+    }
+
+    fn assert_same_document_shape(left: &DocumentRecord, right: &DocumentRecord) {
+        assert_eq!(left.id, right.id);
+        assert_eq!(left.collection_id, right.collection_id);
+        assert_eq!(left.version, right.version);
+        assert_eq!(left.schema_id, right.schema_id);
+        assert_eq!(left.document_type, right.document_type);
+        assert_eq!(left.document.fields, right.document.fields);
+    }
+
     // =========================================================================
     // Document CRUD lifecycle tests
     // =========================================================================
@@ -2761,6 +2793,137 @@ mod tests {
 
         assert_eq!(result.documents.len(), 4, "should return all 4 documents");
         assert_eq!(result.total_count, Some(4));
+    }
+
+    #[cfg(feature = "canonical-document-store")]
+    #[tokio::test]
+    async fn test_canonical_document_service_parity_with_legacy_path() {
+        let legacy = service_with_collection("parity").await;
+        let canonical = canonical_service_with_collection("parity").await;
+
+        let doc = make_document(vec![
+            ("title", sql_string("Record Spine")),
+            ("category", sql_string("architecture")),
+            ("revision", sql_int(1)),
+        ]);
+
+        let legacy_inserted = legacy
+            .insert_document("parity", Some("doc-1"), doc.clone())
+            .await
+            .expect("legacy insert");
+        let canonical_inserted = canonical
+            .insert_document("parity", Some("doc-1"), doc)
+            .await
+            .expect("canonical insert");
+        assert_same_document_shape(&legacy_inserted, &canonical_inserted);
+
+        let legacy_fetched = legacy
+            .get_document("parity", "doc-1", None)
+            .await
+            .expect("legacy get")
+            .expect("legacy document");
+        let canonical_fetched = canonical
+            .get_document("parity", "doc-1", None)
+            .await
+            .expect("canonical get")
+            .expect("canonical document");
+        assert_same_document_shape(&legacy_fetched, &canonical_fetched);
+
+        let updates = vec![DocumentUpdate {
+            operation: UpdateOperation::Set as i32,
+            path: "revision".to_string(),
+            value: Some(sql_int(2)),
+        }];
+        let legacy_updated = legacy
+            .update_document("parity", "doc-1", updates.clone(), None)
+            .await
+            .expect("legacy update");
+        let canonical_updated = canonical
+            .update_document("parity", "doc-1", updates, None)
+            .await
+            .expect("canonical update");
+        assert_same_document_shape(&legacy_updated, &canonical_updated);
+
+        legacy
+            .insert_document(
+                "parity",
+                Some("doc-2"),
+                make_document(vec![
+                    ("title", sql_string("Projection")),
+                    ("category", sql_string("architecture")),
+                    ("revision", sql_int(1)),
+                ]),
+            )
+            .await
+            .expect("legacy insert second");
+        canonical
+            .insert_document(
+                "parity",
+                Some("doc-2"),
+                make_document(vec![
+                    ("title", sql_string("Projection")),
+                    ("category", sql_string("architecture")),
+                    ("revision", sql_int(1)),
+                ]),
+            )
+            .await
+            .expect("canonical insert second");
+
+        let filter = DocumentFilter {
+            conditions: vec![DocFilterCondition {
+                path: "category".to_string(),
+                operator: DocFilterOperator::Eq as i32,
+                value: Some(sql_string("architecture")),
+                values: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let query_params = DocumentQueryParams {
+            filter: Some(filter),
+            include_count: true,
+            limit: 100,
+            ..Default::default()
+        };
+        let legacy_query = legacy
+            .query_documents("parity", query_params.clone())
+            .await
+            .expect("legacy query");
+        let canonical_query = canonical
+            .query_documents("parity", query_params)
+            .await
+            .expect("canonical query");
+        assert_eq!(legacy_query.total_count, canonical_query.total_count);
+
+        let mut legacy_ids: Vec<_> = legacy_query
+            .documents
+            .iter()
+            .map(|document| document.id.as_str())
+            .collect();
+        let mut canonical_ids: Vec<_> = canonical_query
+            .documents
+            .iter()
+            .map(|document| document.id.as_str())
+            .collect();
+        legacy_ids.sort_unstable();
+        canonical_ids.sort_unstable();
+        assert_eq!(legacy_ids, canonical_ids);
+
+        assert!(legacy.delete_document("parity", "doc-1").await.unwrap());
+        assert!(canonical.delete_document("parity", "doc-1").await.unwrap());
+        assert!(
+            legacy
+                .get_document("parity", "doc-1", None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            canonical
+                .get_document("parity", "doc-1", None)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

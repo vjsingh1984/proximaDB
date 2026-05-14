@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use proximadb_kernel::error::ProximaDBError;
 use proximadb_records::ProximaRecord;
 
-use crate::record::{GRAPH_EDGE_LABEL, GRAPH_ID_PROP, GRAPH_NODE_LABEL, GraphNodeKey};
+use crate::record::{GRAPH_EDGE_LABEL, GRAPH_ID_PROP, GRAPH_NODE_LABEL};
 
 /// Result type for topology projection operations.
 pub type ProjectionResult<T> = Result<T, ProximaDBError>;
@@ -63,6 +63,121 @@ pub enum TopologyFormat {
     AdjacencyTable,
 }
 
+/// Directional adjacency index maintained from canonical edge records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdjacencyIndexKind {
+    /// `edges_by_src`: source node oid -> edge records leaving that node.
+    EdgesBySrc,
+    /// `edges_by_dst`: destination node oid -> edge records entering that node.
+    EdgesByDst,
+}
+
+impl AdjacencyIndexKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::EdgesBySrc => "edges_by_src",
+            Self::EdgesByDst => "edges_by_dst",
+        }
+    }
+}
+
+/// Deterministic key for a directional adjacency projection entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdjacencyProjectionKey {
+    /// Graph dataset id.
+    pub graph_id: String,
+    /// Directional adjacency index.
+    pub kind: AdjacencyIndexKind,
+    /// Canonical node oid used as source or destination, depending on `kind`.
+    pub node_oid: String,
+    /// Canonical edge record oid.
+    pub edge_oid: String,
+}
+
+impl AdjacencyProjectionKey {
+    pub fn new(
+        graph_id: impl Into<String>,
+        kind: AdjacencyIndexKind,
+        node_oid: impl Into<String>,
+        edge_oid: impl Into<String>,
+    ) -> Self {
+        Self {
+            graph_id: graph_id.into(),
+            kind,
+            node_oid: node_oid.into(),
+            edge_oid: edge_oid.into(),
+        }
+    }
+
+    /// Stable storage key for projection engines and cache invalidation.
+    pub fn storage_key(&self) -> String {
+        format!(
+            "graph/{}/{}/{}/{}",
+            self.graph_id,
+            self.kind.as_str(),
+            self.node_oid,
+            self.edge_oid
+        )
+    }
+}
+
+/// One rebuildable adjacency entry derived from a canonical edge record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdjacencyProjectionEntry {
+    pub key: AdjacencyProjectionKey,
+    pub opposite_node_oid: String,
+    pub edge_label: String,
+    pub record_version: u64,
+    pub updated_at_ns: i64,
+}
+
+/// Monotonic freshness marker for topology projections.
+///
+/// The source of truth is the canonical edge record epoch. CSR projections are
+/// fresh only when their applied epoch is at least the latest edge-change epoch
+/// observed by the graph facade.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TopologyEpoch(pub u64);
+
+impl TopologyEpoch {
+    pub fn initial() -> Self {
+        Self(0)
+    }
+
+    pub fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+/// Projection freshness state used by CSR/COO/adjacency consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectionFreshness {
+    /// Projection has applied the latest observed canonical edge epoch.
+    Fresh,
+    /// Projection can answer reads but is behind canonical edge state.
+    Stale {
+        applied_epoch: TopologyEpoch,
+        required_epoch: TopologyEpoch,
+    },
+}
+
+impl ProjectionFreshness {
+    pub fn from_epochs(applied_epoch: TopologyEpoch, required_epoch: TopologyEpoch) -> Self {
+        if applied_epoch >= required_epoch {
+            Self::Fresh
+        } else {
+            Self::Stale {
+                applied_epoch,
+                required_epoch,
+            }
+        }
+    }
+
+    pub fn is_fresh(self) -> bool {
+        matches!(self, Self::Fresh)
+    }
+}
+
 /// Result of applying one canonical edge record to a topology projection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopologyApplyResult {
@@ -70,6 +185,8 @@ pub struct TopologyApplyResult {
     pub edge_oid: String,
     /// Number of adjacency entries updated.
     pub entries_written: usize,
+    /// Projection epoch after the edge mutation is applied.
+    pub applied_epoch: TopologyEpoch,
 }
 
 /// Rebuildable graph topology projection contract.
@@ -81,6 +198,16 @@ pub struct TopologyApplyResult {
 #[async_trait]
 pub trait GraphTopologyProjection: Send + Sync {
     fn descriptor(&self) -> &GraphTopologyDescriptor;
+
+    /// Last canonical edge epoch applied by this projection.
+    fn applied_epoch(&self) -> TopologyEpoch {
+        TopologyEpoch::initial()
+    }
+
+    /// Freshness against the latest canonical edge epoch known to the caller.
+    fn freshness(&self, required_epoch: TopologyEpoch) -> ProjectionFreshness {
+        ProjectionFreshness::from_epochs(self.applied_epoch(), required_epoch)
+    }
 
     /// Apply one canonical edge record to the projection.
     async fn apply_edge(
@@ -156,10 +283,54 @@ pub fn edge_endpoints(record: &ProximaRecord) -> Option<(String, String)> {
         .map(|edge_shape| (edge_shape.source_id.clone(), edge_shape.target_id.clone()))
 }
 
+/// Build the `edges_by_src` and `edges_by_dst` adjacency entries for one edge.
+pub fn adjacency_entries_for_edge(record: &ProximaRecord) -> Option<[AdjacencyProjectionEntry; 2]> {
+    let graph_id = graph_id(record)?;
+    let edge_shape = record.edge.as_ref()?;
+    let edge_label = edge_shape.edge_type.clone();
+
+    Some([
+        AdjacencyProjectionEntry {
+            key: AdjacencyProjectionKey::new(
+                graph_id.clone(),
+                AdjacencyIndexKind::EdgesBySrc,
+                edge_shape.source_id.clone(),
+                record.oid.clone(),
+            ),
+            opposite_node_oid: edge_shape.target_id.clone(),
+            edge_label: edge_label.clone(),
+            record_version: record.record_version,
+            updated_at_ns: record.updated_at_ns,
+        },
+        AdjacencyProjectionEntry {
+            key: AdjacencyProjectionKey::new(
+                graph_id,
+                AdjacencyIndexKind::EdgesByDst,
+                edge_shape.target_id.clone(),
+                record.oid.clone(),
+            ),
+            opposite_node_oid: edge_shape.source_id.clone(),
+            edge_label,
+            record_version: record.record_version,
+            updated_at_ns: record.updated_at_ns,
+        },
+    ])
+}
+
+fn graph_id(record: &ProximaRecord) -> Option<String> {
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::ProximaTreeNode;
+
+    match record.props.get(GRAPH_ID_PROP) {
+        Some(ProximaTreeNode::Value(ProximaValue::String(id))) => Some(id.clone()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::record::{CanonicalEdge, CanonicalNode};
+    use crate::record::{CanonicalEdge, CanonicalNode, GraphNodeKey};
     use proximadb_records::ProximaTree;
 
     fn make_node(graph_id: &str, node_id: &str) -> ProximaRecord {
@@ -225,5 +396,42 @@ mod tests {
     fn edge_endpoints_returns_none_for_non_edge_records() {
         let node = make_node("g1", "n1");
         assert!(edge_endpoints(&node).is_none());
+    }
+
+    #[test]
+    fn adjacency_entries_are_directional_and_stable() {
+        let edge = make_edge("g1", "e1", "n1", "n2");
+        let entries = adjacency_entries_for_edge(&edge).expect("adjacency entries");
+
+        assert_eq!(entries[0].key.kind, AdjacencyIndexKind::EdgesBySrc);
+        assert_eq!(entries[0].key.node_oid, "graph/g1/node/n1");
+        assert_eq!(entries[0].opposite_node_oid, "graph/g1/node/n2");
+        assert_eq!(
+            entries[0].key.storage_key(),
+            "graph/g1/edges_by_src/graph/g1/node/n1/graph/g1/edge/e1"
+        );
+
+        assert_eq!(entries[1].key.kind, AdjacencyIndexKind::EdgesByDst);
+        assert_eq!(entries[1].key.node_oid, "graph/g1/node/n2");
+        assert_eq!(entries[1].opposite_node_oid, "graph/g1/node/n1");
+        assert_eq!(
+            entries[1].key.storage_key(),
+            "graph/g1/edges_by_dst/graph/g1/node/n2/graph/g1/edge/e1"
+        );
+    }
+
+    #[test]
+    fn projection_freshness_tracks_required_epoch() {
+        let applied = TopologyEpoch(3);
+
+        assert!(ProjectionFreshness::from_epochs(applied, TopologyEpoch(2)).is_fresh());
+        assert!(ProjectionFreshness::from_epochs(applied, TopologyEpoch(3)).is_fresh());
+        assert_eq!(
+            ProjectionFreshness::from_epochs(applied, TopologyEpoch(4)),
+            ProjectionFreshness::Stale {
+                applied_epoch: TopologyEpoch(3),
+                required_epoch: TopologyEpoch(4)
+            }
+        );
     }
 }

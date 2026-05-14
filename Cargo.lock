@@ -5828,7 +5828,6 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-graph-query",
  "proximadb-kernel",
- "proximadb-proto",
  "proximadb-query-filter",
  "proximadb-records",
  "regex",

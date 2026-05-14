@@ -135,6 +135,7 @@ impl InternalSchemaRegistry {
                 distance_metric: distance_metric.to_string(),
                 ..Default::default()
             }),
+            ..Default::default()
         };
 
         let object = CatalogObject::new(
@@ -173,6 +174,7 @@ impl InternalSchemaRegistry {
                 enable_full_text: false,
                 indexed_paths: vec![],
             }),
+            ..Default::default()
         };
 
         let object = CatalogObject::new(
@@ -206,6 +208,7 @@ impl InternalSchemaRegistry {
                 node_labels: vec![],
                 edge_types: vec![],
             }),
+            ..Default::default()
         };
 
         let object = CatalogObject::new(
@@ -246,6 +249,7 @@ impl InternalSchemaRegistry {
                 rollup_intervals: vec![],
                 cardinality_limits: HashMap::new(),
             }),
+            ..Default::default()
         };
 
         let object = CatalogObject::new(

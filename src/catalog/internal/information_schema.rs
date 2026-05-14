@@ -95,6 +95,12 @@ pub enum InformationSchemaView {
     DocumentCollections,
     /// ProximaDB: observability_streams view
     ObservabilityStreams,
+    /// ProximaDB: storage layout authority metadata
+    StorageLayouts,
+    /// ProximaDB: rebuildable projection metadata
+    Projections,
+    /// ProximaDB: optional relational capability metadata
+    RelationalCapabilities,
 }
 
 impl InformationSchemaView {
@@ -111,6 +117,9 @@ impl InformationSchemaView {
             InformationSchemaView::Graphs => "graphs",
             InformationSchemaView::DocumentCollections => "document_collections",
             InformationSchemaView::ObservabilityStreams => "observability_streams",
+            InformationSchemaView::StorageLayouts => "storage_layouts",
+            InformationSchemaView::Projections => "projections",
+            InformationSchemaView::RelationalCapabilities => "relational_capabilities",
         }
     }
 
@@ -122,6 +131,9 @@ impl InformationSchemaView {
                 | InformationSchemaView::Graphs
                 | InformationSchemaView::DocumentCollections
                 | InformationSchemaView::ObservabilityStreams
+                | InformationSchemaView::StorageLayouts
+                | InformationSchemaView::Projections
+                | InformationSchemaView::RelationalCapabilities
         )
     }
 }
@@ -708,6 +720,159 @@ impl ObservabilityStreamRow {
     }
 }
 
+/// Row in information_schema.storage_layouts (ProximaDB extension)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageLayoutRow {
+    /// Catalog that contains the object.
+    pub table_catalog: String,
+    /// Schema that contains the object.
+    pub table_schema: String,
+    /// Object/table/collection name.
+    pub table_name: String,
+    /// Layout name.
+    pub layout_name: String,
+    /// Authority mode for this layout.
+    pub authority_mode: String,
+    /// Physical layout family.
+    pub layout_kind: String,
+    /// Physical format.
+    pub physical_format: String,
+    /// Write/refresh mode.
+    pub write_mode: String,
+    /// Optional layout location.
+    pub location: Option<String>,
+    /// Snapshot/isolation semantics.
+    pub snapshot_semantics: Option<String>,
+    /// Whether ProximaDB enforces policy/RLS before rows leave this layout.
+    pub policy_enforced_in_proxima: bool,
+    /// Count of lossy type mappings declared for this format.
+    pub lossy_type_mapping_count: usize,
+}
+
+impl StorageLayoutRow {
+    /// Create rows from a catalog object.
+    pub fn from_object(obj: &CatalogObject) -> Vec<Self> {
+        obj.schema
+            .storage_layouts
+            .iter()
+            .map(|layout| Self {
+                table_catalog: obj.catalog.clone(),
+                table_schema: obj.namespace.join("."),
+                table_name: obj.name.clone(),
+                layout_name: layout.name.clone(),
+                authority_mode: format!("{:?}", layout.authority),
+                layout_kind: format!("{:?}", layout.layout_kind),
+                physical_format: format!("{:?}", layout.physical_format),
+                write_mode: format!("{:?}", layout.write_mode),
+                location: layout.location.clone(),
+                snapshot_semantics: layout.snapshot_semantics.clone(),
+                policy_enforced_in_proxima: layout.policy_enforced_in_proxima,
+                lossy_type_mapping_count: layout.lossy_type_mappings.len(),
+            })
+            .collect()
+    }
+}
+
+/// Row in information_schema.projections (ProximaDB extension)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectionRow {
+    /// Catalog that contains the object.
+    pub table_catalog: String,
+    /// Schema that contains the object.
+    pub table_schema: String,
+    /// Object/table/collection name.
+    pub table_name: String,
+    /// Projection name.
+    pub projection_name: String,
+    /// Projection family.
+    pub projection_kind: String,
+    /// Physical format backing the projection.
+    pub physical_format: String,
+    /// Canonical rebuild source.
+    pub rebuild_source: String,
+    /// Freshness semantics.
+    pub freshness: String,
+    /// Optional bounded lag.
+    pub max_lag_ms: Option<i64>,
+    /// Whether the projection is rebuildable without data loss.
+    pub rebuildable: bool,
+    /// Whether the projection is lossy.
+    pub lossy: bool,
+    /// Support status label.
+    pub support_status: String,
+}
+
+impl ProjectionRow {
+    /// Create rows from a catalog object.
+    pub fn from_object(obj: &CatalogObject) -> Vec<Self> {
+        obj.schema
+            .projections
+            .iter()
+            .map(|projection| Self {
+                table_catalog: obj.catalog.clone(),
+                table_schema: obj.namespace.join("."),
+                table_name: obj.name.clone(),
+                projection_name: projection.name.clone(),
+                projection_kind: format!("{:?}", projection.kind),
+                physical_format: format!("{:?}", projection.physical_format),
+                rebuild_source: projection.rebuild_source.clone(),
+                freshness: format!("{:?}", projection.freshness),
+                max_lag_ms: projection.max_lag_ms,
+                rebuildable: projection.rebuildable,
+                lossy: projection.lossy,
+                support_status: projection.support_status.clone(),
+            })
+            .collect()
+    }
+}
+
+/// Row in information_schema.relational_capabilities (ProximaDB extension)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationalCapabilityRow {
+    /// Catalog that contains the object.
+    pub table_catalog: String,
+    /// Schema that contains the object.
+    pub table_schema: String,
+    /// Object/table/collection name.
+    pub table_name: String,
+    /// Whether any relational semantics are enabled.
+    pub has_enforced_semantics: bool,
+    /// Primary-key columns.
+    pub primary_key: Vec<String>,
+    /// Number of unique indexes.
+    pub unique_index_count: usize,
+    /// Number of secondary indexes.
+    pub secondary_index_count: usize,
+    /// Number of constraints.
+    pub constraint_count: usize,
+    /// Number of materialized views.
+    pub materialized_view_count: usize,
+    /// Transaction profile name.
+    pub transaction_profile: Option<String>,
+    /// Schema evolution policy name.
+    pub schema_evolution_policy: Option<String>,
+}
+
+impl RelationalCapabilityRow {
+    /// Create from a catalog object.
+    pub fn from_object(obj: &CatalogObject) -> Self {
+        let capabilities = &obj.schema.relational_capabilities;
+        Self {
+            table_catalog: obj.catalog.clone(),
+            table_schema: obj.namespace.join("."),
+            table_name: obj.name.clone(),
+            has_enforced_semantics: capabilities.has_enforced_semantics(),
+            primary_key: capabilities.primary_key.clone(),
+            unique_index_count: capabilities.unique_indexes.len(),
+            secondary_index_count: capabilities.secondary_indexes.len(),
+            constraint_count: capabilities.constraints.len(),
+            materialized_view_count: capabilities.materialized_views.len(),
+            transaction_profile: capabilities.transaction_profile.clone(),
+            schema_evolution_policy: capabilities.schema_evolution_policy.clone(),
+        }
+    }
+}
+
 /// INFORMATION_SCHEMA query interface
 pub struct InformationSchema {
     registry: Arc<InternalSchemaRegistry>,
@@ -851,6 +1016,33 @@ impl InformationSchema {
             .collect()
     }
 
+    /// Get all storage layout descriptors.
+    pub async fn storage_layouts(&self) -> Vec<StorageLayoutRow> {
+        let objects = self.registry.list_all().await;
+        objects
+            .iter()
+            .flat_map(|o| StorageLayoutRow::from_object(o))
+            .collect()
+    }
+
+    /// Get all projection descriptors.
+    pub async fn projections(&self) -> Vec<ProjectionRow> {
+        let objects = self.registry.list_all().await;
+        objects
+            .iter()
+            .flat_map(|o| ProjectionRow::from_object(o))
+            .collect()
+    }
+
+    /// Get relational capability descriptors for all objects.
+    pub async fn relational_capabilities(&self) -> Vec<RelationalCapabilityRow> {
+        let objects = self.registry.list_all().await;
+        objects
+            .iter()
+            .map(|o| RelationalCapabilityRow::from_object(o))
+            .collect()
+    }
+
     /// Query a specific view
     pub async fn query(&self, view: InformationSchemaView) -> InformationSchemaResult {
         match view {
@@ -902,6 +1094,17 @@ impl InformationSchema {
             InformationSchemaView::ObservabilityStreams => {
                 InformationSchemaResult::ObservabilityStreams(self.observability_streams().await)
             }
+            InformationSchemaView::StorageLayouts => {
+                InformationSchemaResult::StorageLayouts(self.storage_layouts().await)
+            }
+            InformationSchemaView::Projections => {
+                InformationSchemaResult::Projections(self.projections().await)
+            }
+            InformationSchemaView::RelationalCapabilities => {
+                InformationSchemaResult::RelationalCapabilities(
+                    self.relational_capabilities().await,
+                )
+            }
         }
     }
 }
@@ -948,6 +1151,12 @@ pub enum InformationSchemaResult {
     DocumentCollections(Vec<DocumentCollectionRow>),
     /// Rows from `information_schema.observability_streams` (ProximaDB extension)
     ObservabilityStreams(Vec<ObservabilityStreamRow>),
+    /// Rows from `information_schema.storage_layouts` (ProximaDB extension)
+    StorageLayouts(Vec<StorageLayoutRow>),
+    /// Rows from `information_schema.projections` (ProximaDB extension)
+    Projections(Vec<ProjectionRow>),
+    /// Rows from `information_schema.relational_capabilities` (ProximaDB extension)
+    RelationalCapabilities(Vec<RelationalCapabilityRow>),
 }
 
 impl InformationSchemaResult {
@@ -964,6 +1173,9 @@ impl InformationSchemaResult {
             InformationSchemaResult::Graphs(rows) => rows.len(),
             InformationSchemaResult::DocumentCollections(rows) => rows.len(),
             InformationSchemaResult::ObservabilityStreams(rows) => rows.len(),
+            InformationSchemaResult::StorageLayouts(rows) => rows.len(),
+            InformationSchemaResult::Projections(rows) => rows.len(),
+            InformationSchemaResult::RelationalCapabilities(rows) => rows.len(),
         }
     }
 }
@@ -971,7 +1183,12 @@ impl InformationSchemaResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::TableIdentifier;
     use crate::catalog::internal::InternalSchemaRegistry;
+    use proximadb_catalog::{
+        CatalogProjection, CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind,
+        CatalogTableSchema, RelationalCapabilities,
+    };
 
     #[tokio::test]
     async fn test_information_schema_tables() {
@@ -1116,12 +1333,69 @@ mod tests {
         assert_eq!(result.row_count(), 1);
     }
 
+    #[tokio::test]
+    async fn test_information_schema_storage_authority_views() {
+        let registry = Arc::new(InternalSchemaRegistry::new());
+        let table = TableIdentifier::new(vec![], "docs".to_string());
+        let schema = CatalogTableSchema::new("docs")
+            .with_storage_layout(CatalogStorageLayout::internal(
+                "pax_hot",
+                CatalogStorageLayoutKind::Pax,
+            ))
+            .with_projection(CatalogProjection::rebuildable(
+                "docs_text",
+                CatalogProjectionKind::FullText,
+                "primary",
+            ))
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["id".to_string()],
+                ..Default::default()
+            });
+
+        registry
+            .create_table(&table, schema)
+            .await
+            .expect("table creation should preserve catalog metadata");
+
+        let info_schema = InformationSchema::new(registry);
+
+        let layouts = info_schema.storage_layouts().await;
+        assert_eq!(layouts.len(), 2);
+        assert!(layouts.iter().any(|row| row.layout_name == "primary"));
+        assert!(
+            layouts
+                .iter()
+                .any(|row| { row.layout_name == "pax_hot" && row.layout_kind == "Pax" })
+        );
+
+        let projections = info_schema.projections().await;
+        assert_eq!(projections.len(), 1);
+        assert_eq!(projections[0].projection_name, "docs_text");
+        assert_eq!(projections[0].projection_kind, "FullText");
+        assert_eq!(projections[0].rebuild_source, "primary");
+
+        let capabilities = info_schema.relational_capabilities().await;
+        assert_eq!(capabilities.len(), 1);
+        assert!(capabilities[0].has_enforced_semantics);
+        assert_eq!(capabilities[0].primary_key, vec!["id"]);
+
+        let result = info_schema
+            .query(InformationSchemaView::StorageLayouts)
+            .await;
+        assert_eq!(result.row_count(), 2);
+        assert!(InformationSchemaView::StorageLayouts.is_extension());
+    }
+
     #[test]
     fn test_view_names() {
         assert_eq!(InformationSchemaView::Tables.name(), "tables");
         assert_eq!(
             InformationSchemaView::VectorCollections.name(),
             "vector_collections"
+        );
+        assert_eq!(
+            InformationSchemaView::StorageLayouts.name(),
+            "storage_layouts"
         );
         assert!(InformationSchemaView::VectorCollections.is_extension());
         assert!(!InformationSchemaView::Tables.is_extension());

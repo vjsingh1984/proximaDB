@@ -697,6 +697,7 @@ impl Catalog for IcebergCatalog {
             location: Some(table.location.clone()),
             created_at_ms: table.last_updated_ms,
             updated_at_ms: table.last_updated_ms,
+            ..Default::default()
         };
 
         self.cache.put_table(&self.name, identifier, schema.clone());
@@ -862,6 +863,7 @@ impl Catalog for IcebergCatalog {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            ..Default::default()
         })
     }
 

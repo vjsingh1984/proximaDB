@@ -692,8 +692,9 @@ impl Catalog for GlueCatalog {
                 indexes: vec![],
                 schema_version,
                 properties: table.parameters().cloned().unwrap_or_default(),
-                created_at: now,
-                updated_at: now,
+                created_at_ms: now,
+                updated_at_ms: now,
+                ..Default::default()
             };
 
             // Update cache

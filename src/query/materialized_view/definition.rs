@@ -446,6 +446,7 @@ impl MaterializedView {
             constraints: Vec::new(),
             indexes: Vec::new(),
             model_properties: ModelProperties::None,
+            ..Default::default()
         };
 
         let mut obj =

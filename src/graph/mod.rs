@@ -16,14 +16,16 @@
 
 //! # ProximaDB Native Graph Database Engine
 //!
-//! This module implements ProximaDB's native graph database capabilities following
-//! the proto-first, Arc-based zero-copy architecture for maximum performance.
+//! This module implements ProximaDB's native graph database capabilities over
+//! canonical `ProximaRecord` node and edge records. Protocol-specific graph
+//! types are compatibility edges; durable graph truth is the shared record
+//! envelope defined by the convergence design.
 //!
 //! ## Design Principles
 //!
-//! - **Proto-First**: All data structures flow natively as protobuf types
+//! - **Record-First**: Nodes and edges map to canonical `ProximaRecord`
 //! - **Arc-Based Sharing**: Zero-copy memory sharing between vector and graph engines
-//! - **CSR Format**: Compressed Sparse Row format for ultra-efficient edge storage
+//! - **CSR Projection**: Compressed Sparse Row is a rebuildable topology projection
 //! - **Modular Engines**: ORION (in-memory), PULSAR (distributed), QUASAR (hybrid)
 //!
 //! ## Performance Characteristics
@@ -48,8 +50,8 @@
 //! ├─────────────────────────────────────┤
 //! │           Arc Memory Pool           │
 //! │    ┌────────────┬─────────────┐     │
-//! │    │   Nodes    │    Edges    │     │
-//! │    │ Properties │ Embeddings  │     │
+//! │    │ Nodes/Edges│ Adj/CSR     │     │
+//! │    │ Records    │ Projections │     │
 //! │    └────────────┴─────────────┘     │
 //! └─────────────────────────────────────┘
 //! ```

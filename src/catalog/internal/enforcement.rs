@@ -640,6 +640,7 @@ mod tests {
             ],
             indexes: vec![],
             model_properties: super::super::ModelProperties::None,
+            ..Default::default()
         };
 
         CatalogObject::new(

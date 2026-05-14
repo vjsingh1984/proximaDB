@@ -318,6 +318,15 @@ pub struct CatalogTableSchema {
     pub primary_key: Vec<String>,
     /// Indexes
     pub indexes: Vec<CatalogIndex>,
+    /// Cataloged storage layouts and authority modes.
+    #[serde(default)]
+    pub storage_layouts: Vec<CatalogStorageLayout>,
+    /// Cataloged rebuildable projections/access methods.
+    #[serde(default)]
+    pub projections: Vec<CatalogProjection>,
+    /// Optional relational integrity and transaction capabilities.
+    #[serde(default)]
+    pub relational_capabilities: RelationalCapabilities,
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -342,6 +351,9 @@ impl Default for CatalogTableSchema {
             columns: Vec::new(),
             primary_key: Vec::new(),
             indexes: Vec::new(),
+            storage_layouts: vec![CatalogStorageLayout::default()],
+            projections: Vec::new(),
+            relational_capabilities: RelationalCapabilities::default(),
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -375,6 +387,24 @@ impl CatalogTableSchema {
     /// Add an index
     pub fn with_index(mut self, index: CatalogIndex) -> Self {
         self.indexes.push(index);
+        self
+    }
+
+    /// Add a storage layout/authority descriptor.
+    pub fn with_storage_layout(mut self, layout: CatalogStorageLayout) -> Self {
+        self.storage_layouts.push(layout);
+        self
+    }
+
+    /// Add a rebuildable projection descriptor.
+    pub fn with_projection(mut self, projection: CatalogProjection) -> Self {
+        self.projections.push(projection);
+        self
+    }
+
+    /// Set optional relational capability metadata.
+    pub fn with_relational_capabilities(mut self, capabilities: RelationalCapabilities) -> Self {
+        self.relational_capabilities = capabilities;
         self
     }
 }
@@ -1047,6 +1077,11 @@ mod tests {
         assert_eq!(schema.name, "users");
         assert_eq!(schema.columns.len(), 2);
         assert_eq!(schema.primary_key, vec!["id"]);
+        assert_eq!(schema.storage_layouts.len(), 1);
+        assert_eq!(
+            schema.storage_layouts[0].authority,
+            CatalogAuthorityMode::InternalCanonical
+        );
     }
 
     #[test]
@@ -1180,5 +1215,30 @@ mod tests {
             ..Default::default()
         };
         assert!(with_pk.has_enforced_semantics());
+    }
+
+    #[test]
+    fn test_table_schema_persists_layout_projection_and_relational_metadata() {
+        let layout = CatalogStorageLayout::internal("pax_hot", CatalogStorageLayoutKind::Pax);
+        let projection =
+            CatalogProjection::rebuildable("docs_text", CatalogProjectionKind::FullText, "primary");
+        let capabilities = RelationalCapabilities {
+            primary_key: vec!["id".to_string()],
+            ..Default::default()
+        };
+
+        let schema = CatalogTableSchema::new("docs")
+            .with_storage_layout(layout)
+            .with_projection(projection)
+            .with_relational_capabilities(capabilities);
+
+        assert_eq!(schema.storage_layouts.len(), 2);
+        assert_eq!(
+            schema.storage_layouts[1].layout_kind,
+            CatalogStorageLayoutKind::Pax
+        );
+        assert_eq!(schema.projections.len(), 1);
+        assert_eq!(schema.projections[0].kind, CatalogProjectionKind::FullText);
+        assert!(schema.relational_capabilities.has_enforced_semantics());
     }
 }

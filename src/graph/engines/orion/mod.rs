@@ -16,11 +16,16 @@
 
 //! # ORION Graph Engine - PRODUCTION READY
 //!
-//! ORION is ProximaDB's production-grade in-memory graph engine featuring:
-//! - CSR (Compressed Sparse Row) format for fast traversal
+//! ORION is ProximaDB's production-grade in-memory graph traversal engine featuring:
+//! - CSR (Compressed Sparse Row) projection for fast traversal
 //! - Arc-based zero-copy memory sharing
-//! - WAL persistence for durability
+//! - WAL persistence for legacy/compatibility operation logs
 //! - DashMap concurrent access
+//!
+//! In the canonical convergence architecture, ORION is a topology projection
+//! and traversal cache over durable `ProximaRecord` node/edge records. It must
+//! be rebuildable from canonical edge records or adjacency projections and must
+//! not grow independent durable semantics for graph facts.
 //!
 //! ## Production Status
 //!
@@ -41,14 +46,14 @@
 //!
 //! ## Key Features
 //!
-//! - **CSR Format**: Compressed Sparse Row for memory-efficient edge storage
+//! - **CSR Format**: Compressed Sparse Row for memory-efficient edge traversal
 //! - **Zero-Copy Memory**: Arc-based sharing eliminates data duplication
-//! - **WAL Persistence**: Write-ahead logging ensures durability across restarts
+//! - **WAL Persistence**: Compatibility operation logging for non-canonical paths
 //! - **Concurrent Access**: DashMap provides lock-free concurrent reads
 //! - **Graph Algorithms**: PageRank, community detection, centrality metrics
 //! - **Label Indexes**: O(1) lookup for nodes by label
 //!
-//! ## CSR Format Benefits
+//! ## CSR Projection Benefits
 //!
 //! - **Memory Efficiency**: 60% reduction vs adjacency matrix
 //! - **Cache Friendly**: Sequential access patterns for traversal

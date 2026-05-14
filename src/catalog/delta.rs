@@ -824,6 +824,7 @@ impl Catalog for DeltaCatalog {
             location: Some(table.location.clone()),
             created_at_ms: table.created_at_ms,
             updated_at_ms: table.last_modified_ms,
+            ..Default::default()
         };
 
         self.cache.put_table(&self.name, identifier, schema.clone());
@@ -1027,6 +1028,7 @@ impl Catalog for DeltaCatalog {
             location: None,
             created_at_ms: table.created_at_ms,
             updated_at_ms: table.last_modified_ms,
+            ..Default::default()
         })
     }
 

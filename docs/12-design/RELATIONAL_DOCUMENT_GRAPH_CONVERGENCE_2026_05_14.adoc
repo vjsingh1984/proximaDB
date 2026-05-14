@@ -789,11 +789,13 @@ Tasks:
 
 * [x] Introduce or refine a canonical `RecordStore`/`RelationalRecordStore` contract around `ProximaRecord` operations.
 * [x] Define document mapping helpers: `DocumentRecord <-> ProximaRecord`.
-* [ ] Define graph mapping helpers: `Node/Edge <-> ProximaRecord`.
-* [ ] Define `TopologyProjection` trait for adjacency/CSR projections.
+* [x] Define graph mapping helpers: `Node/Edge <-> ProximaRecord`.
+** [x] Canonical graph records carry graph id, labels, properties, RLS fields, version/time fields, and provenance through the shared `ProximaRecord` envelope.
+* [x] Define `TopologyProjection` trait for adjacency/CSR projections.
+** [x] Topology projection contracts expose canonical edge application, full rebuild, directional adjacency entries, and epoch-based freshness checks.
 * [x] Define `DocumentProjection` trait for JSON path, array, full-text, and columnar variation projections.
 * [x] Update `DocumentStorageOperations` docs to state it is facade-facing, not a separate persistence mandate.
-* [ ] Update graph engine docs to state ORION CSR is a topology projection/cache when used with durable graph storage.
+* [x] Update graph engine docs to state ORION CSR is a topology projection/cache when used with durable graph storage.
 
 Acceptance:
 
@@ -825,7 +827,8 @@ Tasks:
 ** [x] access-method/projection over canonical records.
 ** [x] implement canonical `RecordStore`/`RecordScan` adapter for CEDAR while keeping its document memtables as compatibility projection state.
 ** [ ] remove any future CEDAR plan that would add independent durable WAL/recovery semantics.
-* [ ] Add parity tests: old `DocumentService` behavior vs canonical record-backed behavior.
+* [x] Add parity tests: old `DocumentService` behavior vs canonical record-backed behavior.
+** [x] Cover insert/get/update/query/delete parity for the feature-gated canonical CEDAR-backed path.
 
 Acceptance:
 
@@ -839,11 +842,15 @@ Goal: make graph nodes/edges durable as canonical records/tables while keeping t
 
 Tasks:
 
-* [ ] Define canonical node and edge schemas with graph id, labels, properties, RLS fields, version/time fields, and provenance.
+* [x] Define canonical node and edge schemas with graph id, labels, properties, RLS fields, version/time fields, and provenance.
 * [ ] Implement adjacency table projections: `edges_by_src` and `edges_by_dst`.
+** [x] Define deterministic `edges_by_src` and `edges_by_dst` projection keys/entries over canonical edge records.
+** [ ] Wire those entries into a root graph projection store used by write-heavy graph paths.
 * [ ] Route graph insert/update/delete through canonical node/edge records.
 * [ ] Make ORION CSR load/build from edge records or adjacency projections.
 * [ ] Add invalidation/epoch semantics for CSR when edge records change.
+** [x] Define `TopologyEpoch` and freshness state in the graph modality projection contract.
+** [ ] Connect canonical edge mutations to ORION CSR epoch invalidation.
 * [ ] Add write-heavy path that uses adjacency indexes without forcing CSR rebuild.
 * [ ] Add read-heavy path that uses CSR when projection freshness and workload justify it.
 * [ ] Treat TITAN as either a projection/access method or retire it as duplicate adjacency ownership.

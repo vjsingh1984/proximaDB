@@ -96,6 +96,20 @@ pub struct CanonicalNode {
     pub rls_policy_id: Option<String>,
     /// Optimistic-concurrency version.
     pub version: u64,
+    /// Creation time in the canonical record clock (nanoseconds since Unix epoch).
+    pub created_at_ns: i64,
+    /// Last-update time in the canonical record clock (nanoseconds since Unix epoch).
+    pub updated_at_ns: i64,
+    /// Optional valid-from time for bitemporal graph facts.
+    pub valid_from_ns: Option<i64>,
+    /// Optional valid-to time for bitemporal graph facts.
+    pub valid_to_ns: Option<i64>,
+    /// Source system or connector that produced this node.
+    pub origin: Option<String>,
+    /// Principal that authored this node.
+    pub actor: Option<String>,
+    /// Ingestion method, e.g. api/cdc/migration.
+    pub method: Option<String>,
 }
 
 impl CanonicalNode {
@@ -105,6 +119,7 @@ impl CanonicalNode {
         node_label: impl Into<String>,
         properties: ProximaTree,
     ) -> Self {
+        let record_defaults = ProximaRecord::default();
         Self {
             key: GraphNodeKey::new(graph_id, node_id),
             node_label: node_label.into(),
@@ -113,6 +128,13 @@ impl CanonicalNode {
             permitted_principals: Vec::new(),
             rls_policy_id: None,
             version: 0,
+            created_at_ns: record_defaults.created_at_ns,
+            updated_at_ns: record_defaults.updated_at_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: None,
         }
     }
 
@@ -138,6 +160,13 @@ impl CanonicalNode {
             tenant_id: self.tenant_id,
             permitted_principals: self.permitted_principals,
             rls_policy_id: self.rls_policy_id,
+            created_at_ns: self.created_at_ns,
+            updated_at_ns: self.updated_at_ns,
+            valid_from_ns: self.valid_from_ns,
+            valid_to_ns: self.valid_to_ns,
+            origin: self.origin,
+            actor: self.actor,
+            method: self.method,
             props,
             labels,
             ..ProximaRecord::default()
@@ -165,6 +194,20 @@ pub struct CanonicalEdge {
     pub rls_policy_id: Option<String>,
     /// Optimistic-concurrency version.
     pub version: u64,
+    /// Creation time in the canonical record clock (nanoseconds since Unix epoch).
+    pub created_at_ns: i64,
+    /// Last-update time in the canonical record clock (nanoseconds since Unix epoch).
+    pub updated_at_ns: i64,
+    /// Optional valid-from time for bitemporal graph facts.
+    pub valid_from_ns: Option<i64>,
+    /// Optional valid-to time for bitemporal graph facts.
+    pub valid_to_ns: Option<i64>,
+    /// Source system or connector that produced this edge.
+    pub origin: Option<String>,
+    /// Principal that authored this edge.
+    pub actor: Option<String>,
+    /// Ingestion method, e.g. api/cdc/migration.
+    pub method: Option<String>,
 }
 
 impl CanonicalEdge {
@@ -176,6 +219,7 @@ impl CanonicalEdge {
         edge_label: impl Into<String>,
         properties: ProximaTree,
     ) -> Self {
+        let record_defaults = ProximaRecord::default();
         Self {
             key: GraphEdgeKey::new(graph_id, edge_id),
             src_node_oid: src_node_oid.into(),
@@ -186,6 +230,13 @@ impl CanonicalEdge {
             permitted_principals: Vec::new(),
             rls_policy_id: None,
             version: 0,
+            created_at_ns: record_defaults.created_at_ns,
+            updated_at_ns: record_defaults.updated_at_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: None,
         }
     }
 
@@ -230,6 +281,13 @@ impl CanonicalEdge {
             tenant_id: self.tenant_id,
             permitted_principals: self.permitted_principals,
             rls_policy_id: self.rls_policy_id,
+            created_at_ns: self.created_at_ns,
+            updated_at_ns: self.updated_at_ns,
+            valid_from_ns: self.valid_from_ns,
+            valid_to_ns: self.valid_to_ns,
+            origin: self.origin,
+            actor: self.actor,
+            method: self.method,
             edge: Some(edge_shape),
             props,
             labels,
@@ -271,6 +329,13 @@ pub fn canonical_node_from_record(record: &ProximaRecord) -> Option<CanonicalNod
         permitted_principals: record.permitted_principals.clone(),
         rls_policy_id: record.rls_policy_id.clone(),
         version: record.record_version,
+        created_at_ns: record.created_at_ns,
+        updated_at_ns: record.updated_at_ns,
+        valid_from_ns: record.valid_from_ns,
+        valid_to_ns: record.valid_to_ns,
+        origin: record.origin.clone(),
+        actor: record.actor.clone(),
+        method: record.method.clone(),
     })
 }
 
@@ -315,6 +380,13 @@ pub fn canonical_edge_from_record(record: &ProximaRecord) -> Option<CanonicalEdg
         permitted_principals: record.permitted_principals.clone(),
         rls_policy_id: record.rls_policy_id.clone(),
         version: record.record_version,
+        created_at_ns: record.created_at_ns,
+        updated_at_ns: record.updated_at_ns,
+        valid_from_ns: record.valid_from_ns,
+        valid_to_ns: record.valid_to_ns,
+        origin: record.origin.clone(),
+        actor: record.actor.clone(),
+        method: record.method.clone(),
     })
 }
 

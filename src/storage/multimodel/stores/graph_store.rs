@@ -1,13 +1,15 @@
 //! # Graph Store
 //!
-//! Wraps the ORION graph engine for native graph storage with CSR format.
+//! Wraps the ORION graph engine for native graph traversal with CSR projections.
+//! In the canonical architecture, durable graph facts live as `ProximaRecord`
+//! node/edge records; ORION CSR is a rebuildable topology projection/cache.
 //!
 //! ## Engine: ORION
 //!
-//! - **CSR (Compressed Sparse Row)** format for efficient adjacency traversal
+//! - **CSR (Compressed Sparse Row)** projection for efficient adjacency traversal
 //! - **Arc-based zero-copy** memory sharing
 //! - **DashMap** concurrent access
-//! - **WAL persistence** for durability
+//! - **WAL persistence** for legacy/compatibility operation logging
 //! - **1M+ edges/sec** traversal throughput
 
 use async_trait::async_trait;

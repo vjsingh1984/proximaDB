@@ -16,9 +16,12 @@
 
 //! # Graph Storage Engines
 //!
-//! ProximaDB implements multiple graph storage engines optimized for different workloads:
+//! ProximaDB implements multiple graph engines optimized for different workloads.
+//! Under canonical durable graph storage, these engines consume `ProximaRecord`
+//! node/edge records and maintain rebuildable topology projections rather than
+//! owning a separate durable graph record model.
 //!
-//! - **ORION**: In-memory CSR format for real-time traversal (1M+ edges/sec)
+//! - **ORION**: In-memory CSR projection for real-time traversal (1M+ edges/sec)
 //! - **PULSAR**: Distributed engine for sharded graphs (1B+ nodes) [Phase 2]
 //! - **QUASAR**: Hybrid hot/cold tiering for cost optimization [Phase 3]
 //!
@@ -30,12 +33,13 @@
 //! - **Cold**: Embeddings in vector engine (SST/HELIX/VIPER) - SKS with large graphs
 //! - **Memory**: Embeddings cached in memory - SKS-heavy workloads, consumer override
 //!
-//! CSR (Compressed Sparse Row) format NEVER contains embedding data.
-//! Embeddings are optionally stored in separate vector storage engines.
+//! CSR (Compressed Sparse Row) format NEVER contains embedding data and is not
+//! the durable authority for node or edge facts. Embeddings are optionally
+//! stored in separate vector storage engines.
 
 /// Generic graph traversal algorithms (BFS, DFS, Dijkstra, A*) usable across all engines.
 pub mod generic_traversal;
-/// ORION in-memory CSR graph engine for real-time traversal at 1M+ edges/sec.
+/// ORION in-memory CSR projection engine for real-time traversal at 1M+ edges/sec.
 pub mod orion;
 
 // PULSAR: Distributed graph engine (experimental)
