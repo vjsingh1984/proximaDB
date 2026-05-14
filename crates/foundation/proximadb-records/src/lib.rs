@@ -33,6 +33,9 @@ use serde::{Deserialize, Serialize};
 
 pub mod conversions;
 pub mod proto_v2;
+pub mod store;
+
+pub use store::{RecordKey, RecordScan, RecordStore, RecordStoreResult, RecordWriteResult};
 
 // ---------------------------------------------------------------------------
 // NF² Property Tree

@@ -8,11 +8,13 @@
 // - Aggregation pipeline (GROUP BY, COUNT, SUM, AVG, MIN, MAX)
 //
 // Storage strategy:
-// - Hot tier: SST engine with document-optimized blocks
-// - Cold tier: VIPER/Parquet columnar storage
+// - Canonical durable truth: ProximaRecord / ProximaValue record storage
+// - Adaptive projections: JSON path, array, full-text, and columnar access methods
+// - Legacy v1 proto shapes are compatibility adapters at the API/service edge
 
 pub mod aggregation;
 pub mod aggregation_extensions;
+pub mod canonical_adapter;
 pub mod indexes;
 pub mod query;
 pub mod sdp;

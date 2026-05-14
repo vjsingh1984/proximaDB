@@ -1,16 +1,25 @@
-//! Document storage operations trait and related types.
+//! Document facade operations trait and related compatibility types.
 //!
-//! This module provides MongoDB-like document storage capabilities
-//! using the underlying storage engine with JSON path indexing.
+//! This module is a legacy/root facade surface for MongoDB-like document
+//! operations. It is not the long-term durable storage contract. New document
+//! foundation work should use `proximadb_document::CanonicalDocument`,
+//! `proximadb_document::DocumentProjection`, and the canonical
+//! `proximadb_records::RecordStore`/`ProximaRecord` contracts instead.
+//!
+//! The v1 `SqlObject`/`DocumentFilter` types here are compatibility adapter
+//! shapes while document APIs migrate onto `ProximaRecord`/`ProximaValue` and
+//! v2-compatible rich datatypes.
 
 use anyhow::Result;
 use async_trait::async_trait;
 
-/// Document storage operations trait (ISP: focused interface for document operations).
+/// Document facade operations trait (ISP: focused compatibility interface).
 ///
-/// This trait provides MongoDB-like document storage capabilities.
-/// Implementations should use the underlying storage engine (SST recommended)
-/// with JSON path indexing and document-optimized block formats.
+/// This trait provides MongoDB-like document API capabilities for existing
+/// query/runtime callers. Implementations must not treat this trait as a
+/// mandate for independent durable document storage. Durable state should flow
+/// through canonical `ProximaRecord` operations, with JSON path/full-text/
+/// columnar structures maintained as rebuildable projections.
 #[async_trait]
 pub trait DocumentStorageOperations: Send + Sync {
     /// Insert a document into a collection.
