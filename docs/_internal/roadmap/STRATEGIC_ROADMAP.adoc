@@ -639,7 +639,7 @@ maturity justifies consolidation. The governing documents are:
 |===
 | Feature | Status | TD ID | Notes
 
-| Storage layout authority model | 🔄 Phase 7 | TD-060 | Contract skeleton and `CatalogTableSchema` persistence landed in `proximadb-catalog`; introspection and `EXPLAIN` wiring remain.
+| Storage layout authority model | 🔄 Phase 7 | TD-060 | Contract skeleton, `CatalogTableSchema` persistence, internal `ObjectSchema` propagation, information-schema introspection, and nullable EXPLAIN storage-authority metadata landed; planner population remains.
 | Optional relational capabilities | 📅 Phase 7 | TD-061 | Cataloged keys, unique indexes, secondary indexes, FKs, checks, materialized views, transaction profiles, and schema-evolution policy.
 | Predicate-aware vector correctness | 📅 Phase 7 | TD-064 | `VectorTopK` plans must disclose exact, predicate-aware ANN, prefilter-exact, or post-filter fallback behavior.
 |===

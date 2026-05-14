@@ -845,7 +845,9 @@ Tasks:
 * [x] Define canonical node and edge schemas with graph id, labels, properties, RLS fields, version/time fields, and provenance.
 * [ ] Implement adjacency table projections: `edges_by_src` and `edges_by_dst`.
 ** [x] Define deterministic `edges_by_src` and `edges_by_dst` projection keys/entries over canonical edge records.
-** [ ] Wire those entries into a root graph projection store used by write-heavy graph paths.
+** [x] Add root in-memory adjacency projection store over canonical edge records.
+** [x] Wire the root adjacency projection store into graph edge create/update/delete service paths.
+** [ ] Route graph edge reads through adjacency projection when the query is endpoint-bound.
 * [ ] Route graph insert/update/delete through canonical node/edge records.
 * [ ] Make ORION CSR load/build from edge records or adjacency projections.
 * [ ] Add invalidation/epoch semantics for CSR when edge records change.

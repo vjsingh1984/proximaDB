@@ -58,45 +58,38 @@ The workspace refactor has achieved substantial completion with proper architect
 - Cross-model query runtime established in `proximadb-query`
 - Foundation types used throughout
 
-### Phase 9: Platform Runtime Extraction ⚠️ IN PROGRESS (20%)
+### Phase 9: Platform Runtime Extraction ✅ STRUCTURALLY COMPLETE (gRPC fully wired)
 
-#### Phase 9A: Protocol Handler Migration
-**Completed**:
-- ✅ Comprehensive protocol handler audit (60,000+ lines analyzed)
-- ✅ Dependency analysis and architectural assessment
-- ✅ Pragmatic migration strategy established
-- ✅ Successfully migrated 3 gRPC services:
-  - CollectionServiceImpl (151 lines) → `proximadb-api/src/grpc/v1/collection.rs`
-  - VectorServiceImpl (184 lines) → `proximadb-api/src/grpc/v1/vector.rs`
-  - DocumentServiceImpl (266 lines) → `proximadb-api/src/grpc/v1/document.rs`
-- ✅ Compilation verified - all tests passing
-
-**Remaining**:
-- EntityServiceImpl (269 lines)
-- GraphServiceImpl (1,670 lines) - LARGE
-- HybridSearchServiceImpl (350 lines)
-- ObservabilityServiceImpl (400+ lines)
-- SecurityServiceImpl (480 lines)
-- SqlServiceImpl (TBD)
-- StreamingServiceImpl (963 lines)
-- REST handlers (~22,000 lines)
-- PostgreSQL wire (~4,000 lines)
-- Arrow Flight (TBD)
-
-**Phase 9 Completed (2026-05-14)**:
-- ✅ All 10 gRPC services migrated to `proximadb-api` (placeholder impls, zero root crate deps)
-- ✅ REST handler stubs established, root crate dependency removed from `proximadb-api`
+#### Phase 9A: Protocol Handler Migration — COMPLETE
+**Completed as of 2026-05-14**:
+- ✅ All 10 gRPC services in `crates/platform/proximadb-api/src/grpc/v1/` with real port delegation:
+  - CollectionServiceImpl, VectorServiceImpl, DocumentServiceImpl, EntityServiceImpl
+  - GraphServiceImpl, HybridSearchServiceImpl, ObservabilityServiceImpl
+  - SecurityServiceImpl, SqlServiceImpl, StreamingServiceImpl
+- ✅ GrpcServiceFactory wired into all 3 server modes (unified, multi-port, cluster)
+- ✅ Port traits defined in `proximadb-runtime`: GraphPort, DocumentPort, SecurityPort, ClusterPort, EntityPort, HybridPort, ObservabilityPort, StreamingPort, ApiHandlersPort
+- ✅ Root crate concrete services implement port traits and injected via GrpcServiceFactory
+- ✅ SecurityPort: implemented by SecurityServiceImpl in root crate (`src/network/grpc/security_service.rs`)
+- ✅ ClusterPort: implemented by ClusterManager in root crate (`src/cluster/mod.rs`)
 - ✅ Arrow Flight service placeholder (`crates/platform/proximadb-api/src/arrow_flight/`)
 - ✅ pgwire service placeholder (`crates/platform/proximadb-api/src/pgwire/`)
 - ✅ `apps/proximadb-server` binary crate with proper entrypoint
 - ✅ Zero circular dependencies, zero compilation errors workspace-wide
-- ✅ Phase 9.14: All 9 root-crate gRPC service files have 3-line deprecation headers pointing to `proximadb-api`
-- ✅ Phase 9.15: Workspace compiles clean; `check_workspace_boundaries.py --strict` passes with zero findings
-- ✅ `scripts/check_workspace_boundaries.py`: fixed hidden-dir false-positives, classified `crates/contracts/` as `control` layer
+- ✅ `check_workspace_boundaries.py --strict` passes with zero findings
+- ✅ Pre-commit hook validates layering before every commit
 
-**Remaining for Full Migration**:
-- ⏳ Phase 9.9: Move actual `UnifiedHandlers` implementation to `proximadb-runtime` (~3,400 lines)
-  - **Blocker**: depends on `crate::services::collection`, `crate::observability`, `crate::metrics`, `crate::storage::document`, `crate::query::QueryFacadeAdapter` — requires moving those first
+#### Phase 9B: Document-Record Convergence — COMPLETE
+- ✅ CatalogTableSchema + ObjectSchema: storage_layouts, projections, relational_capabilities fields
+- ✅ CatalogStorageLayout, CatalogProjection, RelationalCapabilities, CatalogAuthorityMode types
+- ✅ InformationSchemaView: StorageLayouts, Projections, RelationalCapabilities views
+- ✅ WAL operations: UpsertCanonicalDocumentRecord + DeleteCanonicalDocumentRecord variants
+- ✅ DocumentService: feature-gated canonical-document-store write path via ProximaRecord
+- ✅ Graph CSR projection contracts in proximadb-graph
+
+**Remaining (multi-sprint)**:
+- ⏳ REST handlers: `src/network/rest/` (22,422 lines) → `proximadb-api/src/rest/` (currently tiny stubs)
+- ⏳ Phase 9.9: Move `UnifiedHandlers` to `proximadb-runtime`
+  - **Blocker**: depends on extracting CollectionService, ObservabilityService, DocumentService, QueryFacadeAdapter from root crate first
 - ⏳ Phase 9.10: Move service composition (CollectionService, VectorOps, etc.) to `proximadb-runtime`
 - ⏳ Phase 9.11/9.12: Security + cluster orchestration to runtime crate
 

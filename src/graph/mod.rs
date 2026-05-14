@@ -56,6 +56,7 @@
 //! └─────────────────────────────────────┘
 //! ```
 
+pub mod adjacency_projection;
 pub mod canonical;
 pub mod engines;
 pub mod rag;

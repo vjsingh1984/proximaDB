@@ -25,6 +25,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use proximadb_catalog::{
+    CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout, RelationalCapabilities,
+};
+
 // TODO: Move to proximadb-graph crate
 // For now, use local definitions
 use crate::graph::query::planner::{GraphStatistics, PlanStepType, QueryPlan as GraphQueryPlan};
@@ -46,6 +50,9 @@ pub struct ExplainPlan {
     pub join_strategy: Option<JoinStrategyExplanation>,
     /// Fusion strategy chosen by the optimizer and the reasoning behind it
     pub fusion_strategy: Option<FusionStrategyExplanation>,
+    /// xCatalog storage authority, projection freshness, and relational capability metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_authority: Option<StorageAuthorityExplanation>,
 }
 
 /// Cost estimate for a single operation in the query plan
@@ -148,6 +155,165 @@ impl ExplainPlan {
     pub fn with_fusion_strategy(mut self, explanation: FusionStrategyExplanation) -> Self {
         self.fusion_strategy = Some(explanation);
         self
+    }
+
+    /// Add xCatalog storage authority and projection metadata to the plan.
+    pub fn with_storage_authority(mut self, authority: StorageAuthorityExplanation) -> Self {
+        self.storage_authority = Some(authority);
+        self
+    }
+}
+
+/// Storage authority metadata surfaced by EXPLAIN from xCatalog.
+///
+/// This keeps query plans honest about whether a scan uses canonical
+/// ProximaRecord storage, an externally authoritative table, or a rebuildable
+/// projection/access method. The fields are descriptive and do not change
+/// planning behavior by themselves.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StorageAuthorityExplanation {
+    /// Cataloged physical layouts that may satisfy the plan.
+    pub layouts: Vec<StorageLayoutExplanation>,
+    /// Cataloged projections/access methods considered or available.
+    pub projections: Vec<ProjectionExplanation>,
+    /// Optional relational integrity and transaction capabilities.
+    pub relational_capabilities: RelationalCapabilityExplanation,
+    /// Fallback behavior when a preferred projection is stale, missing, or lossy.
+    pub fallback_behavior: String,
+}
+
+impl StorageAuthorityExplanation {
+    /// Build EXPLAIN metadata from xCatalog layout/projection/capability records.
+    pub fn from_catalog_metadata(
+        layouts: &[CatalogStorageLayout],
+        projections: &[CatalogProjection],
+        relational_capabilities: &RelationalCapabilities,
+    ) -> Self {
+        let fallback_behavior = if projections.iter().any(|projection| !projection.rebuildable) {
+            "planner must verify non-rebuildable projection freshness before use".to_string()
+        } else if projections.iter().any(|projection| projection.lossy) {
+            "planner should fall back to canonical records when exact recall is required"
+                .to_string()
+        } else if layouts
+            .iter()
+            .any(|layout| !layout.policy_enforced_in_proxima)
+        {
+            "planner must apply ProximaDB policy/RLS after external reads".to_string()
+        } else {
+            "canonical records remain the fallback for stale or unavailable projections".to_string()
+        };
+
+        Self {
+            layouts: layouts.iter().map(StorageLayoutExplanation::from).collect(),
+            projections: projections
+                .iter()
+                .map(ProjectionExplanation::from)
+                .collect(),
+            relational_capabilities: RelationalCapabilityExplanation::from(relational_capabilities),
+            fallback_behavior,
+        }
+    }
+
+    /// Returns true when all authority metadata preserves ProximaDB policy semantics.
+    pub fn policy_safe_inside_proxima(&self) -> bool {
+        self.layouts
+            .iter()
+            .all(|layout| layout.policy_enforced_in_proxima)
+    }
+}
+
+/// Physical layout authority row for EXPLAIN output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageLayoutExplanation {
+    pub name: String,
+    pub authority: String,
+    pub layout_kind: String,
+    pub physical_format: String,
+    pub write_mode: String,
+    pub location: Option<String>,
+    pub snapshot_semantics: Option<String>,
+    pub policy_enforced_in_proxima: bool,
+    pub lossy_type_mappings: Vec<String>,
+}
+
+impl From<&CatalogStorageLayout> for StorageLayoutExplanation {
+    fn from(layout: &CatalogStorageLayout) -> Self {
+        Self {
+            name: layout.name.clone(),
+            authority: format!("{:?}", layout.authority),
+            layout_kind: format!("{:?}", layout.layout_kind),
+            physical_format: physical_format_label(&layout.physical_format),
+            write_mode: format!("{:?}", layout.write_mode),
+            location: layout.location.clone(),
+            snapshot_semantics: layout.snapshot_semantics.clone(),
+            policy_enforced_in_proxima: layout.policy_enforced_in_proxima,
+            lossy_type_mappings: layout.lossy_type_mappings.clone(),
+        }
+    }
+}
+
+/// Projection/access-method row for EXPLAIN output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectionExplanation {
+    pub name: String,
+    pub kind: String,
+    pub physical_format: String,
+    pub rebuild_source: String,
+    pub freshness: String,
+    pub max_lag_ms: Option<i64>,
+    pub rebuildable: bool,
+    pub lossy: bool,
+    pub support_status: String,
+}
+
+impl From<&CatalogProjection> for ProjectionExplanation {
+    fn from(projection: &CatalogProjection) -> Self {
+        Self {
+            name: projection.name.clone(),
+            kind: format!("{:?}", projection.kind),
+            physical_format: physical_format_label(&projection.physical_format),
+            rebuild_source: projection.rebuild_source.clone(),
+            freshness: format!("{:?}", projection.freshness),
+            max_lag_ms: projection.max_lag_ms,
+            rebuildable: projection.rebuildable,
+            lossy: projection.lossy,
+            support_status: projection.support_status.clone(),
+        }
+    }
+}
+
+/// Optional relational semantics surfaced by EXPLAIN.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RelationalCapabilityExplanation {
+    pub has_enforced_semantics: bool,
+    pub primary_key: Vec<String>,
+    pub unique_index_count: usize,
+    pub secondary_index_count: usize,
+    pub constraint_count: usize,
+    pub materialized_view_count: usize,
+    pub transaction_profile: Option<String>,
+    pub schema_evolution_policy: Option<String>,
+}
+
+impl From<&RelationalCapabilities> for RelationalCapabilityExplanation {
+    fn from(capabilities: &RelationalCapabilities) -> Self {
+        Self {
+            has_enforced_semantics: capabilities.has_enforced_semantics(),
+            primary_key: capabilities.primary_key.clone(),
+            unique_index_count: capabilities.unique_indexes.len(),
+            secondary_index_count: capabilities.secondary_indexes.len(),
+            constraint_count: capabilities.constraints.len(),
+            materialized_view_count: capabilities.materialized_views.len(),
+            transaction_profile: capabilities.transaction_profile.clone(),
+            schema_evolution_policy: capabilities.schema_evolution_policy.clone(),
+        }
+    }
+}
+
+fn physical_format_label(format: &CatalogPhysicalFormat) -> String {
+    match format {
+        CatalogPhysicalFormat::External(label) => label.clone(),
+        other => format!("{:?}", other),
     }
 }
 
@@ -1220,6 +1386,10 @@ pub enum WarningSeverity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_catalog::{
+        CatalogPhysicalFormat, CatalogProjection, CatalogProjectionKind, CatalogStorageLayout,
+        CatalogStorageLayoutKind, CatalogTableSchema, RelationalCapabilities,
+    };
 
     #[test]
     fn test_enhanced_explain_plan_builder() {
@@ -1406,6 +1576,51 @@ mod tests {
         let deserialized: EnhancedExplainPlan =
             serde_json::from_str(&json).expect("Failed to deserialize");
         assert_eq!(deserialized.optimization_rules_applied.len(), 1);
+    }
+
+    #[test]
+    fn test_explain_storage_authority_from_catalog_metadata() {
+        let mut parquet_lake = CatalogStorageLayout::external_authoritative(
+            "iceberg_lake",
+            CatalogPhysicalFormat::Iceberg,
+            "s3://bucket/table",
+        );
+        parquet_lake.snapshot_semantics = Some("iceberg-snapshot".to_string());
+
+        let mut vector_projection = CatalogProjection::rebuildable(
+            "semantic_ann",
+            CatalogProjectionKind::VectorAnn,
+            "primary",
+        );
+        vector_projection.lossy = true;
+
+        let schema = CatalogTableSchema::new("events")
+            .with_storage_layout(CatalogStorageLayout::internal(
+                "pax_hot",
+                CatalogStorageLayoutKind::Pax,
+            ))
+            .with_storage_layout(parquet_lake)
+            .with_projection(vector_projection)
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["event_id".to_string()],
+                transaction_profile: Some("mvcc".to_string()),
+                ..Default::default()
+            });
+
+        let authority = StorageAuthorityExplanation::from_catalog_metadata(
+            &schema.storage_layouts,
+            &schema.projections,
+            &schema.relational_capabilities,
+        );
+
+        assert_eq!(authority.layouts.len(), 3);
+        assert_eq!(authority.projections.len(), 1);
+        assert!(!authority.policy_safe_inside_proxima());
+        assert!(authority.fallback_behavior.contains("canonical records"));
+        assert!(authority.relational_capabilities.has_enforced_semantics);
+
+        let plan = ExplainPlan::new().with_storage_authority(authority);
+        assert!(plan.storage_authority.is_some());
     }
 
     // ========================================================================

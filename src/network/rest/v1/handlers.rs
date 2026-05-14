@@ -1058,6 +1058,7 @@ pub async fn explain_sql(
         cost_breakdown: None,
         join_strategy: None,
         fusion_strategy: None,
+        storage_authority: None,
     };
 
     let response = ExplainQueryResponse {
