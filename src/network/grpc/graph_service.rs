@@ -410,16 +410,16 @@ fn create_query_response_for_edges(
 
 /// gRPC implementation of GraphService
 pub struct GraphServiceImpl {
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
     /// Query facade adapter for unified query execution (optional for backward compatibility)
     query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
 impl GraphServiceImpl {
     /// Create new GraphServiceImpl
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             query_adapter: None,
         }
     }
@@ -427,11 +427,11 @@ impl GraphServiceImpl {
     /// Create new GraphServiceImpl with query facade adapter
     #[allow(dead_code)]
     pub fn with_adapter(
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         query_adapter: Arc<QueryFacadeAdapter>,
     ) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             query_adapter: Some(query_adapter),
         }
     }
@@ -455,7 +455,7 @@ impl GraphService for GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Node is required"))?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .create_node(&req.graph_id, node)
             .await
@@ -480,7 +480,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_node(&req.graph_id, &req.node_id)
             .await
@@ -519,7 +519,7 @@ impl GraphService for GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Node is required"))?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .update_node(&req.graph_id, node)
             .await
@@ -547,7 +547,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .delete_node(&req.graph_id, &req.node_id)
             .await
@@ -586,7 +586,7 @@ impl GraphService for GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Edge is required"))?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .create_edge(&req.graph_id, edge)
             .await
@@ -611,7 +611,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_edge(&req.graph_id, &req.edge_id)
             .await
@@ -650,7 +650,7 @@ impl GraphService for GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Edge is required"))?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .update_edge(&req.graph_id, edge)
             .await
@@ -678,7 +678,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .delete_edge(&req.graph_id, &req.edge_id)
             .await
@@ -721,7 +721,7 @@ impl GraphService for GraphServiceImpl {
         }
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .query_nodes(&query.graph_id, query.clone())
             .await
@@ -756,7 +756,7 @@ impl GraphService for GraphServiceImpl {
         }
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .query_edges(&query.graph_id, query.clone())
             .await
@@ -787,7 +787,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_neighbors(&req.graph_id, &req.node_id)
             .await
@@ -825,7 +825,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .traverse(&req.graph_id, req.clone())
             .await
@@ -855,7 +855,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<Self::StreamTraverseStream>, Status> {
         let req = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel(8);
-        let handlers = self.unified_handlers.clone();
+        let handlers = self.request_handlers.clone();
         let graph_id = req.graph_id.clone();
         tokio::spawn(async move {
             match handlers
@@ -933,7 +933,7 @@ impl GraphService for GraphServiceImpl {
             .and_then(|s| s.parse::<usize>().ok());
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .shortest_path(
                 &req.graph_id,
@@ -980,7 +980,7 @@ impl GraphService for GraphServiceImpl {
         debug!("gRPC GetGraphStats request for graph: {}", req.graph_id);
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_stats(&req.graph_id)
             .await
@@ -1009,7 +1009,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .batch_create_nodes(&req.graph_id, req.nodes)
             .await
@@ -1040,7 +1040,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .batch_create_edges(&req.graph_id, req.edges)
             .await
@@ -1065,7 +1065,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<ConnectedComponentsResponse>, Status> {
         let req = request.into_inner();
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .connected_components(&req.graph_id)
             .await
@@ -1088,7 +1088,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<CycleCheckResponse>, Status> {
         let req = request.into_inner();
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .has_cycle(&req.graph_id)
             .await
@@ -1105,7 +1105,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
         let req = request.into_inner();
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .add_unique_constraint(&req.graph_id, &req.label, &req.property)
             .await
@@ -1128,7 +1128,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
         let req = request.into_inner();
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .remove_unique_constraint(&req.graph_id, &req.label, &req.property)
             .await
@@ -1155,7 +1155,7 @@ impl GraphService for GraphServiceImpl {
             req.combination_strategy
         );
 
-        match self.unified_handlers.execute_hybrid_query(req).await {
+        match self.request_handlers.execute_hybrid_query(req).await {
             Ok(response) => {
                 info!("Successfully executed hybrid query via gRPC");
                 Ok(Response::new(response))
@@ -1323,7 +1323,7 @@ impl GraphService for GraphServiceImpl {
         // For now, delegate to standard create_graph with metadata
         // In production, this would call engine-specific initialization
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .create_graph(&req.graph_id, req.metadata, req.engine_type)
             .await
@@ -1362,7 +1362,7 @@ impl GraphService for GraphServiceImpl {
 
         // Check if graph exists and is PULSAR
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_graph_info(&req.graph_id)
             .await
@@ -1417,7 +1417,7 @@ impl GraphService for GraphServiceImpl {
 
         // Validate graph is PULSAR
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_graph_info(&req.graph_id)
             .await
@@ -1468,7 +1468,7 @@ impl GraphService for GraphServiceImpl {
 
         // Validate graph is PULSAR
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_graph_info(&req.graph_id)
             .await
@@ -1516,7 +1516,7 @@ impl GraphService for GraphServiceImpl {
 
         // Check if graph exists and is QUASAR
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_graph_info(&req.graph_id)
             .await
@@ -1577,7 +1577,7 @@ impl GraphService for GraphServiceImpl {
 
         // Validate graph is QUASAR
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_graph_info(&req.graph_id)
             .await
@@ -1639,7 +1639,7 @@ impl GraphService for GraphServiceImpl {
 
         // Validate graph is QUASAR
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_graph_info(&req.graph_id)
             .await

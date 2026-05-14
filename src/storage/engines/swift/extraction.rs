@@ -16,7 +16,9 @@ use crate::storage::trait_components::extractor::{
     ExtractionRequest, ExtractionResult, ExtractionStats, VectorExtractor,
 };
 
-use super::unified_reader::{SwiftReadStrategy, SwiftReaderConfig, UnifiedSwiftReader};
+use super::proximablocks_compact_reader::{
+    SwiftReadStrategy, SwiftReaderConfig, UnifiedSwiftReader,
+};
 
 /// SWIFT Vector Extractor
 ///

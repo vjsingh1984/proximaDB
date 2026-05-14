@@ -9,7 +9,7 @@ use std::time::Instant;
 use tracing::debug;
 
 use crate::index::axis::eventlog::StorageEngineType;
-use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
+use crate::storage::engines::core::formats::columnar::columnar_query_engine::columnar_query_reader::UnifiedParquetReader;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{

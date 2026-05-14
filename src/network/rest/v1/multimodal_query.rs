@@ -84,7 +84,7 @@ use crate::query::unified::executor::ParallelExecutor;
 use crate::query::unified::{
     DataModel, FusionStrategy, QueryDecomposer, ResultFuser, UnifiedQueryConfig,
 };
-use crate::security::unified_rbac::ConsolidatedRBACManager;
+use crate::security::rbac_service::ConsolidatedRBACManager;
 use crate::services::VectorOperationsService;
 use crate::storage::document::DocumentService;
 use crate::storage::traits::UnifiedStorageEngine;

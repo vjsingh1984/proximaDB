@@ -10,13 +10,13 @@ use crate::proto::proximadb_v1::{
 /// gRPC implementation of the SqlService for executing SQL queries
 pub struct SqlServiceImpl {
     /// Shared unified handlers for query execution delegation
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
 }
 
 impl SqlServiceImpl {
     /// Create a new SQL service backed by unified handlers
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { unified_handlers }
+    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+        Self { request_handlers }
     }
     /// Convert this implementation into a tonic gRPC server
     pub fn into_server(self) -> SqlServiceServer<Self> {
@@ -33,7 +33,7 @@ impl SqlService for SqlServiceImpl {
         let req = request.into_inner();
         // Delegate to UnifiedHandlers v1 method (typed params, typed rows)
         let resp = self
-            .unified_handlers
+            .request_handlers
             .execute_sql_v1(
                 req.query,
                 if req.parameters.is_empty() {

@@ -19,16 +19,16 @@
 #[cfg(feature = "ai_endpoints")]
 pub mod ai_endpoints;
 pub mod enterprise;
+pub mod request_handlers;
 #[cfg(feature = "sales_endpoints")]
 pub mod sales_endpoints;
-pub mod unified_handlers;
 
 #[cfg(test)]
-mod unified_handlers_tests;
+mod request_handlers_tests;
 
 pub use crate::services::operations::vectors::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
     RichRecordGetRequest, RichRecordGetResponse, RichSearchRequest, RichSearchResponse,
     RichSearchResult,
 };
-pub use unified_handlers::UnifiedHandlers;
+pub use request_handlers::UnifiedHandlers;

@@ -12,7 +12,7 @@ use crate::query::facade::QueryFacadeAdapter;
 /// gRPC implementation of the VectorService for vector CRUD and search operations
 pub struct VectorServiceImpl {
     /// Shared unified handlers for business logic delegation
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
     /// Optional query facade adapter for unified routing through the query planner
     query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
@@ -24,20 +24,20 @@ pub type VectorSearchStreamStream = Pin<
 
 impl VectorServiceImpl {
     /// Create a new vector service backed by unified handlers
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             query_adapter: None,
         }
     }
 
     /// Create a new VectorServiceImpl with optional facade adapter for unified routing
     pub fn with_adapter(
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         query_adapter: Option<Arc<QueryFacadeAdapter>>,
     ) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             query_adapter,
         }
     }
@@ -66,7 +66,7 @@ impl VectorService for VectorServiceImpl {
     ) -> Result<Response<proximadb_v1::VectorOperationResponse>, Status> {
         let tenant_id = Self::extract_tenant_id(&request);
         let req_v1 = request.into_inner();
-        self.unified_handlers
+        self.request_handlers
             .handle_vector_batch_v1_for_tenant(req_v1, tenant_id.as_deref())
             .await
             .map(Response::new)
@@ -82,7 +82,7 @@ impl VectorService for VectorServiceImpl {
 
         if tenant_id.is_some() {
             return self
-                .unified_handlers
+                .request_handlers
                 .handle_vector_search_v1_for_tenant(req_v1, tenant_id.as_deref())
                 .await
                 .map(Response::new)
@@ -99,8 +99,8 @@ impl VectorService for VectorServiceImpl {
                 .map_err(|e| Status::internal(format!("Vector search (facade) failed: {}", e)));
         }
 
-        // Legacy path: route through unified_handlers directly
-        self.unified_handlers
+        // Legacy path: route through request_handlers directly
+        self.request_handlers
             .handle_vector_search_v1(req_v1)
             .await
             .map(Response::new)
@@ -115,7 +115,7 @@ impl VectorService for VectorServiceImpl {
         let req = request.into_inner();
         let include_vector = req.include_vector.unwrap_or(false);
         let include_metadata = req.include_metadata.unwrap_or(true);
-        self.unified_handlers
+        self.request_handlers
             .handle_vector_v1_for_tenant(
                 &req.collection_id,
                 &req.vector_id,
@@ -146,7 +146,7 @@ impl VectorService for VectorServiceImpl {
 
         // Perform the search - route through facade when adapter is available
         let response = if tenant_id.is_some() {
-            self.unified_handlers
+            self.request_handlers
                 .handle_vector_search_v1_for_tenant(req_v1, tenant_id.as_deref())
                 .await
                 .map_err(|e| Status::internal(format!("Vector search stream failed: {}", e)))?
@@ -156,7 +156,7 @@ impl VectorService for VectorServiceImpl {
                 Status::internal(format!("Vector search stream (facade) failed: {}", e))
             })?
         } else {
-            self.unified_handlers
+            self.request_handlers
                 .handle_vector_search_v1(req_v1)
                 .await
                 .map_err(|e| Status::internal(format!("Vector search stream failed: {}", e)))?

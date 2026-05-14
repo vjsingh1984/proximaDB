@@ -13,7 +13,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
 
 use super::MetadataFilter;
-use super::unified_reader::SwiftReaderConfig;
+use super::proximablocks_compact_reader::SwiftReaderConfig;
 
 /// Unified SWIFT reader that implements strategy-aware reading
 ///
@@ -135,22 +135,24 @@ impl UnifiedSWIFTReader {
     /// Convert to legacy SwiftReadStrategy for compatibility
     #[allow(dead_code)]
     #[allow(dead_code)]
-    fn to_swift_strategy(&self) -> super::unified_reader::SwiftReadStrategy {
+    fn to_swift_strategy(&self) -> super::proximablocks_compact_reader::SwiftReadStrategy {
         match &self.strategy {
-            ReadAccessStrategy::DirectStream => super::unified_reader::SwiftReadStrategy::StreamAll,
+            ReadAccessStrategy::DirectStream => {
+                super::proximablocks_compact_reader::SwiftReadStrategy::StreamAll
+            }
             ReadAccessStrategy::CachedSelective { filter: _ } => {
-                super::unified_reader::SwiftReadStrategy::HierarchicalPrune {
+                super::proximablocks_compact_reader::SwiftReadStrategy::HierarchicalPrune {
                     metadata_filter: None, // Deferred: Convert FilterExpression to MetadataFilter
                     id_filter: None,
                 }
             }
             ReadAccessStrategy::CachedSearch { .. } => {
-                super::unified_reader::SwiftReadStrategy::HierarchicalPrune {
+                super::proximablocks_compact_reader::SwiftReadStrategy::HierarchicalPrune {
                     metadata_filter: None,
                     id_filter: None,
                 }
             }
-            _ => super::unified_reader::SwiftReadStrategy::StreamAll,
+            _ => super::proximablocks_compact_reader::SwiftReadStrategy::StreamAll,
         }
     }
 

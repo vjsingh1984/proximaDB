@@ -21,7 +21,7 @@ use crate::query::unified::{
     },
     executor::ParallelExecutor,
 };
-use crate::security::unified_rbac::{
+use crate::security::rbac_service::{
     ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
 use crate::storage::document::DocumentService;

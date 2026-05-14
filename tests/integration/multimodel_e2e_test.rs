@@ -641,7 +641,7 @@ fn test_storage_model_type_alias_matches_canonical_type() {
 
 #[test]
 fn test_rbac_data_model_reexport_matches_canonical_type() {
-    use proximadb::security::unified_rbac::DataModel as RbacDataModel;
+    use proximadb::security::rbac_service::DataModel as RbacDataModel;
     let dm: RbacDataModel = RbacDataModel::Observability;
     let canonical: DataModel = dm;
     assert_eq!(canonical, DataModel::Observability);

@@ -13,7 +13,7 @@ use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistan
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
-    MetadataFilter, columnar_query_engine::unified_reader::UnifiedParquetReader,
+    MetadataFilter, columnar_query_engine::columnar_query_reader::UnifiedParquetReader,
 };
 
 use super::{

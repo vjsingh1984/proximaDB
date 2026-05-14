@@ -100,7 +100,7 @@ use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
     engines::{GraphEngine, orion::OrionGraphEngine},
 };
-use crate::security::unified_rbac::{
+use crate::security::rbac_service::{
     ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
 };
 use crate::storage::cache::orchestrator::{

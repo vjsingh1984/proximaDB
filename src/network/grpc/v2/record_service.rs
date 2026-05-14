@@ -48,7 +48,7 @@ use proximadb_records::proto_v2::{
 /// - Schema enforcement modes (STRICT, FLEXIBLE, HYBRID)
 /// - Typed filtering with range, equality, and CONTAINS operators
 pub struct ProximaRecordServiceImpl {
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
 }
 
 /// Streaming response type for SearchStream
@@ -360,8 +360,8 @@ impl FlowControlState {
 
 impl ProximaRecordServiceImpl {
     /// Create a new ProximaRecordServiceImpl
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { unified_handlers }
+    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+        Self { request_handlers }
     }
 
     /// Convert to a tonic server
@@ -614,7 +614,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let rich_batch = self.convert_to_rich_batch(&batch)?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
@@ -651,7 +651,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let rich_batch = self.convert_to_rich_batch(&batch)?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
@@ -688,7 +688,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let rich_batch = self.convert_to_rich_batch(&batch)?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
@@ -733,7 +733,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         }
 
         match self
-            .unified_handlers
+            .request_handlers
             .handle_record_delete_batch_for_tenant(
                 RichRecordDeleteBatchRequest {
                     collection_id: batch.collection_id.clone(),
@@ -786,7 +786,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
 
         match self
-            .unified_handlers
+            .request_handlers
             .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
             .await
         {
@@ -843,7 +843,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
 
         // Execute search
         let response = self
-            .unified_handlers
+            .request_handlers
             .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
@@ -919,7 +919,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let metrics = Arc::new(StreamingPipelineMetrics::new());
 
         // Clone handlers for the processing task
-        let unified_handlers = Arc::clone(&self.unified_handlers);
+        let request_handlers = Arc::clone(&self.request_handlers);
         let tenant_id = tenant_id.clone();
 
         // Clone metrics for the spawned task
@@ -1018,12 +1018,12 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         | Ok(BatchWriteMode::Unspecified)
                         | Ok(BatchWriteMode::Upsert)
                         | Ok(BatchWriteMode::Update) => {
-                            unified_handlers
+                            request_handlers
                                 .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
                                 .await
                         }
                         Ok(BatchWriteMode::Delete) => {
-                            unified_handlers
+                            request_handlers
                                 .handle_record_delete_batch_for_tenant(
                                     RichRecordDeleteBatchRequest {
                                         collection_id: batch.collection_id.clone(),
@@ -1179,7 +1179,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
 
         let collection_response = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
             .await
             .map_err(|e| {
@@ -1238,7 +1238,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
 
         let collection_response = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
             .await
             .map_err(|e| {

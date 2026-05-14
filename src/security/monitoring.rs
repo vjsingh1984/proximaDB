@@ -3,7 +3,7 @@
 //! Provides real-time security monitoring, threat detection, and automated alerting
 //! for comprehensive security posture management.
 
-use super::unified_rbac::UnifiedPermission;
+use super::rbac_service::UnifiedPermission;
 
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};

@@ -13,7 +13,7 @@ use crate::proto::proximadb_v1::{
 // --- CustomerRouter Struct ---
 
 pub struct CustomerRouter {
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
     metrics_updater: Arc<dyn InternalMetricsUpdater>,
     // Configuration for tenant ID header name, etc.
     tenant_id_header_name: String,
@@ -23,12 +23,12 @@ pub struct CustomerRouter {
 
 impl CustomerRouter {
     pub fn new(
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         metrics_updater: Arc<dyn InternalMetricsUpdater>,
         tenant_id_header_name: Option<String>,
     ) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             metrics_updater,
             tenant_id_header_name: tenant_id_header_name
                 .unwrap_or_else(|| "x-tenant-id".to_string()),
@@ -72,7 +72,7 @@ impl CustomerRouter {
         let req_size = request.get_ref().encoded_len() as u64;
 
         let result = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation(request.into_inner(), &tenant_id) // Pass tenant_id
             .await
             .map(Response::new)
@@ -110,7 +110,7 @@ impl CustomerRouter {
         let num_vectors = request.get_ref().vectors.len() as u64; // Example of data_inserted_bytes
 
         let result = self
-            .unified_handlers
+            .request_handlers
             .handle_vector_batch_v1(request.into_inner(), &tenant_id) // Pass tenant_id
             .await
             .map(Response::new)
@@ -147,7 +147,7 @@ impl CustomerRouter {
         let req_size = request.get_ref().encoded_len() as u64;
 
         let result = self
-            .unified_handlers
+            .request_handlers
             .handle_vector_search_v1(request.into_inner(), &tenant_id) // Pass tenant_id
             .await
             .map(Response::new)
@@ -191,7 +191,7 @@ impl CustomerRouter {
         let include_metadata = req_inner.include_metadata.unwrap_or(true);
 
         let result = self
-            .unified_handlers
+            .request_handlers
             .handle_vector_v1(
                 &collection_id,
                 &vector_id,
@@ -240,7 +240,7 @@ impl CustomerRouter {
         let collection = req_inner.collection.clone();
 
         let result = self
-            .unified_handlers
+            .request_handlers
             .execute_sql_v1(
                 query,
                 parameters,
@@ -283,7 +283,7 @@ impl CustomerRouter {
         let req_size = request.get_ref().encoded_len() as u64;
 
         let result = self
-            .unified_handlers
+            .request_handlers
             .execute_hybrid_query(request.into_inner(), &tenant_id) // Pass tenant_id
             .await
             .map(Response::new)

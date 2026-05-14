@@ -1,4 +1,4 @@
-use crate::security::unified_rbac::UnifiedUserContext;
+use crate::security::rbac_service::UnifiedUserContext;
 use anyhow::Result;
 use async_trait::async_trait;
 

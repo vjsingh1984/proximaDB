@@ -13,7 +13,7 @@ use tracing::{debug, info, warn};
 
 use super::policy::{FilterOperator, Operation, RLSPolicy, SecurityPredicate, ValueSource};
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::security::unified_rbac::UnifiedUserContext;
+use crate::security::rbac_service::UnifiedUserContext;
 
 /// Configuration for Row-Level Security
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -557,7 +557,7 @@ mod tests {
             tenant_id: tenant_id.map(|s| s.to_string()),
             roles: roles.into_iter().map(|s| s.to_string()).collect(),
             effective_permissions: HashSet::new(),
-            auth_method: crate::security::unified_rbac::UnifiedAuthMethod::Internal,
+            auth_method: crate::security::rbac_service::UnifiedAuthMethod::Internal,
             session_id: "test_session".to_string(),
             expires_at: None,
             created_at: Utc::now(),

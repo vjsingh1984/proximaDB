@@ -236,9 +236,9 @@ pub mod readers;
 pub mod row_filter;
 pub mod streaming_compaction;
 pub mod unified_metadata_serializer {
-    pub use crate::storage::engines::core::sst_unified_metadata_serializer::*;
+    pub use crate::storage::engines::core::sst_format_serializer::*;
 }
-pub mod unified_reader;
+pub mod sst_reader;
 pub mod writer;
 
 // New modular structure

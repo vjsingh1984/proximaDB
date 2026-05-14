@@ -239,7 +239,7 @@ impl RestServer {
     /// - Compression: Optional based on parameter
     pub fn new(
         bind_addr: SocketAddr,
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -247,7 +247,7 @@ impl RestServer {
     ) -> Self {
         Self::with_security(
             bind_addr,
-            unified_handlers,
+            request_handlers,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -262,7 +262,7 @@ impl RestServer {
     /// **WARNING**: Only use for local development and testing!
     pub fn new_development(
         bind_addr: SocketAddr,
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -271,7 +271,7 @@ impl RestServer {
         tracing::warn!("🚨 Starting REST server in DEVELOPMENT mode - security is relaxed!");
         Self::with_security(
             bind_addr,
-            unified_handlers,
+            request_handlers,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -284,7 +284,7 @@ impl RestServer {
     /// Create new REST server with custom security configuration.
     pub fn with_security(
         bind_addr: SocketAddr,
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -292,10 +292,10 @@ impl RestServer {
         security_config: RestServerSecurityConfig,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
-        let graph_execution_service = unified_handlers.graph_execution_service.clone();
+        let graph_execution_service = request_handlers.graph_execution_service.clone();
         Self::with_security_and_config(
             bind_addr,
-            unified_handlers,
+            request_handlers,
             graph_execution_service,
             max_request_size_mb,
             compression,
@@ -311,7 +311,7 @@ impl RestServer {
     /// Create new REST server with custom security configuration and data directory from config.
     pub fn with_security_and_config(
         bind_addr: SocketAddr,
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
@@ -323,7 +323,7 @@ impl RestServer {
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
         let state = AppState::new(
-            unified_handlers,
+            request_handlers,
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
@@ -520,7 +520,7 @@ impl RestServer {
     /// This is used by the unified server to get the configured REST router
     /// that can be passed to the protocol multiplexer.
     pub fn build_router_for_unified(
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
@@ -529,7 +529,7 @@ impl RestServer {
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Router {
         let state = AppState::new(
-            unified_handlers,
+            request_handlers,
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
@@ -1732,11 +1732,11 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::network::auth::middleware::auth_middleware_unified;
-    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
-    use crate::security::unified_auth::{
+    use crate::security::auth_service::{
         ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
     };
-    use crate::security::unified_rbac::RBACConfig;
+    use crate::security::rbac_service::RBACConfig;
+    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
 
     fn build_api_key_security_config() -> SecurityConfig {

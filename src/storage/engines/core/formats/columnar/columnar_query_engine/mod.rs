@@ -5,12 +5,12 @@
 
 pub mod adaptive_filter_executor;
 pub mod column_projector;
+pub mod columnar_query_reader;
 pub mod columnar_reader;
 pub mod filter_pushdown_engine;
 pub mod pipeline;
 pub mod query_metrics;
 pub mod result_cache;
-pub mod unified_reader;
 pub mod vectorized_executor;
 
 // Re-export main types for convenience with semantic names
@@ -26,7 +26,7 @@ pub use result_cache::{CacheStrategy, QueryCache};
 pub use vectorized_executor::{DataChunk, vectorized_filter_batch};
 
 // Re-export unified reader types for compatibility
-pub use unified_reader::{
+pub use columnar_query_reader::{
     CollectionContext, FilterValue, PagePruningInfo, PageRange, QuantizationMethod, ReaderConfig,
     ReadingStrategy, ReadingStrategySelector, RowGroupAccessPattern, SchemaMapping, SearchType,
     SeekRange, Stage2Strategy, UnifiedParquetReader, VectorPosition,

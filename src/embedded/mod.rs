@@ -3875,7 +3875,7 @@ impl EmbeddedProximaDB {
 
             let response = self
                 .shared_services
-                .unified_handlers
+                .request_handlers
                 .execute_sql_v1(
                     query.to_string(),
                     proto_params,

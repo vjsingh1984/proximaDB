@@ -17,7 +17,7 @@ use tracing::{debug, info};
 
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::security_service_server::{SecurityService, SecurityServiceServer};
-use crate::security::unified_rbac::{
+use crate::security::rbac_service::{
     ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
 

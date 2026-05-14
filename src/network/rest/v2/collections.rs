@@ -386,7 +386,7 @@ pub async fn create_collection_v2(
 
     // Create collection via unified handlers
     match state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
     {
@@ -502,7 +502,7 @@ pub async fn get_collection_v2(
     };
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -654,7 +654,7 @@ pub async fn list_collections_v2(
     };
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {

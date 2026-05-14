@@ -1016,7 +1016,7 @@ pub async fn insert_records(
     };
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_record_batch_for_tenant(batch_request, Some(&tenant.tenant_id))
         .await
     {
@@ -1292,7 +1292,7 @@ pub async fn search_with_typed_filters(
     };
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
         .await
     {
@@ -1451,7 +1451,7 @@ pub async fn get_record_v2(
     });
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_record_get_for_tenant(
             RichRecordGetRequest {
                 collection_id: collection_id.clone(),
@@ -1532,7 +1532,7 @@ pub async fn delete_record_v2(
     }
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_record_delete_batch_for_tenant(
             RichRecordDeleteBatchRequest {
                 collection_id: collection_id.clone(),

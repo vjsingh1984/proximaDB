@@ -83,11 +83,11 @@
 // - 90% faster similarity search with progressive quantization
 // - Zero code duplication between engines for core columnar operations
 
+pub mod columnar_io;
 pub mod constants; // Column name constants
 pub mod id_index;
 pub mod metadata_filter_strategy;
-pub mod optimization;
-pub mod unified_columnar_io; // NEW: Consolidated Parquet and Arrow IPC operations
+pub mod optimization; // NEW: Consolidated Parquet and Arrow IPC operations
 
 // Modular components with semantic names (replacing old monolithic files)
 pub mod columnar_query_engine;
@@ -105,7 +105,7 @@ pub mod parquet_io_layer; // Low-level I/O operations (formerly shared_parquet_r
 pub mod parquet_metadata; // NEW: Zero-copy metadata serialization for Parquet
 pub mod utilities; // NEW: Zero-copy metadata serialization for NOVA // NEW: Trait for engine-specific metadata collection during writes
 pub use metadata_collector::MetadataCollector;
-pub mod unified_compaction; // Unified Parquet compaction using StreamingParquetWriter
+pub mod columnar_compaction; // Unified Parquet compaction using StreamingParquetWriter
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure
@@ -144,11 +144,11 @@ pub use constants::{
 };
 
 // Re-exports for convenience
-pub use id_index::{ColumnarIdIndex, IndexStats, ParquetLocation};
-pub use optimization::{ColumnarOptimizer, ProgressiveSearchConfig, StreamingRowGroupIterator};
-pub use unified_compaction::{
+pub use columnar_compaction::{
     ColumnarCompactionResult, UnifiedColumnarCompaction, VersionContinuityMode,
 };
+pub use id_index::{ColumnarIdIndex, IndexStats, ParquetLocation};
+pub use optimization::{ColumnarOptimizer, ProgressiveSearchConfig, StreamingRowGroupIterator};
 // Re-export from columnar_query_engine module
 pub use columnar_query_engine::{
     BranchedFilterExecutor,

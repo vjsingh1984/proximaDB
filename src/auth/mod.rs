@@ -2,8 +2,8 @@
 //
 //! **DEPRECATION NOTICE (TD-AUTH-CONSOLIDATION)**:
 //! This module is being consolidated into `crate::security`.
-//! - SSO/OIDC/SAML → `crate::security::auth` + `crate::security::unified_auth`
-//! - RBAC → `crate::security::unified_rbac`
+//! - SSO/OIDC/SAML → `crate::security::auth` + `crate::security::auth_service`
+//! - RBAC → `crate::security::rbac_service`
 //! - Network-layer auth (JWT, middleware) → `crate::network::auth`
 //!
 //! New code should import from `crate::security` directly.
@@ -31,7 +31,7 @@ use anyhow::Result;
     note = "Canonical security result type now lives in crate::security::SecurityAuthenticationResult."
 )]
 pub type SecurityAuthenticationResult = crate::security::SecurityAuthenticationResult;
-use crate::security::unified_rbac::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
+use crate::security::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 
 /// Enterprise authentication coordinator
 pub struct EnterpriseAuthManager {

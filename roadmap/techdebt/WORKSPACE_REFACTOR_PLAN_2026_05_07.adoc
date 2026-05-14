@@ -1796,6 +1796,11 @@ Modality migration rule:
 * root modules remain compatibility shims until tests, binaries, and bindings consume canonical
   crates directly
 * API/platform crates hold protocol/runtime composition, not modality implementation logic
+* semantic renames in the root compatibility facade are allowed when they clarify ownership
+  boundaries without moving behavior: protocol-facing shared handlers should use request/response
+  names, and storage-engine compatibility modules should use physical-format names such as SST,
+  Parquet, columnar, Matrix Trinity, and ProximaBlocks rather than another generic `unified_*`
+  label
 
 === Control-Plane Contract Isolation Checklist
 

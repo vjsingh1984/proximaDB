@@ -19,7 +19,7 @@ use crate::storage::engines::core::formats::columnar::constants::{
     FIELD_EXPIRES_AT, FIELD_ID, FIELD_IS_DELETED, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
 };
 
-use super::unified_reader::UnifiedParquetReader;
+use super::columnar_query_reader::UnifiedParquetReader;
 use super::{QueryConfig, QueryStatistics};
 
 /// Core Parquet reader implementation

@@ -41,7 +41,7 @@ pub async fn progressive_search_handler(
 
     // Delegate directly to unified v1 handler
     let resp = state
-        .unified_handlers
+        .request_handlers
         .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {

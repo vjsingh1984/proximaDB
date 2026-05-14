@@ -895,7 +895,7 @@ pub async fn create_node(
     let proto_node: Node = request.node.into();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .create_node(&graph_id, proto_node)
         .await
@@ -929,7 +929,7 @@ pub async fn get_node(
     debug!("Getting node: {} from graph: {}", node_id, graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_node(&graph_id, &node_id)
         .await
@@ -975,7 +975,7 @@ pub async fn update_node(
     let proto_node: Node = node_input.into();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .update_node(&graph_id, proto_node)
         .await
@@ -1005,7 +1005,7 @@ pub async fn delete_node(
     debug!("Deleting node: {} from graph: {}", node_id, graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .delete_node(&graph_id, &node_id)
         .await
@@ -1047,7 +1047,7 @@ pub async fn get_node_neighbors(
     );
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_neighbors(&graph_id, &node_id)
         .await
@@ -1091,7 +1091,7 @@ pub async fn create_edge(
     let proto_edge: Edge = request.edge.into();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .create_edge(&graph_id, proto_edge)
         .await
@@ -1176,7 +1176,7 @@ pub async fn shortest_path(
         req.prefetch_budget = Some(n);
     }
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .shortest_path(
             &graph_id,
@@ -1228,7 +1228,7 @@ pub async fn add_unique_constraint(
     Json(req): Json<UniqueConstraintRequest>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .add_unique_constraint(&graph_id, &req.label, &req.property)
         .await
@@ -1253,7 +1253,7 @@ pub async fn remove_unique_constraint(
 ) -> impl IntoResponse {
     // remove_unique_constraint now returns Result and is async
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .remove_unique_constraint(&graph_id, &req.label, &req.property)
         .await
@@ -1276,7 +1276,7 @@ pub async fn get_connected_components(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .connected_components(&graph_id)
         .await
@@ -1306,7 +1306,7 @@ pub async fn check_cycles(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .has_cycle(&graph_id)
         .await
@@ -1338,7 +1338,7 @@ pub async fn get_edge(
     debug!("Getting edge: {} from graph: {}", edge_id, graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_edge(&graph_id, &edge_id)
         .await
@@ -1384,7 +1384,7 @@ pub async fn update_edge(
     let proto_edge: Edge = edge_input.into();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .update_edge(&graph_id, proto_edge)
         .await
@@ -1414,7 +1414,7 @@ pub async fn delete_edge(
     debug!("Deleting edge: {} from graph: {}", edge_id, graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .delete_edge(&graph_id, &edge_id)
         .await
@@ -1461,7 +1461,7 @@ pub async fn traverse_graph(
     let override_prefetch_budget = None;
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .traverse_with_overrides(
             &graph_id,
@@ -1536,7 +1536,7 @@ pub async fn walk_graph(
     );
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .graph_walk(
             &graph_id,
@@ -1575,7 +1575,7 @@ pub async fn step_graph(
     );
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .graph_step(
             &graph_id,
@@ -1619,7 +1619,7 @@ pub async fn query_nodes(
     }
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .query_nodes(&graph_id, q.clone().into())
         .await
@@ -1670,7 +1670,7 @@ pub async fn query_edges(
         q.offset = Some(n);
     }
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .query_edges(&graph_id, q.clone().into())
         .await
@@ -1722,7 +1722,7 @@ pub async fn batch_create_nodes(
     let proto_nodes: Vec<Node> = request.nodes.into_iter().map(|n| n.into()).collect();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .batch_create_nodes_with_strategy(&graph_id, proto_nodes, strategy.as_str())
         .await
@@ -1767,7 +1767,7 @@ pub async fn batch_create_edges(
     let proto_edges: Vec<Edge> = request.edges.into_iter().map(|e| e.into()).collect();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .batch_create_edges(&graph_id, proto_edges)
         .await
@@ -1803,7 +1803,7 @@ pub async fn get_graph_stats(
     debug!("Getting graph statistics for graph: {}", graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_stats(&graph_id)
         .await
@@ -1926,7 +1926,7 @@ pub async fn create_graph_collection(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_collection_service
         .create_graph(create_request)
         .await
@@ -1960,7 +1960,7 @@ pub async fn create_graph_collection(
 /// List all graph collections
 pub async fn list_graph_collections(State(app_state): State<AppState>) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_collection_service
         .list_graphs()
         .await
@@ -1998,7 +1998,7 @@ pub async fn get_graph_collection(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_collection_service
         .get_graph(&graph_id)
         .await
@@ -2039,7 +2039,7 @@ pub async fn delete_graph_collection(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_collection_service
         .delete_graph(&graph_id)
         .await
@@ -2286,7 +2286,7 @@ pub async fn create_graph_with_engine(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .create_graph_with_engine(service_request)
         .await
@@ -2327,7 +2327,7 @@ pub async fn get_pulsar_stats(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_pulsar_stats(request)
         .await
@@ -2380,7 +2380,7 @@ pub async fn cross_shard_query(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .cross_shard_query(service_request)
         .await
@@ -2434,7 +2434,7 @@ pub async fn rebalance_shards(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .rebalance_shards(service_request)
         .await
@@ -2474,7 +2474,7 @@ pub async fn get_quasar_stats(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_quasar_stats(request)
         .await
@@ -2511,7 +2511,7 @@ pub async fn get_tier_stats(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_tier_stats(request)
         .await
@@ -2561,7 +2561,7 @@ pub async fn trigger_migration(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .trigger_migration(service_request)
         .await
@@ -2606,7 +2606,7 @@ pub async fn rag_query(
 
     // 1. Get graph engine
     let engine = match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_or_create_graph_engine(&graph_id)
         .await
@@ -2627,7 +2627,7 @@ pub async fn rag_query(
 
     // 2. Setup RGL pipeline components
     let retriever = VectorNodeRetriever::new(
-        app_state.unified_handlers.vector_operations_service.clone(),
+        app_state.request_handlers.vector_operations_service.clone(),
         seed_collection,
         request.budget.max_seeds,
     );

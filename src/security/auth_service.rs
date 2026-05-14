@@ -5,7 +5,7 @@
 //! - Network Auth Service (src/network/auth/mod.rs)
 //! - Auth Middleware (src/network/middleware/auth.rs)
 
-use super::unified_rbac::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
+use super::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
 use crate::auth::{EnterpriseAuthManager, EnterpriseUserContext, SSOToken};
 use crate::network::auth::{JwtService, TokenPair};
@@ -959,7 +959,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_unified_auth_service_creation() {
+    async fn test_auth_service_service_creation() {
         let config = AuthenticationConfig {
             enabled: true,
             methods: vec![AuthenticationMethod::ApiKey],

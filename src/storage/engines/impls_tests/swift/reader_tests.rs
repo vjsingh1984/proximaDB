@@ -2,7 +2,7 @@
 //!
 //! Sources:
 //! - src/storage/engines/impls/swift/unified_reader.rs
-//! - src/storage/engines/impls/swift/unified_strategy_reader.rs
+//! - src/storage/engines/impls/swift/parquet_strategy_reader.rs
 //! - src/storage/engines/impls/swift/progressive_search.rs
 //! - src/storage/engines/impls/swift/hierarchical_blocks.rs
 //! - src/storage/engines/impls/swift/id_index.rs
@@ -33,7 +33,7 @@ async fn test_hierarchical_pruning() {
 }
 
 // =====================================================
-// TESTS FROM unified_strategy_reader.rs
+// TESTS FROM parquet_strategy_reader.rs
 // =====================================================
 
 #[tokio::test]
@@ -41,7 +41,7 @@ async fn test_swift_strategy_selection() {
     let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
 
     // Compaction should use DirectStream
-    let compaction_reader = unified_strategy_reader::UnifiedSWIFTReader::for_compaction(
+    let compaction_reader = proximablocks_compact_strategy_reader::UnifiedSWIFTReader::for_compaction(
         factory.clone(),
         "test_collection".to_string(),
     ).unwrap();
@@ -49,7 +49,7 @@ async fn test_swift_strategy_selection() {
     assert!(!compaction_reader.is_using_cache());
 
     // Search should use CachedSearch
-    let search_reader = unified_strategy_reader::UnifiedSWIFTReader::for_search(
+    let search_reader = proximablocks_compact_strategy_reader::UnifiedSWIFTReader::for_search(
         factory.clone(),
         "test_collection".to_string(),
     ).unwrap();
@@ -60,7 +60,7 @@ async fn test_swift_strategy_selection() {
 #[tokio::test]
 async fn test_config_updates_with_strategy() {
     let factory = Arc::new(FilesystemFactory::create(FilesystemConfig::default()).await.unwrap());
-    let mut reader = unified_strategy_reader::UnifiedSWIFTReader::for_search(
+    let mut reader = proximablocks_compact_strategy_reader::UnifiedSWIFTReader::for_search(
         factory,
         "test".to_string(),
     ).unwrap();

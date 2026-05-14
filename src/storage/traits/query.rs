@@ -5,7 +5,7 @@
 
 use crate::core::search::BlockPruneMode;
 use crate::proto::proximadb_v1::Collection;
-use crate::security::unified_rbac::{TenantContext, UnifiedUserContext};
+use crate::security::rbac_service::{TenantContext, UnifiedUserContext};
 pub use proximadb_quantization_types::QuantizationType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

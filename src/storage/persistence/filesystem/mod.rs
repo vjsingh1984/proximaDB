@@ -1049,12 +1049,12 @@ impl FilesystemFactory {
         // Get the metadata serializer for this engine type
         let metadata_serializer: Arc<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
             match engine_type.as_str() {
-                "sst" => Arc::new(crate::storage::engines::core::sst_unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
-                "viper" => Arc::new(crate::storage::engines::core::viper_unified_metadata_serializer::ViperMetadataSerializer::new()),
-                "raptor" => Arc::new(crate::storage::engines::core::raptor_unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
-                "nova" => Arc::new(crate::storage::engines::core::nova_unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
-                "swift" => Arc::new(crate::storage::engines::core::swift_unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
-                "helix" => Arc::new(crate::storage::engines::core::helix_unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
+                "sst" => Arc::new(crate::storage::engines::core::sst_format_serializer::SstUnifiedMetadataSerializer::new()),
+                "viper" => Arc::new(crate::storage::engines::core::parquet_format_serializer::ViperMetadataSerializer::new()),
+                "raptor" => Arc::new(crate::storage::engines::core::matrix_trinity_serializer::RaptorUnifiedMetadataSerializer::new()),
+                "nova" => Arc::new(crate::storage::engines::core::columnar_format_serializer::NovaUnifiedMetadataSerializer::new()),
+                "swift" => Arc::new(crate::storage::engines::core::proximablocks_compact_serializer::SwiftUnifiedMetadataSerializer::new()),
+                "helix" => Arc::new(crate::storage::engines::core::proximablocks_format_serializer::HelixUnifiedMetadataSerializer::new()),
                 _ => {
                     // Default serializer for other engines
                     #[derive(Debug)]

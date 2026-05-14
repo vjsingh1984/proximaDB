@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
 use super::{AuthCredentials, IdentityProvider};
-use crate::security::unified_rbac::{UnifiedAuthMethod, UnifiedUserContext};
+use crate::security::rbac_service::{UnifiedAuthMethod, UnifiedUserContext};
 
 /// LDAP Identity Provider
 ///

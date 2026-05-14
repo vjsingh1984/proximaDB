@@ -6,7 +6,7 @@
 //!
 //! **Source Files**:
 //! - benchmarks.rs (6 tests)
-//! - unified_strategy_reader.rs (3 tests)
+//! - parquet_strategy_reader.rs (3 tests)
 //! - unified_metadata_serializer.rs (3 tests)
 //! - query_optimization.rs (2 tests)
 //! - progressive_search.rs (2 tests)
@@ -39,11 +39,11 @@ use crate::storage::engines::helix::pca_impl::{EnhancedPCAModel, PCAModelManager
 use crate::storage::engines::helix::progressive_search::{ProgressiveSearchCoordinator, ProgressiveSearchStats};
 use crate::storage::engines::helix::query_optimization::{PredictivePrefetcher, SmartResultCache, QueryPattern};
 use crate::storage::engines::helix::readers::QueryStats;
-use crate::storage::engines::core::helix_unified_metadata_serializer::{
+use crate::storage::engines::core::proximablocks_format_serializer::{
     HelixUnifiedMetadataSerializer, HelixCachedMetadata, HilbertConfig,
     PcaModelMetadata, LiquidClusteringMetadata, ZoneMapEntry, SstableMetadata, QueryOptimizationStats,
 };
-use crate::storage::engines::helix::unified_strategy_reader::{UnifiedHELIXReader, HelixSearchStrategy};
+use crate::storage::engines::helix::proximablocks_strategy_reader::{UnifiedHELIXReader, HelixSearchStrategy};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FileSystem};
 use crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer;
 use crate::storage::traits::{FlushParameters, StorageQueryContext, StorageQueryMetadata, CompactionParameters};
@@ -272,7 +272,7 @@ async fn bench_compaction_throughput() {
 }
 
 // =============================================================================
-// READER TESTS (4 tests: 3 from unified_strategy_reader.rs + 1 from readers.rs)
+// READER TESTS (4 tests: 3 from parquet_strategy_reader.rs + 1 from readers.rs)
 // =============================================================================
 
 #[test]

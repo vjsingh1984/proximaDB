@@ -190,18 +190,20 @@ pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod stages;
 pub mod superblock_cache;
 pub mod unified_metadata_serializer {
-    pub use crate::storage::engines::core::swift_unified_metadata_serializer::*;
+    pub use crate::storage::engines::core::proximablocks_compact_serializer::*;
 }
-pub mod unified_reader;
-pub mod unified_strategy_reader;
+pub mod proximablocks_compact_reader;
+pub mod proximablocks_compact_strategy_reader;
 
 // Re-export main engine type and cache
 #[allow(deprecated)]
 pub use engine::SwiftEngine;
+pub use proximablocks_compact_strategy_reader::{
+    CachedSWIFTReader, DirectSWIFTReader, UnifiedSWIFTReader,
+};
 pub use superblock_cache::{
     CachedSuperBlockMetadata, OptimalTreePath, SwiftSuperBlockCache, TreeNavigationHints,
 };
-pub use unified_strategy_reader::{CachedSWIFTReader, DirectSWIFTReader, UnifiedSWIFTReader};
 
 // Re-export SOLID progressive search stages
 pub use stages::{

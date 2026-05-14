@@ -18,8 +18,8 @@ use crate::core::search::FilterExpression;
 use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::security::encryption::{EncryptedField, FieldEncryption};
+use crate::security::rbac_service::UnifiedUserContext;
 use crate::security::rls::{CollectionRLS, Operation as RLSOperation, RLSFilterResult};
-use crate::security::unified_rbac::UnifiedUserContext;
 use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
 /// Helper to create a SqlValue from a string
@@ -446,8 +446,8 @@ pub fn combine_filters(
 mod tests {
     use super::*;
     use crate::core::search::ComparisonOperator;
+    use crate::security::rbac_service::UnifiedAuthMethod;
     use crate::security::rls::RLSConfig;
-    use crate::security::unified_rbac::UnifiedAuthMethod;
     use chrono::Utc;
     use proximadb_security::AuditConfig;
     use std::collections::HashSet;

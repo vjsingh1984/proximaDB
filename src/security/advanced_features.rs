@@ -7,7 +7,7 @@
 //! - Advanced session management
 //! - Security monitoring and alerting
 
-use super::unified_rbac::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
+use super::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 use crate::audit::logger::AuditLogger;
 
 use anyhow::{Result, anyhow};

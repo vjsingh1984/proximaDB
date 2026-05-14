@@ -21,7 +21,7 @@ use crate::security::SecurityCoordinator;
 /// REST handler configuration
 pub struct RestHandlerConfig {
     /// Shared unified handlers for business logic delegation
-    pub unified_handlers: Arc<UnifiedHandlers>,
+    pub request_handlers: Arc<UnifiedHandlers>,
     /// Optional metrics collector for request instrumentation
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     /// Optional security coordinator for authentication/authorization
@@ -188,7 +188,7 @@ impl RestHandler {
 
     /// Handle GET /api/v1/collections - list all collections
     async fn handle_list_collections(config: &RestHandlerConfig) -> Response<Body> {
-        match config.unified_handlers.list_collections().await {
+        match config.request_handlers.list_collections().await {
             Ok(collections) => {
                 // Serialize collections to JSON
                 match serde_json::to_string(&serde_json::json!({ "collections": collections })) {
@@ -326,7 +326,7 @@ impl RestHandler {
         };
 
         match config
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation(request)
             .await
         {
@@ -361,7 +361,7 @@ impl RestHandler {
         config: &RestHandlerConfig,
         collection_id: &str,
     ) -> Response<Body> {
-        match config.unified_handlers.collection(collection_id).await {
+        match config.request_handlers.collection(collection_id).await {
             Ok(Some(collection)) => match serde_json::to_string(&collection) {
                 Ok(json) => Response::builder()
                     .status(StatusCode::OK)
@@ -411,7 +411,7 @@ impl RestHandler {
             ..Default::default()
         };
         match config
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation(request)
             .await
         {
@@ -535,7 +535,7 @@ impl RestHandler {
         };
 
         match config
-            .unified_handlers
+            .request_handlers
             .handle_vector_batch_v1(batch_request)
             .await
         {
@@ -615,7 +615,7 @@ impl RestHandler {
         };
 
         match config
-            .unified_handlers
+            .request_handlers
             .handle_vector_search_v1(search_request)
             .await
         {

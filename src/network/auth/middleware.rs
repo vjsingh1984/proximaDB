@@ -738,11 +738,11 @@ mod tests {
 
     use crate::network::auth::config::JwtAlgorithm;
     use crate::network::auth::jwt::JwtService;
-    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
-    use crate::security::unified_auth::{
+    use crate::security::auth_service::{
         ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
     };
-    use crate::security::unified_rbac::RBACConfig;
+    use crate::security::rbac_service::RBACConfig;
+    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
 
     #[test]

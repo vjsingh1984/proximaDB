@@ -151,11 +151,11 @@ pub mod streaming_search;
 pub mod zone_maps;
 
 // Unified columnar infrastructure integration
-pub mod unified_columnar_integration;
+pub mod columnar_integration;
 pub mod unified_metadata_serializer {
-    pub use crate::storage::engines::core::nova_unified_metadata_serializer::*;
+    pub use crate::storage::engines::core::columnar_format_serializer::*;
 }
-pub mod unified_strategy_reader;
+pub mod columnar_strategy_reader;
 
 // Reader modules (re-exports UnifiedParquetReader from columnar module)
 pub mod readers;
@@ -174,9 +174,13 @@ pub use nova_meta_reader::{NovaMetaReader, QueryOptimizationHints};
 pub use operations::{NovaCompactionOperations, NovaFlushOperations, NovaSearchOperations};
 
 // Re-export unified strategy readers
-pub use unified_strategy_reader::{CachedNOVAReader, DirectNOVAReader, UnifiedNOVAReader};
+pub use columnar_strategy_reader::{CachedNOVAReader, DirectNOVAReader, UnifiedNOVAReader};
 
 // Re-export unified columnar integration
+pub use columnar_integration::{
+    AdvancedSearchOptions, AdvancedSearchResult, HierarchicalStatistics, NovaPerformanceMetrics,
+    NovaSpecificConfig, NovaUnifiedEngine, StreamingInsertResult, ZoneMap,
+};
 pub use hierarchical_cache::{
     GlobalStatistics, HierarchicalStats, NovaHierarchicalCache, OptimizationHints,
 };
@@ -184,10 +188,6 @@ pub use hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
 pub use progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig};
 pub use streaming_processor::{StreamingConfig, StreamingRowGroupProcessor};
 pub use streaming_search::{StreamingSearchConfig, StreamingSearchEngine};
-pub use unified_columnar_integration::{
-    AdvancedSearchOptions, AdvancedSearchResult, HierarchicalStatistics, NovaPerformanceMetrics,
-    NovaSpecificConfig, NovaUnifiedEngine, StreamingInsertResult, ZoneMap,
-};
 pub use zone_maps::{AdvancedZoneMap, CostBasedOptimizer, ZoneMapConfig};
 
 use anyhow::Result;

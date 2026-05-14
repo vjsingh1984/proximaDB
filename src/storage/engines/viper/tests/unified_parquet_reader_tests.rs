@@ -9,7 +9,7 @@ mod tests {
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
     use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::engines::core::formats::columnar::CollectionContext;
-    use crate::storage::engines::core::formats::columnar::columnar_query_engine::unified_reader::UnifiedParquetReader;
+    use crate::storage::engines::core::formats::columnar::columnar_query_engine::columnar_query_reader::UnifiedParquetReader;
     use anyhow::Result;
     use arrow_array::{Int64Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};

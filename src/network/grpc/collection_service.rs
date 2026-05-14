@@ -10,13 +10,13 @@ use crate::proto::proximadb_v1::collection_service_server::{
 /// gRPC implementation of the CollectionService for managing vector collections
 pub struct CollectionServiceImpl {
     /// Shared unified handlers for business logic delegation
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
 }
 
 impl CollectionServiceImpl {
     /// Create a new collection service backed by unified handlers
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { unified_handlers }
+    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+        Self { request_handlers }
     }
     /// Convert this implementation into a tonic gRPC server
     pub fn into_server(self) -> CollectionServiceServer<Self> {
@@ -53,7 +53,7 @@ impl CollectionService for CollectionServiceImpl {
             migration_config: Default::default(),
         };
         let resp = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation_for_tenant(request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("CreateCollection failed: {}", e)))?;
@@ -90,7 +90,7 @@ impl CollectionService for CollectionServiceImpl {
             migration_config: Default::default(),
         };
         let resp = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation_for_tenant(request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("GetCollection failed: {}", e)))?;
@@ -115,7 +115,7 @@ impl CollectionService for CollectionServiceImpl {
             migration_config: Default::default(),
         };
         let resp = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation_for_tenant(request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("ListCollections failed: {}", e)))?;
@@ -140,7 +140,7 @@ impl CollectionService for CollectionServiceImpl {
             migration_config: Default::default(),
         };
         let _ = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation_for_tenant(request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("DeleteCollection failed: {}", e)))?;

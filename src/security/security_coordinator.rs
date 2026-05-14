@@ -4,15 +4,15 @@
 //! authentication, authorization, audit, Row-Level Security (RLS),
 //! and security policy enforcement.
 
+use super::auth_service::{AuthenticationConfig, AuthenticationData, UnifiedAuthService};
 use super::encryption::{
     EncryptedField, EncryptionConfig, FieldEncryption, FieldEncryptionError, KeyStore,
     KeyStoreConfig,
 };
-use super::rls::{CollectionRLS, Operation as RLSOperation, RLSConfig, RLSFilterResult, RLSPolicy};
-use super::unified_auth::{AuthenticationConfig, AuthenticationData, UnifiedAuthService};
-use super::unified_rbac::{
+use super::rbac_service::{
     ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
+use super::rls::{CollectionRLS, Operation as RLSOperation, RLSConfig, RLSFilterResult, RLSPolicy};
 use crate::audit::logger::AuditLogger;
 use proximadb_security::AuditConfig;
 use std::collections::HashMap;
@@ -450,7 +450,7 @@ pub struct TenantSecurityPolicy {
     pub require_authentication: bool,
     pub require_mfa: bool,
     pub session_timeout_minutes: u64,
-    pub allowed_auth_methods: Vec<super::unified_auth::AuthenticationMethod>,
+    pub allowed_auth_methods: Vec<super::auth_service::AuthenticationMethod>,
     pub audit_level: AuditLevel,
     pub compliance_frameworks: Vec<String>,
 }
@@ -461,7 +461,7 @@ impl TenantSecurityPolicy {
             require_authentication: false,
             require_mfa: false,
             session_timeout_minutes: 480,
-            allowed_auth_methods: vec![super::unified_auth::AuthenticationMethod::ApiKey],
+            allowed_auth_methods: vec![super::auth_service::AuthenticationMethod::ApiKey],
             audit_level: AuditLevel::Basic,
             compliance_frameworks: vec![],
         }
@@ -473,8 +473,8 @@ impl TenantSecurityPolicy {
             require_mfa: false,
             session_timeout_minutes: 240,
             allowed_auth_methods: vec![
-                super::unified_auth::AuthenticationMethod::JWT,
-                super::unified_auth::AuthenticationMethod::ApiKey,
+                super::auth_service::AuthenticationMethod::JWT,
+                super::auth_service::AuthenticationMethod::ApiKey,
             ],
             audit_level: AuditLevel::Comprehensive,
             compliance_frameworks: vec!["SOC2".to_string()],
@@ -487,9 +487,9 @@ impl TenantSecurityPolicy {
             require_mfa: true,
             session_timeout_minutes: 120,
             allowed_auth_methods: vec![
-                super::unified_auth::AuthenticationMethod::SSO,
-                super::unified_auth::AuthenticationMethod::JWT,
-                super::unified_auth::AuthenticationMethod::ClientCertificate,
+                super::auth_service::AuthenticationMethod::SSO,
+                super::auth_service::AuthenticationMethod::JWT,
+                super::auth_service::AuthenticationMethod::ClientCertificate,
             ],
             audit_level: AuditLevel::Full,
             compliance_frameworks: vec![
@@ -577,7 +577,7 @@ fn create_authorization_failure_event(
 mod tests {
     use super::*;
     use crate::security::AuthenticationMethod;
-    use crate::security::unified_auth::{JwtConfig, MtlsConfig, SSOConfig};
+    use crate::security::auth_service::{JwtConfig, MtlsConfig, SSOConfig};
     use std::collections::HashMap;
     use tracing::{debug, info, warn};
 

@@ -114,9 +114,9 @@ pub mod proxima;
 pub mod query_optimization;
 pub mod readers;
 pub mod unified_metadata_serializer {
-    pub use crate::storage::engines::core::helix_unified_metadata_serializer::*;
+    pub use crate::storage::engines::core::proximablocks_format_serializer::*;
 }
-pub mod unified_strategy_reader;
+pub mod proximablocks_strategy_reader;
 pub mod zone_maps;
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -2220,4 +2220,4 @@ impl UnifiedStorageEngine for HelixEngine {
 }
 
 // Re-export unified strategy readers
-pub use unified_strategy_reader::{CachedHELIXReader, DirectHELIXReader, UnifiedHELIXReader};
+pub use proximablocks_strategy_reader::{CachedHELIXReader, DirectHELIXReader, UnifiedHELIXReader};

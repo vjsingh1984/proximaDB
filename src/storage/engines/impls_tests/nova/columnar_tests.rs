@@ -9,7 +9,7 @@
 //!
 //! Sources:
 //! - src/storage/engines/impls/nova/quantized_columns.rs (3 tests)
-//! - src/storage/engines/impls/nova/unified_columnar_integration.rs (3 tests)
+//! - src/storage/engines/impls/nova/columnar_integration.rs (3 tests)
 //! - src/storage/engines/impls/nova/columnar_search.rs (2 tests)
 
 use super::helpers::*;
@@ -60,12 +60,12 @@ fn test_quantization_metadata() {
 }
 
 // ============================================================================
-// Tests from unified_columnar_integration.rs
+// Tests from columnar_integration.rs
 // ============================================================================
 
 #[test]
 fn test_unified_columnar_config() {
-    use crate::storage::engines::core::formats::columnar::unified_columnar_io::UnifiedColumnarConfig;
+    use crate::storage::engines::core::formats::columnar::columnar_io::UnifiedColumnarConfig;
 
     let config = UnifiedColumnarConfig::default();
     assert!(config.enable_quantized_columns);
@@ -75,7 +75,7 @@ fn test_unified_columnar_config() {
 
 #[test]
 fn test_columnar_integration_pipeline() {
-    use crate::storage::engines::nova::unified_columnar_integration::*;
+    use crate::storage::engines::nova::columnar_integration::*;
 
     // Pipeline is private, test through config
     let config = UnifiedColumnarConfig {
@@ -93,7 +93,7 @@ fn test_columnar_integration_pipeline() {
 
 #[tokio::test]
 async fn test_unified_columnar_writer() {
-    use crate::storage::engines::nova::unified_columnar_integration::*;
+    use crate::storage::engines::nova::columnar_integration::*;
     use crate::proto::proximadb_v1::VectorRecord;
 
     // Writer is private, test configuration

@@ -125,7 +125,7 @@ pub mod extraction;
 pub mod matrix_builder;
 // metadata_serializer removed - functionality consolidated into unified_metadata_serializer
 pub mod unified_metadata_serializer {
-    pub use crate::storage::engines::core::raptor_unified_metadata_serializer::*;
+    pub use crate::storage::engines::core::matrix_trinity_serializer::*;
 }
 pub mod writer;
 // ivf_manager removed - obsolete with Matrix Trinity (P² + K² + P×K)

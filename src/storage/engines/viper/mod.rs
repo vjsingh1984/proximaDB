@@ -245,9 +245,9 @@ pub mod compaction;
 pub mod engine;
 pub mod flush;
 pub mod unified_metadata_serializer {
-    pub use crate::storage::engines::core::viper_unified_metadata_serializer::*;
+    pub use crate::storage::engines::core::parquet_format_serializer::*;
 }
-pub mod unified_strategy_reader;
+pub mod parquet_strategy_reader;
 pub mod viper_meta_collector;
 
 // Test modules
@@ -284,7 +284,7 @@ pub use eventlog_flush::ViperFlushNotifier;
 pub use flush::Flush;
 
 // Re-export unified strategy readers
-pub use unified_strategy_reader::{CachedVIPERReader, DirectVIPERReader, UnifiedVIPERReader};
+pub use parquet_strategy_reader::{CachedVIPERReader, DirectVIPERReader, UnifiedVIPERReader};
 // pub use clustering_models::{ClusteringModelManager, EfficientClusteringModel, ClusteringStats}; // Moved to AXIS
 
 // Unified search engine removed - using IntegratedSearchOptimizer from core::search

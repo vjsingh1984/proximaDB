@@ -101,7 +101,7 @@ pub struct ReadinessResponse {
 #[derive(Clone)]
 pub struct HealthState {
     /// Shared unified handlers for checking service availability
-    pub unified_handlers: Arc<UnifiedHandlers>,
+    pub request_handlers: Arc<UnifiedHandlers>,
     /// Extracted graph execution capability for graph stats/health probes
     pub graph_execution_service: Arc<dyn GraphExecutionService>,
     /// Server startup timestamp for uptime calculation
@@ -111,11 +111,11 @@ pub struct HealthState {
 impl HealthState {
     /// Create a new health state recording the current time as startup
     pub fn new(
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         graph_execution_service: Arc<dyn GraphExecutionService>,
     ) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             graph_execution_service,
             startup_time: SystemTime::now(),
         }
@@ -312,7 +312,7 @@ async fn check_storage_health(state: &HealthState, timeout: Duration) -> Compone
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Try to get storage engine status
         if let Err(e) = state
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .unified_engine()
             .collect_engine_metrics()
@@ -329,7 +329,7 @@ async fn check_storage_health(state: &HealthState, timeout: Duration) -> Compone
 
         // Check WAL status
         if let Ok(wal_status) = state
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .get_wal_status()
             .await
@@ -339,7 +339,7 @@ async fn check_storage_health(state: &HealthState, timeout: Duration) -> Compone
 
         // Check available disk space (basic estimation)
         if let Ok(collections) = state
-            .unified_handlers
+            .request_handlers
             .collection_service
             .list_collections()
             .await
@@ -442,7 +442,7 @@ async fn check_indexing_health(state: &HealthState, timeout: Duration) -> Compon
     let (status, message) = match tokio::time::timeout(timeout, async {
         // Check AXIS manager status if available
         match state
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .get_index_status()
             .await
@@ -509,7 +509,7 @@ async fn check_network_health(state: &HealthState, timeout: Duration) -> Compone
 
         // Check gRPC server connectivity through internal health
         if state
-            .unified_handlers
+            .request_handlers
             .collection_service
             .list_collections()
             .await
@@ -560,7 +560,7 @@ async fn quick_storage_check(state: &HealthState) -> Result<(), String> {
     // Basic storage engine availability check
     tokio::time::timeout(Duration::from_millis(1000), async {
         state
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .unified_engine()
             .engine_name();

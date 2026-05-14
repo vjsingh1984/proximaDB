@@ -7,8 +7,8 @@ use anyhow::Result;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
-    FilterCondition, MetadataFilter, metadata_filter_strategy::MetadataFilterAnalyzer,
-    unified_columnar_io::UnifiedColumnarReader,
+    FilterCondition, MetadataFilter, columnar_io::UnifiedColumnarReader,
+    metadata_filter_strategy::MetadataFilterAnalyzer,
 };
 
 /// Branched filter executor for optimized queries

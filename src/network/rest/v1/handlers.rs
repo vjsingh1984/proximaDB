@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone)]
 pub struct AppState {
     /// Shared unified handlers for business logic delegation
-    pub unified_handlers: Arc<UnifiedHandlers>,
+    pub request_handlers: Arc<UnifiedHandlers>,
     /// Extracted graph execution capability for query planning/execution helpers
     pub graph_execution_service: Arc<dyn GraphExecutionService>,
     /// Optional security coordinator for authentication/authorization
@@ -60,7 +60,7 @@ pub struct AppState {
 impl AppState {
     /// Create REST app state with the standard shared runtime components.
     pub fn new(
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         graph_execution_service: Arc<dyn GraphExecutionService>,
         security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
         data_dir: std::path::PathBuf,
@@ -68,7 +68,7 @@ impl AppState {
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             graph_execution_service,
             security_coordinator,
             data_dir,
@@ -84,7 +84,7 @@ impl AppState {
     /// Create health-check state from the same explicit REST capability view.
     pub fn health_state(&self) -> health::HealthState {
         health::HealthState::new(
-            self.unified_handlers.clone(),
+            self.request_handlers.clone(),
             self.graph_execution_service.clone(),
         )
     }
@@ -213,7 +213,7 @@ pub async fn vector_search(
     );
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_vector_search_v1_for_tenant(request.clone(), Some(&tenant.tenant_id))
         .await
     {
@@ -278,7 +278,7 @@ pub async fn vector_batch(
 
     // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
     match state
-        .unified_handlers
+        .request_handlers
         .handle_vector_batch_v1_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -311,7 +311,7 @@ pub async fn get_vector(
 
     // Delegate to UnifiedHandlers
     match state
-        .unified_handlers
+        .request_handlers
         .handle_vector_v1_for_tenant(
             &collection_id,
             &vector_id,
@@ -367,7 +367,7 @@ pub async fn delete_vector(
 
     // Delegate to vector batch handler (which supports deletions)
     match state
-        .unified_handlers
+        .request_handlers
         .handle_vector_batch_v1_for_tenant(delete_request, Some(&tenant.tenant_id))
         .await
     {
@@ -594,7 +594,7 @@ pub async fn collection_operation(
 
     // Direct delegation to UnifiedHandlers
     match state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -650,7 +650,7 @@ pub async fn get_collection(
     };
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -712,7 +712,7 @@ pub async fn list_collections(
     };
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -746,7 +746,7 @@ pub async fn delete_collection(
     };
 
     match state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -785,7 +785,7 @@ pub async fn vector_search_with_metadata(
 
     // Execute search
     match state
-        .unified_handlers
+        .request_handlers
         .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -910,7 +910,7 @@ pub async fn execute_sql(
     };
 
     match state
-        .unified_handlers
+        .request_handlers
         .execute_sql_v1(
             query_with_hint,
             request.parameters.clone(),
@@ -1031,7 +1031,7 @@ pub async fn explain_sql(
 
     // Build a lightweight QueryEngine with vector and graph services
     let qe = QueryEngine::new(
-        state.unified_handlers.vector_operations_service.clone(),
+        state.request_handlers.vector_operations_service.clone(),
         state.graph_execution_service.clone(),
     );
     // Parse SQL and explain using frontend
@@ -1320,7 +1320,7 @@ pub async fn hybrid_search(
 
         // Use query adapter if available, else legacy handlers
         let response = state
-            .unified_handlers
+            .request_handlers
             .handle_vector_search_v1_for_tenant(search_request, Some(&tenant.tenant_id))
             .await
             .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?;
@@ -1464,14 +1464,14 @@ pub fn create_router(state: AppState) -> axum::Router {
         };
 
         let engine = state
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .unified_engine();
         let legacy_store = ProximaEntityStore::with_vector_service(
             engine,
             Arc::new(CsrRelationsStore::new()),
             Arc::new(InMemoryProvenanceRegistry::new()),
-            state.unified_handlers.vector_operations_service.clone(),
+            state.request_handlers.vector_operations_service.clone(),
         );
 
         // Register legacy store globally for compatibility (entity API currently uses legacy store).
@@ -1535,7 +1535,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         use crate::storage::document::DocumentService;
 
         let engine = state
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .unified_engine();
 
@@ -1614,7 +1614,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         use crate::storage::document::DocumentService;
 
         let engine = state
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .unified_engine();
 
@@ -1681,7 +1681,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     // Read-only collection analytics (Entanglement Index, etc.) — TD-043 sub-2
     let analytics_router = {
         let analytics_state = AnalyticsApiState::new(Some(
-            state.unified_handlers.vector_operations_service.clone(),
+            state.request_handlers.vector_operations_service.clone(),
         ));
         analytics::create_router().with_state(analytics_state)
     };
@@ -1693,7 +1693,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         let mut executor = AqlExecutor::new();
 
         // Attach event log for persistent audit trails (TD-050 Phase 5)
-        if let Some(log) = &state.unified_handlers.event_log {
+        if let Some(log) = &state.request_handlers.event_log {
             executor = executor.with_event_log(log.clone());
         }
 
@@ -1701,7 +1701,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         executor.register_source(
             "vector".to_string(),
             Arc::new(VectorAqlSource::new(
-                state.unified_handlers.vector_operations_service.clone(),
+                state.request_handlers.vector_operations_service.clone(),
             )),
         );
         executor.register_source(
@@ -1711,13 +1711,13 @@ pub fn create_router(state: AppState) -> axum::Router {
         executor.register_source(
             "document".to_string(),
             Arc::new(DocumentAqlSource::new(
-                state.unified_handlers.document_service.clone(),
+                state.request_handlers.document_service.clone(),
             )),
         );
         executor.register_source(
             "observability".to_string(),
             Arc::new(ObservabilityAqlSource::new(
-                state.unified_handlers.observability_service.clone(),
+                state.request_handlers.observability_service.clone(),
             )),
         );
 
@@ -1868,7 +1868,7 @@ mod tests {
         .expect("failed to initialize shared services for test app state");
 
         let state = AppState::new(
-            shared_services.unified_handlers,
+            shared_services.request_handlers,
             shared_services.graph_execution_service,
             None,
             data_dir,

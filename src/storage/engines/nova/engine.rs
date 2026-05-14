@@ -398,7 +398,7 @@ impl NovaEngine {
                 .ends_with(crate::storage::engines::constants::NOVA_FILE_EXT)
             {
                 // Create a reader for this file based on query type
-                let reader = super::unified_strategy_reader::UnifiedNOVAReader::for_search(
+                let reader = super::columnar_strategy_reader::UnifiedNOVAReader::for_search(
                     self.filesystem.clone(),
                     collection_id.to_string(),
                     128, // Deferred: Pass actual dimension from StorageQueryContext when available

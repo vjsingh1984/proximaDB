@@ -731,7 +731,7 @@ pub struct SharedServices {
     /// Observability service for logs, metrics, and traces
     pub observability_service: Arc<crate::observability::ObservabilityService>,
     /// Unified request handlers shared across all protocol layers
-    pub unified_handlers: Arc<UnifiedHandlers>,
+    pub request_handlers: Arc<UnifiedHandlers>,
     /// Optional metrics collector for Prometheus/monitoring integration
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     /// Optional internal metrics updater for background metric publishing
@@ -1288,7 +1288,7 @@ impl SharedServices {
         // IMPORTANT: Pass the pre-created GraphCollectionService and graph execution service
         // to ensure ALL graph endpoints and operations share the same state
         debug!("🔧 SharedServices::new - Creating UnifiedHandlers with SHARED graph services...");
-        let unified_handlers_instance = UnifiedHandlers::new(
+        let request_handlers_instance = UnifiedHandlers::new(
             collection_service.clone(),
             vector_operations_service.clone(),
             document_service.clone(),
@@ -1302,9 +1302,9 @@ impl SharedServices {
         if let Some(cfg) = opt_config
             && let Some(ref hybrid) = cfg.hybrid
         {
-            unified_handlers_instance.set_hybrid_runtime(hybrid.clone());
+            request_handlers_instance.set_hybrid_runtime(hybrid.clone());
         }
-        let unified_handlers = Arc::new(unified_handlers_instance);
+        let request_handlers = Arc::new(request_handlers_instance);
         debug!("✅ SharedServices::new - UnifiedHandlers created with shared graph services");
 
         // ==================================================================================
@@ -1466,7 +1466,7 @@ impl SharedServices {
         // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing
         // This enables SQL queries to flow through the facade when unified-facade-routing feature is enabled
         let query_adapter = Arc::new(QueryFacadeAdapter::new(query_facade.clone()));
-        unified_handlers.set_query_adapter(query_adapter);
+        request_handlers.set_query_adapter(query_adapter);
         debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
 
         info!(
@@ -1482,7 +1482,7 @@ impl SharedServices {
                 graph_execution_service,
                 document_service,
                 observability_service,
-                unified_handlers,
+                request_handlers,
                 metrics_collector,
                 metrics_updater: Some(metrics_updater.clone()),
                 query_facade,
@@ -1802,7 +1802,7 @@ impl MultiServer {
             // Add versioned VectorService (v1)
             let vector_service_impl =
                 crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
-                    services.unified_handlers.clone(),
+                    services.request_handlers.clone(),
                     Some(services.query_adapter()),
                 );
             let mut vector_service =
@@ -1821,7 +1821,7 @@ impl MultiServer {
 
             // Add versioned SqlService (v1)
             let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
-                services.unified_handlers.clone(),
+                services.request_handlers.clone(),
             );
             let mut sql_service =
                 crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
@@ -1840,7 +1840,7 @@ impl MultiServer {
             // Add versioned CollectionService (v1)
             let col_service_impl =
                 crate::network::grpc::collection_service::CollectionServiceImpl::new(
-                    services.unified_handlers.clone(),
+                    services.request_handlers.clone(),
                 );
             let mut col_service =
                 crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
@@ -1855,7 +1855,7 @@ impl MultiServer {
 
             // Add GraphService for native graph database operations
             let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
-                services.unified_handlers.clone(),
+                services.request_handlers.clone(),
                 services.query_adapter(),
             );
             let graph_service =
@@ -1953,7 +1953,7 @@ impl MultiServer {
             // Add V2 ProximaRecordService for typed fields and schema support
             let proxima_record_service_impl =
                 crate::network::grpc::v2::ProximaRecordServiceImpl::new(
-                    services.unified_handlers.clone(),
+                    services.request_handlers.clone(),
                 );
             let proxima_record_service = proxima_record_service_impl.into_server();
             debug!("✅ Added V2 ProximaRecordService to gRPC server");
@@ -2007,7 +2007,7 @@ impl MultiServer {
             info!("🔗 Starting Arrow IPC Server on port 5680");
 
             let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
-            let unified_handlers = services.unified_handlers.clone();
+            let request_handlers = services.request_handlers.clone();
             let security_coordinator = if self.rest_auth_enabled {
                 self.security_coordinator.clone()
             } else {
@@ -2018,7 +2018,7 @@ impl MultiServer {
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::ArrowFlightServer;
 
-                match ArrowFlightServer::new(arrow_bind_addr, unified_handlers)
+                match ArrowFlightServer::new(arrow_bind_addr, request_handlers)
                     .with_security_coordinator(security_coordinator)
                     .with_max_message_size(max_message_size)
                     .start()
@@ -2042,7 +2042,7 @@ impl MultiServer {
             info!("📡 Starting REST Server on port 5678");
 
             let rest_bind_addr = self.config.http_bind_address();
-            let unified_handlers = services.unified_handlers.clone();
+            let request_handlers = services.request_handlers.clone();
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
@@ -2065,7 +2065,7 @@ impl MultiServer {
                 // Use with_security_and_config to pass data_dir from TOML config
                 match RestServer::with_security_and_config(
                     rest_bind_addr,
-                    unified_handlers,
+                    request_handlers,
                     graph_execution_service,
                     max_request_size_mb,
                     enable_compression,
@@ -2171,7 +2171,7 @@ impl MultiServer {
 
             let services = self.shared_services.clone();
             let rest_config = RestHandlerConfig {
-                unified_handlers: services.unified_handlers.clone(),
+                request_handlers: services.request_handlers.clone(),
                 metrics_collector: services.metrics_collector.clone(),
                 security_coordinator: self.security_coordinator.clone(),
                 data_dir: self.config.data_dir.clone(),
@@ -2217,7 +2217,7 @@ impl MultiServer {
 
             let vector_service_impl =
                 crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
-                    services.unified_handlers.clone(),
+                    services.request_handlers.clone(),
                     Some(services.query_adapter()),
                 );
             let mut vector_service =
@@ -2234,7 +2234,7 @@ impl MultiServer {
             }
 
             let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
-                services.unified_handlers.clone(),
+                services.request_handlers.clone(),
             );
             let mut sql_service =
                 crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
@@ -2251,7 +2251,7 @@ impl MultiServer {
 
             let col_service_impl =
                 crate::network::grpc::collection_service::CollectionServiceImpl::new(
-                    services.unified_handlers.clone(),
+                    services.request_handlers.clone(),
                 );
             let mut col_service =
                 crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
@@ -2265,7 +2265,7 @@ impl MultiServer {
             }
 
             let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
-                services.unified_handlers.clone(),
+                services.request_handlers.clone(),
                 services.query_adapter(),
             );
             let graph_service =
@@ -2275,7 +2275,7 @@ impl MultiServer {
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
-                services.unified_handlers.clone(),
+                services.request_handlers.clone(),
             )
             .with_security_coordinator(if self.rest_auth_enabled {
                 self.security_coordinator.clone()
@@ -2555,7 +2555,7 @@ impl MultiServer {
             // Build standard services
             let vector_service_impl =
                 crate::network::grpc::vector_service::VectorServiceImpl::with_adapter(
-                    services.unified_handlers.clone(),
+                    services.request_handlers.clone(),
                     Some(services.query_adapter()),
                 );
             let mut vector_service =
@@ -2573,7 +2573,7 @@ impl MultiServer {
             }
 
             let sql_service_impl = crate::network::grpc::sql_service::SqlServiceImpl::new(
-                services.unified_handlers.clone(),
+                services.request_handlers.clone(),
             );
             let mut sql_service =
                 crate::proto::proximadb_v1::sql_service_server::SqlServiceServer::new(
@@ -2591,7 +2591,7 @@ impl MultiServer {
 
             let col_service_impl =
                 crate::network::grpc::collection_service::CollectionServiceImpl::new(
-                    services.unified_handlers.clone(),
+                    services.request_handlers.clone(),
                 );
             let mut col_service =
                 crate::proto::proximadb_v1::collection_service_server::CollectionServiceServer::new(
@@ -2605,7 +2605,7 @@ impl MultiServer {
             }
 
             let graph_service_impl = crate::network::grpc::GraphServiceImpl::with_adapter(
-                services.unified_handlers.clone(),
+                services.request_handlers.clone(),
                 services.query_adapter(),
             );
             let graph_service =
@@ -2676,7 +2676,7 @@ impl MultiServer {
             info!("Starting Arrow IPC Server on port 5680");
 
             let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
-            let unified_handlers = services.unified_handlers.clone();
+            let request_handlers = services.request_handlers.clone();
             let security_coordinator = if self.rest_auth_enabled {
                 self.security_coordinator.clone()
             } else {
@@ -2687,7 +2687,7 @@ impl MultiServer {
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::ArrowFlightServer;
 
-                match ArrowFlightServer::new(arrow_bind_addr, unified_handlers)
+                match ArrowFlightServer::new(arrow_bind_addr, request_handlers)
                     .with_security_coordinator(security_coordinator)
                     .with_max_message_size(max_message_size)
                     .start()
@@ -2711,7 +2711,7 @@ impl MultiServer {
             info!("Starting REST Server on port 5678");
 
             let rest_bind_addr = self.config.http_bind_address();
-            let unified_handlers = services.unified_handlers.clone();
+            let request_handlers = services.request_handlers.clone();
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
@@ -2730,7 +2730,7 @@ impl MultiServer {
 
                 match RestServer::with_security_and_config(
                     rest_bind_addr,
-                    unified_handlers,
+                    request_handlers,
                     graph_execution_service,
                     max_request_size_mb,
                     false, // compression disabled

@@ -5,7 +5,7 @@
 
 //! Arrow <-> Proto codec for Flight protocol
 //!
-//! Reuses existing Arrow infrastructure from arrow_ipc_scanner.rs and unified_columnar_io.rs
+//! Reuses existing Arrow infrastructure from arrow_ipc_scanner.rs and columnar_io.rs
 //! for maximum code reuse and consistency.
 
 use anyhow::{Context, Result};

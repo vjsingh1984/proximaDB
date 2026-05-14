@@ -34,7 +34,7 @@ use super::ast::{
 use super::fusion::SubQueryResult;
 use crate::observability::{LogQueryParams, MetricAggParams, ObservabilityService};
 use crate::query::graph_runtime::execute_graph_query_expr;
-use crate::security::unified_rbac::{
+use crate::security::rbac_service::{
     ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
 };
 use crate::services::operations::vectors::VectorOperationsService;

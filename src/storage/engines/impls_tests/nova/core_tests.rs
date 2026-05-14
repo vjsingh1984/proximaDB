@@ -8,7 +8,7 @@
 //! - nova_meta_reader.rs (2 tests)
 //! - mod.rs (2 tests)
 //! - engine.rs (2 tests)
-//! - unified_strategy_reader.rs (1 test)
+//! - parquet_strategy_reader.rs (1 test)
 //!
 //! Total: 11 tests
 
@@ -165,13 +165,13 @@ async fn test_nova_feature_support() {
 }
 
 // ============================================================================
-// UNIFIED STRATEGY READER TESTS (from unified_strategy_reader.rs)
+// UNIFIED STRATEGY READER TESTS (from parquet_strategy_reader.rs)
 // ============================================================================
 
 #[test]
 fn test_nova_strategy_to_pruning() {
     use crate::storage::engines::core::read_strategy::ReadAccessStrategy;
-    use unified_strategy_reader::UnifiedNOVAReader;
+    use columnar_strategy_reader::UnifiedNOVAReader;
 
     let direct = ReadAccessStrategy::DirectStream;
     let pruning = UnifiedNOVAReader::to_nova_pruning_strategy(&direct);

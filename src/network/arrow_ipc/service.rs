@@ -25,7 +25,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::api_handlers::{
-    RichRecordBatchRequest, RichRecordDeleteBatchRequest, unified_handlers::UnifiedHandlers,
+    RichRecordBatchRequest, RichRecordDeleteBatchRequest, request_handlers::UnifiedHandlers,
 };
 use crate::proto::proximadb_v1::VectorSearchRequest;
 use crate::security::{AuthenticationData, ClientCertificateData, SecurityCoordinator};
@@ -64,7 +64,7 @@ type TonicStream<T> = Pin<Box<dyn Stream<Item = std::result::Result<T, TonicStat
 /// - **.arrow**: Arrow IPC files (from SST, HELIX engines)
 /// - **.parquet**: Parquet files (from Nova, VIPER engines)
 pub struct ProximaFlightService {
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     _codec: ArrowProtoCodec,
     file_export_handler: ArrowFileExportHandler,
@@ -72,9 +72,9 @@ pub struct ProximaFlightService {
 
 impl ProximaFlightService {
     /// Create a new Arrow Flight service backed by unified handlers
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
         // Get storage locations from config
-        let storage_locations = unified_handlers
+        let storage_locations = request_handlers
             .storage_config()
             .map(|config| {
                 config
@@ -86,7 +86,7 @@ impl ProximaFlightService {
             .unwrap_or_default();
 
         Self {
-            unified_handlers,
+            request_handlers,
             security_coordinator: None,
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
@@ -359,7 +359,7 @@ impl ProximaFlightService {
 
     async fn trigger_collection_compaction(&self, collection_id: &str) -> Result<()> {
         let storage_engine = self
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .unified_engine();
         storage_engine
@@ -446,11 +446,11 @@ impl ProximaFlightService {
                     records,
                 };
                 if operation == FlightWriteOperation::Insert {
-                    self.unified_handlers
+                    self.request_handlers
                         .handle_record_insert_batch_for_tenant(request, tenant_id.as_deref())
                         .await?
                 } else {
-                    self.unified_handlers
+                    self.request_handlers
                         .handle_record_batch_for_tenant(request, tenant_id.as_deref())
                         .await?
                 }
@@ -467,11 +467,11 @@ impl ProximaFlightService {
                     records,
                 };
                 if operation == FlightWriteOperation::Insert {
-                    self.unified_handlers
+                    self.request_handlers
                         .handle_record_insert_batch_for_tenant(request, tenant_id.as_deref())
                         .await?
                 } else {
-                    self.unified_handlers
+                    self.request_handlers
                         .handle_record_batch_for_tenant(request, tenant_id.as_deref())
                         .await?
                 }
@@ -508,7 +508,7 @@ impl ProximaFlightService {
         let record_ids = ArrowProtoCodec::batches_to_record_ids(batches)?;
 
         let result = self
-            .unified_handlers
+            .request_handlers
             .handle_record_delete_batch_for_tenant(
                 RichRecordDeleteBatchRequest {
                     collection_id: collection_id.clone(),
@@ -542,7 +542,7 @@ impl ProximaFlightService {
 
         // Execute search via UnifiedHandlers (reuses existing path)
         let response = self
-            .unified_handlers
+            .request_handlers
             .handle_vector_search_v1(request)
             .await?;
 
@@ -620,7 +620,7 @@ impl FlightService for ProximaFlightService {
         let collections = if let Some(cid) = collection_id {
             // Get specific collection
             match self
-                .unified_handlers
+                .request_handlers
                 .collection_service
                 .collection(&cid)
                 .await
@@ -641,7 +641,7 @@ impl FlightService for ProximaFlightService {
             }
         } else {
             // List all collections
-            self.unified_handlers
+            self.request_handlers
                 .collection_service
                 .list_collections()
                 .await
@@ -694,7 +694,7 @@ impl FlightService for ProximaFlightService {
 
         // Get collection
         let collection = self
-            .unified_handlers
+            .request_handlers
             .collection_service
             .collection(&file_request.collection_id)
             .await
@@ -750,7 +750,7 @@ impl FlightService for ProximaFlightService {
 
         // Get collection to determine dimension
         let collection = self
-            .unified_handlers
+            .request_handlers
             .collection_service
             .collection(&metadata.collection_id)
             .await
@@ -1008,7 +1008,7 @@ impl FlightService for ProximaFlightService {
 
                 // Create collection via service
                 let result = self
-                    .unified_handlers
+                    .request_handlers
                     .collection_service
                     .create_collection(&config)
                     .await
@@ -1058,7 +1058,7 @@ impl FlightService for ProximaFlightService {
                 info!(collection_id = %collection_id, "Arrow Flight: delete_collection");
 
                 // Delete collection via service
-                self.unified_handlers
+                self.request_handlers
                     .collection_service
                     .delete_collection(collection_id)
                     .await
@@ -1100,7 +1100,7 @@ impl FlightService for ProximaFlightService {
 
                 // Get collection via service
                 let collection = self
-                    .unified_handlers
+                    .request_handlers
                     .collection_service
                     .collection(collection_id)
                     .await
@@ -1140,7 +1140,7 @@ impl FlightService for ProximaFlightService {
 
                 // List all collections via service
                 let collections = self
-                    .unified_handlers
+                    .request_handlers
                     .collection_service
                     .list_collections()
                     .await
@@ -1254,7 +1254,7 @@ impl FlightService for ProximaFlightService {
 
                 // Insert via unified handlers
                 let response = self
-                    .unified_handlers
+                    .request_handlers
                     .handle_vector_batch_v1(crate::proto::proximadb_v1::VectorBatchRequest {
                         collection_id: collection_id.to_string(),
                         vectors,
@@ -1377,7 +1377,7 @@ impl FlightService for ProximaFlightService {
                 let mut found_vectors = Vec::new();
                 for vector_id in &vector_ids {
                     if let Ok(Some(record)) = self
-                        .unified_handlers
+                        .request_handlers
                         .vector_operations_service
                         .vector(collection_id, vector_id, include_vectors, include_metadata)
                         .await
@@ -1426,7 +1426,7 @@ impl FlightService for ProximaFlightService {
                 info!(collection_id = %collection_id, "Arrow Flight: flush_collection");
 
                 // Flush collection via vector operations service
-                self.unified_handlers
+                self.request_handlers
                     .vector_operations_service
                     .force_flush_collection(collection_id)
                     .await
@@ -1468,7 +1468,7 @@ impl FlightService for ProximaFlightService {
 
                 // Compact collection via storage engine
                 let storage_engine = self
-                    .unified_handlers
+                    .request_handlers
                     .vector_operations_service
                     .unified_engine();
                 storage_engine
@@ -1511,7 +1511,7 @@ impl FlightService for ProximaFlightService {
                 info!(collection_id = %collection_id, "Arrow Flight: flush_and_compact");
 
                 // Flush first, then compact
-                self.unified_handlers
+                self.request_handlers
                     .vector_operations_service
                     .force_flush_collection(collection_id)
                     .await
@@ -1520,7 +1520,7 @@ impl FlightService for ProximaFlightService {
                     })?;
 
                 let storage_engine = self
-                    .unified_handlers
+                    .request_handlers
                     .vector_operations_service
                     .unified_engine();
                 storage_engine
@@ -1560,7 +1560,7 @@ impl FlightService for ProximaFlightService {
 
                 // Get collection
                 let collection = self
-                    .unified_handlers
+                    .request_handlers
                     .collection_service
                     .collection(collection_id)
                     .await
@@ -1844,7 +1844,7 @@ impl ProximaFlightService {
                         match Self::insert_conflict_result(&records, &mut insert_seen_ids) {
                             Some(result) => Ok(result),
                             None => {
-                                self.unified_handlers
+                                self.request_handlers
                                     .handle_record_insert_batch_for_tenant(
                                         RichRecordBatchRequest {
                                             collection_id: collection_id.clone(),
@@ -1856,7 +1856,7 @@ impl ProximaFlightService {
                             }
                         }
                     } else {
-                        self.unified_handlers
+                        self.request_handlers
                             .handle_record_batch_for_tenant(
                                 RichRecordBatchRequest {
                                     collection_id: collection_id.clone(),
@@ -1878,7 +1878,7 @@ impl ProximaFlightService {
                         }
                     };
 
-                    self.unified_handlers
+                    self.request_handlers
                         .handle_record_delete_batch_for_tenant(
                             RichRecordDeleteBatchRequest {
                                 collection_id: collection_id.clone(),

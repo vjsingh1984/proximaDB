@@ -13,14 +13,6 @@ pub mod rls;
 pub mod security_coordinator;
 pub mod validation;
 
-pub mod unified_auth {
-    pub use super::auth_service::*;
-}
-
-pub mod unified_rbac {
-    pub use super::rbac_service::*;
-}
-
 pub use rbac_service::{
     AuthMethod, AuthorizationResult, CollectionPermissionType, ConsolidatedRBACManager, RBACConfig,
     TenantContext, UnifiedAuthMethod, UnifiedPermission, UnifiedRole, UnifiedUserContext,

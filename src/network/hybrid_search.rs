@@ -69,7 +69,7 @@ pub fn validate_hybrid_search_request(request: &HybridSearchExecutionRequest) ->
 
 /// Execute a hybrid search combining vector similarity and BM25 text relevance
 pub async fn execute_hybrid_search(
-    unified_handlers: &UnifiedHandlers,
+    request_handlers: &UnifiedHandlers,
     fulltext_indexes: Option<&HybridFullTextIndexMap>,
     tenant_id: Option<&str>,
     request: HybridSearchExecutionRequest,
@@ -81,7 +81,7 @@ pub async fn execute_hybrid_search(
 
     let vector_start = std::time::Instant::now();
     let vector_results =
-        execute_vector_search(unified_handlers, tenant_id, &request, top_k).await?;
+        execute_vector_search(request_handlers, tenant_id, &request, top_k).await?;
     let vector_search_time_ms = vector_start.elapsed().as_secs_f64() * 1000.0;
 
     let bm25_start = std::time::Instant::now();
@@ -104,7 +104,7 @@ pub async fn execute_hybrid_search(
 }
 
 async fn execute_vector_search(
-    unified_handlers: &UnifiedHandlers,
+    request_handlers: &UnifiedHandlers,
     tenant_id: Option<&str>,
     request: &HybridSearchExecutionRequest,
     top_k: usize,
@@ -115,11 +115,11 @@ async fn execute_vector_search(
 
     let search_request = build_vector_search_request(request, top_k);
     let response = if let Some(tenant_id) = tenant_id {
-        unified_handlers
+        request_handlers
             .handle_vector_search_v1_for_tenant(search_request, Some(tenant_id))
             .await?
     } else {
-        unified_handlers
+        request_handlers
             .handle_vector_search_v1(search_request)
             .await?
     };

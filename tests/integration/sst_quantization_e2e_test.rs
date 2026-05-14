@@ -12,7 +12,7 @@ use tokio;
 
 use proximadb::core::{VectorRecord, SstConfig};
 use proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default;
-use proximadb::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
+use proximadb::compute::quantization::{UnifiedQuantizationEngine, InMemoryCodebookStore};
 use proximadb::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::quantization::{SstQuantizationAdapter, sst_adapter::SstQuantizationConfig};
