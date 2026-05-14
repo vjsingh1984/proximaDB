@@ -879,19 +879,14 @@ impl GraphOperationsService {
     /// Extracts `(from_node_id, to_node_id, edge_id)` from the adjacency
     /// projection's `edges_by_src` snapshot (one entry per edge, no duplicates)
     /// and calls `OrionGraphEngine::rebuild_csr_from_edges`.
-    pub async fn rebuild_orion_csr_from_adjacency_projection(
-        &self,
-        graph_id: &str,
-    ) -> Result<()> {
+    pub async fn rebuild_orion_csr_from_adjacency_projection(&self, graph_id: &str) -> Result<()> {
         let node_prefix = format!("graph/{graph_id}/node/");
         let edge_prefix = format!("graph/{graph_id}/edge/");
 
         let endpoints = {
             let proj = self.adjacency_projection(graph_id);
             proj.snapshot_edge_endpoints().map_err(|e| {
-                ProximaDBError::Internal(format!(
-                    "adjacency projection snapshot failed: {e}"
-                ))
+                ProximaDBError::Internal(format!("adjacency projection snapshot failed: {e}"))
             })?
         };
 

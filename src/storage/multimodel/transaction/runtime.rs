@@ -15,7 +15,7 @@ use super::participants::{
     DocumentStoreParticipant, GraphEdge, GraphNode, GraphStoreParticipant,
     ObservabilityStoreParticipant, VectorStoreParticipant,
 };
-use super::two_phase_commit::ParticipantType;
+use super::two_phase_commit::{CommitResult, ParticipantType, PrepareResult, TwoPhaseParticipant};
 
 /// Runtime wrapper that wires real store-backed participants into the
 /// multi-model transaction coordinator and exposes staging methods for
@@ -115,7 +115,8 @@ impl TransactionalMultiModelFacade {
     }
 
     pub async fn commit(&self, transaction_id: &str) -> Result<()> {
-        self.coordinator.commit(transaction_id).await
+        self.coordinator.commit(transaction_id).await?;
+        self.commit_staged_participants(transaction_id).await
     }
 
     pub async fn rollback(&self, transaction_id: &str) -> Result<()> {
@@ -136,6 +137,69 @@ impl TransactionalMultiModelFacade {
         }
 
         Ok(())
+    }
+
+    async fn commit_staged_participants(&self, transaction_id: &str) -> Result<()> {
+        if let Some(ref participant) = self.document_participant {
+            Self::commit_participant(participant.as_ref(), transaction_id).await?;
+        }
+        if let Some(ref participant) = self.observability_participant {
+            Self::commit_participant(participant.as_ref(), transaction_id).await?;
+        }
+        if let Some(ref participant) = self.vector_participant {
+            Self::commit_participant(participant.as_ref(), transaction_id).await?;
+        }
+        if let Some(ref participant) = self.graph_participant {
+            Self::commit_participant(participant.as_ref(), transaction_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn commit_participant(
+        participant: &(dyn TwoPhaseParticipant + Send + Sync),
+        transaction_id: &str,
+    ) -> Result<()> {
+        match participant.prepare(transaction_id).await {
+            PrepareResult::Yes => {}
+            PrepareResult::No(reason) => {
+                return Err(anyhow!(
+                    "{} participant rejected transaction {}: {}",
+                    participant.participant_type().name(),
+                    transaction_id,
+                    reason
+                ));
+            }
+            PrepareResult::Timeout => {
+                return Err(anyhow!(
+                    "{} participant prepare timed out for transaction {}",
+                    participant.participant_type().name(),
+                    transaction_id
+                ));
+            }
+            PrepareResult::Error(error) => {
+                return Err(anyhow!(
+                    "{} participant prepare failed for transaction {}: {}",
+                    participant.participant_type().name(),
+                    transaction_id,
+                    error
+                ));
+            }
+        }
+
+        match participant.commit(transaction_id).await {
+            CommitResult::Success => Ok(()),
+            CommitResult::Failed(error) => Err(anyhow!(
+                "{} participant commit failed for transaction {}: {}",
+                participant.participant_type().name(),
+                transaction_id,
+                error
+            )),
+            CommitResult::Timeout => Err(anyhow!(
+                "{} participant commit timed out for transaction {}",
+                participant.participant_type().name(),
+                transaction_id
+            )),
+        }
     }
 
     pub async fn insert_document(
@@ -744,6 +808,18 @@ mod tests {
         let record_store = Arc::new(MemoryRecordStore::default());
         let graph_service =
             Arc::new(GraphService::new().with_canonical_record_store(record_store.clone()));
+        graph_service
+            .create_graph_collection(crate::proto::proximadb_v1::CreateGraphRequest {
+                graph_id: graph_id.clone(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .unwrap();
         let graph_store = Arc::new(
             GraphStore::new(GraphStoreConfig::default())
                 .with_service(graph_service.clone())

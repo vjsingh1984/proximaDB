@@ -41,11 +41,9 @@
 //! without panicking.  All meaningful graph traversal work is delegated to the
 //! graph service layer via `InMemoryGraphAdjacencyProjection`.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
 
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
