@@ -891,7 +891,11 @@ Tasks:
 ** Bridges proto `DocumentFilter` (conditions/or_filters/and_filters) to `FilterExpression` (Comparison/And/Or) from `proximadb-filter-expression`.
 ** `DocFilterOperator` → `ComparisonOperator` mapping: Eq→Equals, In→In, Contains/Fulltext→Contains, Regex→Like, Exists→IsNotNull.
 ** 5 tests covering: single eq, multiple conditions→And, or_filters→Or, Exists→IsNotNull, empty→None.
-* [ ] Lower graph pattern queries to `PatternMatch`/`HybridTraverse`.
+* [x] Lower graph pattern queries to `PatternMatch`/`HybridTraverse`.
+** `cypher_query_to_operators(query, graph_name)` in `graph_adapter.rs`: MATCH clauses → `Scan + PatternMatch`; inline WHERE → `Filter`; RETURN → `Project/Sort/Limit`.
+** `graph_traversal_expr_to_operators(expr)`: traversal expressions → `Scan + HybridTraverse` with `EdgePattern{edge_type, min_hops, max_hops, direction}`.
+** `where_clause_to_filter_expression(clause)`: Cypher WHERE (Property/And/Or/Not) → `FilterExpression`; property constraints mapped to `ComparisonOperator`.
+** 7 new tests in `graph_adapter::tests`; all 16 graph-adapter tests pass.
 * [ ] Add cost rules:
 ** [ ] adjacency index vs CSR projection;
 ** [ ] JSON path index vs row scan;

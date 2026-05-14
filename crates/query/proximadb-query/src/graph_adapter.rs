@@ -4,6 +4,11 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use proximadb_data_model::DataModel;
+use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+use proximadb_graph_query::ast::{
+    CypherQuery, EdgeDirection, MatchPattern, PropertyConstraint, PropertyProjection, ReadingClause,
+    WhereClause,
+};
 use proximadb_graph_query::declarative::graph_query_row_id;
 use proximadb_graph_query::service::{
     GraphQueryReadService, GraphQueryService, GraphQueryTraversalService,
@@ -11,6 +16,9 @@ use proximadb_graph_query::service::{
 use proximadb_graph_query::traversal::{
     GraphTraversalExpr, NodeFilter, PropertyFilter as UnifiedPropertyFilter, StartNodeSpec,
     TraversalDirection,
+};
+use proximadb_multimodel_plan::{
+    EdgePattern as PlanEdgePattern, Operator, TraversalDirection as PlanTraversalDirection,
 };
 use proximadb_proto::proximadb_v1::{
     Node, NodeQuery, PropertyFilter, PropertyFilterOperator, PropertyValue, TraversalAlgorithm,
@@ -259,6 +267,247 @@ where
 
 fn traversal_direction_to_algorithm(_direction: &TraversalDirection) -> TraversalAlgorithm {
     TraversalAlgorithm::Bfs
+}
+
+// =========== Phase 4: Graph pattern query → MultiModelPlan operators ===========
+
+/// Lower a `CypherQuery` to a `Vec<Operator>` plan fragment.
+///
+/// Each MATCH reading clause lowers to a graph `Scan` + `PatternMatch` pair.
+/// Inline WHERE predicates inside a MATCH pattern lower to `Filter` operators.
+/// RETURN projections, ORDER BY, and LIMIT lower to `Project`, `Sort`, and
+/// `Limit` operators respectively.
+///
+/// This is the Phase 4 lowering bridge from Cypher-style graph patterns to
+/// the shared algebra used by `MultiModelPlan`.
+pub fn cypher_query_to_operators(query: &CypherQuery, graph_name: &str) -> Vec<Operator> {
+    let mut operators: Vec<Operator> = vec![Operator::Scan {
+        data_model: DataModel::Graph,
+        source: graph_name.to_string(),
+        columns: None,
+        filter: None,
+    }];
+
+    for clause in &query.reading_clauses {
+        if let ReadingClause::Match { pattern, .. } = clause {
+            operators.push(Operator::PatternMatch {
+                pattern: match_pattern_to_cypher_string(pattern),
+            });
+
+            if let Some(where_clause) = &pattern.where_clause {
+                if let Some(expr) = where_clause_to_filter_expression(where_clause) {
+                    operators.push(Operator::Filter { expression: expr });
+                }
+            }
+        }
+    }
+
+    if let Some(ret) = &query.return_spec {
+        let columns: Vec<String> = ret
+            .projections
+            .iter()
+            .filter_map(|p| match p {
+                PropertyProjection::Variable(v) => Some(v.clone()),
+                PropertyProjection::Property { variable, property } => {
+                    Some(format!("{}.{}", variable, property))
+                }
+                _ => None,
+            })
+            .collect();
+        if !columns.is_empty() {
+            operators.push(Operator::Project { columns });
+        }
+
+        if let Some((col, asc)) = ret.order_by.first() {
+            operators.push(Operator::Sort {
+                column: col.clone(),
+                ascending: *asc,
+                limit: ret.limit,
+            });
+        } else if let Some(limit) = ret.limit {
+            operators.push(Operator::Limit {
+                n: limit,
+                offset: ret.skip.unwrap_or(0),
+            });
+        }
+    }
+
+    operators
+}
+
+/// Lower a `GraphTraversalExpr` to a `Vec<Operator>` plan fragment.
+///
+/// Produces `Scan(Graph, graph_name)` followed by `HybridTraverse` carrying
+/// the hop-depth and edge-type constraints from the traversal expression.
+pub fn graph_traversal_expr_to_operators(expr: &GraphTraversalExpr) -> Vec<Operator> {
+    let scan = Operator::Scan {
+        data_model: DataModel::Graph,
+        source: expr.graph_name.clone(),
+        columns: None,
+        filter: None,
+    };
+
+    let direction = match expr.direction {
+        TraversalDirection::Outgoing => PlanTraversalDirection::Outgoing,
+        TraversalDirection::Incoming => PlanTraversalDirection::Incoming,
+        TraversalDirection::Both => PlanTraversalDirection::Both,
+    };
+
+    let traverse = Operator::HybridTraverse {
+        edge_pattern: PlanEdgePattern {
+            edge_type: expr.edge_types.first().cloned(),
+            min_hops: expr.min_depth,
+            max_hops: (expr.max_depth > 0).then_some(expr.max_depth),
+            direction,
+        },
+    };
+
+    vec![scan, traverse]
+}
+
+/// Lower a graph `WhereClause` to the shared `FilterExpression` algebra.
+///
+/// Property fields are qualified as `variable.property` to preserve the
+/// binding context visible in the original Cypher WHERE clause.
+pub fn where_clause_to_filter_expression(clause: &WhereClause) -> Option<FilterExpression> {
+    match clause {
+        WhereClause::Property {
+            variable,
+            property,
+            constraint,
+        } => {
+            let field = format!("{}.{}", variable, property);
+            let (operator, value) = property_constraint_to_comparison(constraint)?;
+            Some(FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            })
+        }
+        WhereClause::And(left, right) => {
+            let mut parts = Vec::new();
+            if let Some(l) = where_clause_to_filter_expression(left) {
+                parts.push(l);
+            }
+            if let Some(r) = where_clause_to_filter_expression(right) {
+                parts.push(r);
+            }
+            match parts.len() {
+                0 => None,
+                1 => Some(parts.into_iter().next().unwrap()),
+                _ => Some(FilterExpression::And(parts)),
+            }
+        }
+        WhereClause::Or(left, right) => {
+            let mut parts = Vec::new();
+            if let Some(l) = where_clause_to_filter_expression(left) {
+                parts.push(l);
+            }
+            if let Some(r) = where_clause_to_filter_expression(right) {
+                parts.push(r);
+            }
+            match parts.len() {
+                0 => None,
+                1 => Some(parts.into_iter().next().unwrap()),
+                _ => Some(FilterExpression::Or(parts)),
+            }
+        }
+        WhereClause::Not(inner) => where_clause_to_filter_expression(inner)
+            .map(|expr| FilterExpression::Not(Box::new(expr))),
+    }
+}
+
+/// Serialize a `MatchPattern` to a human-readable Cypher-style string.
+///
+/// Used as the opaque `pattern` payload in `Operator::PatternMatch` for
+/// observability (explain output) and executor dispatch.
+fn match_pattern_to_cypher_string(pattern: &MatchPattern) -> String {
+    if pattern.edges.is_empty() {
+        pattern
+            .nodes
+            .iter()
+            .map(|n| {
+                let labels = if n.labels.is_empty() {
+                    String::new()
+                } else {
+                    format!(":{}", n.labels.join(":"))
+                };
+                format!("({}{})", n.variable, labels)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    } else {
+        pattern
+            .edges
+            .iter()
+            .map(|e| {
+                let rel_type = if e.edge_types.is_empty() {
+                    String::new()
+                } else {
+                    format!(":{}", e.edge_types.join("|"))
+                };
+                let rel = match &e.variable {
+                    Some(v) => format!("[{v}{rel_type}]"),
+                    None => format!("[{rel_type}]"),
+                };
+                match e.direction {
+                    EdgeDirection::Outgoing => {
+                        format!("({})-{}->({})", e.from_variable, rel, e.to_variable)
+                    }
+                    EdgeDirection::Incoming => {
+                        format!("({})<-{}-({})", e.from_variable, rel, e.to_variable)
+                    }
+                    EdgeDirection::Bidirectional => {
+                        format!("({})-{}-({})", e.from_variable, rel, e.to_variable)
+                    }
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// Convert a `PropertyConstraint` to a `(ComparisonOperator, serde_json::Value)` pair
+/// for use in `FilterExpression::Comparison`.
+fn property_constraint_to_comparison(
+    constraint: &PropertyConstraint,
+) -> Option<(ComparisonOperator, serde_json::Value)> {
+    match constraint {
+        PropertyConstraint::Equals(v) => Some((ComparisonOperator::Equals, v.clone())),
+        PropertyConstraint::NotEquals(v) => Some((ComparisonOperator::NotEquals, v.clone())),
+        PropertyConstraint::GreaterThan(v) => Some((ComparisonOperator::GreaterThan, v.clone())),
+        PropertyConstraint::GreaterThanOrEqual(v) | PropertyConstraint::GreaterOrEqual(v) => {
+            Some((ComparisonOperator::GreaterThanOrEqual, v.clone()))
+        }
+        PropertyConstraint::LessThan(v) => Some((ComparisonOperator::LessThan, v.clone())),
+        PropertyConstraint::LessThanOrEqual(v) | PropertyConstraint::LessOrEqual(v) => {
+            Some((ComparisonOperator::LessThanOrEqual, v.clone()))
+        }
+        PropertyConstraint::In(values) => {
+            Some((ComparisonOperator::In, serde_json::Value::Array(values.clone())))
+        }
+        PropertyConstraint::NotIn(values) => {
+            Some((ComparisonOperator::NotIn, serde_json::Value::Array(values.clone())))
+        }
+        PropertyConstraint::Contains(s) => {
+            Some((ComparisonOperator::Contains, serde_json::Value::String(s.clone())))
+        }
+        PropertyConstraint::StartsWith(s) => {
+            Some((ComparisonOperator::StartsWith, serde_json::Value::String(s.clone())))
+        }
+        PropertyConstraint::EndsWith(s) => {
+            Some((ComparisonOperator::EndsWith, serde_json::Value::String(s.clone())))
+        }
+        PropertyConstraint::Regex(p) => {
+            Some((ComparisonOperator::Like, serde_json::Value::String(p.clone())))
+        }
+        PropertyConstraint::Exists => {
+            Some((ComparisonOperator::IsNotNull, serde_json::Value::Null))
+        }
+        PropertyConstraint::NotExists => {
+            Some((ComparisonOperator::IsNull, serde_json::Value::Null))
+        }
+    }
 }
 
 async fn resolve_nodes_by_label<G>(
@@ -672,5 +921,232 @@ mod tests {
         assert_eq!(result.records_returned, 1);
         assert_eq!(result.records[0].id, "alice");
         assert!(result.records[0].data.get("start_node").is_none());
+    }
+
+    // ── Phase 4: graph pattern lowering tests ────────────────────────────────
+
+    use proximadb_graph_query::ast::{
+        CypherQuery, EdgeDirection, EdgePattern as AstEdgePattern, MatchPattern, NodePattern,
+        PropertyConstraint, PropertyProjection, ReadingClause, ReturnSpec, WhereClause,
+    };
+    use proximadb_multimodel_plan::Operator;
+
+    fn empty_match_pattern() -> MatchPattern {
+        MatchPattern {
+            nodes: vec![],
+            edges: vec![],
+            paths: vec![],
+            where_clause: None,
+        }
+    }
+
+    fn person_node(var: &str) -> NodePattern {
+        NodePattern {
+            variable: var.to_string(),
+            labels: vec!["Person".to_string()],
+            properties: HashMap::new(),
+            optional: false,
+        }
+    }
+
+    fn knows_edge(from: &str, to: &str) -> AstEdgePattern {
+        AstEdgePattern {
+            variable: None,
+            from_variable: from.to_string(),
+            to_variable: to.to_string(),
+            edge_types: vec!["KNOWS".to_string()],
+            properties: HashMap::new(),
+            direction: EdgeDirection::Outgoing,
+            optional: false,
+        }
+    }
+
+    #[test]
+    fn cypher_match_produces_scan_and_pattern_match() {
+        let query = CypherQuery {
+            reading_clauses: vec![ReadingClause::Match {
+                pattern: MatchPattern {
+                    nodes: vec![person_node("n"), person_node("m")],
+                    edges: vec![knows_edge("n", "m")],
+                    paths: vec![],
+                    where_clause: None,
+                },
+                optional: false,
+            }],
+            updating_clauses: vec![],
+            with_clauses: vec![],
+            union_clauses: vec![],
+            return_spec: None,
+        };
+
+        let ops = cypher_query_to_operators(&query, "social");
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(ops[0], Operator::Scan { .. }));
+        assert!(matches!(ops[1], Operator::PatternMatch { .. }));
+        if let Operator::PatternMatch { ref pattern } = ops[1] {
+            assert!(pattern.contains("KNOWS"), "pattern should contain edge type");
+            assert!(pattern.contains("->"), "outgoing edge should use ->");
+        }
+    }
+
+    #[test]
+    fn cypher_match_where_clause_adds_filter_operator() {
+        let where_clause = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "age".to_string(),
+            constraint: PropertyConstraint::GreaterThan(serde_json::json!(30)),
+        };
+
+        let query = CypherQuery {
+            reading_clauses: vec![ReadingClause::Match {
+                pattern: MatchPattern {
+                    nodes: vec![person_node("n")],
+                    edges: vec![],
+                    paths: vec![],
+                    where_clause: Some(where_clause),
+                },
+                optional: false,
+            }],
+            updating_clauses: vec![],
+            with_clauses: vec![],
+            union_clauses: vec![],
+            return_spec: None,
+        };
+
+        let ops = cypher_query_to_operators(&query, "social");
+        // Scan + PatternMatch + Filter
+        assert_eq!(ops.len(), 3);
+        assert!(matches!(ops[2], Operator::Filter { .. }));
+        if let Operator::Filter { ref expression } = ops[2] {
+            match expression {
+                FilterExpression::Comparison { field, operator, .. } => {
+                    assert_eq!(field, "n.age");
+                    assert_eq!(*operator, ComparisonOperator::GreaterThan);
+                }
+                other => panic!("expected Comparison, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn cypher_return_limit_adds_limit_operator() {
+        let query = CypherQuery {
+            reading_clauses: vec![ReadingClause::Match {
+                pattern: empty_match_pattern(),
+                optional: false,
+            }],
+            updating_clauses: vec![],
+            with_clauses: vec![],
+            union_clauses: vec![],
+            return_spec: Some(ReturnSpec {
+                variables: vec![],
+                projections: vec![PropertyProjection::Variable("n".to_string())],
+                distinct: false,
+                order_by: vec![],
+                limit: Some(10),
+                skip: Some(5),
+            }),
+        };
+
+        let ops = cypher_query_to_operators(&query, "social");
+        // Scan + PatternMatch + Project + Limit
+        let has_project = ops.iter().any(|o| matches!(o, Operator::Project { .. }));
+        let has_limit = ops.iter().any(|o| matches!(o, Operator::Limit { .. }));
+        assert!(has_project, "should have Project for RETURN variables");
+        assert!(has_limit, "should have Limit for RETURN LIMIT");
+        if let Some(Operator::Limit { n, offset }) = ops.last() {
+            assert_eq!(*n, 10);
+            assert_eq!(*offset, 5);
+        }
+    }
+
+    #[test]
+    fn traversal_expr_lowers_to_scan_and_hybrid_traverse() {
+        let expr = GraphTraversalExpr {
+            graph_name: "kg".to_string(),
+            start_nodes: StartNodeSpec::Ids(vec!["n1".to_string()]),
+            edge_types: vec!["RELATED".to_string()],
+            direction: TraversalDirection::Both,
+            max_depth: 3,
+            min_depth: 1,
+            node_filters: vec![],
+            edge_filters: vec![],
+            return_paths: false,
+        };
+
+        let ops = graph_traversal_expr_to_operators(&expr);
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(ops[0], Operator::Scan { .. }));
+        assert!(matches!(ops[1], Operator::HybridTraverse { .. }));
+        if let Operator::HybridTraverse { ref edge_pattern } = ops[1] {
+            assert_eq!(edge_pattern.edge_type.as_deref(), Some("RELATED"));
+            assert_eq!(edge_pattern.min_hops, 1);
+            assert_eq!(edge_pattern.max_hops, Some(3));
+        }
+    }
+
+    #[test]
+    fn where_clause_and_lowers_to_and_expression() {
+        let clause = WhereClause::And(
+            Box::new(WhereClause::Property {
+                variable: "n".to_string(),
+                property: "active".to_string(),
+                constraint: PropertyConstraint::Equals(serde_json::json!(true)),
+            }),
+            Box::new(WhereClause::Property {
+                variable: "n".to_string(),
+                property: "age".to_string(),
+                constraint: PropertyConstraint::GreaterThan(serde_json::json!(18)),
+            }),
+        );
+
+        let expr = where_clause_to_filter_expression(&clause).expect("non-empty");
+        assert!(matches!(expr, FilterExpression::And(_)));
+        if let FilterExpression::And(parts) = expr {
+            assert_eq!(parts.len(), 2);
+        }
+    }
+
+    #[test]
+    fn where_clause_not_wraps_inner() {
+        let clause = WhereClause::Not(Box::new(WhereClause::Property {
+            variable: "n".to_string(),
+            property: "deleted".to_string(),
+            constraint: PropertyConstraint::Equals(serde_json::json!(true)),
+        }));
+
+        let expr = where_clause_to_filter_expression(&clause).expect("non-empty");
+        assert!(matches!(expr, FilterExpression::Not(_)));
+    }
+
+    #[test]
+    fn property_constraint_exists_lowers_to_is_not_null() {
+        let clause = WhereClause::Property {
+            variable: "n".to_string(),
+            property: "email".to_string(),
+            constraint: PropertyConstraint::Exists,
+        };
+
+        let expr = where_clause_to_filter_expression(&clause).expect("non-empty");
+        match expr {
+            FilterExpression::Comparison { field, operator, .. } => {
+                assert_eq!(field, "n.email");
+                assert_eq!(operator, ComparisonOperator::IsNotNull);
+            }
+            other => panic!("expected Comparison, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn match_pattern_edge_serializes_to_cypher_arrow_notation() {
+        let pattern = MatchPattern {
+            nodes: vec![],
+            edges: vec![knows_edge("a", "b")],
+            paths: vec![],
+            where_clause: None,
+        };
+
+        let s = match_pattern_to_cypher_string(&pattern);
+        assert_eq!(s, "(a)-[:KNOWS]->(b)");
     }
 }
