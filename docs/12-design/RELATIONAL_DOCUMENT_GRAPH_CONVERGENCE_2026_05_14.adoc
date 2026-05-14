@@ -928,12 +928,31 @@ Goal: eliminate separate recovery semantics for document and graph.
 
 Tasks:
 
-* [ ] Define canonical WAL entries for document/node/edge writes.
-* [ ] Make document WAL replay rebuild document projections, not document-only truth.
-* [ ] Make graph WAL replay rebuild adjacency/CSR projections, not graph-only truth.
-* [ ] Ensure snapshots/checkpoints capture canonical records plus projection metadata.
-* [ ] Ensure CDC streams publish canonical record changes with document/graph logical views as derived event forms.
-* [ ] Add crash/recovery tests for document indexes, graph adjacency tables, and CSR rebuilds.
+* [x] Define canonical WAL entries for document/node/edge writes.
+** `CanonicalWalEntry` / `CanonicalOperation` in `crates/storage/proximadb-storage-common/src/wal_entry.rs`.
+** `RecordUpsert { collection_id, record: ProximaRecord, projections: Vec<ProjectionDirective> }` is the single WAL shape for document inserts, graph node writes, graph edge writes, vector writes, and observability writes.
+** `RecordDelete { collection_id, oid, projections }` covers all modality deletes.
+** `Checkpoint(SnapshotManifest)` and `CdcBarrier { barrier_sequence, events }` round out the four operation kinds.
+* [x] Make document WAL replay rebuild document projections, not document-only truth.
+** `ProjectionDirective::DocumentJsonPathIndex` and `ProjectionDirective::FullTextIndex` travel alongside every document `RecordUpsert`.
+** `recover_from_canonical_wal` fires `ProjectionRebuilder::apply_directive` for each directive, so recovery rebuilds JSON path and FTS indexes from the canonical log rather than depending on a separate `DocumentRecord` durable truth.
+** Test `recovery_replays_upserts_and_fires_directives` and `projection_corruption_repaired_by_full_replay_from_zero` verify this.
+* [x] Make graph WAL replay rebuild adjacency/CSR projections, not graph-only truth.
+** `ProjectionDirective::AdjacencyTableRow { graph_id, node_oid, edge_refs }` rebuilds per-node adjacency rows.
+** `ProjectionDirective::CsrRebuild { graph_id }` marks CSR stale for background re-materialisation; the constraint from `graph_adapter.rs` (CSR used only when `epoch_age_secs < MAX_STALE_SECS`) governs when it is consulted.
+** Tests `crash_recovery_graph_adjacency_directives_all_fired` and `recovery_replays_deletes_with_no_record` verify the adjacency rebuild path.
+* [x] Ensure snapshots/checkpoints capture canonical records plus projection metadata.
+** `SnapshotManifest { sequence_number, collection_ids, projection_freshness: Vec<ProjectionFreshness> }` is the checkpoint payload.
+** `ProjectionFreshness { projection_name, last_rebuilt_lsn, stale }` lets recovery skip projections already up-to-date.
+** `latest_checkpoint(entries)` finds the highest-LSN checkpoint; callers pass its `sequence_number` as `start_after_lsn` to replay only subsequent entries.
+** Tests `latest_checkpoint_finds_highest_lsn_checkpoint` and `crash_recovery_resumes_from_checkpoint_lsn` verify this.
+* [x] Ensure CDC streams publish canonical record changes with document/graph logical views as derived event forms.
+** `CdcRecordEvent { event_id, sequence_number, collection_id, operation: CdcOperation, record_after: Option<ProximaRecord>, logical_views: Vec<CdcLogicalView> }`.
+** `CdcLogicalView::DocumentChange`, `GraphNodeChange`, `GraphEdgeChange` carry pre-computed modality views so CDC subscribers receive the canonical record plus the logical shapes they care about.
+** Tests `cdc_event_carries_logical_views` and `cdc_delete_event_has_no_record_after` verify this.
+* [x] Add crash/recovery tests for document indexes, graph adjacency tables, and CSR rebuilds.
+** 17 tests in `wal_entry::tests` cover: upsert/delete replay, directive firing and error counting, LSN-scoped resume from checkpoint, graph adjacency + CSR directive replay, and full-log corruption repair from LSN 0.
+** All 55 `proximadb-storage-common` tests pass.
 
 Acceptance:
 
