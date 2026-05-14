@@ -20,7 +20,7 @@ use crate::grpc::v1::{
     streaming::{StreamingServiceImpl, StreamCoordinator},
     vector::VectorServiceImpl,
 };
-use proximadb_runtime::{ApiHandlersPort, DocumentPort, EntityPort, HybridPort, ObservabilityPort, SecurityPort};
+use proximadb_runtime::{ApiHandlersPort, DocumentPort, EntityPort, GraphPort, HybridPort, ObservabilityPort, SecurityPort};
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
 use proximadb_proto::v1::{
     collection_service_server::CollectionServiceServer,
@@ -167,12 +167,18 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Build graph service
+    /// Build graph service.
+    ///
+    /// When `port` is `None` the service returns `UNIMPLEMENTED` for every RPC.
     pub fn build_graph_service(
         &self,
-        port: Arc<dyn ApiHandlersPort>,
+        port: Option<Arc<dyn GraphPort>>,
     ) -> GraphServiceServer<GraphServiceImpl> {
-        let server = GraphServiceServer::new(GraphServiceImpl::new(port));
+        let impl_ = match port {
+            Some(p) => GraphServiceImpl::new(p),
+            None => GraphServiceImpl::without_backend(),
+        };
+        let server = GraphServiceServer::new(impl_);
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -290,6 +296,7 @@ pub struct GrpcServiceFactory {
     port: Arc<dyn ApiHandlersPort>,
     document_port: Option<Arc<dyn DocumentPort>>,
     entity_port: Option<Arc<dyn EntityPort>>,
+    graph_port: Option<Arc<dyn GraphPort>>,
     hybrid_port: Option<Arc<dyn HybridPort>>,
     observability_port: Option<Arc<dyn ObservabilityPort>>,
     security_port: Option<Arc<dyn SecurityPort>>,
@@ -303,6 +310,7 @@ impl GrpcServiceFactory {
             port,
             document_port: None,
             entity_port: None,
+            graph_port: None,
             hybrid_port: None,
             observability_port: None,
             security_port: None,
@@ -319,6 +327,12 @@ impl GrpcServiceFactory {
     /// Attach an entity port so the factory can wire the entity service.
     pub fn with_entity(mut self, entity: Arc<dyn EntityPort>) -> Self {
         self.entity_port = Some(entity);
+        self
+    }
+
+    /// Attach a graph port so the factory can wire the graph service.
+    pub fn with_graph(mut self, graph: Arc<dyn GraphPort>) -> Self {
+        self.graph_port = Some(graph);
         self
     }
 
@@ -357,7 +371,7 @@ impl GrpcServiceFactory {
             collection: builder.build_collection_service(self.port.clone()),
             document: Some(builder.build_document_service(self.document_port.clone())),
             entity: Some(builder.build_entity_service(self.entity_port.clone())),
-            graph: builder.build_graph_service(self.port.clone()),
+            graph: builder.build_graph_service(self.graph_port.clone()),
             hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(),
@@ -377,7 +391,7 @@ impl GrpcServiceFactory {
             collection: builder.build_collection_service(self.port.clone()),
             document: Some(builder.build_document_service(self.document_port.clone())),
             entity: Some(builder.build_entity_service(self.entity_port.clone())),
-            graph: builder.build_graph_service(self.port.clone()),
+            graph: builder.build_graph_service(self.graph_port.clone()),
             hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
             sql: builder.build_sql_service(self.port.clone()),
             streaming: builder.build_streaming_service(),

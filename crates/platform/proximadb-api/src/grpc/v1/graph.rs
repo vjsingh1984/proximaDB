@@ -1,212 +1,335 @@
 //! # Graph Services (gRPC)
 //!
-//! gRPC implementations for graph database operations including nodes, edges,
-//! traversals, and advanced graph algorithms.
-//!
-//! `execute_hybrid_query` routes through `ApiHandlersPort`. All graph CRUD operations
-//! (create/get/update/delete node/edge, traversal, etc.) remain unimplemented until the
-//! graph execution service is extracted to the runtime crate.
+//! gRPC implementation for graph database operations — node/edge CRUD,
+//! traversal, analytics, hybrid query.  Each RPC delegates to the injected
+//! `GraphPort`; when no port is provided the service returns `UNIMPLEMENTED`.
 
 use std::sync::Arc;
-use std::pin::Pin;
+
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 use proximadb_proto::v1::{
     graph_service_server::{GraphService as GraphServiceTrait, GraphServiceServer},
-    *
+    *,
 };
-use proximadb_runtime::ApiHandlersPort;
+use proximadb_runtime::GraphPort;
 
-/// Streaming response type for stream_traverse
-pub type StreamTraverseStream = Pin<
-    Box<dyn tokio_stream::Stream<Item = Result<TraversalChunk, Status>> + Send>,
->;
+/// Streaming response type for `stream_traverse`.
+pub type StreamTraverseStream = ReceiverStream<Result<TraversalChunk, Status>>;
 
-/// Graph service implementation.
+/// gRPC GraphService backed by a `GraphPort`.
 pub struct GraphServiceImpl {
-    port: Arc<dyn ApiHandlersPort>,
+    port: Option<Arc<dyn GraphPort>>,
 }
 
 impl GraphServiceImpl {
-    /// Create a new graph service backed by the given port.
-    pub fn new(port: Arc<dyn ApiHandlersPort>) -> Self {
-        Self { port }
+    /// Construct with a concrete graph port.
+    pub fn new(port: Arc<dyn GraphPort>) -> Self {
+        Self { port: Some(port) }
     }
 
-    /// Convert to tonic server.
+    /// Construct without a backend (all RPCs return UNIMPLEMENTED).
+    pub fn without_backend() -> Self {
+        Self { port: None }
+    }
+
+    /// Convert into a tonic gRPC server.
     pub fn into_server(self) -> GraphServiceServer<Self> {
         GraphServiceServer::new(self)
     }
+
+    fn not_configured() -> Status {
+        Status::unimplemented("Graph service not configured on this node")
+    }
+
+    fn port_err(e: anyhow::Error) -> Status {
+        Status::internal(e.to_string())
+    }
 }
 
-// Placeholder trait implementation - will be implemented after migration
 #[tonic::async_trait]
 impl GraphServiceTrait for GraphServiceImpl {
+    // ── Node CRUD ─────────────────────────────────────────────────────────
+
     async fn create_node(
         &self,
-        _request: Request<CreateNodeRequest>,
+        request: Request<CreateNodeRequest>,
     ) -> Result<Response<Node>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.create_node(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn get_node(
         &self,
-        _request: Request<GetNodeRequest>,
+        request: Request<GetNodeRequest>,
     ) -> Result<Response<Node>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_node(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn update_node(
         &self,
-        _request: Request<UpdateNodeRequest>,
+        request: Request<UpdateNodeRequest>,
     ) -> Result<Response<Node>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.update_node(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn delete_node(
         &self,
-        _request: Request<DeleteNodeRequest>,
+        request: Request<DeleteNodeRequest>,
     ) -> Result<Response<Node>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.delete_node(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
+
+    // ── Edge CRUD ─────────────────────────────────────────────────────────
 
     async fn create_edge(
         &self,
-        _request: Request<CreateEdgeRequest>,
+        request: Request<CreateEdgeRequest>,
     ) -> Result<Response<Edge>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.create_edge(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn get_edge(
         &self,
-        _request: Request<GetEdgeRequest>,
+        request: Request<GetEdgeRequest>,
     ) -> Result<Response<Edge>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_edge(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn update_edge(
         &self,
-        _request: Request<UpdateEdgeRequest>,
+        request: Request<UpdateEdgeRequest>,
     ) -> Result<Response<Edge>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.update_edge(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn delete_edge(
         &self,
-        _request: Request<DeleteEdgeRequest>,
+        request: Request<DeleteEdgeRequest>,
     ) -> Result<Response<Edge>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.delete_edge(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
+
+    // ── Queries ───────────────────────────────────────────────────────────
 
     async fn query_nodes(
         &self,
-        _request: Request<NodeQuery>,
+        request: Request<NodeQuery>,
     ) -> Result<Response<BatchResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.query_nodes(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn query_edges(
         &self,
-        _request: Request<EdgeQuery>,
+        request: Request<EdgeQuery>,
     ) -> Result<Response<BatchResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.query_edges(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn execute_query(
         &self,
-        _request: Request<GraphQueryRequest>,
+        request: Request<GraphQueryRequest>,
     ) -> Result<Response<GraphQueryResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.execute_query(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn get_neighbors(
         &self,
-        _request: Request<GetNeighborsRequest>,
+        request: Request<GetNeighborsRequest>,
     ) -> Result<Response<BatchResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_neighbors(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
+
+    // ── Traversal ─────────────────────────────────────────────────────────
 
     async fn traverse_graph(
         &self,
-        _request: Request<TraversalRequest>,
+        request: Request<TraversalRequest>,
     ) -> Result<Response<TraversalResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.traverse_graph(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     type StreamTraverseStream = StreamTraverseStream;
 
     async fn stream_traverse(
         &self,
-        _request: Request<TraversalRequest>,
+        request: Request<TraversalRequest>,
     ) -> Result<Response<Self::StreamTraverseStream>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        let chunks = port
+            .stream_traverse(request.into_inner())
+            .await
+            .map_err(Self::port_err)?;
+
+        let (tx, rx) = mpsc::channel(8);
+        tokio::spawn(async move {
+            for chunk in chunks {
+                if tx.send(Ok(chunk)).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
     }
+
+    // ── Analytics ─────────────────────────────────────────────────────────
 
     async fn get_graph_stats(
         &self,
-        _request: Request<GetStatsRequest>,
+        request: Request<GetStatsRequest>,
     ) -> Result<Response<GraphStats>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_graph_stats(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn shortest_path(
         &self,
-        _request: Request<ShortestPathRequest>,
+        request: Request<ShortestPathRequest>,
     ) -> Result<Response<ShortestPathResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.shortest_path(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn get_connected_components(
         &self,
-        _request: Request<GetStatsRequest>,
+        request: Request<GetStatsRequest>,
     ) -> Result<Response<ConnectedComponentsResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_connected_components(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn has_cycle(
         &self,
-        _request: Request<GetStatsRequest>,
+        request: Request<GetStatsRequest>,
     ) -> Result<Response<CycleCheckResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.has_cycle(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
+
+    // ── Constraints ───────────────────────────────────────────────────────
 
     async fn add_unique_constraint(
         &self,
-        _request: Request<UniqueConstraintRequest>,
+        request: Request<UniqueConstraintRequest>,
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.add_unique_constraint(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn remove_unique_constraint(
         &self,
-        _request: Request<UniqueConstraintRequest>,
+        request: Request<UniqueConstraintRequest>,
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.remove_unique_constraint(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
+
+    // ── Batch operations ──────────────────────────────────────────────────
 
     async fn batch_create_nodes(
         &self,
-        _request: Request<BatchNodeRequest>,
+        request: Request<BatchNodeRequest>,
     ) -> Result<Response<BatchResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.batch_create_nodes(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn batch_create_edges(
         &self,
-        _request: Request<BatchEdgeRequest>,
+        request: Request<BatchEdgeRequest>,
     ) -> Result<Response<BatchResponse>, Status> {
-        Err(Status::unimplemented("Graph service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.batch_create_edges(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
+
+    // ── Hybrid query ──────────────────────────────────────────────────────
 
     async fn execute_hybrid_query(
         &self,
         request: Request<HybridSearchRequest>,
     ) -> Result<Response<HybridSearchResponse>, Status> {
-        let req = request.into_inner();
-        self.port
-            .execute_hybrid_query(req)
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.execute_hybrid_query(request.into_inner())
             .await
             .map(Response::new)
-            .map_err(|e| Status::internal(format!("Hybrid query failed: {e}")))
+            .map_err(Self::port_err)
     }
 }

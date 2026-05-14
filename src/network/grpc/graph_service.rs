@@ -1672,3 +1672,204 @@ impl GraphService for GraphServiceImpl {
         }
     }
 }
+
+// ── GraphPort ─────────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::GraphPort for GraphServiceImpl {
+    async fn create_node(&self, request: CreateNodeRequest) -> anyhow::Result<Node> {
+        GraphService::create_node(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_node(&self, request: GetNodeRequest) -> anyhow::Result<Node> {
+        GraphService::get_node(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn update_node(&self, request: UpdateNodeRequest) -> anyhow::Result<Node> {
+        GraphService::update_node(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_node(&self, request: DeleteNodeRequest) -> anyhow::Result<Node> {
+        GraphService::delete_node(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn create_edge(&self, request: CreateEdgeRequest) -> anyhow::Result<Edge> {
+        GraphService::create_edge(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_edge(&self, request: GetEdgeRequest) -> anyhow::Result<Edge> {
+        GraphService::get_edge(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn update_edge(&self, request: UpdateEdgeRequest) -> anyhow::Result<Edge> {
+        GraphService::update_edge(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_edge(&self, request: DeleteEdgeRequest) -> anyhow::Result<Edge> {
+        GraphService::delete_edge(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn query_nodes(&self, request: NodeQuery) -> anyhow::Result<BatchResponse> {
+        GraphService::query_nodes(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn query_edges(&self, request: EdgeQuery) -> anyhow::Result<BatchResponse> {
+        GraphService::query_edges(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn execute_query(
+        &self,
+        request: GraphQueryRequest,
+    ) -> anyhow::Result<GraphQueryResponse> {
+        GraphService::execute_query(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_neighbors(&self, request: GetNeighborsRequest) -> anyhow::Result<BatchResponse> {
+        GraphService::get_neighbors(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn traverse_graph(
+        &self,
+        request: TraversalRequest,
+    ) -> anyhow::Result<TraversalResponse> {
+        GraphService::traverse_graph(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn stream_traverse(
+        &self,
+        request: TraversalRequest,
+    ) -> anyhow::Result<Vec<TraversalChunk>> {
+        let resp = proximadb_runtime::GraphPort::traverse_graph(self, request).await?;
+        let chunk = TraversalChunk {
+            nodes: resp.nodes,
+            edges: resp.edges,
+            paths: resp.paths,
+            stats: resp.stats,
+            done: true,
+        };
+        Ok(vec![chunk])
+    }
+
+    async fn get_graph_stats(&self, request: GetStatsRequest) -> anyhow::Result<GraphStats> {
+        GraphService::get_graph_stats(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn shortest_path(
+        &self,
+        request: ShortestPathRequest,
+    ) -> anyhow::Result<ShortestPathResponse> {
+        GraphService::shortest_path(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_connected_components(
+        &self,
+        request: GetStatsRequest,
+    ) -> anyhow::Result<ConnectedComponentsResponse> {
+        GraphService::get_connected_components(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn has_cycle(&self, request: GetStatsRequest) -> anyhow::Result<CycleCheckResponse> {
+        GraphService::has_cycle(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn add_unique_constraint(
+        &self,
+        request: UniqueConstraintRequest,
+    ) -> anyhow::Result<UniqueConstraintResponse> {
+        GraphService::add_unique_constraint(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn remove_unique_constraint(
+        &self,
+        request: UniqueConstraintRequest,
+    ) -> anyhow::Result<UniqueConstraintResponse> {
+        GraphService::remove_unique_constraint(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn batch_create_nodes(
+        &self,
+        request: BatchNodeRequest,
+    ) -> anyhow::Result<BatchResponse> {
+        GraphService::batch_create_nodes(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn batch_create_edges(
+        &self,
+        request: BatchEdgeRequest,
+    ) -> anyhow::Result<BatchResponse> {
+        GraphService::batch_create_edges(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn execute_hybrid_query(
+        &self,
+        request: HybridSearchRequest,
+    ) -> anyhow::Result<HybridSearchResponse> {
+        GraphService::execute_hybrid_query(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+}
