@@ -15,9 +15,11 @@
 //! This will be migrated to vector modality in Phase 6B after dependency untangling.
 
 pub mod binary;
+pub mod compile_time;
 pub mod internal_types;
 pub mod product;
 pub mod scalar;
+pub mod smart_defaults;
 
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +33,7 @@ pub use proximadb_proto::v1::quantization_level::QuantizationType;
 pub use binary::{BinaryQuantizer, BinaryVector};
 pub use product::{PQCodebook, PQVector, ProductQuantizer};
 pub use scalar::{Int8Vector, ScalarQuantizer};
+pub use smart_defaults::QuantizationSmartDefaults;
 
 /// Quantized vector data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
