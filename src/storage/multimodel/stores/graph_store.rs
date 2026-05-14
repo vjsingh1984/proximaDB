@@ -18,8 +18,12 @@ use std::sync::Arc;
 use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphService, Node, NodeId};
+use crate::proto::proximadb_v1::{PropertyValue, property_value};
 
 use super::super::traits::{ModelType, StoreCapabilities};
+use super::super::transaction::participants::{
+    GraphEdge as TransactionGraphEdge, GraphNode as TransactionGraphNode, GraphWriteOperations,
+};
 
 // Use the graph engine's Result type
 type Result<T> = std::result::Result<T, ProximaDBError>;
@@ -109,7 +113,7 @@ impl GraphStore {
     pub fn capabilities(&self) -> StoreCapabilities {
         StoreCapabilities {
             model_type: ModelType::Graph,
-            supports_transactions: false, // Future: add graph transactions
+            supports_transactions: true,
             supports_secondary_indexes: true, // Property indexes
             supports_acid: false,
             supports_streaming: true,
@@ -239,6 +243,94 @@ impl GraphStore {
             .and_then(|e| e.edge_count().ok())
             .unwrap_or(0)
     }
+}
+
+#[async_trait]
+impl GraphWriteOperations for GraphStore {
+    async fn create_node(&self, graph_id: &str, node: TransactionGraphNode) -> anyhow::Result<()> {
+        let now_ms = current_epoch_ms();
+        let graph_node = Node {
+            id: node.id,
+            labels: vec![node.label],
+            properties: string_properties_to_proto(node.properties),
+            embedding: None,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+
+        if let Some(service) = &self.service {
+            service.create_node(graph_id, graph_node).await?;
+        } else {
+            self.insert_node(graph_node).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn create_edge(&self, graph_id: &str, edge: TransactionGraphEdge) -> anyhow::Result<()> {
+        let now_ms = current_epoch_ms();
+        let graph_edge = Edge {
+            id: edge.id,
+            from_node_id: edge.source,
+            to_node_id: edge.target,
+            edge_type: edge.edge_type,
+            properties: string_properties_to_proto(edge.properties),
+            weight: None,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+
+        if let Some(service) = &self.service {
+            service.create_edge(graph_id, graph_edge).await?;
+        } else {
+            self.insert_edge(graph_edge).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn delete_node(&self, graph_id: &str, node_id: &str) -> anyhow::Result<()> {
+        if let Some(service) = &self.service {
+            service.delete_node(graph_id, &node_id.to_string()).await?;
+        } else {
+            GraphEngine::delete_node(self, &node_id.to_string()).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn delete_edge(&self, graph_id: &str, edge_id: &str) -> anyhow::Result<()> {
+        if let Some(service) = &self.service {
+            service.delete_edge(graph_id, &edge_id.to_string()).await?;
+        } else {
+            GraphEngine::delete_edge(self, &edge_id.to_string()).await?;
+        }
+
+        Ok(())
+    }
+}
+
+fn string_properties_to_proto(
+    properties: std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, PropertyValue> {
+    properties
+        .into_iter()
+        .map(|(key, value)| {
+            (
+                key,
+                PropertyValue {
+                    value: Some(property_value::Value::StringValue(value)),
+                },
+            )
+        })
+        .collect()
+}
+
+fn current_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or_default()
 }
 
 /// Delegate to the underlying GraphEngine trait

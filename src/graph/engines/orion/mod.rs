@@ -482,6 +482,79 @@ impl OrionGraphEngine {
         Ok(())
     }
 
+    /// Rebuild all CSR state from a provided slice of edges.
+    ///
+    /// This clears `node_to_index`, `index_to_node`, `csr_outgoing`, and
+    /// `csr_incoming`, then re-adds every edge in a single batch rebuild.
+    /// Use this when canonical edge records (or an adjacency projection snapshot)
+    /// are the authoritative source and the in-memory CSR needs to be
+    /// cold-started or refreshed — for example after restart before WAL replay,
+    /// or when the caller detects a stale epoch via `service.edge_epoch()`.
+    ///
+    /// Edges are added in the order provided; the CSR is rebuilt once after all
+    /// edges have been staged.
+    pub async fn rebuild_csr_from_edges(&self, edges: &[Arc<Edge>]) -> Result<()> {
+        // Phase 1: Resolve all node indices before taking CSR locks.
+        // This preserves lock order: index_to_node → csr_outgoing/csr_incoming,
+        // matching the order used by add_edge_to_csr to prevent deadlocks.
+        self.node_to_index.clear();
+        let mut resolved: Vec<(usize, usize, EdgeId)> = Vec::with_capacity(edges.len());
+        {
+            let mut idx = Self::write_lock(&self.index_to_node, "index_to_node")?;
+            idx.clear();
+
+            for edge in edges {
+                let from_idx = if let Some(i) = self.node_to_index.get(&edge.from_node_id) {
+                    *i
+                } else {
+                    let i = idx.len();
+                    idx.push(edge.from_node_id.clone());
+                    self.node_to_index.insert(edge.from_node_id.clone(), i);
+                    i
+                };
+                let to_idx = if let Some(i) = self.node_to_index.get(&edge.to_node_id) {
+                    *i
+                } else {
+                    let i = idx.len();
+                    idx.push(edge.to_node_id.clone());
+                    self.node_to_index.insert(edge.to_node_id.clone(), i);
+                    i
+                };
+                resolved.push((from_idx, to_idx, edge.id.clone()));
+            }
+        } // index_to_node write lock released
+
+        // Phase 2: Reset and populate CSR with resolved indices.
+        {
+            let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
+            *csr_out = storage::CsrStorage::with_capacity(edges.len() * 2, edges.len());
+        }
+        {
+            let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
+            *csr_in = storage::CsrStorage::with_capacity(edges.len() * 2, edges.len());
+        }
+        {
+            let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
+            let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
+
+            for (from_idx, to_idx, edge_id) in &resolved {
+                // Silently ignore duplicates during batch rebuild.
+                let _ = csr_out.add_edge(*from_idx, *to_idx, edge_id.clone());
+                let _ = csr_in.add_edge(*to_idx, *from_idx, edge_id.clone());
+            }
+
+            csr_out.rebuild()?;
+            csr_in.rebuild()?;
+        }
+
+        tracing::debug!(
+            "ORION CSR rebuilt from {} edges ({} nodes indexed)",
+            edges.len(),
+            self.node_to_index.len()
+        );
+        Ok(())
+    }
+
     // Convenience alias methods for persistence module compatibility
 
     /// Create a node in the graph (alias for `insert_node` used by persistence layer).

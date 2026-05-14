@@ -865,6 +865,80 @@ impl GraphOperationsService {
     }
 
     // =========================================================================
+    // CSR Projection Management
+    // =========================================================================
+
+    /// Rebuild the ORION engine's CSR from the in-memory adjacency projection.
+    ///
+    /// This is the hook point for the convergence spec item "Make ORION CSR
+    /// load/build from edge records or adjacency projections."  The adjacency
+    /// projection is the single source of truth for write-heavy edge state; the
+    /// CSR is a read-optimised derived projection that should be rebuilt from it
+    /// when the engine is cold-started or when `edge_epoch()` reveals staleness.
+    ///
+    /// Extracts `(from_node_id, to_node_id, edge_id)` from the adjacency
+    /// projection's `edges_by_src` snapshot (one entry per edge, no duplicates)
+    /// and calls `OrionGraphEngine::rebuild_csr_from_edges`.
+    pub async fn rebuild_orion_csr_from_adjacency_projection(
+        &self,
+        graph_id: &str,
+    ) -> Result<()> {
+        let node_prefix = format!("graph/{graph_id}/node/");
+        let edge_prefix = format!("graph/{graph_id}/edge/");
+
+        let endpoints = {
+            let proj = self.adjacency_projection(graph_id);
+            proj.snapshot_edge_endpoints().map_err(|e| {
+                ProximaDBError::Internal(format!(
+                    "adjacency projection snapshot failed: {e}"
+                ))
+            })?
+        };
+
+        // Build minimal Arc<Edge> stubs — only from/to/id fields are used by
+        // rebuild_csr_from_edges (which just needs endpoint IDs for indexing).
+        let edges: Vec<Arc<crate::graph::Edge>> = endpoints
+            .into_iter()
+            .filter_map(|(from_oid, to_oid, edge_oid)| {
+                let from_id = from_oid.strip_prefix(&node_prefix)?.to_string();
+                let to_id = to_oid.strip_prefix(&node_prefix)?.to_string();
+                let edge_id = edge_oid.strip_prefix(&edge_prefix)?.to_string();
+                Some(Arc::new(crate::graph::Edge {
+                    id: edge_id,
+                    from_node_id: from_id,
+                    to_node_id: to_id,
+                    edge_type: String::new(),
+                    properties: std::collections::HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                }))
+            })
+            .collect();
+
+        if let Some(engine) = self.graphs.get(graph_id) {
+            match engine.value().as_ref() {
+                crate::graph::engines::GraphEngineImpl::Orion(orion) => {
+                    orion.rebuild_csr_from_edges(&edges).await?;
+                    tracing::info!(
+                        graph_id,
+                        edge_count = edges.len(),
+                        "ORION CSR rebuilt from adjacency projection"
+                    );
+                }
+                #[allow(unreachable_patterns)]
+                _ => {
+                    tracing::debug!(
+                        "rebuild_orion_csr_from_adjacency_projection: not an ORION engine, skipped"
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    // =========================================================================
     // Transaction Management API
     // =========================================================================
 

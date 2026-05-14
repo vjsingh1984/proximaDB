@@ -631,4 +631,110 @@ mod tests {
                 .is_none()
         );
     }
+
+    /// Verify that ORION CSR can be rebuilt from the adjacency projection.
+    ///
+    /// Creates 2 edges via the service (which updates the adjacency projection),
+    /// then calls `rebuild_orion_csr_from_adjacency_projection`, and checks that
+    /// ORION's CSR-backed `get_outgoing_targets` returns the expected neighbours.
+    #[tokio::test]
+    async fn orion_csr_rebuild_from_adjacency_projection() {
+        use crate::graph::engines::GraphEngine;
+        use crate::graph::engines::GraphEngineImpl;
+        use crate::proto::proximadb_v1::CreateGraphRequest;
+
+        let graph_id = format!("csr_rebuild_test_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let service = GraphOperationsService::new();
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        for nid in ["a", "b", "c"] {
+            service
+                .create_node(
+                    graph_id,
+                    Node {
+                        id: nid.to_string(),
+                        labels: vec!["V".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 0,
+                        updated_at_ms: 0,
+                    },
+                )
+                .await
+                .expect("create node");
+        }
+
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "ea".to_string(),
+                    from_node_id: "a".to_string(),
+                    to_node_id: "b".to_string(),
+                    edge_type: "E".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            )
+            .await
+            .expect("create ea");
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "eb".to_string(),
+                    from_node_id: "a".to_string(),
+                    to_node_id: "c".to_string(),
+                    edge_type: "E".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            )
+            .await
+            .expect("create eb");
+
+        // Rebuild CSR from the adjacency projection.
+        service
+            .rebuild_orion_csr_from_adjacency_projection(graph_id)
+            .await
+            .expect("CSR rebuild");
+
+        // Read back via ORION's CSR get_outgoing_targets.
+        let engine_arc = service
+            .graphs
+            .get(graph_id)
+            .expect("engine present")
+            .value()
+            .clone();
+        if let GraphEngineImpl::Orion(orion) = engine_arc.as_ref() {
+            let mut outgoing = orion
+                .get_outgoing_targets(&"a".to_string())
+                .await
+                .expect("outgoing targets");
+            outgoing.sort();
+            assert_eq!(
+                outgoing,
+                vec!["b".to_string(), "c".to_string()],
+                "CSR should have both outgoing neighbours for node a"
+            );
+        } else {
+            panic!("expected ORION engine");
+        }
+    }
 }

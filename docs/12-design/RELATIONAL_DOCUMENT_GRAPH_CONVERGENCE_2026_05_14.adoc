@@ -852,16 +852,27 @@ Tasks:
 ** [x] Add optional canonical `RecordStore` injection for graph services.
 ** [x] Upsert/delete canonical node and edge records from graph node/edge service paths when a record store is injected.
 ** [x] Wire batch_create_nodes and batch_create_nodes_with_strategy to upsert canonical records.
-** [ ] Wire transactional node/edge paths (commit_transaction) to write canonical records at commit time.
+** [x] Wire transactional node/edge paths (commit_transaction) to write canonical records at commit time.
+*** [x] `GraphStore` implements the transactional graph write adapter and `TransactionalMultiModelFacade`/`TransactionalMultiModalFacade` auto-register graph participants from configured graph stores, so committed staged nodes/edges flow through `GraphService` and its canonical record-store hooks.
 ** [ ] Make canonical graph record storage the default durable path and demote ORION WAL to compatibility projection recovery.
-* [ ] Make ORION CSR load/build from edge records or adjacency projections.
-* [ ] Add invalidation/epoch semantics for CSR when edge records change.
+* [x] Make ORION CSR load/build from edge records or adjacency projections.
+** `OrionGraphEngine::rebuild_csr_from_edges(&[Arc<Edge>])` clears and rebuilds all CSR state in one batch pass.
+** `GraphOperationsService::rebuild_orion_csr_from_adjacency_projection(graph_id)` snapshots `edges_by_src` from the in-memory adjacency projection, strips OID prefixes, and calls `rebuild_csr_from_edges`.
+** Test `orion_csr_rebuild_from_adjacency_projection` verifies end-to-end: insert edges → rebuild CSR → query via `get_outgoing_targets`.
+* [x] Add invalidation/epoch semantics for CSR when edge records change.
 ** [x] Define `TopologyEpoch` and freshness state in the graph modality projection contract.
 ** [x] Connect canonical edge mutations to ORION CSR epoch invalidation.
 *** CSR consumers call `service.edge_epoch(graph_id)` to snapshot freshness before building CSR.
+*** When epoch is stale, call `service.rebuild_orion_csr_from_adjacency_projection(graph_id)` to refresh.
 * [x] Add write-heavy path that uses adjacency indexes without forcing CSR rebuild.
 * [ ] Add read-heavy path that uses CSR when projection freshness and workload justify it.
-* [ ] Treat TITAN as either a projection/access method or retire it as duplicate adjacency ownership.
+** Deferred: adjacency projection already provides O(degree) endpoint-bound lookup for user-facing `query_edges`.
+** CSR already serves graph algorithm traversals (`OrionGraphEngine::get_outgoing_targets`/`get_incoming_sources`).
+** Adding a CSR→edge-load switching heuristic for `query_edges` requires workload profiling evidence showing CSR-indexed reads outperform adjacency-projection reads on the endpoint-bound path. Track as a future ADR item.
+* [x] Treat TITAN as either a projection/access method or retire it as duplicate adjacency ownership.
+** `TitanGraphEngine` retired (May 2026): its DashMap adjacency lists duplicated `InMemoryGraphAdjacencyProjection`.
+** `TitanEngine` kept as a factory-registration stub only; module comment prohibits independent durable graph authority.
+** Adjacency projection authority consolidated in `src/graph/adjacency_projection.rs`.
 
 Acceptance:
 

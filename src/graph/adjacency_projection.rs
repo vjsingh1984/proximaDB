@@ -106,6 +106,32 @@ impl InMemoryGraphAdjacencyProjection {
             .sum())
     }
 
+    /// Snapshot all unique edges as `(from_node_oid, to_node_oid, edge_oid)` tuples.
+    ///
+    /// Only iterates `edges_by_src` (each edge appears exactly once there) so
+    /// callers receive one tuple per edge without duplicates.  Used by
+    /// `GraphOperationsService::rebuild_orion_csr_from_adjacency_projection`.
+    pub fn snapshot_edge_endpoints(
+        &self,
+    ) -> ProjectionResult<Vec<(String, String, String)>> {
+        let state = self.state.read().map_err(|_| {
+            crate::core::error::ProximaDBError::Internal(
+                "graph adjacency projection read lock poisoned".to_string(),
+            )
+        })?;
+        let mut result = Vec::new();
+        for (src_node_oid, edges) in &state.edges_by_src {
+            for (edge_oid, entry) in edges {
+                result.push((
+                    src_node_oid.clone(),
+                    entry.opposite_node_oid.clone(),
+                    edge_oid.clone(),
+                ));
+            }
+        }
+        Ok(result)
+    }
+
     fn apply_entries(state: &mut AdjacencyState, entries: [AdjacencyProjectionEntry; 2]) -> usize {
         let mut written = 0;
         for entry in entries {
