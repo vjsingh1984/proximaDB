@@ -64,10 +64,7 @@ impl GraphServiceTrait for GraphServiceImpl {
             .map_err(Self::port_err)
     }
 
-    async fn get_node(
-        &self,
-        request: Request<GetNodeRequest>,
-    ) -> Result<Response<Node>, Status> {
+    async fn get_node(&self, request: Request<GetNodeRequest>) -> Result<Response<Node>, Status> {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_node(request.into_inner())
             .await
@@ -110,10 +107,7 @@ impl GraphServiceTrait for GraphServiceImpl {
             .map_err(Self::port_err)
     }
 
-    async fn get_edge(
-        &self,
-        request: Request<GetEdgeRequest>,
-    ) -> Result<Response<Edge>, Status> {
+    async fn get_edge(&self, request: Request<GetEdgeRequest>) -> Result<Response<Edge>, Status> {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_edge(request.into_inner())
             .await

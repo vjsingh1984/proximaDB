@@ -33,7 +33,9 @@ pub struct ProximaFlightService {
 impl ProximaFlightService {
     /// Create a new Flight service backed by unified handlers
     pub fn new(handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { _handlers: handlers }
+        Self {
+            _handlers: handlers,
+        }
     }
 
     /// Convert into a tonic service server

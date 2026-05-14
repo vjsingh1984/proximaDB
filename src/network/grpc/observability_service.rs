@@ -560,30 +560,21 @@ impl proximadb_runtime::ObservabilityPort for ObservabilityServiceImpl {
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn ingest_logs(
-        &self,
-        request: IngestLogsRequest,
-    ) -> anyhow::Result<IngestLogsResponse> {
+    async fn ingest_logs(&self, request: IngestLogsRequest) -> anyhow::Result<IngestLogsResponse> {
         ObservabilityService::ingest_logs(self, Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn query_logs(
-        &self,
-        request: QueryLogsRequest,
-    ) -> anyhow::Result<QueryLogsResponse> {
+    async fn query_logs(&self, request: QueryLogsRequest) -> anyhow::Result<QueryLogsResponse> {
         ObservabilityService::query_logs(self, Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn stream_logs(
-        &self,
-        request: QueryLogsRequest,
-    ) -> anyhow::Result<Vec<LogEntry>> {
+    async fn stream_logs(&self, request: QueryLogsRequest) -> anyhow::Result<Vec<LogEntry>> {
         // Delegate to query_logs; the gRPC adapter wraps the Vec in a ReceiverStream.
         ObservabilityService::query_logs(self, Request::new(request))
             .await
@@ -641,10 +632,7 @@ impl proximadb_runtime::ObservabilityPort for ObservabilityServiceImpl {
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn get_trace(
-        &self,
-        request: GetTraceRequest,
-    ) -> anyhow::Result<GetTraceResponse> {
+    async fn get_trace(&self, request: GetTraceRequest) -> anyhow::Result<GetTraceResponse> {
         ObservabilityService::get_trace(self, Request::new(request))
             .await
             .map(|r| r.into_inner())
@@ -671,10 +659,7 @@ impl proximadb_runtime::ObservabilityPort for ObservabilityServiceImpl {
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn list_alerts(
-        &self,
-        request: ListAlertsRequest,
-    ) -> anyhow::Result<ListAlertsResponse> {
+    async fn list_alerts(&self, request: ListAlertsRequest) -> anyhow::Result<ListAlertsResponse> {
         ObservabilityService::list_alerts(self, Request::new(request))
             .await
             .map(|r| r.into_inner())

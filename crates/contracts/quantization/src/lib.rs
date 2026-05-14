@@ -339,11 +339,7 @@ pub struct QuantizationConfig {
 #[async_trait::async_trait]
 pub trait QuantizationEngine: Send + Sync {
     /// Quantize vectors to the specified level
-    async fn quantize(
-        &self,
-        vectors: &[f32],
-        config: &QuantizationConfig,
-    ) -> Result<Vec<u8>>;
+    async fn quantize(&self, vectors: &[f32], config: &QuantizationConfig) -> Result<Vec<u8>>;
 
     /// Dequantize vectors back to FP32
     async fn dequantize(

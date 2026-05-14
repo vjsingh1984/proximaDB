@@ -48,10 +48,7 @@ pub trait DocumentPort: Send + Sync {
         request: InsertDocumentRequest,
     ) -> Result<InsertDocumentResponse>;
 
-    async fn get_document(
-        &self,
-        request: GetDocumentRequest,
-    ) -> Result<GetDocumentResponse>;
+    async fn get_document(&self, request: GetDocumentRequest) -> Result<GetDocumentResponse>;
 
     async fn update_document(
         &self,

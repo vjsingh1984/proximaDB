@@ -1764,10 +1764,7 @@ impl proximadb_runtime::GraphPort for GraphServiceImpl {
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn traverse_graph(
-        &self,
-        request: TraversalRequest,
-    ) -> anyhow::Result<TraversalResponse> {
+    async fn traverse_graph(&self, request: TraversalRequest) -> anyhow::Result<TraversalResponse> {
         GraphService::traverse_graph(self, tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
@@ -1843,20 +1840,14 @@ impl proximadb_runtime::GraphPort for GraphServiceImpl {
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn batch_create_nodes(
-        &self,
-        request: BatchNodeRequest,
-    ) -> anyhow::Result<BatchResponse> {
+    async fn batch_create_nodes(&self, request: BatchNodeRequest) -> anyhow::Result<BatchResponse> {
         GraphService::batch_create_nodes(self, tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn batch_create_edges(
-        &self,
-        request: BatchEdgeRequest,
-    ) -> anyhow::Result<BatchResponse> {
+    async fn batch_create_edges(&self, request: BatchEdgeRequest) -> anyhow::Result<BatchResponse> {
         GraphService::batch_create_edges(self, tonic::Request::new(request))
             .await
             .map(|r| r.into_inner())

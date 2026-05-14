@@ -88,7 +88,10 @@ impl CollectionIdCache {
             }
             cache.insert(
                 collection_name,
-                CollectionIdCacheEntry { collection_id, cached_at: now },
+                CollectionIdCacheEntry {
+                    collection_id,
+                    cached_at: now,
+                },
             );
         }
     }

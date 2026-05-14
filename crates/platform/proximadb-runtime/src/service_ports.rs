@@ -51,23 +51,13 @@ pub trait CollectionPort: Send + Sync {
     ) -> Result<Collection>;
 
     /// Delete a collection, honouring tenant scope. Returns true if deleted.
-    async fn delete_collection(
-        &self,
-        id: &str,
-        tenant_id: Option<&str>,
-    ) -> Result<bool>;
+    async fn delete_collection(&self, id: &str, tenant_id: Option<&str>) -> Result<bool>;
 
     /// List all collections visible to the given tenant (or all if tenant_id is None).
-    async fn list_collections(
-        &self,
-        tenant_id: Option<&str>,
-    ) -> Result<Vec<Collection>>;
+    async fn list_collections(&self, tenant_id: Option<&str>) -> Result<Vec<Collection>>;
 
     /// Resolve a collection name or UUID to its canonical internal ID.
-    async fn resolve_collection_id(
-        &self,
-        identifier: &str,
-    ) -> Result<Option<String>>;
+    async fn resolve_collection_id(&self, identifier: &str) -> Result<Option<String>>;
 }
 
 // ── Vector operations ─────────────────────────────────────────────────────────
@@ -117,25 +107,15 @@ pub trait VectorOpsPort: Send + Sync {
 #[async_trait]
 pub trait QueryAdapterPort: Send + Sync {
     /// Route a vector search through the unified query planner.
-    async fn vector_search(
-        &self,
-        request: VectorSearchRequest,
-    ) -> Result<VectorOperationResponse>;
+    async fn vector_search(&self, request: VectorSearchRequest) -> Result<VectorOperationResponse>;
 
     /// Execute a hybrid (vector + keyword) query.
-    async fn execute_hybrid(
-        &self,
-        request: HybridSearchRequest,
-    ) -> Result<HybridSearchResponse>;
+    async fn execute_hybrid(&self, request: HybridSearchRequest) -> Result<HybridSearchResponse>;
 
     /// Execute a SQL statement through the unified facade.
     ///
     /// Returns rows as protocol-neutral JSON so the protocol layer can convert
     /// to v1 `ExecuteSqlResponse`, v2 `ProximaValue` rows, or any wire format
     /// without the port accumulating v1 surface debt.
-    async fn execute_sql(
-        &self,
-        query: String,
-        collection: Option<String>,
-    ) -> Result<JsonValue>;
+    async fn execute_sql(&self, query: String, collection: Option<String>) -> Result<JsonValue>;
 }

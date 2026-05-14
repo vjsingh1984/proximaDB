@@ -26,9 +26,7 @@ impl CollectionServiceImpl {
     }
 
     /// Convert this implementation into a tonic gRPC server.
-    pub fn into_server(
-        self,
-    ) -> v1::collection_service_server::CollectionServiceServer<Self> {
+    pub fn into_server(self) -> v1::collection_service_server::CollectionServiceServer<Self> {
         v1::collection_service_server::CollectionServiceServer::new(self)
     }
 
@@ -134,6 +132,8 @@ impl v1::collection_service_server::CollectionService for CollectionServiceImpl 
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("DeleteCollection failed: {e}")))?;
-        Ok(Response::new(v1::DeleteCollectionResponse { success: true }))
+        Ok(Response::new(v1::DeleteCollectionResponse {
+            success: true,
+        }))
     }
 }

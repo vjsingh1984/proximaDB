@@ -63,10 +63,7 @@ pub trait ObservabilityPort: Send + Sync {
 
     // ── Metrics ───────────────────────────────────────────────────────────
 
-    async fn ingest_metrics(
-        &self,
-        request: IngestMetricsRequest,
-    ) -> Result<IngestMetricsResponse>;
+    async fn ingest_metrics(&self, request: IngestMetricsRequest) -> Result<IngestMetricsResponse>;
 
     async fn query_metrics(&self, request: QueryMetricsRequest) -> Result<QueryMetricsResponse>;
 
@@ -77,10 +74,7 @@ pub trait ObservabilityPort: Send + Sync {
 
     // ── Traces ────────────────────────────────────────────────────────────
 
-    async fn ingest_traces(
-        &self,
-        request: IngestTracesRequest,
-    ) -> Result<IngestTracesResponse>;
+    async fn ingest_traces(&self, request: IngestTracesRequest) -> Result<IngestTracesResponse>;
 
     async fn query_traces(&self, request: QueryTracesRequest) -> Result<QueryTracesResponse>;
 

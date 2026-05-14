@@ -11,12 +11,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_proto::v1::{
     BatchEdgeRequest, BatchNodeRequest, BatchResponse, ConnectedComponentsResponse,
-    CreateEdgeRequest, CreateNodeRequest, CycleCheckResponse, DeleteEdgeRequest,
-    DeleteNodeRequest, Edge, EdgeQuery, GetEdgeRequest, GetNeighborsRequest, GetNodeRequest,
-    GetStatsRequest, GraphQueryRequest, GraphQueryResponse, GraphStats, HybridSearchRequest,
-    HybridSearchResponse, Node, NodeQuery, ShortestPathRequest, ShortestPathResponse,
-    TraversalChunk, TraversalRequest, TraversalResponse, UniqueConstraintRequest,
-    UniqueConstraintResponse, UpdateEdgeRequest, UpdateNodeRequest,
+    CreateEdgeRequest, CreateNodeRequest, CycleCheckResponse, DeleteEdgeRequest, DeleteNodeRequest,
+    Edge, EdgeQuery, GetEdgeRequest, GetNeighborsRequest, GetNodeRequest, GetStatsRequest,
+    GraphQueryRequest, GraphQueryResponse, GraphStats, HybridSearchRequest, HybridSearchResponse,
+    Node, NodeQuery, ShortestPathRequest, ShortestPathResponse, TraversalChunk, TraversalRequest,
+    TraversalResponse, UniqueConstraintRequest, UniqueConstraintResponse, UpdateEdgeRequest,
+    UpdateNodeRequest,
 };
 
 /// Port for graph database operations (CRUD, traversal, analytics, hybrid query).

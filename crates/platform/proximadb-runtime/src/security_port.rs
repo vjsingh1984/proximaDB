@@ -58,10 +58,8 @@ pub trait SecurityPort: Send + Sync {
     async fn revoke_role(&self, request: RevokeRoleRequest) -> Result<RevokeRoleResponse>;
 
     /// List all roles assigned to a principal.
-    async fn list_user_roles(
-        &self,
-        request: ListUserRolesRequest,
-    ) -> Result<ListUserRolesResponse>;
+    async fn list_user_roles(&self, request: ListUserRolesRequest)
+    -> Result<ListUserRolesResponse>;
 
     /// Retrieve audit events matching the given filter.
     async fn list_audit_events(

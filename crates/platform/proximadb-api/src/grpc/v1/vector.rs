@@ -8,8 +8,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use proximadb_proto::v1::{self as v1};
 use proximadb_proto::v1::vector_service_server::{VectorService, VectorServiceServer};
+use proximadb_proto::v1::{self as v1};
 use proximadb_runtime::ApiHandlersPort;
 
 /// gRPC implementation of the VectorService for vector CRUD and search operations.
@@ -18,9 +18,8 @@ pub struct VectorServiceImpl {
 }
 
 /// Streaming response type for VectorSearchStream.
-pub type VectorSearchStreamStream = Pin<
-    Box<dyn tokio_stream::Stream<Item = Result<v1::SearchVectorRecord, Status>> + Send>,
->;
+pub type VectorSearchStreamStream =
+    Pin<Box<dyn tokio_stream::Stream<Item = Result<v1::SearchVectorRecord, Status>> + Send>>;
 
 impl VectorServiceImpl {
     /// Create a new vector service backed by the given port.

@@ -7,8 +7,8 @@
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
-use proximadb_proto::v1::{self as v1};
 use proximadb_proto::v1::sql_service_server::{SqlService, SqlServiceServer};
+use proximadb_proto::v1::{self as v1};
 use proximadb_runtime::ApiHandlersPort;
 
 /// gRPC implementation of the SqlService for executing SQL queries.

@@ -275,10 +275,7 @@ impl proximadb_runtime::EntityPort for EntityServiceImpl {
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
     }
 
-    async fn get_entity(
-        &self,
-        request: GetEntityRequest,
-    ) -> anyhow::Result<GetEntityResponse> {
+    async fn get_entity(&self, request: GetEntityRequest) -> anyhow::Result<GetEntityResponse> {
         EntityService::get_entity(self, Request::new(request))
             .await
             .map(|r| r.into_inner())

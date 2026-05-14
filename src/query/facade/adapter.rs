@@ -648,7 +648,9 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
         &self,
         _request: crate::proto::proximadb_v1::HybridSearchRequest,
     ) -> anyhow::Result<crate::proto::proximadb_v1::HybridSearchResponse> {
-        Err(anyhow::anyhow!("Hybrid search via QueryFacadeAdapter is not yet implemented"))
+        Err(anyhow::anyhow!(
+            "Hybrid search via QueryFacadeAdapter is not yet implemented"
+        ))
     }
 
     async fn execute_sql(

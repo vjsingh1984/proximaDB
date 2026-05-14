@@ -22,10 +22,7 @@ use proximadb_proto::streaming::v1::{
 /// adapter returns `UNIMPLEMENTED` for session RPCs.
 #[async_trait]
 pub trait StreamingPort: Send + Sync {
-    async fn create_session(
-        &self,
-        request: CreateSessionRequest,
-    ) -> Result<CreateSessionResponse>;
+    async fn create_session(&self, request: CreateSessionRequest) -> Result<CreateSessionResponse>;
 
     async fn close_session(&self, request: CloseSessionRequest) -> Result<CloseSessionResponse>;
 

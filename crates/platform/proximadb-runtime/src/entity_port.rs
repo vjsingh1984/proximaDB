@@ -17,20 +17,11 @@ use proximadb_proto::v1::{
 /// adapter returns `UNIMPLEMENTED` for every RPC.
 #[async_trait]
 pub trait EntityPort: Send + Sync {
-    async fn upsert_entity(
-        &self,
-        request: UpsertEntityRequest,
-    ) -> Result<UpsertEntityResponse>;
+    async fn upsert_entity(&self, request: UpsertEntityRequest) -> Result<UpsertEntityResponse>;
 
-    async fn get_entity(
-        &self,
-        request: GetEntityRequest,
-    ) -> Result<GetEntityResponse>;
+    async fn get_entity(&self, request: GetEntityRequest) -> Result<GetEntityResponse>;
 
-    async fn delete_entity(
-        &self,
-        request: DeleteEntityRequest,
-    ) -> Result<DeleteEntityResponse>;
+    async fn delete_entity(&self, request: DeleteEntityRequest) -> Result<DeleteEntityResponse>;
 
     async fn search_entities(
         &self,

@@ -9,29 +9,24 @@
 use std::sync::Arc;
 
 use crate::grpc::v1::{
-    collection::CollectionServiceImpl,
-    document::DocumentServiceImpl,
-    entity::EntityServiceImpl,
-    graph::GraphServiceImpl,
-    hybrid::HybridSearchServiceImpl,
-    observability::ObservabilityServiceImpl,
-    security::SecurityServiceImpl,
-    sql::SqlServiceImpl,
-    streaming::StreamingServiceImpl,
-    vector::VectorServiceImpl,
+    collection::CollectionServiceImpl, document::DocumentServiceImpl, entity::EntityServiceImpl,
+    graph::GraphServiceImpl, hybrid::HybridSearchServiceImpl,
+    observability::ObservabilityServiceImpl, security::SecurityServiceImpl, sql::SqlServiceImpl,
+    streaming::StreamingServiceImpl, vector::VectorServiceImpl,
 };
-use proximadb_runtime::{ApiHandlersPort, DocumentPort, EntityPort, GraphPort, HybridPort, ObservabilityPort, SecurityPort, StreamingPort};
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
 use proximadb_proto::v1::{
     collection_service_server::CollectionServiceServer,
-    document_service_server::DocumentServiceServer,
-    entity_service_server::EntityServiceServer,
+    document_service_server::DocumentServiceServer, entity_service_server::EntityServiceServer,
     graph_service_server::GraphServiceServer,
     hybrid_search_service_server::HybridSearchServiceServer,
     observability_service_server::ObservabilityServiceServer,
-    security_service_server::SecurityServiceServer,
-    sql_service_server::SqlServiceServer,
+    security_service_server::SecurityServiceServer, sql_service_server::SqlServiceServer,
     vector_service_server::VectorServiceServer,
+};
+use proximadb_runtime::{
+    ApiHandlersPort, DocumentPort, EntityPort, GraphPort, HybridPort, ObservabilityPort,
+    SecurityPort, StreamingPort,
 };
 
 /// Configuration for gRPC services
