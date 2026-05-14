@@ -788,6 +788,10 @@ Current status after the first refinement:
   `proximadb_vector::quantization::internal_types`; root `compute::quantization::types` remains a
   compatibility re-export while the rest of Phase 6 untangles engine, cache, hardware, and storage
   dependencies
+* low-dependency quantization helpers (`compile_time` and `smart_defaults`) now live in
+  `proximadb_vector::quantization`; root `compute::quantization` keeps compatibility re-exports
+  while engine/cache/storage modules remain in the root crate until their dependency seams are
+  extracted
 * the shared glob matcher used by columnar storage file filtering now lives in
   `proximadb-storage-common`; root `utils::glob` remains a compatibility re-export
 * `proximadb-runtime-common` now exists as the first horizontal runtime-helper crate and owns the
