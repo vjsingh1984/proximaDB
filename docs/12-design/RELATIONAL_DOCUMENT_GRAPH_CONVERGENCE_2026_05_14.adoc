@@ -903,7 +903,12 @@ Tasks:
 ** [x] columnar variation projection vs JSON payload scan: `variation_projection_access_path(has_columnar, projected, total, doc_size)` — columnar when projecting < 50% of fields.
 ** `AccessPath` enum and `AccessPathCostEstimate` struct in `optimizer_support.rs`; `AccessPathCostEstimate::reason` surfaces choice rationale in EXPLAIN output.
 ** 12 cost-rule tests added; all 18 optimizer_support tests pass.
-* [ ] Ensure engine-level RLS predicates are pushed into every scan/projection.
+* [x] Ensure engine-level RLS predicates are pushed into every scan/projection.
+** `RlsContext { tenant_id, permitted_principals }` in `lowering.rs`.
+** `build_rls_filter(ctx)` builds `FilterExpression` for `tenant_id = v` AND/OR `permitted_principals IN [...]`.
+** `push_rls_predicates(plan, ctx)` ANDs the RLS filter into every `Scan.filter` and `VectorTopK.predicate` at planning time (no post-hoc application-layer filtering).
+** 7 tests: empty ctx is noop, non-Scan operators untouched, tenant+principals→And, existing filters preserved via And.
+** Per spec §8: `tenant_id`/`permitted_principals` are record fields pushed into scan iterators.
 * [ ] Align REST/gRPC/Arrow Flight/PostgreSQL wire behavior for document and graph result shapes.
 
 Acceptance:

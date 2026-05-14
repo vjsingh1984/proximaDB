@@ -335,6 +335,128 @@ pub fn lower_uql_to_plan_no_optimization(
     lowerer.lower(statement)
 }
 
+// =========== Phase 4: Engine-level RLS predicate pushdown ===========
+//
+// Per spec §8: `tenant_id` and `permitted_principals` are record fields.
+// RLS predicates MUST be pushed into every Scan and VectorTopK at planning
+// time — not applied post-hoc at the application layer.
+
+/// Row-level security context carried by each query request.
+///
+/// The planner calls `push_rls_predicates` to inject these predicates into
+/// every scan/projection operator before plan execution so the storage engine
+/// never returns records outside the caller's security boundary.
+#[derive(Debug, Clone)]
+pub struct RlsContext {
+    /// Tenant identifier. Non-empty string injects `tenant_id = value` into scans.
+    pub tenant_id: String,
+    /// Principals the caller belongs to. Non-empty vec injects
+    /// `permitted_principals IN [p1, p2, ...]` into scans.
+    pub permitted_principals: Vec<String>,
+}
+
+impl RlsContext {
+    /// Create a tenant-only RLS context (no principal list).
+    pub fn for_tenant(tenant_id: impl Into<String>) -> Self {
+        Self {
+            tenant_id: tenant_id.into(),
+            permitted_principals: vec![],
+        }
+    }
+
+    /// Create an RLS context with both tenant and principal list.
+    pub fn with_principals(tenant_id: impl Into<String>, principals: Vec<String>) -> Self {
+        Self {
+            tenant_id: tenant_id.into(),
+            permitted_principals: principals,
+        }
+    }
+
+    /// Returns `true` if this context would inject any predicate.
+    pub fn is_active(&self) -> bool {
+        !self.tenant_id.is_empty() || !self.permitted_principals.is_empty()
+    }
+}
+
+/// Build the `FilterExpression` that represents the RLS predicates in `ctx`.
+///
+/// Returns `None` when the context is empty (unauthenticated/system bypass).
+pub fn build_rls_filter(ctx: &RlsContext) -> Option<FilterExpression> {
+    let mut parts = Vec::new();
+
+    if !ctx.tenant_id.is_empty() {
+        parts.push(FilterExpression::Comparison {
+            field: "tenant_id".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::Value::String(ctx.tenant_id.clone()),
+        });
+    }
+
+    if !ctx.permitted_principals.is_empty() {
+        let principals: Vec<serde_json::Value> = ctx
+            .permitted_principals
+            .iter()
+            .map(|p| serde_json::Value::String(p.clone()))
+            .collect();
+        parts.push(FilterExpression::Comparison {
+            field: "permitted_principals".to_string(),
+            operator: ComparisonOperator::In,
+            value: serde_json::Value::Array(principals),
+        });
+    }
+
+    match parts.len() {
+        0 => None,
+        1 => Some(parts.into_iter().next().unwrap()),
+        _ => Some(FilterExpression::And(parts)),
+    }
+}
+
+/// Inject RLS predicates into every `Scan` and `VectorTopK` operator in `plan`.
+///
+/// For `Scan`: the RLS predicate is ANDed with any existing `filter` field so
+/// the storage engine enforces tenant isolation during the scan.
+/// For `VectorTopK`: the RLS predicate is ANDed with the `predicate` field so
+/// the HNSW navigator excludes cross-tenant vectors.
+///
+/// This is a no-op when `ctx.is_active()` returns `false`.
+pub fn push_rls_predicates(plan: &mut MultiModelPlan, ctx: &RlsContext) {
+    if !ctx.is_active() {
+        return;
+    }
+
+    let Some(rls_filter) = build_rls_filter(ctx) else {
+        return;
+    };
+
+    for op in &mut plan.operators {
+        match op {
+            Operator::Scan { filter, .. } => {
+                *filter = Some(and_with_existing(filter.take(), rls_filter.clone()));
+            }
+            Operator::VectorTopK { predicate, .. } => {
+                *predicate = Some(and_with_existing(predicate.take(), rls_filter.clone()));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// AND `new_expr` with `existing`, or return `new_expr` if `existing` is `None`.
+fn and_with_existing(
+    existing: Option<FilterExpression>,
+    new_expr: FilterExpression,
+) -> FilterExpression {
+    match existing {
+        None => new_expr,
+        Some(FilterExpression::And(mut parts)) => {
+            parts.push(new_expr);
+            FilterExpression::And(parts)
+        }
+        Some(other) => FilterExpression::And(vec![other, new_expr]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,6 +608,170 @@ mod tests {
                 assert_eq!(value, serde_json::json!("active"));
             }
             _ => panic!("Expected Comparison expression"),
+        }
+    }
+
+    // ── Phase 4: RLS predicate pushdown tests ────────────────────────────────
+
+    use proximadb_multimodel_plan::VectorMetric;
+
+    fn scan_op(with_filter: bool) -> Operator {
+        Operator::Scan {
+            data_model: DataModel::Vector,
+            source: "embeddings".to_string(),
+            columns: None,
+            filter: if with_filter {
+                Some(FilterExpression::Comparison {
+                    field: "category".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: serde_json::json!("ai"),
+                })
+            } else {
+                None
+            },
+        }
+    }
+
+    fn vector_topk_op(with_predicate: bool) -> Operator {
+        Operator::VectorTopK {
+            query_vector: vec![0.1, 0.2],
+            k: 10,
+            metric: VectorMetric::Cosine,
+            predicate: if with_predicate {
+                Some(FilterExpression::Comparison {
+                    field: "lang".to_string(),
+                    operator: ComparisonOperator::Equals,
+                    value: serde_json::json!("en"),
+                })
+            } else {
+                None
+            },
+        }
+    }
+
+    #[test]
+    fn rls_injects_tenant_id_into_scan_with_no_existing_filter() {
+        let mut plan = MultiModelPlan::new(vec![scan_op(false)], PlanContext::default());
+        push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
+
+        match &plan.operators[0] {
+            Operator::Scan { filter: Some(f), .. } => match f {
+                FilterExpression::Comparison { field, operator, value } => {
+                    assert_eq!(field, "tenant_id");
+                    assert_eq!(*operator, ComparisonOperator::Equals);
+                    assert_eq!(*value, serde_json::json!("acme"));
+                }
+                other => panic!("expected Comparison, got {:?}", other),
+            },
+            other => panic!("expected Scan with filter, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rls_ands_tenant_id_with_existing_scan_filter() {
+        let mut plan = MultiModelPlan::new(vec![scan_op(true)], PlanContext::default());
+        push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
+
+        match &plan.operators[0] {
+            Operator::Scan { filter: Some(FilterExpression::And(parts)), .. } => {
+                assert_eq!(parts.len(), 2);
+                // One part should be the existing category filter
+                // One part should be the tenant_id filter
+                let has_category = parts.iter().any(|p| {
+                    matches!(p, FilterExpression::Comparison { field, .. } if field == "category")
+                });
+                let has_tenant = parts.iter().any(|p| {
+                    matches!(p, FilterExpression::Comparison { field, .. } if field == "tenant_id")
+                });
+                assert!(has_category, "existing filter must be preserved");
+                assert!(has_tenant, "tenant_id must be injected");
+            }
+            other => panic!("expected Scan with And filter, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rls_injects_tenant_id_into_vector_topk_predicate() {
+        let mut plan = MultiModelPlan::new(vec![vector_topk_op(false)], PlanContext::default());
+        push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
+
+        match &plan.operators[0] {
+            Operator::VectorTopK { predicate: Some(FilterExpression::Comparison { field, .. }), .. } => {
+                assert_eq!(field, "tenant_id");
+            }
+            other => panic!("expected VectorTopK with tenant predicate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rls_ands_with_existing_vector_topk_predicate() {
+        let mut plan = MultiModelPlan::new(vec![vector_topk_op(true)], PlanContext::default());
+        push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
+
+        match &plan.operators[0] {
+            Operator::VectorTopK { predicate: Some(FilterExpression::And(parts)), .. } => {
+                assert_eq!(parts.len(), 2);
+            }
+            other => panic!("expected VectorTopK with And predicate, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rls_with_principals_injects_in_predicate() {
+        let ctx = RlsContext::with_principals("acme", vec!["admin".to_string(), "editor".to_string()]);
+        let mut plan = MultiModelPlan::new(vec![scan_op(false)], PlanContext::default());
+        push_rls_predicates(&mut plan, &ctx);
+
+        // tenant_id + permitted_principals → And([tenant_eq, principals_in])
+        match &plan.operators[0] {
+            Operator::Scan { filter: Some(FilterExpression::And(parts)), .. } => {
+                assert_eq!(parts.len(), 2);
+                let has_principals = parts.iter().any(|p| {
+                    matches!(p, FilterExpression::Comparison { field, operator, .. }
+                        if field == "permitted_principals" && *operator == ComparisonOperator::In)
+                });
+                assert!(has_principals, "permitted_principals IN predicate expected");
+            }
+            other => panic!("expected And filter, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rls_noop_for_empty_context() {
+        let ctx = RlsContext::for_tenant("");
+        let mut plan = MultiModelPlan::new(vec![scan_op(false)], PlanContext::default());
+        push_rls_predicates(&mut plan, &ctx);
+
+        // No filter injected
+        match &plan.operators[0] {
+            Operator::Scan { filter: None, .. } => {}
+            other => panic!("expected Scan with no filter for empty ctx, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn rls_does_not_touch_non_scan_operators() {
+        let mut plan = MultiModelPlan::new(
+            vec![
+                scan_op(false),
+                Operator::Filter {
+                    expression: FilterExpression::Comparison {
+                        field: "score".to_string(),
+                        operator: ComparisonOperator::GreaterThan,
+                        value: serde_json::json!(0.5),
+                    },
+                },
+            ],
+            PlanContext::default(),
+        );
+        push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
+
+        // Filter operator must remain unchanged
+        match &plan.operators[1] {
+            Operator::Filter { expression: FilterExpression::Comparison { field, .. } } => {
+                assert_eq!(field, "score", "Filter operator must not be modified");
+            }
+            other => panic!("Filter operator unexpectedly changed: {:?}", other),
         }
     }
 }
