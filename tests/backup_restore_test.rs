@@ -3,8 +3,7 @@
 use std::path::Path;
 
 use proximadb::{
-    storage::persistence::filesystem::FilesystemFactory,
-    storage::persistence::filesystem::unified::UnifiedCachingFilesystem,
+    storage::persistence::filesystem::{FilesystemFactory, UnifiedCachingFilesystem},
 };
 
 // Import from operations module

@@ -10,6 +10,7 @@
 //! with no I/O or service dependencies.
 
 use std::net::SocketAddr;
+use tracing::{debug, info, warn};
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 ///

@@ -69,7 +69,7 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "cluster")]
 use crate::cluster::consensus::RaftConsensus;

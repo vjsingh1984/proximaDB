@@ -8,8 +8,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use proximadb::storage::persistence::filesystem::{
-    FileOptions, FileSystem, FilesystemFactory, metadata_traits::GenericMetadataSerializer,
-    unified::UnifiedCachingFilesystem,
+    FileOptions, FileSystem, FilesystemFactory, UnifiedCachingFilesystem,
+    metadata_traits::GenericMetadataSerializer,
 };
 
 /// Test data for filesystem operations
