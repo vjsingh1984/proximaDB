@@ -17,6 +17,7 @@ pub mod proto_defaults;
 pub mod resources;
 pub mod security_port;
 pub mod service_ports;
+pub mod streaming_port;
 
 // Re-exports
 pub use cluster_port::{ClusterHealthStatus, ClusterPort};
@@ -32,3 +33,4 @@ pub use port::ApiHandlersPort;
 pub use resources::{MemoryBudget, ResourceManager};
 pub use security_port::SecurityPort;
 pub use service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};
+pub use streaming_port::StreamingPort;

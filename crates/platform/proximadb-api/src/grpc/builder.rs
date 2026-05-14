@@ -17,10 +17,10 @@ use crate::grpc::v1::{
     observability::ObservabilityServiceImpl,
     security::SecurityServiceImpl,
     sql::SqlServiceImpl,
-    streaming::{StreamingServiceImpl, StreamCoordinator},
+    streaming::StreamingServiceImpl,
     vector::VectorServiceImpl,
 };
-use proximadb_runtime::{ApiHandlersPort, DocumentPort, EntityPort, GraphPort, HybridPort, ObservabilityPort, SecurityPort};
+use proximadb_runtime::{ApiHandlersPort, DocumentPort, EntityPort, GraphPort, HybridPort, ObservabilityPort, SecurityPort, StreamingPort};
 use proximadb_proto::streaming::v1::streaming_service_server::StreamingServiceServer;
 use proximadb_proto::v1::{
     collection_service_server::CollectionServiceServer,
@@ -221,10 +221,20 @@ impl GrpcServiceBuilder {
         Self::apply_compression(server, self.config.compression_enabled)
     }
 
-    /// Build streaming service
-    pub fn build_streaming_service(&self) -> StreamingServiceServer<StreamingServiceImpl> {
-        let server =
-            StreamingServiceServer::new(StreamingServiceImpl::new(Arc::new(StreamCoordinator)));
+    /// Build streaming service.
+    ///
+    /// When `port` is `None` the session-management RPCs return `UNIMPLEMENTED`;
+    /// the streaming RPCs always return `UNIMPLEMENTED` as they are
+    /// protocol-specific and cannot be represented as port methods.
+    pub fn build_streaming_service(
+        &self,
+        port: Option<Arc<dyn StreamingPort>>,
+    ) -> StreamingServiceServer<StreamingServiceImpl> {
+        let impl_ = match port {
+            Some(p) => StreamingServiceImpl::new(p),
+            None => StreamingServiceImpl::without_backend(),
+        };
+        let server = StreamingServiceServer::new(impl_);
         let server = Self::apply_message_limits(
             server,
             self.config.max_decoding_message_size,
@@ -300,6 +310,7 @@ pub struct GrpcServiceFactory {
     hybrid_port: Option<Arc<dyn HybridPort>>,
     observability_port: Option<Arc<dyn ObservabilityPort>>,
     security_port: Option<Arc<dyn SecurityPort>>,
+    streaming_port: Option<Arc<dyn StreamingPort>>,
     config: GrpcServiceConfig,
 }
 
@@ -314,6 +325,7 @@ impl GrpcServiceFactory {
             hybrid_port: None,
             observability_port: None,
             security_port: None,
+            streaming_port: None,
             config: GrpcServiceConfig::default(),
         }
     }
@@ -354,6 +366,12 @@ impl GrpcServiceFactory {
         self
     }
 
+    /// Attach a streaming port so the factory can wire session management in the streaming service.
+    pub fn with_streaming(mut self, streaming: Arc<dyn StreamingPort>) -> Self {
+        self.streaming_port = Some(streaming);
+        self
+    }
+
     /// Set service configuration
     pub fn with_config(mut self, config: GrpcServiceConfig) -> Self {
         self.config = config;
@@ -374,7 +392,7 @@ impl GrpcServiceFactory {
             graph: builder.build_graph_service(self.graph_port.clone()),
             hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
             sql: builder.build_sql_service(self.port.clone()),
-            streaming: builder.build_streaming_service(),
+            streaming: builder.build_streaming_service(self.streaming_port.clone()),
             observability: Some(builder.build_observability_service(self.observability_port.clone())),
             security: builder.build_security_service(self.security_port.clone()),
         })
@@ -394,7 +412,7 @@ impl GrpcServiceFactory {
             graph: builder.build_graph_service(self.graph_port.clone()),
             hybrid_search: builder.build_hybrid_search_service(self.hybrid_port.clone()),
             sql: builder.build_sql_service(self.port.clone()),
-            streaming: builder.build_streaming_service(),
+            streaming: builder.build_streaming_service(self.streaming_port.clone()),
             observability: Some(builder.build_observability_service(self.observability_port.clone())),
             security: builder.build_security_service(self.security_port.clone()),
         }

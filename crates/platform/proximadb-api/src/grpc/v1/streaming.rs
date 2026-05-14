@@ -1,71 +1,76 @@
 //! # Streaming Service (gRPC)
 //!
-//! gRPC implementation for real-time vector streaming, bidirectional streaming
-//! for ingestion, and server streaming for live query subscriptions.
+//! gRPC implementation for real-time vector streaming and session management.
 //!
-//! ## Status
-//!
-//! **TEMPORARY PLACEHOLDER**: This module contains placeholder implementations during the
-//! workspace refactor. The actual implementations exist in `src/network/grpc/streaming_service.rs`.
+//! The three unary session-management RPCs (`create_session`, `close_session`,
+//! `get_session_status`) delegate to the injected `StreamingPort`.  The
+//! bidirectional and client-streaming RPCs (`stream_insert`, `subscribe_query`,
+//! `batch_stream`) are inherently protocol-specific — they carry
+//! `tonic::Streaming<T>` which cannot cross a port boundary — and remain as
+//! UNIMPLEMENTED stubs until the streaming architecture is redesigned.
 
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status};
 
-// Placeholder types for streaming services
-// TODO: Replace with actual types after migration
-pub struct StreamCoordinator;
-pub struct StreamConfig;
+use tonic::{Request, Response, Status};
 
 use proximadb_proto::streaming::v1::{
     streaming_service_server::{StreamingService, StreamingServiceServer},
-    *
+    *,
 };
-use proximadb_proto::v1::{SearchVectorRecord, SearchResult, VectorRecord};
+use proximadb_runtime::StreamingPort;
 
-/// gRPC Streaming Service implementation
+/// Streaming response type for stream_insert
+pub type StreamInsertStream =
+    Pin<Box<dyn tokio_stream::Stream<Item = Result<StreamInsertResponse, Status>> + Send>>;
+
+/// Streaming response type for subscribe_query
+pub type SubscribeQueryStream =
+    Pin<Box<dyn tokio_stream::Stream<Item = Result<QueryUpdate, Status>> + Send>>;
+
+/// gRPC StreamingService backed by a `StreamingPort` for session management.
 pub struct StreamingServiceImpl {
-    _coordinator: Arc<StreamCoordinator>,
+    port: Option<Arc<dyn StreamingPort>>,
 }
 
 impl StreamingServiceImpl {
-    /// Create a new streaming service
-    pub fn new(_coordinator: Arc<StreamCoordinator>) -> Self {
-        Self { _coordinator }
+    /// Construct with a concrete streaming port.
+    pub fn new(port: Arc<dyn StreamingPort>) -> Self {
+        Self { port: Some(port) }
     }
 
-    /// Create a new streaming service with config
-    pub fn with_config(_coordinator: Arc<StreamCoordinator>, _config: StreamConfig) -> Self {
-        Self { _coordinator }
+    /// Construct without a backend (session RPCs return UNIMPLEMENTED).
+    pub fn without_backend() -> Self {
+        Self { port: None }
     }
 
-    /// Convert to tonic server
+    /// Convert into a tonic gRPC server.
     pub fn into_server(self) -> StreamingServiceServer<Self> {
         StreamingServiceServer::new(self)
     }
+
+    fn not_configured() -> Status {
+        Status::unimplemented("Streaming session management not configured on this node")
+    }
+
+    fn port_err(e: anyhow::Error) -> Status {
+        Status::internal(e.to_string())
+    }
 }
 
-/// Streaming response type for stream_insert
-pub type StreamInsertStream = Pin<
-    Box<dyn tokio_stream::Stream<Item = Result<StreamInsertResponse, Status>> + Send>,
->;
-
-/// Streaming response type for subscribe_query
-pub type SubscribeQueryStream = Pin<
-    Box<dyn tokio_stream::Stream<Item = Result<QueryUpdate, Status>> + Send>,
->;
-
-// Placeholder trait implementation - will be implemented after migration
 #[tonic::async_trait]
 impl StreamingService for StreamingServiceImpl {
+    // ── Protocol-specific streaming RPCs (not expressible as port methods) ──
+
     type StreamInsertStream = StreamInsertStream;
 
     async fn stream_insert(
         &self,
         _request: Request<tonic::Streaming<StreamInsertRequest>>,
     ) -> Result<Response<Self::StreamInsertStream>, Status> {
-        Err(Status::unimplemented("Streaming service migration in progress"))
+        Err(Status::unimplemented(
+            "stream_insert: bidirectional streaming not yet supported via port abstraction",
+        ))
     }
 
     type SubscribeQueryStream = SubscribeQueryStream;
@@ -74,34 +79,52 @@ impl StreamingService for StreamingServiceImpl {
         &self,
         _request: Request<SubscribeRequest>,
     ) -> Result<Response<Self::SubscribeQueryStream>, Status> {
-        Err(Status::unimplemented("Streaming service migration in progress"))
+        Err(Status::unimplemented(
+            "subscribe_query: server streaming not yet supported via port abstraction",
+        ))
     }
 
     async fn batch_stream(
         &self,
         _request: Request<tonic::Streaming<VectorBatch>>,
     ) -> Result<Response<BatchStreamResponse>, Status> {
-        Err(Status::unimplemented("Streaming service migration in progress"))
+        Err(Status::unimplemented(
+            "batch_stream: client streaming not yet supported via port abstraction",
+        ))
     }
+
+    // ── Unary session management RPCs (delegate through StreamingPort) ───────
 
     async fn create_session(
         &self,
-        _request: Request<CreateSessionRequest>,
+        request: Request<CreateSessionRequest>,
     ) -> Result<Response<CreateSessionResponse>, Status> {
-        Err(Status::unimplemented("Streaming service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.create_session(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn close_session(
         &self,
-        _request: Request<CloseSessionRequest>,
+        request: Request<CloseSessionRequest>,
     ) -> Result<Response<CloseSessionResponse>, Status> {
-        Err(Status::unimplemented("Streaming service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.close_session(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 
     async fn get_session_status(
         &self,
-        _request: Request<GetSessionStatusRequest>,
+        request: Request<GetSessionStatusRequest>,
     ) -> Result<Response<GetSessionStatusResponse>, Status> {
-        Err(Status::unimplemented("Streaming service migration in progress"))
+        let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
+        port.get_session_status(request.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(Self::port_err)
     }
 }

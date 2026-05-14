@@ -965,3 +965,38 @@ mod tests {
         assert!(status_result.is_err());
     }
 }
+
+// ── StreamingPort ─────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::StreamingPort for StreamingServiceImpl {
+    async fn create_session(
+        &self,
+        request: crate::proto::proximadb_streaming_v1::CreateSessionRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_streaming_v1::CreateSessionResponse> {
+        StreamingService::create_session(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn close_session(
+        &self,
+        request: crate::proto::proximadb_streaming_v1::CloseSessionRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_streaming_v1::CloseSessionResponse> {
+        StreamingService::close_session(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_session_status(
+        &self,
+        request: crate::proto::proximadb_streaming_v1::GetSessionStatusRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_streaming_v1::GetSessionStatusResponse> {
+        StreamingService::get_session_status(self, tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+}
