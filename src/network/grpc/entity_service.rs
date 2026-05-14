@@ -1,3 +1,7 @@
+// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/entity.rs
+// Please use: use proximadb_api::grpc::EntityServiceImpl;
+// This compatibility shim will be removed in version 0.3.0
+
 /*
  * Copyright 2025 ProximaDB
  *

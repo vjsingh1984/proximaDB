@@ -1,3 +1,6 @@
+// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/vector.rs
+// Please use: use proximadb_api::grpc::VectorServiceImpl;
+// This compatibility shim will be removed in version 0.3.0
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;

@@ -1,3 +1,7 @@
+// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/hybrid.rs
+// Please use: use proximadb_api::grpc::HybridSearchServiceImpl;
+// This compatibility shim will be removed in version 0.3.0
+
 //! gRPC service implementation for Hybrid Search
 //!
 //! Provides gRPC endpoints for hybrid BM25 + vector search fusion.

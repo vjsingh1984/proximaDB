@@ -1,3 +1,7 @@
+// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/observability.rs
+// Please use: use proximadb_api::grpc::ObservabilityServiceImpl;
+// This compatibility shim will be removed in version 0.3.0
+
 // Observability gRPC service implementation
 //
 // Implements the ObservabilityService defined in proto/proximadb/v1/observability.proto

@@ -1,3 +1,7 @@
+// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/document.rs
+// Please use: use proximadb_api::grpc::DocumentServiceImpl;
+// This compatibility shim will be removed in version 0.3.0
+
 // Document gRPC service implementation
 //
 // Implements the DocumentService defined in proto/proximadb/v1/document.proto

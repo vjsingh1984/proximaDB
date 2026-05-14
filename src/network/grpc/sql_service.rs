@@ -1,3 +1,6 @@
+// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/sql.rs
+// Please use: use proximadb_api::grpc::SqlServiceImpl;
+// This compatibility shim will be removed in version 0.3.0
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
 
