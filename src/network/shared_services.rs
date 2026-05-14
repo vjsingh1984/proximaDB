@@ -15,7 +15,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use crate::utils::uuid::Uuid;
 use crate::api_handlers::UnifiedHandlers;
 use crate::metrics::MetricsConfig;
 use crate::monitoring::MetricsCollector;
@@ -34,6 +33,7 @@ use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
 use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use crate::utils::uuid::Uuid;
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 
 /// Shared services for thin protocol handlers

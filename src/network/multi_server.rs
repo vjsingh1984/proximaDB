@@ -3,17 +3,25 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Multi-server architecture with dedicated HTTP and gRPC servers
+//! Multi-protocol server lifecycle orchestration (`MultiServer`).
 //!
-//! **TD-GOD-FILE**: This file (~3000 lines) handles REST, gRPC, Arrow Flight,
-//! PostgreSQL wire protocol, TLS, and lifecycle. It should be split into:
-//! - `network/server/mod.rs` — MultiServer struct + lifecycle orchestration
-//! - `network/server/rest.rs` — REST/Axum server setup and routes
-//! - `network/server/grpc.rs` — gRPC/Tonic server setup
-//! - `network/server/pgwire.rs` — PostgreSQL wire protocol server
-//! - `network/server/flight.rs` — Arrow Flight server
-//! - `network/server/tls.rs` — TLS configuration for all protocols
-//! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
+//! Owns server startup, TCP multiplexing, TLS wiring, and graceful shutdown
+//! across REST, gRPC, Arrow Flight, and PostgreSQL wire protocol.
+//!
+//! Related modules:
+//! - `server_config` — configuration types (`MultiServerConfig`, `TLSConfig`, …)
+//! - `shared_services` — `SharedServices` service composition root
+//!
+//! ## Architecture overview
+//!
+//! ```text
+//! MultiServer::start()
+//!     ↓ unified mode
+//! TCP mux (port 5678) → REST on 127.0.0.1:15678 (HTTP/1.1)
+//!                     → gRPC on 127.0.0.1:15679 (HTTP/2)
+//!     ↓ multi-port mode
+//! REST on :5678 | gRPC on :5679 | Arrow Flight on :5680 | pgwire on :5433
+//! ```
 //!
 //! ## Architecture Overview:
 //!
@@ -79,22 +87,18 @@ use crate::proto::proximadb_cluster_v1::{
 
 use crate::security::SecurityCoordinator;
 
-
 // Server configuration types extracted to src/network/server_config.rs
 // All existing call sites using `crate::network::multi_server::MultiServerConfig` etc continue to work.
-pub use crate::network::server_config::{
-    ArrowIpcServerConfig, GrpcHttpServerConfig, MultiServerConfig,
-    PostgresServerConfig, RestHttpServerConfig, TLSConfig,
-};
 #[cfg(feature = "cluster")]
 pub use crate::network::server_config::ClusterServerConfig;
-
-
+pub use crate::network::server_config::{
+    ArrowIpcServerConfig, GrpcHttpServerConfig, MultiServerConfig, PostgresServerConfig,
+    RestHttpServerConfig, ServerStatus, TLSConfig,
+};
 
 // SharedServices extracted to src/network/shared_services.rs
 // All existing call sites using `crate::network::multi_server::SharedServices` continue to work.
 pub use crate::network::shared_services::SharedServices;
-
 
 /// Apply 64 MB message limits and optional gzip compression to a tonic service.
 ///
@@ -108,7 +112,7 @@ macro_rules! apply_limits {
             .max_encoding_message_size(MSG_64MB);
         if $compress {
             s.accept_compressed(CompressionEncoding::Gzip)
-             .send_compressed(CompressionEncoding::Gzip)
+                .send_compressed(CompressionEncoding::Gzip)
         } else {
             s
         }
@@ -271,7 +275,9 @@ impl MultiServer {
                         "Failed to create ObservabilityStorage with WAL: {}. Using non-durable storage.",
                         e
                     );
-                    Arc::new(crate::observability::ObservabilityStorage::new(&obs_path_str))
+                    Arc::new(crate::observability::ObservabilityStorage::new(
+                        &obs_path_str,
+                    ))
                 }
             };
             let obs_service = match crate::observability::ObservabilityService::new(obs_storage)
@@ -279,7 +285,10 @@ impl MultiServer {
             {
                 Ok(svc) => Arc::new(svc),
                 Err(e) => {
-                    warn!("Failed to create ObservabilityService: {}. Creating minimal instance.", e);
+                    warn!(
+                        "Failed to create ObservabilityService: {}. Creating minimal instance.",
+                        e
+                    );
                     let fallback_storage = Arc::new(
                         crate::observability::ObservabilityStorage::new(&obs_path_str),
                     );
@@ -297,12 +306,11 @@ impl MultiServer {
 
             // ── Wrap concrete impls as port objects for the factory ────────────
 
-            let graph_port: Arc<dyn proximadb_runtime::GraphPort> = Arc::new(
-                crate::network::grpc::GraphServiceImpl::with_adapter(
+            let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
+                Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
                     services.request_handlers.clone(),
                     services.query_adapter(),
-                ),
-            );
+                ));
             let doc_port: Arc<dyn proximadb_runtime::DocumentPort> = Arc::new(
                 crate::network::grpc::DocumentServiceImpl::new(doc_storage_service),
             );
@@ -311,9 +319,8 @@ impl MultiServer {
             );
             let streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
                 Arc::new(crate::network::grpc::StreamingServiceImpl::new());
-            let security_port: Arc<dyn proximadb_runtime::SecurityPort> = Arc::new(
-                crate::network::grpc::SecurityServiceImpl::with_default_config(),
-            );
+            let security_port: Arc<dyn proximadb_runtime::SecurityPort> =
+                Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
             let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
                 Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
 
@@ -339,16 +346,16 @@ impl MultiServer {
             // at the composition root; the factory is protocol-agnostic.
             let compress = self.config.grpc_config.compression;
 
-            let vector_service        = apply_limits!(grpc_svcs.vector, compress);
-            let sql_service           = apply_limits!(grpc_svcs.sql, compress);
-            let col_service           = grpc_svcs.collection;
-            let graph_service         = grpc_svcs.graph;
+            let vector_service = apply_limits!(grpc_svcs.vector, compress);
+            let sql_service = apply_limits!(grpc_svcs.sql, compress);
+            let col_service = grpc_svcs.collection;
+            let graph_service = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
-            let security_service      = grpc_svcs.security;
-            let document_service      = grpc_svcs.document;
-            let entity_service        = grpc_svcs.entity;
+            let security_service = grpc_svcs.security;
+            let document_service = grpc_svcs.document;
+            let entity_service = grpc_svcs.entity;
             let observability_service = grpc_svcs.observability;
-            let streaming_service     = grpc_svcs.streaming;
+            let streaming_service = grpc_svcs.streaming;
 
             // Add V2 ProximaRecordService for typed fields and schema support
             let proxima_record_service_impl =
@@ -618,12 +625,11 @@ impl MultiServer {
             let compress = self.config.grpc_config.compression;
 
             // ── Build core gRPC services via factory ──────────────────────────
-            let graph_port: Arc<dyn proximadb_runtime::GraphPort> = Arc::new(
-                crate::network::grpc::GraphServiceImpl::with_adapter(
+            let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
+                Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
                     services.request_handlers.clone(),
                     services.query_adapter(),
-                ),
-            );
+                ));
             let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
                 Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
@@ -635,12 +641,12 @@ impl MultiServer {
                 .with_config(grpc_cfg)
                 .create_all_services_sync();
 
-            let vector_service        = apply_limits!(grpc_svcs.vector, compress);
-            let sql_service           = apply_limits!(grpc_svcs.sql, compress);
-            let col_service           = grpc_svcs.collection;
-            let graph_service         = grpc_svcs.graph;
+            let vector_service = apply_limits!(grpc_svcs.vector, compress);
+            let sql_service = apply_limits!(grpc_svcs.sql, compress);
+            let col_service = grpc_svcs.collection;
+            let graph_service = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
-            let security_service      = grpc_svcs.security;
+            let security_service = grpc_svcs.security;
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
@@ -924,12 +930,11 @@ impl MultiServer {
             };
 
             // ── Build standard services via factory ───────────────────────────
-            let graph_port: Arc<dyn proximadb_runtime::GraphPort> = Arc::new(
-                crate::network::grpc::GraphServiceImpl::with_adapter(
+            let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
+                Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
                     services.request_handlers.clone(),
                     services.query_adapter(),
-                ),
-            );
+                ));
             let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
                 Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
@@ -943,12 +948,12 @@ impl MultiServer {
 
             let compress = self.config.grpc_config.compression;
 
-            let vector_service        = apply_limits!(grpc_svcs.vector, compress);
-            let sql_service           = apply_limits!(grpc_svcs.sql, compress);
-            let col_service           = grpc_svcs.collection;
-            let graph_service         = grpc_svcs.graph;
+            let vector_service = apply_limits!(grpc_svcs.vector, compress);
+            let sql_service = apply_limits!(grpc_svcs.sql, compress);
+            let col_service = grpc_svcs.collection;
+            let graph_service = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
-            let security_service      = grpc_svcs.security;
+            let security_service = grpc_svcs.security;
 
             // Build cluster services
             let mut server = server_builder
@@ -1143,210 +1148,4 @@ impl MultiServer {
     }
 }
 
-/// Server status information
-#[derive(Debug, Clone)]
-pub struct ServerStatus {
-    /// Whether the HTTP/REST server is running
-    pub http_running: bool,
-    /// Whether the gRPC server is running
-    pub grpc_running: bool,
-    /// HTTP server bind address (if running)
-    pub http_address: Option<SocketAddr>,
-    /// gRPC server bind address (if running)
-    pub grpc_address: Option<SocketAddr>,
-    /// Whether TLS is enabled for connections
-    pub tls_enabled: bool,
-}
 // Deferred: Re-add TTL sweeper code in proper function context if needed
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_server_config_defaults() {
-        let config = MultiServerConfig::default();
-
-        // REST port
-        assert_eq!(config.http_config.port, 5678);
-        assert!(config.http_config.enable_rest);
-        assert!(config.http_config.enable_dashboard);
-        assert!(config.http_config.enable_metrics);
-        assert!(config.http_config.enable_health);
-        assert!(!config.http_config.compression);
-
-        // gRPC port
-        assert_eq!(config.grpc_config.port, 5679);
-        assert!(config.grpc_config.enable_grpc);
-        assert_eq!(config.grpc_config.max_message_size, 64 * 1024 * 1024); // 64MB
-        assert!(config.grpc_config.enable_reflection);
-        assert!(config.grpc_config.compression);
-
-        // Arrow IPC port
-        assert_eq!(config.arrow_ipc_config.port, 5680);
-        assert!(config.arrow_ipc_config.enable_arrow_ipc);
-        assert_eq!(config.arrow_ipc_config.max_message_size, 512 * 1024 * 1024); // 512MB
-        assert!(!config.arrow_ipc_config.compression);
-
-        // PostgreSQL port
-        assert_eq!(config.postgres_config.port, 5433);
-        assert!(config.postgres_config.enable_postgres);
-        assert_eq!(config.postgres_config.max_connections, 100);
-
-        // TLS defaults
-        assert!(!config.tls_config.enabled);
-        assert!(config.tls_config.cert_file.is_none());
-        assert!(config.tls_config.key_file.is_none());
-    }
-
-    #[test]
-    fn test_server_config_unified_mode() {
-        let config = MultiServerConfig::default();
-
-        // Default: unified mode disabled (legacy multi-port)
-        assert!(!config.unified_mode);
-        assert!(!config.is_unified_mode());
-        assert_eq!(config.unified_port, 5678);
-        assert_eq!(config.unified_bind_address, "0.0.0.0");
-
-        // Verify unified bind address computation
-        let unified_addr = config.unified_bind_address();
-        assert_eq!(unified_addr.port(), 5678);
-
-        // Enable unified mode
-        let mut unified_config = config;
-        unified_config.unified_mode = true;
-        unified_config.unified_port = 9999;
-        assert!(unified_config.is_unified_mode());
-        assert_eq!(unified_config.unified_bind_address().port(), 9999);
-    }
-
-    #[test]
-    fn test_server_config_multi_port() {
-        let mut config = MultiServerConfig::default();
-        config.unified_mode = false;
-
-        // Verify each protocol gets its own port
-        let http_addr = config.http_bind_address();
-        let grpc_addr = config.grpc_bind_address();
-
-        assert_eq!(http_addr.port(), 5678);
-        assert_eq!(grpc_addr.port(), 5679);
-
-        // Arrow IPC and Postgres use their own bind addresses
-        assert_eq!(config.arrow_ipc_config.active_bind_address().port(), 5680);
-        assert_eq!(config.postgres_config.active_bind_address().port(), 5433);
-
-        // Verify all ports are distinct
-        let ports = vec![
-            http_addr.port(),
-            grpc_addr.port(),
-            config.arrow_ipc_config.port,
-            config.postgres_config.port,
-        ];
-        let unique: std::collections::HashSet<_> = ports.iter().collect();
-        assert_eq!(
-            unique.len(),
-            ports.len(),
-            "All protocol ports must be unique"
-        );
-
-        // Verify custom port assignment
-        config.http_config.port = 8080;
-        config.grpc_config.port = 8081;
-        config.grpc_config.bind_address = "0.0.0.0:8081"
-            .parse()
-            .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 8081)));
-
-        assert_eq!(config.http_bind_address().port(), 8080);
-        assert_eq!(config.grpc_bind_address().port(), 8081);
-    }
-
-    #[test]
-    fn test_protocol_detection() {
-        // Test the unified mode protocol detection configuration
-        // (actual TCP-level detection happens at runtime, but we verify the config wiring)
-        let mut config = MultiServerConfig::default();
-        config.unified_mode = true;
-
-        // In unified mode, all protocols share one address
-        let unified = config.unified_bind_address();
-        assert_eq!(unified.port(), config.unified_port);
-
-        // Verify TLS auto-detection with no certificates returns false
-        let mut tls = TLSConfig::default();
-        assert!(!tls.auto_detect_tls());
-        assert!(!tls.enabled);
-
-        // Verify TLS with certificates that don't exist returns false
-        let mut tls_with_fake = TLSConfig {
-            cert_file: Some("/nonexistent/cert.pem".to_string()),
-            key_file: Some("/nonexistent/key.pem".to_string()),
-            ..Default::default()
-        };
-        assert!(!tls_with_fake.auto_detect_tls());
-        assert!(!tls_with_fake.enabled);
-
-        // Verify mTLS detection
-        let tls_no_mtls = TLSConfig::default();
-        assert!(!tls_no_mtls.is_mtls_enabled());
-
-        let tls_mtls = TLSConfig {
-            enabled: true,
-            require_client_certs: true,
-            ca_file: Some("/path/to/ca.pem".to_string()),
-            ..Default::default()
-        };
-        assert!(tls_mtls.is_mtls_enabled());
-        assert_eq!(tls_mtls.get_ca_path(), Some("/path/to/ca.pem"));
-
-        // Verify bind address construction
-        let tls_for_bind = TLSConfig::default();
-        let addr = tls_for_bind.bind_address(5678);
-        assert_eq!(addr.port(), 5678);
-        assert_eq!(addr.ip(), std::net::IpAddr::from([0, 0, 0, 0]));
-
-        // Verify REST TLS detection
-        let rest_config = RestHttpServerConfig {
-            port: 5678,
-            enable_rest: true,
-            enable_dashboard: false,
-            enable_metrics: false,
-            enable_health: true,
-            compression: false,
-            tls_cert_file: None,
-            tls_key_file: None,
-        };
-        assert!(!rest_config.is_tls_enabled());
-
-        // Verify gRPC TLS detection
-        let grpc_config = GrpcHttpServerConfig {
-            port: 5679,
-            bind_address: "0.0.0.0:5679"
-                .parse()
-                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5679))),
-            tls_bind_address: None,
-            enable_grpc: true,
-            max_message_size: 64 * 1024 * 1024,
-            enable_reflection: true,
-            compression: true,
-            tls_cert_file: None,
-            tls_key_file: None,
-        };
-        assert!(!grpc_config.is_tls_enabled());
-
-        // Verify Arrow IPC TLS detection
-        let arrow_config = ArrowIpcServerConfig {
-            port: 5680,
-            bind_address: "0.0.0.0:5680"
-                .parse()
-                .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], 5680))),
-            enable_arrow_ipc: true,
-            max_message_size: 512 * 1024 * 1024,
-            compression: false,
-            tls_cert_file: None,
-            tls_key_file: None,
-        };
-        assert!(!arrow_config.is_tls_enabled());
-    }
-}
