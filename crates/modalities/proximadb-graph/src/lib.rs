@@ -25,6 +25,7 @@
 //! - `proximadb-graph-query` - Graph query contracts
 
 pub mod core;
+pub mod projection;
 pub mod query;
 pub mod record;
 pub mod storage;
