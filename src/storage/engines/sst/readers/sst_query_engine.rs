@@ -60,7 +60,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 
 // Using UnifiedCachingFilesystem instead of ZeroCopyIOSystem
 use crate::storage::persistence::filesystem::FileSystem;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 // Vectorized execution imports (TD-041)
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::evaluate_predicate_vectorized;
@@ -118,7 +118,7 @@ pub struct UnifiedSstableReader {
     shared_reader: Arc<SharedSstFormatReader>,
     strategy_selector: Arc<ReadingStrategySelector>,
     // UNIFIED CACHE: Using UnifiedCachingFilesystem for all caching needs
-    unified_filesystem: Arc<UnifiedCachingFilesystem>,
+    caching_filesystem: Arc<UnifiedCachingFilesystem>,
     collection_id: String,
 
     // Filesystem factory for direct file access when needed
@@ -2006,7 +2006,7 @@ impl UnifiedSstableReader {
     /// - Code Reuse: Delegates file operations to SharedSstFormatReader (eliminates duplication)
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
-        unified_filesystem: Arc<UnifiedCachingFilesystem>,
+        caching_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
     ) -> Self {
         let config = ReaderConfig::default();
@@ -2030,14 +2030,14 @@ impl UnifiedSstableReader {
         let shared_reader = Arc::new(SharedSstFormatReader::new(
             filesystem.clone(),
             mmap_strategy,
-            unified_filesystem.clone(),
+            caching_filesystem.clone(),
             collection_id.clone(),
         ));
 
         Self {
             shared_reader,
             strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
-            unified_filesystem,
+            caching_filesystem,
             collection_id,
             filesystem,
         }
@@ -2058,7 +2058,7 @@ impl UnifiedSstableReader {
     /// This constructor enables dual strategy support for different operation types
     pub fn new_with_bandwidth_optimizer(
         filesystem: Arc<FilesystemFactory>,
-        unified_filesystem: Arc<UnifiedCachingFilesystem>,
+        caching_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
         _bandwidth_optimizer: Option<
             Arc<crate::storage::engines::core::io::zero_copy::BandwidthOptimizer>,
@@ -2084,14 +2084,14 @@ impl UnifiedSstableReader {
         let shared_reader = Arc::new(SharedSstFormatReader::new(
             filesystem.clone(),
             mmap_strategy,
-            unified_filesystem.clone(),
+            caching_filesystem.clone(),
             collection_id.clone(),
         ));
 
         Self {
             shared_reader,
             strategy_selector: Arc::new(ReadingStrategySelector::new(config)),
-            unified_filesystem,
+            caching_filesystem,
             collection_id,
             filesystem,
         }
@@ -2272,7 +2272,7 @@ impl UnifiedSstableReader {
 
             // UnifiedCachingFilesystem handles caching internally
             // Try to get metadata (will use cache if available)
-            match self.unified_filesystem.metadata(file_path).await {
+            match self.caching_filesystem.metadata(file_path).await {
                 Ok(_metadata) => {
                     debug!("✅ Got metadata for file: {}", file_path);
                     // Convert FileMetadata to the format needed here
@@ -2827,7 +2827,7 @@ impl UnifiedSstableReader {
                 && !file_path.starts_with("/")
                 && file_path.contains("://");
             if is_remote {
-                let cache_status = self.unified_filesystem.metadata(file_path).await;
+                let cache_status = self.caching_filesystem.metadata(file_path).await;
                 if cache_status.is_ok() {
                     debug!(
                         "💾 SST: File {} found in disk cache, using cached copy",

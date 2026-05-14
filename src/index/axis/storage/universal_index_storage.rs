@@ -36,7 +36,7 @@ use tracing::{debug, info, warn};
 
 use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::sst::writer::SstableWriter;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 /// Universal index data that can be stored across tiers
 pub trait IndexData: Serialize + for<'de> Deserialize<'de> + Clone + Send + Sync {

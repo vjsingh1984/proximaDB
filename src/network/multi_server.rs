@@ -1262,7 +1262,7 @@ impl SharedServices {
             ..Default::default()
         };
         let event_log_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                 filesystem_factory.get_filesystem(&storage_config.metadata_url)?,
                 "auditlog".to_string(),
                 "eventlog".to_string(),

@@ -24,7 +24,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::index::axis::eventlog::StorageEngineType;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 /// Unified interface for extracting vectors from storage files.
 ///

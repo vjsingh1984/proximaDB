@@ -15,11 +15,11 @@ pub mod compaction_tests;
 pub mod debug_compaction_test;
 
 // Storage tests
-pub mod unified_storage_tests;
+pub mod parquet_storage_tests;
 
 // TEMPORARILY DISABLED: Tests with import issues from storage engine consolidation
 // TODO: Update imports after architectural consolidation is complete
 // pub mod coverage_tests;
 // pub mod strategy_tests;
-// pub mod unified_parquet_reader_edge_tests;
-// pub mod unified_parquet_reader_tests;
+// pub mod parquet_reader_edge_tests;
+// pub mod parquet_reader_tests;

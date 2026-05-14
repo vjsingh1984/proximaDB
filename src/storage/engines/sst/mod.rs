@@ -3670,7 +3670,7 @@ mod simple_sstable_tests {
     #[tokio::test]
     async fn test_sstable_format_with_bloom_filter() {
         use crate::storage::engines::sst::readers::UnifiedSstableReader;
-        use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+        use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
         // Initialize hardware capabilities for testing
         let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
@@ -3766,7 +3766,7 @@ mod simple_sstable_tests {
     #[tokio::test]
     async fn test_sstable_empty_file_handling() {
         use crate::storage::engines::sst::readers::UnifiedSstableReader;
-        use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+        use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
@@ -3807,7 +3807,7 @@ mod simple_sstable_tests {
     #[tokio::test]
     async fn test_sstable_truncated_file_handling() {
         use crate::storage::engines::sst::readers::UnifiedSstableReader;
-        use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+        use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();

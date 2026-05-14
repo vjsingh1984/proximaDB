@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 
 /// Unified VIPER reader that implements strategy-aware reading

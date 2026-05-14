@@ -110,7 +110,7 @@ pub struct ReaderConfig {
 #[derive(Debug, Clone)]
 pub struct CacheContext {
     pub cached_filesystem:
-        Arc<crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem>,
+        Arc<crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem>,
     pub collection_id: String,
     pub engine_type: String,
 }
@@ -225,7 +225,7 @@ impl UnifiedParquetReader {
         dimension: usize,
         filesystem_factory: Arc<FilesystemFactory>,
         cached_filesystem: Arc<
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
         >,
         collection_id: String,
         engine_type: String,

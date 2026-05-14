@@ -513,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unified_cache_coordinator_new() {
+    fn test_metadata_cache_coordinator_new() {
         let coordinator = UnifiedCacheCoordinator::new();
         assert!(coordinator.caches.is_empty());
     }

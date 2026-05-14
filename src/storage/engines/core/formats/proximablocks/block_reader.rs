@@ -18,7 +18,7 @@ use crate::storage::engines::core::formats::proximablocks::block_structures::{
     ProximaBlockMetadata, ProximaDataBlock,
 };
 use crate::storage::persistence::filesystem::FileSystem;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 /// ✅ Reading strategy for different access patterns
 #[derive(Debug, Clone)]

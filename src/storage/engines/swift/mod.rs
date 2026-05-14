@@ -1296,7 +1296,7 @@ impl SwiftFile {
         // Create UnifiedCachingFilesystem (same as SST unified_reader.rs:47)
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let unified_fs = std::sync::Arc::new(
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 collection_id.to_string(),
                 "swift".to_string(),

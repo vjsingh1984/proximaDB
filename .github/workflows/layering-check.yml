@@ -1,0 +1,57 @@
+name: Workspace Layering Check
+
+on:
+  push:
+    branches: [ main, develop, 'feature/**' ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  layering-validation:
+    name: Validate Workspace Layering
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Run layering validation
+      run: |
+        chmod +x scripts/check-layering.sh
+        ./scripts/check-layering.sh
+
+    - name: Report violations
+      if: failure()
+      run: |
+        echo "## Layering Violations Detected" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Run \`python3 scripts/check_workspace_boundaries.py --strict\` locally and review the workspace refactor plan plus ADR-001." >> $GITHUB_STEP_SUMMARY
+
+    - name: Post results to PR (on failure)
+      if: failure() && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.name,
+            body: `## Layering Violations Detected
+
+            The workspace layering validation check failed. Please fix the violations before merging.
+
+            **What to check:**
+            - Run \`./scripts/check-layering.sh\` locally
+            - Run \`python3 scripts/check_workspace_boundaries.py --strict\` directly for the canonical checker
+            - Review [Workspace Refactor Plan](https://github.com/${{ context.repo.owner }}/${{ context.repo.name }}/blob/main/roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc)
+            - Refer to [ADR-001: Workspace Layering Architecture](https://github.com/${{ context.repo.owner }}/${{ context.repo.name }}/blob/main/docs/12-design/ADR-001-workspace-layering.md)
+
+            **Golden Rule:** Lower layers must not depend on higher layers.
+
+            This check enforces the workspace boundary table used by the refactor plan.`
+          })

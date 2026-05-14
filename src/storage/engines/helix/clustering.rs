@@ -383,7 +383,7 @@ impl PCAModel {
     pub async fn save_to_file(
         &self,
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
         >,
         model_path: &str,
     ) -> Result<()> {
@@ -404,7 +404,7 @@ impl PCAModel {
     /// Load PCA model from filesystem
     pub async fn load_from_file(
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
         >,
         model_path: &str,
     ) -> Result<Self> {

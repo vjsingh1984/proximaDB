@@ -2,8 +2,8 @@
 //!
 //! This file consolidates all search-related tests for the SST engine from:
 //! - unified_search_engine/tests.rs (19 tests)
-//! - readers/tests/unified_sstable_reader_edge_tests.rs (22 tests)
-//! - readers/tests/unified_sstable_reader_tests.rs (8 tests)
+//! - readers/tests/sst_reader_edge_tests.rs (22 tests)
+//! - readers/tests/sst_reader_tests.rs (8 tests)
 //! - tests/bloom_filter_tests.rs (9 tests)
 //! - search/mod.rs inline tests (3 tests)
 //! - search/coordinator.rs inline tests (2 tests)
@@ -48,7 +48,7 @@ use crate::storage::traits::StorageQueryContext;
 
 use crate::proto::proximadb_v1::{VectorRecord, SqlValue, sql_value, MetadataItem};
 use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig, FileSystem};
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::query::query_optimizer::SearchParams as QuerySearchParams;
 
 // ============================================================================

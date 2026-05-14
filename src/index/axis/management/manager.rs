@@ -245,7 +245,11 @@ pub struct AxisManager {
         RwLock<
             HashMap<
                 String,
-                Arc<tokio::sync::RwLock<crate::index::axis::indexes::ivf_unified::UnifiedIvfIndex>>,
+                Arc<
+                    tokio::sync::RwLock<
+                        crate::index::axis::indexes::dual_store_ivf::UnifiedIvfIndex,
+                    >,
+                >,
             >,
         >,
     >,
@@ -855,7 +859,7 @@ impl AxisManager {
     /// 4. Future inserts go directly to trained index
     async fn insert_into_ivf(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
-        use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
+        use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
 
         let dimension = vector.vector.len();
         if dimension == 0 || vector.id.is_empty() {
@@ -1665,7 +1669,7 @@ impl AxisManager {
         vectors: &[VectorRecord],
     ) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
-        use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
+        use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
 
         if vectors.is_empty() {
             return Ok(());

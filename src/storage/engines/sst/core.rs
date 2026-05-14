@@ -38,7 +38,7 @@ use crate::storage::engines::core::ops::{
 use crate::storage::engines::sst::{
     SstConfig, SstError, compaction::Compaction, decompression_cache, readers::UnifiedSstableReader,
 };
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
 

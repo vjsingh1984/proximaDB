@@ -1,8 +1,8 @@
 //! Consolidated Reader Tests for VIPER Engine
 //!
 //! This module consolidates all reader-related tests from the following source files:
-//! - unified_parquet_reader_tests.rs (15 tests)
-//! - unified_parquet_reader_edge_tests.rs (15 tests)
+//! - parquet_reader_tests.rs (15 tests)
+//! - parquet_reader_edge_tests.rs (15 tests)
 //! - coverage_tests.rs (11 tests)
 //! - strategy_tests.rs (10 tests)
 //!
@@ -30,7 +30,7 @@ use parquet::file::properties::WriterProperties;
 
 // Use consolidated helpers
 
-// SECTION 1: Basic Reader Tests (unified_parquet_reader_tests.rs)
+// SECTION 1: Basic Reader Tests (parquet_reader_tests.rs)
 // 15 tests covering basic reader functionality and core operations
 // ============================================================================
 
@@ -478,7 +478,7 @@ async fn test_vector_extraction_debug() -> Result<()> {
 }
 
 // ============================================================================
-// SECTION 2: Reader Edge Cases (unified_parquet_reader_edge_tests.rs)
+// SECTION 2: Reader Edge Cases (parquet_reader_edge_tests.rs)
 // 15 tests covering boundary conditions and error scenarios
 // ============================================================================
 
@@ -1087,7 +1087,7 @@ async fn create_test_reader_with_files(file_paths: Vec<String>) -> UnifiedParque
     );
     let base_fs = filesystem_factory.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "viper".to_string(),

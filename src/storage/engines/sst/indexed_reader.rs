@@ -12,7 +12,7 @@ use crate::core::search::index_based_filter::{
     ColumnData, ColumnMetadata, IndexBasedDataReader, MetadataSource, ReadStrategy,
 };
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 /// SST-specific metadata source representing an SST file
 pub struct SSTMetadataSource {

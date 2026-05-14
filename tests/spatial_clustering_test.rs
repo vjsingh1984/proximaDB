@@ -1,4 +1,4 @@
-//! Integration tests for Unified Spatial Clustering Infrastructure
+//! Integration tests for spatial clustering infrastructure
 //!
 //! Tests the complete pipeline: PCA → Spatial Encoding → Block Clustering → Pruning
 //! for SST (Z-order), HELIX (Hilbert), and SWIFT (AdaCurve) engines.

@@ -25,7 +25,7 @@ use crate::core::error::ProximaDBError;
 use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::engines::orion::OrionGraphEngine;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
 use serde::{Deserialize, Serialize};

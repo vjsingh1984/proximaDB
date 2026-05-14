@@ -61,7 +61,7 @@ pub async fn check_bloom_filter(
 /// Search an SSTable for nearest vectors with type-safe FilterExpression support
 pub async fn search_sstable(
     filesystem: &Arc<
-        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
     >,
     sstable: &SStableMetadata,
     query_vector: &[f32],
@@ -136,7 +136,7 @@ pub async fn search_sstable(
 /// Find a specific vector by ID
 pub async fn find_vector_by_id(
     filesystem: &Arc<
-        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
     >,
     sstable: &SStableMetadata,
     vector_id: &str,
@@ -199,7 +199,7 @@ pub async fn find_vector_by_id(
 /// thread searching one or more SSTables in parallel for maximum performance.
 pub async fn parallel_search(
     filesystem: Arc<
-        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
     >,
     sstables: Vec<SStableMetadata>,
     query_vector: Vec<f32>,
@@ -316,7 +316,7 @@ pub struct QueryStats {
 /// Advanced search with statistics
 pub async fn search_with_stats(
     filesystem: &Arc<
-        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
     >,
     sstables: &[SStableMetadata],
     query_vector: &[f32],
@@ -403,7 +403,7 @@ pub async fn search_with_stats(
 /// FP32 search for initial candidate filtering.
 pub async fn search_sstable_quantized(
     filesystem: &Arc<
-        crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
     >,
     sstable: &SStableMetadata,
     query_vector: &[f32],

@@ -1,4 +1,4 @@
-//! Example of using the unified metrics framework in production
+//! Example of using the metrics collection framework in production
 //! Shows how to integrate access patterns, filesystem, and engine metrics
 
 use proximadb::metrics::collectors::{
@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 /// Example production metrics setup
 pub struct ProductionMetricsManager {
-    unified_collector: UnifiedMetricsCollector,
+    metrics_collector: UnifiedMetricsCollector,
     access_pattern_collector: Arc<AccessPatternMetricsCollector>,
     filesystem_collector: Arc<FilesystemMetricsCollector>,
     engine_collector: Arc<EngineMetricsCollector>,
@@ -25,20 +25,20 @@ pub struct ProductionMetricsManager {
 impl ProductionMetricsManager {
     /// Initialize the production metrics system
     pub fn new() -> Self {
-        let mut unified_collector = UnifiedMetricsCollector::new();
+        let mut metrics_collector = UnifiedMetricsCollector::new();
         
         // Create specialized collectors
         let access_pattern_collector = Arc::new(AccessPatternMetricsCollector::new());
         let filesystem_collector = Arc::new(FilesystemMetricsCollector::new());
         let engine_collector = Arc::new(EngineMetricsCollector::new());
         
-        // Register all collectors with unified system
-        unified_collector.register(access_pattern_collector.clone() as Arc<dyn MetricsCollectorTrait>);
-        unified_collector.register(filesystem_collector.clone() as Arc<dyn MetricsCollectorTrait>);
-        unified_collector.register(engine_collector.clone() as Arc<dyn MetricsCollectorTrait>);
+        // Register all collectors with the shared metrics system
+        metrics_collector.register(access_pattern_collector.clone() as Arc<dyn MetricsCollectorTrait>);
+        metrics_collector.register(filesystem_collector.clone() as Arc<dyn MetricsCollectorTrait>);
+        metrics_collector.register(engine_collector.clone() as Arc<dyn MetricsCollectorTrait>);
         
         Self {
-            unified_collector,
+            metrics_collector,
             access_pattern_collector,
             filesystem_collector,
             engine_collector,
@@ -150,7 +150,7 @@ impl ProductionMetricsManager {
         }
         
         // Get overall system summary
-        let summary = self.unified_collector.metrics_summary().await;
+        let summary = self.metrics_collector.metrics_summary().await;
         
         info!(
             "System summary - Health: {:.1}%, CPU: {:.1}%, Memory: {:.1}%, QPS: {:.0}, P99 latency: {:.1}ms",
@@ -168,7 +168,7 @@ impl ProductionMetricsManager {
     }
     
     async fn check_alerts(&self) {
-        let alerts = self.unified_collector.active_alerts().await;
+        let alerts = self.metrics_collector.active_alerts().await;
         
         if !alerts.is_none() {
             warn!("Active alerts: {}", alerts.len());
@@ -191,10 +191,10 @@ impl ProductionMetricsManager {
     
     /// Export metrics for external monitoring systems (Prometheus, Grafana, etc.)
     pub async fn export_metrics(&self) -> String {
-        let samples = self.unified_collector.collect_all().await.clone();
+        let samples = self.metrics_collector.collect_all().await.clone();
         
         let mut output = String::new();
-        output.push_str("# ProximaDB Unified Metrics Export\n");
+        output.push_str("# ProximaDB Metrics Export\n");
         output.push_str("# TYPE gauge\n\n");
         
         for sample in samples {
@@ -227,11 +227,11 @@ pub async fn integrate_with_cache_orchestrator() {
     
     // Get the metrics collector from tracker
     if let Some(metrics_collector) = tracker.metrics_collector() {
-        // Register with unified system
-        let mut unified = UnifiedMetricsCollector::new();
-        unified.register(metrics_collector as Arc<dyn MetricsCollectorTrait>);
+        // Register with the shared metrics system
+        let mut collector = UnifiedMetricsCollector::new();
+        collector.register(metrics_collector as Arc<dyn MetricsCollectorTrait>);
         
-        info!("Cache orchestrator metrics integrated with unified framework");
+        info!("Cache orchestrator metrics integrated with metrics framework");
     }
     
     // Use tracker normally - metrics are automatically collected

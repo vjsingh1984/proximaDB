@@ -61,7 +61,7 @@ use tracing::info;
 
 use crate::core::error::{ProximaDBError, StorageError};
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 /// File type enum for cache key discrimination
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -131,7 +131,7 @@ pub struct SharedSstFormatReader {
     mmap_strategy: SstMmapStrategy,
 
     /// UNIFIED CACHE: UnifiedCachingFilesystem replaces all specialized caches
-    unified_filesystem: Arc<UnifiedCachingFilesystem>,
+    caching_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
     #[allow(dead_code)]
@@ -154,7 +154,7 @@ pub struct SharedSstFormatWriter {
 
     /// Unified filesystem for write operations
     #[allow(dead_code)]
-    unified_filesystem: Arc<UnifiedCachingFilesystem>,
+    caching_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
     #[allow(dead_code)]
@@ -219,7 +219,7 @@ impl SharedSstFormatReader {
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
         mmap_strategy: SstMmapStrategy,
-        unified_filesystem: Arc<UnifiedCachingFilesystem>,
+        caching_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
     ) -> Self {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -227,7 +227,7 @@ impl SharedSstFormatReader {
         Self {
             filesystem,
             mmap_strategy,
-            unified_filesystem,
+            caching_filesystem,
             collection_id,
             stats: Arc::new(ReaderStats::default()),
             distance_compute: Arc::new(UnifiedDistanceCompute::default()), // ✅ Create once and reuse
@@ -343,8 +343,8 @@ impl SharedSstFormatReader {
         use crate::storage::persistence::filesystem::FileSystem;
 
         // Try mmap first for local files (zero-copy)
-        if self.unified_filesystem.supports_mmap()
-            && let Ok(Some(mmap)) = self.unified_filesystem.get_mmap(file_path).await
+        if self.caching_filesystem.supports_mmap()
+            && let Ok(Some(mmap)) = self.caching_filesystem.get_mmap(file_path).await
         {
             tracing::debug!("Using mmap for {} ({} bytes)", file_path, mmap.len());
             return Ok(MmapOrVec::Mmap(mmap));
@@ -352,7 +352,7 @@ impl SharedSstFormatReader {
 
         // Fall back to regular read (for cloud storage or unsupported paths)
         let data = if use_cache {
-            self.unified_filesystem.read(file_path).await?
+            self.caching_filesystem.read(file_path).await?
         } else {
             self.filesystem
                 .get_filesystem(file_path)?

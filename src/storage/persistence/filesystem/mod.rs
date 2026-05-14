@@ -184,22 +184,22 @@ pub mod write_strategy;
 
 // Unified filesystem modules
 pub mod access_tracker;
+pub mod cache_config;
 pub mod cache_metrics;
+pub mod caching_filesystem;
 pub mod disk_cache;
+pub mod metadata_cache;
 pub mod metadata_traits;
 pub mod orchestrator_integration;
 pub mod prefetch_engine;
 pub mod range_optimizer;
 pub mod smart_io;
-pub mod unified_cache;
-pub mod unified_config;
-pub mod unified_filesystem;
 
 // Filesystem implementations
 pub use local::LocalFileSystem;
 
 // Unified caching filesystem
-pub use unified_filesystem::UnifiedCachingFilesystem;
+pub use caching_filesystem::UnifiedCachingFilesystem;
 
 // Re-export centralized scheme validation functions
 pub use scheme_validation::{
@@ -1077,7 +1077,7 @@ impl FilesystemFactory {
             };
 
         // Wrap it with UnifiedCachingFilesystem for caching
-        let unified_fs = crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::with_serializer(
+        let unified_fs = crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::with_serializer(
             fs,
             collection_id.to_string(),
             engine_type.to_string(),

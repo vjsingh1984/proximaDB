@@ -93,7 +93,7 @@ impl NovaSearchOperations {
     ) -> Result<Vec<OptimizedSearchRecord>> {
         use crate::core::search::results::OptimizedSearchRecord;
         use crate::storage::engines::core::formats::columnar::UnifiedParquetReader;
-        use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+        use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
         // Get search parameters from context
         let query_vector = ctx

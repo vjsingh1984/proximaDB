@@ -12,7 +12,7 @@ mod edge_tests {
     use crate::storage::engines::sst::readers::sst_query_engine::{
         CollectionContext, ReaderConfig, UnifiedSstableReader,
     };
-    use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+    use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use chrono::Utc;
     use serde_json::json;

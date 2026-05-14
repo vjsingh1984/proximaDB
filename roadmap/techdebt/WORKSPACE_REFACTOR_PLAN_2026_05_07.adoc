@@ -733,6 +733,11 @@ Current status after the first refinement:
 * unified-executor declarative graph helpers and traversal start-node resolution now also use `GraphQueryReadService` plus canonical `NodeQuery` construction for label/property lookup, avoiding root-only graph convenience methods in another query path
 * execution planning now depends on a separate narrow `GraphQueryStatsService` contract for graph metadata validation, so the planner no longer needs a concrete `GraphOperationsService` just to inspect graph stats
 * traversal-oriented query paths now depend on a separate narrow `GraphQueryTraversalService` contract, so unified graph traversal, AQL graph source execution, and the low-level query executor no longer need the full `GraphOperationsService` just to traverse or expand neighbors
+* root and engine integration test module names now follow the same compatibility-facade naming rule:
+  cross-model query coverage lives under `query_integration_test`, spatial clustering under
+  `spatial_clustering_test`, SQL frontend coverage under `sql_query_tests`, and SST/VIPER reader
+  coverage under physical-format names, leaving `unified_*` language for actual compatibility
+  symbols that still exist during migration
 * the extracted graph crate now also defines named composite capability bundles (`GraphQueryService` for read+traversal and `GraphExecutionService` for stats+traversal), so root query orchestration can depend on stable graph capability sets without re-stating concrete `GraphOperationsService` or ad hoc paired bounds at every entrypoint
 * the `query/execution` `QueryEngine` wrapper now composes those extracted graph stats/traversal contracts directly and no longer keeps a concrete `GraphOperationsService` field just to pass capabilities through to planner/executor
 * the lower query-runtime constructors (`QueryEngine`, `ExecutionPlanner`, `QueryExecutor`, `GraphAqlSource`, and declarative graph execution helpers) now all accept `Arc<dyn ...>` extracted graph capability views directly, eliminating another class of hidden `Sized`/concrete-type coupling under the compatibility wrappers

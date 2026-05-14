@@ -490,7 +490,7 @@ mod tests {
             .get_filesystem("file:///tmp/test")
             .unwrap();
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "test_collection".to_string(),
                 "test".to_string(),
@@ -562,7 +562,7 @@ mod tests {
                 .get_filesystem("file:///tmp/test")
                 .unwrap();
             let cached_filesystem = Arc::new(
-                crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
+                crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                     base_fs,
                     "test_collection".to_string(),
                     "test".to_string(),

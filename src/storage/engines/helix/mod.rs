@@ -291,7 +291,7 @@ pub struct HelixEngine {
     ///
     /// Shared across all file operations (flush, compact, search)
     filesystem:
-        Arc<crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem>,
+        Arc<crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem>,
 
     /// **Filesystem Factory**
     ///
@@ -667,7 +667,7 @@ impl HelixEngine {
             .map_err(|e| anyhow::anyhow!("Failed to get base filesystem: {}", e))?;
 
         let filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                 base_filesystem,
                 collection_id.clone(),
                 "helix".to_string(),
@@ -843,7 +843,7 @@ impl HelixEngine {
     /// Reads actual metadata from file headers/footers for proper Hilbert pruning.
     async fn load_levels(
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
         >,
         data_dir: &Path,
     ) -> Result<HashMap<usize, Vec<SStableMetadata>>> {
@@ -905,7 +905,7 @@ impl HelixEngine {
     /// Uses the new unified header format from proxima.rs
     async fn read_file_metadata_from_header(
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
         >,
         file_path: &str,
     ) -> Result<(Option<(u64, u64)>, u64)> {
@@ -945,7 +945,7 @@ impl HelixEngine {
     /// Read Hilbert range from unified header (static version for load_levels)
     async fn read_hilbert_range_static(
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
         >,
         file_path: &str,
     ) -> Result<(u64, u64)> {
@@ -957,7 +957,7 @@ impl HelixEngine {
     /// Read num_vectors from unified header (static version for load_levels)
     async fn read_num_vectors_static(
         filesystem: &Arc<
-            crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem,
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem,
         >,
         file_path: &str,
     ) -> Result<u64> {

@@ -10,7 +10,7 @@ use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::sst::SstConfig;
 use crate::storage::engines::sst::SstableWriter;
 use crate::storage::engines::sst::readers::{CollectionContext, UnifiedSstableReader};
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;

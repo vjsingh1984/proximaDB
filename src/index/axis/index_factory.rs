@@ -28,8 +28,8 @@ use async_trait::async_trait;
 use crate::compute::distance_computation::DistanceMetric;
 // VectorRecord eliminated from AXIS - zero-overhead storage only
 use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
+use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
 use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
-use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
 use crate::index::axis::indexes::lsh_index::{AxisLshConfig, AxisLshIndex};
 use crate::index::axis::types::IndexAlgorithm;
 use crate::index::edr::{EdrIndex, EdrIndexConfig};
@@ -235,7 +235,7 @@ impl IndexFactory {
 // No adapters needed - all index types implement AxisVectorIndex directly!
 
 // Implementation of AxisVectorIndex for AXIS-native indexes is in their respective modules:
-// - UnifiedIvfIndex in ivf_unified.rs
+// - UnifiedIvfIndex in dual_store_ivf.rs
 // - AxisLshIndex in lsh_index.rs
 // - AxisAnnoyIndex in annoy_index.rs
 // - AxisHnswIndex in hnsw_index.rs

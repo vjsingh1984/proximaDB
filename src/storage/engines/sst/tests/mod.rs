@@ -17,8 +17,8 @@ pub mod sst_compactor_tests;
 pub mod strategy_tests;
 
 // Reader-specific tests - flattened from readers/tests/ in Phase 2
+pub mod sst_reader_edge_tests;
+pub mod sst_reader_tests;
 pub mod test_metadata_filtering;
 pub mod test_metadata_filtering_fixed;
 pub mod test_sst1_validation;
-pub mod unified_sstable_reader_edge_tests;
-pub mod unified_sstable_reader_tests;

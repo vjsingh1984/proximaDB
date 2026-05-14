@@ -165,7 +165,7 @@ impl StreamingCompactor {
                 .get_filesystem("file://")
                 .map_err(|e| anyhow::anyhow!("Failed to get base filesystem: {}", e))?;
             let unified_fs = Arc::new(
-                crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem::new(
+                crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                     base_fs,
                     "compaction".to_string(), // Use generic collection_id for compaction
                     "sst_compaction".to_string(),

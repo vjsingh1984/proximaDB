@@ -23,13 +23,13 @@ use crate::storage::persistence::filesystem::{
 };
 
 use super::access_tracker::AccessPatternTracker;
+use super::cache_config::{UnifiedCacheConfig, WorkloadType};
 use super::cache_metrics::CacheMetrics;
 use super::disk_cache::DiskCacheManager;
+use super::metadata_cache::{CachedMetadata, UnifiedMetadataCache};
 use super::metadata_traits::{EngineMetadataSerializer, GenericMetadataSerializer};
 use super::prefetch_engine::PrefetchEngine;
 use super::range_optimizer::RangeOptimizer;
-use super::unified_cache::{CachedMetadata, UnifiedMetadataCache};
-use super::unified_config::{UnifiedCacheConfig, WorkloadType};
 
 /// Unified caching filesystem that consolidates all caching layers
 pub struct UnifiedCachingFilesystem {

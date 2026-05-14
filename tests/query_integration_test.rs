@@ -1,4 +1,4 @@
-//! Integration tests for the Unified Multi-Model Query Engine
+//! Integration tests for the multi-model query engine
 //!
 //! Tests cross-model queries combining vector search, document queries,
 //! and graph traversal with various fusion strategies.

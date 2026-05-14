@@ -10,7 +10,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 use super::MetadataFilter;
 use super::proximablocks_compact_reader::SwiftReaderConfig;

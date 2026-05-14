@@ -10,7 +10,7 @@ use tracing::debug;
 
 use crate::index::axis::eventlog::StorageEngineType;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::trait_components::extractor::{
     ExtractedVector, ExtractionCapabilities, ExtractionCost, ExtractionError, ExtractionMode,
     ExtractionRequest, ExtractionResult, ExtractionStats, VectorExtractor,

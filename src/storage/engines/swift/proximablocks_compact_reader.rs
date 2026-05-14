@@ -62,7 +62,7 @@ use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
 };
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 use super::MetadataFilter;
 
@@ -132,7 +132,7 @@ pub struct UnifiedSwiftReader {
 
     /// Unified caching filesystem for cache-first metadata access
     #[allow(dead_code)]
-    unified_filesystem: Arc<UnifiedCachingFilesystem>,
+    caching_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for cache key generation
     collection_id: String,
@@ -198,14 +198,14 @@ impl UnifiedSwiftReader {
     pub async fn new(
         filesystem: Arc<FilesystemFactory>,
         file_path: String,
-        unified_filesystem: Arc<UnifiedCachingFilesystem>,
+        caching_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
         config: SwiftReaderConfig,
     ) -> Result<Self> {
         Self::new_with_bandwidth_optimizer(
             filesystem,
             file_path,
-            unified_filesystem,
+            caching_filesystem,
             collection_id,
             config,
             None,
@@ -218,7 +218,7 @@ impl UnifiedSwiftReader {
     pub async fn new_with_bandwidth_optimizer(
         filesystem: Arc<FilesystemFactory>,
         file_path: String,
-        unified_filesystem: Arc<UnifiedCachingFilesystem>,
+        caching_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
         config: SwiftReaderConfig,
         _bandwidth_optimizer: Option<
@@ -244,7 +244,7 @@ impl UnifiedSwiftReader {
         let shared_reader = Arc::new(SharedSstFormatReader::new(
             filesystem.clone(),
             mmap_strategy,
-            unified_filesystem.clone(),
+            caching_filesystem.clone(),
             collection_id.clone(),
         ));
 
@@ -253,7 +253,7 @@ impl UnifiedSwiftReader {
             file_path: file_path.clone(),
             config,
             cached_superblock_metadata: Arc::new(RwLock::new(HashMap::new())),
-            unified_filesystem,
+            caching_filesystem,
             collection_id,
             cached_id_index: None,
             cached_header: None,

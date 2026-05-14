@@ -260,6 +260,16 @@ install-tdd-hooks:
 	@cp .git/hooks/pre-commit.tdd .git/hooks/pre-commit
 	@echo "✓ TDD pre-commit hook installed"
 
+# Install layering validation pre-commit hook
+install-layering-hooks:
+	@echo "Installing workspace layering validation pre-commit hook..."
+	@chmod +x scripts/pre-commit-layering-hook.sh
+	@ln -sf ../../scripts/pre-commit-layering-hook.sh .git/hooks/pre-commit
+	@echo "✓ Layering validation pre-commit hook installed"
+	@echo ""
+	@echo "This hook will validate workspace layering before each commit."
+	@echo "Run './scripts/check-layering.sh' manually to check for violations."
+
 # Start TDD cycle for a new feature
 tdd-start:
 	@echo "Starting TDD cycle..."

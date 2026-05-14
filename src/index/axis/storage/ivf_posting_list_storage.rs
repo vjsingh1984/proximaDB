@@ -31,7 +31,7 @@ use crate::core::types::StorageEngineType;
 use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::sst::writer::SstableWriter;
-use crate::storage::persistence::filesystem::unified_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 /// Type alias for [`PostingListEntry`] for compatibility
 pub type PostingEntry = PostingListEntry;

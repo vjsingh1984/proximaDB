@@ -163,7 +163,7 @@ pub mod query_facade;
 pub mod multimodel_e2e_test;
 
 // SQL frontend integration tests
-// Note: sql_frontend module only contains unified_query_tests.rs which needs a mod.rs
+// Note: sql_frontend module only contains sql_query_tests.rs which needs a mod.rs
 // TODO: Add mod.rs to sql_frontend directory when tests are ready
 
 // Middleware integration tests are at this level since they cross-cut concerns

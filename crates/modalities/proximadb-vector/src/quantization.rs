@@ -7,6 +7,12 @@
 //! - **Binary** - 1-bit quantization (0/1)
 //! - **Scalar (Int8)** - 8-bit scalar quantization
 //! - **Product (PQ)** - Product quantization with sub-vector codebooks
+//!
+//! ## Note on Engine Consolidation
+//!
+//! The production quantization engine (7,556 lines) remains in `src/compute/quantization/`
+//! due to complex dependencies on storage, core, and compute infrastructure.
+//! This will be migrated to vector modality in Phase 6B after dependency untangling.
 
 pub mod binary;
 pub mod product;

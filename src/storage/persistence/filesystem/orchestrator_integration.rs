@@ -12,7 +12,7 @@ use crate::storage::cache::backend::CacheTier;
 use crate::storage::cache::orchestrator::{
     CacheType as OrchestratorCacheType, CrossCacheOrchestrator,
 };
-use crate::storage::persistence::filesystem::unified_filesystem::{
+use crate::storage::persistence::filesystem::caching_filesystem::{
     CacheType as FilesystemCacheType, UnifiedCachingFilesystem,
 };
 
