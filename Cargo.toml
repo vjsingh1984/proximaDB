@@ -48,6 +48,7 @@ members = [
     "crates/query/proximadb-graph-subset",
     "crates/query/proximadb-multimodel-query",
     "crates/query/proximadb-multimodel-plan",
+    "crates/contracts/quantization",
     "crates/query/proximadb-observability-query",
     "crates/query/proximadb-query",
     "crates/query/proximadb-query-clauses",

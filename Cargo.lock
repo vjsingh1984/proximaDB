@@ -5971,6 +5971,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-quantization-contracts"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "proximadb-quantization-types"
 version = "0.2.0"
 dependencies = [
