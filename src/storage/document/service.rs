@@ -517,8 +517,9 @@ impl DocumentService {
     async fn remove_document_projection(&self, collection: &str, id: &str) -> Result<()> {
         #[cfg(feature = "canonical-document-store")]
         if self.canonical_record_store.is_some() {
+            let record_oid = DocumentRecordKey::new(collection, id).canonical_oid();
             self.index_manager
-                .remove_record_projection(collection, id)
+                .remove_record_projection(collection, &record_oid)
                 .await?;
             return Ok(());
         }
@@ -2316,8 +2317,9 @@ fn create_field_eq_filter(
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::{
-        DocFilterCondition, DocFilterOperator, DocumentCollectionConfig, DocumentFilter,
-        DocumentUpdate, SqlObject, SqlValue, UpdateOperation, sql_value,
+        DocFilterCondition, DocFilterOperator, DocIndexType, DocumentCollectionConfig,
+        DocumentFilter, DocumentUpdate, IndexDefinition, SqlObject, SqlValue, UpdateOperation,
+        sql_value,
     };
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
@@ -2990,6 +2992,80 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[cfg(feature = "canonical-document-store")]
+    #[tokio::test]
+    async fn test_canonical_document_query_uses_record_oid_projection_keys() {
+        use crate::storage::engines::cedar::CedarEngine;
+        use proximadb_records::RecordStorage;
+
+        let cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
+        let storage_engine: Arc<dyn UnifiedStorageEngine> = cedar.clone();
+        let record_store: Arc<dyn RecordStorage> = cedar;
+        let svc = DocumentService::with_canonical_record_store(storage_engine, record_store);
+
+        svc.create_collection(
+            "indexed",
+            DocumentCollectionConfig {
+                name: "indexed".to_string(),
+                indexes: vec![IndexDefinition {
+                    path: "category".to_string(),
+                    index_type: DocIndexType::Btree as i32,
+                    unique: false,
+                    sparse: false,
+                    name: Some("category_idx".to_string()),
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("collection creation should succeed");
+
+        svc.insert_document(
+            "indexed",
+            Some("doc-1"),
+            make_document(vec![
+                ("title", sql_string("Canonical Index")),
+                ("category", sql_string("architecture")),
+            ]),
+        )
+        .await
+        .expect("insert should succeed");
+
+        let query_params = DocumentQueryParams {
+            filter: Some(DocumentFilter {
+                conditions: vec![DocFilterCondition {
+                    path: "category".to_string(),
+                    operator: DocFilterOperator::Eq as i32,
+                    value: Some(sql_string("architecture")),
+                    values: Vec::new(),
+                }],
+                ..Default::default()
+            }),
+            include_count: true,
+            ..Default::default()
+        };
+
+        let query_result = svc
+            .query_documents("indexed", query_params.clone())
+            .await
+            .expect("indexed canonical query should succeed");
+        assert_eq!(query_result.total_count, Some(1));
+        assert_eq!(query_result.documents[0].id, "doc-1");
+
+        assert!(
+            svc.delete_document("indexed", "doc-1")
+                .await
+                .expect("delete should succeed")
+        );
+
+        let query_after_delete = svc
+            .query_documents("indexed", query_params)
+            .await
+            .expect("indexed canonical query after delete should succeed");
+        assert_eq!(query_after_delete.total_count, Some(0));
+        assert!(query_after_delete.documents.is_empty());
     }
 
     #[cfg(feature = "canonical-document-store")]

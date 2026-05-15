@@ -14,6 +14,8 @@ use jsonpath_rust::JsonPathQuery;
 use serde_json::Value as JsonValue;
 use tracing::debug;
 
+use proximadb_document::DocumentRecordKey;
+
 use crate::proto::proximadb_v1::{
     DocFilterCondition, DocFilterOperator, SortField, SortOrder, SqlObject, SqlValue,
     sql_value::Value as SqlValueVariant,
@@ -207,7 +209,7 @@ impl QueryExecutor {
             .filter(|doc| {
                 candidate_ids
                     .as_ref()
-                    .is_none_or(|ids| ids.contains(doc.id.as_str()))
+                    .is_none_or(|ids| Self::candidate_ids_match_document(ids, doc))
             })
             .cloned()
             .collect();
@@ -221,6 +223,24 @@ impl QueryExecutor {
         }
 
         Ok(documents)
+    }
+
+    /// Return true when a candidate set references the document by either the
+    /// legacy facade id or the canonical record oid.
+    ///
+    /// This keeps legacy document indexes and canonical record-backed
+    /// projection indexes query-compatible during the Phase 2 migration.
+    fn candidate_ids_match_document(
+        candidate_ids: &std::collections::HashSet<&str>,
+        document: &DocumentRecord,
+    ) -> bool {
+        if candidate_ids.contains(document.id.as_str()) {
+            return true;
+        }
+
+        let canonical_oid =
+            DocumentRecordKey::new(&document.collection_id, &document.id).canonical_oid();
+        candidate_ids.contains(canonical_oid.as_str())
     }
 
     /// Sort documents by the given fields

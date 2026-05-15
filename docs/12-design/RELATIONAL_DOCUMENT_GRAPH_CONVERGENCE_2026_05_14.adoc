@@ -838,7 +838,9 @@ Tasks:
 * [x] Convert full-text index maintenance into a rebuildable projection over canonical records.
 ** [x] Add `IndexManager` canonical-record projection entry points for JSON path, array, and full-text indexes.
 ** [x] Route canonical `DocumentService` insert/update/delete projection maintenance through those entry points.
-** [ ] Switch projection keys from facade document id to canonical record oid after query executor supports record-id candidate sets.
+** [x] Switch projection keys from facade document id to canonical record oid after query executor supports record-id candidate sets.
+*** [x] Canonical `IndexManager` projection entry points now key JSON path, array, and full-text entries by `ProximaRecord::oid`.
+*** [x] Document query candidate filtering accepts both legacy facade ids and canonical record oid candidates during migration; feature-gated tests cover indexed query and delete projection cleanup.
 * [x] Decide CEDAR fate:
 ** [x] access-method/projection over canonical records.
 ** [x] implement canonical `RecordStore`/`RecordScan` adapter for CEDAR while keeping its document memtables as compatibility projection state.

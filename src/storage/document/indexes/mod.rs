@@ -130,6 +130,21 @@ impl IndexManager {
 
     /// Index a new document
     pub async fn index_document(&self, collection: &str, document: &DocumentRecord) -> Result<()> {
+        self.index_document_with_key(collection, document, &document.id)
+            .await
+    }
+
+    /// Index a document using an explicit projection key.
+    ///
+    /// Legacy document mode uses the facade document id. Canonical record-backed
+    /// mode uses `ProximaRecord::oid` so projection entries can be traced and
+    /// rebuilt by canonical record identity.
+    async fn index_document_with_key(
+        &self,
+        collection: &str,
+        document: &DocumentRecord,
+        projection_key: &str,
+    ) -> Result<()> {
         debug!("Indexing document {} in {}", document.id, collection);
 
         let indexes = self.indexes.read().await;
@@ -137,20 +152,20 @@ impl IndexManager {
             // Update path indexes
             for (path, index) in &collection_indexes.path_indexes {
                 if let Some(value) = self.extract_path_value(&document.document, path) {
-                    index.insert(&document.id, value)?;
+                    index.insert(projection_key, value)?;
                 }
             }
 
             // Update array indexes
             for (path, index) in &collection_indexes.array_indexes {
                 if let Some(values) = self.extract_array_values(&document.document, path) {
-                    index.insert(&document.id, values)?;
+                    index.insert(projection_key, values)?;
                 }
             }
 
             // Update full-text index
             if let Some(ref ft_index) = collection_indexes.fulltext_index {
-                ft_index.index_document(&document.id, &document.document)?;
+                ft_index.index_document(projection_key, &document.document)?;
             }
         }
 
@@ -161,16 +176,17 @@ impl IndexManager {
     ///
     /// This is the Phase 2 convergence boundary: JSON path, array, and
     /// full-text structures are rebuildable projections over `ProximaRecord`.
-    /// During migration the projection key remains the document facade id so
-    /// existing document query execution keeps its public behavior.
+    /// Projection entries are keyed by canonical record oid; query execution
+    /// accepts canonical oid candidate sets and facade document-id candidate
+    /// sets while the public document API remains v1-compatible.
     pub async fn index_record_projection(&self, record: &ProximaRecord) -> Result<Option<String>> {
         let Some(document) = proxima_record_to_legacy_document(record) else {
             return Ok(None);
         };
 
-        self.index_document(&document.collection_id, &document)
+        self.index_document_with_key(&document.collection_id, &document, &record.oid)
             .await?;
-        Ok(Some(document.id))
+        Ok(Some(record.oid.clone()))
     }
 
     /// Reindex a document after update
@@ -197,9 +213,11 @@ impl IndexManager {
             return Ok(None);
         };
 
-        self.reindex_document(&document.collection_id, &document)
+        self.remove_document(&document.collection_id, &record.oid)
             .await?;
-        Ok(Some(document.id))
+        self.index_document_with_key(&document.collection_id, &document, &record.oid)
+            .await?;
+        Ok(Some(record.oid.clone()))
     }
 
     /// Remove a document from all indexes
@@ -227,12 +245,16 @@ impl IndexManager {
         Ok(())
     }
 
-    /// Remove projection entries by facade document id.
+    /// Remove projection entries by projection key.
     ///
     /// Canonical storage owns durable truth; this only removes rebuildable
-    /// projection state for the document facade.
-    pub async fn remove_record_projection(&self, collection: &str, id: &str) -> Result<()> {
-        self.remove_document(collection, id).await
+    /// projection state for the canonical record-backed document facade.
+    pub async fn remove_record_projection(
+        &self,
+        collection: &str,
+        projection_key: &str,
+    ) -> Result<()> {
+        self.remove_document(collection, projection_key).await
     }
 
     /// Rebuild projection entries for a collection from canonical records.
