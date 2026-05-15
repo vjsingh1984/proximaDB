@@ -4,12 +4,11 @@
 //! and liveness/readiness health probes.  All handlers delegate to `ApiHandlersPort`.
 
 use axum::{
-    Json,
+    Json, Router,
     extract::State,
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router,
 };
 use proximadb_proto::v1::SqlValue;
 use serde::Deserialize;
@@ -76,7 +75,9 @@ pub fn sql_value_to_json(v: &SqlValue) -> serde_json::Value {
         Some(V::BoolValue(b)) => serde_json::Value::Bool(*b),
         Some(V::Int64Value(i)) => serde_json::Value::Number((*i).into()),
         Some(V::BytesValue(b)) => serde_json::Value::Array(
-            b.iter().map(|x| serde_json::Value::Number((*x as u64).into())).collect(),
+            b.iter()
+                .map(|x| serde_json::Value::Number((*x as u64).into()))
+                .collect(),
         ),
         Some(V::NullValue(_)) | None => serde_json::Value::Null,
         Some(V::ArrayValue(arr)) => {
@@ -103,7 +104,9 @@ pub async fn execute_sql(
     Json(request): Json<SqlQueryRequest>,
 ) -> RestResult<Json<serde_json::Value>> {
     if request.query.trim().is_empty() {
-        return Err(RestError::InvalidArgument("SQL query cannot be empty".to_string()));
+        return Err(RestError::InvalidArgument(
+            "SQL query cannot be empty".to_string(),
+        ));
     }
 
     let start = std::time::Instant::now();

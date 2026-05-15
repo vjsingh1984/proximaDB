@@ -655,8 +655,14 @@ mod tests {
         push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
 
         match &plan.operators[0] {
-            Operator::Scan { filter: Some(f), .. } => match f {
-                FilterExpression::Comparison { field, operator, value } => {
+            Operator::Scan {
+                filter: Some(f), ..
+            } => match f {
+                FilterExpression::Comparison {
+                    field,
+                    operator,
+                    value,
+                } => {
                     assert_eq!(field, "tenant_id");
                     assert_eq!(*operator, ComparisonOperator::Equals);
                     assert_eq!(*value, serde_json::json!("acme"));
@@ -673,7 +679,10 @@ mod tests {
         push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
 
         match &plan.operators[0] {
-            Operator::Scan { filter: Some(FilterExpression::And(parts)), .. } => {
+            Operator::Scan {
+                filter: Some(FilterExpression::And(parts)),
+                ..
+            } => {
                 assert_eq!(parts.len(), 2);
                 // One part should be the existing category filter
                 // One part should be the tenant_id filter
@@ -696,7 +705,10 @@ mod tests {
         push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
 
         match &plan.operators[0] {
-            Operator::VectorTopK { predicate: Some(FilterExpression::Comparison { field, .. }), .. } => {
+            Operator::VectorTopK {
+                predicate: Some(FilterExpression::Comparison { field, .. }),
+                ..
+            } => {
                 assert_eq!(field, "tenant_id");
             }
             other => panic!("expected VectorTopK with tenant predicate, got {:?}", other),
@@ -709,7 +721,10 @@ mod tests {
         push_rls_predicates(&mut plan, &RlsContext::for_tenant("acme"));
 
         match &plan.operators[0] {
-            Operator::VectorTopK { predicate: Some(FilterExpression::And(parts)), .. } => {
+            Operator::VectorTopK {
+                predicate: Some(FilterExpression::And(parts)),
+                ..
+            } => {
                 assert_eq!(parts.len(), 2);
             }
             other => panic!("expected VectorTopK with And predicate, got {:?}", other),
@@ -718,13 +733,17 @@ mod tests {
 
     #[test]
     fn rls_with_principals_injects_in_predicate() {
-        let ctx = RlsContext::with_principals("acme", vec!["admin".to_string(), "editor".to_string()]);
+        let ctx =
+            RlsContext::with_principals("acme", vec!["admin".to_string(), "editor".to_string()]);
         let mut plan = MultiModelPlan::new(vec![scan_op(false)], PlanContext::default());
         push_rls_predicates(&mut plan, &ctx);
 
         // tenant_id + permitted_principals → And([tenant_eq, principals_in])
         match &plan.operators[0] {
-            Operator::Scan { filter: Some(FilterExpression::And(parts)), .. } => {
+            Operator::Scan {
+                filter: Some(FilterExpression::And(parts)),
+                ..
+            } => {
                 assert_eq!(parts.len(), 2);
                 let has_principals = parts.iter().any(|p| {
                     matches!(p, FilterExpression::Comparison { field, operator, .. }
@@ -745,7 +764,10 @@ mod tests {
         // No filter injected
         match &plan.operators[0] {
             Operator::Scan { filter: None, .. } => {}
-            other => panic!("expected Scan with no filter for empty ctx, got {:?}", other),
+            other => panic!(
+                "expected Scan with no filter for empty ctx, got {:?}",
+                other
+            ),
         }
     }
 
@@ -768,7 +790,9 @@ mod tests {
 
         // Filter operator must remain unchanged
         match &plan.operators[1] {
-            Operator::Filter { expression: FilterExpression::Comparison { field, .. } } => {
+            Operator::Filter {
+                expression: FilterExpression::Comparison { field, .. },
+            } => {
                 assert_eq!(field, "score", "Filter operator must not be modified");
             }
             other => panic!("Filter operator unexpectedly changed: {:?}", other),

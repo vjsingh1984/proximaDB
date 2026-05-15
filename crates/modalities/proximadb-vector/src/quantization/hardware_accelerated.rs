@@ -371,7 +371,13 @@ mod tests {
             let reconstructed = min + (q as f32 / 255.0) * range;
             let error = (reconstructed - values[i]).abs();
             let tolerance = (range / 255.0 * 50.0).max(2.5);
-            assert!(error < tolerance, "error {} > tolerance {} at {}", error, tolerance, i);
+            assert!(
+                error < tolerance,
+                "error {} > tolerance {} at {}",
+                error,
+                tolerance,
+                i
+            );
         }
     }
 

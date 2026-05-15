@@ -232,7 +232,10 @@ mod tests {
         );
         let env = r.to_canonical_envelope();
         assert!(env.get("_node").is_some(), "_node key missing");
-        assert!(env.get("_data").is_none(), "_data should not appear for graph");
+        assert!(
+            env.get("_data").is_none(),
+            "_data should not appear for graph"
+        );
     }
 
     // ── document normalisation ────────────────────────────────────────────
@@ -245,8 +248,14 @@ mod tests {
         );
         let norm = normalize_document_result_shape(&r);
         let payload = &norm["_data"];
-        assert!(payload.get("_id").is_none(), "_id should be stripped from payload");
-        assert!(payload.get("id").is_none(), "id should be stripped from payload");
+        assert!(
+            payload.get("_id").is_none(),
+            "_id should be stripped from payload"
+        );
+        assert!(
+            payload.get("id").is_none(),
+            "id should be stripped from payload"
+        );
         assert_eq!(payload["body"], "text");
         // Envelope _id still present.
         assert_eq!(norm["_id"], "doc-4");
@@ -328,14 +337,8 @@ mod tests {
 
         // Both must have the three stable envelope fields.
         for key in &["_id", "_model", "_score"] {
-            assert!(
-                doc_env.get(key).is_some(),
-                "doc envelope missing {key}"
-            );
-            assert!(
-                graph_env.get(key).is_some(),
-                "graph envelope missing {key}"
-            );
+            assert!(doc_env.get(key).is_some(), "doc envelope missing {key}");
+            assert!(graph_env.get(key).is_some(), "graph envelope missing {key}");
         }
     }
 }

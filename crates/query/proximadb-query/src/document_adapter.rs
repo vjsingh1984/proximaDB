@@ -122,9 +122,7 @@ pub fn convert_filter_value_to_sql(value: &FilterValue) -> SqlValue {
 /// - `and_filters` are recursively lowered and combined with `FilterExpression::And`.
 /// - A mix of conditions + or_filters + and_filters is wrapped in an outer AND.
 /// - Returns `None` for an empty filter (no conditions, no sub-filters).
-pub fn document_filter_to_filter_expression(
-    filter: &DocumentFilter,
-) -> Option<FilterExpression> {
+pub fn document_filter_to_filter_expression(filter: &DocumentFilter) -> Option<FilterExpression> {
     let mut parts: Vec<FilterExpression> = Vec::new();
 
     // Lower each condition to a Comparison leaf.
@@ -225,7 +223,9 @@ pub fn build_document_query_record(id: &str, document: &SqlObject) -> UnifiedRec
 mod tests {
     use super::*;
     use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
-    use proximadb_proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, SqlObject, sql_value::Value};
+    use proximadb_proto::proximadb_v1::{
+        DocFilterCondition, DocFilterOperator, SqlObject, sql_value::Value,
+    };
 
     #[test]
     fn sql_value_to_json_primitives() {

@@ -840,7 +840,8 @@ Tasks:
 * [x] Decide CEDAR fate:
 ** [x] access-method/projection over canonical records.
 ** [x] implement canonical `RecordStore`/`RecordScan` adapter for CEDAR while keeping its document memtables as compatibility projection state.
-** [ ] remove any future CEDAR plan that would add independent durable WAL/recovery semantics.
+** [x] remove any future CEDAR plan that would add independent durable WAL/recovery semantics.
+*** [x] `CedarEngine` reports `authority_role=rebuildable_projection`, `durable_authority=canonical_record_store`, and `wal_role=none`; flush/compact are explicit no-op projection hooks and tests assert they do not claim durable writes.
 * [x] Add parity tests: old `DocumentService` behavior vs canonical record-backed behavior.
 ** [x] Cover insert/get/update/query/delete parity for the feature-gated canonical CEDAR-backed path.
 

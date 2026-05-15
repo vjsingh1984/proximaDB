@@ -53,7 +53,9 @@ impl IntoResponse for RestError {
             RestError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             RestError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, "not_implemented"),
             RestError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "unauthorized"),
-            RestError::ResourceExhausted(_) => (StatusCode::TOO_MANY_REQUESTS, "resource_exhausted"),
+            RestError::ResourceExhausted(_) => {
+                (StatusCode::TOO_MANY_REQUESTS, "resource_exhausted")
+            }
         };
         (
             status,

@@ -12,7 +12,7 @@ pub use bitmap::{BitmapError, BitmapIteratorAll, RoaringBitmap};
 pub use glob::{GlobError, GlobMatcher, GlobPattern, glob_match};
 pub use storage_path::StoragePath;
 pub use wal_entry::{
-    CanonicalOperation, CanonicalWalEntry, CdcLogicalView, CdcOperation, CdcRecordEvent,
-    EdgeRef, ProjectionDirective, ProjectionFreshness, ProjectionRebuilder, RecoveryResult,
+    CanonicalOperation, CanonicalWalEntry, CdcLogicalView, CdcOperation, CdcRecordEvent, EdgeRef,
+    ProjectionDirective, ProjectionFreshness, ProjectionRebuilder, RecoveryResult,
     SnapshotManifest, latest_checkpoint, recover_from_canonical_wal,
 };

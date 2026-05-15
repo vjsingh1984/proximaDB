@@ -6,8 +6,8 @@ use anyhow::Result;
 use proximadb_data_model::DataModel;
 use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use proximadb_graph_query::ast::{
-    CypherQuery, EdgeDirection, MatchPattern, PropertyConstraint, PropertyProjection, ReadingClause,
-    WhereClause,
+    CypherQuery, EdgeDirection, MatchPattern, PropertyConstraint, PropertyProjection,
+    ReadingClause, WhereClause,
 };
 use proximadb_graph_query::declarative::graph_query_row_id;
 use proximadb_graph_query::service::{
@@ -483,24 +483,30 @@ fn property_constraint_to_comparison(
         PropertyConstraint::LessThanOrEqual(v) | PropertyConstraint::LessOrEqual(v) => {
             Some((ComparisonOperator::LessThanOrEqual, v.clone()))
         }
-        PropertyConstraint::In(values) => {
-            Some((ComparisonOperator::In, serde_json::Value::Array(values.clone())))
-        }
-        PropertyConstraint::NotIn(values) => {
-            Some((ComparisonOperator::NotIn, serde_json::Value::Array(values.clone())))
-        }
-        PropertyConstraint::Contains(s) => {
-            Some((ComparisonOperator::Contains, serde_json::Value::String(s.clone())))
-        }
-        PropertyConstraint::StartsWith(s) => {
-            Some((ComparisonOperator::StartsWith, serde_json::Value::String(s.clone())))
-        }
-        PropertyConstraint::EndsWith(s) => {
-            Some((ComparisonOperator::EndsWith, serde_json::Value::String(s.clone())))
-        }
-        PropertyConstraint::Regex(p) => {
-            Some((ComparisonOperator::Like, serde_json::Value::String(p.clone())))
-        }
+        PropertyConstraint::In(values) => Some((
+            ComparisonOperator::In,
+            serde_json::Value::Array(values.clone()),
+        )),
+        PropertyConstraint::NotIn(values) => Some((
+            ComparisonOperator::NotIn,
+            serde_json::Value::Array(values.clone()),
+        )),
+        PropertyConstraint::Contains(s) => Some((
+            ComparisonOperator::Contains,
+            serde_json::Value::String(s.clone()),
+        )),
+        PropertyConstraint::StartsWith(s) => Some((
+            ComparisonOperator::StartsWith,
+            serde_json::Value::String(s.clone()),
+        )),
+        PropertyConstraint::EndsWith(s) => Some((
+            ComparisonOperator::EndsWith,
+            serde_json::Value::String(s.clone()),
+        )),
+        PropertyConstraint::Regex(p) => Some((
+            ComparisonOperator::Like,
+            serde_json::Value::String(p.clone()),
+        )),
         PropertyConstraint::Exists => {
             Some((ComparisonOperator::IsNotNull, serde_json::Value::Null))
         }
@@ -984,7 +990,10 @@ mod tests {
         assert!(matches!(ops[0], Operator::Scan { .. }));
         assert!(matches!(ops[1], Operator::PatternMatch { .. }));
         if let Operator::PatternMatch { ref pattern } = ops[1] {
-            assert!(pattern.contains("KNOWS"), "pattern should contain edge type");
+            assert!(
+                pattern.contains("KNOWS"),
+                "pattern should contain edge type"
+            );
             assert!(pattern.contains("->"), "outgoing edge should use ->");
         }
     }
@@ -1019,7 +1028,9 @@ mod tests {
         assert!(matches!(ops[2], Operator::Filter { .. }));
         if let Operator::Filter { ref expression } = ops[2] {
             match expression {
-                FilterExpression::Comparison { field, operator, .. } => {
+                FilterExpression::Comparison {
+                    field, operator, ..
+                } => {
                     assert_eq!(field, "n.age");
                     assert_eq!(*operator, ComparisonOperator::GreaterThan);
                 }
@@ -1129,7 +1140,9 @@ mod tests {
 
         let expr = where_clause_to_filter_expression(&clause).expect("non-empty");
         match expr {
-            FilterExpression::Comparison { field, operator, .. } => {
+            FilterExpression::Comparison {
+                field, operator, ..
+            } => {
                 assert_eq!(field, "n.email");
                 assert_eq!(operator, ComparisonOperator::IsNotNull);
             }

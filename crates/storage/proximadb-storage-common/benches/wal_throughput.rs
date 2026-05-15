@@ -44,7 +44,9 @@ fn make_directives(n: usize) -> Vec<ProjectionDirective> {
                     weight: Some(1.0),
                 }],
             },
-            _ => ProjectionDirective::CsrRebuild { graph_id: "kg".into() },
+            _ => ProjectionDirective::CsrRebuild {
+                graph_id: "kg".into(),
+            },
         })
         .collect()
 }

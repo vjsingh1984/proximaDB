@@ -7,14 +7,11 @@
 use std::collections::HashMap;
 
 use axum::{
-    Json,
+    Json, Router,
     extract::{Extension, Path, Query, State},
     routing::{get, post},
-    Router,
 };
-use proximadb_proto::v1::{
-    SearchQuery, VectorBatchRequest, VectorRecord, VectorSearchRequest,
-};
+use proximadb_proto::v1::{SearchQuery, VectorBatchRequest, VectorRecord, VectorSearchRequest};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 use uuid::Uuid;
@@ -93,7 +90,11 @@ pub fn parse_search_request(value: serde_json::Value) -> Result<VectorSearchRequ
             let vector: Vec<f32> = obj
                 .get("vector")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_f64().map(|f| f as f32))
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let top_k = obj.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
@@ -163,7 +164,9 @@ pub async fn vector_search(
         .map_err(|e| RestError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     if request.collection_id.is_empty() {
-        return Err(RestError::InvalidArgument("collection_id is required".to_string()));
+        return Err(RestError::InvalidArgument(
+            "collection_id is required".to_string(),
+        ));
     }
 
     debug!(
@@ -177,7 +180,10 @@ pub async fn vector_search(
         .await
         .map(Json)
         .map_err(|e| {
-            error!("Vector search failed for '{}': {}", request.collection_id, e);
+            error!(
+                "Vector search failed for '{}': {}",
+                request.collection_id, e
+            );
             RestError::Internal(format!("Search failed: {}", e))
         })
 }
@@ -192,7 +198,9 @@ pub async fn vector_batch(
         .map_err(|e| RestError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     if request.collection_id.is_empty() {
-        return Err(RestError::InvalidArgument("collection_id is required".to_string()));
+        return Err(RestError::InvalidArgument(
+            "collection_id is required".to_string(),
+        ));
     }
     if request.vectors.is_empty() {
         return Err(RestError::InvalidArgument(
@@ -231,7 +239,10 @@ pub async fn get_vector(
         ));
     }
 
-    debug!("Get vector: collection='{}', id='{}'", collection_id, vector_id);
+    debug!(
+        "Get vector: collection='{}', id='{}'",
+        collection_id, vector_id
+    );
 
     state
         .handlers
@@ -264,7 +275,10 @@ pub async fn delete_vector(
         ));
     }
 
-    info!("Delete vector: collection='{}', id='{}'", collection_id, vector_id);
+    info!(
+        "Delete vector: collection='{}', id='{}'",
+        collection_id, vector_id
+    );
 
     let tombstone = VectorBatchRequest {
         collection_id: collection_id.clone(),
@@ -286,7 +300,10 @@ pub async fn delete_vector(
         .await
         .map(Json)
         .map_err(|e| {
-            error!("Delete vector {}/{} failed: {}", collection_id, vector_id, e);
+            error!(
+                "Delete vector {}/{} failed: {}",
+                collection_id, vector_id, e
+            );
             RestError::Internal(e.to_string())
         })
 }
@@ -313,7 +330,11 @@ pub async fn vector_search_with_metadata(
         .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map(|resp| {
-            info!("Search+metadata {} done in {}ms", request_id, start.elapsed().as_millis());
+            info!(
+                "Search+metadata {} done in {}ms",
+                request_id,
+                start.elapsed().as_millis()
+            );
             Json(resp)
         })
         .map_err(|e| {
@@ -331,7 +352,10 @@ pub async fn vector_search_with_metadata(
 pub fn create_vector_router() -> Router<RestAppState> {
     Router::new()
         .route("/api/v1/search", post(vector_search))
-        .route("/api/v1/search/with_metadata", post(vector_search_with_metadata))
+        .route(
+            "/api/v1/search/with_metadata",
+            post(vector_search_with_metadata),
+        )
         .route("/api/v1/vectors/batch", post(vector_batch))
         .route(
             "/api/v1/vectors/:collection_id/:vector_id",

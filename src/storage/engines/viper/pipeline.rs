@@ -2131,7 +2131,9 @@ impl ParquetFlusher {
                 // SNAPPY not supported by Parquet, use uncompressed
                 Compression::UNCOMPRESSED
             }
-            FoundationCompressionAlgorithm::Lz4 | FoundationCompressionAlgorithm::Lz4hc | FoundationCompressionAlgorithm::Lzo => Compression::LZ4,
+            FoundationCompressionAlgorithm::Lz4
+            | FoundationCompressionAlgorithm::Lz4hc
+            | FoundationCompressionAlgorithm::Lzo => Compression::LZ4,
             FoundationCompressionAlgorithm::Zstd => {
                 Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?)
             }
@@ -2796,7 +2798,9 @@ impl CompactionEngine {
                 FoundationCompressionAlgorithm::Snappy => 0.15,
                 FoundationCompressionAlgorithm::Zstd => 0.35,
                 FoundationCompressionAlgorithm::Lz4 | FoundationCompressionAlgorithm::Lz4hc => 0.12,
-                FoundationCompressionAlgorithm::Gzip | FoundationCompressionAlgorithm::Deflate | FoundationCompressionAlgorithm::Zlib => 0.20,
+                FoundationCompressionAlgorithm::Gzip
+                | FoundationCompressionAlgorithm::Deflate
+                | FoundationCompressionAlgorithm::Zlib => 0.20,
                 FoundationCompressionAlgorithm::Brotli => 0.33,
                 FoundationCompressionAlgorithm::Bzip2 => 0.30,
                 FoundationCompressionAlgorithm::Xz | FoundationCompressionAlgorithm::Lzma => 0.28,

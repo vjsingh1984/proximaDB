@@ -161,7 +161,6 @@ pub struct ColumnarSerializer {
 
     /// Memory pools for reuse
     memory_pools: MemoryPools,
-
 }
 
 /// Memory pools for efficient reuse

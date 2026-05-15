@@ -571,9 +571,7 @@ pub fn graph_traversal_access_path(
         // Adjacency table row lookup: O(degree) index scan, but always consistent.
         let cost = 2.0 + expected_hop_fan_out * 0.5;
         let reason = if !csr_is_fresh {
-            format!(
-                "Adjacency table chosen: CSR stale ({csr_epoch_age_secs}s ≥ {MAX_STALE_SECS}s)"
-            )
+            format!("Adjacency table chosen: CSR stale ({csr_epoch_age_secs}s ≥ {MAX_STALE_SECS}s)")
         } else {
             format!(
                 "Adjacency table chosen: write-heavy workload ({write_ops_per_min}/min ≥ {MAX_WRITE_RATE}/min)"
@@ -739,8 +737,8 @@ pub fn variation_projection_access_path(
             ),
         }
     } else {
-        let json_cost = avg_doc_size_bytes as f64 * JSON_DESER_PER_BYTE
-            + projected_field_count as f64 * 0.5;
+        let json_cost =
+            avg_doc_size_bytes as f64 * JSON_DESER_PER_BYTE + projected_field_count as f64 * 0.5;
         AccessPathCostEstimate {
             path: AccessPath::CanonicalScan,
             cost: json_cost,
@@ -819,7 +817,9 @@ pub struct CsrMaterializationDecision {
 /// - Traversal speedup scales with out-degree; high-fan-out graphs benefit most.
 /// - Materialization is always skipped when the epoch is still within the
 ///   freshness window (`csr_epoch_age_secs < MAX_STALE_SECS`).
-pub fn csr_auto_materialize_decision(input: &CsrMaterializationInput) -> CsrMaterializationDecision {
+pub fn csr_auto_materialize_decision(
+    input: &CsrMaterializationInput,
+) -> CsrMaterializationDecision {
     // Threshold constants. All durations in seconds; rates in ops/min.
     const SMALL_GRAPH_THRESHOLD: u64 = 10_000; // ≤ 10 k nodes → adjacency table fast enough
     const LARGE_GRAPH_THRESHOLD: u64 = 100_000; // ≥ 100 k nodes → CSR speedup justifies build
@@ -865,9 +865,7 @@ pub fn csr_auto_materialize_decision(input: &CsrMaterializationInput) -> CsrMate
             estimated_traversal_speedup,
             reason: format!(
                 "Write rate {}/min exceeds threshold ({}/min); CSR would stale before amortizing build cost {:.1}ms",
-                input.write_ops_per_min,
-                MAX_WRITE_RATE_FOR_CSR,
-                estimated_build_cost_ms,
+                input.write_ops_per_min, MAX_WRITE_RATE_FOR_CSR, estimated_build_cost_ms,
             ),
         };
     }
@@ -1146,7 +1144,11 @@ mod tests {
             variation_projection_access_path(false, 5, 10, 512),
         ];
         for est in &rules {
-            assert!(!est.reason.is_empty(), "reason must not be empty: {:?}", est.path);
+            assert!(
+                !est.reason.is_empty(),
+                "reason must not be empty: {:?}",
+                est.path
+            );
             assert!(est.cost > 0.0, "cost must be positive: {:?}", est.path);
         }
     }
@@ -1250,16 +1252,56 @@ mod tests {
     #[test]
     fn csr_decision_reason_is_non_empty_for_all_triggers() {
         let cases = vec![
-            CsrMaterializationInput { csr_epoch_age_secs: 60, graph_size_nodes: 200_000, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 10 },
-            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 200_000, write_ops_per_min: 50, avg_out_degree: 5.0, query_repetitions_per_min: 10 },
-            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 500, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 10 },
-            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 2_000_000, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 0 },
-            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 50_000, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 15 },
-            CsrMaterializationInput { csr_epoch_age_secs: 600, graph_size_nodes: 50_000, write_ops_per_min: 2, avg_out_degree: 5.0, query_repetitions_per_min: 1 },
+            CsrMaterializationInput {
+                csr_epoch_age_secs: 60,
+                graph_size_nodes: 200_000,
+                write_ops_per_min: 2,
+                avg_out_degree: 5.0,
+                query_repetitions_per_min: 10,
+            },
+            CsrMaterializationInput {
+                csr_epoch_age_secs: 600,
+                graph_size_nodes: 200_000,
+                write_ops_per_min: 50,
+                avg_out_degree: 5.0,
+                query_repetitions_per_min: 10,
+            },
+            CsrMaterializationInput {
+                csr_epoch_age_secs: 600,
+                graph_size_nodes: 500,
+                write_ops_per_min: 2,
+                avg_out_degree: 5.0,
+                query_repetitions_per_min: 10,
+            },
+            CsrMaterializationInput {
+                csr_epoch_age_secs: 600,
+                graph_size_nodes: 2_000_000,
+                write_ops_per_min: 2,
+                avg_out_degree: 5.0,
+                query_repetitions_per_min: 0,
+            },
+            CsrMaterializationInput {
+                csr_epoch_age_secs: 600,
+                graph_size_nodes: 50_000,
+                write_ops_per_min: 2,
+                avg_out_degree: 5.0,
+                query_repetitions_per_min: 15,
+            },
+            CsrMaterializationInput {
+                csr_epoch_age_secs: 600,
+                graph_size_nodes: 50_000,
+                write_ops_per_min: 2,
+                avg_out_degree: 5.0,
+                query_repetitions_per_min: 1,
+            },
         ];
         for input in &cases {
             let d = csr_auto_materialize_decision(input);
-            assert!(!d.reason.is_empty(), "reason empty for trigger {:?}", d.trigger);
+            assert!(
+                !d.reason.is_empty(),
+                "reason empty for trigger {:?}",
+                d.trigger
+            );
             assert!(d.estimated_build_cost_ms >= 0.0);
             assert!(d.estimated_traversal_speedup >= 1.0);
         }

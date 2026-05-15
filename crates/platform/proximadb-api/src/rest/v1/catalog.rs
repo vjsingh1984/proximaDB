@@ -9,12 +9,11 @@
 //! until a `CatalogPort` trait is defined in `proximadb-runtime`.
 
 use axum::{
-    Json,
+    Json, Router,
     extract::{Extension, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router,
 };
 use proximadb_proto::v1::{CollectionOperation, CollectionRequest};
 use serde::{Deserialize, Serialize};
@@ -91,10 +90,7 @@ pub struct ListCollectionsQuery {
 /// reads the raw JSON and back-patches the already-parsed `CollectionRequest` so the
 /// enum integers match the proto-defined constants regardless of whether the client
 /// sent a string name or an integer.
-fn apply_proto_enum_workarounds(
-    request: &mut CollectionRequest,
-    raw: &serde_json::Value,
-) {
+fn apply_proto_enum_workarounds(request: &mut CollectionRequest, raw: &serde_json::Value) {
     let Some(ref mut config) = request.collection_config else {
         return;
     };
@@ -182,15 +178,13 @@ pub async fn collection_operation(
     Extension(tenant): Extension<TenantContext>,
     Json(value): Json<serde_json::Value>,
 ) -> RestResult<Json<proximadb_proto::v1::CollectionResponse>> {
-    let mut request: CollectionRequest = serde_json::from_value(value.clone()).map_err(|e| {
-        RestError::InvalidArgument(format!("Invalid request format: {}", e))
-    })?;
+    let mut request: CollectionRequest = serde_json::from_value(value.clone())
+        .map_err(|e| RestError::InvalidArgument(format!("Invalid request format: {}", e)))?;
 
     apply_proto_enum_workarounds(&mut request, &value);
 
-    let operation = CollectionOperation::try_from(request.operation).map_err(|_| {
-        RestError::InvalidArgument("Invalid collection operation".to_string())
-    })?;
+    let operation = CollectionOperation::try_from(request.operation)
+        .map_err(|_| RestError::InvalidArgument("Invalid collection operation".to_string()))?;
 
     info!(
         "Collection operation {:?} for {:?}, tenant='{}'",
@@ -211,7 +205,10 @@ pub async fn get_collection(
     State(state): State<RestAppState>,
     Extension(tenant): Extension<TenantContext>,
 ) -> impl IntoResponse {
-    debug!("Get collection '{}', tenant='{}'", collection_id, tenant.tenant_id);
+    debug!(
+        "Get collection '{}', tenant='{}'",
+        collection_id, tenant.tenant_id
+    );
 
     if collection_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "collection_id is required").into_response();
@@ -235,7 +232,10 @@ pub async fn get_collection(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") {
-                (StatusCode::NOT_FOUND, format!("Collection not found: {}", collection_id))
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("Collection not found: {}", collection_id),
+                )
                     .into_response()
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
@@ -290,7 +290,10 @@ pub async fn delete_collection(
     State(state): State<RestAppState>,
     Extension(tenant): Extension<TenantContext>,
 ) -> impl IntoResponse {
-    info!("Delete collection '{}', tenant='{}'", collection_id, tenant.tenant_id);
+    info!(
+        "Delete collection '{}', tenant='{}'",
+        collection_id, tenant.tenant_id
+    );
 
     if collection_id.is_empty() {
         return (StatusCode::BAD_REQUEST, "collection_id is required").into_response();
@@ -314,7 +317,10 @@ pub async fn delete_collection(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") {
-                (StatusCode::NOT_FOUND, format!("Collection not found: {}", collection_id))
+                (
+                    StatusCode::NOT_FOUND,
+                    format!("Collection not found: {}", collection_id),
+                )
                     .into_response()
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
@@ -328,7 +334,10 @@ pub async fn delete_collection(
 /// Build the collection lifecycle router.
 pub fn create_collection_router() -> Router<RestAppState> {
     Router::new()
-        .route("/api/v1/collections", post(collection_operation).get(list_collections))
+        .route(
+            "/api/v1/collections",
+            post(collection_operation).get(list_collections),
+        )
         .route(
             "/api/v1/collections/:collection_id",
             get(get_collection).delete(delete_collection),

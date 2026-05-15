@@ -8,11 +8,11 @@
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::QuantizationLevel;
-use proximadb_hardware::{SimdLevel, best_simd_level};
 use crate::proto::proximadb_v1::DistanceMetric;
 use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::utils::cache::LruCache;
 use parking_lot::RwLock;
+use proximadb_hardware::{SimdLevel, best_simd_level};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;

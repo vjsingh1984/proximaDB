@@ -19,7 +19,6 @@ use tokio::sync::RwLock;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::compression::{CompressionAlgorithm, StandardCompression};
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::storage::persistence::filesystem::{FileStorageTier, FilesystemFactory};
 
@@ -113,23 +112,10 @@ static SHARED_MEMORY_POOL: Lazy<Arc<VectorMemoryPool>> = Lazy::new(|| {
     Arc::new(VectorMemoryPool::new())
 });
 
-/// Global shared hardware capabilities for all storage engines
-/// This singleton ensures hardware detection is done only once
-static SHARED_HARDWARE_CAPABILITIES: Lazy<Arc<HardwareCapabilities>> = Lazy::new(|| {
-    tracing::info!("Detecting hardware capabilities for universal optimizer");
-    crate::core::hardware_capabilities::get_hardware_capabilities()
-});
-
 /// Get the global shared memory pool instance
 /// All storage engines should use this instead of creating their own pools
 pub fn get_shared_memory_pool() -> Arc<VectorMemoryPool> {
     SHARED_MEMORY_POOL.clone()
-}
-
-/// Get the global shared hardware capabilities instance
-/// All storage engines should use this instead of detecting hardware multiple times
-pub fn get_shared_hardware_capabilities() -> Arc<HardwareCapabilities> {
-    SHARED_HARDWARE_CAPABILITIES.clone()
 }
 
 /// Configure the memory pool size from server config
@@ -800,7 +786,6 @@ pub trait UniversallyOptimized {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::hardware_capabilities;
 
     #[tokio::test]
     async fn test_universal_optimizer_creation() {

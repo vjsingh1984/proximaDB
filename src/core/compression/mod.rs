@@ -287,8 +287,8 @@ mod parquet {
 }
 
 // Re-export for clean imports
-pub use proximadb_compression_types::CompressionAlgorithm;
 pub use parquet::file::properties::WriterProperties;
+pub use proximadb_compression_types::CompressionAlgorithm;
 
 // Compression markers module
 pub mod markers;

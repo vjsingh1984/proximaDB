@@ -2143,7 +2143,7 @@ impl EmbeddedProximaDB {
                 match write_buffer.vector_by_id(collection, vector_id).await {
                     Ok(Some(record)) => return Ok(Some(record)),
                     Ok(None) => {} // not in memtable; fall through to storage
-                    Err(_) => {}  // ignore memtable errors; fall through to storage
+                    Err(_) => {}   // ignore memtable errors; fall through to storage
                 }
             }
 

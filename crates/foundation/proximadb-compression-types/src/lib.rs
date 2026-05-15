@@ -453,9 +453,18 @@ mod tests {
     #[test]
     fn test_legacy_compression_codec_unsupported_falls_back_to_none() {
         // Algorithms not representable in the 5-variant legacy codec default to None
-        assert_eq!(CompressionCodec::from(CompressionAlgorithm::Brotli), CompressionCodec::None);
-        assert_eq!(CompressionCodec::from(CompressionAlgorithm::Bzip2), CompressionCodec::None);
-        assert_eq!(CompressionCodec::from(CompressionAlgorithm::Mixed), CompressionCodec::None);
+        assert_eq!(
+            CompressionCodec::from(CompressionAlgorithm::Brotli),
+            CompressionCodec::None
+        );
+        assert_eq!(
+            CompressionCodec::from(CompressionAlgorithm::Bzip2),
+            CompressionCodec::None
+        );
+        assert_eq!(
+            CompressionCodec::from(CompressionAlgorithm::Mixed),
+            CompressionCodec::None
+        );
     }
 
     #[test]
@@ -488,9 +497,18 @@ mod tests {
     #[test]
     fn test_legacy_flight_compression_unsupported_falls_back_to_none() {
         // Arrow Flight only supports Lz4/Zstd; everything else falls back to None
-        assert_eq!(FlightCompression::from(CompressionAlgorithm::Gzip), FlightCompression::None);
-        assert_eq!(FlightCompression::from(CompressionAlgorithm::Brotli), FlightCompression::None);
-        assert_eq!(FlightCompression::from(CompressionAlgorithm::Bzip2), FlightCompression::None);
+        assert_eq!(
+            FlightCompression::from(CompressionAlgorithm::Gzip),
+            FlightCompression::None
+        );
+        assert_eq!(
+            FlightCompression::from(CompressionAlgorithm::Brotli),
+            FlightCompression::None
+        );
+        assert_eq!(
+            FlightCompression::from(CompressionAlgorithm::Bzip2),
+            FlightCompression::None
+        );
     }
 
     #[test]

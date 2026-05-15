@@ -306,7 +306,9 @@ pub fn recover_from_canonical_wal<R: ProjectionRebuilder>(
 
         match &entry.operation {
             CanonicalOperation::RecordUpsert {
-                record, projections, ..
+                record,
+                projections,
+                ..
             } => {
                 result.upserts_replayed += 1;
                 for directive in projections {
@@ -317,7 +319,9 @@ pub fn recover_from_canonical_wal<R: ProjectionRebuilder>(
                 }
             }
             CanonicalOperation::RecordDelete {
-                oid: _, projections, ..
+                oid: _,
+                projections,
+                ..
             } => {
                 result.deletes_replayed += 1;
                 for directive in projections {
@@ -341,13 +345,10 @@ pub fn recover_from_canonical_wal<R: ProjectionRebuilder>(
 /// Recovery should call this first, then pass the returned `sequence_number`
 /// as `start_after_lsn` to `recover_from_canonical_wal`.
 pub fn latest_checkpoint(entries: &[CanonicalWalEntry]) -> Option<&SnapshotManifest> {
-    entries
-        .iter()
-        .rev()
-        .find_map(|e| match &e.operation {
-            CanonicalOperation::Checkpoint(m) => Some(m),
-            _ => None,
-        })
+    entries.iter().rev().find_map(|e| match &e.operation {
+        CanonicalOperation::Checkpoint(m) => Some(m),
+        _ => None,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -707,7 +708,11 @@ mod tests {
         // Only entries 4 and 5 replayed.
         assert_eq!(result.upserts_replayed, 2);
         assert_eq!(result.directives_applied, 2);
-        let replayed_oids: Vec<_> = rb.applied.iter().filter_map(|(oid, _)| oid.as_deref()).collect();
+        let replayed_oids: Vec<_> = rb
+            .applied
+            .iter()
+            .filter_map(|(oid, _)| oid.as_deref())
+            .collect();
         assert!(replayed_oids.contains(&"post-cp-1"));
         assert!(replayed_oids.contains(&"post-cp-2"));
         assert!(!replayed_oids.contains(&"pre-cp-1"));
@@ -725,7 +730,9 @@ mod tests {
                 weight: None,
             }],
         };
-        let csr_dir = ProjectionDirective::CsrRebuild { graph_id: "kg".into() };
+        let csr_dir = ProjectionDirective::CsrRebuild {
+            graph_id: "kg".into(),
+        };
 
         let entries = vec![
             upsert_entry(1, "alice", vec![edge_dir.clone()]),

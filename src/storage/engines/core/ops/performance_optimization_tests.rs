@@ -3,7 +3,6 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::core::hardware_capabilities;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig, FileStorageTier};
     use std::sync::Arc;
     use tokio;

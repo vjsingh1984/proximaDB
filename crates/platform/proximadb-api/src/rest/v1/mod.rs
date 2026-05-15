@@ -25,9 +25,7 @@ pub use entities::{create_vector_router, parse_batch_request, parse_search_reque
 pub use hybrid::{create_health_router, create_sql_router, execute_sql, sql_value_to_json};
 
 // Re-exports — handler functions (for direct registration in existing root-crate routers)
-pub use catalog::{
-    collection_operation, delete_collection, get_collection, list_collections,
-};
+pub use catalog::{collection_operation, delete_collection, get_collection, list_collections};
 pub use entities::{
     delete_vector, get_vector, vector_batch, vector_search, vector_search_with_metadata,
 };

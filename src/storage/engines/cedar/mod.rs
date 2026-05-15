@@ -101,6 +101,22 @@ impl CedarEngine {
     ) -> dashmap::mapref::one::RefMut<'_, String, DashMap<String, DocumentRecord>> {
         self.collections.entry(collection.to_string()).or_default()
     }
+
+    /// CEDAR is a rebuildable document projection over canonical records, not
+    /// an independent durable source with its own WAL/recovery authority.
+    pub const fn authority_role() -> &'static str {
+        "rebuildable_projection"
+    }
+
+    /// Durable document truth belongs to the shared canonical record store.
+    pub const fn durable_authority() -> &'static str {
+        "canonical_record_store"
+    }
+
+    /// CEDAR intentionally has no independent WAL authority.
+    pub const fn wal_role() -> &'static str {
+        "none"
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -298,13 +314,17 @@ impl DocumentStorageEngine for CedarEngine {
     }
 
     async fn flush(&self, _collection: &str) -> Result<FlushToStorageResult> {
-        // Phase 5: implement disk persistence
-        Ok(FlushToStorageResult::default())
+        Ok(FlushToStorageResult {
+            success: true,
+            ..FlushToStorageResult::default()
+        })
     }
 
     async fn compact(&self, _collection: &str) -> Result<FlushToStorageResult> {
-        // Phase 5: implement compaction
-        Ok(FlushToStorageResult::default())
+        Ok(FlushToStorageResult {
+            success: true,
+            ..FlushToStorageResult::default()
+        })
     }
 
     async fn document_count(&self, collection: &str) -> Result<u64> {
@@ -326,6 +346,15 @@ impl DocumentStorageEngine for CedarEngine {
             "collection_count".to_string(),
             serde_json::json!(self.collections.len()),
         );
+        metrics.insert(
+            "authority_role".to_string(),
+            serde_json::json!(Self::authority_role()),
+        );
+        metrics.insert(
+            "durable_authority".to_string(),
+            serde_json::json!(Self::durable_authority()),
+        );
+        metrics.insert("wal_role".to_string(), serde_json::json!(Self::wal_role()));
         Ok(metrics)
     }
 }
@@ -431,6 +460,41 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(metrics["engine"], serde_json::json!("cedar"));
+    }
+
+    #[tokio::test]
+    async fn test_cedar_reports_projection_authority_boundary() {
+        let engine = CedarEngine::new().unwrap();
+        let metrics = DocumentStorageEngine::collect_metrics(&engine)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            metrics["authority_role"],
+            serde_json::json!("rebuildable_projection")
+        );
+        assert_eq!(
+            metrics["durable_authority"],
+            serde_json::json!("canonical_record_store")
+        );
+        assert_eq!(metrics["wal_role"], serde_json::json!("none"));
+    }
+
+    #[tokio::test]
+    async fn test_cedar_flush_and_compact_do_not_claim_durable_writes() {
+        let engine = CedarEngine::new().unwrap();
+
+        let flush = DocumentStorageEngine::flush(&engine, "col").await.unwrap();
+        assert!(flush.success);
+        assert_eq!(flush.documents_flushed, 0);
+        assert_eq!(flush.bytes_written, 0);
+
+        let compact = DocumentStorageEngine::compact(&engine, "col")
+            .await
+            .unwrap();
+        assert!(compact.success);
+        assert_eq!(compact.documents_flushed, 0);
+        assert_eq!(compact.bytes_written, 0);
     }
 
     // -- Cycle 1.1: Insert + Get --
