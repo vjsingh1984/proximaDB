@@ -1812,7 +1812,7 @@ mod tests {
     #[tokio::test]
     async fn test_unified_ivf_basic() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = UnifiedIvfConfig {
             n_clusters: 2, // Reduce clusters to match small dataset

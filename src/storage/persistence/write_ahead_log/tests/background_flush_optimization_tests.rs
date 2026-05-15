@@ -180,7 +180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_background_flush_context_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let context = create_test_context("test_collection", StorageEngineType::Viper);
 
@@ -198,7 +198,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_optimized_compaction() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Create mock storage engines
         let viper_engine = Arc::new(MockStorageEngine::new("viper"));
@@ -253,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_coordinator_with_context_optimization() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Create flush coordinator
         let coordinator = WALFlushCoordinator::new();
@@ -309,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_selection_optimization() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let coordinator = WALFlushCoordinator::new();
 
@@ -368,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_performance_configuration_from_context() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let context = create_test_context("perf_test", StorageEngineType::Viper);
 
@@ -400,7 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_call_elimination() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // This test verifies that when context is provided, no collection service calls are made
         let coordinator = WALFlushCoordinator::new();
@@ -443,7 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_end_to_end_optimization_flow() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Simulate the complete optimized flow:
         // VectorOperationsService → BackgroundFlushContext → FlushCoordinator → BackgroundManager

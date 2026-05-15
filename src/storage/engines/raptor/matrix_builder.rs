@@ -725,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_p2_matrix_building() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -746,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_k2_matrix_building() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_adaptive_pxk_coverage() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Test coverage formula for different k and d values
         // Formula: exp(-2 * ln(k/d + 1)) produces HIGH values for LOW k/d ratios
@@ -791,7 +791,7 @@ mod tests {
     // ========== NEW TESTS ==========
 
     fn create_builder(metric: DistanceMetric) -> MatrixBuilder {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(metric));
         MatrixBuilder::new(distance_compute, hardware, metric)

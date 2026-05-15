@@ -294,7 +294,7 @@ mod tests {
     #[tokio::test]
     async fn test_single_vector_operations() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let _config = create_test_config(temp_dir.path().to_str().unwrap());
@@ -453,7 +453,7 @@ mod tests {
     #[tokio::test]
     async fn test_similarity_search() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let _config = create_test_config(temp_dir.path().to_str().unwrap());
@@ -587,7 +587,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let _config = create_test_config(temp_dir.path().to_str().unwrap());
@@ -667,7 +667,7 @@ mod tests {
     #[tokio::test]
     async fn test_multi_collection_isolation() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().to_str().unwrap();
@@ -747,7 +747,7 @@ mod tests {
     #[tokio::test]
     async fn test_persistence_across_restarts() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path().to_str().unwrap();
@@ -833,7 +833,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_vectors_unified() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let _config = create_test_config(temp_dir.path().to_str().unwrap());
@@ -1204,7 +1204,7 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_operations() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let _config = create_test_config(temp_dir.path().to_str().unwrap());

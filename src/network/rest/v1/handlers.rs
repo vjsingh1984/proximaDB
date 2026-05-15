@@ -1913,7 +1913,7 @@ mod tests {
     }
 
     async fn build_test_app_state() -> (AppState, TempDir) {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
         let storage_path = temp_dir.path().join("storage");

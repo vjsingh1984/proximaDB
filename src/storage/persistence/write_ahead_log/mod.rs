@@ -3391,7 +3391,7 @@ mod simple_context_tests {
 
     #[tokio::test]
     async fn test_background_flush_context_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: BackgroundFlushContext creation and validation");
 
@@ -3439,7 +3439,7 @@ mod simple_context_tests {
 
     #[tokio::test]
     async fn test_context_performance_settings() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Context performance configuration");
 
@@ -3637,7 +3637,7 @@ mod optimization_validation_tests {
 
     #[tokio::test]
     async fn test_service_call_elimination_validation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 VALIDATION: Service call elimination through context optimization");
 
@@ -3723,7 +3723,7 @@ mod optimization_validation_tests {
 
     #[tokio::test]
     async fn test_context_metadata_completeness() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 VALIDATION: Context contains all metadata needed for background operations");
 

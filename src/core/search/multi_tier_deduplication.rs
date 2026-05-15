@@ -809,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_deduplication_without_ids() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let mut deduplicator = MultiTierDeduplicator::new();
 
         // Create vectors without IDs (immutable vectors)

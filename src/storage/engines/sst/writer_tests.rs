@@ -41,7 +41,7 @@ mod tests {
         use tempfile::TempDir;
 
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let temp_dir = TempDir::new().unwrap();
         let sstable_path = temp_dir.path().join("test.sstable");
 
@@ -95,7 +95,7 @@ mod tests {
         use tracing::debug;
 
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let temp_dir = TempDir::new().unwrap();
         let sstable_path = temp_dir.path().join("inspect.sst");
 

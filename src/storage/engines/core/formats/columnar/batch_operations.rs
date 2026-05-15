@@ -8,7 +8,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::{ColumnarConfig, ParquetLocation, UnifiedParquetReader};
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
 
@@ -17,10 +16,6 @@ pub struct ColumnarBatchOperations {
     /// Unified Parquet reader
     #[allow(dead_code)]
     parquet_reader: Arc<UnifiedParquetReader>,
-
-    /// Hardware capabilities
-    #[allow(dead_code)]
-    hardware: Arc<HardwareCapabilities>,
 
     /// Vector memory pool for efficient buffer reuse
     memory_pool: Arc<VectorMemoryPool>,
@@ -37,13 +32,12 @@ impl ColumnarBatchOperations {
     /// Create new batch operations handler
     pub fn new(
         parquet_reader: Arc<UnifiedParquetReader>,
-        hardware: Arc<HardwareCapabilities>,
+        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         memory_pool: Arc<VectorMemoryPool>,
         config: ColumnarConfig,
     ) -> Self {
         Self {
             parquet_reader,
-            hardware,
             memory_pool,
             config,
             operation_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -477,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_operations_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let filesystem_factory = Arc::new(
             FilesystemFactory::create(FilesystemConfig::default())
@@ -549,7 +543,7 @@ mod tests {
 
     fn create_test_batch_ops() -> ColumnarBatchOperations {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+            let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
             let filesystem_factory = Arc::new(
                 FilesystemFactory::create(FilesystemConfig::default())

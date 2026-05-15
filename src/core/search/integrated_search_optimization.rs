@@ -244,15 +244,13 @@ impl AdvancedSearchOptimizer {
         cache_orchestrator: Arc<CrossCacheOrchestrator>,
         config: OptimizationConfig,
     ) -> Self {
-        // Detect hardware capabilities
-        let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
-
         // Detect available memory using platform-specific methods
         let available_memory_gb = Self::detect_available_memory();
+        let simd_level = proximadb_hardware::best_simd_level();
 
         let hardware_profile = HardwareProfile {
-            has_avx2: caps.cpu.features.avx2_support,
-            has_avx512: caps.cpu.features.avx512_support,
+            has_avx2: simd_level >= proximadb_hardware::SimdLevel::AVX2,
+            has_avx512: simd_level >= proximadb_hardware::SimdLevel::AVX512,
             cpu_cores: num_cpus::get(),
             available_memory_gb,
         };

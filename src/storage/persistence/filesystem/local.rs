@@ -90,6 +90,16 @@ impl LocalFileSystem {
         use crate::storage::persistence::filesystem::FilesystemFactory;
 
         let path = FilesystemFactory::resolve_path(url)?;
+        // For bare relative paths (no scheme), anchor to root_dir so each
+        // LocalFileSystem instance with its own root_dir stays isolated.
+        // Paths that came in with a scheme (file://, etc.) keep their
+        // extracted form so callers can reason about them directly.
+        let path_buf = PathBuf::from(&path);
+        if !path_buf.is_absolute() && !url.contains("://") {
+            if let Some(ref root) = self.config.root_dir {
+                return Ok(root.join(&path_buf).to_string_lossy().into_owned());
+            }
+        }
         Ok(path)
     }
 

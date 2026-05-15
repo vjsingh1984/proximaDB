@@ -168,7 +168,7 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
 #[tokio::test]
 async fn test_viper_flush_and_compaction_debug() -> Result<()> {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     debug!("\n🚀 Starting VIPER debug test");
 

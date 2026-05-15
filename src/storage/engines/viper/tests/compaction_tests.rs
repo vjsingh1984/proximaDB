@@ -131,7 +131,7 @@ fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
 #[tokio::test]
 async fn test_insert_flush_compact_flow() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test complete flow: insert -> flush -> compact
     let temp_dir = TempDir::new().unwrap();
@@ -420,7 +420,7 @@ async fn test_insert_flush_compact_flow() {
 #[tokio::test]
 async fn test_basic_compaction() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
@@ -847,7 +847,7 @@ async fn test_basic_compaction() {
 #[tokio::test]
 async fn test_concurrent_compaction_and_reads() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
@@ -1027,7 +1027,7 @@ async fn test_concurrent_compaction_and_reads() {
 #[tokio::test]
 async fn test_concurrent_compaction_across_collections() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test that we can compact different collections concurrently
     let temp_dir = TempDir::new().unwrap();
@@ -1345,7 +1345,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
 #[tokio::test]
 async fn test_size_tiered_compaction_strategy() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
@@ -1468,7 +1468,7 @@ async fn test_size_tiered_compaction_strategy() {
 #[tokio::test]
 async fn test_compaction_with_metadata_filtering() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let _config = create_compaction_config(temp_dir.path().to_str().unwrap());
@@ -1684,7 +1684,7 @@ async fn test_compaction_with_metadata_filtering() {
 #[tokio::test]
 async fn test_incremental_compaction() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Use persistent test directory instead of temporary directory
     let test_dir = "/tmp/proximadb-test/viper-incremental-compaction";

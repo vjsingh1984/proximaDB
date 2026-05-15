@@ -13,7 +13,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sst1_magic_bytes_write_and_read() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test.sstable");
@@ -72,7 +72,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sst1_format_with_compression() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("compressed.sstable");
@@ -130,7 +130,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_reject_non_sst1_format() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("invalid.sstable");
@@ -158,7 +158,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_different_compression_algorithms() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(FilesystemFactory::create());
@@ -223,7 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adaptive_block_sizing() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let filesystem = Arc::new(FilesystemFactory::create());

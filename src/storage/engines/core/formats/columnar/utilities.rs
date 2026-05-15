@@ -8,17 +8,12 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::{ColumnarConfig, ColumnarFileMetadata};
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Utility functions for columnar storage operations
 pub struct ColumnarUtilities {
     /// Filesystem factory for storage operations
     filesystem: Arc<FilesystemFactory>,
-
-    /// Hardware capabilities
-    #[allow(dead_code)]
-    hardware: Arc<HardwareCapabilities>,
 
     /// Configuration
     #[allow(dead_code)]
@@ -58,12 +53,11 @@ impl ColumnarUtilities {
     /// Create new columnar utilities
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
-        hardware: Arc<HardwareCapabilities>,
+        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         config: ColumnarConfig,
     ) -> Self {
         Self {
             filesystem,
-            hardware,
             config,
             metrics_cache: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -596,7 +590,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_columnar_utilities_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let filesystem = Arc::new(
             FilesystemFactory::create(FilesystemConfig::default())
@@ -632,7 +626,7 @@ mod tests {
 
     #[test]
     fn test_row_group_size_calculation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let filesystem = Arc::new(tokio::runtime::Runtime::new().unwrap().block_on(async {
             FilesystemFactory::create(FilesystemConfig::default())

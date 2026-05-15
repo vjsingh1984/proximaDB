@@ -940,12 +940,8 @@ impl EmbeddedProximaDB {
         use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
         use std::sync::Arc;
 
-        // Initialize hardware capabilities first
-        if let Err(e) =
-            crate::core::hardware_capabilities::initialize_hardware_capabilities_default()
-        {
-            tracing::warn!("Failed to initialize hardware capabilities: {}", e);
-        }
+        // Initialize hardware capabilities
+        let _ = proximadb_hardware::hardware_capabilities();
 
         // Log hardware capabilities summary
         let _hw_summary = crate::core::hardware_capabilities::log_hardware_capabilities_summary();

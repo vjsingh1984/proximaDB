@@ -35,7 +35,7 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 /// A fully initialized SWIFT engine ready for testing
 #[allow(deprecated)]
 pub async fn create_test_engine() -> SwiftEngine {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     let distance_engine = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
     SwiftEngine::new_with_config(distance_engine, None)
         .await
@@ -51,7 +51,7 @@ pub async fn create_test_engine() -> SwiftEngine {
 /// A fully initialized SWIFT engine with the specified distance metric
 #[allow(deprecated)]
 pub async fn create_test_engine_with_metric(metric: DistanceMetric) -> SwiftEngine {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     let distance_engine = Arc::new(UnifiedDistanceCompute::new(metric));
     SwiftEngine::new_with_config(distance_engine, None)
         .await

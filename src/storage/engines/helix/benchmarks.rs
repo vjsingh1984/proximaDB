@@ -84,7 +84,7 @@ mod benchmarks {
 
     #[bench]
     fn bench_pca_training(b: &mut Bencher) {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let vectors = generate_random_vectors(1000, 768, 42);
 
@@ -97,7 +97,7 @@ mod benchmarks {
 
     #[bench]
     fn bench_pca_projection(b: &mut Bencher) {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let vectors = generate_random_vectors(100, 768, 42);
         let model = clustering::PCAModel::train(&vectors, 16)
@@ -114,7 +114,7 @@ mod benchmarks {
 
     #[bench]
     fn bench_hilbert_key_computation(b: &mut Bencher) {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let vectors = vec![
             vec![0.1, 0.2, 0.3],
@@ -132,7 +132,7 @@ mod benchmarks {
 
     #[tokio::test]
     async fn bench_flush_performance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().expect("TempDir creation should succeed");
         let config = HelixConfig::default();
@@ -175,7 +175,7 @@ mod benchmarks {
 
     #[tokio::test]
     async fn bench_search_with_pruning() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().expect("TempDir creation should succeed");
         let mut config = HelixConfig::default();
@@ -266,7 +266,7 @@ mod benchmarks {
 
     #[tokio::test]
     async fn bench_compaction_throughput() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().expect("TempDir creation should succeed");
         let mut config = HelixConfig::default();
@@ -321,7 +321,7 @@ mod benchmarks {
 
     #[test]
     fn bench_hilbert_ordering_quality() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Generate clustered data
         let vectors = generate_clustered_vectors(5, 20, 64);
@@ -379,7 +379,7 @@ mod benchmarks {
 
     #[tokio::test]
     async fn bench_liquid_clustering_effectiveness() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut tracker = clustering::QueryPatternTracker::default();
 
@@ -435,7 +435,7 @@ mod benchmarks {
 
     #[test]
     fn bench_memory_usage() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Measure memory overhead of metadata structures
         let num_blocks = 1000;
@@ -493,7 +493,7 @@ mod criterion_benchmarks {
     use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
     fn pca_benchmark(c: &mut Criterion) {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut group = c.benchmark_group("pca");
 
@@ -513,7 +513,7 @@ mod criterion_benchmarks {
     }
 
     fn hilbert_benchmark(c: &mut Criterion) {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut group = c.benchmark_group("hilbert");
 
@@ -533,7 +533,7 @@ mod criterion_benchmarks {
     }
 
     fn search_benchmark(c: &mut Criterion) {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut group = c.benchmark_group("search");
 

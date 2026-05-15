@@ -421,7 +421,7 @@ use crate::core::hardware_capabilities::HardwareCapabilities;
 /// Source: Multiple test files
 #[allow(dead_code)]
 pub fn init_hardware_capabilities() -> Arc<HardwareCapabilities> {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     crate::core::hardware_capabilities::get_hardware_capabilities()
 }
 

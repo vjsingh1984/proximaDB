@@ -298,7 +298,7 @@ mod tests {
         dimension: usize,
     ) -> Result<FormatBenchmarkResult> {
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new()?;
         let base_path = temp_dir.path().to_str().unwrap().to_string();
@@ -631,7 +631,7 @@ mod tests {
             .try_init();
 
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         println!("\n");
         println!("{}", SEPARATOR_DOUBLE);
@@ -806,7 +806,7 @@ mod tests {
     #[tokio::test]
     async fn compare_compression_ratios() -> Result<()> {
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         println!("\n");
         println!("{}", SEPARATOR_DOUBLE);

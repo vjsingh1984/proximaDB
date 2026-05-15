@@ -622,7 +622,7 @@ mod edge_tests {
         use tempfile::TempDir;
 
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Create a temporary directory and write test SSTable
         let temp_dir = TempDir::new().unwrap();

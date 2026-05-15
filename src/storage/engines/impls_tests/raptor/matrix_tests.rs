@@ -39,7 +39,7 @@ use crate::storage::engines::raptor::matrix_builder::MatrixBuilder;
 /// Source: p2_matrix_tests.rs
 #[test]
 fn test_p2_matrix_upper_triangle_indexing() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Create a P² matrix with 4 vectors
     let n = 4;
@@ -78,7 +78,7 @@ fn test_p2_matrix_upper_triangle_indexing() {
 /// Source: p2_matrix_tests.rs
 #[test]
 fn test_p2_matrix_distance_symmetry() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Create a P² matrix with mock distances
     let p2_matrix = P2Matrix {
@@ -105,7 +105,7 @@ fn test_p2_matrix_distance_symmetry() {
 /// Source: p2_matrix_tests.rs
 #[tokio::test]
 async fn test_build_p2_matrix() -> Result<()> {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Since we can't directly test RaptorWriter.build_p2_matrix due to visibility,
     // we'll test the P² matrix concept directly
@@ -150,7 +150,7 @@ async fn test_build_p2_matrix() -> Result<()> {
 /// Source: p2_matrix_tests.rs
 #[tokio::test]
 async fn test_p2_matrix_proximaencoder() -> Result<()> {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Use ProximaCodec for encoding (migrated from old ProximaEncoder)
     use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme as CodecScheme;
@@ -220,7 +220,7 @@ async fn test_p2_matrix_proximaencoder() -> Result<()> {
 /// Source: p2_matrix_tests.rs
 #[test]
 fn test_p2_matrix_memory_scaling() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test memory usage for different P values
     let test_cases = vec![
@@ -247,7 +247,7 @@ fn test_p2_matrix_memory_scaling() {
 /// Source: p2_matrix_tests.rs
 #[tokio::test]
 async fn test_p2_matrix_search_integration() -> Result<()> {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // use crate::storage::engines::raptor::consolidated_reader::{  // Unclosed delimiter - commented out
 
@@ -299,7 +299,7 @@ async fn test_p2_matrix_search_integration() -> Result<()> {
 
 #[test]
 fn test_phase1_boundary_detection_basic() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
@@ -371,7 +371,7 @@ fn test_phase1_boundary_detection_basic() {
 
 #[test]
 fn test_phase2_spillover_detection() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -452,7 +452,7 @@ fn test_phase2_spillover_detection() {
 
 #[test]
 fn test_boundary_ratio_calculation() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test the d_i/d_j > 0.8 boundary ratio rule
     let test_cases = vec![
@@ -480,7 +480,7 @@ fn test_boundary_ratio_calculation() {
 
 #[test]
 fn test_adaptive_pxk_coverage_formula() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test the adaptive coverage formula: coverage(k,d) = max(0.1, min(1.0, exp(-2 × log(k/d + 1))))
     // The formula exp(-2 * ln(k/d + 1)) gives values that decrease as k/d increases
@@ -513,7 +513,7 @@ fn test_adaptive_pxk_coverage_formula() {
 
 #[test]
 fn test_5_component_boosting() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test the 5-component distance boosting formula
     // d_total = α₁×d₁(runtime) + α₂×d₂(mean) + α₃×d₃(density) + α₄×d₄(min) + α₅×d₅(max)
@@ -593,7 +593,7 @@ fn test_5_component_boosting() {
 
 #[test]
 fn test_spillover_map_generation() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test generating spillover maps for recursive checking
     let mut spillover_map: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -637,7 +637,7 @@ fn test_spillover_map_generation() {
 
 #[test]
 fn test_p2_matrix_building() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -658,7 +658,7 @@ fn test_p2_matrix_building() {
 
 #[test]
 fn test_k2_matrix_building() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
@@ -675,7 +675,7 @@ fn test_k2_matrix_building() {
 
 #[test]
 fn test_adaptive_pxk_coverage() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test coverage formula for different k and d values
     // Formula: exp(-2 * ln(k/d + 1)) produces HIGH values for LOW k/d ratios

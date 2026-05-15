@@ -573,7 +573,7 @@ mod tests {
     }
 
     async fn create_test_store() -> Result<MetricsPersistenceLayer> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let unique_path = generate_unique_test_path();
         let config = MetricsConfig {
@@ -598,7 +598,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_store_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: MetricsPersistenceLayer creation and initialization");
 
@@ -609,7 +609,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_metrics_storage_and_retrieval() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: CollectionMetrics storage and retrieval");
 
@@ -701,7 +701,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_global_metrics_storage_and_retrieval() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: GlobalMetrics storage and retrieval");
 
@@ -737,7 +737,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_partitioning() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Collection partitioning for metrics storage");
 
@@ -800,7 +800,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_list_collections() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: List collections functionality");
 
@@ -842,7 +842,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_cleanup_functionality() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Metrics cleanup functionality");
 
@@ -888,7 +888,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_metrics_operations() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Concurrent metrics operations");
 
@@ -956,7 +956,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_filesystem_factory_integration() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: FilesystemFactory integration");
 

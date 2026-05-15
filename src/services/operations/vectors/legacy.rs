@@ -4490,7 +4490,7 @@ mod index_first_search_tests {
 
     #[tokio::test]
     async fn test_index_first_strategy_with_indexed_collection() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing index-first strategy with indexed collection");
 
         let collection_service = MockCollectionService::new();
@@ -4504,7 +4504,7 @@ mod index_first_search_tests {
 
     #[tokio::test]
     async fn test_no_double_wal_scan() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing that WAL is not scanned twice");
 
         let source = include_str!("legacy.rs");
@@ -4539,7 +4539,7 @@ mod index_first_search_tests {
 
     #[tokio::test]
     async fn test_early_termination_with_sufficient_index_results() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing early termination when indexes return sufficient results");
 
         let source = include_str!("legacy.rs");
@@ -4580,7 +4580,7 @@ mod index_first_search_tests {
 
     #[tokio::test]
     async fn test_fallback_to_raw_search_without_indexes() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing fallback to raw search when no indexes configured");
 
         let collection_service = MockCollectionService::new();
@@ -4594,7 +4594,7 @@ mod index_first_search_tests {
 
     #[tokio::test]
     async fn test_metadata_filter_pushdown_to_indexes() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing metadata filter pushdown to indexes");
 
         let search_params = SearchParams {
@@ -4649,7 +4649,7 @@ mod index_first_search_tests {
 
     #[tokio::test]
     async fn test_performance_improvement_with_index_first() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing performance improvement architecture with index-first strategy");
 
         let source = include_str!("legacy.rs");

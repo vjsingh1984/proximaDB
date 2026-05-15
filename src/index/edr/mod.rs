@@ -216,11 +216,10 @@ impl AxisVectorIndex for EdrIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
 
     #[tokio::test]
     async fn test_edr_index_creation() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let config = EdrIndexConfig::default();
         let index = EdrIndex::new(config).unwrap();
 
@@ -238,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edr_add_document() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let config = EdrIndexConfig::default();
         let index = EdrIndex::new(config).unwrap();
 
@@ -254,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edr_search() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let config = EdrIndexConfig {
             top_k: 5,
             enable_query_expansion: true,

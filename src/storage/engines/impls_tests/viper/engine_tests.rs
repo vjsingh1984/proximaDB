@@ -69,7 +69,7 @@ async fn test_viper_unified_storage_engine_traits() -> Result<()> {
 #[tokio::test]
 async fn test_single_vector_operations() {
     // Initialize hardware capabilities for testing
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let _config = create_default_test_config(temp_dir.path().to_str().unwrap());

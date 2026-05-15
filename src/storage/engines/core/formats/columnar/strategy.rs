@@ -162,17 +162,16 @@ pub struct HardwareCapabilities {
 
 impl Default for HardwareCapabilities {
     fn default() -> Self {
-        // Detect actual hardware capabilities
-        let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let level = proximadb_hardware::best_simd_level();
         Self {
-            has_sse: caps.cpu.features.sse42_support,
-            has_avx: caps.cpu.features.avx_support,
-            has_avx2: caps.cpu.features.avx2_support,
-            has_avx512: caps.cpu.features.avx512_support,
-            has_popcount: caps.cpu.features.popcnt_support,
-            cache_line_size: 64, // Standard cache line size
-            l1_cache_size: 32 * 1024, // 32KB typical
-            l2_cache_size: 256 * 1024, // 256KB typical
+            has_sse: level >= proximadb_hardware::SimdLevel::SSE41,
+            has_avx: level >= proximadb_hardware::SimdLevel::AVX2,
+            has_avx2: level >= proximadb_hardware::SimdLevel::AVX2,
+            has_avx512: level >= proximadb_hardware::SimdLevel::AVX512,
+            has_popcount: level >= proximadb_hardware::SimdLevel::SSE41,
+            cache_line_size: 64,
+            l1_cache_size: 32 * 1024,
+            l2_cache_size: 256 * 1024,
         }
     }
 }

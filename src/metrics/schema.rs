@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn test_collection_metrics_creation_and_defaults() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: CollectionMetrics creation and default values");
 
@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn test_collection_metrics_full_initialization() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: CollectionMetrics full initialization");
 
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn test_global_metrics_creation() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: GlobalMetrics creation and validation");
 
@@ -646,7 +646,7 @@ mod tests {
     #[test]
     fn test_sparsity_calculation() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Sparsity ratio calculation");
 
@@ -678,7 +678,7 @@ mod tests {
     #[test]
     fn test_latency_percentiles_calculation() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Latency percentiles calculation");
 
@@ -723,7 +723,7 @@ mod tests {
     #[test]
     fn test_optimization_hints_generation() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Query optimization hints generation");
 
@@ -855,7 +855,7 @@ mod tests {
     #[test]
     fn test_metrics_serialization_deserialization() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Metrics serialization and deserialization");
 
@@ -956,7 +956,7 @@ mod tests {
     #[test]
     fn test_index_build_status_variants() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: IndexBuildStatus variants");
 
@@ -1019,7 +1019,7 @@ mod tests {
     #[test]
     fn test_query_optimization_hints_structure() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: QueryOptimizationHints structure");
 
@@ -1111,7 +1111,7 @@ mod tests {
     #[test]
     fn test_filterable_column_stats_edge_cases() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: FilterableColumnStats edge cases");
 

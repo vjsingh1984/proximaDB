@@ -618,7 +618,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_basic_operations() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let cache = DecompressionCache::from_config(test_cache_config(10)); // 10MB cache
 
@@ -657,7 +657,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_eviction() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let cache = DecompressionCache::from_config(test_cache_config(1)); // 1MB cache - very small for testing
 

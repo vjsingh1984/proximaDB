@@ -537,7 +537,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_vectors_basic() -> Result<()> {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new()?;
         let file_path = format!("{}/search_test.parquet", temp_dir.path().display());

@@ -244,7 +244,7 @@ mod tests {
             .try_init();
 
         // Initialize hardware capabilities for the test
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
@@ -309,7 +309,7 @@ mod tests {
     #[tokio::test]
     async fn test_mvcc_multiple_versions_compaction() {
         // Initialize hardware capabilities for the test
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
@@ -447,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn test_expired_records_deletion() {
         // Initialize hardware capabilities for the test
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
@@ -559,7 +559,7 @@ mod tests {
             .try_init();
 
         // Initialize hardware capabilities for the test
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
@@ -687,7 +687,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_with_metadata() {
         // Initialize hardware capabilities for the test
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();
@@ -1010,7 +1010,7 @@ mod tests {
             .try_init();
 
         // Initialize hardware capabilities for the test
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = TempDir::new().unwrap();
         let base_path = temp_dir.path();

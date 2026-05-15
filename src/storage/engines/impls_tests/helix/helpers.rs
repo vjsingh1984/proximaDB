@@ -30,7 +30,7 @@ use crate::storage::traits::FlushParameters;
 
 /// Create a default HELIX engine for testing
 pub async fn create_test_engine() -> Result<HelixEngine, Box<dyn std::error::Error>> {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     HelixEngine::new().await.map_err(|e| e.into())
 }
 
@@ -39,7 +39,7 @@ pub async fn create_test_engine_with_config(
     config: HelixConfig,
     temp_dir: &TempDir,
 ) -> Result<HelixEngine, Box<dyn std::error::Error>> {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let path = temp_dir.path().to_str().unwrap().to_string();
 
@@ -65,7 +65,7 @@ pub async fn create_minimal_engine(
     ),
     Box<dyn std::error::Error>,
 > {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let path = temp_dir.path().to_str().unwrap().to_string();
 
@@ -441,7 +441,7 @@ pub fn train_test_pca_model(
 
 /// Initialize hardware capabilities (idempotent)
 pub fn init_hardware() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 }
 
 /// Setup a complete test environment with engine, filesystem, and collection

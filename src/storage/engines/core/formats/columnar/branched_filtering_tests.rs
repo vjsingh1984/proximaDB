@@ -104,7 +104,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fast_path_filterable_columns_only() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_fast_path.parquet");
@@ -207,7 +207,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_slow_path_non_filterable_columns() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_slow_path.parquet");
@@ -286,7 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mixed_path_filterable_and_non_filterable() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_mixed_path.parquet");
@@ -363,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_filter_path() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_no_filter.parquet");
@@ -407,7 +407,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_performance_metrics_logging() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_metrics.parquet");
@@ -464,7 +464,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edge_cases() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_edge_cases.parquet");

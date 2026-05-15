@@ -168,7 +168,7 @@ mod tests {
     async fn create_test_metrics_components_with_cleanup(
         cleanup: bool,
     ) -> Result<(Arc<MetricsUpdateService>, Arc<MetricsPersistenceLayer>)> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = MetricsConfig {
             enabled: true,
@@ -234,7 +234,7 @@ mod tests {
     #[tokio::test]
     async fn test_directvectorservice_metrics_integration() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: VectorOperationsService metrics integration (simulated)");
 
@@ -324,7 +324,7 @@ mod tests {
     #[tokio::test]
     async fn test_flushcoordinator_metrics_integration() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: FlushCoordinator metrics integration");
 
@@ -404,7 +404,7 @@ mod tests {
     #[tokio::test]
     async fn test_backgroundmanager_metrics_integration() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: BackgroundManager metrics integration");
 
@@ -499,7 +499,7 @@ mod tests {
     #[tokio::test]
     async fn test_end_to_end_metrics_collection() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: End-to-end metrics collection across all components");
 
@@ -670,7 +670,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_collection_with_multiple_collections() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Metrics collection with multiple collections");
 
@@ -762,7 +762,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_persistence_across_restarts() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Metrics persistence across component restarts");
 

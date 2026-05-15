@@ -433,10 +433,10 @@ impl Default for ComputeConfig {
         Self {
             acceleration: AccelerationConfig {
                 backend_priority: vec![
-                    ComputeBackend::CUDA,
-                    ComputeBackend::ROCm,
-                    ComputeBackend::OpenCL,
+                    ComputeBackend::AVX512,
                     ComputeBackend::AVX2,
+                    ComputeBackend::NEON,
+                    ComputeBackend::SSE41,
                 ],
                 cpu_vectorization: CpuVectorization {
                     avx512: true,

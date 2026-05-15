@@ -25,7 +25,7 @@ use crate::storage::traits::UnifiedStorageEngine;
 #[tokio::test]
 async fn test_optimized_viper_operations() {
     // Initialize hardware capabilities
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     let ops = optimized_operations::OptimizedNovaOperations::new().unwrap();
     // Test compute mode selection
     let small_vectors = vec![vec![0.0; 128]; 10];
@@ -147,7 +147,7 @@ fn test_quantization_config() {
 
 #[tokio::test]
 async fn test_nova_engine_creation() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     let engine = engine::NovaEngine::new().await.unwrap();
     assert_eq!(engine.engine_name(), "NOVA");
     assert_eq!(engine.engine_version(), "1.0.0");
@@ -155,7 +155,7 @@ async fn test_nova_engine_creation() {
 
 #[tokio::test]
 async fn test_nova_feature_support() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     let engine = engine::NovaEngine::new().await.unwrap();
     assert!(engine.supports_feature("id_lookup"));
     assert!(engine.supports_feature("columnar_search"));

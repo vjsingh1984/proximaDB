@@ -1893,7 +1893,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nova_engine_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = NovaEngine::new().await.unwrap();
         assert_eq!(engine.engine_name(), "NOVA");
         assert_eq!(engine.engine_version(), "1.0.0");
@@ -1901,7 +1901,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_nova_feature_support() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = NovaEngine::new().await.unwrap();
         assert!(engine.supports_feature("id_lookup"));
         assert!(engine.supports_feature("columnar_search"));

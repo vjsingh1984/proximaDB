@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn test_create_hnsw_index() {
         // Initialize hardware capabilities for HNSW
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let algorithm = IndexAlgorithm::HNSW {
             m: 16,
@@ -334,7 +334,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_trained_hnsw_index() {
         // Initialize hardware capabilities for HNSW
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let algorithm = IndexAlgorithm::HNSW {
             m: 16,

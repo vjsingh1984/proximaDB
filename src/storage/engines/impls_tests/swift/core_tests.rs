@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_swift_engine_creation() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     // Need to create distance engine and axis manager for new()
     let _distance_engine = Arc::new(
         crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
@@ -40,7 +40,7 @@ async fn test_swift_engine_creation() {
 
 #[tokio::test]
 async fn test_swift_feature_support() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     // Need to create distance engine and axis manager for new()
     let _distance_engine = Arc::new(
         crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(

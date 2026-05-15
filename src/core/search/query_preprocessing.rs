@@ -8,7 +8,7 @@
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::QuantizationLevel;
-use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
+use proximadb_hardware::{SimdLevel, best_simd_level};
 use crate::proto::proximadb_v1::DistanceMetric;
 use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::utils::cache::LruCache;
@@ -55,8 +55,8 @@ pub struct QueryPreprocessor {
     /// Quantization engine (optional until properly initialized)
     quantization_engine: Option<Arc<StorageQuantizationEngine>>,
 
-    /// Hardware capabilities for SIMD
-    hardware: Arc<HardwareCapabilities>,
+    /// SIMD level for hardware-accelerated operations
+    simd_level: SimdLevel,
 
     /// Cache statistics
     stats: Arc<RwLock<CacheStats>>,
@@ -107,15 +107,11 @@ impl QueryPreprocessor {
         */
         let quantization_engine = None;
 
-        trace!("Getting hardware capabilities");
-        let hardware = get_hardware_capabilities();
-        trace!("Hardware capabilities retrieved");
-
         trace!("QueryPreprocessor creation complete");
         Self {
             cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
             quantization_engine,
-            hardware,
+            simd_level: best_simd_level(),
             stats: Arc::new(RwLock::new(CacheStats::default())),
         }
     }
@@ -260,14 +256,11 @@ impl QueryPreprocessor {
         // Use hardware-accelerated normalization if available
         #[cfg(target_arch = "x86_64")]
         {
-            trace!(
-                "On x86_64 - AVX2: {}, SSE42: {}",
-                self.hardware.cpu.features.avx2_support, self.hardware.cpu.features.sse42_support
-            );
-            if self.hardware.cpu.features.avx2_support {
+            trace!("On x86_64 - SIMD level: {:?}", self.simd_level);
+            if self.simd_level >= SimdLevel::AVX2 {
                 trace!("Using AVX2 normalization");
                 return Arc::new(self.normalize_avx2(vector));
-            } else if self.hardware.cpu.features.sse42_support {
+            } else if self.simd_level >= SimdLevel::SSE41 {
                 trace!("Using SSE normalization");
                 return Arc::new(self.normalize_sse(vector));
             }
@@ -275,11 +268,9 @@ impl QueryPreprocessor {
 
         #[cfg(target_arch = "aarch64")]
         {
-            trace!(
-                "On aarch64 - NEON: {}",
-                self.hardware.cpu.features.neon_support
-            );
-            if self.hardware.cpu.features.neon_support {
+            let neon_available = self.simd_level >= SimdLevel::NEON;
+            trace!("On aarch64 - NEON: {}", neon_available);
+            if neon_available {
                 trace!("Using NEON normalization");
                 return Arc::new(self.normalize_neon(vector));
             }

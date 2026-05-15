@@ -2009,7 +2009,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_engine_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Need to create distance engine and axis manager for new()
         let _distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
@@ -2023,7 +2023,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_feature_support() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Need to create distance engine and axis manager for new()
         let _distance_engine = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
@@ -2042,7 +2042,7 @@ mod tests {
     #[cfg(feature = "experimental-engines")]
     #[tokio::test]
     async fn test_swift_vector_by_id_miss() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = SwiftEngine::new().await.unwrap();
 
         // Lookup in non-existent path should return None (not error)
@@ -2136,7 +2136,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_engine_name_and_version() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = SwiftEngine::new().await.unwrap();
         assert_eq!(engine.engine_name(), "SWIFT");
         assert_eq!(engine.engine_version(), "1.0.0");
@@ -2144,14 +2144,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_engine_strategy() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = SwiftEngine::new().await.unwrap();
         assert_eq!(engine.strategy(), StorageEngineStrategy::Swift);
     }
 
     #[tokio::test]
     async fn test_swift_feature_support_exhaustive() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = SwiftEngine::new().await.unwrap();
 
         // All supported features
@@ -2272,7 +2272,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_swift_engine_initial_statistics() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = SwiftEngine::new().await.unwrap();
         let stats = engine.statistics.read().await;
         assert_eq!(stats.engine_name, "SWIFT");

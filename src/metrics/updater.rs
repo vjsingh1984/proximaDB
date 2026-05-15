@@ -790,7 +790,7 @@ mod tests {
     }
 
     async fn create_test_updater() -> Result<Arc<MetricsUpdateService>> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let unique_path = generate_unique_test_path();
 

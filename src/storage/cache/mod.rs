@@ -281,8 +281,7 @@ mod base_cache_tests {
 
     #[tokio::test]
     async fn test_basic_get_put() {
-        let _ =
-            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -302,8 +301,7 @@ mod base_cache_tests {
 
     #[tokio::test]
     async fn test_cache_miss() {
-        let _ =
-            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -314,8 +312,7 @@ mod base_cache_tests {
 
     #[tokio::test]
     async fn test_invalidation() {
-        let _ =
-            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -340,8 +337,7 @@ mod base_cache_tests {
 
     #[tokio::test]
     async fn test_tier_selection() {
-        let _ =
-            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -363,8 +359,7 @@ mod base_cache_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_metrics_recording() {
-        let _ =
-            crate::core::hardware_capabilities::initialize_hardware_capabilities_default().unwrap();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let cache = BaseCacheImpl::<String, TestValue>::new(10);
 
@@ -410,7 +405,7 @@ mod backend_tests {
 
     #[tokio::test]
     async fn test_memory_backend_basic_operations() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let backend = MemoryBackend::<String, String>::new(1); // 1MB
 
@@ -433,7 +428,7 @@ mod backend_tests {
 
     #[tokio::test]
     async fn test_memory_backend_capacity() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let backend = MemoryBackend::<u32, TestBytes>::new(1); // 1MB limit
 
@@ -454,7 +449,7 @@ mod backend_tests {
 
     #[tokio::test]
     async fn test_memory_backend_clear() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let backend = MemoryBackend::<String, String>::new(1);
 
@@ -478,7 +473,7 @@ mod backend_tests {
 
     #[tokio::test]
     async fn test_memory_backend_tier() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let backend = MemoryBackend::<String, String>::new(1);
         assert_eq!(backend.tier(), CacheTier::L1);
@@ -486,7 +481,7 @@ mod backend_tests {
 
     #[tokio::test]
     async fn test_memory_backend_concurrent_access() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         use std::sync::Arc;
 
@@ -525,7 +520,7 @@ mod metrics_tests {
 
     #[test]
     fn test_metrics_recording() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let metrics = CacheMetrics::new();
 
@@ -575,7 +570,7 @@ mod metrics_tests {
 
     #[test]
     fn test_metrics_reset() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let metrics = CacheMetrics::new();
 
@@ -603,7 +598,7 @@ mod metrics_tests {
 
     #[test]
     fn test_metrics_summary_print() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let metrics = CacheMetrics::new();
 
@@ -646,7 +641,7 @@ mod eviction_tests {
 
     #[test]
     fn test_lru_policy() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let policy = EvictionPolicy::LRU {
             max_items: 1000,
@@ -667,7 +662,7 @@ mod eviction_tests {
 
     #[test]
     fn test_lfu_policy() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let policy = EvictionPolicy::LFU {
             max_items: 1000,
@@ -691,7 +686,7 @@ mod eviction_tests {
 
     #[test]
     fn test_arc_policy() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let policy = EvictionPolicy::ARC {
             target_size: 1000,
@@ -715,7 +710,7 @@ mod eviction_tests {
 
     #[test]
     fn test_ttl_policy() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let policy = EvictionPolicy::TTL {
             max_age_seconds: 3600,
@@ -736,7 +731,7 @@ mod eviction_tests {
 
     #[test]
     fn test_pattern_based_policy() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let policy = EvictionPolicy::PatternBased {
             use_ml_predictions: true,
@@ -760,7 +755,7 @@ mod eviction_tests {
 
     #[tokio::test]
     async fn test_access_tracker() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let tracker = AccessTracker::new();
 
@@ -779,7 +774,7 @@ mod eviction_tests {
 
     #[test]
     fn test_cache_eviction_config() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = CacheEvictionConfig::default();
 
@@ -791,7 +786,7 @@ mod eviction_tests {
 
     #[tokio::test]
     async fn test_cache_evictor_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let orchestrator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024 * 100)); // 100MB
         let metrics = Arc::new(UnifiedMetricsCollector::new());

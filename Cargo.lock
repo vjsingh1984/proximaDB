@@ -5614,6 +5614,7 @@ dependencies = [
  "proximadb-graph-arrow",
  "proximadb-graph-query",
  "proximadb-graph-subset",
+ "proximadb-hardware",
  "proximadb-kernel",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",

@@ -21,7 +21,7 @@ use super::{ParquetWriterConfig, StreamingParquetWriter, UnifiedParquetReader};
 
 #[tokio::test]
 async fn test_id_column_always_preserved() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_id_preservation.parquet");
@@ -65,7 +65,7 @@ async fn test_id_column_always_preserved() {
 
 #[tokio::test]
 async fn test_id_less_storage_warning() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_name = format!("test_id_less_warning.parquet");
@@ -120,7 +120,7 @@ async fn test_id_less_storage_warning() {
 
 #[tokio::test]
 async fn test_parquet_flush_and_read_pattern() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("collection_data");
@@ -241,7 +241,7 @@ async fn test_parquet_flush_and_read_pattern() {
 
 #[tokio::test]
 async fn test_branched_filtering_fast_vs_slow_path() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_branched_filtering.parquet");
@@ -501,7 +501,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
 #[tokio::test]
 async fn test_multi_file_directory_scan() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("collection_data");
@@ -651,7 +651,7 @@ async fn test_multi_file_directory_scan() {
 
 #[tokio::test]
 async fn test_dictionary_encoding_optimization() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_dictionary_encoding.parquet");
@@ -771,7 +771,7 @@ async fn test_dictionary_encoding_optimization() {
 
 #[tokio::test]
 async fn test_customer_api_compatibility() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_customer_apis.parquet");
@@ -897,7 +897,7 @@ async fn test_customer_api_compatibility() {
 
 #[tokio::test]
 async fn test_row_group_offset_optimization() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test that row group offset is added when id_less_storage is enabled
     // but ID column is still preserved
@@ -1016,7 +1016,7 @@ fn read_parquet_schema(file_path: &std::path::Path) -> Result<arrow_schema::Sche
 
 #[tokio::test]
 async fn test_schema_evolution_with_id_column() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test that schema evolution preserves ID column requirement
     let quantization_configs = vec![

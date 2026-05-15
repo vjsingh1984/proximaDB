@@ -141,6 +141,7 @@ proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-document-query = { path = "crates/query/proximadb-document-query" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
+proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }

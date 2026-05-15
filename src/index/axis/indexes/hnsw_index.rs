@@ -1474,7 +1474,7 @@ mod tests {
     #[tokio::test]
     async fn test_hnsw_basic_operations() {
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config, 3).expect("Failed to create HNSW index");
@@ -1515,7 +1515,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_search_quality() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut config = AxisHnswConfig::default();
         config.ef = 200; // Higher ef for better quality
@@ -1569,7 +1569,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_layer_navigation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut config = AxisHnswConfig::default();
         config.m = 16;
@@ -1600,7 +1600,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_pruning_heuristic() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut config = AxisHnswConfig::default();
         config.m = 5; // Small M to test pruning
@@ -1632,7 +1632,7 @@ mod tests {
 
     #[test]
     fn test_hnsw_config_validation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Test valid config
         let valid_config = AxisHnswConfig {
@@ -1655,7 +1655,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_empty_index_search() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config, 3).expect("Failed to create HNSW index");
@@ -1670,7 +1670,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_duplicate_removal() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config, 2).expect("Failed to create HNSW index");
@@ -1701,7 +1701,7 @@ mod tests {
     async fn test_hnsw_serialization_roundtrip() {
         use crate::index::axis::storage::serialization::IndexSerializer;
 
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config.clone(), 4).expect("Failed to create HNSW index");
@@ -1789,7 +1789,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_predicate_search_all_pass_matches_unfiltered() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let cfg = AxisHnswConfig {
             ef: 200,
             ..AxisHnswConfig::default()
@@ -1821,7 +1821,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_predicate_search_excludes_specific_id() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let cfg = AxisHnswConfig {
             ef: 200,
             ..AxisHnswConfig::default()
@@ -1878,7 +1878,7 @@ mod tests {
         // We verify this by checking that a node in the gamma>1 index has at least as
         // many neighbors as the gamma=1 baseline (ideally more, but at small scale
         // they may coincide). The key invariant: gamma>1 NEVER produces fewer edges.
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let cfg_base = AxisHnswConfig {
             m: 4,
@@ -1922,7 +1922,7 @@ mod tests {
 
     #[test]
     fn test_select_neighbors_gamma_returns_more_candidates() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let cfg = AxisHnswConfig {
             m: 4,
             gamma: 2.0,

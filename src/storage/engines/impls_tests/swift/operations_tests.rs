@@ -123,7 +123,7 @@ use crate::core::memory::pool::VectorMemoryPool;
 async fn test_optimized_operations() {
     use optimized_operations::OptimizedSwiftOperations;
 
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities();
 
     let _ops = OptimizedSwiftOperations::new().unwrap();
 

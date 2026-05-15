@@ -121,11 +121,10 @@ impl LateInteractionScorer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
 
     #[tokio::test]
     async fn test_late_interaction_scoring() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let scorer = LateInteractionScorer::new(DistanceMetric::Cosine);
 
         let query = vec![1.0, 0.0, 0.0];
@@ -138,7 +137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_detailed_scoring() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let scorer = LateInteractionScorer::new(DistanceMetric::Cosine);
 
         let expanded_queries = vec![vec![1.0, 0.0, 0.0], vec![0.9, 0.1, 0.0]];

@@ -48,7 +48,7 @@ async fn create_test_file(data: &[u8]) -> Result<NamedTempFile> {
 
 #[tokio::test]
 async fn test_valid_sst1_magic_marker() {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities();
 
     let reader = create_test_reader().await;
 
@@ -68,7 +68,7 @@ async fn test_valid_sst1_magic_marker() {
 
 #[tokio::test]
 async fn test_invalid_magic_marker_rejection() {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities();
 
     let reader = create_test_reader().await;
 
@@ -112,7 +112,7 @@ async fn test_invalid_magic_marker_rejection() {
 
 #[tokio::test]
 async fn test_file_too_small() {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities();
 
     let reader = create_test_reader().await;
 
@@ -143,7 +143,7 @@ async fn test_file_too_small() {
 
 #[tokio::test]
 async fn test_nonexistent_file() {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities();
 
     let reader = create_test_reader().await;
 
@@ -167,7 +167,7 @@ async fn test_nonexistent_file() {
 
 #[tokio::test]
 async fn test_search_skips_invalid_files() {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities();
 
     let reader = create_test_reader().await;
 
@@ -225,7 +225,7 @@ async fn test_search_skips_invalid_files() {
 
 #[tokio::test]
 async fn test_validation_logs_debug_info() {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities();
 
     let reader = create_test_reader().await;
 
@@ -249,7 +249,7 @@ async fn test_validation_logs_debug_info() {
 
 #[tokio::test]
 async fn test_edge_case_magic_markers() {
-    let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities();
 
     let reader = create_test_reader().await;
 

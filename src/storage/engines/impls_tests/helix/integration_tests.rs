@@ -97,7 +97,7 @@ fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord> {
 /// Test basic HELIX engine initialization
 #[tokio::test]
 async fn test_helix_engine_initialization() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     let (engine, _temp_dir) = create_test_helix_engine().await;
     assert_eq!(engine.engine_name(), "helix");
     assert_eq!(engine.engine_version(), "1.0.0");
@@ -168,7 +168,7 @@ async fn test_hilbert_curve_encoding() {
 /// Test flush and compaction with clustering
 #[tokio::test]
 async fn test_flush_and_compaction() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
@@ -324,7 +324,7 @@ async fn test_liquid_clustering() {
 /// Test progressive search with quantization
 #[tokio::test]
 async fn test_progressive_search() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     use crate::storage::engines::helix::progressive_search::ProgressiveSearchCoordinator;
 
@@ -479,7 +479,7 @@ async fn test_zone_maps() {
 /// Test end-to-end search with all optimizations
 #[tokio::test]
 async fn test_end_to_end_search() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let _config = HelixConfig::default();
@@ -751,7 +751,7 @@ fn create_test_records(count: usize, dims: usize) -> Vec<VectorRecord> {
 
 #[tokio::test]
 async fn test_helix_engine_creation() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let (engine, _helix_temp) = create_test_helix_engine().await;
 
@@ -761,7 +761,7 @@ async fn test_helix_engine_creation() {
 
 #[tokio::test]
 async fn test_flush_operation() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
@@ -834,7 +834,7 @@ async fn test_flush_operation() {
 
 #[tokio::test]
 async fn test_vector_search() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
@@ -935,7 +935,7 @@ async fn test_vector_search() {
 
 #[tokio::test]
 async fn test_vector_by_id() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
@@ -1010,7 +1010,7 @@ async fn test_vector_by_id() {
 
 #[tokio::test]
 async fn test_compaction() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempfile::tempdir().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
@@ -1110,7 +1110,7 @@ async fn test_compaction() {
 
 #[tokio::test]
 async fn test_pca_model_training_v2() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let records = create_test_records(100, 128);
     let model = clustering::PCAModel::train(&records, 16).unwrap();
@@ -1125,7 +1125,7 @@ async fn test_pca_model_training_v2() {
 
 #[tokio::test]
 async fn test_hilbert_key_computation() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Use vectors with different patterns (not uniform values)
     // Uniform vectors like [0,0,0] or [1,1,1] normalize to [0.5,0.5,0.5] and produce same key
@@ -1145,7 +1145,7 @@ async fn test_hilbert_key_computation() {
 
 #[tokio::test]
 async fn test_liquid_clustering_v2() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let mut tracker = clustering::QueryPatternTracker::default();
 
@@ -1168,7 +1168,7 @@ async fn test_liquid_clustering_v2() {
 
 #[tokio::test]
 async fn test_proxima_integration() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1240,7 +1240,7 @@ async fn test_proxima_integration() {
 
 #[tokio::test]
 async fn test_metrics_collection() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let path = temp_dir.path().to_str().unwrap().to_string();
@@ -1346,7 +1346,7 @@ mod clustering_tests {
 /// Test block sizes are correctly written and read from header
 #[tokio::test]
 async fn test_block_sizes_serialization_roundtrip() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1425,7 +1425,7 @@ async fn test_block_sizes_serialization_roundtrip() {
 /// Test large dimension blocks (1536D - OpenAI embeddings)
 #[tokio::test]
 async fn test_large_dimension_blocks_1536d() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1517,7 +1517,7 @@ async fn test_large_dimension_blocks_1536d() {
 /// Test extreme dimension blocks (4096D - Cohere embeddings)
 #[tokio::test]
 async fn test_extreme_dimension_blocks_4096d() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1582,7 +1582,7 @@ async fn test_extreme_dimension_blocks_4096d() {
 /// Test exact size reads eliminate re-reads
 #[tokio::test]
 async fn test_exact_size_eliminates_rereads() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1667,7 +1667,7 @@ async fn test_exact_size_eliminates_rereads() {
 /// Test header integrity validation (size mismatch detection)
 #[tokio::test]
 async fn test_header_size_mismatch_detection() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1731,7 +1731,7 @@ async fn test_header_size_mismatch_detection() {
 /// Test block sizes with no compression (worst case)
 #[tokio::test]
 async fn test_block_sizes_no_compression() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1801,7 +1801,7 @@ async fn test_block_sizes_no_compression() {
 /// Test multiple blocks with varying sizes
 #[tokio::test]
 async fn test_varying_block_sizes() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1884,7 +1884,7 @@ async fn test_varying_block_sizes() {
 /// Test hilbert_range is available in header for pruning
 #[tokio::test]
 async fn test_hilbert_range_in_header() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();
@@ -1964,7 +1964,7 @@ async fn test_hilbert_range_in_header() {
 /// Test complete query flow: header read → hilbert pruning → exact block reads
 #[tokio::test]
 async fn test_complete_query_flow_with_pruning() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = tempdir().unwrap();
     let temp_path = temp_dir.path().to_str().unwrap().to_string();

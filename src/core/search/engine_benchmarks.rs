@@ -190,11 +190,11 @@ impl StorageEngineBenchmark {
 
     /// Detect hardware capabilities
     fn detect_hardware_profile() -> HardwareProfile {
-        let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let simd_level = proximadb_hardware::best_simd_level();
 
         HardwareProfile {
-            has_avx512: caps.has_avx512(),
-            has_avx2: caps.has_simd(),
+            has_avx512: simd_level >= proximadb_hardware::SimdLevel::AVX512,
+            has_avx2: simd_level >= proximadb_hardware::SimdLevel::AVX2,
             available_memory_gb: 16.0, // Default estimate
             cpu_cores: num_cpus::get(),
         }

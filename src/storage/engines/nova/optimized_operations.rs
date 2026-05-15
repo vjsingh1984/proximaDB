@@ -468,7 +468,7 @@ mod tests {
     #[tokio::test]
     async fn test_optimized_viper_operations() {
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let ops = OptimizedNovaOperations::new().unwrap();
         // Test compute mode selection
         let small_vectors = vec![vec![0.0; 128]; 10];

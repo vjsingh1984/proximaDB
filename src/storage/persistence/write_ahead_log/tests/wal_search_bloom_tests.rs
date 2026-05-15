@@ -45,7 +45,7 @@ use tracing::{debug, error, info};
     
     #[tokio::test]
     async fn test_wal_search_with_bloom_filter_optimization() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing WAL search with bloom filter optimization");
         
         // Create WAL manager
@@ -146,7 +146,7 @@ use tracing::{debug, error, info};
     
     #[tokio::test]
     async fn test_bloom_filter_performance_metrics() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing bloom filter performance metrics");
         
         let config = WALConfig::default();
@@ -197,7 +197,7 @@ use tracing::{debug, error, info};
     
     #[tokio::test]
     async fn test_wal_search_distance_metrics() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing WAL search with different distance metrics");
         
         let config = WALConfig::default();
@@ -250,7 +250,7 @@ use tracing::{debug, error, info};
     
     #[tokio::test]
     async fn test_empty_wal_search() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing search on empty WAL");
         
         let config = WALConfig::default();
@@ -276,7 +276,7 @@ use tracing::{debug, error, info};
     
     #[tokio::test]
     async fn test_wal_search_ranking() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing WAL search result ranking");
         
         let config = WALConfig::default();
@@ -325,7 +325,7 @@ use tracing::{debug, error, info};
     
     #[tokio::test]
     async fn test_metadata_filter_operators() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing various metadata filter operators");
         
         let config = WALConfig::default();

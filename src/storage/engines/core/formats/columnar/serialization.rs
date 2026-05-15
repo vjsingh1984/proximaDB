@@ -19,7 +19,6 @@ use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
 use crate::core::compression::CompressionAlgorithm;
-use crate::core::hardware_capabilities::get_hardware_capabilities;
 use crate::proto::proximadb_v1::VectorRecord;
 
 /// Serialization configuration for columnar storage
@@ -163,9 +162,6 @@ pub struct ColumnarSerializer {
     /// Memory pools for reuse
     memory_pools: MemoryPools,
 
-    /// Hardware capabilities for optimization
-    #[allow(dead_code)]
-    hardware_caps: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
 }
 
 /// Memory pools for efficient reuse
@@ -353,8 +349,6 @@ pub struct PerformanceStats {
 impl ColumnarSerializer {
     /// Create new serializer
     pub fn new(config: ColumnarSerializationConfig) -> Result<Self> {
-        let hardware_caps = get_hardware_capabilities();
-
         let quantization_engine = if config.quantization.is_some() {
             let quant_config = StorageQuantizationConfig::default(); // Deferred: Convert from QuantizationConfig
             let distance_compute = Arc::new(
@@ -380,7 +374,6 @@ impl ColumnarSerializer {
             config,
             quantization_engine,
             memory_pools: MemoryPools::new(),
-            hardware_caps,
         })
     }
 

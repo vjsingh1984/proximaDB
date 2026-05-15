@@ -1234,7 +1234,7 @@ mod tests {
     #[tokio::test]
     async fn test_pq_based_sorting() {
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Create quantization infrastructure
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());

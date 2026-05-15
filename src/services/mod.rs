@@ -226,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_searches_no_interference() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing concurrent searches don't interfere with each other");
 
         // Track concurrent search executions
@@ -292,7 +292,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_wal_scan_happens_once_per_search() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing WAL is scanned exactly once per search");
 
         // Track WAL scan invocations
@@ -340,7 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_orchestration_order() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing search orchestration order");
 
         // Track the order of operations
@@ -421,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_index_and_storage_mutual_exclusion() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing that indexes and raw storage aren't both searched");
 
         // When indexes are available and used, raw storage scan should be skipped
@@ -482,7 +482,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata_filter_propagation() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing metadata filter propagation through search layers");
 
         // Verify that metadata filters are properly propagated to:
@@ -549,7 +549,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_performance_with_no_double_scan() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         info!("🧪 Testing that search operations scan WAL only once");
 
         use tracing::info;

@@ -736,8 +736,7 @@ mod tests {
     use super::*;
     #[allow(dead_code)]
     async fn test_columnar_optimizer_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        let _hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
             crate::proto::proximadb_v1::DistanceMetric::Cosine,
         ));

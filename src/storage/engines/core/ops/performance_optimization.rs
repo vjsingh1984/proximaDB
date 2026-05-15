@@ -674,7 +674,7 @@ impl UniversalPerformanceOptimizer {
     ) -> Result<Vec<f32>> {
         let mut distances = Vec::new();
 
-        if get_shared_hardware_capabilities().cpu.features.avx2_support {
+        if proximadb_hardware::best_simd_level() >= proximadb_hardware::SimdLevel::AVX2 {
             // Use SIMD acceleration
             for candidate in candidates {
                 let distance = match metric {
@@ -804,7 +804,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_universal_optimizer_creation() {
-        let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let optimizer =
             UniversalPerformanceOptimizer::with_strategy(UniversalOptimizationStrategy::Balanced)
@@ -820,7 +820,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_tier_optimization() {
-        let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let optimizer = UniversalPerformanceOptimizer::with_strategy(
             UniversalOptimizationStrategy::CostOptimized,

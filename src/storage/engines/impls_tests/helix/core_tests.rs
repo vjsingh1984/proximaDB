@@ -62,7 +62,7 @@ use tempfile::TempDir;
 // Benchmarks moved to benches/ directory - #[bench] requires unstable feature
 // #[bench]
 // fn bench_pca_training(b: &mut Bencher) {
-//     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+//     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 //
 //     let vectors = generate_random_vectors(1000, 768, 42);
 //
@@ -74,7 +74,7 @@ use tempfile::TempDir;
 //
 // #[bench]
 // fn bench_pca_projection(b: &mut Bencher) {
-//     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+//     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 //
 //     let vectors = generate_random_vectors(100, 768, 42);
 //     let model = clustering::PCAModel::train(&vectors, 16).unwrap();
@@ -88,7 +88,7 @@ use tempfile::TempDir;
 //
 // #[bench]
 // fn bench_hilbert_key_computation(b: &mut Bencher) {
-//     let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+//     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 //
 //     let vectors = vec![
 //         vec![0.1, 0.2, 0.3],
@@ -106,7 +106,7 @@ use tempfile::TempDir;
 
 #[tokio::test]
 async fn bench_flush_performance() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let config = HelixConfig::default();
@@ -144,7 +144,7 @@ async fn bench_flush_performance() {
 
 #[tokio::test]
 async fn bench_search_with_pruning() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let mut config = HelixConfig::default();
@@ -226,7 +226,7 @@ async fn bench_search_with_pruning() {
 
 #[tokio::test]
 async fn bench_compaction_throughput() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let temp_dir = TempDir::new().unwrap();
     let mut config = HelixConfig::default();
