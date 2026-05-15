@@ -16,8 +16,10 @@
 //! - NEON on ARM
 //! - Scalar fallback for other platforms
 
+pub mod conversion;
 pub mod engine;
 pub mod impls;
+pub mod int8_simd;
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +27,7 @@ use serde::{Deserialize, Serialize};
 pub use proximadb_proto::v1::DistanceMetric;
 
 // Re-export implementations
+pub use conversion::{get_distance_metric_from_config, internal_distance_to_proto, proto_distance_to_internal};
 pub use engine::UnifiedDistanceCompute;
 pub use impls::{cosine_distance, dot_product, euclidean_distance, manhattan_distance};
 
