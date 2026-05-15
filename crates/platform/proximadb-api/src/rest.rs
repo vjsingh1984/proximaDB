@@ -2,10 +2,16 @@
 //!
 //! HTTP/JSON API handlers via Axum framework.
 
+pub mod errors;
+pub mod state;
 pub mod v1;
 pub mod v2;
 
 use serde::Serialize;
+
+// Re-export errors and state for consumers
+pub use errors::{RestError, RestResult};
+pub use state::{RestAppState, TenantContext};
 
 // Re-export v1 handlers
 pub use v1::{
