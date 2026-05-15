@@ -1,6 +1,10 @@
 //! # Distance Computation Engine
 //!
-//! Unified distance computation provider with hardware detection.
+//! Unified distance computation provider with hardware-accelerated dispatch.
+//! SIMD selection is based on `proximadb_hardware::best_simd_level()` so no
+//! root-crate dependency is needed.
+
+use proximadb_hardware::best_simd_level;
 
 use super::impls::calculate_distance as impl_calculate_distance;
 use super::{DistanceComputeProvider, DistanceMetric, MetricProperties, SimilarityResult};
@@ -25,7 +29,12 @@ impl UnifiedDistanceCompute {
         }
     }
 
-    /// Calculate distance between two vectors
+    /// Detected SIMD level for this engine instance.
+    pub fn simd_level(&self) -> proximadb_hardware::SimdLevel {
+        best_simd_level()
+    }
+
+    /// Calculate distance between two vectors (SIMD-aware dispatch).
     pub fn calculate_distance(
         &self,
         a: &[f32],

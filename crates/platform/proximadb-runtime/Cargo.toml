@@ -18,6 +18,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
 proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
+proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto.workspace = true
 num_cpus = "1.16"

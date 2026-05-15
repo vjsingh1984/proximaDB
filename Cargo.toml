@@ -26,6 +26,7 @@ members = [
     "crates/foundation/proximadb-distance-types",
     "crates/foundation/proximadb-encoding-types",
     "crates/foundation/proximadb-filter-expression",
+    "crates/foundation/proximadb-hardware",
     "crates/foundation/proximadb-kernel",
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
@@ -80,6 +81,7 @@ hyper = { version = "0.14" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
+proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }

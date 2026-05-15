@@ -17,6 +17,7 @@ path = "src/lib.rs"
 anyhow.workspace = true
 arrow.workspace = true
 async-trait.workspace = true
+proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
