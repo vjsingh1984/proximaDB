@@ -48,6 +48,17 @@ pub struct RestServer {
     tls_config: Option<NetworkTlsConfig>,
 }
 
+/// Port-based service objects for wiring proximadb-api REST handlers.
+///
+/// When provided to `RestServer`, the document/graph/observability routes are
+/// served by the port-backed handlers from `proximadb-api` instead of the
+/// legacy root-crate handlers.
+pub struct RestServerPorts {
+    pub doc_port: std::sync::Arc<dyn proximadb_runtime::DocumentPort>,
+    pub graph_port: std::sync::Arc<dyn proximadb_runtime::GraphPort>,
+    pub obs_port: std::sync::Arc<dyn proximadb_runtime::ObservabilityPort>,
+}
+
 /// Authentication configuration for the REST server
 #[derive(Debug, Clone, Default)]
 pub struct RestAuthConfig {
@@ -322,7 +333,41 @@ impl RestServer {
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
-        let state = AppState::new(
+        Self::with_security_and_config_and_ports(
+            bind_addr,
+            request_handlers,
+            graph_execution_service,
+            max_request_size_mb,
+            compression,
+            metrics_collector,
+            security_coordinator,
+            security_config,
+            data_dir,
+            query_adapter,
+            llm_engine,
+            None,
+        )
+    }
+
+    /// Create new REST server with port-backed service objects wired in.
+    ///
+    /// When `ports` is `Some`, document/graph/observability routes are served
+    /// by handlers from `proximadb-api` that delegate to the port trait objects.
+    pub fn with_security_and_config_and_ports(
+        bind_addr: SocketAddr,
+        request_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
+        max_request_size_mb: Option<u64>,
+        compression: bool,
+        metrics_collector: Option<Arc<MetricsCollector>>,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
+        security_config: RestServerSecurityConfig,
+        data_dir: std::path::PathBuf,
+        query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+        ports: Option<RestServerPorts>,
+    ) -> Self {
+        let base_state = AppState::new(
             request_handlers,
             graph_execution_service,
             security_coordinator.clone(),
@@ -330,6 +375,11 @@ impl RestServer {
             query_adapter,
             llm_engine,
         );
+        let state = if let Some(p) = ports {
+            base_state.with_ports(p.doc_port, p.graph_port, p.obs_port)
+        } else {
+            base_state
+        };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
         let max_size_bytes = max_request_size_mb.unwrap_or(64) * 1024 * 1024;

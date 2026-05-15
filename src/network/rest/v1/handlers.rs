@@ -55,6 +55,12 @@ pub struct AppState {
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
     /// LLM engine for semantic operations
     pub llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+    /// Port-based document service (from proximadb-api migration)
+    pub doc_port: Option<Arc<dyn proximadb_runtime::DocumentPort>>,
+    /// Port-based graph service (from proximadb-api migration)
+    pub graph_port: Option<Arc<dyn proximadb_runtime::GraphPort>>,
+    /// Port-based observability service (from proximadb-api migration)
+    pub obs_port: Option<Arc<dyn proximadb_runtime::ObservabilityPort>>,
 }
 
 impl AppState {
@@ -78,7 +84,23 @@ impl AppState {
             ))),
             catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
             llm_engine,
+            doc_port: None,
+            graph_port: None,
+            obs_port: None,
         }
+    }
+
+    /// Inject port-based service objects for API-crate-backed routes.
+    pub fn with_ports(
+        mut self,
+        doc_port: Arc<dyn proximadb_runtime::DocumentPort>,
+        graph_port: Arc<dyn proximadb_runtime::GraphPort>,
+        obs_port: Arc<dyn proximadb_runtime::ObservabilityPort>,
+    ) -> Self {
+        self.doc_port = Some(doc_port);
+        self.graph_port = Some(graph_port);
+        self.obs_port = Some(obs_port);
+        self
     }
 
     /// Create health-check state from the same explicit REST capability view.
@@ -1590,16 +1612,25 @@ pub fn create_router(state: AppState) -> axum::Router {
             "/api/v1/search/with_metadata",
             post(vector_search_with_metadata),
         )
-        // Graph database endpoints
+        // Graph database endpoints — use port-based router if available, else root-crate router
         .nest(
             "/api/v1/graph",
-            crate::network::rest::v1::graph::create_graph_router(),
+            if let Some(ref gp) = state.graph_port {
+                use proximadb_api::rest::{GraphRestState, create_graph_router};
+                create_graph_router().with_state(GraphRestState { graph_port: gp.clone() })
+            } else {
+                crate::network::rest::v1::graph::create_graph_router()
+            },
         )
         // SKS entity endpoints (storage-coupled path)
         .nest("/api", entities_router);
 
-    // Document API endpoints (with WAL for durability)
-    let document_router = {
+    // Document API endpoints — use port-based router if available, else root-crate router
+    let document_router = if let Some(ref dp) = state.doc_port {
+        use proximadb_api::rest::{DocumentRestState, create_document_router};
+        info!("✅ Document API routing via port-based handler (proximadb-api)");
+        create_document_router().with_state(DocumentRestState { document_port: dp.clone() })
+    } else {
         use crate::network::rest::v1::document::{self, DocumentApiState};
         use crate::storage::document::DocumentService;
 
@@ -1608,8 +1639,6 @@ pub fn create_router(state: AppState) -> axum::Router {
             .vector_operations_service
             .unified_engine();
 
-        // Use WAL-enabled constructor for durability (same as gRPC server)
-        // data_dir comes from TOML config (server.data_dir)
         let doc_base_path = state.data_dir.join("documents");
         let doc_path_str = doc_base_path.to_string_lossy().to_string();
 
@@ -1629,22 +1658,17 @@ pub fn create_router(state: AppState) -> axum::Router {
         document::create_document_router().with_state(doc_state)
     };
     router = router.nest("/api/v1/documents", document_router);
-    info!("✅ Document API endpoints enabled at /api/v1/documents (WAL-enabled)");
+    info!("✅ Document API endpoints enabled at /api/v1/documents");
 
-    // Observability API endpoints (with WAL for durability)
-    // Create observability service first so it can be shared with unified query
-    let observability_service: Option<Arc<crate::observability::ObservabilityService>> = {
+    // Observability API endpoints — use port-based router if available, else root-crate router
+    let observability_service: Option<Arc<crate::observability::ObservabilityService>> = if state.obs_port.is_none() {
         use crate::observability::{ObservabilityService, ObservabilityStorage};
 
-        // Create storage in data directory with WAL for durability (same as gRPC server)
-        // data_dir comes from TOML config (server.data_dir)
         let obs_base_path = state.data_dir.join("observability");
         let obs_path_str = obs_base_path.to_string_lossy().to_string();
 
-        // Create service with WAL-enabled storage
         match tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                // Try WAL-enabled storage first
                 let storage = match ObservabilityStorage::new_with_wal(&obs_path_str).await {
                     Ok(s) => Arc::new(s),
                     Err(e) => {
@@ -1661,10 +1685,18 @@ pub fn create_router(state: AppState) -> axum::Router {
                 None
             }
         }
+    } else {
+        None
     };
 
-    // Create observability router if service initialized successfully
-    if let Some(ref obs_service) = observability_service {
+    if let Some(ref op) = state.obs_port {
+        use proximadb_api::rest::{ObservabilityRestState, create_observability_router};
+        router = router.nest(
+            "/api/v1/observability",
+            create_observability_router().with_state(ObservabilityRestState { observability_port: op.clone() }),
+        );
+        info!("✅ Observability API routing via port-based handler (proximadb-api)");
+    } else if let Some(ref obs_service) = observability_service {
         use crate::network::rest::v1::observability::{self, ObservabilityApiState};
         let obs_state = ObservabilityApiState {
             observability_service: obs_service.clone(),

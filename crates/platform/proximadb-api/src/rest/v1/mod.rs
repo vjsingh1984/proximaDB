@@ -22,6 +22,7 @@ pub use observability::{LogsHandler, MetricsHandler};
 // Re-exports — state types
 pub use analytics::AnalyticsRestState;
 pub use document::DocumentRestState;
+pub use graph::GraphRestState;
 pub use observability::ObservabilityRestState;
 
 // Re-exports — router builders
@@ -29,6 +30,7 @@ pub use analytics::create_analytics_router;
 pub use catalog::create_collection_router;
 pub use document::create_document_router;
 pub use entities::{create_vector_router, parse_batch_request, parse_search_request};
+pub use graph::create_graph_router;
 pub use hybrid::{create_health_router, create_sql_router, execute_sql, sql_value_to_json};
 pub use observability::create_observability_router;
 

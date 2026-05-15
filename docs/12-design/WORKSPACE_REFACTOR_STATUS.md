@@ -97,8 +97,17 @@ The workspace refactor has achieved substantial completion with proper architect
   - `proximadb-api/src/rest/v1/observability.rs`: logs/metrics/traces ingest + query → `ObservabilityPort`; `ObservabilityRestState`
   - `proximadb-api/src/rest/v1/analytics.rs`: Entanglement Index (inline pure-math); `AnalyticsRestState`
   - All migrated handlers compile cleanly without root-crate concrete type deps; 17 tests pass in `proximadb-api`
+- ✅ REST handler migration wave 2 (2026-05-15):
+  - `proximadb-api/src/rest/v1/graph.rs`: full graph REST API via `GraphPort`
+    - Node/edge CRUD, query, traversal (BFS/DFS), walk/step (agentic), shortest path
+    - Connected components, cycle detection, unique constraints DDL, batch create
+    - Declarative query via `GraphPort::execute_query`
+    - Legacy 308 redirects preserved
+    - Graph collection management, RAG, PULSAR/QUASAR → `501 Not Implemented`
+    - 5 tests pass; zero root-crate concrete type deps
+  - `GraphRestState` exported from `proximadb-api::rest`
+  - `create_graph_router()` exported for integration
 - ⏳ REST handler migration remaining:
-  - `graph.rs` (3,208 lines) — uses `GraphOperationsService` + root-crate canonical types; needs `GraphPort` REST adaptation
   - `handlers.rs` remaining (explain_sql, hybrid search/index, `create_router`) — concrete root deps
   - `multimodal_query.rs` (2,318 lines) — uses `QueryFacadeAdapter` concrete type
 - ⏳ Phase 9.9: Move `UnifiedHandlers` to `proximadb-runtime`

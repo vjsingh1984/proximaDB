@@ -175,6 +175,10 @@ impl MultiServer {
         let services = self.shared_services.clone();
         let mut handles = Vec::new();
 
+        // Holds port-backed service objects created inside the gRPC block so the
+        // REST server (a sibling block) can also use them.
+        let mut rest_ports_opt: Option<crate::network::rest::server::RestServerPorts> = None;
+
         // Start gRPC server on port 5679 if configured
         if self.config.grpc_config.enable_grpc {
             info!("🔗 Starting gRPC Server on port 5679");
@@ -317,6 +321,14 @@ impl MultiServer {
             let obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service),
             );
+
+            // Clone ports for REST server before they are consumed by the gRPC factory
+            rest_ports_opt = Some(crate::network::rest::server::RestServerPorts {
+                doc_port: doc_port.clone(),
+                graph_port: graph_port.clone(),
+                obs_port: obs_port.clone(),
+            });
+
             let streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
                 Arc::new(crate::network::grpc::StreamingServiceImpl::new());
             let security_port: Arc<dyn proximadb_runtime::SecurityPort> =
@@ -471,8 +483,9 @@ impl MultiServer {
                 let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
                 rest_security.auth.enabled = auth_enabled;
 
-                // Use with_security_and_config to pass data_dir from TOML config
-                match RestServer::with_security_and_config(
+                // Pass port objects so document/graph/observability routes use
+                // the port-backed handlers from proximadb-api.
+                match RestServer::with_security_and_config_and_ports(
                     rest_bind_addr,
                     request_handlers,
                     graph_execution_service,
@@ -484,6 +497,7 @@ impl MultiServer {
                     data_dir,
                     query_adapter,
                     llm_engine,
+                    rest_ports_opt,
                 )
                 .start()
                 .await
