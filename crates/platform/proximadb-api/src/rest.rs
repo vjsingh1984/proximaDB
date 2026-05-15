@@ -13,11 +13,18 @@ use serde::Serialize;
 pub use errors::{RestError, RestResult};
 pub use state::{RestAppState, TenantContext};
 
-// Re-export v1 handlers
+// Re-export v1 handler types and state types
 pub use v1::{
     AnalyticsHandler, AqlHandler, CatalogHandler, CollectionHandler, DocumentHandler,
     DocumentQueryHandler, EntityHandler, GraphHandler, GraphTraversalHandler, HybridSearchHandler,
     LogsHandler, MetricsHandler, ProgressiveSearchHandler, VectorHandler,
+};
+pub use v1::{AnalyticsRestState, DocumentRestState, ObservabilityRestState};
+
+// Re-export v1 router builders
+pub use v1::{
+    create_analytics_router, create_collection_router, create_document_router,
+    create_health_router, create_observability_router, create_sql_router, create_vector_router,
 };
 
 /// REST API request context

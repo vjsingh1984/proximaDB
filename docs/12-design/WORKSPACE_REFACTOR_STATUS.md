@@ -1,8 +1,8 @@
 # Workspace Refactor Status
 
-**Last Updated**: 2026-05-14
+**Last Updated**: 2026-05-15
 **Overall Completion**: 98%
-**Current Phase**: Phase 9 (Platform Runtime Extraction) - 90% COMPLETE
+**Current Phase**: Phase 9 (Platform Runtime Extraction) - 92% COMPLETE
 
 ## Executive Summary
 
@@ -87,7 +87,20 @@ The workspace refactor has achieved substantial completion with proper architect
 - ✅ Graph CSR projection contracts in proximadb-graph
 
 **Remaining (multi-sprint)**:
-- ⏳ REST handlers: `src/network/rest/` (22,422 lines) → `proximadb-api/src/rest/` (currently tiny stubs)
+- ✅ REST handler migration wave 1 (2026-05-15):
+  - `proximadb-api/src/rest/errors.rs`: self-contained `RestError` + `RestResult`
+  - `proximadb-api/src/rest/state.rs`: `RestAppState` (Arc<dyn ApiHandlersPort>) + `TenantContext`
+  - `proximadb-api/src/rest/v1/entities.rs`: vector search, batch, get, delete, with_metadata → `ApiHandlersPort`
+  - `proximadb-api/src/rest/v1/catalog.rs`: collection CRUD + proto-enum normalisation → `ApiHandlersPort`
+  - `proximadb-api/src/rest/v1/hybrid.rs`: SQL execute + liveness/readiness → `ApiHandlersPort`
+  - `proximadb-api/src/rest/v1/document.rs`: full document CRUD + aggregation → `DocumentPort`; `DocumentRestState`
+  - `proximadb-api/src/rest/v1/observability.rs`: logs/metrics/traces ingest + query → `ObservabilityPort`; `ObservabilityRestState`
+  - `proximadb-api/src/rest/v1/analytics.rs`: Entanglement Index (inline pure-math); `AnalyticsRestState`
+  - All migrated handlers compile cleanly without root-crate concrete type deps; 17 tests pass in `proximadb-api`
+- ⏳ REST handler migration remaining:
+  - `graph.rs` (3,208 lines) — uses `GraphOperationsService` + root-crate canonical types; needs `GraphPort` REST adaptation
+  - `handlers.rs` remaining (explain_sql, hybrid search/index, `create_router`) — concrete root deps
+  - `multimodal_query.rs` (2,318 lines) — uses `QueryFacadeAdapter` concrete type
 - ⏳ Phase 9.9: Move `UnifiedHandlers` to `proximadb-runtime`
   - **Blocker**: depends on extracting CollectionService, ObservabilityService, DocumentService, QueryFacadeAdapter from root crate first
 - ⏳ Phase 9.10: Move service composition (CollectionService, VectorOps, etc.) to `proximadb-runtime`
