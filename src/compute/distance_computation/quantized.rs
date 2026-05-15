@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{info, trace};
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
+use proximadb_hardware::{SimdLevel, best_simd_level};
 
 /// Configuration for distance calculations on quantized data
 #[derive(Debug, Clone)]
@@ -260,9 +260,8 @@ pub struct QuantizedDistanceCalculator {
     /// Unified distance compute engine
     distance_engine: Arc<UnifiedDistanceCompute>,
 
-    /// Hardware capabilities
-    #[allow(dead_code)]
-    hardware_caps: Arc<HardwareCapabilities>,
+    /// Whether SIMD is available on this platform
+    has_simd: bool,
 
     /// Distance table cache for PQ
     #[allow(dead_code)]
@@ -421,7 +420,7 @@ impl Default for HardwarePreferences {
 impl QuantizedDistanceCalculator {
     /// Create new distance calculator
     pub fn new(config: QuantizedDistanceConfig) -> Result<Self> {
-        let hardware_caps = get_hardware_capabilities();
+        let has_simd = best_simd_level() > SimdLevel::Scalar;
         let distance_engine = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
         let pq_distance_cache = Arc::new(std::sync::RwLock::new(PQDistanceCache {
@@ -431,7 +430,7 @@ impl QuantizedDistanceCalculator {
             memory_usage_bytes: 0,
         }));
 
-        let hamming_lut = Arc::new(HammingLookupTable::new(&hardware_caps)?);
+        let hamming_lut = Arc::new(HammingLookupTable::new(has_simd)?);
 
         let int8_distance_tables = Arc::new(std::sync::RwLock::new(Int8DistanceTables {
             tables: std::collections::HashMap::new(),
@@ -446,7 +445,7 @@ impl QuantizedDistanceCalculator {
         Ok(Self {
             config,
             distance_engine,
-            hardware_caps,
+            has_simd,
             pq_distance_cache,
             hamming_lut,
             int8_distance_tables,
@@ -888,7 +887,7 @@ impl QuantizedDistanceCalculator {
     fn should_use_simd(&self, dimension: usize) -> bool {
         self.config.simd_optimization.enable_simd
             && dimension >= self.config.simd_optimization.simd_threshold
-            && self.hardware_caps.has_simd()
+            && self.has_simd
     }
 
     /// Return true when the batch is large enough to benefit from SIMD batch processing.
@@ -1137,7 +1136,7 @@ impl QuantizedDistanceCalculator {
 // Implementation of helper structs
 impl HammingLookupTable {
     /// Build a 256-entry popcount lookup table, detecting hardware POPCNT support.
-    fn new(hardware_caps: &HardwareCapabilities) -> Result<Self> {
+    fn new(has_simd: bool) -> Result<Self> {
         let mut hamming_weights = [0u8; 256];
         for (i, weight) in hamming_weights.iter_mut().enumerate() {
             *weight = (i as u8).count_ones() as u8;
@@ -1145,7 +1144,7 @@ impl HammingLookupTable {
 
         Ok(Self {
             hamming_weights,
-            has_popcnt: hardware_caps.has_simd(), // Simplified check
+            has_popcnt: has_simd,
         })
     }
 }
@@ -1247,7 +1246,7 @@ mod tests {
     use super::*;
 
     fn init_hardware_capabilities() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     }
 
     #[test]
@@ -1297,8 +1296,7 @@ mod tests {
     fn test_hamming_lookup_table() {
         init_hardware_capabilities();
 
-        let hardware_caps = get_hardware_capabilities();
-        let lut = HammingLookupTable::new(&hardware_caps).unwrap();
+        let lut = HammingLookupTable::new(best_simd_level() > SimdLevel::Scalar).unwrap();
 
         // Test known values
         assert_eq!(lut.hamming_weights[0], 0); // 0000_0000

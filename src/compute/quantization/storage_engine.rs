@@ -16,7 +16,7 @@ use super::quantization_engine::{
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 // Note: create_distance_calculator is available but not currently used
 // use crate::compute::distance_computation::create_distance_calculator;
-use crate::core::hardware_capabilities::{HardwareBackend, get_hardware_capabilities};
+use proximadb_hardware::{SimdLevel, best_simd_level};
 
 /// Common configuration for storage engine quantization
 #[derive(Debug, Clone)]
@@ -141,8 +141,8 @@ pub struct StorageQuantizationEngine {
     config: StorageQuantizationConfig,
     /// Cached codebooks
     codebooks: Arc<DashMap<String, Arc<Vec<Vec<f32>>>>>,
-    /// Hardware capabilities
-    hardware: Option<HardwareBackend>,
+    /// SIMD level (None means scalar-only)
+    hardware: Option<SimdLevel>,
 }
 
 impl StorageQuantizationEngine {
@@ -152,21 +152,12 @@ impl StorageQuantizationEngine {
         distance_compute: Arc<UnifiedDistanceCompute>,
         config: StorageQuantizationConfig,
     ) -> Self {
-        // Detect hardware capabilities
+        // Detect hardware capabilities using foundation crate
         let hardware = if config.enable_hardware_acceleration {
-            let caps = get_hardware_capabilities();
-            if caps.cpu.features.avx512_support {
-                info!("✅ StorageQuantization using AVX-512 SIMD");
-                Some(HardwareBackend::AVX512)
-            } else if caps.cpu.features.avx2_support {
-                info!("✅ StorageQuantization using AVX2 SIMD");
-                Some(HardwareBackend::AVX2)
-            } else if caps.cpu.features.sse42_support {
-                info!("✅ StorageQuantization using SSE SIMD");
-                Some(HardwareBackend::SSE)
-            } else if caps.cpu.features.neon_support {
-                info!("✅ StorageQuantization using NEON SIMD");
-                Some(HardwareBackend::NEON)
+            let level = best_simd_level();
+            if level > SimdLevel::Scalar {
+                info!("✅ StorageQuantization using SIMD level: {:?}", level);
+                Some(level)
             } else {
                 None
             }
@@ -706,11 +697,7 @@ impl StorageQuantizationEngine {
             let codes = &quantized_vector.data;
 
             // Process multiple codes at once if SIMD is available
-            if let Some(HardwareBackend::AVX2)
-            | Some(HardwareBackend::AVX512)
-            | Some(HardwareBackend::SSE)
-            | Some(HardwareBackend::NEON) = self.hardware
-            {
+            if self.hardware.is_some() {
                 // Use SIMD to sum up distances from lookup tables
                 // Process 4 or 8 codes at a time depending on SIMD width
                 let simd_width = 4; // AVX can process 8 floats, but we're indexing
@@ -1499,8 +1486,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_quantization_engine() {
-        // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        // Hardware capabilities auto-initialize via proximadb_hardware OnceLock
+        let _ = proximadb_hardware::hardware_capabilities();
 
         // Create engines
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());

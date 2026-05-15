@@ -1927,7 +1927,7 @@ mod tests {
 
     #[test]
     fn test_quantization_level_bytes() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let dimension = 768;
 
         let pq8 = UnifiedQuantizationLevel::pq8(16);
@@ -1953,7 +1953,7 @@ mod tests {
 
     #[test]
     fn test_compression_ratio() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let dimension = 768;
 
         let pq8 = UnifiedQuantizationLevel::pq8(16);
@@ -1963,7 +1963,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_quantization_roundtrip() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(InMemoryCodebookStore::new());
         let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
@@ -1991,7 +1991,7 @@ mod tests {
 
     #[test]
     fn test_quantization_level_variants() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Test PQ4 creation
         let pq4 = UnifiedQuantizationLevel::pq4(8);
         match &pq4.level_type {
@@ -2016,7 +2016,7 @@ mod tests {
 
     #[test]
     fn test_bytes_per_vector_calculation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let dim = 128;
 
         // Test None (FP32)
@@ -2050,7 +2050,7 @@ mod tests {
 
     #[test]
     fn test_compression_ratio_calculations() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let dim = 512;
 
         // No compression
@@ -2075,7 +2075,7 @@ mod tests {
 
     #[test]
     fn test_in_memory_codebook_store() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let rt = tokio::runtime::Runtime::new().unwrap();
 
@@ -2123,7 +2123,7 @@ mod tests {
 
     #[test]
     fn test_hamming_distance_calculation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(InMemoryCodebookStore::new());
         let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
@@ -2151,7 +2151,7 @@ mod tests {
 
     #[test]
     fn test_pq_distance_calculation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let codebook_store = Arc::new(InMemoryCodebookStore::new());
         let engine = UnifiedQuantizationEngine::new(distance_compute, codebook_store);
@@ -2195,7 +2195,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_quantization() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = create_test_engine();
 
         let test_vector = vec![0.1, 0.2, 0.3, 0.4];
@@ -2222,7 +2222,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_uniform_quantization() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = create_test_engine();
 
         let test_vector = vec![0.0, 0.25, 0.5, 0.75, 1.0];
@@ -2263,7 +2263,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_binary_quantization() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = create_test_engine();
 
         let test_vector = vec![-1.0, -0.5, 0.0, 0.5, 1.0, 1.5];
@@ -2298,7 +2298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_scalar_quantization() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = create_test_engine();
 
         let test_vector = vec![0.1, 0.5, 1.0, 2.0, 5.0];
@@ -2329,7 +2329,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_product_quantization() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = create_test_engine();
 
         // Generate training data
@@ -2385,7 +2385,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_quantization() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = create_test_engine();
 
         let vectors: Vec<Vec<f32>> = (0..10).map(|i| vec![i as f32 * 0.1; 8]).collect();
@@ -2416,7 +2416,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_quantization_edge_cases() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = create_test_engine();
 
         // Empty vector
@@ -2445,7 +2445,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_quantization_level_helpers() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Test helper methods
         let pq8 = UnifiedQuantizationLevel::pq8(16);
         if let Some(QuantizationLevel::Pq(pq)) = &pq8.level_type {
@@ -2475,7 +2475,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_bytes_per_vector_calculation_extended() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let dimension = 768; // BERT-like dimension
 
         // No quantization - full FP32
@@ -2510,7 +2510,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compression_ratio_additional() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let dimension = 512;
 
         // Test various quantization levels
@@ -2543,7 +2543,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_distance_on_quantized_vectors() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = create_test_engine();
 
         let vec1 = vec![1.0, 0.0, 0.0, 0.0];
@@ -2579,7 +2579,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_unified_modules_integration() -> Result<()> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
         let codebook_store = Arc::new(InMemoryCodebookStore::new());

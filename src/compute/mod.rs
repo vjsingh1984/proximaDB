@@ -235,8 +235,8 @@ pub struct AccelerationConfig {
     pub math_library: MathLibrary,
 }
 
-// Using central HardwareBackend from hardware_capabilities module
-pub use crate::core::hardware_capabilities::HardwareBackend as ComputeBackend;
+// ComputeBackend: use proximadb_hardware::SimdLevel directly for SIMD dispatch
+pub use proximadb_hardware::SimdLevel as ComputeBackend;
 
 #[derive(Debug, Clone)]
 pub struct CpuVectorization {
@@ -500,7 +500,8 @@ pub struct HardwareInfo {
     pub numa_topology: NumaTopology,
 }
 
-// Re-export CpuFeatures and CacheSizes from centralized hardware capabilities module
+// CpuFeatures and CacheSizes are root-crate-specific (complex NUMA/cache metadata)
+// Use crate::core::hardware_capabilities directly for GPU and detailed CPU info
 pub use crate::core::hardware_capabilities::{CacheSizes, CpuFeatures};
 
 // Using central GpuDevice and GpuBackend from hardware_capabilities module
@@ -565,7 +566,7 @@ mod unified_quantization_tests {
 
     fn setup_hardware_capabilities() {
         INIT.call_once(|| {
-            let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+            let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         });
     }
 

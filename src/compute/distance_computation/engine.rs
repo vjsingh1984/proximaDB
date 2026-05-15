@@ -2573,7 +2573,7 @@ mod tests {
     #[test]
     fn test_platform_detection() {
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let _capability = crate::core::hardware_capabilities::get_hardware_capabilities();
 
         // Test that we can create calculators for all metrics
@@ -2596,7 +2596,7 @@ mod tests {
 
     #[test]
     fn test_scalar_implementations() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let a = vec![1.0, 0.0];
         let b = vec![0.0, 1.0];
 
@@ -2616,7 +2616,7 @@ mod tests {
 
     #[test]
     fn test_metric_specific_implementations() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![4.0, 5.0, 6.0];
 
@@ -2635,7 +2635,7 @@ mod tests {
 
     #[test]
     fn test_batch_processing() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let query = vec![1.0, 2.0, 3.0];
         let vectors = vec![
             vec![1.0, 2.0, 3.0],
@@ -2657,7 +2657,7 @@ mod tests {
 
     #[test]
     fn test_distance_metric_properties() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![4.0, 5.0, 6.0];
 
@@ -2675,7 +2675,7 @@ mod tests {
 
     #[test]
     fn test_simd_vs_scalar_consistency() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let b = vec![8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
 
@@ -2689,7 +2689,7 @@ mod tests {
 
     #[test]
     fn test_zero_vectors() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let zero_a = vec![0.0, 0.0, 0.0];
         let zero_b = vec![0.0, 0.0, 0.0];
         let non_zero = vec![1.0, 2.0, 3.0];
@@ -2728,7 +2728,7 @@ mod tests {
 
     #[test]
     fn test_edge_cases() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Test with single element vectors
         let a = vec![5.0];
         let b = vec![3.0];
@@ -2769,7 +2769,7 @@ mod tests {
 
     #[test]
     fn test_jaccard_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let jaccard_calc = UnifiedDistanceCompute::new(DistanceMetric::Jaccard);
 
         // Test identical sets (binary vectors)
@@ -2801,7 +2801,7 @@ mod tests {
 
     #[test]
     fn test_hamming_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let hamming_calc = UnifiedDistanceCompute::new(DistanceMetric::Hamming);
 
         // Test identical vectors
@@ -2837,7 +2837,7 @@ mod tests {
 
     #[test]
     fn test_chebyshev_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let chebyshev_calc = UnifiedDistanceCompute::new(DistanceMetric::Chebyshev);
 
         // Test identical vectors
@@ -2873,7 +2873,7 @@ mod tests {
 
     #[test]
     fn test_canberra_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let canberra_calc = UnifiedDistanceCompute::new(DistanceMetric::Canberra);
 
         // Test identical vectors
@@ -2902,7 +2902,7 @@ mod tests {
 
     #[test]
     fn test_minkowski_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let minkowski_calc = UnifiedDistanceCompute::new(DistanceMetric::Minkowski);
 
         // Test identical vectors
@@ -2925,7 +2925,7 @@ mod tests {
 
     #[test]
     fn test_angular_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let angular_calc = UnifiedDistanceCompute::new(DistanceMetric::Angular);
 
         // Test identical vectors (angle = 0)
@@ -2967,7 +2967,7 @@ mod tests {
 
     #[test]
     fn test_bray_curtis_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let bray_curtis_calc = UnifiedDistanceCompute::new(DistanceMetric::BrayCurtis);
 
         // Test identical vectors
@@ -3000,7 +3000,7 @@ mod tests {
 
     #[test]
     fn test_hellinger_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let hellinger_calc = UnifiedDistanceCompute::new(DistanceMetric::Hellinger);
 
         // Test identical distributions
@@ -3031,7 +3031,7 @@ mod tests {
 
     #[test]
     fn test_batch_consistency() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let query = vec![1.0, 2.0, 3.0, 4.0];
         let vectors = vec![
             vec![1.0, 2.0, 3.0, 4.0], // Same as query
@@ -3078,7 +3078,7 @@ mod tests {
 
     #[test]
     fn test_large_vector_dimensions() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Test with high-dimensional vectors
         let dim = 1024;
         let a: Vec<f32> = (0..dim).map(|i| i as f32 * 0.001).collect();
@@ -3097,7 +3097,7 @@ mod tests {
 
     #[test]
     fn test_nan_and_infinity_handling() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         use std::f32::{INFINITY, NAN, NEG_INFINITY};
 
         let normal = vec![1.0, 2.0, 3.0];

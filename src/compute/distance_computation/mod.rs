@@ -55,11 +55,9 @@ pub use sparse::{
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
-
     #[test]
     fn test_distance_computation_construction() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Test default construction
         let _default_compute = UnifiedDistanceCompute::default();
         // Test that the engine was constructed successfully
@@ -78,7 +76,7 @@ mod tests {
 
     #[test]
     fn test_chunked_batch_calculation() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
 
         let query = vec![1.0, 2.0, 3.0];
@@ -109,7 +107,7 @@ mod tests {
     fn test_dimension_mismatch_handling() {
         // Test that dimension mismatch causes a panic (debug_assert_eq!)
         // This is the expected behavior for safety - mismatched dimensions are programming errors
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
 
         let vec1 = vec![1.0, 2.0];
@@ -121,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_distance_normalization() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
 
         // Test that all metrics follow "lower = more similar" semantics
