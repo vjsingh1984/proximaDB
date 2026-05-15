@@ -582,51 +582,113 @@ impl MultiServer {
 
         let mut handles = Vec::new();
 
-        // 1. Start REST server on internal port (HTTP/1.1)
-        {
-            use crate::network::multiplex::{
-                builder::MultiplexServiceBuilder,
-                detectors::RestDetector,
-                handlers::{RestHandler, RestHandlerConfig},
-                protocol_multiplexer::{UnifiedServer, UnifiedServerConfig},
-                traits::DetectedProtocol,
+        // Create doc and observability backing services once; both REST and gRPC
+        // use Arc clones so there is a single WAL-backed instance per service.
+        let shared_services_ref = self.shared_services.clone();
+
+        let doc_base_path = self.config.data_dir.join("documents");
+        let doc_path_str = doc_base_path.to_string_lossy().to_string();
+        let doc_storage_service: Arc<crate::storage::document::DocumentService> = {
+            let engine = shared_services_ref
+                .vector_operations_service
+                .unified_engine();
+            match crate::storage::document::DocumentService::new_with_wal(engine, &doc_path_str)
+                .await
+            {
+                Ok(svc) => Arc::new(svc),
+                Err(e) => {
+                    warn!(
+                        "Failed to create DocumentService with WAL: {}. Using non-durable storage.",
+                        e
+                    );
+                    Arc::new(crate::storage::document::DocumentService::new(
+                        shared_services_ref
+                            .vector_operations_service
+                            .unified_engine(),
+                    ))
+                }
+            }
+        };
+
+        let obs_base_path = self.config.data_dir.join("observability");
+        let obs_path_str = obs_base_path.to_string_lossy().to_string();
+        let obs_storage =
+            match crate::observability::ObservabilityStorage::new_with_wal(&obs_path_str).await {
+                Ok(storage) => Arc::new(storage),
+                Err(e) => {
+                    warn!(
+                        "Failed to create ObservabilityStorage with WAL: {}. Using non-durable.",
+                        e
+                    );
+                    Arc::new(crate::observability::ObservabilityStorage::new(
+                        &obs_path_str,
+                    ))
+                }
+            };
+        let obs_service: Arc<crate::observability::ObservabilityService> =
+            match crate::observability::ObservabilityService::new(obs_storage).await {
+                Ok(svc) => Arc::new(svc),
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to create ObservabilityService in unified mode: {}",
+                        e
+                    ));
+                }
             };
 
+        // Build REST port objects (each wraps its own ServiceImpl over a shared Arc).
+        let rest_ports = {
             let services = self.shared_services.clone();
-            let rest_config = RestHandlerConfig {
-                request_handlers: services.request_handlers.clone(),
-                metrics_collector: services.metrics_collector.clone(),
-                security_coordinator: self.security_coordinator.clone(),
-                data_dir: self.config.data_dir.clone(),
-            };
-            let rest_handler = RestHandler::with_config(rest_config);
+            let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
+                Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
+                    services.request_handlers.clone(),
+                    services.query_adapter(),
+                ));
+            let doc_port: Arc<dyn proximadb_runtime::DocumentPort> = Arc::new(
+                crate::network::grpc::DocumentServiceImpl::new(doc_storage_service.clone()),
+            );
+            let obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
+                crate::network::grpc::ObservabilityServiceImpl::new(obs_service.clone()),
+            );
+            crate::network::rest::server::RestServerPorts {
+                doc_port,
+                graph_port,
+                obs_port,
+            }
+        };
 
-            let service = MultiplexServiceBuilder::new()
-                .add_detector(RestDetector::new())
-                .add_handler(rest_handler)
-                .with_fallback(DetectedProtocol::Rest)
-                .build();
+        // 1. Start REST server on internal port (HTTP/1.1) using axum with port-backed handlers
+        {
+            let services = self.shared_services.clone();
+            let request_handlers = services.request_handlers.clone();
+            let graph_execution_service = services.graph_execution_service.clone();
+            let metrics_collector = services.metrics_collector.clone();
+            let security_coordinator = self.security_coordinator.clone();
+            let data_dir = self.config.data_dir.clone();
+            let query_adapter = Some(services.query_adapter());
+            let llm_engine = self.llm_engine.clone();
 
-            let server_config = UnifiedServerConfig {
-                bind_address: internal_rest_addr,
-                enable_http1: true,
-                enable_http2: false, // REST is HTTP/1.1 only
-                max_connections: 10000,
-                http2_max_concurrent_streams: 1000,
-                http2_initial_connection_window_size: 1024 * 1024,
-                http2_initial_stream_window_size: 1024 * 1024,
-                tcp_keepalive_secs: Some(60),
-                request_timeout_secs: 30,
-            };
+            let router = crate::network::rest::server::RestServer::build_router_for_unified(
+                request_handlers,
+                graph_execution_service,
+                metrics_collector,
+                security_coordinator,
+                data_dir,
+                query_adapter,
+                llm_engine,
+                Some(rest_ports),
+            );
 
-            let server = UnifiedServer::with_config(service, server_config);
             info!(
-                "🌐 REST Server starting on {} (internal)",
+                "🌐 REST Server starting on {} (internal, port-backed handlers)",
                 internal_rest_addr
             );
 
             let handle = tokio::spawn(async move {
-                if let Err(e) = server.serve().await {
+                if let Err(e) = axum::Server::bind(&internal_rest_addr)
+                    .serve(router.into_make_service())
+                    .await
+                {
                     tracing::error!("Internal REST server error: {}", e);
                 }
             });
@@ -644,6 +706,16 @@ impl MultiServer {
                     services.request_handlers.clone(),
                     services.query_adapter(),
                 ));
+            let grpc_doc_port: Arc<dyn proximadb_runtime::DocumentPort> = Arc::new(
+                crate::network::grpc::DocumentServiceImpl::new(doc_storage_service.clone()),
+            );
+            let grpc_obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
+                crate::network::grpc::ObservabilityServiceImpl::new(obs_service.clone()),
+            );
+            let grpc_streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
+                Arc::new(crate::network::grpc::StreamingServiceImpl::new());
+            let grpc_security_port: Arc<dyn proximadb_runtime::SecurityPort> =
+                Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
             let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
                 Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
@@ -651,6 +723,10 @@ impl MultiServer {
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
             let grpc_svcs = proximadb_api::grpc::builder::GrpcServiceFactory::new(api_port)
                 .with_graph(graph_port)
+                .with_document(grpc_doc_port)
+                .with_observability(grpc_obs_port)
+                .with_streaming(grpc_streaming_port)
+                .with_security(grpc_security_port)
                 .with_hybrid(hybrid_port)
                 .with_config(grpc_cfg)
                 .create_all_services_sync();

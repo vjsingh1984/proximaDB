@@ -567,8 +567,9 @@ impl RestServer {
 
     /// Build a REST router for unified mode without starting a server.
     ///
-    /// This is used by the unified server to get the configured REST router
-    /// that can be passed to the protocol multiplexer.
+    /// `ports` injects port-backed handlers from `proximadb-api` for document,
+    /// graph, and observability routes. When `None`, the legacy root-crate
+    /// handlers are used.
     pub fn build_router_for_unified(
         request_handlers: Arc<UnifiedHandlers>,
         graph_execution_service: Arc<dyn GraphExecutionService>,
@@ -577,8 +578,9 @@ impl RestServer {
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+        ports: Option<RestServerPorts>,
     ) -> Router {
-        let state = AppState::new(
+        let base_state = AppState::new(
             request_handlers,
             graph_execution_service,
             security_coordinator.clone(),
@@ -586,6 +588,11 @@ impl RestServer {
             query_adapter,
             llm_engine,
         );
+        let state = if let Some(p) = ports {
+            base_state.with_ports(p.doc_port, p.graph_port, p.obs_port)
+        } else {
+            base_state
+        };
 
         // Create metrics router if metrics collector is available
         let metrics_router = if let Some(collector) = metrics_collector {
