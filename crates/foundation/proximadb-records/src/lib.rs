@@ -36,7 +36,8 @@ pub mod proto_v2;
 pub mod store;
 
 pub use store::{
-    RecordKey, RecordScan, RecordStorage, RecordStore, RecordStoreResult, RecordWriteResult,
+    RecordKey, RecordRecoveryOperation, RecordRecoverySummary, RecordScan, RecordStorage,
+    RecordStore, RecordStoreResult, RecordWriteResult, replay_record_recovery_operations,
 };
 
 // ---------------------------------------------------------------------------

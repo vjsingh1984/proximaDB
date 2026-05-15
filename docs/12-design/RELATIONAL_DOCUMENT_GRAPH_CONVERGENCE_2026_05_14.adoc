@@ -831,7 +831,9 @@ Tasks:
 * [x] Make document WAL entries encode canonical record operations when canonical document storage is active.
 ** [x] Add canonical document upsert/delete WAL variants carrying `ProximaRecord` / canonical record id.
 ** [x] Replay canonical document WAL entries into legacy hot projections during migration.
-** [ ] Extract document WAL ownership fully into shared canonical record-store recovery.
+** [x] Extract document WAL ownership fully into shared canonical record-store recovery.
+*** [x] `proximadb-records` exposes `RecordRecoveryOperation` plus `replay_record_recovery_operations`; canonical document WAL replay now routes recovered upserts/deletes through that shared record-store hook before document facade projections are used.
+*** [x] Feature-gated restart tests verify canonical document WAL upserts and deletes recover into a fresh canonical record store.
 * [x] Convert JSON path index maintenance into a rebuildable projection over canonical records.
 * [x] Convert full-text index maintenance into a rebuildable projection over canonical records.
 ** [x] Add `IndexManager` canonical-record projection entry points for JSON path, array, and full-text indexes.

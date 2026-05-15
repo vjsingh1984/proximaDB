@@ -40,6 +40,24 @@ pub struct RecordWriteResult {
     pub record_oids: Vec<String>,
 }
 
+/// Canonical record-store operation recovered from a durable log.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecordRecoveryOperation {
+    /// Replay an insert/update as the authoritative record state.
+    Upsert(ProximaRecord),
+    /// Replay a delete by canonical object id.
+    Delete(RecordKey),
+}
+
+/// Summary of canonical record-store recovery replay.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecordRecoverySummary {
+    /// Number of recovered upserts applied to the record store.
+    pub upserts_replayed: usize,
+    /// Number of recovered deletes applied to the record store.
+    pub deletes_replayed: usize,
+}
+
 /// Narrow canonical store contract over `ProximaRecord`.
 ///
 /// This is intentionally modality-neutral. It does not describe document JSON
@@ -89,6 +107,36 @@ pub trait RecordScan: Send + Sync {
 pub trait RecordStorage: RecordStore + RecordScan {}
 
 impl<T> RecordStorage for T where T: RecordStore + RecordScan + ?Sized {}
+
+/// Replay recovered canonical record operations into a `RecordStore`.
+///
+/// This is the shared record-store recovery hook used by modality facades while
+/// their API-specific WAL shapes migrate toward the canonical WAL envelope.
+pub async fn replay_record_recovery_operations<S, I>(
+    store: &S,
+    operations: I,
+) -> RecordStoreResult<RecordRecoverySummary>
+where
+    S: RecordStore + ?Sized,
+    I: IntoIterator<Item = RecordRecoveryOperation>,
+{
+    let mut summary = RecordRecoverySummary::default();
+
+    for operation in operations {
+        match operation {
+            RecordRecoveryOperation::Upsert(record) => {
+                store.upsert_record(record).await?;
+                summary.upserts_replayed += 1;
+            }
+            RecordRecoveryOperation::Delete(key) => {
+                store.delete_record(&key).await?;
+                summary.deletes_replayed += 1;
+            }
+        }
+    }
+
+    Ok(summary)
+}
 
 #[cfg(test)]
 mod tests {
@@ -198,5 +246,43 @@ mod tests {
         let records = storage.scan_records(10).await.expect("scan");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].oid, "r1");
+    }
+
+    #[tokio::test]
+    async fn recovery_replay_applies_upserts_and_deletes_in_order() {
+        let store = MemoryRecordStore::default();
+        let summary = replay_record_recovery_operations(
+            &store,
+            vec![
+                RecordRecoveryOperation::Upsert(ProximaRecord {
+                    oid: "r1".to_string(),
+                    ..ProximaRecord::default()
+                }),
+                RecordRecoveryOperation::Upsert(ProximaRecord {
+                    oid: "r2".to_string(),
+                    ..ProximaRecord::default()
+                }),
+                RecordRecoveryOperation::Delete(RecordKey::new("r1")),
+            ],
+        )
+        .await
+        .expect("recovery replay");
+
+        assert_eq!(summary.upserts_replayed, 2);
+        assert_eq!(summary.deletes_replayed, 1);
+        assert!(
+            store
+                .get_record(&RecordKey::new("r1"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .get_record(&RecordKey::new("r2"))
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 }

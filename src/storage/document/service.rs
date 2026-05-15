@@ -28,7 +28,9 @@ use crate::storage::traits::UnifiedStorageEngine;
 #[cfg(feature = "canonical-document-store")]
 use proximadb_document::DocumentRecordKey;
 #[cfg(feature = "canonical-document-store")]
-use proximadb_records::{RecordKey, RecordStorage};
+use proximadb_records::{
+    RecordKey, RecordRecoveryOperation, RecordStorage, replay_record_recovery_operations,
+};
 
 use super::DocumentStorageEngine;
 use super::aggregation_extensions::LookupFetcher;
@@ -162,6 +164,40 @@ impl DocumentService {
         }
     }
 
+    /// Create a canonical-record-backed document service with WAL recovery.
+    ///
+    /// Recovered canonical document WAL entries are replayed through the shared
+    /// `proximadb_records::replay_record_recovery_operations` hook so the
+    /// canonical record store, not the document facade map, owns durable state.
+    #[cfg(feature = "canonical-document-store")]
+    pub async fn with_canonical_record_store_and_wal(
+        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        record_store: Arc<dyn RecordStorage>,
+        wal_base_path: &str,
+    ) -> Result<Self> {
+        let wal_path = format!("{}/document_wal", wal_base_path);
+        let wal_writer = UnifiedWALWriter::new(wal_path.clone())
+            .await
+            .context("Failed to create document WAL writer")?;
+
+        let mut service = Self {
+            storage_engine,
+            document_engine: None,
+            index_manager: Arc::new(IndexManager::new()),
+            query_executor: Arc::new(QueryExecutor::new()),
+            collections: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(RwLock::new(HashMap::new())),
+            canonical_record_store: Some(record_store),
+            wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
+            wal_path,
+            metrics_collector: None,
+        };
+
+        service.recover_from_wal().await?;
+
+        Ok(service)
+    }
+
     /// Create a new document service with WAL support
     pub async fn new_with_wal(
         storage_engine: Arc<dyn UnifiedStorageEngine>,
@@ -243,6 +279,8 @@ impl DocumentService {
 
         let mut recovered_docs = 0;
         let mut recovered_collections = 0;
+        #[cfg(feature = "canonical-document-store")]
+        let mut canonical_recovery_ops = Vec::new();
 
         for entry in entries {
             if entry.is_document_operation()
@@ -263,6 +301,10 @@ impl DocumentService {
                         collection_id,
                         record,
                     } => {
+                        #[cfg(feature = "canonical-document-store")]
+                        canonical_recovery_ops
+                            .push(RecordRecoveryOperation::Upsert(record.clone()));
+
                         if let Some(document) = proxima_record_to_legacy_document(&record) {
                             let mut documents = self.documents.write().await;
                             let collection_docs = documents.entry(collection_id).or_default();
@@ -302,8 +344,12 @@ impl DocumentService {
                     DocumentOperation::DeleteCanonicalDocumentRecord {
                         collection_id,
                         document_id,
-                        ..
+                        record_oid,
                     } => {
+                        #[cfg(feature = "canonical-document-store")]
+                        canonical_recovery_ops
+                            .push(RecordRecoveryOperation::Delete(RecordKey::new(record_oid)));
+
                         let mut documents = self.documents.write().await;
                         if let Some(collection_docs) = documents.get_mut(&collection_id) {
                             collection_docs.remove(&document_id);
@@ -344,6 +390,26 @@ impl DocumentService {
                     }
                 }
             }
+        }
+
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            let summary =
+                replay_record_recovery_operations(record_store.as_ref(), canonical_recovery_ops)
+                    .await
+                    .context("Failed to replay canonical document WAL into record store")?;
+
+            if summary.upserts_replayed > 0 || summary.deletes_replayed > 0 {
+                info!(
+                    "Canonical document WAL recovery complete: {} upserts, {} deletes replayed into record store",
+                    summary.upserts_replayed, summary.deletes_replayed
+                );
+            }
+        } else if !canonical_recovery_ops.is_empty() {
+            warn!(
+                "Recovered {} canonical document WAL operations without a canonical record store",
+                canonical_recovery_ops.len()
+            );
         }
 
         info!(
@@ -2922,6 +2988,155 @@ mod tests {
                 .get_document("parity", "doc-1", None)
                 .await
                 .unwrap()
+                .is_none()
+        );
+    }
+
+    #[cfg(feature = "canonical-document-store")]
+    #[tokio::test]
+    async fn test_canonical_document_wal_recovery_replays_into_record_store() {
+        use crate::storage::engines::cedar::CedarEngine;
+        use proximadb_records::RecordStorage;
+
+        let temp_dir = tempfile::tempdir().expect("temp wal dir");
+        let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
+
+        let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
+        let first_storage_engine: Arc<dyn UnifiedStorageEngine> = first_cedar.clone();
+        let first_record_store: Arc<dyn RecordStorage> = first_cedar;
+        let first = DocumentService::with_canonical_record_store_and_wal(
+            first_storage_engine,
+            first_record_store,
+            wal_base_path,
+        )
+        .await
+        .expect("canonical wal service");
+
+        first
+            .create_collection(
+                "wal_docs",
+                DocumentCollectionConfig {
+                    name: "wal_docs".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("create collection");
+        first
+            .insert_document(
+                "wal_docs",
+                Some("doc-1"),
+                make_document(vec![("title", sql_string("Recovered"))]),
+            )
+            .await
+            .expect("insert");
+        first.flush_wal().await.expect("flush wal");
+
+        let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
+        let restarted_storage_engine: Arc<dyn UnifiedStorageEngine> = restarted_cedar.clone();
+        let restarted_record_store: Arc<dyn RecordStorage> = restarted_cedar;
+        let restarted_record_probe = restarted_record_store.clone();
+        let restarted = DocumentService::with_canonical_record_store_and_wal(
+            restarted_storage_engine,
+            restarted_record_store,
+            wal_base_path,
+        )
+        .await
+        .expect("restart from wal");
+
+        let recovered_records = restarted_record_probe
+            .scan_records(10)
+            .await
+            .expect("scan recovered records");
+        assert_eq!(recovered_records.len(), 1);
+
+        let recovered = restarted
+            .get_document("wal_docs", "doc-1", None)
+            .await
+            .expect("get recovered")
+            .expect("document recovered through canonical store");
+        assert_eq!(
+            recovered
+                .document
+                .fields
+                .get("title")
+                .and_then(|v| v.value.clone()),
+            Some(sql_value::Value::StringValue("Recovered".to_string()))
+        );
+    }
+
+    #[cfg(feature = "canonical-document-store")]
+    #[tokio::test]
+    async fn test_canonical_document_wal_recovery_replays_deletes_into_record_store() {
+        use crate::storage::engines::cedar::CedarEngine;
+        use proximadb_records::RecordStorage;
+
+        let temp_dir = tempfile::tempdir().expect("temp wal dir");
+        let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
+
+        let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
+        let first_storage_engine: Arc<dyn UnifiedStorageEngine> = first_cedar.clone();
+        let first_record_store: Arc<dyn RecordStorage> = first_cedar;
+        let first = DocumentService::with_canonical_record_store_and_wal(
+            first_storage_engine,
+            first_record_store,
+            wal_base_path,
+        )
+        .await
+        .expect("canonical wal service");
+
+        first
+            .create_collection(
+                "wal_docs",
+                DocumentCollectionConfig {
+                    name: "wal_docs".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("create collection");
+        first
+            .insert_document(
+                "wal_docs",
+                Some("doc-1"),
+                make_document(vec![("title", sql_string("Deleted"))]),
+            )
+            .await
+            .expect("insert");
+        assert!(
+            first
+                .delete_document("wal_docs", "doc-1")
+                .await
+                .expect("delete")
+        );
+        first.flush_wal().await.expect("flush wal");
+
+        let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
+        let restarted_storage_engine: Arc<dyn UnifiedStorageEngine> = restarted_cedar.clone();
+        let restarted_record_store: Arc<dyn RecordStorage> = restarted_cedar;
+        let restarted_record_probe = restarted_record_store.clone();
+        let restarted = DocumentService::with_canonical_record_store_and_wal(
+            restarted_storage_engine,
+            restarted_record_store,
+            wal_base_path,
+        )
+        .await
+        .expect("restart from wal");
+
+        let recovered_records = restarted_record_probe
+            .scan_records(10)
+            .await
+            .expect("scan recovered records");
+        assert!(
+            recovered_records.is_empty(),
+            "delete replay should remove canonical records"
+        );
+
+        assert!(
+            restarted
+                .get_document("wal_docs", "doc-1", None)
+                .await
+                .expect("get after delete replay")
                 .is_none()
         );
     }
