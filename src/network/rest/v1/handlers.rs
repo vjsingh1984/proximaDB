@@ -61,6 +61,8 @@ pub struct AppState {
     pub graph_port: Option<Arc<dyn proximadb_runtime::GraphPort>>,
     /// Port-based observability service (from proximadb-api migration)
     pub obs_port: Option<Arc<dyn proximadb_runtime::ObservabilityPort>>,
+    /// Port-backed unified query service (Phase 9.9)
+    pub unified_query_port: Option<Arc<dyn proximadb_runtime::UnifiedQueryPort>>,
 }
 
 impl AppState {
@@ -87,6 +89,7 @@ impl AppState {
             doc_port: None,
             graph_port: None,
             obs_port: None,
+            unified_query_port: None,
         }
     }
 
@@ -100,6 +103,15 @@ impl AppState {
         self.doc_port = Some(doc_port);
         self.graph_port = Some(graph_port);
         self.obs_port = Some(obs_port);
+        self
+    }
+
+    /// Inject unified query port (Phase 9.9).
+    pub fn with_unified_query_port(
+        mut self,
+        port: Arc<dyn proximadb_runtime::UnifiedQueryPort>,
+    ) -> Self {
+        self.unified_query_port = Some(port);
         self
     }
 
@@ -1578,13 +1590,6 @@ pub fn create_router(state: AppState) -> axum::Router {
     };
 
     let mut router = axum::Router::new()
-        // Vector operations
-        .route("/api/v1/search", post(vector_search))
-        .route("/api/v1/vectors/batch", post(vector_batch))
-        .route(
-            "/api/v1/vectors/:collection_id/:vector_id",
-            get(get_vector).delete(delete_vector),
-        )
         .route(
             "/api/v1/progressive/search/:collection_id",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),
@@ -1592,14 +1597,6 @@ pub fn create_router(state: AppState) -> axum::Router {
         // SQL query execution
         .route("/api/v1/sql/execute", post(execute_sql))
         .route("/api/v1/sql/explain", post(explain_sql))
-        // Collection operations
-        .route("/api/v1/collections", post(collection_operation))
-        .route("/api/v1/collections", get(list_collections))
-        .route("/api/v1/collections/:collection_id", get(get_collection))
-        .route(
-            "/api/v1/collections/:collection_id",
-            delete(delete_collection),
-        )
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
@@ -1607,17 +1604,14 @@ pub fn create_router(state: AppState) -> axum::Router {
         // Hybrid search production endpoints (AppState-backed)
         .route("/api/v1/hybrid/search", post(hybrid_search))
         .route("/api/v1/hybrid/index", post(hybrid_index))
-        // With metadata endpoints
-        .route(
-            "/api/v1/search/with_metadata",
-            post(vector_search_with_metadata),
-        )
         // Graph database endpoints — use port-based router if available, else root-crate router
         .nest(
             "/api/v1/graph",
             if let Some(ref gp) = state.graph_port {
                 use proximadb_api::rest::{GraphRestState, create_graph_router};
-                create_graph_router().with_state(GraphRestState { graph_port: gp.clone() })
+                create_graph_router().with_state(GraphRestState {
+                    graph_port: gp.clone(),
+                })
             } else {
                 crate::network::rest::v1::graph::create_graph_router()
             },
@@ -1625,11 +1619,32 @@ pub fn create_router(state: AppState) -> axum::Router {
         // SKS entity endpoints (storage-coupled path)
         .nest("/api", entities_router);
 
+    // Collection and vector routes via port-backed handlers (proximadb-api).
+    // Uses RestAppState { handlers: Arc<dyn ApiHandlersPort> } so these routes compile
+    // without coupling to any root-crate concrete service type.
+    {
+        let api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort> =
+            state.request_handlers.clone();
+        let api_rest_state = proximadb_api::rest::RestAppState::new(api_handlers);
+        router = router
+            .merge(
+                proximadb_api::rest::create_collection_router()
+                    .with_state(api_rest_state.clone()),
+            )
+            .merge(
+                proximadb_api::rest::create_vector_router()
+                    .with_state(api_rest_state),
+            );
+    }
+    info!("✅ Collection and Vector API routing via port-backed handlers (proximadb-api)");
+
     // Document API endpoints — use port-based router if available, else root-crate router
     let document_router = if let Some(ref dp) = state.doc_port {
         use proximadb_api::rest::{DocumentRestState, create_document_router};
         info!("✅ Document API routing via port-based handler (proximadb-api)");
-        create_document_router().with_state(DocumentRestState { document_port: dp.clone() })
+        create_document_router().with_state(DocumentRestState {
+            document_port: dp.clone(),
+        })
     } else {
         use crate::network::rest::v1::document::{self, DocumentApiState};
         use crate::storage::document::DocumentService;
@@ -1661,7 +1676,10 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!("✅ Document API endpoints enabled at /api/v1/documents");
 
     // Observability API endpoints — use port-based router if available, else root-crate router
-    let observability_service: Option<Arc<crate::observability::ObservabilityService>> = if state.obs_port.is_none() {
+    let observability_service: Option<Arc<crate::observability::ObservabilityService>> = if state
+        .obs_port
+        .is_none()
+    {
         use crate::observability::{ObservabilityService, ObservabilityStorage};
 
         let obs_base_path = state.data_dir.join("observability");
@@ -1693,7 +1711,9 @@ pub fn create_router(state: AppState) -> axum::Router {
         use proximadb_api::rest::{ObservabilityRestState, create_observability_router};
         router = router.nest(
             "/api/v1/observability",
-            create_observability_router().with_state(ObservabilityRestState { observability_port: op.clone() }),
+            create_observability_router().with_state(ObservabilityRestState {
+                observability_port: op.clone(),
+            }),
         );
         info!("✅ Observability API routing via port-based handler (proximadb-api)");
     } else if let Some(ref obs_service) = observability_service {
@@ -1709,52 +1729,59 @@ pub fn create_router(state: AppState) -> axum::Router {
     }
 
     // Unified Multi-Model Query API endpoints
-    // Routes all queries through QueryFacadeAdapter for consistent execution
-    let unified_query_router_opt = {
-        use crate::network::rest::v1::multimodal_query::{self, UnifiedQueryApiState};
-        use crate::storage::document::DocumentService;
-
-        let engine = state
-            .request_handlers
-            .vector_operations_service
-            .unified_engine();
-
-        // Use WAL-enabled constructor for durability (same as document router)
-        // data_dir comes from TOML config (server.data_dir)
-        let doc_base_path = state.data_dir.join("documents");
-        let doc_path_str = doc_base_path.to_string_lossy().to_string();
-
-        let document_service = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                match DocumentService::new_with_wal(engine.clone(), &doc_path_str).await {
-                    Ok(svc) => Arc::new(svc),
-                    Err(e) => {
-                        tracing::warn!("Unified query: Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
-                        Arc::new(DocumentService::new(engine.clone()))
-                    }
-                }
-            })
-        });
-
-        // Get the query adapter from state (required for unified query execution)
-        let query_adapter_opt = state.query_adapter.clone();
-
-        // Use new_with_adapter to route all queries through QueryFacadeAdapter
-        query_adapter_opt.map(|adapter| {
-            let unified_state =
-                UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine)
-                    .with_catalog_manager(state.catalog_manager.clone());
-            multimodal_query::create_router().with_state(unified_state)
-        })
-    };
-
-    if let Some(unified_query_router) = unified_query_router_opt {
-        router = router.nest("/api/v1/unified", unified_query_router);
-        info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
+    // Phase 9.9: prefer port-backed router when unified_query_port is available;
+    // fall back to root-crate QueryFacadeAdapter-based router otherwise.
+    if let Some(ref uq_port) = state.unified_query_port {
+        // Port-backed path: delegates to UnifiedQueryPortImpl (real implementation)
+        use proximadb_api::rest::UnifiedQueryRestState;
+        let uq_state = UnifiedQueryRestState {
+            unified_query_port: uq_port.clone(),
+        };
+        let uq_router = proximadb_api::rest::create_multimodal_router().with_state(uq_state);
+        router = router.nest("/api/v1/unified", uq_router);
+        info!("✅ Unified Query API enabled at /api/v1/unified (port-backed, Phase 9.9)");
     } else {
-        tracing::warn!(
-            "QueryFacadeAdapter not configured in AppState. Skipping unified query endpoints."
-        );
+        // Legacy path: root-crate QueryFacadeAdapter directly
+        let unified_query_router_opt = {
+            use crate::network::rest::v1::multimodal_query::{self, UnifiedQueryApiState};
+            use crate::storage::document::DocumentService;
+
+            let engine = state
+                .request_handlers
+                .vector_operations_service
+                .unified_engine();
+
+            let doc_base_path = state.data_dir.join("documents");
+            let doc_path_str = doc_base_path.to_string_lossy().to_string();
+
+            let document_service = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async {
+                    match DocumentService::new_with_wal(engine.clone(), &doc_path_str).await {
+                        Ok(svc) => Arc::new(svc),
+                        Err(e) => {
+                            tracing::warn!("Unified query: Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
+                            Arc::new(DocumentService::new(engine.clone()))
+                        }
+                    }
+                })
+            });
+
+            state.query_adapter.clone().map(|adapter| {
+                let unified_state =
+                    UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine)
+                        .with_catalog_manager(state.catalog_manager.clone());
+                multimodal_query::create_router().with_state(unified_state)
+            })
+        };
+
+        if let Some(unified_query_router) = unified_query_router_opt {
+            router = router.nest("/api/v1/unified", unified_query_router);
+            info!("✅ Unified Query API enabled at /api/v1/unified (via QueryFacadeAdapter)");
+        } else {
+            tracing::warn!(
+                "QueryFacadeAdapter not configured in AppState. Skipping unified query endpoints."
+            );
+        }
     }
 
     // Optional enterprise catalog endpoints
@@ -1844,7 +1871,13 @@ pub fn create_router(state: AppState) -> axum::Router {
         "default",
         crate::network::middleware::tenant::TenantIdSource::Default,
     );
-    let router = router.with_state(state).layer(Extension(default_tenant));
+    let default_api_tenant = proximadb_api::rest::TenantContext {
+        tenant_id: "default".to_string(),
+    };
+    let router = router
+        .with_state(state)
+        .layer(Extension(default_tenant))
+        .layer(axum::Extension(default_api_tenant));
 
     // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
     #[cfg(feature = "ai_endpoints")]
@@ -1883,10 +1916,15 @@ pub fn create_router(state: AppState) -> axum::Router {
     }
 
     info!("✅ REST API: Router created with routes:");
-    info!("   POST   /api/v1/collections (collection_operation)");
-    info!("   GET    /api/v1/collections (list_collections)");
-    info!("   GET    /api/v1/collections/:id (get_collection)");
-    info!("   DELETE /api/v1/collections/:id (delete_collection)");
+    info!("   POST   /api/v1/collections (port-backed via proximadb-api)");
+    info!("   GET    /api/v1/collections (port-backed via proximadb-api)");
+    info!("   GET    /api/v1/collections/:id (port-backed via proximadb-api)");
+    info!("   DELETE /api/v1/collections/:id (port-backed via proximadb-api)");
+    info!("   POST   /api/v1/search (port-backed via proximadb-api)");
+    info!("   POST   /api/v1/search/with_metadata (port-backed via proximadb-api)");
+    info!("   POST   /api/v1/vectors/batch (port-backed via proximadb-api)");
+    info!("   GET    /api/v1/vectors/:collection_id/:vector_id (port-backed via proximadb-api)");
+    info!("   DELETE /api/v1/vectors/:collection_id/:vector_id (port-backed via proximadb-api)");
     info!("   POST   /api/v1/hybrid/search (hybrid_search)");
     info!("   POST   /api/v1/hybrid/index (hybrid_index)");
     info!("   POST   /api/v1/experimental/hybrid/search (mock hybrid API)");
