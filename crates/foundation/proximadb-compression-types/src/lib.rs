@@ -27,45 +27,37 @@ use std::fmt;
 ///
 /// This is the single source of truth for compression algorithms across ProximaDB.
 /// All other compression type definitions should migrate to use this enum.
-///
-/// ## Variants
-///
-/// - `None` - No compression
-/// - `Snappy` - Snappy compression
-/// - `Lz4` - LZ4 compression
-/// - `Zstd` - Zstandard compression
-/// - `Gzip` - Gzip compression
-/// - `Brotli` - Brotli compression
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CompressionAlgorithm {
     /// No compression
     None,
-
-    /// Snappy compression
-    ///
     /// Fast compression/decompression, moderate compression ratio
     Snappy,
-
-    /// LZ4 compression
-    ///
     /// Very fast compression/decompression, moderate compression ratio
     Lz4,
-
-    /// Zstandard (Zstd) compression
-    ///
     /// Good compression ratio, fast compression/decompression
     Zstd,
-
-    /// Gzip compression
-    ///
     /// Good compression ratio, moderate speed
     Gzip,
-
-    /// Brotli compression
-    ///
     /// Excellent compression ratio, slower compression
     Brotli,
+    /// Legacy Bzip2 support
+    Bzip2,
+    /// Raw Deflate (ZIP compatible)
+    Deflate,
+    /// XZ / LZMA2 high-ratio compression
+    Xz,
+    /// Zlib compression
+    Zlib,
+    /// LZO placeholder (falls back to LZ4 at runtime; no Rust impl)
+    Lzo,
+    /// LZ4 high-compression variant
+    Lz4hc,
+    /// LZMA (implemented via XZ at max level)
+    Lzma,
+    /// Mixed per-column strategy: selects algorithm based on column data type
+    Mixed,
 }
 
 impl Default for CompressionAlgorithm {
@@ -83,6 +75,14 @@ impl fmt::Display for CompressionAlgorithm {
             Self::Zstd => write!(f, "zstd"),
             Self::Gzip => write!(f, "gzip"),
             Self::Brotli => write!(f, "brotli"),
+            Self::Bzip2 => write!(f, "bzip2"),
+            Self::Deflate => write!(f, "deflate"),
+            Self::Xz => write!(f, "xz"),
+            Self::Zlib => write!(f, "zlib"),
+            Self::Lzo => write!(f, "lzo"),
+            Self::Lz4hc => write!(f, "lz4hc"),
+            Self::Lzma => write!(f, "lzma"),
+            Self::Mixed => write!(f, "mixed"),
         }
     }
 }
@@ -97,40 +97,46 @@ impl CompressionAlgorithm {
             "zstd" | "zstandard" => Some(Self::Zstd),
             "gzip" => Some(Self::Gzip),
             "brotli" => Some(Self::Brotli),
+            "bzip2" => Some(Self::Bzip2),
+            "deflate" => Some(Self::Deflate),
+            "xz" => Some(Self::Xz),
+            "zlib" => Some(Self::Zlib),
+            "lzo" => Some(Self::Lzo),
+            "lz4hc" => Some(Self::Lz4hc),
+            "lzma" => Some(Self::Lzma),
+            "mixed" => Some(Self::Mixed),
             _ => None,
         }
     }
 
     /// Check if this compression algorithm is lossless
-    ///
-    /// All compression algorithms in ProximaDB are lossless
     pub fn is_lossless(&self) -> bool {
         *self != Self::None
     }
 
-    /// Get the compression level range for this algorithm
-    ///
-    /// Returns (min_level, max_level) or None if compression level is not applicable
+    /// Get the compression level range for this algorithm.
     pub fn level_range(&self) -> Option<(i32, i32)> {
         match self {
-            Self::None => None,
-            Self::Snappy => None, // Snappy doesn't support compression levels
-            Self::Lz4 => Some((0, 16)),
+            Self::None | Self::Snappy | Self::Lzo | Self::Mixed => None,
+            Self::Lz4 | Self::Lz4hc => Some((0, 16)),
             Self::Zstd => Some((1, 22)),
-            Self::Gzip => Some((0, 9)),
+            Self::Gzip | Self::Deflate | Self::Zlib => Some((0, 9)),
             Self::Brotli => Some((0, 11)),
+            Self::Bzip2 => Some((1, 9)),
+            Self::Xz | Self::Lzma => Some((0, 9)),
         }
     }
 
     /// Get the default compression level for this algorithm
     pub fn default_level(&self) -> Option<i32> {
         match self {
-            Self::None => None,
-            Self::Snappy => None,
-            Self::Lz4 => Some(0),
+            Self::None | Self::Snappy | Self::Lzo | Self::Mixed => None,
+            Self::Lz4 | Self::Lz4hc => Some(0),
             Self::Zstd => Some(3),
-            Self::Gzip => Some(6),
+            Self::Gzip | Self::Deflate | Self::Zlib => Some(6),
             Self::Brotli => Some(4),
+            Self::Bzip2 => Some(6),
+            Self::Xz | Self::Lzma => Some(6),
         }
     }
 }
@@ -254,12 +260,11 @@ impl From<CompressionAlgorithm> for CompressionCodec {
         match algorithm {
             CompressionAlgorithm::None => Self::None,
             CompressionAlgorithm::Snappy => Self::Snappy,
-            CompressionAlgorithm::Lz4 => Self::Lz4,
+            CompressionAlgorithm::Lz4 | CompressionAlgorithm::Lz4hc => Self::Lz4,
             CompressionAlgorithm::Zstd => Self::Zstd,
             CompressionAlgorithm::Gzip => Self::Gzip,
-            CompressionAlgorithm::Brotli => {
-                panic!("Brotli compression not supported in legacy CompressionCodec")
-            }
+            // Fallback: unsupported algorithms default to None in this legacy codec
+            _ => Self::None,
         }
     }
 }
@@ -287,12 +292,10 @@ impl From<CompressionAlgorithm> for FlightCompression {
     fn from(algorithm: CompressionAlgorithm) -> Self {
         match algorithm {
             CompressionAlgorithm::None => Self::None,
-            CompressionAlgorithm::Lz4 => Self::Lz4,
+            CompressionAlgorithm::Lz4 | CompressionAlgorithm::Lz4hc => Self::Lz4,
             CompressionAlgorithm::Zstd => Self::Zstd,
-            _ => panic!(
-                "Compression algorithm {:?} not supported in FlightCompression",
-                algorithm
-            ),
+            // Arrow Flight only supports Lz4 and Zstd; fallback to None
+            _ => Self::None,
         }
     }
 }
@@ -448,9 +451,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not supported in legacy CompressionCodec")]
-    fn test_legacy_compression_codec_brotli_unsupported() {
-        let _ = CompressionCodec::from(CompressionAlgorithm::Brotli);
+    fn test_legacy_compression_codec_unsupported_falls_back_to_none() {
+        // Algorithms not representable in the 5-variant legacy codec default to None
+        assert_eq!(CompressionCodec::from(CompressionAlgorithm::Brotli), CompressionCodec::None);
+        assert_eq!(CompressionCodec::from(CompressionAlgorithm::Bzip2), CompressionCodec::None);
+        assert_eq!(CompressionCodec::from(CompressionAlgorithm::Mixed), CompressionCodec::None);
     }
 
     #[test]
@@ -481,9 +486,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not supported in FlightCompression")]
-    fn test_legacy_flight_compression_unsupported() {
-        let _ = FlightCompression::from(CompressionAlgorithm::Gzip);
+    fn test_legacy_flight_compression_unsupported_falls_back_to_none() {
+        // Arrow Flight only supports Lz4/Zstd; everything else falls back to None
+        assert_eq!(FlightCompression::from(CompressionAlgorithm::Gzip), FlightCompression::None);
+        assert_eq!(FlightCompression::from(CompressionAlgorithm::Brotli), FlightCompression::None);
+        assert_eq!(FlightCompression::from(CompressionAlgorithm::Bzip2), FlightCompression::None);
     }
 
     #[test]

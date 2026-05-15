@@ -6117,6 +6117,12 @@ dependencies = [
 [[package]]
 name = "proximadb-storage-common"
 version = "0.2.0"
+dependencies = [
+ "criterion",
+ "proximadb-records",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "proximadb-telemetry"

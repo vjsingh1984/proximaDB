@@ -2131,20 +2131,19 @@ impl ParquetFlusher {
                 // SNAPPY not supported by Parquet, use uncompressed
                 Compression::UNCOMPRESSED
             }
-            FoundationCompressionAlgorithm::Lz4 => Compression::LZ4,
+            FoundationCompressionAlgorithm::Lz4 | FoundationCompressionAlgorithm::Lz4hc | FoundationCompressionAlgorithm::Lzo => Compression::LZ4,
             FoundationCompressionAlgorithm::Zstd => {
-                // Use ZSTD level 3 as default
                 Compression::ZSTD(parquet::basic::ZstdLevel::try_new(3)?)
             }
             FoundationCompressionAlgorithm::Gzip => {
-                // Use Gzip level 6 as default
                 Compression::GZIP(parquet::basic::GzipLevel::try_new(6)?)
             }
             FoundationCompressionAlgorithm::Brotli => {
-                // Use Brotli level 3 as default
                 Compression::BROTLI(parquet::basic::BrotliLevel::try_new(3)?)
             }
             FoundationCompressionAlgorithm::None => Compression::UNCOMPRESSED,
+            // Other algorithms not supported by Parquet: fall back to Snappy
+            _ => Compression::SNAPPY,
         };
 
         let props = WriterProperties::builder()
@@ -2794,14 +2793,18 @@ impl CompactionEngine {
         // Simulate compression optimization based on algorithm
         let compression_improvement = match target_algorithm {
             ViperCompressionConfig::Uniform(algo) => match algo {
-                FoundationCompressionAlgorithm::Snappy => 0.15, // 15% improvement
-                FoundationCompressionAlgorithm::Zstd => 0.35,   // 35% improvement (using level 3)
-                FoundationCompressionAlgorithm::Lz4 => 0.12,    // 12% improvement
-                FoundationCompressionAlgorithm::Gzip => 0.20,   // 20% improvement (using level 6)
-                FoundationCompressionAlgorithm::Brotli => 0.33, // 33% improvement (using level 3)
+                FoundationCompressionAlgorithm::Snappy => 0.15,
+                FoundationCompressionAlgorithm::Zstd => 0.35,
+                FoundationCompressionAlgorithm::Lz4 | FoundationCompressionAlgorithm::Lz4hc => 0.12,
+                FoundationCompressionAlgorithm::Gzip | FoundationCompressionAlgorithm::Deflate | FoundationCompressionAlgorithm::Zlib => 0.20,
+                FoundationCompressionAlgorithm::Brotli => 0.33,
+                FoundationCompressionAlgorithm::Bzip2 => 0.30,
+                FoundationCompressionAlgorithm::Xz | FoundationCompressionAlgorithm::Lzma => 0.28,
+                FoundationCompressionAlgorithm::Lzo => 0.10,
+                FoundationCompressionAlgorithm::Mixed => 0.40,
                 FoundationCompressionAlgorithm::None => 0.0,
             },
-            ViperCompressionConfig::Mixed { .. } => 0.40, // 40% improvement from optimal per-column compression
+            ViperCompressionConfig::Mixed { .. } => 0.40,
         };
 
         let entries_processed = 5000; // Estimate

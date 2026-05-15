@@ -14,6 +14,7 @@ use bzip2::write::BzEncoder;
 use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
 use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
+pub use proximadb_compression_types::CompressionAlgorithm;
 use serde::{Deserialize, Serialize};
 use snap::{raw::Decoder as SnapDecoder, raw::Encoder as SnapEncoder};
 use std::io::{Read, Write};
@@ -47,47 +48,6 @@ impl Default for VectorSerializationConfig {
             adaptive_compression: true,
         }
     }
-}
-
-/// Compression algorithms supported for vector data
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
-pub enum CompressionAlgorithm {
-    /// No compression
-    #[default]
-    None,
-    /// Zstandard compression
-    Zstd,
-    /// LZ4 fast compression
-    Lz4,
-    /// Snappy balanced compression
-    Snappy,
-    /// Gzip/Deflate compression
-    Gzip,
-    /// Brotli compression
-    Brotli,
-    /// Bzip2 compression  
-    Bzip2,
-    /// Raw deflate compression
-    Deflate,
-    /// XZ/LZMA2 compression
-    Xz,
-    /// Zlib compression
-    Zlib,
-    /// LZO compression (fastest)
-    Lzo,
-    /// LZ4 high compression variant
-    Lz4hc,
-    /// LZMA compression (high ratio)
-    Lzma,
-    /// Mixed compression strategy - optimal per-column compression
-    /// Uses different algorithms based on column data type:
-    /// - Binary columns: UNCOMPRESSED (fast filtering)  
-    /// - INT8 columns: SNAPPY (fast decompression)
-    /// - PQ columns: ZSTD (best ratio)
-    /// - FP32 columns: LZ4 (fast decompression for reranking)
-    /// - ID columns: GZIP (maximum compression)
-    /// - Metadata columns: BROTLI (maximum compression for cold data)
-    Mixed,
 }
 
 /// Vector serialization format marker

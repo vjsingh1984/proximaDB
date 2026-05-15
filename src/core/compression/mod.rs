@@ -287,7 +287,7 @@ mod parquet {
 }
 
 // Re-export for clean imports
-pub use crate::core::serialization::CompressionAlgorithm;
+pub use proximadb_compression_types::CompressionAlgorithm;
 pub use parquet::file::properties::WriterProperties;
 
 // Compression markers module
