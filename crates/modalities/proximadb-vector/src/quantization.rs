@@ -16,6 +16,7 @@
 
 pub mod binary;
 pub mod compile_time;
+pub mod hardware_accelerated;
 pub mod internal_types;
 pub mod product;
 pub mod scalar;
@@ -31,6 +32,7 @@ pub use proximadb_proto::v1::quantization_level::QuantizationType;
 
 // Re-export implementations
 pub use binary::{BinaryQuantizer, BinaryVector};
+pub use hardware_accelerated::AcceleratedQuantization;
 pub use product::{PQCodebook, PQVector, ProductQuantizer};
 pub use scalar::{Int8Vector, ScalarQuantizer};
 pub use smart_defaults::QuantizationSmartDefaults;
