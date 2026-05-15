@@ -68,9 +68,12 @@ impl DistanceMetricExt for DistanceMetric {
 }
 #[cfg(feature = "gpu")]
 use crate::compute::gpu::distance::create_gpu_accelerator;
+#[cfg(feature = "gpu")]
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 #[cfg(feature = "gpu")]
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Handle as TokioHandle};
+
+use proximadb_hardware::{SimdLevel, best_simd_level};
 
 // Re-export HardwareBackend for public use
 pub use crate::core::hardware_capabilities::HardwareBackend;
@@ -116,9 +119,16 @@ static SEARCH_BACKEND_LOGGED: AtomicBool = AtomicBool::new(false);
 ///
 /// This 100,000x speedup is critical for hot paths.
 fn get_cached_preferred_backend() -> HardwareBackend {
-    *PREFERRED_BACKEND.get_or_init(|| {
-        let caps = get_hardware_capabilities();
-        caps.preferred_backend()
+    *PREFERRED_BACKEND.get_or_init(|| match best_simd_level() {
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::AVX512 => HardwareBackend::AVX512,
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::AVX2 => HardwareBackend::AVX2,
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::SSE41 => HardwareBackend::SSE,
+        #[cfg(target_arch = "aarch64")]
+        SimdLevel::NEON => HardwareBackend::NEON,
+        _ => HardwareBackend::Scalar,
     })
 }
 
@@ -128,8 +138,13 @@ fn get_cached_preferred_backend() -> HardwareBackend {
 /// Future versions will support CUDA/ROCm/Metal acceleration.
 fn is_gpu_enabled_cached() -> bool {
     *GPU_ENABLED_CACHE.get_or_init(|| {
-        let caps = get_hardware_capabilities();
-        caps.has_gpu()
+        #[cfg(feature = "gpu")]
+        {
+            let caps = get_hardware_capabilities();
+            caps.has_gpu()
+        }
+        #[cfg(not(feature = "gpu"))]
+        false
     })
 }
 
@@ -241,37 +256,30 @@ static PLATFORM_CAPABILITY: OnceLock<PlatformCapability> = OnceLock::new();
 ///
 /// This ensures SIMD dispatch has zero overhead in production.
 fn get_platform_capability() -> PlatformCapability {
-    *PLATFORM_CAPABILITY.get_or_init(|| {
-        // Use the already-initialized global hardware capabilities
-        let caps = get_hardware_capabilities();
-        let backend = caps.preferred_backend();
-
-        // Map HardwareBackend to PlatformCapability
-        match backend {
-            #[cfg(target_arch = "x86_64")]
-            HardwareBackend::AVX512 => {
-                trace!("Using AVX-512 SIMD from global hardware detection");
-                PlatformCapability::X86Avx512
-            }
-            #[cfg(target_arch = "x86_64")]
-            HardwareBackend::AVX2 => {
-                trace!("Using AVX2 SIMD from global hardware detection");
-                PlatformCapability::X86Avx2
-            }
-            #[cfg(target_arch = "x86_64")]
-            HardwareBackend::SSE => {
-                trace!("Using SSE2 SIMD from global hardware detection");
-                PlatformCapability::X86Sse2
-            }
-            #[cfg(target_arch = "aarch64")]
-            HardwareBackend::NEON => {
-                trace!("Using ARM NEON SIMD from global hardware detection");
-                PlatformCapability::ArmNeon
-            }
-            _ => {
-                trace!("Using scalar implementation from global hardware detection");
-                PlatformCapability::Scalar
-            }
+    *PLATFORM_CAPABILITY.get_or_init(|| match best_simd_level() {
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::AVX512 => {
+            trace!("Using AVX-512 SIMD from global hardware detection");
+            PlatformCapability::X86Avx512
+        }
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::AVX2 => {
+            trace!("Using AVX2 SIMD from global hardware detection");
+            PlatformCapability::X86Avx2
+        }
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::SSE41 => {
+            trace!("Using SSE2 SIMD from global hardware detection");
+            PlatformCapability::X86Sse2
+        }
+        #[cfg(target_arch = "aarch64")]
+        SimdLevel::NEON => {
+            trace!("Using ARM NEON SIMD from global hardware detection");
+            PlatformCapability::ArmNeon
+        }
+        _ => {
+            trace!("Using scalar implementation from global hardware detection");
+            PlatformCapability::Scalar
         }
     })
 }
@@ -587,14 +595,10 @@ impl Default for UnifiedDistanceCompute {
 impl UnifiedDistanceCompute {
     /// Create new instance with system default metric
     pub fn new(metric: DistanceMetric) -> Self {
-        // Use cached hardware detection for efficiency
         let preferred_backend = get_cached_preferred_backend();
         let gpu_enabled = is_gpu_enabled_cached();
-        let platform_capability = get_platform_capability(); // Uses global cached detection
-
-        // Get actual hardware backend from centralized capabilities
-        let caps = get_hardware_capabilities();
-        let hardware_backend = caps.preferred_backend();
+        let platform_capability = get_platform_capability();
+        let hardware_backend = preferred_backend;
 
         trace!(
             "Creating UnifiedDistanceCompute with metric: {:?}, backend: {:?}, platform: {:?}",
@@ -2572,9 +2576,7 @@ mod tests {
 
     #[test]
     fn test_platform_detection() {
-        // Initialize hardware capabilities
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
-        let _capability = crate::core::hardware_capabilities::get_hardware_capabilities();
 
         // Test that we can create calculators for all metrics
         let cosine_calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
