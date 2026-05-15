@@ -2139,21 +2139,15 @@ impl EmbeddedProximaDB {
         use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
 
         self.runtime.block_on(async {
-            // Step 1: Check WAL/memtable for unflushed data (most recent)
-            if let Some(write_buffer) = get_global_write_buffer_behavior()
-                && let Ok(batches) = write_buffer.get_unflushed_batches(collection).await
-            {
-                for batch in batches {
-                    for record in batch.vector_records.iter() {
-                        if record.id == vector_id {
-                            // Found in unflushed data - check if it's a tombstone
-                            if record.vector.is_empty() && record.version.is_none() {
-                                // This is a tombstone marker - vector was deleted
-                                return Ok(None);
-                            }
-                            return Ok(Some(record.clone()));
-                        }
-                    }
+            // Step 1: Check WAL/memtable for unflushed data using MVCC-aware lookup.
+            // vector_by_id selects the latest version across all batches (version then
+            // timestamp), so an UPDATE for the same ID always wins over an INSERT.
+            // Tombstones (expires_at=0) are returned as None automatically.
+            if let Some(write_buffer) = get_global_write_buffer_behavior() {
+                match write_buffer.vector_by_id(collection, vector_id).await {
+                    Ok(Some(record)) => return Ok(Some(record)),
+                    Ok(None) => {} // not in memtable; fall through to storage
+                    Err(_) => {}  // ignore memtable errors; fall through to storage
                 }
             }
 

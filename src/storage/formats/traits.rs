@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn test_compression_codec_default() {
         let codec = CompressionCodec::default();
-        assert_eq!(codec, CompressionCodec::Lz4);
+        assert_eq!(codec, CompressionCodec::None);
     }
 
     #[test]

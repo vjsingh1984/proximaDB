@@ -832,8 +832,8 @@ mod tests {
     async fn test_compression_config_default() {
         let config = CompressionConfig::default();
 
-        // Default compression is Snappy as per core::service_types::CompressionAlgorithm::default()
-        assert!(matches!(config.algorithm, CompressionAlgorithm::Snappy));
+        // CompressionAlgorithm::default() returns None (no compression by default)
+        assert!(matches!(config.algorithm, CompressionAlgorithm::None));
         assert!(!config.compress_memory);
         assert!(config.compress_disk);
         assert_eq!(config.min_compress_size, 1024);

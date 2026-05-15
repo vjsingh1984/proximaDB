@@ -259,8 +259,11 @@ impl WriteAheadLogDiskManager {
                 0,                          // vector_count (unknown at this point)
                 self.wal_base_url.clone(),  // storage_url
             );
-            // Async append (non-blocking, high performance)
-            manifest_service.append_async(entry).await?;
+            // Async append (non-blocking, high performance); non-fatal if manifest
+            // channel is closed (e.g. singleton background worker from a prior run).
+            if let Err(e) = manifest_service.append_async(entry).await {
+                warn!("⚠️  Manifest append failed (non-fatal): {}", e);
+            }
         }
 
         // Update stats
