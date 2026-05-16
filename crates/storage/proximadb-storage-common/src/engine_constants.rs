@@ -32,3 +32,9 @@ pub const METADATA_EXT: &str = ".meta";
 pub const STATS_EXT: &str = ".stats";
 pub const INDEX_EXT: &str = ".idx";
 pub const BLOOM_FILTER_EXT: &str = ".bloom";
+
+// ProximaBlocks sizing constants (SST/Swift/Helix)
+pub const DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES: usize = 200;
+pub const DEFAULT_TARGET_BLOCK_SIZE_BYTES: usize = 3 * 1024 * 1024;
+pub const MIN_TARGET_BLOCK_SIZE_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_TARGET_BLOCK_SIZE_BYTES: usize = 4 * 1024 * 1024;

@@ -1,10 +1,12 @@
 pub mod index_algorithm;
 /// Advanced metadata query engine with runtime evaluation and regex caching.
 pub mod metadata_query;
+pub mod normalize;
 pub mod query_params;
 pub mod search_query;
 
 pub use index_algorithm::IndexAlgorithmConfig;
+pub use normalize::normalize_field;
 pub use query_params::Params;
 pub use search_query::SearchQuery;
 
