@@ -9,8 +9,13 @@ pub mod btree;
 pub mod cache;
 pub mod pool;
 pub mod skiplist;
+pub mod vector_ops;
 
 pub use btree::{BPlusTree, BTreeError, BTreeIterator, BTreeStats, DiskNodeInfo};
 pub use cache::{CacheEntry, CacheError, CacheStats, LruCache, ThreadSafeLruCache};
 pub use pool::{Pool, PoolConfig, PoolStats, PooledItem, VectorMemoryPool, VectorPoolStats};
 pub use skiplist::{SkipList, SkipListIterator};
+pub use vector_ops::{
+    cosine_similarity, dot_product, mean, normalize_l2, resize_vector, standard_deviation,
+    validate_vector,
+};
