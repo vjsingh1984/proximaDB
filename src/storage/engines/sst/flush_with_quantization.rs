@@ -130,7 +130,7 @@ impl SstEngine {
 
         // Create block with SST engine profile
         let compression_config = BlockCompressionConfig {
-            algorithm: crate::core::compression::CompressionAlgorithm::Lz4,
+            algorithm: proximadb_compression::CompressionAlgorithm::Lz4,
             compression_level: 3,
             enable_vector_compression: true,
             enable_metadata_compression: true,

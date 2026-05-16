@@ -130,8 +130,8 @@ pub enum ParquetFieldType {
 }
 
 // CLEANUP: ParquetCompression removed - duplicate of CompressionAlgorithm
-// Use crate::core::compression::CompressionAlgorithm instead
-pub type ParquetCompression = crate::core::compression::CompressionAlgorithm;
+// Use proximadb_compression::CompressionAlgorithm instead
+pub type ParquetCompression = proximadb_compression::CompressionAlgorithm;
 
 /// Processed vector record with separated filterable and extra metadata
 ///
@@ -206,7 +206,7 @@ pub struct CompressionStats {
 }
 
 // CLEANUP: CompressionConfig and CompressionAlgorithm removed
-// Use crate::core::compression::CompressionAlgorithm from unified compression module
+// Use proximadb_compression::CompressionAlgorithm from unified compression module
 // Use crate::storage::engines::core::ops::UniversalCompressionConfig for configuration
 
 /// Schema configuration

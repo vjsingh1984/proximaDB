@@ -16,7 +16,7 @@ use crate::storage::engines::core::ops::{
         ContextAwareCompressionConfig, CompressionData,
     },
 };
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use super::{DataBlock, SstableWriter};
 
 /// Enhanced SSTable Writer with Universal Compression Integration

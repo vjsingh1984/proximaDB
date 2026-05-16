@@ -1006,7 +1006,7 @@ impl Flush {
         mut props_builder: parquet::file::properties::WriterPropertiesBuilder,
         batch: &arrow_array::RecordBatch,
     ) -> Result<parquet::file::properties::WriterPropertiesBuilder> {
-        use crate::core::compression::{
+        use proximadb_compression::{
             CompressionContext, detect_column_type, optimal_compression_for_column,
         };
 
@@ -1044,35 +1044,35 @@ impl Flush {
 
             // Apply optimal encoding based on column type
             let encoding = match data_type {
-                crate::core::compression::ColumnData::BinaryQuantized => {
+                proximadb_compression::ColumnData::BinaryQuantized => {
                     // Binary data - use bit packing for maximum density
                     parquet::basic::Encoding::RLE
                 }
-                crate::core::compression::ColumnData::Int8Quantized => {
+                proximadb_compression::ColumnData::Int8Quantized => {
                     // Integer quantized - use delta encoding
                     parquet::basic::Encoding::DELTA_BINARY_PACKED
                 }
-                crate::core::compression::ColumnData::ProductQuantized => {
+                proximadb_compression::ColumnData::ProductQuantized => {
                     // PQ vectors - use byte stream split for floating point efficiency
                     parquet::basic::Encoding::BYTE_STREAM_SPLIT
                 }
-                crate::core::compression::ColumnData::FullPrecision => {
+                proximadb_compression::ColumnData::FullPrecision => {
                     // FP32 vectors - use byte stream split for best compression
                     parquet::basic::Encoding::BYTE_STREAM_SPLIT
                 }
-                crate::core::compression::ColumnData::Identifier => {
+                proximadb_compression::ColumnData::Identifier => {
                     // ID columns - use dictionary encoding for deduplication
                     parquet::basic::Encoding::RLE_DICTIONARY
                 }
-                crate::core::compression::ColumnData::Metadata => {
+                proximadb_compression::ColumnData::Metadata => {
                     // Metadata - use dictionary encoding for repeated values
                     parquet::basic::Encoding::RLE_DICTIONARY
                 }
-                crate::core::compression::ColumnData::Timestamp => {
+                proximadb_compression::ColumnData::Timestamp => {
                     // Timestamps - use delta encoding for monotonic values
                     parquet::basic::Encoding::DELTA_BINARY_PACKED
                 }
-                crate::core::compression::ColumnData::Generic => {
+                proximadb_compression::ColumnData::Generic => {
                     // Generic data - use plain encoding
                     parquet::basic::Encoding::PLAIN
                 }

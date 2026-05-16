@@ -1874,8 +1874,8 @@ impl ProximaDataBlock {
         &self,
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
-        use crate::core::compression::CompressionAlgorithm;
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::CompressionAlgorithm;
+        use proximadb_compression::{CompressionContext, compress};
         use std::collections::{HashMap, HashSet};
         use std::io::Write;
 
@@ -2166,7 +2166,7 @@ impl ProximaDataBlock {
 
                 // Write: [u32 total_len][u8 marker][compressed_bytes]
                 // Uses ProximaDB standard compression markers for consistency
-                let marker = crate::core::compression::markers::compression_marker(&metadata_algo);
+                let marker = proximadb_compression::markers::compression_marker(&metadata_algo);
                 let total_len = 1 + compressed_values.len(); // 1 byte for marker
                 result.write_all(&(total_len as u32).to_le_bytes())?;
                 result.write_all(&[marker])?;
@@ -2440,7 +2440,7 @@ impl ProximaDataBlock {
                     let mut final_result = Vec::new();
 
                     // Write compression marker (using standard markers from compression_marker())
-                    use crate::core::compression::compression_marker;
+                    use proximadb_compression::compression_marker;
                     let marker_val = compression_marker(&config.algorithm);
                     final_result.push(marker_val);
                     trace!("[ENCODE] Using compression marker: 0x{:02X}", marker_val);
@@ -2474,7 +2474,7 @@ impl ProximaDataBlock {
 
         // For uncompressed data, we need to mark it as such
         // Use MARKER_UNCOMPRESSED (0x02) as the marker for uncompressed data
-        use crate::core::compression::MARKER_UNCOMPRESSED;
+        use proximadb_compression::MARKER_UNCOMPRESSED;
         let mut final_result = Vec::with_capacity(result.len() + 1);
         final_result.push(MARKER_UNCOMPRESSED);
         final_result.extend(result);
@@ -2675,7 +2675,7 @@ impl ProximaDataBlock {
         data: &[u8],
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> anyhow::Result<Self> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::Read;
 
         trace!(
@@ -3131,7 +3131,7 @@ impl ProximaDataBlock {
                 let mut marker_byte = [0u8; 1];
                 cursor.read_exact(&mut marker_byte)?;
                 let compression_algo =
-                    crate::core::compression::markers::compression_algorithm_from_marker(
+                    proximadb_compression::markers::compression_algorithm_from_marker(
                         marker_byte[0],
                     );
                 trace!(
@@ -3670,7 +3670,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
 
@@ -3770,7 +3770,7 @@ impl ProximaDataBlock {
 
         // Compress vector field if enabled AND Proxima didn't already compress well
         let final_vector_data = if config.enable_vector_compression
-            && config.algorithm != crate::core::compression::CompressionAlgorithm::None
+            && config.algorithm != proximadb_compression::CompressionAlgorithm::None
             && compression_ratio < 2.0
         // Only apply additional compression if Proxima achieved < 2x
         {
@@ -3797,10 +3797,10 @@ impl ProximaDataBlock {
 
                 // Write vector field header: [compression_marker][data] (no size overhead)
                 let compression_marker = match config.algorithm {
-                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                    proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                    proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                    proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                     _ => 0x00,
                 };
 
@@ -3849,7 +3849,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
 
         #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
@@ -3867,12 +3867,12 @@ impl ProximaDataBlock {
 
         // Write compression intent (what we'll try, but actual compression is per-group)
         let compression_intent =
-            if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+            if config.algorithm != proximadb_compression::CompressionAlgorithm::None {
                 match config.algorithm {
-                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                    proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                    proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                    proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                     _ => 0x10, // Default to LZ4
                 }
             } else {
@@ -4068,7 +4068,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
 
         #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
@@ -4193,7 +4193,7 @@ impl ProximaDataBlock {
         }
 
         // Now compress the entire block
-        if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+        if config.algorithm != proximadb_compression::CompressionAlgorithm::None {
             let compressed_block = compress(
                 &uncompressed_block,
                 config.algorithm,
@@ -4204,10 +4204,10 @@ impl ProximaDataBlock {
 
             // Write compression algorithm marker
             let compression_marker = match config.algorithm {
-                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                 _ => 0x10, // Default to LZ4
             };
             field_data.push(compression_marker);
@@ -4254,7 +4254,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
 
@@ -4357,7 +4357,7 @@ impl ProximaDataBlock {
         }
 
         // Now compress the entire block
-        if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+        if config.algorithm != proximadb_compression::CompressionAlgorithm::None {
             let compressed_block = compress(
                 &uncompressed_block,
                 config.algorithm,
@@ -4368,10 +4368,10 @@ impl ProximaDataBlock {
 
             // Write compression algorithm marker
             let compression_marker = match config.algorithm {
-                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                 _ => 0x10, // Default to LZ4
             };
             field_data.push(compression_marker);
@@ -4415,7 +4415,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
         use crate::storage::engines::core::ops::proximacodec::TypeId;
         use crate::storage::engines::core::ops::proximacodec::{
             ProximaCodec, ProximaScheme as CodecScheme, analysis,
@@ -4510,7 +4510,7 @@ impl ProximaDataBlock {
 
             // Compress dimension field if enabled
             let final_dimension_data = if config.enable_vector_compression
-                && config.algorithm != crate::core::compression::CompressionAlgorithm::None
+                && config.algorithm != proximadb_compression::CompressionAlgorithm::None
             {
                 let compressed = compress(
                     &encoded_dimension,
@@ -4521,10 +4521,10 @@ impl ProximaDataBlock {
 
                 // Write dimension field header: [compression_marker][data_size][data]
                 let compression_marker = match config.algorithm {
-                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                    proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                    proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                    proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                     _ => 0x00,
                 };
 
@@ -4615,7 +4615,7 @@ impl ProximaDataBlock {
 
         if encoding_version == 0x01 {
             // Field-level compression with delta encoding
-            use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+            use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
 
             // ===== DECODE VECTOR FIELD =====
             // Read compression marker
@@ -4771,7 +4771,7 @@ impl ProximaDataBlock {
         dimension: usize,
         vector_count: usize,
     ) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
         #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
@@ -5006,7 +5006,7 @@ impl ProximaDataBlock {
         dimension: usize,
         vector_count: usize,
     ) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
 
         trace!(
@@ -5208,7 +5208,7 @@ impl ProximaDataBlock {
         dimension: usize,
         vector_count: usize,
     ) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
         #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
@@ -5381,7 +5381,7 @@ impl ProximaDataBlock {
         dimension: usize,
         vector_count: usize,
     ) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
 
         trace!(

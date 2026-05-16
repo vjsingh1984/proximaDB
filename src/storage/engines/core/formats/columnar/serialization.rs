@@ -18,7 +18,7 @@ use crate::compute::distance_computation::SelectedFormat;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 
 /// Serialization configuration for columnar storage

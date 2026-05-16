@@ -227,7 +227,7 @@ async fn load_block_from_disk(_superblock_idx: u32, _block_idx: u32) -> Result<P
     // 4. Deserialize the records
 
     // For now, return a mock block using the correct constructor
-    use crate::core::compression::CompressionAlgorithm;
+    use proximadb_compression::CompressionAlgorithm;
     use crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig;
 
     let compression_config = BlockCompressionConfig {

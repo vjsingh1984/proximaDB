@@ -710,7 +710,7 @@ mod tests {
             quantized_section: None,
             metadata: crate::storage::engines::core::formats::proximablocks::block_structures::ProximaBlockMetadata::default(),
             compression_config: crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig::default(),
-            compression_algorithm: crate::core::compression::CompressionAlgorithm::None,
+            compression_algorithm: proximadb_compression::CompressionAlgorithm::None,
             uncompressed_size: 0,
             bloom_filter: None,
             block_bloom_filter: None,

@@ -5,7 +5,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 
 /// Row-based file header structure
 #[derive(Debug, Clone)]

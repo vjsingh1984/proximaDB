@@ -620,7 +620,7 @@ mod tests {
                 metadata_checksum: 0,
             },
             compression_config: crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig {
-                algorithm: crate::core::compression::CompressionAlgorithm::Lz4,
+                algorithm: proximadb_compression::CompressionAlgorithm::Lz4,
                 compression_level: 1,
                 enable_vector_compression: true,
                 enable_metadata_compression: true,
@@ -629,7 +629,7 @@ mod tests {
                 vector_layout: crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
                 metadata_algorithm: None,
             },
-            compression_algorithm: crate::core::compression::CompressionAlgorithm::Lz4,
+            compression_algorithm: proximadb_compression::CompressionAlgorithm::Lz4,
             uncompressed_size: 0,
             bloom_filter: None,
             block_bloom_filter: None,

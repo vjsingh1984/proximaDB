@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
 
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::core::serialization::{VectorSerializationConfig, CompressionAlgorithm as CoreCompression};
 use crate::proto::proximadb_v1::VectorRecord;
 

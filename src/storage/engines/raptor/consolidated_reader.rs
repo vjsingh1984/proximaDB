@@ -38,7 +38,7 @@ use super::common::{
 };
 use super::config::RaptorConfig;
 use super::constants;
-use crate::core::compression::{CompressionAlgorithm, CompressionContext};
+use proximadb_compression::{CompressionAlgorithm, CompressionContext};
 
 // Additional imports for component boosting and hierarchical search
 use std::collections::HashSet;
@@ -386,7 +386,7 @@ impl RaptorReader {
                 let compressed_data = &full_file_data[start as usize..end as usize];
 
                 // Use standard decompression (Proxima used for different data types)
-                let decompressed = crate::core::compression::decompress(
+                let decompressed = proximadb_compression::decompress(
                     compressed_data,
                     CompressionAlgorithm::Zstd,
                     CompressionContext::Column,
@@ -414,7 +414,7 @@ impl RaptorReader {
                 let compressed_data = &full_file_data[start as usize..end as usize];
 
                 // DIRECT decode
-                let decompressed = crate::core::compression::decompress(
+                let decompressed = proximadb_compression::decompress(
                     compressed_data,
                     CompressionAlgorithm::Zstd,
                     CompressionContext::Column,
@@ -2147,7 +2147,7 @@ impl RaptorReader {
 
             // Decompress if needed
             let decompressed = if pxk_metadata.compression != CompressionAlgorithm::None {
-                crate::core::compression::decompress(
+                proximadb_compression::decompress(
                     &matrix_data,
                     pxk_metadata.compression,
                     CompressionContext::Column,
@@ -2205,20 +2205,20 @@ impl RaptorReader {
 
                     // Parse compression algorithm from string
                     let compression_algo = match matrix_ref.compression_algorithm.as_str() {
-                        "zstd" => crate::core::compression::CompressionAlgorithm::Zstd,
-                        "lz4" => crate::core::compression::CompressionAlgorithm::Lz4,
-                        "snappy" => crate::core::compression::CompressionAlgorithm::Snappy,
-                        _ => crate::core::compression::CompressionAlgorithm::None,
+                        "zstd" => proximadb_compression::CompressionAlgorithm::Zstd,
+                        "lz4" => proximadb_compression::CompressionAlgorithm::Lz4,
+                        "snappy" => proximadb_compression::CompressionAlgorithm::Snappy,
+                        _ => proximadb_compression::CompressionAlgorithm::None,
                     };
 
                     // Decompress if needed
                     let decompressed = if compression_algo
-                        != crate::core::compression::CompressionAlgorithm::None
+                        != proximadb_compression::CompressionAlgorithm::None
                     {
-                        crate::core::compression::decompress(
+                        proximadb_compression::decompress(
                             &matrix_data,
                             compression_algo,
-                            crate::core::compression::CompressionContext::Column,
+                            proximadb_compression::CompressionContext::Column,
                         )?
                     } else {
                         matrix_data
@@ -2542,7 +2542,7 @@ impl RaptorReader {
 
     /// Decompress bloom filter using unified compression module
     fn decompress_bloom_filter(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
-        use crate::core::compression::{
+        use proximadb_compression::{
             CompressionContext, CompressionProvider, StandardCompression,
         };
 
@@ -2900,7 +2900,7 @@ impl RaptorReader {
 
     /// Decompress P² matrix using unified compression
     fn decompress_p2_matrix(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
-        use crate::core::compression::{
+        use proximadb_compression::{
             CompressionContext, CompressionProvider, StandardCompression,
         };
 
@@ -3717,10 +3717,10 @@ impl RaptorReader {
         compressed: &[u8],
         algorithm: CompressionAlgorithm,
     ) -> Result<Vec<u8>> {
-        crate::core::compression::decompress(
+        proximadb_compression::decompress(
             compressed,
             algorithm,
-            crate::core::compression::CompressionContext::Column,
+            proximadb_compression::CompressionContext::Column,
         )
     }
 
@@ -3901,7 +3901,7 @@ impl RaptorReader {
             .await?;
 
         let vector_data = if vector_column_meta.compression != CompressionAlgorithm::None {
-            use crate::core::compression::{CompressionContext, decompress};
+            use proximadb_compression::{CompressionContext, decompress};
             decompress(
                 &vector_compressed,
                 vector_column_meta.compression,
@@ -3927,7 +3927,7 @@ impl RaptorReader {
             .await?;
 
         let id_data = if id_column_meta.compression != CompressionAlgorithm::None {
-            use crate::core::compression::{CompressionContext, decompress};
+            use proximadb_compression::{CompressionContext, decompress};
             decompress(
                 &id_compressed,
                 id_column_meta.compression,

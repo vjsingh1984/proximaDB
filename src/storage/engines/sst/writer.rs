@@ -278,7 +278,7 @@ impl SstableWriter {
     fn compress_block_streaming(
         &self,
         data_block: &ProximaDataBlock,
-        algorithm: crate::core::compression::CompressionAlgorithm,
+        algorithm: proximadb_compression::CompressionAlgorithm,
         level: u8,
     ) -> Result<Vec<u8>> {
         debug!("🔍 SST WRITER: Compressing block with universal adapter");

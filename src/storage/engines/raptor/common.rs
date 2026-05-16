@@ -1,4 +1,4 @@
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 /// Common types and structures shared across RAPTOR modules

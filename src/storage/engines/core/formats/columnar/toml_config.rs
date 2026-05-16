@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use anyhow::{Result, Context};
 
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::storage::engines::core::formats::columnar::{
     ParquetWriterConfig, FooterCacheConfig, HybridWriterConfig,
     WriterMode, ParquetConfigBuilder, FooterCacheBuilder, HybridWriterBuilder,

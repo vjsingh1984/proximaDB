@@ -286,7 +286,7 @@ pub use sst_metadata::{SstBlockHeader, SstGlobalHeader, SstMetadata, SstMetadata
 pub use arrow_reader::ProximaBlocksArrowReader;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 
 /// Common configuration for row-based storage engines
 #[derive(Debug, Clone)]

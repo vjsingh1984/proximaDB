@@ -37,7 +37,7 @@ pub struct CachedBlock {
     /// Number of times accessed
     pub access_count: u64,
     /// Original compression algorithm
-    pub compression_algorithm: Option<crate::core::compression::CompressionAlgorithm>,
+    pub compression_algorithm: Option<proximadb_compression::CompressionAlgorithm>,
 }
 
 /// Decompression cache for SSTable blocks with automatic invalidation
@@ -52,7 +52,7 @@ pub struct DecompressionCache {
     stats: Arc<RwLock<CacheStats>>,
     /// Compression-specific sub-caches for better locality
     compression_caches:
-        Arc<RwLock<HashMap<crate::core::compression::CompressionAlgorithm, Vec<BlockCacheKey>>>>,
+        Arc<RwLock<HashMap<proximadb_compression::CompressionAlgorithm, Vec<BlockCacheKey>>>>,
     /// File modification timestamps for invalidation
     file_timestamps: Arc<dashmap::DashMap<String, i64>>,
     /// Configuration from TOML
@@ -305,7 +305,7 @@ impl DecompressionCache {
         &self,
         key: BlockCacheKey,
         data: ProximaDataBlock,
-        compression_algorithm: Option<crate::core::compression::CompressionAlgorithm>,
+        compression_algorithm: Option<proximadb_compression::CompressionAlgorithm>,
     ) -> Result<()> {
         // Calculate block size
         let size_bytes = Self::calculate_block_size(&data);
@@ -424,15 +424,15 @@ impl DecompressionCache {
     /// Estimate decompression time based on algorithm and size
     fn estimate_decompression_time(
         size_bytes: usize,
-        algorithm: Option<crate::core::compression::CompressionAlgorithm>,
+        algorithm: Option<proximadb_compression::CompressionAlgorithm>,
     ) -> u64 {
         // Rough estimates based on typical decompression speeds
         match algorithm {
-            Some(crate::core::compression::CompressionAlgorithm::Zstd) => {
+            Some(proximadb_compression::CompressionAlgorithm::Zstd) => {
                 (size_bytes as u64) / 1000
             } // ~1GB/s
-            Some(crate::core::compression::CompressionAlgorithm::Lz4) => (size_bytes as u64) / 2000, // ~2GB/s
-            Some(crate::core::compression::CompressionAlgorithm::Snappy) => {
+            Some(proximadb_compression::CompressionAlgorithm::Lz4) => (size_bytes as u64) / 2000, // ~2GB/s
+            Some(proximadb_compression::CompressionAlgorithm::Snappy) => {
                 (size_bytes as u64) / 1500
             } // ~1.5GB/s
             _ => 0,
@@ -481,7 +481,7 @@ impl DecompressionCache {
         blocks: Vec<(
             u32,
             ProximaDataBlock,
-            Option<crate::core::compression::CompressionAlgorithm>,
+            Option<proximadb_compression::CompressionAlgorithm>,
         )>,
     ) -> Result<()> {
         info!(
@@ -506,7 +506,7 @@ impl DecompressionCache {
     /// Get blocks by compression algorithm (for optimization)
     pub async fn get_blocks_by_algorithm(
         &self,
-        algorithm: crate::core::compression::CompressionAlgorithm,
+        algorithm: proximadb_compression::CompressionAlgorithm,
     ) -> Vec<BlockCacheKey> {
         let comp_caches = self.compression_caches.read().await;
         comp_caches.get(&algorithm).cloned().unwrap_or_default()
@@ -641,7 +641,7 @@ mod tests {
             .put(
                 key.clone(),
                 block.clone(),
-                Some(crate::core::compression::CompressionAlgorithm::Zstd),
+                Some(proximadb_compression::CompressionAlgorithm::Zstd),
             )
             .await
             .unwrap();

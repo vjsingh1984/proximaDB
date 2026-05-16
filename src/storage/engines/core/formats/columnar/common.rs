@@ -18,7 +18,7 @@ use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
 use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
@@ -77,7 +77,7 @@ pub struct CompressionStrategy {
 #[derive(Debug, Clone)]
 pub enum CompressionAlgorithmSelection {
     /// Fixed algorithm for all data
-    Fixed(crate::core::compression::CompressionAlgorithm),
+    Fixed(proximadb_compression::CompressionAlgorithm),
     /// Per-column type optimization
     PerColumnType,
     /// Adaptive based on data characteristics

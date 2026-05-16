@@ -294,7 +294,7 @@ use crate::core::{SstConfig, VectorRecord};
 // SearchResult is now proto type, not in core::search
 use crate::core::search::json_value_serde;
 // use crate::core::serialization::VectorSerializationConfig;  // Not needed
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 // Removed ZeroCopyIOSystem - using UnifiedCachingFilesystem instead
 // SortingStats now comes from utils module
 // Unified search engine removed - using direct search methods
@@ -2209,8 +2209,8 @@ mod bplustree_tests {
 #[cfg(test)]
 mod compression_tests_unified {
     use super::*;
-    use crate::core::compression::markers::*;
-    use crate::core::compression::{
+    use proximadb_compression::markers::*;
+    use proximadb_compression::{
         CompressionAlgorithm as UnifiedCompressionAlgorithm, CompressionContext,
     };
     use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
@@ -2371,7 +2371,7 @@ mod compression_tests_unified {
         let test_data = b"Test data for compression context verification".repeat(100);
 
         // Compress using unified module with SST context
-        let compressed = crate::core::compression::compress(
+        let compressed = proximadb_compression::compress(
             &test_data,
             UnifiedCompressionAlgorithm::Zstd,
             3,
@@ -2380,7 +2380,7 @@ mod compression_tests_unified {
         .unwrap();
 
         // Decompress using unified module
-        let decompressed = crate::core::compression::decompress(
+        let decompressed = proximadb_compression::decompress(
             &compressed,
             UnifiedCompressionAlgorithm::Zstd,
             CompressionContext::Block,
@@ -3108,8 +3108,8 @@ mod decompression_cache_tests {
 #[cfg(test)]
 mod compression_tests {
     use super::*;
-    use crate::core::compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
-    use crate::core::compression::markers::*;
+    use proximadb_compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
+    use proximadb_compression::markers::*;
     use crate::proto::proximadb_v1::CompressionAlgorithm;
     use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 

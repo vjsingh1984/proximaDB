@@ -672,7 +672,7 @@ mod tests {
                 metadata_checksum: 0,
             },
             compression_config: Default::default(),
-            compression_algorithm: crate::core::compression::CompressionAlgorithm::None,
+            compression_algorithm: proximadb_compression::CompressionAlgorithm::None,
             uncompressed_size: 1024,
             bloom_filter: None,
             block_bloom_filter: None,

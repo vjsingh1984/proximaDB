@@ -55,7 +55,7 @@ use tracing::debug;
 
 // Reuse existing platform capabilities
 use super::common::VectorStats;
-use crate::core::compression::{
+use proximadb_compression::{
     CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
 use crate::core::hardware_capabilities::get_hardware_capabilities;
@@ -3668,7 +3668,7 @@ impl RaptorWriter {
 
                 // Compress text using LZ4 for speed
                 let compressed_text = if all_text.len() > 1024 {
-                    crate::core::compression::compress(
+                    proximadb_compression::compress(
                         &all_text,
                         CompressionAlgorithm::Lz4,
                         3,
@@ -4468,7 +4468,7 @@ impl RaptorWriter {
         }
 
         // Compress IVF data
-        let compressed = crate::core::compression::compress(
+        let compressed = proximadb_compression::compress(
             &ivf_data,
             CompressionAlgorithm::Zstd,
             6,
@@ -4799,7 +4799,7 @@ impl RaptorWriter {
         }
 
         // Compress projections
-        let compressed = crate::core::compression::compress(
+        let compressed = proximadb_compression::compress(
             &projection_data,
             CompressionAlgorithm::Zstd,
             6,
@@ -5397,7 +5397,7 @@ impl RaptorWriter {
         combined_data.extend(&id_column_data);
 
         // Compress using unified compression - use CompressionProvider trait
-        use crate::core::compression::CompressionProvider;
+        use proximadb_compression::CompressionProvider;
         let compressed = self.compression.compress(
             &combined_data,
             CompressionAlgorithm::Zstd, // No level field in enum

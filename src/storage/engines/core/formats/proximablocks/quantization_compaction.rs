@@ -204,7 +204,7 @@ impl QuantizationAwareCompaction {
 
         // Use higher compression for compacted blocks
         let compression_config = BlockCompressionConfig {
-            algorithm: crate::core::compression::CompressionAlgorithm::Zstd,
+            algorithm: proximadb_compression::CompressionAlgorithm::Zstd,
             compression_level: 6, // Higher compression for compacted data
             enable_vector_compression: true,
             enable_metadata_compression: true,

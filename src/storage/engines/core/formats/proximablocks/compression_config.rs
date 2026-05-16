@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::core::compression::{CompressionAlgorithm, CompressionContext};
+use proximadb_compression::{CompressionAlgorithm, CompressionContext};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::CompressionConfig as ProtoCompressionConfig;
 

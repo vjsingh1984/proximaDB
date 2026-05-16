@@ -215,7 +215,7 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)

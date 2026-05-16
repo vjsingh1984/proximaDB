@@ -14,7 +14,7 @@ use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::VectorRecord;
 // ProximaCodec system for encoding/decoding
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::storage::engines::core::formats::proximablocks::{
     BlockCompressionConfig, VectorEncodingLayout,
 };

@@ -12,7 +12,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
 use super::QuantizationConfig;
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
 use crate::storage::engines::core::formats::columnar::constants::{
     DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
