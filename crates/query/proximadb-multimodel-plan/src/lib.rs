@@ -1,5 +1,8 @@
 //! MultiModelPlan v1 - Unified Query Contract for Vectorized Cross-Model Execution
 //!
+//! Also re-exports `compute_plan` — the serializable physical `ComputePlan` / `PlanNode`
+//! IR used by the compute scheduler and provider layer.
+//!
 //! This module implements the MultiModelPlan contract that enables unified query
 //! execution across all ProximaDB storage engines (SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR).
 //!
@@ -1616,3 +1619,7 @@ mod tests {
         assert!(plan.validate().unwrap().is_valid);
     }
 }
+
+/// Physical compute plan IR — serializable provider-agnostic plan used by the
+/// compute scheduler, providers, and pipeline executor.
+pub mod compute_plan;
