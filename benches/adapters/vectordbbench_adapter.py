@@ -1,15 +1,17 @@
 """
-ProximaDB Adapter for VectorDBBench
+ProximaDB Adapter for VectorDBBench.
 
-Integrates ProximaDB with the VectorDBBench framework for standardized
-vector database performance testing.
+The default mode is embedded and uses direct PyO3 calls into the in-process
+Rust service facade. Remote gRPC/Arrow Flight benchmarks should use a separate
+adapter that exercises those protocol surfaces explicitly.
 """
 
-import grpc
-import numpy as np
-from typing import List, Dict, Any, Tuple
 import logging
+import tempfile
 import time
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +26,44 @@ class ProximaDBVectorDBClient:
         Args:
             config: Configuration dictionary with host, port, etc.
         """
-        self.host = config.get('host', 'localhost')
-        self.port = config.get('port', 5678)
+        self.mode = config.get("mode", "embedded")
+        self.host = config.get("host", "localhost")
+        self.port = config.get("port", 5678)
         self.collection_name = None
         self.dimension = None
         self.metric_type = None
+        self.storage_engine = config.get("engine", "sst")
+        self._tmpdir: Optional[tempfile.TemporaryDirectory] = None
+        self._db = None
 
-        # Connect to ProximaDB
-        self.channel = grpc.insecure_channel(f'{self.host}:{self.port}')
-        logger.info(f"Connected to ProximaDB at {self.host}:{self.port}")
+        if self.mode != "embedded":
+            raise NotImplementedError(
+                "VectorDBBench adapter currently supports mode='embedded' only. "
+                "Use a dedicated gRPC or Arrow Flight benchmark adapter for remote "
+                "protocol measurements."
+            )
+
+        try:
+            from proximadb_embedded import ProximaDB
+        except ImportError as exc:
+            raise ImportError(
+                "Embedded VectorDBBench requires the proximadb_embedded PyO3 package. "
+                "Build it with: cd clients/python-embedded && "
+                "maturin develop -m ../../Cargo.toml --release --features python,pylib"
+            ) from exc
+
+        data_dir = config.get("data_dir")
+        if data_dir is None:
+            self._tmpdir = tempfile.TemporaryDirectory(prefix="proximadb-vdbbench-")
+            data_dir = self._tmpdir.name
+
+        self._db = ProximaDB(
+            data_dirs=data_dir,
+            cache_size_mb=int(config.get("cache_size_mb", 1024)),
+            default_engine=config.get("engine", "sst"),
+            enable_wal=bool(config.get("enable_wal", True)),
+        )
+        logger.info("Connected to embedded ProximaDB at %s", data_dir)
 
     def create_collection(self, collection_name: str, dimension: int, metric_type: str):
         """
@@ -47,8 +78,24 @@ class ProximaDBVectorDBClient:
         self.dimension = dimension
         self.metric_type = metric_type
 
-        # Implementation would call ProximaDB's collection creation API
-        logger.info(f"Created collection: {collection_name} (dim={dimension}, metric={metric_type})")
+        requested_engine = str(self.storage_engine).lower()
+        if requested_engine in {"sst", "viper", "nova", "swift", "raptor", "helix"}:
+            storage_engine = requested_engine
+        else:
+            storage_engine = "sst"
+
+        self._db.create_collection(
+            collection_name,
+            dimension=dimension,
+            engine=storage_engine,
+        )
+        logger.info(
+            "Created embedded collection: %s (dim=%s, metric=%s, engine=%s)",
+            collection_name,
+            dimension,
+            metric_type,
+            storage_engine,
+        )
 
     def insert_vectors(self, vectors: np.ndarray, ids: List[int] = None):
         """
@@ -61,8 +108,20 @@ class ProximaDBVectorDBClient:
         if ids is None:
             ids = list(range(len(vectors)))
 
-        # Implementation would insert vectors into ProximaDB
-        logger.info(f"Inserted {len(vectors)} vectors")
+        if self.collection_name is None:
+            raise RuntimeError("create_collection must be called before insert_vectors")
+
+        vector_array = np.asarray(vectors, dtype=np.float32)
+        string_ids = [str(vector_id) for vector_id in ids]
+        if hasattr(self._db, "insert_numpy"):
+            inserted = self._db.insert_numpy(self.collection_name, string_ids, vector_array)
+        else:
+            inserted = self._db.insert(
+                self.collection_name,
+                string_ids,
+                vector_array.tolist(),
+            )
+        logger.info("Inserted %s vectors through embedded bindings", inserted)
 
     def create_index(self, index_params: Dict[str, Any]):
         """
@@ -71,10 +130,15 @@ class ProximaDBVectorDBClient:
         Args:
             index_params: Index parameters (e.g., HNSW M, efConstruction)
         """
-        # Implementation would create index using ProximaDB's API
-        logger.info(f"Created index with params: {index_params}")
+        # The embedded collection API currently chooses index behavior through
+        # collection configuration and engine defaults. Keep the hook explicit so
+        # VectorDBBench configs remain visible without pretending to build a
+        # separate durable index.
+        logger.info("Index params recorded for embedded benchmark: %s", index_params)
 
-    def search(self, query_vectors: np.ndarray, k: int) -> Tuple[List[List[int]], List[List[float]]]:
+    def search(
+        self, query_vectors: np.ndarray, k: int
+    ) -> Tuple[List[List[Any]], List[List[float]]]:
         """
         Search for nearest neighbors
 
@@ -87,14 +151,31 @@ class ProximaDBVectorDBClient:
         """
         start_time = time.time()
 
-        # Implementation would search ProximaDB
-        # This is a placeholder that returns mock results
-        n_queries = len(query_vectors)
-        ids = [[i for i in range(k)] for _ in range(n_queries)]
-        distances = [[float(i) for i in range(k)] for _ in range(n_queries)]
+        if self.collection_name is None:
+            raise RuntimeError("create_collection must be called before search")
+
+        ids: List[List[Any]] = []
+        distances: List[List[float]] = []
+        for query in np.asarray(query_vectors, dtype=np.float32):
+            if hasattr(self._db, "search_numpy"):
+                results = self._db.search_numpy(self.collection_name, query, top_k=k)
+            else:
+                results = self._db.search(self.collection_name, query.tolist(), top_k=k)
+
+            result_ids: List[Any] = []
+            result_distances: List[float] = []
+            for result in results:
+                raw_id = getattr(result, "id", "")
+                try:
+                    result_ids.append(int(raw_id))
+                except (TypeError, ValueError):
+                    result_ids.append(raw_id)
+                result_distances.append(float(getattr(result, "score", 0.0)))
+            ids.append(result_ids)
+            distances.append(result_distances)
 
         elapsed = time.time() - start_time
-        logger.debug(f"Search completed for {n_queries} queries in {elapsed:.3f}s")
+        logger.debug("Search completed for %s queries in %.3fs", len(query_vectors), elapsed)
 
         return ids, distances
 
@@ -105,17 +186,20 @@ class ProximaDBVectorDBClient:
         Returns:
             Memory usage in MB
         """
-        # Implementation would query ProximaDB's memory usage
-        # Placeholder: estimate based on collection size
+        # Process RSS is what VectorDBBench expects for an embedded benchmark:
+        # the database lives in this Python process.
         import psutil
+
         process = psutil.Process()
         return process.memory_info().rss / 1024 / 1024
 
     def disconnect(self):
         """Disconnect from ProximaDB"""
-        if self.channel:
-            self.channel.close()
-        logger.info("Disconnected from ProximaDB")
+        if self._db is not None and hasattr(self._db, "close"):
+            self._db.close()
+        if self._tmpdir is not None:
+            self._tmpdir.cleanup()
+        logger.info("Disconnected from embedded ProximaDB")
 
 
 class VectorDBBenchAdapter:
@@ -174,7 +258,7 @@ class VectorDBBenchAdapter:
                 'qps': qps,
                 'avg_latency_ms': avg_latency,
                 'memory_mb': client.get_memory_usage(),
-                'recall': 0.95,  # Placeholder
+                'recall': None,
                 'total_queries': len(query_vectors)
             }
 

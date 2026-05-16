@@ -1,17 +1,30 @@
 # ProximaDB Embedded
 
-**Zero-overhead embedded vector database for Python**
+**In-process ProximaDB bindings for Python**
 
-ProximaDB Embedded provides direct in-process access to ProximaDB's high-performance Rust core without any network overhead. Perfect for applications that need fast, local vector storage.
+ProximaDB Embedded provides direct in-process access to ProximaDB's Rust services without opening REST, gRPC, Arrow Flight, or PostgreSQL wire ports. It is the local/embedded entry point for applications that need fast vector, document, graph, SQL/UQL, and observability operations in the same process.
 
 ## Features
 
-- **Zero Network Overhead**: Direct in-process API calls to Rust core
+- **No Local Port Required**: Direct in-process calls into shared Rust services and facades
 - **Multi-Disk Support**: Configure multiple storage locations with weighted distribution
 - **SIMD Acceleration**: Automatic AVX2/NEON vector operation optimization
 - **Full Persistence**: Write-ahead logging with configurable sync modes
-- **NumPy Integration**: Zero-copy transfer of NumPy arrays
+- **NumPy Integration**: Fast NumPy ingestion paths that avoid Python list conversion
 - **Context Manager**: Automatic resource cleanup
+
+## Embedded vs Remote Protocols
+
+Embedded mode should not start a local server just to call ProximaDB from Python. The PyO3 module owns an in-process database instance and routes operations directly to the same Rust collection, vector, catalog, document, graph, observability, SQL, and unified-query services used by server mode.
+
+Use remote protocols when another process or host needs access:
+
+- **Arrow Flight**: high-throughput remote columnar/bulk exchange.
+- **gRPC**: low-latency remote lifecycle and vector operations.
+- **REST**: human-friendly and operational HTTP workflows.
+- **PostgreSQL wire**: SQL clients, BI tools, SQLAlchemy/JDBC/ODBC compatibility.
+
+For embedded Python benchmarks and local agent runtimes, prefer direct PyO3 calls. Use gRPC or Arrow Flight only when benchmarking the network/protocol surface itself.
 
 ## Installation
 
@@ -25,11 +38,11 @@ Requires Rust toolchain and maturin:
 
 ```bash
 # Install maturin
-pip install maturin
+/Users/vijaysingh/code/.venv/bin/python -m pip install maturin
 
 # Build and install
 cd clients/python-embedded
-maturin develop -m ../../Cargo.toml --release --features python,pylib -i python
+maturin develop -m ../../Cargo.toml --release --features python,pylib
 ```
 
 Canonical import:
@@ -178,10 +191,11 @@ with ProximaDB(data_dirs="./data") as db:
 
 | Feature | Embedded | Client SDK |
 |---------|----------|------------|
-| Network overhead | None | HTTP/gRPC |
+| Hot path | Direct PyO3 service calls | REST/gRPC/Arrow Flight/pgwire |
+| Network overhead | None | Protocol dependent |
 | Deployment | In-process | Separate server |
 | Scaling | Single node | Multi-node |
-| Use case | Local apps | Distributed systems |
+| Use case | Local apps, agents, notebooks, embedded runtimes | Distributed systems and external clients |
 
 ## License
 

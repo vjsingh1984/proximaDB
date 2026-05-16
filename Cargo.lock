@@ -6282,10 +6282,15 @@ dependencies = [
 name = "proximadb-storage-common"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "criterion",
  "proximadb-records",
+ "proximadb-runtime-common",
  "serde",
  "serde_json",
+ "thiserror 1.0.69",
+ "toml 0.8.23",
+ "tracing",
 ]
 
 [[package]]

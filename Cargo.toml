@@ -100,6 +100,7 @@ thiserror = "1.0"
 tokio = { version = "1.37", features = ["full"] }
 tokio-stream = "0.1"
 tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
+toml = "0.8"
 tower = { version = "0.4", features = ["limit"] }
 tower-http = { version = "0.4", features = ["cors", "trace"] }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
@@ -107,6 +108,8 @@ proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
+proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
+proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 tonic-prost = "0.14"
 # Compression libraries (workspace-inheritable for modality/horizontal crates)
 brotli = "6.0"

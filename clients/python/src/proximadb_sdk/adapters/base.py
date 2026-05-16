@@ -1,8 +1,9 @@
 """
-ProximaDB Protocol Adapter Base Class
+ProximaDB Adapter Base Class
 
-Abstract base class defining the interface for protocol-specific adapters.
-Enables consistent API regardless of underlying protocol (REST, gRPC, embedded).
+Abstract base class defining the interface for transport and embedded adapters.
+Enables consistent API regardless of whether calls use REST, gRPC, or direct
+in-process embedded bindings.
 
 Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
@@ -25,13 +26,13 @@ from ..models import (
 
 
 class BaseProtocolAdapter(ABC):
-    """Abstract base class for protocol adapters.
+    """Abstract base class for SDK adapters.
 
-    Protocol adapters encapsulate protocol-specific logic, enabling the
-    unified client to delegate operations without conditional branches.
+    Adapters encapsulate transport-specific or embedded binding logic, enabling
+    the unified client to delegate operations without conditional branches.
 
     All methods return Pydantic models, regardless of the underlying
-    protocol's native format (JSON for REST, protobuf for gRPC).
+    native format (JSON for REST, protobuf for gRPC, PyO3 objects for embedded).
     """
 
     @property
@@ -52,7 +53,7 @@ class BaseProtocolAdapter(ABC):
 
     @abstractmethod
     def health(self) -> HealthStatus:
-        """Check server health status."""
+        """Check adapter health status."""
         pass
 
     # ==========================================================================

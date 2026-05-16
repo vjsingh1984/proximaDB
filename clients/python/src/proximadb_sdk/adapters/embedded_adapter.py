@@ -1,8 +1,10 @@
 """
-ProximaDB Embedded Protocol Adapter
+ProximaDB Embedded Adapter
 
-Wraps the PyO3 embedded bindings to implement the BaseProtocolAdapter interface.
-Converts raw PyO3 responses (often ints) to standardized Pydantic models.
+Wraps the PyO3 embedded bindings to implement the SDK adapter interface.
+This adapter does not open REST, gRPC, Arrow Flight, or PostgreSQL wire ports;
+it calls the in-process embedded database object directly and converts raw
+PyO3 responses to standardized Pydantic models.
 
 This adapter is the key to Task 2.2: Unified Embedded API - ensuring
 embedded mode returns the same response types as REST/gRPC modes.
@@ -39,11 +41,15 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddedProtocolAdapter(BaseProtocolAdapter):
-    """Embedded protocol adapter implementing BaseProtocolAdapter.
+    """Embedded adapter implementing BaseProtocolAdapter.
 
     Wraps the PyO3 EmbeddedProximaDB bindings to provide a consistent
     interface that returns Pydantic models. This is critical for ensuring
     embedded mode has API parity with REST/gRPC modes.
+
+    Embedded is not a network protocol. It shares the adapter interface so the
+    unified client can route operations consistently, but the hot path remains
+    direct in-process calls into the Rust service facade.
 
     Key transformations:
     - insert() returns int (count) -> VectorOperationResponse
@@ -131,7 +137,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
 
     @property
     def protocol_name(self) -> str:
-        """Return the protocol name."""
+        """Return the adapter name used by SDK routing."""
         return "embedded"
 
     @property
@@ -163,7 +169,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def health(self) -> HealthStatus:
-        """Check embedded database health status."""
+        """Check embedded database health without network I/O."""
         if not self._connected or self._db is None:
             return HealthStatus(
                 status="unhealthy",
@@ -690,8 +696,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     ) -> List[SearchResult]:
         """Search for similar vectors.
 
-        The embedded API typically returns a list of tuples (id, score, metadata).
-        This method converts them to SearchResult objects.
+        The embedded API returns PyO3 objects or dictionaries from direct
+        service calls. This method converts them to SearchResult objects.
         """
         try:
             filter_expr = None

@@ -65,7 +65,7 @@ client.ingest_logs("prod", [{"message": "error", "severity": "error"}])
 
 == Protocols
 
-The SDK supports REST and gRPC. REST is the default for local development.
+The SDK supports REST and gRPC for remote server access. REST is the default for local development against a running server.
 
 [source,python]
 ----
@@ -73,9 +73,22 @@ from proximadb import ProximaDBClient, Protocol
 client = ProximaDBClient("http://localhost:5678", protocol=Protocol.REST)
 ----
 
+== Embedded Python
+
+Embedded Python uses the separate `proximadb_embedded` PyO3 package. It does not start local ports and should not route through loopback REST/gRPC/Arrow Flight for normal embedded workloads.
+
+[source,python]
+----
+from proximadb_embedded import ProximaDB
+
+db = ProximaDB(data_dirs="./data", default_engine="sst")
+db.create_collection("docs", dimension=768)
+----
+
+Use Arrow Flight or gRPC when another process, host, or benchmark intentionally needs the remote protocol surface. Use direct embedded calls for notebooks, local agents, and in-process applications.
+
 == Notes
 
 * Vector operations are the most mature API surface.
 * Document, graph, and observability helpers are evolving.
 * For production, prefer explicit configuration and retries.
-

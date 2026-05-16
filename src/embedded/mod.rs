@@ -38,6 +38,15 @@
 //! - **Full persistence**: WAL, snapshots, and recovery
 //! - **Thread-safe**: Safe for concurrent access
 //!
+//! ## Protocol Boundary
+//!
+//! Embedded language bindings are in-process entry points. They should call the
+//! shared Rust services, catalog/query facades, and storage/runtime contracts
+//! directly instead of starting loopback REST, gRPC, Arrow Flight, or pgwire
+//! servers. Those protocols remain the right surfaces for remote clients and
+//! explicit protocol benchmarks, but embedded mode should keep ports out of the
+//! normal hot path.
+//!
 //! ## Build Features
 //!
 //! Enable language-specific bindings with Cargo features:

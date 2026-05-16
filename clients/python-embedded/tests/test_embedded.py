@@ -5,7 +5,7 @@ import tempfile
 import numpy as np
 import pytest
 
-from proximadb_embedded import DiskConfig, ProximaDB, SearchResult
+from proximadb_embedded import DiskConfig, GraphEdge, GraphNode, ProximaDB, SearchResult
 
 
 class TestEmbeddedBasics:
@@ -250,6 +250,234 @@ class TestVectorOperations:
             for k in [1, 5, 10, 20]:
                 results = db.search("topk_test", query=vectors[0], top_k=k)
                 assert len(results) <= k
+
+
+class TestEmbeddedModalities:
+    """Direct embedded tests for non-vector modality facades."""
+
+    def test_graph_entity_relationship_flow(self):
+        """Entity/SKS-style records are represented through graph-first facades."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = ProximaDB(data_dirs=tmpdir)
+            db.create_graph("entity_graph")
+
+            alice = GraphNode(
+                "entity_alice",
+                labels=["Entity", "Person"],
+                properties={"name": "Alice", "kind": "customer"},
+            )
+            acme = GraphNode(
+                "entity_acme",
+                labels=["Entity", "Organization"],
+                properties={"name": "Acme", "kind": "account"},
+            )
+            assert db.create_nodes("entity_graph", [alice, acme]) == 2
+
+            relation = GraphEdge(
+                "entity_alice",
+                "entity_acme",
+                "WORKS_WITH",
+                id="rel_alice_acme",
+                weight=0.75,
+                properties={"source": "embedded_tdd"},
+            )
+            assert db.create_edges("entity_graph", [relation]) == 1
+
+            loaded = db.get_node("entity_graph", "entity_alice")
+            assert loaded is not None
+            assert "Entity" in loaded.labels
+            assert loaded.properties["name"] == "Alice"
+
+            entities = db.query_nodes_by_labels("entity_graph", ["Entity"])
+            assert {node.id for node in entities} >= {"entity_alice", "entity_acme"}
+
+            outgoing = db.get_outgoing_edges("entity_graph", "entity_alice")
+            assert len(outgoing) == 1
+            assert outgoing[0].edge_type == "WORKS_WITH"
+            assert outgoing[0].to_node_id == "entity_acme"
+
+            traversal = db.traverse_graph("entity_graph", "entity_alice", max_depth=1)
+            assert {node.id for node in traversal["nodes"]} >= {
+                "entity_alice",
+                "entity_acme",
+            }
+
+            stats = db.graph_stats("entity_graph")
+            assert stats.total_nodes >= 2
+            assert stats.total_edges >= 1
+
+    def test_document_collection_crud_and_query(self):
+        """Documents stay behind the embedded document facade."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = ProximaDB(data_dirs=tmpdir)
+            db.create_document_collection("docs", indexed_paths=["$.kind", "$.score"])
+
+            doc_id, version = db.insert_document(
+                "docs",
+                {
+                    "kind": "note",
+                    "score": 7,
+                    "payload": {"title": "embedded"},
+                },
+                doc_id="doc_1",
+            )
+            assert doc_id == "doc_1"
+            assert version >= 1
+
+            loaded = db.get_document("docs", "doc_1")
+            assert loaded["kind"] == "note"
+            assert loaded["payload"]["title"] == "embedded"
+
+            matches = db.query_documents("docs", filter="$.kind = 'note'", limit=10)
+            assert any(match_id == "doc_1" for match_id, _ in matches)
+
+            db.update_document("docs", "doc_1", {"$.score": 9})
+            updated = db.get_document("docs", "doc_1")
+            assert updated["score"] == 9
+
+            assert "docs" in db.list_document_collections()
+            assert db.delete_document("docs", "doc_1") is True
+            assert db.get_document("docs", "doc_1") is None
+
+    def test_observability_logs_metrics_and_traces(self):
+        """Observability APIs use direct embedded service methods."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = ProximaDB(data_dirs=tmpdir)
+            db.create_observability_namespace("obs", retention_days=1)
+
+            start_ns = 1_700_000_000_000_000_000
+            end_ns = start_ns + 10_000_000
+
+            assert (
+                db.ingest_logs(
+                    "obs",
+                    [
+                        {
+                            "timestamp_ns": start_ns,
+                            "severity": "INFO",
+                            "message": "embedded service started",
+                            "source": "test",
+                            "service": "embedded",
+                            "fields": {"tenant": "local"},
+                        }
+                    ],
+                )
+                == 1
+            )
+            logs = db.query_logs("obs", start_ns - 1, end_ns, query="embedded", limit=10)
+            assert len(logs) == 1
+            assert logs[0]["service"] == "embedded"
+
+            assert (
+                db.ingest_metrics(
+                    "obs",
+                    [
+                        {
+                            "metric_name": "request_latency_ms",
+                            "timestamp_ns": start_ns,
+                            "value": 12.5,
+                            "labels": {"route": "/embedded"},
+                        }
+                    ],
+                )
+                == 1
+            )
+            points = db.aggregate_metrics(
+                "obs",
+                "request_latency_ms",
+                aggregation="avg",
+                start_time=None,
+                end_time=None,
+                step_seconds=60,
+            )
+            assert points
+            assert points[0]["value"] == 12.5
+
+            assert (
+                db.ingest_traces(
+                    "obs",
+                    [
+                        {
+                            "trace_id": "trace-1",
+                            "span_id": "span-1",
+                            "name": "embedded_call",
+                            "kind": "INTERNAL",
+                            "start_time_ns": start_ns,
+                            "end_time_ns": start_ns + 1_000,
+                            "service": "embedded",
+                            "status_code": "OK",
+                            "attributes": {"surface": "pyo3"},
+                        }
+                    ],
+                )
+                == 1
+            )
+            spans = db.query_traces(
+                "obs",
+                start_ns - 1,
+                end_ns,
+                trace_id="trace-1",
+                service="embedded",
+                operation=None,
+                min_duration_ns=None,
+                status=None,
+                limit=10,
+            )
+            assert len(spans) == 1
+            assert spans[0]["trace_id"] == "trace-1"
+
+            trace = db.get_trace("obs", "trace-1")
+            assert trace["complete"] is True
+            assert trace["spans"][0]["span_id"] == "span-1"
+
+    def test_relational_sql_surface_uses_canonical_catalog(self):
+        """Relational DDL/DML should be available without network protocols."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = ProximaDB(data_dirs=tmpdir)
+            create = db.execute_sql(
+                """
+                CREATE TABLE IF NOT EXISTS accounts (
+                    account_id TEXT NOT NULL,
+                    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    embedding VECTOR(4),
+                    PRIMARY KEY (account_id)
+                ) WITH (
+                    storage_engine = 'SST',
+                    layout = 'hybrid',
+                    schema_kind = 'relational_entity'
+                );
+                """
+            )
+            assert create["rows"][0]["success"] is True
+
+            insert = db.execute_sql(
+                """
+                INSERT INTO accounts (account_id, payload, embedding)
+                VALUES ('acct-1', '{"tier":"gold"}'::jsonb, '[0.1, 0.2, 0.3, 0.4]');
+                """
+            )
+            assert insert["rows"][0]["inserted_ids"] == ["acct-1"]
+
+            tables = db.execute_sql(
+                "SELECT * FROM xcatalog.tables WHERE table_name = 'accounts';"
+            )
+            assert tables["row_count"] == 1
+            assert tables["rows"][0]["schema_kind"] == "relational_entity"
+
+            record = db.get_vector("accounts", "acct-1")
+            assert record is not None
+            assert record["id"] == "acct-1"
+            assert record["vector"] == pytest.approx([0.1, 0.2, 0.3, 0.4])
+
+    def test_unified_query_surface_exposes_plan_for_multimodal_query(self):
+        """UQL-style planning should be reachable from embedded Python."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = ProximaDB(data_dirs=tmpdir)
+            plan = db.explain_unified_query(
+                "SELECT * FROM documents.docs WHERE $.kind = 'note'"
+            )
+            assert "component_count" in plan
+            assert "components" in plan
 
 
 class TestMultiDisk:
