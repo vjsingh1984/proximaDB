@@ -24,6 +24,7 @@
 //! - `proximadb-graph-query` - Graph query contracts
 
 pub mod core;
+pub mod cypher_functions;
 pub mod projection;
 pub mod query;
 pub mod record;
@@ -37,6 +38,7 @@ pub use traversal::{
     BreadthFirst, DepthFirst, ShortestPath, Traversal, TraversalOrder, TraversalResult,
 };
 
+pub use cypher_functions::{CypherFunction, CypherFunctionRegistry};
 pub use storage::{GraphStorage, MemoryGraphStorage};
 
 /// Graph direction
