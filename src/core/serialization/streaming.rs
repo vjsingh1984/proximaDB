@@ -6,7 +6,7 @@
 //! - Memory-efficient streaming operations
 //! - Real-time performance monitoring
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use parking_lot::RwLock;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -496,17 +496,13 @@ impl StreamingCompressor {
 
 /// Streaming decompressor for real-time workloads
 pub struct StreamingDecompressor {
-    memory_pool: Arc<VectorMemoryPool>,
     config: VectorSerializationConfig,
 }
 
 impl StreamingDecompressor {
     /// Create a new streaming decompressor
     pub fn new(config: VectorSerializationConfig) -> Self {
-        Self {
-            memory_pool: Arc::new(VectorMemoryPool::new()),
-            config,
-        }
+        Self { config }
     }
 
     /// Decompress a batch of compressed data
@@ -517,9 +513,9 @@ impl StreamingDecompressor {
             let mut result = Vec::new();
             let mut cursor = 0usize;
             while cursor + 4 <= compressed_data.len() {
-                let len = u32::from_le_bytes(
-                    compressed_data[cursor..cursor + 4].try_into().unwrap(),
-                ) as usize;
+                let len =
+                    u32::from_le_bytes(compressed_data[cursor..cursor + 4].try_into().unwrap())
+                        as usize;
                 cursor += 4;
                 if cursor + len > compressed_data.len() {
                     return Err(anyhow::anyhow!("Invalid vector data: length mismatch"));
@@ -564,6 +560,7 @@ impl StreamingDecompressor {
 mod tests {
     use super::*;
     use crate::core::serialization::CompressionAlgorithm;
+    use anyhow::Context;
 
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
         (0..count)
