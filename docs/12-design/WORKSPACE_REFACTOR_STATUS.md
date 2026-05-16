@@ -1,8 +1,8 @@
 # Workspace Refactor Status
 
 **Last Updated**: 2026-05-15
-**Overall Completion**: 99%
-**Current Phase**: Phase 10 (Root Crate Thinning) - IN PROGRESS
+**Overall Completion**: 100%
+**Current Phase**: Phase 10 (Root Crate Thinning) - COMPLETE
 
 ## Executive Summary
 
@@ -259,11 +259,10 @@ This boundary respects the layering principles and prevents upward dependencies 
 ## Remaining Work
 
 ### High Priority (P0)
-1. **Phase 10: Root crate thinning** (IN PROGRESS)
-   - Remove dead fallback branches from `create_router()` in `src/network/rest/v1/handlers.rs`
-   - Graph, document, observability, and unified query routes still have root-crate fallback paths
-   - Update `build_test_app_state()` to wire mock ports so fallbacks can be safely deleted
-   - Estimated: ~120 lines of dead code removed, tests remain green
+1. **Phase 10: Root crate thinning** (COMPLETE)
+   - `create_router()` now routes graph, document, observability, unified query, collection, vector, hybrid, and SQL explain through port-backed `proximadb-api` routers.
+   - `build_test_app_state()` wires mock graph/document/observability/unified-query ports, so tests exercise the production route shape instead of root fallback branches.
+   - Legacy root hybrid search/index handlers have been removed; request/response DTOs remain only for compatibility tests.
 
 ### Medium Priority (P1)
 1. **Complete vector modality extraction** (Phase 6 continuation)
@@ -329,6 +328,6 @@ The workspace refactor has achieved **99% completion** with:
 - ✅ All Phase 9 REST handler migration waves complete (9.1–9.14)
 - ✅ All Phase 9 port traits + root-crate impls wired in production server
 
-The refactor has achieved its primary goals. Phase 10 (root crate thinning) removes the last dead fallback branches in `create_router()`.
+The refactor has achieved its primary goals. Phase 10 (root crate thinning) removed the last dead fallback branches in `create_router()` and trimmed obsolete root hybrid handler bodies.
 
-**Next Steps**: Phase 10 root crate thinning — wire mock ports in `build_test_app_state()`, then delete ~120 lines of dead fallback code from `handlers.rs`.
+**Next Steps**: Continue medium-priority modality extraction and query-runtime consolidation without adding new root fallback routes.

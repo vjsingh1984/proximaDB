@@ -15,7 +15,6 @@ use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
 use flate2::write::{DeflateEncoder, GzEncoder, ZlibEncoder};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended};
 pub use proximadb_compression_types::CompressionAlgorithm;
-use serde::{Deserialize, Serialize};
 use snap::{raw::Decoder as SnapDecoder, raw::Encoder as SnapEncoder};
 use std::io::{Read, Write};
 use std::mem::size_of;

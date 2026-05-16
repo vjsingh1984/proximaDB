@@ -68,7 +68,9 @@
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
+#[cfg(feature = "cluster")]
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "cluster")]
