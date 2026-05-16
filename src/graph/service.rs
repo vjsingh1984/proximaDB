@@ -136,6 +136,12 @@ pub struct GraphOperationsService {
     /// Monotonic edge-mutation epoch per graph, used to invalidate CSR/topology projections.
     /// Advances on every create_edge, update_edge, delete_edge, and batch_create_edges call.
     edge_epochs: Arc<DashMap<String, AtomicU64>>,
+    /// Last edge epoch applied to the ORION CSR projection per graph.
+    ///
+    /// CSR is a rebuildable read projection. This tracks the canonical edge
+    /// epoch at which CSR was rebuilt so endpoint reads only use explicitly
+    /// materialized, fresh topology.
+    csr_rebuild_epochs: Arc<DashMap<String, AtomicU64>>,
 
     /// Configuration for graph storage base URL
     base_storage_url: String,
@@ -180,6 +186,7 @@ impl GraphOperationsService {
             canonical_record_store: None,
             adjacency_projections: Arc::new(DashMap::new()),
             edge_epochs: Arc::new(DashMap::new()),
+            csr_rebuild_epochs: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(), // Default storage URL
             memory_pool,
             metrics_updater: None,
@@ -258,6 +265,7 @@ impl GraphOperationsService {
             canonical_record_store: None,
             adjacency_projections: Arc::new(DashMap::new()),
             edge_epochs: Arc::new(DashMap::new()),
+            csr_rebuild_epochs: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(),
             memory_pool,
             metrics_updater: None,
@@ -398,9 +406,52 @@ impl GraphOperationsService {
     pub async fn create_graph_collection(
         &self,
         request: crate::proto::proximadb_v1::CreateGraphRequest,
-    ) -> Result<()> {
-        self.collection_service.create_graph(request).await?;
-        Ok(())
+    ) -> Result<Arc<crate::proto::proximadb_v1::GraphCollection>> {
+        self.collection_service.create_graph(request).await
+    }
+
+    /// Get graph collection metadata (delegates to collection service)
+    pub async fn get_graph_collection(
+        &self,
+        graph_id: &str,
+    ) -> Result<Option<Arc<crate::proto::proximadb_v1::GraphCollection>>> {
+        self.collection_service.get_graph(graph_id).await
+    }
+
+    /// Delete graph collection metadata and drop any active engine.
+    pub async fn delete_graph_collection(&self, graph_id: &str) -> Result<bool> {
+        let existed = self.collection_service.get_graph(graph_id).await?.is_some();
+        if !existed {
+            return Ok(false);
+        }
+
+        self.collection_service.delete_graph(graph_id).await?;
+        self.remove_graph(graph_id);
+        Ok(true)
+    }
+
+    /// List graph collection metadata (delegates to collection service)
+    pub async fn list_graph_collections(
+        &self,
+    ) -> Result<Vec<Arc<crate::proto::proximadb_v1::GraphCollection>>> {
+        self.collection_service.list_graphs().await
+    }
+
+    /// Update graph collection schema and return the refreshed metadata.
+    pub async fn update_graph_schema(
+        &self,
+        graph_id: &str,
+        schema: crate::proto::proximadb_v1::GraphSchema,
+    ) -> Result<Arc<crate::proto::proximadb_v1::GraphCollection>> {
+        self.collection_service
+            .update_schema(graph_id, schema)
+            .await?;
+        self.collection_service
+            .get_graph(graph_id)
+            .await?
+            .ok_or_else(|| {
+                ProximaDBError::InvalidInput(format!("Graph collection '{}' not found", graph_id))
+            })
     }
 
     /// Remove a graph engine (for cleanup/deletion)
@@ -410,6 +461,7 @@ impl GraphOperationsService {
     ) -> Option<Arc<crate::graph::engines::GraphEngineImpl>> {
         self.adjacency_projections.remove(graph_id);
         self.edge_epochs.remove(graph_id);
+        self.csr_rebuild_epochs.remove(graph_id);
         self.graphs.remove(graph_id).map(|(_, engine)| engine)
     }
 
@@ -434,6 +486,20 @@ impl GraphOperationsService {
             .entry(graph_id.to_string())
             .or_insert_with(|| AtomicU64::new(0))
             .fetch_add(1, Ordering::Release);
+    }
+
+    /// Return the canonical edge epoch represented by the current ORION CSR projection.
+    pub fn csr_rebuild_epoch(&self, graph_id: &str) -> Option<TopologyEpoch> {
+        self.csr_rebuild_epochs
+            .get(graph_id)
+            .map(|v| TopologyEpoch(v.load(Ordering::Acquire)))
+    }
+
+    /// True when CSR has been explicitly rebuilt and no edge mutation happened since.
+    pub fn has_fresh_orion_csr(&self, graph_id: &str) -> bool {
+        self.csr_rebuild_epoch(graph_id)
+            .map(|epoch| epoch >= self.edge_epoch(graph_id))
+            .unwrap_or(false)
     }
 
     pub(crate) fn adjacency_projection(
@@ -960,9 +1026,15 @@ impl GraphOperationsService {
             match engine.value().as_ref() {
                 crate::graph::engines::GraphEngineImpl::Orion(orion) => {
                     orion.rebuild_csr_from_edges(&edges).await?;
+                    let rebuild_epoch = self.edge_epoch(graph_id).0;
+                    self.csr_rebuild_epochs
+                        .entry(graph_id.to_string())
+                        .or_insert_with(|| AtomicU64::new(0))
+                        .store(rebuild_epoch, Ordering::Release);
                     tracing::info!(
                         graph_id,
                         edge_count = edges.len(),
+                        rebuild_epoch,
                         "ORION CSR rebuilt from adjacency projection"
                     );
                 }

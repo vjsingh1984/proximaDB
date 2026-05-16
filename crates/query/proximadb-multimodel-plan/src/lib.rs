@@ -645,6 +645,9 @@ pub struct PlanContext {
     pub enable_distributed: bool,
     /// Execution priority.
     pub priority: ExecutionPriority,
+    /// Catalog-resolved storage authority, layout, and projection metadata for sources in this plan.
+    #[serde(default)]
+    pub resolved_objects: Vec<ResolvedObjectContext>,
 }
 
 impl Default for PlanContext {
@@ -655,8 +658,107 @@ impl Default for PlanContext {
             memory_limit_bytes: None,
             enable_distributed: false,
             priority: ExecutionPriority::Normal,
+            resolved_objects: Vec::new(),
         }
     }
+}
+
+/// Source-of-truth mode visible to the planner after xCatalog resolution.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ResolvedAuthorityMode {
+    /// ProximaRecord plus WAL/log/manifest own durable truth.
+    InternalCanonical,
+    /// An external table/source owns durable truth; ProximaDB maps and governs access.
+    ExternalAuthoritative,
+    /// Point-in-time import from an external source.
+    ImportedSnapshot,
+    /// Publication generated from canonical records.
+    ExportedPublication,
+    /// Rebuildable structure derived from canonical records or events.
+    RebuildableProjection,
+}
+
+/// Catalog-resolved object metadata carried through lowerers, optimizers, and EXPLAIN.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedObjectContext {
+    /// Source name as referenced by the query.
+    pub source: String,
+    /// Optional alias from the query.
+    pub alias: Option<String>,
+    /// Logical model requested by the query, e.g. vector, document, graph, observability.
+    pub data_model: String,
+    /// Resolved catalog namespace/table path.
+    pub table_identifier: String,
+    /// Source-of-truth role for the resolved object.
+    pub authority: ResolvedAuthorityMode,
+    /// Physical layouts cataloged for the object.
+    pub storage_layouts: Vec<ResolvedStorageLayoutContext>,
+    /// Rebuildable projections/access methods cataloged for the object.
+    pub projections: Vec<ResolvedProjectionContext>,
+    /// Whether the plan crosses an external policy/RLS boundary.
+    pub external_policy_boundary: bool,
+    /// Planner-visible fallback behavior if a projection or external mapping is unavailable.
+    pub fallback_behavior: String,
+}
+
+impl ResolvedObjectContext {
+    pub fn internal_canonical(
+        source: impl Into<String>,
+        data_model: impl Into<String>,
+        table_identifier: impl Into<String>,
+    ) -> Self {
+        Self {
+            source: source.into(),
+            alias: None,
+            data_model: data_model.into(),
+            table_identifier: table_identifier.into(),
+            authority: ResolvedAuthorityMode::InternalCanonical,
+            storage_layouts: Vec::new(),
+            projections: Vec::new(),
+            external_policy_boundary: false,
+            fallback_behavior: "read canonical ProximaRecord storage".to_string(),
+        }
+    }
+
+    pub fn is_external_authority(&self) -> bool {
+        matches!(self.authority, ResolvedAuthorityMode::ExternalAuthoritative)
+    }
+
+    pub fn requires_policy_boundary(&self) -> bool {
+        self.external_policy_boundary
+            || self.storage_layouts.iter().any(|layout| {
+                layout.authority == ResolvedAuthorityMode::ExternalAuthoritative
+                    && !layout.policy_enforced_in_proxima
+            })
+    }
+}
+
+/// Planner-visible physical layout metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedStorageLayoutContext {
+    pub name: String,
+    pub authority: ResolvedAuthorityMode,
+    pub layout_kind: String,
+    pub physical_format: String,
+    pub write_mode: String,
+    pub location: Option<String>,
+    pub snapshot_semantics: Option<String>,
+    pub policy_enforced_in_proxima: bool,
+    pub lossy_type_mappings: Vec<String>,
+}
+
+/// Planner-visible rebuildable projection/access-method metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResolvedProjectionContext {
+    pub name: String,
+    pub kind: String,
+    pub physical_format: String,
+    pub rebuild_source: String,
+    pub freshness: String,
+    pub max_lag_ms: Option<i64>,
+    pub rebuildable: bool,
+    pub lossy: bool,
+    pub support_status: String,
 }
 
 /// Execution priority
@@ -1076,6 +1178,61 @@ mod tests {
 
         assert_eq!(plan.len(), 2);
         assert!(!plan.is_empty());
+    }
+
+    #[test]
+    fn test_plan_context_carries_resolved_object_authority() {
+        let mut context = PlanContext::default();
+        assert!(context.resolved_objects.is_empty());
+
+        context
+            .resolved_objects
+            .push(ResolvedObjectContext::internal_canonical(
+                "docs",
+                "document",
+                "default.docs",
+            ));
+
+        let resolved = &context.resolved_objects[0];
+        assert_eq!(resolved.source, "docs");
+        assert_eq!(resolved.authority, ResolvedAuthorityMode::InternalCanonical);
+        assert!(!resolved.requires_policy_boundary());
+    }
+
+    #[test]
+    fn test_plan_context_marks_external_authority_as_policy_boundary() {
+        let mut resolved =
+            ResolvedObjectContext::internal_canonical("lake_docs", "document", "lake.docs");
+        resolved.authority = ResolvedAuthorityMode::ExternalAuthoritative;
+        resolved.storage_layouts.push(ResolvedStorageLayoutContext {
+            name: "iceberg".to_string(),
+            authority: ResolvedAuthorityMode::ExternalAuthoritative,
+            layout_kind: "ExternalTable".to_string(),
+            physical_format: "Iceberg".to_string(),
+            write_mode: "ExternalRefresh".to_string(),
+            location: Some("s3://warehouse/docs".to_string()),
+            snapshot_semantics: Some("iceberg-snapshot".to_string()),
+            policy_enforced_in_proxima: false,
+            lossy_type_mappings: Vec::new(),
+        });
+
+        assert!(resolved.is_external_authority());
+        assert!(resolved.requires_policy_boundary());
+    }
+
+    #[test]
+    fn test_plan_context_serde_is_backward_compatible_without_resolved_objects() {
+        let json = serde_json::json!({
+            "created_at": "2026-05-15T00:00:00Z",
+            "timeout_ms": null,
+            "memory_limit_bytes": null,
+            "enable_distributed": false,
+            "priority": "Normal"
+        });
+
+        let context: PlanContext =
+            serde_json::from_value(json).expect("PlanContext should deserialize legacy payloads");
+        assert!(context.resolved_objects.is_empty());
     }
 
     #[test]

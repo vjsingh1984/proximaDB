@@ -89,6 +89,7 @@ use crate::proto::proximadb_v1::{
     Component,
     ConnectedComponentsResponse,
     CreateEdgeRequest,
+    CreateGraphRequest,
     CreateNodeRequest,
     CycleCheckResponse,
     DeleteEdgeRequest,
@@ -100,8 +101,10 @@ use crate::proto::proximadb_v1::{
     // Common types
     GetNodeRequest,
     GetStatsRequest,
+    GraphCollection,
     GraphQueryRequest,
     GraphQueryResponse,
+    GraphSchema,
     GraphStats,
     HybridSearchRequest,
     HybridSearchResponse,
@@ -1862,5 +1865,64 @@ impl proximadb_runtime::GraphPort for GraphServiceImpl {
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn create_graph_collection(
+        &self,
+        request: CreateGraphRequest,
+    ) -> anyhow::Result<GraphCollection> {
+        self.request_handlers
+            .graph_operations_service
+            .create_graph_collection(request)
+            .await
+            .map(|collection| (*collection).clone())
+            .map_err(|err| anyhow::anyhow!("{}", err))
+    }
+
+    async fn get_graph_collection(
+        &self,
+        graph_id: String,
+    ) -> anyhow::Result<Option<GraphCollection>> {
+        self.request_handlers
+            .graph_operations_service
+            .get_graph_collection(&graph_id)
+            .await
+            .map(|collection| collection.map(|collection| (*collection).clone()))
+            .map_err(|err| anyhow::anyhow!("{}", err))
+    }
+
+    async fn delete_graph_collection(&self, graph_id: String) -> anyhow::Result<bool> {
+        self.request_handlers
+            .graph_operations_service
+            .delete_graph_collection(&graph_id)
+            .await
+            .map_err(|err| anyhow::anyhow!("{}", err))
+    }
+
+    async fn list_graph_collections(&self) -> anyhow::Result<Vec<GraphCollection>> {
+        self.request_handlers
+            .graph_operations_service
+            .list_graph_collections()
+            .await
+            .map(|collections| {
+                collections
+                    .into_iter()
+                    .map(|collection| (*collection).clone())
+                    .collect()
+            })
+            .map_err(|err| anyhow::anyhow!("{}", err))
+    }
+
+    async fn update_graph_schema(
+        &self,
+        graph_id: String,
+        schema: GraphSchema,
+    ) -> anyhow::Result<GraphCollection> {
+        self.request_handlers
+            .graph_operations_service
+            .update_graph_schema(&graph_id, schema)
+            .await
+            .map(|collection| (*collection).clone())
+            .map_err(|err| anyhow::anyhow!("{}", err))
     }
 }

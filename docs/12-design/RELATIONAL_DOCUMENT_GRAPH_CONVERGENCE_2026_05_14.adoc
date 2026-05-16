@@ -888,10 +888,11 @@ Tasks:
 *** CSR consumers call `service.edge_epoch(graph_id)` to snapshot freshness before building CSR.
 *** When epoch is stale, call `service.rebuild_orion_csr_from_adjacency_projection(graph_id)` to refresh.
 * [x] Add write-heavy path that uses adjacency indexes without forcing CSR rebuild.
-* [ ] Add read-heavy path that uses CSR when projection freshness and workload justify it.
-** Deferred: adjacency projection already provides O(degree) endpoint-bound lookup for user-facing `query_edges`.
-** CSR already serves graph algorithm traversals (`OrionGraphEngine::get_outgoing_targets`/`get_incoming_sources`).
-** Adding a CSR→edge-load switching heuristic for `query_edges` requires workload profiling evidence showing CSR-indexed reads outperform adjacency-projection reads on the endpoint-bound path. Track as a future ADR item.
+* [x] Add read-heavy path that uses CSR when projection freshness and workload justify it.
+** `GraphOperationsService` records the edge epoch applied to each ORION CSR rebuild.
+** Endpoint-bound `query_edges` uses CSR only when it was explicitly rebuilt and its rebuild epoch is fresh relative to the canonical edge epoch.
+** Edge mutations advance the canonical edge epoch; stale or missing CSR falls back to adjacency projection, preserving the write-heavy path without forcing CSR rebuild.
+** Test `endpoint_bound_query_uses_fresh_csr_and_falls_back_when_stale` verifies fresh CSR candidates and stale fallback through the public query path.
 * [x] Treat TITAN as either a projection/access method or retire it as duplicate adjacency ownership.
 ** `TitanGraphEngine` retired (May 2026): its DashMap adjacency lists duplicated `InMemoryGraphAdjacencyProjection`.
 ** `TitanEngine` kept as a factory-registration stub only; module comment prohibits independent durable graph authority.
@@ -939,6 +940,10 @@ Tasks:
 ** `normalize_graph_result_shape()` normalises the `_node` sub-object: `labels` always an array, `properties` always an object (debug-string payloads become `{}`), `id` always present (falls back to envelope `_id`).
 ** 14 tests covering: standard fields present, score null/present, metadata included, graph uses `_node` key, document strips duplicate ids, labels string→array, debug-string properties→empty object, structured properties preserved, missing node key, cross-model envelope key parity.
 ** All 151 `proximadb-query` tests pass.
+* [x] Move storage authority metadata from endpoint-only EXPLAIN into planner-native context.
+** `PlanContext.resolved_objects` carries xCatalog-resolved authority, physical layout, projection freshness/lossiness, external policy boundary, and fallback behavior through lowering/optimization.
+** `UnifiedQueryRouter::context_for_statement()` resolves cataloged UQL `SELECT`, join, `EXPLAIN`, and multimodal sources through `CatalogManager` before lowering; missing metadata is non-fatal and leaves execution on the default context.
+** The planner contract remains anchored on canonical `ProximaRecord`/`ProximaType` authority. External tables and specialized formats are visible as cataloged authority/layout/projection metadata, not as hidden durable engines.
 
 Acceptance:
 

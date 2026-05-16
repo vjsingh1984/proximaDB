@@ -48,11 +48,19 @@ use tracing::{debug, info, trace};
 use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::StorageEngineType;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::query::multimodal::plan::{MultiModelPlan, PlanContext, PlanStats};
+use crate::query::multimodal::plan::{
+    MultiModelPlan, PlanContext, PlanStats, ResolvedAuthorityMode, ResolvedObjectContext,
+    ResolvedProjectionContext, ResolvedStorageLayoutContext,
+};
 use crate::query::unified::lower::lower_uql_to_plan;
-use crate::query::unified::uql::UQLStatement;
+use crate::query::unified::uql::{DataSource, UQLStatement};
+use crate::{catalog::CatalogManager, catalog::TableIdentifier};
 
 // Phase D: Import plan executor for operator dispatch (spec §7)
+use proximadb_catalog::{
+    CatalogAuthorityMode, CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout,
+    CatalogTableSchema,
+};
 use proximadb_query::{PlanDataSource, PlanExecutionContext, PlanExecutor};
 
 /// Unified query result
@@ -135,6 +143,9 @@ pub struct UnifiedQueryRouter {
 
     /// Enable caching of execution plans
     enable_plan_cache: bool,
+
+    /// Optional xCatalog resolver used to attach authority/layout/projection context before lowering.
+    catalog_manager: Option<Arc<CatalogManager>>,
 }
 
 impl UnifiedQueryRouter {
@@ -144,6 +155,7 @@ impl UnifiedQueryRouter {
             default_context: context,
             enable_optimization: true,
             enable_plan_cache: true,
+            catalog_manager: None,
         }
     }
 
@@ -153,7 +165,14 @@ impl UnifiedQueryRouter {
             default_context: context,
             enable_optimization: false,
             enable_plan_cache: false,
+            catalog_manager: None,
         }
+    }
+
+    /// Attach xCatalog resolution to the router.
+    pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
+        self.catalog_manager = Some(catalog_manager);
+        self
     }
 
     /// Execute a query from SQL string
@@ -168,8 +187,9 @@ impl UnifiedQueryRouter {
         // 1. Parse SQL to UQL statement (simplified - in production, use full SQL parser)
         let uql_statement = self.parse_sql_to_uql(sql)?;
 
-        // 2. Lower to MultiModelPlan
-        let plan = lower_uql_to_plan(&uql_statement, self.default_context.clone())?;
+        // 2. Resolve catalog authority context and lower to MultiModelPlan
+        let context = self.context_for_statement(&uql_statement).await;
+        let plan = lower_uql_to_plan(&uql_statement, context)?;
 
         // 3. Execute the plan
         let result = self.execute_plan(plan).await?;
@@ -200,8 +220,9 @@ impl UnifiedQueryRouter {
         // 1. Convert facade request to UQL statement
         let uql_statement = self.facade_request_to_uql(request)?;
 
-        // 2. Lower to MultiModelPlan
-        let plan = lower_uql_to_plan(&uql_statement, self.default_context.clone())?;
+        // 2. Resolve catalog authority context and lower to MultiModelPlan
+        let context = self.context_for_statement(&uql_statement).await;
+        let plan = lower_uql_to_plan(&uql_statement, context)?;
 
         // 3. Execute the plan
         let result = self.execute_plan(plan).await?;
@@ -226,8 +247,9 @@ impl UnifiedQueryRouter {
 
         let start = std::time::Instant::now();
 
-        // 1. Lower to MultiModelPlan
-        let plan = lower_uql_to_plan(statement, self.default_context.clone())?;
+        // 1. Resolve catalog authority context and lower to MultiModelPlan
+        let context = self.context_for_statement(statement).await;
+        let plan = lower_uql_to_plan(statement, context)?;
 
         // 2. Execute the plan
         let result = self.execute_plan(plan).await?;
@@ -340,6 +362,159 @@ impl UnifiedQueryRouter {
         // The plan only contains DataModel, not StorageEngineType.
         Vec::new()
     }
+
+    async fn context_for_statement(&self, statement: &UQLStatement) -> PlanContext {
+        let mut context = self.default_context.clone();
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return context;
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        for source in sources_for_statement(statement) {
+            let source_name = source.collection.clone();
+            if !seen.insert(source_name.clone()) {
+                continue;
+            }
+
+            match resolve_source_context(catalog_manager, source).await {
+                Ok(resolved) => context.resolved_objects.push(resolved),
+                Err(err) => debug!(
+                    "xCatalog resolution skipped for query source '{}': {}",
+                    source_name, err
+                ),
+            }
+        }
+
+        context
+    }
+}
+
+fn sources_for_statement(statement: &UQLStatement) -> Vec<DataSource> {
+    match statement {
+        UQLStatement::Select(select) => {
+            let mut sources = vec![select.from.clone()];
+            sources.extend(select.joins.iter().map(|join| join.source.clone()));
+            sources
+        }
+        UQLStatement::MultiModal(multi) => multi
+            .components
+            .keys()
+            .map(|model| DataSource {
+                model: model.clone(),
+                collection: format!("{:?}", model).to_lowercase(),
+                alias: None,
+            })
+            .collect(),
+        UQLStatement::Explain(inner) => sources_for_statement(inner),
+    }
+}
+
+async fn resolve_source_context(
+    catalog_manager: &Arc<CatalogManager>,
+    source: DataSource,
+) -> Result<ResolvedObjectContext> {
+    let (catalog, table_id) = catalog_manager.resolve_table(&source.collection).await?;
+    let schema = catalog.get_table(&table_id).await?;
+    Ok(resolved_object_from_schema(source, &table_id, &schema))
+}
+
+fn resolved_object_from_schema(
+    source: DataSource,
+    table_id: &TableIdentifier,
+    schema: &CatalogTableSchema,
+) -> ResolvedObjectContext {
+    let storage_layouts: Vec<_> = schema
+        .storage_layouts
+        .iter()
+        .map(resolved_layout_from_catalog)
+        .collect();
+    let projections: Vec<_> = schema
+        .projections
+        .iter()
+        .map(resolved_projection_from_catalog)
+        .collect();
+    let authority = storage_layouts
+        .iter()
+        .find(|layout| layout.name == "primary")
+        .map(|layout| layout.authority)
+        .or_else(|| storage_layouts.first().map(|layout| layout.authority))
+        .unwrap_or(ResolvedAuthorityMode::InternalCanonical);
+
+    let external_policy_boundary = storage_layouts.iter().any(|layout| {
+        layout.authority == ResolvedAuthorityMode::ExternalAuthoritative
+            && !layout.policy_enforced_in_proxima
+    });
+
+    ResolvedObjectContext {
+        source: source.collection,
+        alias: source.alias,
+        data_model: format!("{:?}", source.model).to_lowercase(),
+        table_identifier: table_id.to_string(),
+        authority,
+        storage_layouts,
+        projections,
+        external_policy_boundary,
+        fallback_behavior: fallback_behavior_for_schema(schema),
+    }
+}
+
+fn resolved_layout_from_catalog(layout: &CatalogStorageLayout) -> ResolvedStorageLayoutContext {
+    ResolvedStorageLayoutContext {
+        name: layout.name.clone(),
+        authority: resolved_authority(layout.authority),
+        layout_kind: format!("{:?}", layout.layout_kind),
+        physical_format: physical_format_label(&layout.physical_format),
+        write_mode: format!("{:?}", layout.write_mode),
+        location: layout.location.clone(),
+        snapshot_semantics: layout.snapshot_semantics.clone(),
+        policy_enforced_in_proxima: layout.policy_enforced_in_proxima,
+        lossy_type_mappings: layout.lossy_type_mappings.clone(),
+    }
+}
+
+fn resolved_projection_from_catalog(projection: &CatalogProjection) -> ResolvedProjectionContext {
+    ResolvedProjectionContext {
+        name: projection.name.clone(),
+        kind: format!("{:?}", projection.kind),
+        physical_format: physical_format_label(&projection.physical_format),
+        rebuild_source: projection.rebuild_source.clone(),
+        freshness: format!("{:?}", projection.freshness),
+        max_lag_ms: projection.max_lag_ms,
+        rebuildable: projection.rebuildable,
+        lossy: projection.lossy,
+        support_status: projection.support_status.clone(),
+    }
+}
+
+fn resolved_authority(authority: CatalogAuthorityMode) -> ResolvedAuthorityMode {
+    match authority {
+        CatalogAuthorityMode::InternalCanonical => ResolvedAuthorityMode::InternalCanonical,
+        CatalogAuthorityMode::ExternalAuthoritative => ResolvedAuthorityMode::ExternalAuthoritative,
+        CatalogAuthorityMode::ImportedSnapshot => ResolvedAuthorityMode::ImportedSnapshot,
+        CatalogAuthorityMode::ExportedPublication => ResolvedAuthorityMode::ExportedPublication,
+        CatalogAuthorityMode::RebuildableProjection => ResolvedAuthorityMode::RebuildableProjection,
+    }
+}
+
+fn physical_format_label(format: &CatalogPhysicalFormat) -> String {
+    match format {
+        CatalogPhysicalFormat::External(label) => label.clone(),
+        other => format!("{:?}", other),
+    }
+}
+
+fn fallback_behavior_for_schema(schema: &CatalogTableSchema) -> String {
+    if schema
+        .storage_layouts
+        .iter()
+        .any(|layout| layout.authority == CatalogAuthorityMode::ExternalAuthoritative)
+    {
+        "apply Proxima policy boundary, then read external authoritative source".to_string()
+    } else if schema.projections.is_empty() {
+        "read canonical ProximaRecord storage".to_string()
+    } else {
+        "fall back to canonical ProximaRecord storage and rebuild projections as needed".to_string()
+    }
 }
 
 /// Facade request structure
@@ -401,6 +576,10 @@ mod tests {
     use super::*;
     use crate::query::unified::ast::DataModel;
     use crate::query::unified::uql::{DataSource, SelectStatement, UQLStatement};
+    use proximadb_catalog::{
+        CatalogColumn, CatalogDataType, CatalogPhysicalFormat, CatalogProjection,
+        CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind, CatalogTableSchema,
+    };
 
     #[test]
     fn test_create_router() {
@@ -472,6 +651,127 @@ mod tests {
 
         // Engine extraction now returns empty since Scan uses DataModel, not StorageEngineType
         assert!(engines.is_empty());
+    }
+
+    #[test]
+    fn test_resolved_object_from_schema_preserves_external_authority() {
+        let source = DataSource {
+            model: DataModel::Document,
+            collection: "lake.docs".to_string(),
+            alias: Some("d".to_string()),
+        };
+        let table_id = TableIdentifier::new(vec!["lake".to_string()], "docs".to_string());
+        let mut schema = CatalogTableSchema::new("docs");
+        schema.storage_layouts = vec![CatalogStorageLayout::external_authoritative(
+            "iceberg",
+            CatalogPhysicalFormat::Iceberg,
+            "s3://warehouse/docs",
+        )];
+
+        let resolved = resolved_object_from_schema(source, &table_id, &schema);
+
+        assert_eq!(
+            resolved.authority,
+            ResolvedAuthorityMode::ExternalAuthoritative
+        );
+        assert!(resolved.requires_policy_boundary());
+        assert_eq!(resolved.alias.as_deref(), Some("d"));
+    }
+
+    #[tokio::test]
+    async fn test_router_context_resolves_cataloged_uql_source() {
+        let manager = Arc::new(CatalogManager::new());
+        let catalog = manager
+            .create_native_catalog(
+                "default",
+                &format!(
+                    "file:///private/tmp/proximadb-router-catalog-{}",
+                    uuid::Uuid::new_v4()
+                ),
+            )
+            .await
+            .expect("native catalog should be created");
+        catalog
+            .create_namespace(&["default".to_string()], HashMap::new())
+            .await
+            .expect("namespace should be created");
+
+        let table_id = TableIdentifier::new(vec!["default".to_string()], "vectors".to_string());
+        let mut schema = CatalogTableSchema::new("vectors")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
+            .with_projection(CatalogProjection::rebuildable(
+                "vectors_hnsw",
+                CatalogProjectionKind::VectorAnn,
+                "pax_hot",
+            ));
+        schema.storage_layouts = vec![CatalogStorageLayout::internal(
+            "pax_hot",
+            CatalogStorageLayoutKind::Pax,
+        )];
+        catalog
+            .create_table(&table_id, schema)
+            .await
+            .expect("table should be created");
+
+        let router = UnifiedQueryRouter::new(PlanContext::default()).with_catalog_manager(manager);
+        let statement = UQLStatement::Select(SelectStatement {
+            columns: vec!["id".to_string()],
+            from: DataSource {
+                model: DataModel::Vector,
+                collection: "vectors".to_string(),
+                alias: None,
+            },
+            joins: Vec::new(),
+            where_clause: None,
+            order_by: None,
+            limit: Some(10),
+            offset: None,
+            fusion: None,
+        });
+
+        let context = router.context_for_statement(&statement).await;
+
+        assert_eq!(context.resolved_objects.len(), 1);
+        assert_eq!(context.resolved_objects[0].source, "vectors");
+        assert_eq!(
+            context.resolved_objects[0].storage_layouts[0].layout_kind,
+            "Pax"
+        );
+        assert_eq!(context.resolved_objects[0].projections[0].kind, "VectorAnn");
+    }
+
+    #[tokio::test]
+    async fn test_router_context_ignores_uncataloged_uql_source() {
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog(
+                "default",
+                &format!(
+                    "file:///private/tmp/proximadb-router-empty-catalog-{}",
+                    uuid::Uuid::new_v4()
+                ),
+            )
+            .await
+            .expect("native catalog should be created");
+        let router = UnifiedQueryRouter::new(PlanContext::default()).with_catalog_manager(manager);
+        let statement = UQLStatement::Select(SelectStatement {
+            columns: vec!["id".to_string()],
+            from: DataSource {
+                model: DataModel::Vector,
+                collection: "missing".to_string(),
+                alias: None,
+            },
+            joins: Vec::new(),
+            where_clause: None,
+            order_by: None,
+            limit: Some(10),
+            offset: None,
+            fusion: None,
+        });
+
+        let context = router.context_for_statement(&statement).await;
+
+        assert!(context.resolved_objects.is_empty());
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub mod document;
 pub mod entities;
 pub mod graph;
 pub mod hybrid;
+pub mod multimodal_query;
 pub mod observability;
 
 // Re-exports — handler types
@@ -23,6 +24,7 @@ pub use observability::{LogsHandler, MetricsHandler};
 pub use analytics::AnalyticsRestState;
 pub use document::DocumentRestState;
 pub use graph::GraphRestState;
+pub use multimodal_query::UnifiedQueryRestState;
 pub use observability::ObservabilityRestState;
 
 // Re-exports — router builders
@@ -32,6 +34,7 @@ pub use document::create_document_router;
 pub use entities::{create_vector_router, parse_batch_request, parse_search_request};
 pub use graph::create_graph_router;
 pub use hybrid::{create_health_router, create_sql_router, execute_sql, sql_value_to_json};
+pub use multimodal_query::create_multimodal_router;
 pub use observability::create_observability_router;
 
 // Re-exports — handler functions (for direct registration in existing root-crate routers)

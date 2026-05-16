@@ -11,12 +11,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_proto::v1::{
     BatchEdgeRequest, BatchNodeRequest, BatchResponse, ConnectedComponentsResponse,
-    CreateEdgeRequest, CreateNodeRequest, CycleCheckResponse, DeleteEdgeRequest, DeleteNodeRequest,
-    Edge, EdgeQuery, GetEdgeRequest, GetNeighborsRequest, GetNodeRequest, GetStatsRequest,
-    GraphQueryRequest, GraphQueryResponse, GraphStats, HybridSearchRequest, HybridSearchResponse,
-    Node, NodeQuery, ShortestPathRequest, ShortestPathResponse, TraversalChunk, TraversalRequest,
-    TraversalResponse, UniqueConstraintRequest, UniqueConstraintResponse, UpdateEdgeRequest,
-    UpdateNodeRequest,
+    CreateEdgeRequest, CreateGraphRequest, CreateNodeRequest, CycleCheckResponse, DeleteEdgeRequest,
+    DeleteNodeRequest, Edge, EdgeQuery, GetEdgeRequest, GetNeighborsRequest, GetNodeRequest,
+    GetStatsRequest, GraphCollection, GraphQueryRequest, GraphQueryResponse, GraphSchema, GraphStats,
+    HybridSearchRequest, HybridSearchResponse, Node, NodeQuery, ShortestPathRequest,
+    ShortestPathResponse, TraversalChunk, TraversalRequest, TraversalResponse,
+    UniqueConstraintRequest, UniqueConstraintResponse, UpdateEdgeRequest, UpdateNodeRequest,
 };
 
 /// Port for graph database operations (CRUD, traversal, analytics, hybrid query).
@@ -91,4 +91,25 @@ pub trait GraphPort: Send + Sync {
         &self,
         request: HybridSearchRequest,
     ) -> Result<HybridSearchResponse>;
+
+    // ── Graph collection management ───────────────────────────────────────
+
+    /// Create a named graph collection (metadata + schema).
+    async fn create_graph_collection(&self, request: CreateGraphRequest) -> Result<GraphCollection>;
+
+    /// Fetch a graph collection by ID. Returns `None` when not found.
+    async fn get_graph_collection(&self, graph_id: String) -> Result<Option<GraphCollection>>;
+
+    /// Delete a graph collection. Returns `true` if the collection existed.
+    async fn delete_graph_collection(&self, graph_id: String) -> Result<bool>;
+
+    /// List all graph collections visible on this node.
+    async fn list_graph_collections(&self) -> Result<Vec<GraphCollection>>;
+
+    /// Replace the schema for an existing graph collection.
+    async fn update_graph_schema(
+        &self,
+        graph_id: String,
+        schema: GraphSchema,
+    ) -> Result<GraphCollection>;
 }

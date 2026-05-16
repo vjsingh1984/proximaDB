@@ -17,7 +17,7 @@ pub use state::{RestAppState, TenantContext};
 pub use v1::{
     AnalyticsHandler, AqlHandler, CatalogHandler, CollectionHandler, DocumentHandler,
     DocumentQueryHandler, EntityHandler, GraphHandler, GraphTraversalHandler, HybridSearchHandler,
-    LogsHandler, MetricsHandler, ProgressiveSearchHandler, VectorHandler,
+    LogsHandler, MetricsHandler, ProgressiveSearchHandler, UnifiedQueryRestState, VectorHandler,
 };
 pub use v1::{AnalyticsRestState, DocumentRestState, GraphRestState, ObservabilityRestState};
 
@@ -25,7 +25,7 @@ pub use v1::{AnalyticsRestState, DocumentRestState, GraphRestState, Observabilit
 pub use v1::{
     create_analytics_router, create_collection_router, create_document_router,
     create_graph_router, create_health_router, create_observability_router, create_sql_router,
-    create_vector_router,
+    create_multimodal_router, create_vector_router,
 };
 
 /// REST API request context

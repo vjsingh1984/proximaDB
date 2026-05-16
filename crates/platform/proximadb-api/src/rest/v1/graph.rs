@@ -45,11 +45,12 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use proximadb_proto::v1::{
-    BatchEdgeRequest, BatchNodeRequest, CreateEdgeRequest, CreateNodeRequest, DeleteEdgeRequest,
-    DeleteNodeRequest, Edge, EmbeddingVersion, GetEdgeRequest, GetNeighborsRequest, GetNodeRequest,
-    GetStatsRequest, GraphQueryRequest, Node, NodeQuery, EdgeQuery, PropertyFilter,
-    PropertyFilterOperator, ShortestPathAlgorithm, TraversalAlgorithm, TraversalRequest,
-    UniqueConstraintRequest, UpdateEdgeRequest, UpdateNodeRequest, property_value,
+    BatchEdgeRequest, BatchNodeRequest, CreateEdgeRequest, CreateGraphRequest, CreateNodeRequest,
+    DeleteEdgeRequest, DeleteNodeRequest, Edge, EmbeddingVersion, GetEdgeRequest,
+    GetNeighborsRequest, GetNodeRequest, GetStatsRequest, GraphQueryRequest, GraphSchema, Node,
+    NodeQuery, EdgeQuery, PropertyFilter, PropertyFilterOperator, ShortestPathAlgorithm,
+    TraversalAlgorithm, TraversalRequest, UniqueConstraintRequest, UpdateEdgeRequest,
+    UpdateNodeRequest, property_value,
 };
 use proximadb_proto::v1::PropertyValue;
 use proximadb_runtime::GraphPort;
@@ -630,12 +631,12 @@ fn err_response<T: Serialize>(err: anyhow::Error) -> Response {
 
 pub fn create_graph_router() -> Router<GraphRestState> {
     Router::new()
-        // Collection management (not in GraphPort → 501)
-        .route("/graphs", post(not_implemented_handler))
-        .route("/graphs", get(not_implemented_handler))
-        .route("/graphs/:graph_id", get(not_implemented_handler))
-        .route("/graphs/:graph_id", delete(not_implemented_handler))
-        .route("/graphs/:graph_id/schema", put(not_implemented_handler))
+        // Graph collection management
+        .route("/graphs", post(create_graph_collection))
+        .route("/graphs", get(list_graph_collections))
+        .route("/graphs/:graph_id", get(get_graph_collection))
+        .route("/graphs/:graph_id", delete(delete_graph_collection))
+        .route("/graphs/:graph_id/schema", put(update_graph_schema))
         // Node CRUD
         .route("/graphs/:graph_id/nodes", post(create_node))
         .route("/graphs/:graph_id/nodes/:id", get(get_node))
@@ -1384,6 +1385,143 @@ async fn batch_create_edges(
         Err(e) => {
             error!("Batch create edges failed: {e}");
             err_response::<BatchResults<CanonicalEdge>>(e)
+        }
+    }
+}
+
+// ── Graph collection management handlers ─────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct CreateGraphCollectionBody {
+    graph_id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateGraphSchemaBody {
+    schema: serde_json::Value,
+}
+
+async fn create_graph_collection(
+    State(s): State<GraphRestState>,
+    Json(body): Json<CreateGraphCollectionBody>,
+) -> impl IntoResponse {
+    info!("Creating graph collection: {}", body.graph_id);
+    let request = CreateGraphRequest {
+        graph_id: body.graph_id,
+        name: body.name,
+        description: body.description,
+        schema: None,
+        storage_config: None,
+        engine_config: None,
+        access_control: None,
+    };
+    match s.graph_port.create_graph_collection(request).await {
+        Ok(col) => {
+            let data = serde_json::to_value(&col).unwrap_or_default();
+            (StatusCode::CREATED, Json(GraphResponse::success(data))).into_response()
+        }
+        Err(e) => {
+            error!("Failed to create graph collection: {e}");
+            err_response::<serde_json::Value>(e)
+        }
+    }
+}
+
+async fn list_graph_collections(State(s): State<GraphRestState>) -> impl IntoResponse {
+    debug!("Listing graph collections");
+    match s.graph_port.list_graph_collections().await {
+        Ok(cols) => {
+            let data: Vec<serde_json::Value> =
+                cols.iter().map(|c| serde_json::to_value(c).unwrap_or_default()).collect();
+            Json(GraphResponse::success(data)).into_response()
+        }
+        Err(e) => {
+            error!("Failed to list graph collections: {e}");
+            err_response::<Vec<serde_json::Value>>(e)
+        }
+    }
+}
+
+async fn get_graph_collection(
+    State(s): State<GraphRestState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    debug!("Getting graph collection: {graph_id}");
+    match s.graph_port.get_graph_collection(graph_id.clone()).await {
+        Ok(Some(col)) => {
+            let data = serde_json::to_value(&col).unwrap_or_default();
+            Json(GraphResponse::success(data)).into_response()
+        }
+        Ok(None) => {
+            let err_resp = GraphResponse::<serde_json::Value>::from_error(
+                ErrorCode::NotFound,
+                format!("Graph collection '{graph_id}' not found"),
+            );
+            (StatusCode::NOT_FOUND, Json(err_resp)).into_response()
+        }
+        Err(e) => {
+            error!("Failed to get graph collection {graph_id}: {e}");
+            err_response::<serde_json::Value>(e)
+        }
+    }
+}
+
+async fn delete_graph_collection(
+    State(s): State<GraphRestState>,
+    Path(graph_id): Path<String>,
+) -> impl IntoResponse {
+    info!("Deleting graph collection: {graph_id}");
+    match s.graph_port.delete_graph_collection(graph_id.clone()).await {
+        Ok(true) => (StatusCode::NO_CONTENT, Json(GraphResponse::success(()))).into_response(),
+        Ok(false) => {
+            let err_resp = GraphResponse::<()>::from_error(
+                ErrorCode::NotFound,
+                format!("Graph collection '{graph_id}' not found"),
+            );
+            (StatusCode::NOT_FOUND, Json(err_resp)).into_response()
+        }
+        Err(e) => {
+            error!("Failed to delete graph collection {graph_id}: {e}");
+            err_response::<()>(e)
+        }
+    }
+}
+
+async fn update_graph_schema(
+    State(s): State<GraphRestState>,
+    Path(graph_id): Path<String>,
+    Json(body): Json<UpdateGraphSchemaBody>,
+) -> impl IntoResponse {
+    info!("Updating schema for graph collection: {graph_id}");
+    let schema: GraphSchema = match serde_json::from_value(body.schema) {
+        Ok(s) => s,
+        Err(e) => {
+            let err_resp = GraphResponse::<serde_json::Value>::from_error(
+                ErrorCode::InvalidArgument,
+                format!("Invalid schema JSON: {e}"),
+            );
+            return (StatusCode::BAD_REQUEST, Json(err_resp)).into_response();
+        }
+    };
+    match s.graph_port.update_graph_schema(graph_id.clone(), schema).await {
+        Ok(col) => {
+            let data = serde_json::to_value(&col).unwrap_or_default();
+            Json(GraphResponse::success(data)).into_response()
+        }
+        Err(e) if is_not_found(&e) => {
+            let err_resp = GraphResponse::<serde_json::Value>::from_error(
+                ErrorCode::NotFound,
+                format!("Graph collection '{graph_id}' not found"),
+            );
+            (StatusCode::NOT_FOUND, Json(err_resp)).into_response()
+        }
+        Err(e) => {
+            error!("Failed to update schema for {graph_id}: {e}");
+            err_response::<serde_json::Value>(e)
         }
     }
 }

@@ -1461,7 +1461,7 @@ impl PostgresProtocol {
             };
 
             match graph_service.create_graph_collection(request).await {
-                Ok(()) => {
+                Ok(_) => {
                     info!(
                         "Created graph '{}' via PostgreSQL (graph engine: ORION)",
                         table_name

@@ -18,6 +18,7 @@ pub mod resources;
 pub mod security_port;
 pub mod service_ports;
 pub mod streaming_port;
+pub mod unified_query_port;
 
 // Re-exports
 pub use cluster_port::{ClusterHealthStatus, ClusterPort};
@@ -34,3 +35,4 @@ pub use resources::{MemoryBudget, ResourceManager};
 pub use security_port::SecurityPort;
 pub use service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};
 pub use streaming_port::StreamingPort;
+pub use unified_query_port::UnifiedQueryPort;

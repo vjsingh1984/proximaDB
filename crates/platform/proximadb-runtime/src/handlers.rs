@@ -18,6 +18,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use proximadb_proto::v1::{
+    CollectionOperation, CollectionRequest, CollectionResponse, ExecuteSqlResponse, HybridSearchRequest,
+    HybridSearchResponse, SqlRow, SqlRowField, SqlValue, VectorBatchRequest, VectorOperationResponse,
+    VectorSearchRequest, sql_value,
+};
+
+use crate::port::ApiHandlersPort;
 use crate::service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};
 
 /// Global request counter for generating unique request IDs.
@@ -144,4 +153,199 @@ impl UnifiedHandlers {
             collection_id_cache: CollectionIdCache::new(),
         }
     }
+}
+
+// ── ApiHandlersPort implementation ───────────────────────────────────────────
+
+#[async_trait]
+impl ApiHandlersPort for UnifiedHandlers {
+    async fn handle_collection_operation_for_tenant(
+        &self,
+        request: CollectionRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<CollectionResponse> {
+        let op = CollectionOperation::try_from(request.operation).unwrap_or(CollectionOperation::Unspecified);
+        let collection_id = request.collection_id.as_deref().unwrap_or("");
+        let start = Instant::now();
+
+        let mut resp = CollectionResponse {
+            operation: request.operation,
+            ..Default::default()
+        };
+
+        match op {
+            CollectionOperation::CollectionCreate => {
+                let config = request
+                    .collection_config
+                    .ok_or_else(|| anyhow!("collection_config required for CREATE"))?;
+                let col = self.collection.create_collection(config, tenant_id).await?;
+                resp.success = true;
+                resp.collection = Some(col);
+            }
+            CollectionOperation::CollectionUpdate => {
+                let config = request
+                    .collection_config
+                    .ok_or_else(|| anyhow!("collection_config required for UPDATE"))?;
+                let col = self.collection.update_collection(collection_id, config, tenant_id).await?;
+                resp.success = true;
+                resp.collection = Some(col);
+            }
+            CollectionOperation::CollectionGet => {
+                let col = self.collection.get_collection(collection_id, tenant_id).await?;
+                resp.success = col.is_some();
+                resp.collection = col;
+            }
+            CollectionOperation::CollectionList => {
+                let cols = self.collection.list_collections(tenant_id).await?;
+                resp.success = true;
+                resp.total_count = cols.len() as i64;
+                resp.collections = cols;
+            }
+            CollectionOperation::CollectionDelete => {
+                let deleted = self.collection.delete_collection(collection_id, tenant_id).await?;
+                resp.success = deleted;
+                resp.affected_count = if deleted { 1 } else { 0 };
+            }
+            CollectionOperation::CollectionGetIdByName => {
+                let resolved = self.collection.resolve_collection_id(collection_id).await?;
+                resp.success = resolved.is_some();
+                if let Some(id) = resolved {
+                    resp.metadata.insert("collection_id".to_string(), id);
+                }
+            }
+            CollectionOperation::CollectionMigrate | CollectionOperation::Unspecified => {
+                return Err(anyhow!("collection operation {:?} not implemented", op));
+            }
+        }
+
+        resp.processing_time_us = start.elapsed().as_micros() as i64;
+        Ok(resp)
+    }
+
+    async fn handle_vector_search_v1_for_tenant(
+        &self,
+        request: VectorSearchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<VectorOperationResponse> {
+        self.vector_ops.search(request, tenant_id).await
+    }
+
+    async fn handle_vector_search_v1(
+        &self,
+        request: VectorSearchRequest,
+    ) -> Result<VectorOperationResponse> {
+        self.vector_ops.search(request, None).await
+    }
+
+    async fn handle_vector_batch_v1_for_tenant(
+        &self,
+        request: VectorBatchRequest,
+        tenant_id: Option<&str>,
+    ) -> Result<VectorOperationResponse> {
+        self.vector_ops.batch_upsert(request, tenant_id).await
+    }
+
+    async fn handle_vector_v1_for_tenant(
+        &self,
+        collection_id: &str,
+        vector_id: &str,
+        include_vector: bool,
+        include_metadata: bool,
+        tenant_id: Option<&str>,
+    ) -> Result<VectorOperationResponse> {
+        self.vector_ops
+            .get_vector(collection_id, vector_id, include_vector, include_metadata, tenant_id)
+            .await
+    }
+
+    async fn execute_hybrid_query(
+        &self,
+        request: HybridSearchRequest,
+    ) -> Result<HybridSearchResponse> {
+        let adapter = self
+            .query_adapter
+            .as_ref()
+            .ok_or_else(|| anyhow!("hybrid query requires QueryAdapterPort (not wired)"))?;
+        adapter.execute_hybrid(request).await
+    }
+
+    async fn execute_sql_v1(
+        &self,
+        query: String,
+        _parameters: Option<Vec<SqlValue>>,
+        collection: Option<String>,
+    ) -> Result<ExecuteSqlResponse> {
+        let adapter = self
+            .query_adapter
+            .as_ref()
+            .ok_or_else(|| anyhow!("SQL execution requires QueryAdapterPort (not wired)"))?;
+
+        let start = Instant::now();
+        let json_result = adapter.execute_sql(query, collection).await?;
+
+        let records = json_result
+            .get("records")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .or_else(|| json_result.as_array().cloned())
+            .unwrap_or_default();
+
+        let columns: Vec<String> = json_result
+            .get("columns")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        let rows: Vec<SqlRow> = records
+            .iter()
+            .map(|record| {
+                let fields: Vec<SqlRowField> = match record.as_object() {
+                    Some(obj) => obj
+                        .iter()
+                        .map(|(k, v)| SqlRowField {
+                            key: k.clone(),
+                            value: Some(json_to_sql_value(v)),
+                        })
+                        .collect(),
+                    None => vec![SqlRowField {
+                        key: "value".to_string(),
+                        value: Some(json_to_sql_value(record)),
+                    }],
+                };
+                SqlRow { fields, similarity: None }
+            })
+            .collect();
+
+        let rows_returned = rows.len() as u64;
+        let rows_scanned = json_result
+            .get("total_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(rows_returned);
+
+        Ok(ExecuteSqlResponse {
+            rows,
+            rows_scanned,
+            rows_returned,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+            columns,
+            column_types: vec![],
+        })
+    }
+}
+
+fn json_to_sql_value(v: &serde_json::Value) -> SqlValue {
+    let inner = match v {
+        serde_json::Value::String(s) => sql_value::Value::StringValue(s.clone()),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                sql_value::Value::Int64Value(i)
+            } else {
+                sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::Bool(b) => sql_value::Value::BoolValue(*b),
+        serde_json::Value::Null => sql_value::Value::NullValue(0),
+        other => sql_value::Value::StringValue(other.to_string()),
+    };
+    SqlValue { value: Some(inner) }
 }

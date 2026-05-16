@@ -107,13 +107,24 @@ The workspace refactor has achieved substantial completion with proper architect
     - 5 tests pass; zero root-crate concrete type deps
   - `GraphRestState` exported from `proximadb-api::rest`
   - `create_graph_router()` exported for integration
-- ⏳ REST handler migration remaining:
-  - `handlers.rs` remaining (explain_sql, hybrid search/index, `create_router`) — concrete root deps
-  - `multimodal_query.rs` (2,318 lines) — uses `QueryFacadeAdapter` concrete type
-- ⏳ Phase 9.9: Move `UnifiedHandlers` to `proximadb-runtime`
-  - **Blocker**: depends on extracting CollectionService, ObservabilityService, DocumentService, QueryFacadeAdapter from root crate first
-- ⏳ Phase 9.10: Move service composition (CollectionService, VectorOps, etc.) to `proximadb-runtime`
-- ⏳ Phase 9.11/9.12: Security + cluster orchestration to runtime crate
+- ✅ REST handler migration waves 1-3 complete (2026-05-15): 24 tests pass in `proximadb-api`
+- ✅ Phase 9.9: `UnifiedQueryPort` implemented in root crate (2026-05-15)
+  - `src/query/unified_query_port_impl.rs`: `UnifiedQueryPortImpl` wraps `QueryFacadeAdapter` + `PreparedStatementCache`
+  - All 9 `UnifiedQueryPort` methods implemented; `RestServerPorts` + `AppState` extended; both `multi_server.rs` sites wire the impl
+  - 6 new unit tests pass
+- ✅ Phase 9.10: `ApiHandlersPort` implemented on `proximadb-runtime::UnifiedHandlers` (2026-05-15)
+  - `crates/platform/proximadb-runtime/src/handlers.rs`: `UnifiedHandlers` implements `ApiHandlersPort`
+  - All 7 `CollectionOperation` variants dispatched via `CollectionPort`; vector ops via `VectorOpsPort`; SQL/hybrid via `QueryAdapterPort`
+  - `json_to_sql_value` helper converts JSON → proto `SqlValue`
+- ✅ Phase 9.11 (Security orchestration): STRUCTURALLY COMPLETE (2026-05-15)
+  - gRPC `SecurityServiceImpl` in `proximadb-api/src/grpc/v1/security.rs` is fully port-backed
+  - Root-crate `SecurityServiceImpl` implements `SecurityPort` (`src/network/grpc/security_service.rs:460`)
+  - `GrpcServiceBuilder::build_security_service(Option<Arc<dyn SecurityPort>>)` wired in all server modes
+- ✅ Phase 9.12 (Graph collection management): COMPLETE (2026-05-15)
+  - `GraphPort` extended with 5 collection management methods in `crates/platform/proximadb-runtime/src/graph_port.rs`
+  - Root-crate `GraphServiceImpl` implements all 5 via `graph_collection_service` (`src/network/grpc/graph_service.rs`)
+  - 5 previously-501 REST routes now live: POST/GET `/graphs`, GET/DELETE `/graphs/:id`, PUT `/graphs/:id/schema`
+- ⏳ Remaining: `hybrid_index` + `explain_sql` (need `BM25IndexPort` + `SqlFrontendParser` port); RAG/PULSAR/QUASAR (501)
 
 **Architecture Established**:
 - `proximadb-api` depends on: `proximadb-runtime`, `proximadb-proto`, `proximadb-kernel`

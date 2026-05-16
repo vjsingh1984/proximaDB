@@ -153,7 +153,13 @@ impl super::GraphOperationsService {
 
         let is_endpoint_bound = query.from_node_id.is_some() || query.to_node_id.is_some();
 
-        if is_endpoint_bound {
+        if is_endpoint_bound && self.has_fresh_orion_csr(graph_id) {
+            if let Some(csr_results) = self.query_edges_from_fresh_csr(engine.as_ref(), &query)? {
+                results = csr_results;
+            }
+        }
+
+        if is_endpoint_bound && results.is_empty() {
             let projection = self.adjacency_projection(graph_id);
 
             if let Some(from) = &query.from_node_id {
@@ -195,6 +201,16 @@ impl super::GraphOperationsService {
         // Non-endpoint-bound queries return an empty result; a full-graph edge
         // scan is not supported without explicit endpoint or type filters.
 
+        if let Some(from) = &query.from_node_id {
+            results.retain(|edge| edge.from_node_id == *from);
+        }
+        if let Some(to) = &query.to_node_id {
+            results.retain(|edge| edge.to_node_id == *to);
+        }
+        if !query.edge_types.is_empty() {
+            results.retain(|edge| query.edge_types.contains(&edge.edge_type));
+        }
+
         // Property filters (simple, if provided)
         if !query.filters.is_empty() {
             results.retain(|edge| {
@@ -232,6 +248,43 @@ impl super::GraphOperationsService {
             });
         }
         Ok(results)
+    }
+
+    fn query_edges_from_fresh_csr(
+        &self,
+        engine: &crate::graph::engines::GraphEngineImpl,
+        query: &EdgeQuery,
+    ) -> Result<Option<Vec<Arc<Edge>>>> {
+        let Some(endpoint) = query.from_node_id.as_ref().or(query.to_node_id.as_ref()) else {
+            return Ok(None);
+        };
+
+        let edge_type = if query.edge_types.len() == 1 {
+            Some(query.edge_types[0].as_str())
+        } else {
+            None
+        };
+
+        let mut seen = std::collections::HashSet::new();
+        let mut results = Vec::new();
+
+        if let Some(from) = &query.from_node_id {
+            for edge in engine.get_outgoing_edges(from, edge_type)? {
+                if seen.insert(edge.id.clone()) {
+                    results.push(edge);
+                }
+            }
+        }
+
+        if query.from_node_id.is_none() {
+            for edge in engine.get_incoming_edges(endpoint, edge_type)? {
+                if seen.insert(edge.id.clone()) {
+                    results.push(edge);
+                }
+            }
+        }
+
+        Ok(Some(results))
     }
 }
 
@@ -527,6 +580,142 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn endpoint_bound_query_uses_fresh_csr_and_falls_back_when_stale() {
+        use crate::proto::proximadb_v1::EdgeQuery;
+
+        let graph_id = format!("csr_query_test_{}", std::process::id());
+        let graph_id = graph_id.as_str();
+        let service = GraphOperationsService::new();
+        service
+            .create_graph_collection(CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .expect("create graph");
+
+        for node_id in ["n1", "n2", "n3", "n4"] {
+            service
+                .create_node(
+                    graph_id,
+                    Node {
+                        id: node_id.to_string(),
+                        labels: vec!["P".to_string()],
+                        properties: HashMap::new(),
+                        embedding: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                    },
+                )
+                .await
+                .expect("create node");
+        }
+
+        for (id, to) in [("e1", "n2"), ("e2", "n3")] {
+            service
+                .create_edge(
+                    graph_id,
+                    Edge {
+                        id: id.to_string(),
+                        from_node_id: "n1".to_string(),
+                        to_node_id: to.to_string(),
+                        edge_type: "KNOWS".to_string(),
+                        properties: HashMap::new(),
+                        weight: None,
+                        created_at_ms: 1,
+                        updated_at_ms: 1,
+                    },
+                )
+                .await
+                .expect("create edge");
+        }
+
+        assert!(!service.has_fresh_orion_csr(graph_id));
+        service
+            .rebuild_orion_csr_from_adjacency_projection(graph_id)
+            .await
+            .expect("rebuild csr");
+        assert_eq!(
+            service.csr_rebuild_epoch(graph_id),
+            Some(service.edge_epoch(graph_id))
+        );
+        assert!(service.has_fresh_orion_csr(graph_id));
+
+        let query = EdgeQuery {
+            graph_id: graph_id.to_string(),
+            from_node_id: Some("n1".to_string()),
+            to_node_id: None,
+            edge_types: vec!["KNOWS".to_string()],
+            filters: vec![],
+            offset: None,
+            limit: None,
+            continuation_token: None,
+        };
+
+        let engine_arc = service
+            .graphs
+            .get(graph_id)
+            .expect("engine present")
+            .value()
+            .clone();
+        let mut csr_only_ids: Vec<_> = service
+            .query_edges_from_fresh_csr(engine_arc.as_ref(), &query)
+            .expect("csr candidates")
+            .expect("csr endpoint query")
+            .into_iter()
+            .map(|edge| edge.id.clone())
+            .collect();
+        csr_only_ids.sort();
+        assert_eq!(csr_only_ids, vec!["e1".to_string(), "e2".to_string()]);
+
+        let mut query_ids: Vec<_> = service
+            .query_edges(graph_id, query.clone())
+            .await
+            .expect("fresh csr query")
+            .into_iter()
+            .map(|edge| edge.id.clone())
+            .collect();
+        query_ids.sort();
+        assert_eq!(query_ids, vec!["e1".to_string(), "e2".to_string()]);
+
+        service
+            .create_edge(
+                graph_id,
+                Edge {
+                    id: "e3".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n4".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+            )
+            .await
+            .expect("create stale edge");
+
+        assert!(!service.has_fresh_orion_csr(graph_id));
+        let mut stale_query_ids: Vec<_> = service
+            .query_edges(graph_id, query)
+            .await
+            .expect("stale csr falls back to adjacency")
+            .into_iter()
+            .map(|edge| edge.id.clone())
+            .collect();
+        stale_query_ids.sort();
+        assert_eq!(
+            stale_query_ids,
+            vec!["e1".to_string(), "e2".to_string(), "e3".to_string()]
+        );
+    }
+
+    #[tokio::test]
     async fn canonical_record_store_receives_graph_writes() {
         let graph_id = format!("canonical_graph_store_test_{}", std::process::id());
         let graph_id = graph_id.as_str();
@@ -639,7 +828,6 @@ mod tests {
     /// ORION's CSR-backed `get_outgoing_targets` returns the expected neighbours.
     #[tokio::test]
     async fn orion_csr_rebuild_from_adjacency_projection() {
-        use crate::graph::engines::GraphEngine;
         use crate::graph::engines::GraphEngineImpl;
         use crate::proto::proximadb_v1::CreateGraphRequest;
 
