@@ -322,20 +322,21 @@ impl MultiServer {
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service),
             );
 
-            // Clone ports for REST server before they are consumed by the gRPC factory
-            rest_ports_opt = Some(crate::network::rest::server::RestServerPorts {
-                doc_port: doc_port.clone(),
-                graph_port: graph_port.clone(),
-                obs_port: obs_port.clone(),
-                api_handlers: self.shared_services.api_handlers.clone(),
-            });
-
             let streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
                 Arc::new(crate::network::grpc::StreamingServiceImpl::new());
             let security_port: Arc<dyn proximadb_runtime::SecurityPort> =
                 Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
             let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
                 Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
+
+            // Clone ports for REST server before they are consumed by the gRPC factory
+            rest_ports_opt = Some(crate::network::rest::server::RestServerPorts {
+                doc_port: doc_port.clone(),
+                graph_port: graph_port.clone(),
+                obs_port: obs_port.clone(),
+                api_handlers: self.shared_services.api_handlers.clone(),
+                hybrid_port: Some(hybrid_port.clone()),
+            });
 
             // ── Build all gRPC services through the port-based factory ─────────
 
@@ -651,11 +652,14 @@ impl MultiServer {
             let obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service.clone()),
             );
+            let rest_hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+                Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
             crate::network::rest::server::RestServerPorts {
                 doc_port,
                 graph_port,
                 obs_port,
                 api_handlers: services.api_handlers.clone(),
+                hybrid_port: Some(rest_hybrid_port),
             }
         };
 

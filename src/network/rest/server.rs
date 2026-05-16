@@ -59,6 +59,8 @@ pub struct RestServerPorts {
     pub obs_port: std::sync::Arc<dyn proximadb_runtime::ObservabilityPort>,
     /// Port-backed handler for collection/vector routes (Phase 9.10).
     pub api_handlers: std::sync::Arc<dyn proximadb_runtime::ApiHandlersPort>,
+    /// Port-backed hybrid search service (Phase 9.13).
+    pub hybrid_port: Option<std::sync::Arc<dyn proximadb_runtime::HybridPort>>,
 }
 
 /// Authentication configuration for the REST server
@@ -379,7 +381,12 @@ impl RestServer {
         );
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
-            s.with_api_handlers(p.api_handlers)
+            let s = s.with_api_handlers(p.api_handlers);
+            if let Some(hp) = p.hybrid_port {
+                s.with_hybrid_port(hp)
+            } else {
+                s
+            }
         } else {
             base_state
         };
@@ -600,7 +607,12 @@ impl RestServer {
         );
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
-            s.with_api_handlers(p.api_handlers)
+            let s = s.with_api_handlers(p.api_handlers);
+            if let Some(hp) = p.hybrid_port {
+                s.with_hybrid_port(hp)
+            } else {
+                s
+            }
         } else {
             base_state
         };

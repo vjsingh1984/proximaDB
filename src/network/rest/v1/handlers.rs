@@ -70,6 +70,11 @@ pub struct AppState {
     /// go through `CollectionPort`/`VectorOpsPort` trait objects rather than the
     /// concrete root-crate `UnifiedHandlers`.
     pub api_handlers: Option<Arc<dyn proximadb_runtime::ApiHandlersPort>>,
+    /// Port-backed hybrid search service (Phase 9.13).
+    ///
+    /// When set, `create_router` mounts `create_hybrid_search_router` from
+    /// `proximadb-api` instead of the AppState-backed root-crate handlers.
+    pub hybrid_port: Option<Arc<dyn proximadb_runtime::HybridPort>>,
 }
 
 impl AppState {
@@ -98,6 +103,7 @@ impl AppState {
             obs_port: None,
             unified_query_port: None,
             api_handlers: None,
+            hybrid_port: None,
         }
     }
 
@@ -129,6 +135,15 @@ impl AppState {
         handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
     ) -> Self {
         self.api_handlers = Some(handlers);
+        self
+    }
+
+    /// Inject port-backed hybrid search service (Phase 9.13).
+    pub fn with_hybrid_port(
+        mut self,
+        port: Arc<dyn proximadb_runtime::HybridPort>,
+    ) -> Self {
+        self.hybrid_port = Some(port);
         self
     }
 
@@ -937,16 +952,12 @@ pub fn create_router(state: AppState) -> axum::Router {
             "/api/v1/progressive/search/:collection_id",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),
         )
-        // SQL query execution
+        // SQL query execution (explain added conditionally below)
         .route("/api/v1/sql/execute", post(execute_sql))
-        .route("/api/v1/sql/explain", post(explain_sql))
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
-        // Hybrid search production endpoints (AppState-backed)
-        .route("/api/v1/hybrid/search", post(hybrid_search))
-        .route("/api/v1/hybrid/index", post(hybrid_index))
         // Graph database endpoints — use port-based router if available, else root-crate router
         .nest(
             "/api/v1/graph",
@@ -1128,6 +1139,44 @@ pub fn create_router(state: AppState) -> axum::Router {
                 "QueryFacadeAdapter not configured in AppState. Skipping unified query endpoints."
             );
         }
+    }
+
+    // Hybrid search: always use the port-backed router with a real RestHybridPortImpl
+    // backed by the in-process BM25 index + VectorOpsPort.  The legacy root-crate
+    // handlers (hybrid_search / hybrid_index) are retained as fallback only when
+    // fulltext_indexes are unavailable (shouldn't happen in normal startup).
+    {
+        use crate::network::hybrid_search::{Bm25IndexPortImpl, RestHybridPortImpl};
+        use proximadb_api::rest::{HybridRestState, create_hybrid_search_router};
+
+        let indexes = state.fulltext_indexes.clone().unwrap_or_else(|| {
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()))
+        });
+        let vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort> =
+            state.request_handlers.vector_operations_service.clone();
+        let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+            Arc::new(RestHybridPortImpl::new(vector_ops, indexes.clone()));
+        let bm25_port: Arc<dyn proximadb_runtime::BM25IndexPort> =
+            Arc::new(Bm25IndexPortImpl::new(indexes));
+        let hybrid_state = HybridRestState {
+            hybrid_port,
+            bm25_port: Some(bm25_port),
+        };
+        router = router.merge(create_hybrid_search_router(hybrid_state));
+        info!("✅ Hybrid search at /api/v1/hybrid/* via RestHybridPortImpl (real BM25+vector)");
+    }
+
+    // SQL explain: prefer port-backed (UnifiedQueryPort) when available; fall back to root-crate.
+    if let Some(ref uq_port) = state.unified_query_port {
+        use proximadb_api::rest::{UnifiedQueryRestState, create_explain_router};
+        let explain_state = UnifiedQueryRestState {
+            unified_query_port: uq_port.clone(),
+        };
+        router = router.merge(create_explain_router(explain_state));
+        info!("✅ SQL explain at /api/v1/sql/explain via port-backed handler (proximadb-api)");
+    } else {
+        router = router.route("/api/v1/sql/explain", post(explain_sql));
+        info!("✅ SQL explain at /api/v1/sql/explain via root-crate handler");
     }
 
     // Optional enterprise catalog endpoints

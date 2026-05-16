@@ -124,7 +124,16 @@ The workspace refactor has achieved substantial completion with proper architect
   - `GraphPort` extended with 5 collection management methods in `crates/platform/proximadb-runtime/src/graph_port.rs`
   - Root-crate `GraphServiceImpl` implements all 5 via `graph_collection_service` (`src/network/grpc/graph_service.rs`)
   - 5 previously-501 REST routes now live: POST/GET `/graphs`, GET/DELETE `/graphs/:id`, PUT `/graphs/:id/schema`
-- ⏳ Remaining: `hybrid_index` + `explain_sql` (need `BM25IndexPort` + `SqlFrontendParser` port); RAG/PULSAR/QUASAR (501)
+- ✅ Phase 9.13 (hybrid_index + explain_sql): COMPLETE (2026-05-15)
+  - `BM25IndexPort` trait defined in `crates/platform/proximadb-runtime/src/bm25_port.rs`
+  - Root-crate `Bm25IndexPortImpl` implements `BM25IndexPort` wrapping `HybridFullTextIndexMap`
+  - `HybridRestState { hybrid_port, bm25_port }` added to `hybrid.rs`
+  - `hybrid_search` REST handler: POST `/api/v1/hybrid/search` → `HybridPort::hybrid_search`
+  - `hybrid_index` REST handler: POST `/api/v1/hybrid/index` → `BM25IndexPort::index_documents`
+  - `create_hybrid_search_router()` exported from `proximadb-api`
+  - `create_explain_router()` added to `multimodal_query.rs`: POST `/api/v1/sql/explain` → `UnifiedQueryPort::explain_unified_query`
+  - All exports added to `rest/v1/mod.rs`
+- ⏳ Remaining: RAG, PULSAR, QUASAR graph endpoints (501, no port defined)
 
 **Architecture Established**:
 - `proximadb-api` depends on: `proximadb-runtime`, `proximadb-proto`, `proximadb-kernel`

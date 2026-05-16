@@ -65,6 +65,206 @@ impl BM25IndexPort for Bm25IndexPortImpl {
     }
 }
 
+// ── RestHybridPortImpl ─────────────────────────────────────────────────────────
+
+use proximadb_proto::v1::{
+    FusionStrategyInfo, HybridFusionSearchRequest, HybridFusionSearchResponse,
+    HybridSearchMetrics, HybridSearchResult, ListFusionStrategiesRequest,
+    ListFusionStrategiesResponse, TextHighlight as ProtoTextHighlight,
+};
+use proximadb_runtime::HybridPort;
+
+/// Real `HybridPort` implementation backed by the in-process BM25 index and a
+/// `VectorOpsPort` trait object for vector similarity search.
+///
+/// This replaces the mock `HybridSearchServiceImpl` for the REST hybrid search
+/// route (`POST /api/v1/hybrid/search`).
+pub struct RestHybridPortImpl {
+    vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+    indexes: HybridFullTextIndexMap,
+}
+
+impl RestHybridPortImpl {
+    pub fn new(
+        vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+        indexes: HybridFullTextIndexMap,
+    ) -> Self {
+        Self { vector_ops, indexes }
+    }
+}
+
+#[async_trait]
+impl HybridPort for RestHybridPortImpl {
+    async fn hybrid_search(
+        &self,
+        request: HybridFusionSearchRequest,
+    ) -> Result<HybridFusionSearchResponse> {
+        let start = std::time::Instant::now();
+        let top_k = normalize_top_k(request.top_k as usize);
+
+        // ── Vector search ──────────────────────────────────────────────────
+        let vector_start = std::time::Instant::now();
+        let vector_results: Vec<VectorResult> = if !request.query_vector.is_empty() {
+            let search_request = crate::proto::proximadb_v1::VectorSearchRequest {
+                collection_id: request.collection.clone(),
+                queries: vec![crate::proto::proximadb_v1::SearchQuery {
+                    vector: request.query_vector.clone(),
+                    filters: std::collections::HashMap::new(),
+                    advanced_filter: None,
+                }],
+                top_k: top_k as u32,
+                include_fields: None,
+                search_params: None,
+                distance_metric_override: None,
+                search_optimization: None,
+            };
+            let resp = self
+                .vector_ops
+                .search(search_request, None)
+                .await
+                .map_err(|e| anyhow!("Vector search failed: {}", e))?;
+            resp.results
+                .map(|r| r.results)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|rec| VectorResult {
+                    doc_id: rec.id,
+                    score: rec.score,
+                    distance: (1.0 - rec.score).max(0.0),
+                    metadata: std::collections::HashMap::new(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let vector_search_time_ms = vector_start.elapsed().as_secs_f64() * 1000.0;
+
+        // ── BM25 search ────────────────────────────────────────────────────
+        let bm25_start = std::time::Instant::now();
+        let bm25_text = request.text_query.trim().to_string();
+        let bm25_results: Vec<BM25Result> = if !bm25_text.is_empty() {
+            let indexes = self
+                .indexes
+                .read()
+                .map_err(|e| anyhow!("BM25 lock error: {}", e))?;
+            if let Some(index) = indexes.get(&request.collection) {
+                index
+                    .search(&bm25_text, top_k)
+                    .into_iter()
+                    .map(|r| BM25Result {
+                        doc_id: r.doc_id,
+                        score: r.score,
+                        highlights: Some(
+                            r.matched_terms
+                                .into_iter()
+                                .map(|term| TextHighlight {
+                                    field: "content".to_string(),
+                                    start_offset: 0,
+                                    end_offset: term.len(),
+                                    text: term,
+                                })
+                                .collect(),
+                        ),
+                        metadata: std::collections::HashMap::new(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        let bm25_search_time_ms = bm25_start.elapsed().as_secs_f64() * 1000.0;
+
+        // ── Fusion ─────────────────────────────────────────────────────────
+        let fusion_start = std::time::Instant::now();
+        let internal_strategy = match proximadb_proto::v1::FusionStrategy::try_from(request.fusion_strategy) {
+            Ok(proximadb_proto::v1::FusionStrategy::BordaCount) => FusionStrategy::BordaCount,
+            _ => FusionStrategy::ReciprocalRank { k: 60 },
+        };
+        let fused = HybridFusionEngine::new(internal_strategy)
+            .fuse(bm25_results, vector_results)
+            .map_err(|e| anyhow!("Fusion failed: {}", e))?;
+        let fusion_time_ms = fusion_start.elapsed().as_secs_f64() * 1000.0;
+        let total_time_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        let results: Vec<HybridSearchResult> = fused
+            .into_iter()
+            .take(top_k)
+            .map(|r| {
+                let highlights: Vec<ProtoTextHighlight> = r
+                    .highlights
+                    .as_ref()
+                    .map(|hs| {
+                        hs.iter()
+                            .map(|hl| ProtoTextHighlight {
+                                field: hl.field.clone(),
+                                text: hl.text.clone(),
+                                start_offset: hl.start_offset as u32,
+                                end_offset: hl.end_offset as u32,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                HybridSearchResult {
+                    id: r.doc_id,
+                    fused_score: r.fused_score,
+                    bm25_score: r.bm25_score,
+                    vector_score: r.vector_score,
+                    bm25_rank: if r.bm25_rank == usize::MAX {
+                        u64::MAX
+                    } else {
+                        r.bm25_rank as u64
+                    },
+                    vector_rank: if r.vector_rank == usize::MAX {
+                        u64::MAX
+                    } else {
+                        r.vector_rank as u64
+                    },
+                    highlights,
+                    metadata: std::collections::HashMap::new(),
+                }
+            })
+            .collect();
+
+        let results_count = results.len() as u32;
+        Ok(HybridFusionSearchResponse {
+            results,
+            results_count,
+            fusion_strategy: request.fusion_strategy,
+            metrics: Some(HybridSearchMetrics {
+                bm25_search_time_ms,
+                vector_search_time_ms,
+                fusion_time_ms,
+                total_time_ms,
+            }),
+        })
+    }
+
+    async fn list_fusion_strategies(
+        &self,
+        _request: ListFusionStrategiesRequest,
+    ) -> Result<ListFusionStrategiesResponse> {
+        Ok(ListFusionStrategiesResponse {
+            strategies: vec![
+                FusionStrategyInfo {
+                    id: "reciprocal_rank".to_string(),
+                    name: "Reciprocal Rank Fusion".to_string(),
+                    description: "Combines BM25 and vector ranks with 1/(k+rank) weighting"
+                        .to_string(),
+                    default_params: None,
+                },
+                FusionStrategyInfo {
+                    id: "linear".to_string(),
+                    name: "Linear Score Fusion".to_string(),
+                    description: "Linearly combines normalized BM25 and vector scores".to_string(),
+                    default_params: None,
+                },
+            ],
+        })
+    }
+}
+
 /// Parameters for executing a hybrid (vector + BM25 text) search
 #[derive(Debug)]
 pub struct HybridSearchExecutionRequest {
