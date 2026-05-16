@@ -4,8 +4,8 @@
 //! repeated decompression of frequently accessed data. It uses an LRU eviction
 //! policy with configurable size limits.
 
-use crate::utils::cache::LruCache;
 use anyhow::Result;
+use proximadb_runtime_common::cache::LruCache;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -428,13 +428,9 @@ impl DecompressionCache {
     ) -> u64 {
         // Rough estimates based on typical decompression speeds
         match algorithm {
-            Some(proximadb_compression::CompressionAlgorithm::Zstd) => {
-                (size_bytes as u64) / 1000
-            } // ~1GB/s
+            Some(proximadb_compression::CompressionAlgorithm::Zstd) => (size_bytes as u64) / 1000, // ~1GB/s
             Some(proximadb_compression::CompressionAlgorithm::Lz4) => (size_bytes as u64) / 2000, // ~2GB/s
-            Some(proximadb_compression::CompressionAlgorithm::Snappy) => {
-                (size_bytes as u64) / 1500
-            } // ~1.5GB/s
+            Some(proximadb_compression::CompressionAlgorithm::Snappy) => (size_bytes as u64) / 1500, // ~1.5GB/s
             _ => 0,
         }
     }

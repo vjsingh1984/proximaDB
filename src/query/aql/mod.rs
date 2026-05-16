@@ -8,9 +8,9 @@
 //! intermediate representation that guarantees a structured audit trail
 //! for every cross-model operation.
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::query::unified::ast::{JoinType as UnifiedJoinType, MultiModelQuery, QueryComponent};
 use proximadb_data_model::MemoryType;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;

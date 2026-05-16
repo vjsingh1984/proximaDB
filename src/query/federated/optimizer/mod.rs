@@ -16,9 +16,9 @@ use std::collections::HashMap;
 use super::parser::{
     FederatedQuery, QueryTarget, QueryType, SqlExtension, TargetModelType, VectorQuery,
 };
-use proximadb_kernel::error::VectorDBError;
 use crate::query::capability::{Capability, CapabilitySet};
 use crate::storage::multimodal::ModelType;
+use proximadb_kernel::error::VectorDBError;
 
 mod sql_parsing;
 mod vector_query_parsing;

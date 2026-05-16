@@ -43,7 +43,8 @@ impl Default for BatchConfig {
 #[derive(Clone)]
 pub struct BlockCache {
     /// LRU cache storing blocks by (superblock_id, block_id) key
-    pub cache: Arc<RwLock<crate::utils::cache::LruCache<(u32, u32), Arc<ProximaDataBlock>>>>,
+    pub cache:
+        Arc<RwLock<proximadb_runtime_common::cache::LruCache<(u32, u32), Arc<ProximaDataBlock>>>>,
     /// Current cache size in bytes
     pub current_size: Arc<RwLock<usize>>,
     /// Maximum cache size in bytes
@@ -53,7 +54,7 @@ pub struct BlockCache {
 impl BlockCache {
     fn new(max_size: usize) -> Self {
         Self {
-            cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
+            cache: Arc::new(RwLock::new(proximadb_runtime_common::cache::LruCache::new(
                 if max_size == 0 { 1000 } else { max_size },
             ))),
             current_size: Arc::new(RwLock::new(0)),
@@ -227,8 +228,8 @@ async fn load_block_from_disk(_superblock_idx: u32, _block_idx: u32) -> Result<P
     // 4. Deserialize the records
 
     // For now, return a mock block using the correct constructor
-    use proximadb_compression::CompressionAlgorithm;
     use crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig;
+    use proximadb_compression::CompressionAlgorithm;
 
     let compression_config = BlockCompressionConfig {
         algorithm: CompressionAlgorithm::Zstd,

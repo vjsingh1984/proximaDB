@@ -115,6 +115,7 @@
 pub mod aql; // TD-050: Agentic Query Language (RUBICON)
 pub mod arrow_graph_bridge; // TD-035: Arrow bridge for graph query results
 pub mod ast;
+pub mod authority_context; // Shared xCatalog authority conversion for planner/EXPLAIN context
 pub mod cache; // C2: Query result caching for agentic AI workloads with repetitive queries
 pub mod capability; // Capability registry for query validation and API parity
 pub mod columnar; // M2: Dual Columnar Execution - ColumnarReadProvider abstraction

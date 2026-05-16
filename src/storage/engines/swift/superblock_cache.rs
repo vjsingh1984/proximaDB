@@ -24,8 +24,9 @@ pub struct SwiftSuperBlockCache {
 
     /// DataBlock metadata cache with LRU eviction
     #[allow(dead_code)]
-    datablock_cache:
-        Arc<RwLock<crate::utils::cache::LruCache<String, Arc<CachedDataBlockMetadata>>>>,
+    datablock_cache: Arc<
+        RwLock<proximadb_runtime_common::cache::LruCache<String, Arc<CachedDataBlockMetadata>>>,
+    >,
     #[allow(dead_code)]
     datablock_ttl_sec: u64,
 
@@ -277,7 +278,7 @@ impl SwiftSuperBlockCache {
         Self {
             superblock_cache: Arc::new(DashMap::new()),
             tree_navigation_cache: Arc::new(DashMap::new()),
-            datablock_cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
+            datablock_cache: Arc::new(RwLock::new(proximadb_runtime_common::cache::LruCache::new(
                 if datablock_cache_size == 0 {
                     100
                 } else {

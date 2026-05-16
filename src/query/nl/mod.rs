@@ -9,8 +9,8 @@
 //! 3. **Composer Agent**: Generates the final AQL or SQL query based on the views.
 
 use crate::ai::llm_integration::LLMIntegrationEngine;
-use proximadb_kernel::error::ProximaDBError;
 use async_trait::async_trait;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 

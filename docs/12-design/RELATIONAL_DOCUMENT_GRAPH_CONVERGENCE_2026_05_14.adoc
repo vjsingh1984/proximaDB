@@ -944,6 +944,8 @@ Tasks:
 ** `PlanContext.resolved_objects` carries xCatalog-resolved authority, physical layout, projection freshness/lossiness, external policy boundary, and fallback behavior through lowering/optimization.
 ** `UnifiedQueryRouter::context_for_statement()` resolves cataloged UQL `SELECT`, join, `EXPLAIN`, and multimodal sources through `CatalogManager` before lowering; missing metadata is non-fatal and leaves execution on the default context.
 ** `StorageAuthorityExplanation::from_plan_context()` converts resolved planner context into EXPLAIN metadata so endpoint handlers can consume shared plan context instead of duplicating catalog lookups.
+** `UnifiedQueryPortImpl::explain_unified_query()` now enriches port-backed `/api/v1/sql/explain` and `/api/v1/unified/explain` JSON with `storage_authority` by resolving catalog targets into `PlanContext.resolved_objects`.
+** `query::authority_context` centralizes xCatalog-to-`ResolvedObjectContext` conversion so router and port-backed EXPLAIN paths share one interpretation of external authority, projection rebuildability, policy boundary, and fallback behavior.
 ** The planner contract remains anchored on canonical `ProximaRecord`/`ProximaType` authority. External tables and specialized formats are visible as cataloged authority/layout/projection metadata, not as hidden durable engines.
 
 Acceptance:

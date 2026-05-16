@@ -128,7 +128,7 @@ pub struct NovaHierarchicalCache {
     superblock_cache: Arc<DashMap<String, Arc<SuperBlockStats>>>,
 
     /// Block stats - LRU cache with higher capacity
-    block_cache: Arc<RwLock<crate::utils::cache::LruCache<String, Arc<BlockStats>>>>,
+    block_cache: Arc<RwLock<proximadb_runtime_common::cache::LruCache<String, Arc<BlockStats>>>>,
 
     /// RowGroup stats - on-demand loading with TTL
     rowgroup_cache:
@@ -195,7 +195,7 @@ impl NovaHierarchicalCache {
     ) -> Self {
         Self {
             superblock_cache: Arc::new(DashMap::new()),
-            block_cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(
+            block_cache: Arc::new(RwLock::new(proximadb_runtime_common::cache::LruCache::new(
                 if block_cache_size == 0 {
                     100
                 } else {

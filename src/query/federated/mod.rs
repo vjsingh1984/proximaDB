@@ -375,7 +375,6 @@ impl FederatedQueryContext {
 
 #[cfg(test)]
 mod tests {
-    use proximadb_kernel::error::ProximaDBError;
     use crate::core::search::results::OptimizedSearchRecord;
     use crate::graph::engines::GraphEngine;
     use crate::graph::{Edge, EdgeId, Node, NodeId};
@@ -397,6 +396,7 @@ mod tests {
     use anyhow::Result;
     use arrow::array::{Float32Array, Float64Array, Int64Array, StringArray};
     use async_trait::async_trait;
+    use proximadb_kernel::error::ProximaDBError;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 

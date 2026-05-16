@@ -23,10 +23,10 @@ use std::collections::HashMap;
 use anyhow::Result;
 use tracing::debug;
 
-use proximadb_kernel::error::VectorDBError;
 use crate::query::unified::UnifiedRecord;
 use crate::query::unified::ast::DataModel;
 use crate::query::unified::fusion::SubQueryResult;
+use proximadb_kernel::error::VectorDBError;
 
 /// Strategy for aggregating results from multiple nodes
 #[derive(Debug, Clone)]

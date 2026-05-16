@@ -97,7 +97,9 @@ impl AqlExecutor {
     /// Retrieve an audit trail from the event log (TD-050 Phase 4).
     pub async fn get_audit_trail(&self, query_id: &str) -> Result<AuditTrail> {
         let log = self.event_log.as_ref().ok_or_else(|| {
-            proximadb_kernel::error::ProximaDBError::InvalidInput("Event log not configured".to_string())
+            proximadb_kernel::error::ProximaDBError::InvalidInput(
+                "Event log not configured".to_string(),
+            )
         })?;
 
         let entity_id = format!("query:{}", query_id);
@@ -105,9 +107,12 @@ impl AqlExecutor {
         // Read the latest event for this query ID
         let events = log.read_events(&entity_id, 0, 1).await?;
         let event = events.first().ok_or_else(|| {
-            proximadb_kernel::error::ProximaDBError::Storage(proximadb_kernel::error::StorageError::NotFound(
-                format!("Audit trail for query '{}'", query_id),
-            ))
+            proximadb_kernel::error::ProximaDBError::Storage(
+                proximadb_kernel::error::StorageError::NotFound(format!(
+                    "Audit trail for query '{}'",
+                    query_id
+                )),
+            )
         })?;
 
         let trail: AuditTrail = serde_json::from_value(event.data.clone()).map_err(|e| {

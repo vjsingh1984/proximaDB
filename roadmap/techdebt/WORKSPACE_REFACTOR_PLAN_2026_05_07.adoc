@@ -818,6 +818,9 @@ Current status after the first refinement:
 * `proximadb-runtime-common` now exists as the first horizontal runtime-helper crate and owns the
   generic LRU cache implementation; root `utils::cache` remains a compatibility re-export while
   storage, query, modality, and platform crates converge on the shared horizontal helper
+* the first direct LRU consumers have moved off the root `utils::cache` compatibility path:
+  query preprocessing, SST decompression/block caches, local filesystem mmap caching, and
+  HELIX/NOVA/SWIFT storage caches now import `proximadb-runtime-common::cache::LruCache`
 * the generic concurrent ordered-map helper historically exposed as `utils::skiplist::SkipList`
   now also lives in `proximadb-runtime-common`; root `utils::skiplist` remains a compatibility
   re-export while future storage/query runtime consumers can depend on the horizontal crate directly

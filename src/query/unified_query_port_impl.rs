@@ -16,9 +16,13 @@ use proximadb_proto::v1::{SqlValue, sql_value};
 use proximadb_runtime::UnifiedQueryPort;
 use tracing::{debug, info};
 
+use crate::catalog::CatalogManager;
+use crate::query::authority_context::{AuthoritySource, resolved_object_from_catalog_schema};
+use crate::query::explain::StorageAuthorityExplanation;
+use crate::query::multimodal::plan::PlanContext;
 use crate::query::{
-    ParameterValue, PreparedStatementCache, PreparedStatementConfig, QueryFacadeAdapter,
-    PreparedStatementError,
+    ParameterValue, PreparedStatementCache, PreparedStatementConfig, PreparedStatementError,
+    QueryFacadeAdapter,
 };
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
@@ -49,6 +53,7 @@ fn sql_values_to_params(values: Option<Vec<SqlValue>>) -> Vec<ParameterValue> {
 pub struct UnifiedQueryPortImpl {
     adapter: Arc<QueryFacadeAdapter>,
     cache: Arc<PreparedStatementCache>,
+    catalog_manager: Option<Arc<CatalogManager>>,
 }
 
 impl UnifiedQueryPortImpl {
@@ -59,12 +64,26 @@ impl UnifiedQueryPortImpl {
             cache: Arc::new(PreparedStatementCache::new(
                 PreparedStatementConfig::default(),
             )),
+            catalog_manager: None,
         }
     }
 
     /// Create with a custom prepared-statement cache.
-    pub fn with_cache(adapter: Arc<QueryFacadeAdapter>, cache: Arc<PreparedStatementCache>) -> Self {
-        Self { adapter, cache }
+    pub fn with_cache(
+        adapter: Arc<QueryFacadeAdapter>,
+        cache: Arc<PreparedStatementCache>,
+    ) -> Self {
+        Self {
+            adapter,
+            cache,
+            catalog_manager: None,
+        }
+    }
+
+    /// Attach xCatalog so port-backed EXPLAIN can expose planner-native authority metadata.
+    pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
+        self.catalog_manager = Some(catalog_manager);
+        self
     }
 
     /// Serialize a `QueryResult` to `serde_json::Value`, applying an optional row limit.
@@ -100,6 +119,114 @@ impl UnifiedQueryPortImpl {
             "metrics": metrics,
         }))
     }
+
+    async fn explain_storage_authority_from_catalog(
+        &self,
+        collection: Option<&str>,
+        query: &str,
+    ) -> Result<Option<StorageAuthorityExplanation>> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(None);
+        };
+
+        let mut context = PlanContext::default();
+        let mut targets = explain_catalog_targets(query);
+        if let Some(collection) = collection
+            && !collection.trim().is_empty()
+        {
+            targets.insert(0, collection.trim().to_string());
+        }
+        targets.sort();
+        targets.dedup();
+
+        for target in targets {
+            let (catalog, table_id) = match catalog_manager.resolve_table(&target).await {
+                Ok(resolved) => resolved,
+                Err(err) => {
+                    debug!(
+                        "port-backed EXPLAIN storage authority unavailable for '{}': {}",
+                        target, err
+                    );
+                    continue;
+                }
+            };
+            let schema = match catalog.get_table(&table_id).await {
+                Ok(schema) => schema,
+                Err(err) => {
+                    debug!(
+                        "port-backed EXPLAIN catalog lookup unavailable for '{}': {}",
+                        table_id, err
+                    );
+                    continue;
+                }
+            };
+            context
+                .resolved_objects
+                .push(resolved_object_from_catalog_schema(
+                    AuthoritySource::new(target.clone(), "relational"),
+                    &table_id,
+                    &schema,
+                ));
+        }
+
+        Ok(StorageAuthorityExplanation::from_plan_context(&context))
+    }
+}
+
+fn explain_catalog_targets(sql: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let normalized = sql.replace(['\n', '\t', ',', '(', ')'], " ");
+    let tokens: Vec<&str> = normalized.split_whitespace().collect();
+
+    for window in tokens.windows(2) {
+        if let [keyword, target] = window {
+            let keyword = keyword.trim_matches('"').to_ascii_uppercase();
+            if matches!(keyword.as_str(), "FROM" | "JOIN" | "INTO" | "UPDATE")
+                && !target.starts_with('$')
+            {
+                targets.push(target.trim_matches('"').trim_end_matches(';').to_string());
+            }
+        }
+    }
+
+    for function in [
+        "VECTOR_SEARCH",
+        "DOCUMENT_QUERY",
+        "GRAPH_QUERY",
+        "LOGS",
+        "METRICS",
+    ] {
+        let needle = format!("{function}(");
+        let mut search_from = 0;
+        while let Some(offset) = sql[search_from..].to_ascii_uppercase().find(&needle) {
+            let start = search_from + offset + needle.len();
+            let Some(rest) = sql.get(start..) else {
+                break;
+            };
+            let candidate = rest
+                .split([',', ')'])
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"');
+            if !candidate.is_empty() && !candidate.starts_with('$') {
+                targets.push(candidate.to_string());
+            }
+            search_from = start;
+        }
+    }
+
+    targets
+        .into_iter()
+        .filter(|target| {
+            let upper = target.to_ascii_uppercase();
+            !matches!(
+                upper.as_str(),
+                "SELECT" | "WHERE" | "ON" | "AS" | "LATERAL" | "UNNEST"
+            )
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -144,7 +271,10 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
                 .unwrap_or("SELECT 1")
                 .to_string()
         });
-        info!("execute_multi_model_query SQL: {}", &sql[..sql.len().min(200)]);
+        info!(
+            "execute_multi_model_query SQL: {}",
+            &sql[..sql.len().min(200)]
+        );
         let result = self
             .adapter
             .federated_query(&sql)
@@ -202,13 +332,24 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
     async fn explain_unified_query(
         &self,
         query: String,
-        _collection: Option<String>,
+        collection: Option<String>,
     ) -> Result<serde_json::Value> {
-        let explain = self
-            .adapter
-            .explain(&query)
-            .context("explain failed")?;
-        serde_json::to_value(&explain).context("failed to serialize explain result")
+        let explain = self.adapter.explain(&query).context("explain failed")?;
+        let mut value =
+            serde_json::to_value(&explain).context("failed to serialize explain result")?;
+        let storage_authority = self
+            .explain_storage_authority_from_catalog(collection.as_deref(), &query)
+            .await?;
+        if let Some(storage_authority) = storage_authority {
+            if let serde_json::Value::Object(ref mut object) = value {
+                object.insert(
+                    "storage_authority".to_string(),
+                    serde_json::to_value(storage_authority)
+                        .context("failed to serialize storage authority")?,
+                );
+            }
+        }
+        Ok(value)
     }
 
     async fn prepare_statement(
@@ -301,10 +442,7 @@ fn json_to_multi_model_sql(req: &serde_json::Value) -> Option<String> {
                             .join(",")
                     })
                     .unwrap_or_default();
-                let top_k = config
-                    .get("top_k")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(10);
+                let top_k = config.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10);
                 format!(
                     "SELECT * FROM VECTOR_SEARCH('{}', '[{}]', {})",
                     collection, query_vec, top_k
@@ -360,6 +498,10 @@ fn json_to_multi_model_sql(req: &serde_json::Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::TableIdentifier;
+    use crate::query::authority_context::{AuthoritySource, resolved_object_from_catalog_schema};
+    use crate::query::multimodal::plan::ResolvedAuthorityMode;
+    use proximadb_catalog::{CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema};
 
     #[test]
     fn test_sql_value_to_param_string() {
@@ -412,5 +554,41 @@ mod tests {
     fn test_json_to_multi_model_sql_no_components_field() {
         let req = serde_json::json!({ "query": "SELECT 1" });
         assert!(json_to_multi_model_sql(&req).is_none());
+    }
+
+    #[test]
+    fn test_explain_catalog_targets_extracts_from_sql_and_functions() {
+        let targets = explain_catalog_targets(
+            "SELECT * FROM default.docs d JOIN graph.edges e ON d.id = e.src \
+             UNION ALL SELECT * FROM VECTOR_SEARCH('vectors', '[0.1]', 10)",
+        );
+
+        assert!(targets.contains(&"default.docs".to_string()));
+        assert!(targets.contains(&"graph.edges".to_string()));
+        assert!(targets.contains(&"vectors".to_string()));
+    }
+
+    #[test]
+    fn test_resolved_object_from_catalog_schema_preserves_external_policy_boundary() {
+        let table_id = TableIdentifier::new(vec!["lake".to_string()], "docs".to_string());
+        let mut schema = CatalogTableSchema::new("docs");
+        schema.storage_layouts = vec![CatalogStorageLayout::external_authoritative(
+            "iceberg",
+            CatalogPhysicalFormat::Iceberg,
+            "s3://warehouse/docs",
+        )];
+
+        let object = resolved_object_from_catalog_schema(
+            AuthoritySource::new("lake.docs", "document"),
+            &table_id,
+            &schema,
+        );
+
+        assert_eq!(
+            object.authority,
+            ResolvedAuthorityMode::ExternalAuthoritative
+        );
+        assert!(object.requires_policy_boundary());
+        assert_eq!(object.storage_layouts[0].physical_format, "Iceberg");
     }
 }

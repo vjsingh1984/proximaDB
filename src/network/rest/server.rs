@@ -384,8 +384,10 @@ impl RestServer {
             base_state
         };
         let state = if let Some(ref adapter) = query_adapter {
-            let port = Arc::new(crate::query::UnifiedQueryPortImpl::new(adapter.clone()))
-                as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
+            let port = Arc::new(
+                crate::query::UnifiedQueryPortImpl::new(adapter.clone())
+                    .with_catalog_manager(state.catalog_manager.clone()),
+            ) as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
             state.with_unified_query_port(port)
         } else {
             state
@@ -605,8 +607,10 @@ impl RestServer {
             base_state
         };
         let state = if let Some(ref adapter) = query_adapter {
-            let port = Arc::new(crate::query::UnifiedQueryPortImpl::new(adapter.clone()))
-                as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
+            let port = Arc::new(
+                crate::query::UnifiedQueryPortImpl::new(adapter.clone())
+                    .with_catalog_manager(state.catalog_manager.clone()),
+            ) as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
             state.with_unified_query_port(port)
         } else {
             state

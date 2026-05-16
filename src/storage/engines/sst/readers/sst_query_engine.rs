@@ -48,7 +48,6 @@ use super::block_filter::{BlockFilter, IntelligentBlockFilter};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
-use proximadb_compression::CompressionAlgorithm;
 use crate::core::search::{FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
@@ -57,6 +56,7 @@ use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
 };
 use crate::storage::engines::sst::{IndexEntry, SstableHeader}; // OPTIMIZED: Removed SstRecord import
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_compression::CompressionAlgorithm;
 
 // Using UnifiedCachingFilesystem instead of ZeroCopyIOSystem
 use crate::storage::persistence::filesystem::FileSystem;
@@ -141,7 +141,9 @@ impl std::fmt::Debug for UnifiedSstableReader {
 pub struct BlockCache {
     #[allow(dead_code)]
     cache: Arc<
-        tokio::sync::RwLock<crate::utils::cache::LruCache<BlockCacheKey, Arc<ProximaDataBlock>>>,
+        tokio::sync::RwLock<
+            proximadb_runtime_common::cache::LruCache<BlockCacheKey, Arc<ProximaDataBlock>>,
+        >,
     >,
     #[allow(dead_code)]
     max_size: usize,
@@ -5492,7 +5494,7 @@ impl BlockCache {
     pub fn new(max_size: usize) -> Self {
         Self {
             cache: Arc::new(tokio::sync::RwLock::new(
-                crate::utils::cache::LruCache::new(max_size),
+                proximadb_runtime_common::cache::LruCache::new(max_size),
             )),
             max_size,
             hit_rate: Arc::new(tokio::sync::RwLock::new(CacheStats::default())),

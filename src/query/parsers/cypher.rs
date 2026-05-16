@@ -74,7 +74,6 @@
 //! - Functions: `labels(n)`, `type(r)`, `id(n)`
 //! - Aggregations: `count()`, `sum()`, `avg()`, `collect()`
 
-use proximadb_kernel::error::ProximaDBError;
 use nom::{
     IResult,
     branch::alt,
@@ -85,6 +84,7 @@ use nom::{
     multi::{many0, many1, separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, separated_pair, tuple},
 };
+use proximadb_kernel::error::ProximaDBError;
 // TODO: Move to proximadb-graph crate
 // For now, use local definitions
 use crate::graph::query::ast::{

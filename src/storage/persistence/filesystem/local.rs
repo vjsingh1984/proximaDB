@@ -62,8 +62,9 @@ pub struct LocalFileSystem {
     config: LocalConfig,
     /// LRU cache for memory-mapped files (thread-safe)
     /// Files above MIN_MMAP_SIZE are cached for faster subsequent reads
-    mmap_cache:
-        parking_lot::RwLock<crate::utils::cache::LruCache<PathBuf, std::sync::Arc<memmap2::Mmap>>>,
+    mmap_cache: parking_lot::RwLock<
+        proximadb_runtime_common::cache::LruCache<PathBuf, std::sync::Arc<memmap2::Mmap>>,
+    >,
     /// Optional file encryption layer for transparent encryption at rest
     encryption_layer: Option<std::sync::Arc<crate::storage::encryption::FileEncryptionLayer>>,
 }
@@ -151,7 +152,7 @@ impl LocalFileSystem {
 
         Ok(Self {
             config,
-            mmap_cache: parking_lot::RwLock::new(crate::utils::cache::LruCache::new(
+            mmap_cache: parking_lot::RwLock::new(proximadb_runtime_common::cache::LruCache::new(
                 MMAP_CACHE_SIZE,
             )),
             encryption_layer,
@@ -347,7 +348,7 @@ impl LocalFileSystem {
 
         Ok(Self {
             config,
-            mmap_cache: parking_lot::RwLock::new(crate::utils::cache::LruCache::new(
+            mmap_cache: parking_lot::RwLock::new(proximadb_runtime_common::cache::LruCache::new(
                 MMAP_CACHE_SIZE,
             )),
             encryption_layer: None,

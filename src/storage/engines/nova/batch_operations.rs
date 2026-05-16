@@ -49,7 +49,7 @@ impl Default for BatchConfig {
 #[derive(Clone)]
 pub struct RowGroupCache {
     /// LRU cache storing row groups by ID
-    pub cache: Arc<RwLock<crate::utils::cache::LruCache<usize, Arc<RecordBatch>>>>,
+    pub cache: Arc<RwLock<proximadb_runtime_common::cache::LruCache<usize, Arc<RecordBatch>>>>,
     /// Current cache size in bytes
     #[allow(dead_code)]
     pub current_size: Arc<RwLock<usize>>,
@@ -60,7 +60,9 @@ pub struct RowGroupCache {
 impl RowGroupCache {
     fn new(max_size: usize) -> Self {
         Self {
-            cache: Arc::new(RwLock::new(crate::utils::cache::LruCache::new(100))),
+            cache: Arc::new(RwLock::new(proximadb_runtime_common::cache::LruCache::new(
+                100,
+            ))),
             current_size: Arc::new(RwLock::new(0)),
             max_size,
         }
