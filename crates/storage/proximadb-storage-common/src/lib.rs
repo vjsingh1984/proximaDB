@@ -5,6 +5,7 @@
 
 pub mod bitmap;
 pub mod cache_config;
+pub mod collection_path;
 pub mod columnar_constants;
 pub mod engine_constants;
 pub mod engine_type;
@@ -15,6 +16,7 @@ pub mod storage_path;
 pub mod wal_entry;
 
 pub use bitmap::{BitmapError, BitmapIteratorAll, RoaringBitmap};
+pub use collection_path::slug_for;
 pub use cache_config::{
     AlertThresholds, CacheConfig, CoordinationConfig, EvictionPolicy, FilterCacheConfig,
     GlobalCacheConfig, IndexCacheConfig, MetadataStoreConfig, MonitoringConfig, QueryCacheConfig,

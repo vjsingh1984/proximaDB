@@ -15,6 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow.workspace = true
+proximadb-kernel.workspace = true
 proximadb-records = { workspace = true }
 proximadb-runtime-common.workspace = true
 serde.workspace = true
