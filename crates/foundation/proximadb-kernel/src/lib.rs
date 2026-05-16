@@ -4,6 +4,7 @@
 //! higher-level crates depend on and that should not pull in storage, query,
 //! transport, or binding implementations.
 
+pub mod base62;
 pub mod checksum;
 pub mod encoding;
 pub mod error;
@@ -11,6 +12,7 @@ pub mod foundation;
 pub mod hash;
 pub mod uuid;
 
+pub use base62::*;
 pub use checksum::*;
 pub use encoding::*;
 pub use error::*;
