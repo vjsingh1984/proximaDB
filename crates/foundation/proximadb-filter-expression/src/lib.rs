@@ -1,3 +1,6 @@
+/// Advanced metadata query engine with runtime evaluation and regex caching.
+pub mod metadata_query;
+
 /// Complex filter expression for advanced metadata filtering.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum FilterExpression {

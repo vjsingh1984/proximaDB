@@ -14,5 +14,7 @@ name = "proximadb_filter_expression"
 path = "src/lib.rs"
 
 [dependencies]
+anyhow.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
