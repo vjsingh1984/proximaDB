@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::{ColumnarConfig, ParquetLocation, UnifiedParquetReader};
-use crate::core::memory::pool::VectorMemoryPool;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
 
 /// Batch operations for columnar storage
@@ -466,7 +466,7 @@ pub struct BatchCacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::memory::pool::VectorMemoryPool;
+    use proximadb_runtime_common::pool::VectorMemoryPool;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
     #[tokio::test]

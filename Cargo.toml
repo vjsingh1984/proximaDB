@@ -88,6 +88,7 @@ proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types"
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+parking_lot = "0.12"
 prost = "0.14"
 prost-types = "0.14"
 rand = { version = "0.8", features = ["small_rng"] }
@@ -111,7 +112,6 @@ bzip2 = "0.5"
 flate2 = { version = "1.0", default-features = true }
 lz4_flex = "0.11"
 snap = "1.1"
-parking_lot = "0.12"
 tracing = "0.1"
 xz2 = "0.1"
 zstd = "0.13"

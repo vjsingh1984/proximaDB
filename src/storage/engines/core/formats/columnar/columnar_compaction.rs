@@ -256,7 +256,7 @@ impl UnifiedColumnarCompaction {
         use crate::compute::quantization::storage_engine::{
             StorageQuantizationConfig, StorageQuantizationEngine,
         };
-        use crate::core::memory::pool::VectorMemoryPool;
+        use proximadb_runtime_common::pool::VectorMemoryPool;
         use crate::storage::engines::core::formats::columnar::constants;
         use arrow::array::ArrayRef;
         use arrow_array::{FixedSizeListArray, Float32Array, builder::BinaryBuilder};

@@ -8,7 +8,7 @@
 
 use super::super::super::swift::*;
 use crate::core::hardware_capabilities;
-use crate::core::memory::pool::VectorMemoryPool;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 // TESTS FROM batch_operations.rs
 // =====================================================
 

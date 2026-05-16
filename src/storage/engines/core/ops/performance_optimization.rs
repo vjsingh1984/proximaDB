@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::memory::pool::VectorMemoryPool;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 use crate::storage::persistence::filesystem::{FileStorageTier, FilesystemFactory};
 use proximadb_compression::{CompressionAlgorithm, StandardCompression};
 

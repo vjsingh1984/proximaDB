@@ -8,7 +8,7 @@ use std::sync::Arc;
 use super::block_structures::ProximaDataBlock;
 use super::index_structures::RowBasedIdIndex;
 use crate::core::VectorRecord;
-use crate::core::memory::pool::VectorMemoryPool;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 use crate::utils::Uuid;
 // Quantization now handled by unified compute module
 

@@ -8,7 +8,7 @@ use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::compute::quantization::quantization_engine::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-use crate::core::memory::pool::VectorMemoryPool;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 use crate::core::{Collection, VectorRecord};
 
 /// Pairs original records with their quantized representations

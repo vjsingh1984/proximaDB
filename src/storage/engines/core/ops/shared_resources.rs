@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use once_cell::sync::Lazy;
-use crate::core::memory::pool::VectorMemoryPool;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 
 /// Global shared memory pool for all storage engines
 /// This ensures memory buffers are reused across engines for maximum efficiency

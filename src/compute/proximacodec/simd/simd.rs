@@ -110,7 +110,7 @@ use std::sync::{Arc, OnceLock};
 use tracing::{debug, trace};
 
 use crate::core::hardware_capabilities::HardwareBackend;
-use crate::core::memory::pool::{PoolConfig, VectorMemoryPool};
+use proximadb_runtime_common::pool::{PoolConfig, VectorMemoryPool};
 
 // Platform-specific SIMD imports
 #[cfg(target_arch = "x86_64")]
@@ -201,7 +201,7 @@ fn f32_to_i32_with_pool(values: &[f32]) -> Vec<i32> {
 /// Returns a pooled Vec<u8> that's automatically returned on drop (RAII pattern).
 /// Used for intermediate compression/encoding buffers.
 #[allow(dead_code)]
-fn acquire_compression_buffer() -> crate::core::memory::pool::PooledItem<Vec<u8>> {
+fn acquire_compression_buffer() -> proximadb_runtime_common::pool::PooledItem<Vec<u8>> {
     let pool = get_memory_pool();
     pool.compression_buffers.acquire()
 }

@@ -13,7 +13,7 @@ use anyhow::Result;
 use tracing::{debug, trace};
 
 use crate::core::hardware_capabilities::HardwareBackend;
-use crate::core::memory::pool::{Pool, PoolConfig};
+use proximadb_runtime_common::pool::{Pool, PoolConfig};
 
 /// GPU batch configuration
 #[derive(Debug, Clone)]
@@ -320,7 +320,7 @@ impl<T: Clone + Send + 'static> GpuBufferPool<T> {
     }
 
     /// Acquire a GPU buffer from the pool
-    pub fn acquire(&self) -> crate::core::memory::pool::PooledItem<GpuBuffer<T>> {
+    pub fn acquire(&self) -> proximadb_runtime_common::pool::PooledItem<GpuBuffer<T>> {
         trace!(
             "🎯 [GPU Pool] Acquiring buffer for backend {:?}",
             self.backend
@@ -329,7 +329,7 @@ impl<T: Clone + Send + 'static> GpuBufferPool<T> {
     }
 
     /// Get pool statistics
-    pub fn stats(&self) -> crate::core::memory::pool::PoolStats {
+    pub fn stats(&self) -> proximadb_runtime_common::pool::PoolStats {
         self.pool.stats()
     }
 }

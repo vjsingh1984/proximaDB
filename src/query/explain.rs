@@ -30,6 +30,9 @@ use proximadb_catalog::{
     RelationalCapabilities,
 };
 
+use crate::query::multimodal::plan::{
+    PlanContext, ResolvedObjectContext, ResolvedProjectionContext, ResolvedStorageLayoutContext,
+};
 // TODO: Move to proximadb-graph crate
 // For now, use local definitions
 use crate::graph::query::planner::{GraphStatistics, PlanStepType, QueryPlan as GraphQueryPlan};
@@ -184,6 +187,52 @@ pub struct StorageAuthorityExplanation {
 }
 
 impl StorageAuthorityExplanation {
+    /// Build EXPLAIN metadata from planner-native resolved object context.
+    pub fn from_plan_context(context: &PlanContext) -> Option<Self> {
+        if context.resolved_objects.is_empty() {
+            return None;
+        }
+
+        let layouts = context
+            .resolved_objects
+            .iter()
+            .flat_map(|object| object.storage_layouts.iter())
+            .map(StorageLayoutExplanation::from)
+            .collect();
+        let projections = context
+            .resolved_objects
+            .iter()
+            .flat_map(|object| object.projections.iter())
+            .map(ProjectionExplanation::from)
+            .collect();
+        let fallback_behavior = fallback_behavior_from_resolved_objects(&context.resolved_objects);
+
+        Some(Self {
+            layouts,
+            projections,
+            relational_capabilities: RelationalCapabilityExplanation::default(),
+            fallback_behavior,
+        })
+    }
+
+    /// Build EXPLAIN metadata for one resolved source.
+    pub fn from_resolved_object_context(object: &ResolvedObjectContext) -> Self {
+        Self {
+            layouts: object
+                .storage_layouts
+                .iter()
+                .map(StorageLayoutExplanation::from)
+                .collect(),
+            projections: object
+                .projections
+                .iter()
+                .map(ProjectionExplanation::from)
+                .collect(),
+            relational_capabilities: RelationalCapabilityExplanation::default(),
+            fallback_behavior: object.fallback_behavior.clone(),
+        }
+    }
+
     /// Build EXPLAIN metadata from a catalog table schema.
     pub fn from_catalog_table_schema(schema: &CatalogTableSchema) -> Self {
         Self::from_catalog_metadata(
@@ -232,6 +281,31 @@ impl StorageAuthorityExplanation {
     }
 }
 
+fn fallback_behavior_from_resolved_objects(objects: &[ResolvedObjectContext]) -> String {
+    if objects
+        .iter()
+        .any(ResolvedObjectContext::requires_policy_boundary)
+    {
+        "planner must apply ProximaDB policy/RLS after external reads".to_string()
+    } else if objects.iter().any(|object| {
+        object
+            .projections
+            .iter()
+            .any(|projection| !projection.rebuildable)
+    }) {
+        "planner must verify non-rebuildable projection freshness before use".to_string()
+    } else if objects
+        .iter()
+        .any(|object| object.projections.iter().any(|projection| projection.lossy))
+    {
+        "planner should fall back to canonical records when exact recall is required".to_string()
+    } else if objects.len() == 1 {
+        objects[0].fallback_behavior.clone()
+    } else {
+        "canonical records remain the fallback for stale or unavailable projections".to_string()
+    }
+}
+
 /// Physical layout authority row for EXPLAIN output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageLayoutExplanation {
@@ -262,6 +336,22 @@ impl From<&CatalogStorageLayout> for StorageLayoutExplanation {
     }
 }
 
+impl From<&ResolvedStorageLayoutContext> for StorageLayoutExplanation {
+    fn from(layout: &ResolvedStorageLayoutContext) -> Self {
+        Self {
+            name: layout.name.clone(),
+            authority: format!("{:?}", layout.authority),
+            layout_kind: layout.layout_kind.clone(),
+            physical_format: layout.physical_format.clone(),
+            write_mode: layout.write_mode.clone(),
+            location: layout.location.clone(),
+            snapshot_semantics: layout.snapshot_semantics.clone(),
+            policy_enforced_in_proxima: layout.policy_enforced_in_proxima,
+            lossy_type_mappings: layout.lossy_type_mappings.clone(),
+        }
+    }
+}
+
 /// Projection/access-method row for EXPLAIN output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionExplanation {
@@ -284,6 +374,22 @@ impl From<&CatalogProjection> for ProjectionExplanation {
             physical_format: physical_format_label(&projection.physical_format),
             rebuild_source: projection.rebuild_source.clone(),
             freshness: format!("{:?}", projection.freshness),
+            max_lag_ms: projection.max_lag_ms,
+            rebuildable: projection.rebuildable,
+            lossy: projection.lossy,
+            support_status: projection.support_status.clone(),
+        }
+    }
+}
+
+impl From<&ResolvedProjectionContext> for ProjectionExplanation {
+    fn from(projection: &ResolvedProjectionContext) -> Self {
+        Self {
+            name: projection.name.clone(),
+            kind: projection.kind.clone(),
+            physical_format: projection.physical_format.clone(),
+            rebuild_source: projection.rebuild_source.clone(),
+            freshness: projection.freshness.clone(),
             max_lag_ms: projection.max_lag_ms,
             rebuildable: projection.rebuildable,
             lossy: projection.lossy,
@@ -1627,6 +1733,86 @@ mod tests {
 
         let plan = ExplainPlan::new().with_storage_authority(authority);
         assert!(plan.storage_authority.is_some());
+    }
+
+    #[test]
+    fn test_explain_storage_authority_from_plan_context() {
+        use crate::query::multimodal::plan::{
+            PlanContext, ResolvedAuthorityMode, ResolvedObjectContext, ResolvedProjectionContext,
+            ResolvedStorageLayoutContext,
+        };
+
+        let mut object =
+            ResolvedObjectContext::internal_canonical("vectors", "vector", "default.vectors");
+        object.storage_layouts.push(ResolvedStorageLayoutContext {
+            name: "pax_hot".to_string(),
+            authority: ResolvedAuthorityMode::InternalCanonical,
+            layout_kind: "Pax".to_string(),
+            physical_format: "ProximaBlock".to_string(),
+            write_mode: "Mutable".to_string(),
+            location: None,
+            snapshot_semantics: Some("mvcc".to_string()),
+            policy_enforced_in_proxima: true,
+            lossy_type_mappings: Vec::new(),
+        });
+        object.projections.push(ResolvedProjectionContext {
+            name: "vectors_hnsw".to_string(),
+            kind: "VectorAnn".to_string(),
+            physical_format: "ProximaBlock".to_string(),
+            rebuild_source: "pax_hot".to_string(),
+            freshness: "Lazy".to_string(),
+            max_lag_ms: None,
+            rebuildable: true,
+            lossy: false,
+            support_status: "experimental".to_string(),
+        });
+
+        let mut context = PlanContext::default();
+        context.resolved_objects.push(object);
+
+        let authority = StorageAuthorityExplanation::from_plan_context(&context)
+            .expect("resolved object context should produce EXPLAIN authority metadata");
+
+        assert_eq!(authority.layouts.len(), 1);
+        assert_eq!(authority.layouts[0].layout_kind, "Pax");
+        assert_eq!(authority.projections[0].kind, "VectorAnn");
+        assert!(authority.policy_safe_inside_proxima());
+    }
+
+    #[test]
+    fn test_explain_storage_authority_from_plan_context_external_boundary() {
+        use crate::query::multimodal::plan::{
+            PlanContext, ResolvedAuthorityMode, ResolvedObjectContext, ResolvedStorageLayoutContext,
+        };
+
+        let mut object =
+            ResolvedObjectContext::internal_canonical("lake_docs", "document", "lake.docs");
+        object.authority = ResolvedAuthorityMode::ExternalAuthoritative;
+        object.external_policy_boundary = true;
+        object.storage_layouts.push(ResolvedStorageLayoutContext {
+            name: "iceberg".to_string(),
+            authority: ResolvedAuthorityMode::ExternalAuthoritative,
+            layout_kind: "ExternalTable".to_string(),
+            physical_format: "Iceberg".to_string(),
+            write_mode: "ExternalRefresh".to_string(),
+            location: Some("s3://warehouse/docs".to_string()),
+            snapshot_semantics: Some("iceberg-snapshot".to_string()),
+            policy_enforced_in_proxima: false,
+            lossy_type_mappings: vec!["timestamp_tz".to_string()],
+        });
+
+        let mut context = PlanContext::default();
+        context.resolved_objects.push(object);
+
+        let authority = StorageAuthorityExplanation::from_plan_context(&context)
+            .expect("external resolved object context should produce EXPLAIN metadata");
+
+        assert!(!authority.policy_safe_inside_proxima());
+        assert!(authority.fallback_behavior.contains("policy/RLS"));
+        assert_eq!(
+            authority.layouts[0].lossy_type_mappings,
+            vec!["timestamp_tz".to_string()]
+        );
     }
 
     // ========================================================================

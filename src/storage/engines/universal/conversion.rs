@@ -4,7 +4,7 @@
 //! This module provides conversion utilities between different storage formats
 //! and quantization formats used by storage engines.
 
-use crate::core::memory::pool::VectorMemoryPool;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

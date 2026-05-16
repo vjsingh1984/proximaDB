@@ -943,6 +943,7 @@ Tasks:
 * [x] Move storage authority metadata from endpoint-only EXPLAIN into planner-native context.
 ** `PlanContext.resolved_objects` carries xCatalog-resolved authority, physical layout, projection freshness/lossiness, external policy boundary, and fallback behavior through lowering/optimization.
 ** `UnifiedQueryRouter::context_for_statement()` resolves cataloged UQL `SELECT`, join, `EXPLAIN`, and multimodal sources through `CatalogManager` before lowering; missing metadata is non-fatal and leaves execution on the default context.
+** `StorageAuthorityExplanation::from_plan_context()` converts resolved planner context into EXPLAIN metadata so endpoint handlers can consume shared plan context instead of duplicating catalog lookups.
 ** The planner contract remains anchored on canonical `ProximaRecord`/`ProximaType` authority. External tables and specialized formats are visible as cataloged authority/layout/projection metadata, not as hidden durable engines.
 
 Acceptance:
