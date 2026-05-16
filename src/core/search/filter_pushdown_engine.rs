@@ -47,7 +47,7 @@
 //! 4. **Statistics-Based Optimization** - Use column stats for selective filtering
 //! 5. **Multi-Layer Filtering** - Apply filters at storage, index, and result layers
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -158,7 +158,7 @@ impl ProximaEntityStore {
             .entity_to_vectors
             .read()
             .map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for entity_to_vectors is poisoned: {}",
                     e
                 ))
@@ -173,7 +173,7 @@ impl ProximaEntityStore {
             .embeddings
             .read()
             .map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for embeddings is poisoned: {}",
                     e
                 ))
@@ -205,7 +205,7 @@ impl ProximaEntityStore {
     ) -> Result<Vec<EmbeddingVersion>> {
         let prefix = format!("{}/{}", collection_id, entity_id);
         let store = self.embeddings.read().map_err(|e| {
-            crate::core::error::VectorDBError::Internal(format!(
+            proximadb_kernel::error::VectorDBError::Internal(format!(
                 "RwLock for embeddings is poisoned: {}",
                 e
             ))
@@ -311,7 +311,7 @@ impl EntityStore for ProximaEntityStore {
             );
             // In-memory embedding store (temporary v1)
             let mut embeddings_store = self.embeddings.write().map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for embeddings is poisoned: {}",
                     e
                 ))
@@ -332,13 +332,13 @@ impl EntityStore for ProximaEntityStore {
         // Update entity↔vector index
         {
             let mut e2v = self.entity_to_vectors.write().map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for entity_to_vectors is poisoned: {}",
                     e
                 ))
             })?;
             let mut v2e = self.vector_to_entity.write().map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for vector_to_entity is poisoned: {}",
                     e
                 ))
@@ -379,7 +379,7 @@ impl EntityStore for ProximaEntityStore {
         // Store in memory cache
         {
             let mut headers_store = self.headers.write().map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for headers is poisoned: {}",
                     e
                 ))
@@ -437,7 +437,7 @@ impl EntityStore for ProximaEntityStore {
             Some(bytes) => Some(bytes),
             None => {
                 let headers = self.headers.read().map_err(|e| {
-                    crate::core::error::VectorDBError::Internal(format!(
+                    proximadb_kernel::error::VectorDBError::Internal(format!(
                         "RwLock for headers is poisoned: {}",
                         e
                     ))
@@ -540,7 +540,7 @@ impl EntityStore for ProximaEntityStore {
             // Remove header from in-memory caches
             {
                 let mut headers = self.headers.write().map_err(|e| {
-                    crate::core::error::VectorDBError::Internal(format!(
+                    proximadb_kernel::error::VectorDBError::Internal(format!(
                         "RwLock for headers is poisoned: {}",
                         e
                     ))
@@ -565,7 +565,7 @@ impl EntityStore for ProximaEntityStore {
             // Get all embedding keys for this entity
             let vector_keys = {
                 let entity_to_vectors = self.entity_to_vectors.read().map_err(|e| {
-                    crate::core::error::VectorDBError::Internal(format!(
+                    proximadb_kernel::error::VectorDBError::Internal(format!(
                         "RwLock for entity_to_vectors is poisoned: {}",
                         e
                     ))
@@ -575,7 +575,7 @@ impl EntityStore for ProximaEntityStore {
 
             if let Some(vector_keys) = vector_keys {
                 let mut embeddings = self.embeddings.write().map_err(|e| {
-                    crate::core::error::VectorDBError::Internal(format!(
+                    proximadb_kernel::error::VectorDBError::Internal(format!(
                         "RwLock for embeddings is poisoned: {}",
                         e
                     ))
@@ -588,13 +588,13 @@ impl EntityStore for ProximaEntityStore {
             // Remove from entity↔vector index
             {
                 let mut e2v = self.entity_to_vectors.write().map_err(|e| {
-                    crate::core::error::VectorDBError::Internal(format!(
+                    proximadb_kernel::error::VectorDBError::Internal(format!(
                         "RwLock for entity_to_vectors is poisoned: {}",
                         e
                     ))
                 })?;
                 let mut v2e = self.vector_to_entity.write().map_err(|e| {
-                    crate::core::error::VectorDBError::Internal(format!(
+                    proximadb_kernel::error::VectorDBError::Internal(format!(
                         "RwLock for vector_to_entity is poisoned: {}",
                         e
                     ))
@@ -729,7 +729,7 @@ impl EntityStore for ProximaEntityStore {
         // Collect entity IDs first to avoid holding lock across await
         let entity_ids = {
             let headers = self.headers.read().map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for headers is poisoned: {}",
                     e
                 ))
@@ -780,7 +780,7 @@ impl ProximaEntityStore {
         // First pass: Get candidate entity IDs (simplified for now)
         let candidate_ids = {
             let headers = self.headers.read().map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for headers is poisoned: {}",
                     e
                 ))
@@ -928,7 +928,7 @@ impl ProximaEntityStore {
         // Clone the keys to drop the lock before await
         let keys: Vec<String> = {
             let headers = self.headers.read().map_err(|e| {
-                crate::core::error::VectorDBError::Internal(format!(
+                proximadb_kernel::error::VectorDBError::Internal(format!(
                     "RwLock for headers is poisoned: {}",
                     e
                 ))
@@ -1219,7 +1219,7 @@ impl Default for CsrRelationsStore {
 impl RelationsStore for CsrRelationsStore {
     async fn add_relation(&self, collection_id: &str, relation: Relation) -> Result<()> {
         let mut guard = self.adj.write().map_err(|e| {
-            crate::core::error::VectorDBError::Internal(format!(
+            proximadb_kernel::error::VectorDBError::Internal(format!(
                 "RwLock for adj is poisoned: {}",
                 e
             ))
@@ -1233,7 +1233,7 @@ impl RelationsStore for CsrRelationsStore {
 
     async fn get_relations(&self, collection_id: &str, entity_id: &str) -> Result<Vec<Relation>> {
         let guard = self.adj.read().map_err(|e| {
-            crate::core::error::VectorDBError::Internal(format!(
+            proximadb_kernel::error::VectorDBError::Internal(format!(
                 "RwLock for adj is poisoned: {}",
                 e
             ))
@@ -1247,7 +1247,7 @@ impl RelationsStore for CsrRelationsStore {
 
     async fn delete_all_relations(&self, collection_id: &str, entity_id: &str) -> Result<()> {
         let mut guard = self.adj.write().map_err(|e| {
-            crate::core::error::VectorDBError::Internal(format!(
+            proximadb_kernel::error::VectorDBError::Internal(format!(
                 "RwLock for adj is poisoned: {}",
                 e
             ))
@@ -1282,7 +1282,7 @@ impl Default for InMemoryProvenanceRegistry {
 impl ProvenanceRegistry for InMemoryProvenanceRegistry {
     async fn register_provenance(&self, entity_id: &str, provenance: Provenance) -> Result<()> {
         let mut map = self.map.write().map_err(|e| {
-            crate::core::error::VectorDBError::Internal(format!(
+            proximadb_kernel::error::VectorDBError::Internal(format!(
                 "RwLock for map is poisoned: {}",
                 e
             ))
@@ -1293,7 +1293,7 @@ impl ProvenanceRegistry for InMemoryProvenanceRegistry {
 
     async fn remove_provenance(&self, entity_id: &str) -> Result<()> {
         let mut map = self.map.write().map_err(|e| {
-            crate::core::error::VectorDBError::Internal(format!(
+            proximadb_kernel::error::VectorDBError::Internal(format!(
                 "RwLock for map is poisoned: {}",
                 e
             ))

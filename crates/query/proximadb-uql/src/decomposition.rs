@@ -557,11 +557,11 @@ impl QueryDecomposer {
         if query_lower.contains("cosine") {
             DistanceMetric::Cosine
         } else if query_lower.contains("euclidean") || query_lower.contains("l2") {
-            DistanceMetric::Euclidean
+            DistanceMetric::L2
         } else if query_lower.contains("dot") || query_lower.contains("inner") {
-            DistanceMetric::DotProduct
+            DistanceMetric::InnerProduct
         } else if query_lower.contains("manhattan") || query_lower.contains("l1") {
-            DistanceMetric::Manhattan
+            DistanceMetric::L1
         } else {
             DistanceMetric::Cosine // Default
         }

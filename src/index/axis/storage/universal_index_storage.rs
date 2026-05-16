@@ -25,7 +25,7 @@
 //! - S3: SST or VIPER format, promotion to local disk for bloom filter/columnar scan benefits
 //! - S3 → Disk promotion uses /tmp (if NVMe not configured) or HDD as staging
 
-use crate::core::error::{ProximaDBError, StorageError};
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 use crate::utils::encoding::base64_encode;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};

@@ -43,7 +43,7 @@
 //! - Fast lookup: Sum distances from codebook table
 
 use crate::compute::distance_computation::UnifiedDistanceCompute;
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use rand::Rng;
 use tracing::{debug, info};
 

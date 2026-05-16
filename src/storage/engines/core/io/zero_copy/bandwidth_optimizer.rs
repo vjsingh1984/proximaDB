@@ -12,7 +12,7 @@ use super::config::{
     RangeOptimizationConfig,
 };
 use super::traits::{DataRange, FileAccessRequest, QueryContext, QueryType, RequestPriority};
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Download strategy decision
 #[derive(Debug, Clone, PartialEq)]

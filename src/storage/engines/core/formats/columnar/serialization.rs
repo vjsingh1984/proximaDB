@@ -510,7 +510,7 @@ impl ColumnarSerializer {
             SelectedFormat::FP32 => {
                 let vector_key = "vector";
                 let array = arrays.get(vector_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         vector_key
                     ))
@@ -520,7 +520,7 @@ impl ColumnarSerializer {
             SelectedFormat::Binary => {
                 let binary_key = "vector_binary";
                 let array = arrays.get(binary_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         binary_key
                     ))
@@ -532,19 +532,19 @@ impl ColumnarSerializer {
                 let scale_key = "int8_scale";
                 let zero_point_key = "int8_zero_point";
                 let vector_array = arrays.get(vector_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         vector_key
                     ))
                 })?;
                 let scale_array = arrays.get(scale_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         scale_key
                     ))
                 })?;
                 let zero_point_array = arrays.get(zero_point_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         zero_point_key
                     ))
@@ -554,7 +554,7 @@ impl ColumnarSerializer {
             SelectedFormat::PQ => {
                 let pq_key = "vector_pq";
                 let array = arrays.get(pq_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         pq_key
                     ))

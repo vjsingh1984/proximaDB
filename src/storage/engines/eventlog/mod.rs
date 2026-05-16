@@ -54,7 +54,7 @@
 //! - **Temporal Queries**: Point-in-time data reconstruction
 //! - **Audit Trails**: Complete change history
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::storage::persistence::filesystem::{FileSystem, UnifiedCachingFilesystem};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

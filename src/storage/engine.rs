@@ -148,7 +148,7 @@ impl StorageEngine {
         // Create singleton SST storage instance
         let _sst_config_for_storage = config.sst_config.clone().unwrap_or_default();
         let _sst_storage = Arc::new(SstEngine::new().await.map_err(|e| {
-            crate::core::error::StorageError::SstEngine(format!(
+            proximadb_kernel::error::StorageError::SstEngine(format!(
                 "Failed to create SST storage: {}",
                 e
             ))

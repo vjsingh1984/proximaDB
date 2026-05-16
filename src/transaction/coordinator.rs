@@ -47,7 +47,7 @@
 //! 4. **Commit/Rollback**: Finalize transaction
 //! 5. **WAL Replay**: Recovery on restart
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

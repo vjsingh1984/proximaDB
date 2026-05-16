@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext,
 };

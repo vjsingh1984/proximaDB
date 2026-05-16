@@ -59,7 +59,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use tracing::info;
 
-use crate::core::error::{ProximaDBError, StorageError};
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 

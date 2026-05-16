@@ -7,7 +7,7 @@ use std::sync::Arc;
 // Bytemuck imports removed - using manual serialization for flexibility
 use tracing::{debug, trace, warn};
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::traits::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext, QueryType,
 };

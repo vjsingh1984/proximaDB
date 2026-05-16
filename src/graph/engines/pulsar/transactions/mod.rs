@@ -46,7 +46,7 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::proto::proximadb_v1::{Edge, Node};
 use dashmap::DashMap;

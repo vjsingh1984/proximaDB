@@ -28,7 +28,7 @@ use uuid::Uuid;
 use super::context::{TransactionContext, TransactionId, TransactionState, TransactionStats};
 use super::isolation::{ConflictResolution, IsolationLevel, Lock, LockMode};
 use super::operations::{MultiModelOperation, OperationRollback};
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Result type for transaction operations
 pub type Result<T> = std::result::Result<T, ProximaDBError>;

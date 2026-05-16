@@ -5,7 +5,7 @@
 //! GraphOperationsService lean by separating traversal concerns.
 
 use super::Result;
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::NodeId;
 use crate::graph::engines::GraphEngine;
 use tracing::debug;

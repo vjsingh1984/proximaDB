@@ -25,7 +25,7 @@
 use super::traits::{
     AlgorithmComplexity, AllPairsShortestPaths, GraphAlgorithm, NoInput, ParallelAlgorithm,
 };
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::orion::OrionGraphEngine;
 use std::sync::Arc;
 

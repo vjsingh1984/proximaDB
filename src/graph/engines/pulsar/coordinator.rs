@@ -19,7 +19,7 @@
 //! Coordinates cross-shard queries and distributed graph traversal operations.
 //! Implements distributed BFS/DFS algorithms that work across multiple shards.
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::sharding::ConsistentHashRing;
 use crate::graph::engines::GraphEngine;

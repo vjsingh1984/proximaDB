@@ -60,7 +60,7 @@ use tracing::{debug, info, warn};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system
-use crate::core::error::{ProximaDBError, StorageError};
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 use crate::core::search::FilterExpression;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
 

@@ -137,7 +137,7 @@ pub mod replication;
 pub mod sharding;
 pub mod transactions;
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};

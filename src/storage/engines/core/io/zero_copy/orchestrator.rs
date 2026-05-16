@@ -15,7 +15,7 @@ use super::metrics::SystemPerformanceMetrics;
 use super::traits::{
     DataRange, FileAccessRequest, MetadataSerializer, QueryContext, RequestPriority,
 };
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::storage::cache::specialized::filesystem_metadata_store::{
     FilesystemMetadata, FilesystemMetadataStore,
 };

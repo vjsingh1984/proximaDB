@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use tracing::debug;
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::storage::persistence::filesystem::{
     DirEntry, FileMetadata, FileOptions, FileSystem, FilesystemFile, FsResult,
 };

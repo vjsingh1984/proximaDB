@@ -48,7 +48,7 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::engines::pulsar::consensus::GraphCommand;
 use dashmap::DashMap;

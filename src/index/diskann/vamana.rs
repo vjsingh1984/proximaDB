@@ -37,7 +37,7 @@
 //! - **Low Diameter**: Small number of hops between any two nodes
 
 use crate::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute};
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::{HashSet, VecDeque};
 use tracing::info;
 

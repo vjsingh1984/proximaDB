@@ -69,7 +69,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
-use proximadb_distance_types::DistanceMetric as FoundationDistanceMetric;
 use proximadb_graph_query::service::GraphQueryService;
 use proximadb_vector_query::VectorQueryService;
 use serde::{Deserialize, Serialize};
@@ -140,8 +139,6 @@ pub struct VectorSearchQuery {
     pub request_id: Option<String>,
 }
 
-// Re-export foundation distance metric type for backward compatibility
-// TODO: Migrate all uses to FoundationDistanceMetric (Phase 2.2)
 pub use proximadb_distance_types::DistanceMetric;
 
 /// Search parameters
@@ -1150,21 +1147,7 @@ impl UnifiedQueryHandler {
             .ok_or_else(|| anyhow!("No query vectors provided"))?
             .clone();
 
-        let distance_metric = match query.distance_metric {
-            Some(FoundationDistanceMetric::Cosine) => {
-                Some(proximadb_vector_query::DistanceMetric::Cosine)
-            }
-            Some(FoundationDistanceMetric::L2) => {
-                Some(proximadb_vector_query::DistanceMetric::Euclidean)
-            }
-            Some(FoundationDistanceMetric::InnerProduct) => {
-                Some(proximadb_vector_query::DistanceMetric::DotProduct)
-            }
-            Some(FoundationDistanceMetric::L1) => {
-                Some(proximadb_vector_query::DistanceMetric::Manhattan)
-            }
-            None => None,
-        };
+        let distance_metric = query.distance_metric;
 
         let request = VectorSearchRequest {
             collection_id: query.collection_id.clone(),

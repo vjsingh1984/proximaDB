@@ -42,7 +42,7 @@
 //! - **Distributed Sorting**: Global sort across nodes
 //! - **Data Skew Mitigation**: Handle uneven data distribution
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use tracing::{debug, info};
 

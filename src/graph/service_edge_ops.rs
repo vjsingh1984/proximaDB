@@ -16,7 +16,7 @@ impl super::GraphOperationsService {
     /// Create a new edge
     pub async fn create_edge(&self, graph_id: &str, edge: Edge) -> Result<Arc<Edge>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -33,7 +33,7 @@ impl super::GraphOperationsService {
             ))
             .is_some()
         {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(format!(
                 "Composite edge already exists: (from='{}', to='{}', type='{}')",
                 edge.from_node_id, edge.to_node_id, edge.edge_type
             )));
@@ -70,7 +70,7 @@ impl super::GraphOperationsService {
     /// Update an edge
     pub async fn update_edge(&self, graph_id: &str, edge: Edge) -> Result<Arc<Edge>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -99,7 +99,7 @@ impl super::GraphOperationsService {
     /// Delete an edge
     pub async fn delete_edge(&self, graph_id: &str, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -124,7 +124,7 @@ impl super::GraphOperationsService {
     /// Get an edge by ID
     pub async fn get_edge(&self, graph_id: &str, id: &EdgeId) -> Result<Option<Arc<Edge>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -141,7 +141,7 @@ impl super::GraphOperationsService {
     /// Phase 3.  Engine traversal is only used for full-graph edge scans.
     pub async fn query_edges(&self, graph_id: &str, query: EdgeQuery) -> Result<Vec<Arc<Edge>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }

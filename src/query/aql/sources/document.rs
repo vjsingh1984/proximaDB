@@ -107,8 +107,8 @@ impl AqlSource for DocumentAqlSource {
             .query_documents(&collection, params)
             .await
             .map_err(|e| {
-                crate::core::error::ProximaDBError::Storage(
-                    crate::core::error::StorageError::SstEngine(e.to_string()),
+                proximadb_kernel::error::ProximaDBError::Storage(
+                    proximadb_kernel::error::StorageError::SstEngine(e.to_string()),
                 )
             })?;
 

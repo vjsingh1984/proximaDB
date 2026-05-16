@@ -28,7 +28,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::cluster::{ClusterManager, NodeInfo, RoutingService, ShardManager};
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::observability::ObservabilityService;
 use crate::query::unified::ast::MultiModelQuery;
 use crate::query::unified::executor::ParallelExecutor;

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Engine-specific metadata serialization trait
 ///

@@ -19,7 +19,7 @@
 //! Implements cold storage backends for QUASAR's hybrid tiering system.
 //! Supports multiple storage formats: SST, Parquet, and JSON.
 
-use crate::core::error::{ProximaDBError, StorageError, VectorDBError};
+use proximadb_kernel::error::{ProximaDBError, StorageError, VectorDBError};
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::ColdStorageBackend as BackendType;
 use crate::graph::{Edge, EdgeId, Node, NodeId};

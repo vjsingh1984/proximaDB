@@ -1,4 +1,4 @@
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::utils::StoragePath;
 use crate::utils::uuid::Uuid;
 use anyhow::Result;

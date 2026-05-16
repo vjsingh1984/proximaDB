@@ -74,7 +74,7 @@
 //! - Functions: `labels(n)`, `type(r)`, `id(n)`
 //! - Aggregations: `count()`, `sum()`, `avg()`, `collect()`
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use nom::{
     IResult,
     branch::alt,

@@ -97,7 +97,7 @@ impl AqlExecutor {
     /// Retrieve an audit trail from the event log (TD-050 Phase 4).
     pub async fn get_audit_trail(&self, query_id: &str) -> Result<AuditTrail> {
         let log = self.event_log.as_ref().ok_or_else(|| {
-            crate::core::error::ProximaDBError::InvalidInput("Event log not configured".to_string())
+            proximadb_kernel::error::ProximaDBError::InvalidInput("Event log not configured".to_string())
         })?;
 
         let entity_id = format!("query:{}", query_id);
@@ -105,13 +105,13 @@ impl AqlExecutor {
         // Read the latest event for this query ID
         let events = log.read_events(&entity_id, 0, 1).await?;
         let event = events.first().ok_or_else(|| {
-            crate::core::error::ProximaDBError::Storage(crate::core::error::StorageError::NotFound(
+            proximadb_kernel::error::ProximaDBError::Storage(proximadb_kernel::error::StorageError::NotFound(
                 format!("Audit trail for query '{}'", query_id),
             ))
         })?;
 
         let trail: AuditTrail = serde_json::from_value(event.data.clone()).map_err(|e| {
-            crate::core::error::ProximaDBError::Internal(format!(
+            proximadb_kernel::error::ProximaDBError::Internal(format!(
                 "Audit trail deserialization failed: {}",
                 e
             ))
@@ -126,7 +126,7 @@ impl AqlExecutor {
             entity_id: format!("query:{}", trail.query_id),
             event_type: "AqlQueryExecuted".to_string(),
             data: serde_json::to_value(trail).map_err(|e| {
-                crate::core::error::ProximaDBError::Internal(format!(
+                proximadb_kernel::error::ProximaDBError::Internal(format!(
                     "Audit trail serialization failed: {}",
                     e
                 ))
@@ -149,7 +149,7 @@ impl AqlExecutor {
         match from {
             AqlFrom::Source { name, .. } => {
                 let source = self.sources.get(name).ok_or_else(|| {
-                    crate::core::error::ProximaDBError::InvalidInput(format!(
+                    proximadb_kernel::error::ProximaDBError::InvalidInput(format!(
                         "Source '{}' not found",
                         name
                     ))
@@ -242,7 +242,7 @@ impl AqlExecutor {
         ctx: &mut AuditContext,
     ) -> Result<AqlResult> {
         if sources.is_empty() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "MultiSource query requires at least one source".to_string(),
             ));
         }
@@ -259,7 +259,7 @@ impl AqlExecutor {
 
         let mut iter = source_results.into_iter();
         let (_, mut combined) = iter.next().ok_or_else(|| {
-            crate::core::error::ProximaDBError::InvalidInput(
+            proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "MultiSource query requires at least one source".to_string(),
             )
         })?;

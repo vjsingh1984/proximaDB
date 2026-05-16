@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::context::TransactionId;
-use crate::core::error::{ProximaDBError, StorageError};
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 
 /// Result type for log operations
 type Result<T> = std::result::Result<T, ProximaDBError>;

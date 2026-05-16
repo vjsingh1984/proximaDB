@@ -116,10 +116,10 @@ impl VectorServiceImpl {
     /// Convert contract distance metric to modality distance metric.
     fn convert_metric(&self, metric: &ContractDistanceMetric) -> DistanceMetric {
         match metric {
-            ContractDistanceMetric::Euclidean => DistanceMetric::Euclidean,
+            ContractDistanceMetric::L2 => DistanceMetric::Euclidean,
             ContractDistanceMetric::Cosine => DistanceMetric::Cosine,
-            ContractDistanceMetric::DotProduct => DistanceMetric::DotProduct,
-            ContractDistanceMetric::Manhattan => DistanceMetric::Manhattan,
+            ContractDistanceMetric::InnerProduct => DistanceMetric::DotProduct,
+            ContractDistanceMetric::L1 => DistanceMetric::Manhattan,
         }
     }
 
@@ -437,15 +437,15 @@ mod tests {
             DistanceMetric::Cosine
         ));
         assert!(matches!(
-            service.convert_metric(&ContractMetric::Euclidean),
+            service.convert_metric(&ContractMetric::L2),
             DistanceMetric::Euclidean
         ));
         assert!(matches!(
-            service.convert_metric(&ContractMetric::DotProduct),
+            service.convert_metric(&ContractMetric::InnerProduct),
             DistanceMetric::DotProduct
         ));
         assert!(matches!(
-            service.convert_metric(&ContractMetric::Manhattan),
+            service.convert_metric(&ContractMetric::L1),
             DistanceMetric::Manhattan
         ));
     }

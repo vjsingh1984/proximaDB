@@ -5,7 +5,7 @@
 //! traversal stacks.
 
 use super::{NodeRetriever, RagQuery, Result, Subgraph, SubgraphBuilder, SubgraphEdge};
-use crate::core::error::{ProximaDBError, StorageError};
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 use crate::graph::NodeId;
 use crate::graph::engines::GraphEngine;
 use crate::services::VectorOperationsService;

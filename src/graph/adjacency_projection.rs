@@ -68,7 +68,7 @@ impl InMemoryGraphAdjacencyProjection {
     /// Return outgoing adjacency entries for a canonical source node oid.
     pub fn edges_by_src(&self, node_oid: &str) -> ProjectionResult<Vec<AdjacencyProjectionEntry>> {
         let state = self.state.read().map_err(|_| {
-            crate::core::error::ProximaDBError::Internal(
+            proximadb_kernel::error::ProximaDBError::Internal(
                 "graph adjacency projection read lock poisoned".to_string(),
             )
         })?;
@@ -82,7 +82,7 @@ impl InMemoryGraphAdjacencyProjection {
     /// Return incoming adjacency entries for a canonical destination node oid.
     pub fn edges_by_dst(&self, node_oid: &str) -> ProjectionResult<Vec<AdjacencyProjectionEntry>> {
         let state = self.state.read().map_err(|_| {
-            crate::core::error::ProximaDBError::Internal(
+            proximadb_kernel::error::ProximaDBError::Internal(
                 "graph adjacency projection read lock poisoned".to_string(),
             )
         })?;
@@ -95,7 +95,7 @@ impl InMemoryGraphAdjacencyProjection {
 
     pub fn edge_count(&self) -> ProjectionResult<usize> {
         let state = self.state.read().map_err(|_| {
-            crate::core::error::ProximaDBError::Internal(
+            proximadb_kernel::error::ProximaDBError::Internal(
                 "graph adjacency projection read lock poisoned".to_string(),
             )
         })?;
@@ -113,7 +113,7 @@ impl InMemoryGraphAdjacencyProjection {
     /// `GraphOperationsService::rebuild_orion_csr_from_adjacency_projection`.
     pub fn snapshot_edge_endpoints(&self) -> ProjectionResult<Vec<(String, String, String)>> {
         let state = self.state.read().map_err(|_| {
-            crate::core::error::ProximaDBError::Internal(
+            proximadb_kernel::error::ProximaDBError::Internal(
                 "graph adjacency projection read lock poisoned".to_string(),
             )
         })?;
@@ -277,13 +277,13 @@ impl GraphTopologyProjection for InMemoryGraphAdjacencyProjection {
         edge_record: &ProximaRecord,
     ) -> ProjectionResult<TopologyApplyResult> {
         let entries = adjacency_entries_for_edge(edge_record).ok_or_else(|| {
-            crate::core::error::ProximaDBError::InvalidInput(
+            proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "record is not a canonical graph edge".to_string(),
             )
         })?;
 
         let mut state = self.state.write().map_err(|_| {
-            crate::core::error::ProximaDBError::Internal(
+            proximadb_kernel::error::ProximaDBError::Internal(
                 "graph adjacency projection write lock poisoned".to_string(),
             )
         })?;
@@ -301,7 +301,7 @@ impl GraphTopologyProjection for InMemoryGraphAdjacencyProjection {
 
     async fn remove_edge(&self, edge_record: &ProximaRecord) -> ProjectionResult<bool> {
         let mut state = self.state.write().map_err(|_| {
-            crate::core::error::ProximaDBError::Internal(
+            proximadb_kernel::error::ProximaDBError::Internal(
                 "graph adjacency projection write lock poisoned".to_string(),
             )
         })?;
@@ -331,7 +331,7 @@ impl GraphTopologyProjection for InMemoryGraphAdjacencyProjection {
         let edge_count = edge_oids.len();
 
         let mut state = self.state.write().map_err(|_| {
-            crate::core::error::ProximaDBError::Internal(
+            proximadb_kernel::error::ProximaDBError::Internal(
                 "graph adjacency projection write lock poisoned".to_string(),
             )
         })?;

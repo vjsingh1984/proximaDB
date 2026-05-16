@@ -392,7 +392,7 @@ pub enum PressureStatus {
 }
 
 /// Re-export VectorDBError for use in this module
-pub use crate::core::error::VectorDBError;
+pub use proximadb_kernel::error::VectorDBError;
 
 #[cfg(test)]
 mod tests {

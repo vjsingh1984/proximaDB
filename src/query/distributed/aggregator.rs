@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use tracing::debug;
 
-use crate::core::error::VectorDBError;
+use proximadb_kernel::error::VectorDBError;
 use crate::query::unified::UnifiedRecord;
 use crate::query::unified::ast::DataModel;
 use crate::query::unified::fusion::SubQueryResult;

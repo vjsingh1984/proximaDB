@@ -19,7 +19,7 @@
 //! Implements consistent hashing for distributed node and edge placement across shards.
 //! Uses SHA-256 for hash function to ensure uniform distribution.
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::NodeId;
 use sha2::{Digest, Sha256};

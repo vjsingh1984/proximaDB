@@ -102,8 +102,8 @@ impl AqlSource for GraphAqlSource {
             .traverse(&graph_id, traversal_request)
             .await
             .map_err(|e| {
-                crate::core::error::ProximaDBError::Storage(
-                    crate::core::error::StorageError::SstEngine(e.to_string()),
+                proximadb_kernel::error::ProximaDBError::Storage(
+                    proximadb_kernel::error::StorageError::SstEngine(e.to_string()),
                 )
             })?;
 

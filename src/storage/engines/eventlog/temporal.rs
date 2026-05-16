@@ -19,7 +19,7 @@
 //! This module provides time travel queries for event-sourced entities,
 //! enabling point-in-time state reconstruction and event replay.
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::eventlog::index::EventIndex;
 use crate::storage::engines::eventlog::snapshot::SnapshotManager;
 use crate::storage::engines::eventlog::{EntityId, Event, EventLogConfig, EventSequence};

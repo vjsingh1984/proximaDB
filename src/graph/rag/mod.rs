@@ -84,7 +84,7 @@ pub use engine_impls::{KHopSubgraphBuilder, VectorNodeRetriever};
 #[cfg(test)]
 mod engine_impls_test;
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::NodeId;
 use async_trait::async_trait;
 use std::collections::HashSet;

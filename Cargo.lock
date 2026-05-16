@@ -6206,6 +6206,7 @@ name = "proximadb-vector-query"
 version = "0.2.0"
 dependencies = [
  "async-trait",
+ "proximadb-distance-types",
  "proximadb-kernel",
  "proximadb-proto",
 ]

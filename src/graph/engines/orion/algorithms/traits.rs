@@ -23,7 +23,7 @@
 //! - **Interface Segregation**: Specific traits for specific capabilities (incremental, parallel)
 //! - **Dependency Inversion**: Algorithms depend on abstractions (traits), not concrete types
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use anyhow::Result;
 use std::collections::HashMap;
 

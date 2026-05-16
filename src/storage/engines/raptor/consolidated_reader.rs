@@ -684,7 +684,7 @@ impl RaptorReader {
                         .iter()
                         .find(|rg| rg.id == rowgroup_id)
                         .ok_or_else(|| {
-                            crate::core::error::ProximaDBError::InvalidInput(format!(
+                            proximadb_kernel::error::ProximaDBError::InvalidInput(format!(
                                 "Rowgroup {} not found in footer metadata",
                                 rowgroup_id
                             ))
@@ -1449,7 +1449,7 @@ impl RaptorReader {
                 .centroids
                 .get_centroid(centroid_id as u16)
                 .ok_or_else(|| {
-                    crate::core::error::ProximaDBError::Internal(format!(
+                    proximadb_kernel::error::ProximaDBError::Internal(format!(
                         "Centroid {} not found (centroid count mismatch)",
                         centroid_id
                     ))

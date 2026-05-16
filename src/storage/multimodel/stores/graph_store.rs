@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphService, Node, NodeId};
 use crate::proto::proximadb_v1::{PropertyValue, property_value};

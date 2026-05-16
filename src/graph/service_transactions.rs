@@ -29,7 +29,7 @@
 //! ```
 
 use super::Result;
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, Node};
 use crate::proto::proximadb_v1::{Edge as ProtoEdge, Node as ProtoNode};

@@ -116,27 +116,20 @@ pub struct VectorSearchParams {
     pub n_probes: Option<u32>,
 }
 
-/// Distance metrics for vector search.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub enum DistanceMetric {
-    /// Euclidean distance (L2).
-    Euclidean,
-    /// Cosine similarity.
-    #[default]
-    Cosine,
-    /// Dot product.
-    DotProduct,
-    /// Manhattan distance (L1).
-    Manhattan,
-}
+/// Distance metrics for vector search — re-exported from the foundation crate.
+///
+/// Use the foundation variant names: `L2` (Euclidean), `Cosine`, `InnerProduct` (dot
+/// product), `L1` (Manhattan).  The local definition was removed to eliminate a
+/// duplicate that required translation bridges in every call-site.
+pub use proximadb_distance_types::DistanceMetric;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn distance_metric_defaults_to_cosine() {
-        assert_eq!(DistanceMetric::default(), DistanceMetric::Cosine);
+    fn distance_metric_defaults_to_l2() {
+        assert_eq!(DistanceMetric::default(), DistanceMetric::L2);
     }
 
     #[test]
@@ -146,7 +139,7 @@ mod tests {
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 20,
             threshold: Some(0.75),
-            metric: DistanceMetric::DotProduct,
+            metric: DistanceMetric::InnerProduct,
             params: VectorSearchParams {
                 mode: Some("adaptive".to_string()),
                 ef_search: Some(128),
@@ -155,7 +148,7 @@ mod tests {
         };
 
         assert_eq!(expr.collection, "embeddings");
-        assert_eq!(expr.metric, DistanceMetric::DotProduct);
+        assert_eq!(expr.metric, DistanceMetric::InnerProduct);
         assert_eq!(expr.params.mode.as_deref(), Some("adaptive"));
         assert_eq!(expr.params.ef_search, Some(128));
         assert_eq!(expr.params.n_probes, Some(16));
@@ -172,28 +165,28 @@ mod tests {
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 10,
             threshold: Some(0.8),
-            metric: DistanceMetric::Euclidean,
+            metric: DistanceMetric::L2,
             filter: None,
         };
 
         assert_eq!(request.collection_id, "test_collection");
         assert_eq!(request.query_vector.len(), 3);
         assert_eq!(request.top_k, 10);
-        assert_eq!(request.metric, DistanceMetric::Euclidean);
+        assert_eq!(request.metric, DistanceMetric::L2);
     }
 
     #[test]
-    fn vector_search_request_defaults_to_cosine() {
+    fn vector_search_request_uses_foundation_metric_default() {
         let request = VectorSearchRequest {
             collection_id: "test".to_string(),
             query_vector: vec![0.0],
             top_k: 5,
             threshold: None,
-            metric: DistanceMetric::default(), // Cosine
+            metric: DistanceMetric::default(),
             filter: None,
         };
 
-        assert_eq!(request.metric, DistanceMetric::Cosine);
+        assert_eq!(request.metric, DistanceMetric::L2);
     }
 
     #[test]

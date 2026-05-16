@@ -65,7 +65,7 @@ pub mod pulsar {
     //! **Note**: PULSAR is experimental and not production-ready.
     //! For production use, use ORION with application-level sharding.
 
-    use crate::core::error::ProximaDBError;
+    use proximadb_kernel::error::ProximaDBError;
     use crate::graph::{Edge, EdgeId, Node, NodeId};
     use std::sync::Arc;
 
@@ -212,7 +212,7 @@ pub mod quasar {
     //! **Note**: QUASAR is experimental and not production-ready.
     //! For production use, use ORION.
 
-    use crate::core::error::ProximaDBError;
+    use proximadb_kernel::error::ProximaDBError;
     use crate::graph::{Edge, EdgeId, Node, NodeId};
     use std::sync::Arc;
 
@@ -340,7 +340,7 @@ pub mod quasar {
     }
 }
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::{Edge, EdgeId, Node, NodeId};

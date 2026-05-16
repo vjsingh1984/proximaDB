@@ -19,7 +19,7 @@
 //! Implements master-slave replication for fault tolerance in the distributed graph engine.
 //! Supports configurable replication factors from 1 to 3.
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::pulsar::sharding::ConsistentHashRing;
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};

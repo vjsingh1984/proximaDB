@@ -42,7 +42,7 @@
 //! - **Search List Size**: Internal candidate pool size (default: 2*L)
 
 use crate::compute::distance_computation::UnifiedDistanceCompute;
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::index::diskann::VamanaGraph;
 use crate::index::diskann::ssd_layout::NodeOrdering;
 use std::collections::{BinaryHeap, HashSet};

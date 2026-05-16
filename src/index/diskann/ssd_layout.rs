@@ -48,7 +48,7 @@
 //! Node 2 → [Disk Location 2] → Cache Hit
 //! ```
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::{HashMap, HashSet, VecDeque};
 use tracing::info;
 

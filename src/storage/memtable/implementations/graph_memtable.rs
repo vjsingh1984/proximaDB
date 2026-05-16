@@ -20,7 +20,7 @@
 //! This memtable is designed to work with the existing WAL infrastructure
 //! while providing graph-specific functionality.
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
@@ -253,7 +253,7 @@ impl GraphMemtable {
             Ok(())
         } else {
             Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::NotFound(format!("Node {} not found", node_id)),
+                proximadb_kernel::error::StorageError::NotFound(format!("Node {} not found", node_id)),
             ))
         }
     }
@@ -274,7 +274,7 @@ impl GraphMemtable {
             Ok(())
         } else {
             Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::NotFound(format!("Node {} not found", node_id)),
+                proximadb_kernel::error::StorageError::NotFound(format!("Node {} not found", node_id)),
             ))
         }
     }
@@ -324,7 +324,7 @@ impl GraphMemtable {
             Ok(())
         } else {
             Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::NotFound(format!("Edge {} not found", edge_id)),
+                proximadb_kernel::error::StorageError::NotFound(format!("Edge {} not found", edge_id)),
             ))
         }
     }
@@ -343,7 +343,7 @@ impl GraphMemtable {
             Ok(())
         } else {
             Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::NotFound(format!("Edge {} not found", edge_id)),
+                proximadb_kernel::error::StorageError::NotFound(format!("Edge {} not found", edge_id)),
             ))
         }
     }

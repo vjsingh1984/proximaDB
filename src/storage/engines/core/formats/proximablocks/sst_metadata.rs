@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tracing::warn;
 
 use crate::core::bloom::SstableBloomFilter;
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext,
 };

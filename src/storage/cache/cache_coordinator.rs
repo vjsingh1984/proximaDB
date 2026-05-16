@@ -55,7 +55,7 @@ use async_recursion::async_recursion;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::core::error::VectorDBError;
+use proximadb_kernel::error::VectorDBError;
 
 /// Cache key trait - all cache keys must implement this
 pub trait CacheKey: Send + Sync + Hash + Eq + Clone + Debug + ToString {}

@@ -45,7 +45,7 @@
 use super::traits::{
     AlgorithmComplexity, CentralityScores, GraphAlgorithm, NoInput, ParallelAlgorithm,
 };
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::orion::OrionGraphEngine;
 use rayon::prelude::*;
 use std::collections::{HashMap, VecDeque};

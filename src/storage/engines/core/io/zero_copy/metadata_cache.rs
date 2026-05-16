@@ -16,7 +16,7 @@ use tracing::{debug, info, trace, warn};
 
 use super::MAGIC_BYTES;
 use super::traits::{DataRange, EngineMetadata, MetadataSerializer, QueryContext};
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Fixed-size cache file header (bytemuck compatible)
 #[repr(C)]
@@ -485,7 +485,7 @@ impl ZeroCopyMetadataCache {
         serializer: Arc<dyn MetadataSerializer>,
     ) -> Result<MmappedMetadata, ProximaDBError> {
         let file = File::open(cache_file_path).map_err(|_| {
-            ProximaDBError::Storage(crate::core::error::StorageError::NotFound(
+            ProximaDBError::Storage(proximadb_kernel::error::StorageError::NotFound(
                 "Cache file not found".into(),
             ))
         })?;

@@ -95,7 +95,7 @@ pub use service_transactions::{
     UnitOfWork,
 };
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
     adjacency_projection::{

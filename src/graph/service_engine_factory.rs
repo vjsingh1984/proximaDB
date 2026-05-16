@@ -37,7 +37,7 @@
 //! - Log warnings when experimental engines are requested
 
 use super::Result;
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use std::sync::Arc;
 
@@ -93,7 +93,7 @@ impl super::GraphOperationsService {
                 }
                 #[cfg(not(feature = "distributed-graph"))]
                 {
-                    return Err(crate::core::error::ProximaDBError::NotImplemented(
+                    return Err(proximadb_kernel::error::ProximaDBError::NotImplemented(
                         "PULSAR engine requires 'distributed-graph' feature".to_string(),
                     ));
                 }
@@ -121,7 +121,7 @@ impl super::GraphOperationsService {
                 }
                 #[cfg(not(feature = "tiered-graph"))]
                 {
-                    return Err(crate::core::error::ProximaDBError::NotImplemented(
+                    return Err(proximadb_kernel::error::ProximaDBError::NotImplemented(
                         "QUASAR engine requires 'tiered-graph' feature".to_string(),
                     ));
                 }

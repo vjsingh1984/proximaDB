@@ -19,7 +19,7 @@
 //! Implements automatic hot/cold data tiering logic based on access patterns.
 //! Manages data movement between memory (hot) and disk (cold) storage.
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use super::{QuasarConfig, cache::AccessPatternCache, storage_backend::ColdStorageBackend};
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};

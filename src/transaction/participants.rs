@@ -25,7 +25,7 @@
 //! - Applies changes during commit phase
 //! - Rolls back changes during abort phase
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::transaction::two_phase_commit::{TransactionId, TransactionParticipant, Vote};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -205,7 +205,7 @@ impl TransactionParticipant for VectorEngineParticipant {
             for op in &operations {
                 writer(op).map_err(|e| {
                     ProximaDBError::Storage(
-                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                        proximadb_kernel::error::StorageError::TransactionCommitFailed(format!(
                             "durable commit failed for {}: {}",
                             self.id, e
                         )),
@@ -307,7 +307,7 @@ impl TransactionParticipant for DocumentEngineParticipant {
             for op in &operations {
                 writer(op).map_err(|e| {
                     ProximaDBError::Storage(
-                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                        proximadb_kernel::error::StorageError::TransactionCommitFailed(format!(
                             "durable commit failed for {}: {}",
                             self.id, e
                         )),
@@ -386,7 +386,7 @@ impl TransactionParticipant for GraphEngineParticipant {
             for op in &operations {
                 writer(op).map_err(|e| {
                     ProximaDBError::Storage(
-                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                        proximadb_kernel::error::StorageError::TransactionCommitFailed(format!(
                             "durable commit failed for {}: {}",
                             self.id, e
                         )),
@@ -465,7 +465,7 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
             for op in &operations {
                 writer(op).map_err(|e| {
                     ProximaDBError::Storage(
-                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                        proximadb_kernel::error::StorageError::TransactionCommitFailed(format!(
                             "durable commit failed for {}: {}",
                             self.id, e
                         )),

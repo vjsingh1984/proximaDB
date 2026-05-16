@@ -122,7 +122,7 @@ impl From<ApiError> for tonic::Status {
 ///
 /// This stays as a named adapter to avoid implementing a foreign trait for a
 /// foundation error type at the API boundary.
-pub fn protocol_error_to_grpc_status(err: crate::core::error::ProtocolError) -> tonic::Status {
+pub fn protocol_error_to_grpc_status(err: proximadb_kernel::error::ProtocolError) -> tonic::Status {
     ApiError::from(err).into()
 }
 
@@ -257,9 +257,9 @@ impl From<crate::query::capability::CapabilityCheckError> for ApiError {
 }
 
 /// Convert ProtocolError to ApiError for unified error handling
-impl From<crate::core::error::ProtocolError> for ApiError {
-    fn from(err: crate::core::error::ProtocolError) -> Self {
-        use crate::core::error::ProtocolError;
+impl From<proximadb_kernel::error::ProtocolError> for ApiError {
+    fn from(err: proximadb_kernel::error::ProtocolError) -> Self {
+        use proximadb_kernel::error::ProtocolError;
         match err {
             ProtocolError::InvalidArgument { msg, field } => {
                 let message = if let Some(f) = field {
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn test_protocol_error_to_grpc_status() {
-        let err = crate::core::error::ProtocolError::not_found("collection", "c1");
+        let err = proximadb_kernel::error::ProtocolError::not_found("collection", "c1");
 
         let status = protocol_error_to_grpc_status(err);
 

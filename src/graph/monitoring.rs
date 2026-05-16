@@ -52,7 +52,7 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::GraphMemoryPool;
 use crate::utils::Uuid;
 use serde::{Deserialize, Serialize};

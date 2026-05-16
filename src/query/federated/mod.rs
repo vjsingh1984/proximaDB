@@ -375,7 +375,7 @@ impl FederatedQueryContext {
 
 #[cfg(test)]
 mod tests {
-    use crate::core::error::ProximaDBError;
+    use proximadb_kernel::error::ProximaDBError;
     use crate::core::search::results::OptimizedSearchRecord;
     use crate::graph::engines::GraphEngine;
     use crate::graph::{Edge, EdgeId, Node, NodeId};

@@ -39,7 +39,7 @@
 //! - **Network partition**: Timeout and abort
 //! - **WAL replay**: On restart, check prepared transactions and decide
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

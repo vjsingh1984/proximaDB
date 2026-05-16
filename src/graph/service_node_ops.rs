@@ -16,7 +16,7 @@ impl super::GraphOperationsService {
     /// Get neighbors of a node
     pub async fn get_neighbors(&self, graph_id: &str, node_id: &NodeId) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -88,7 +88,7 @@ impl super::GraphOperationsService {
     /// Query nodes by labels and properties
     pub async fn query_nodes(&self, graph_id: &str, query: NodeQuery) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -318,7 +318,7 @@ impl super::GraphOperationsService {
         );
 
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -341,7 +341,7 @@ impl super::GraphOperationsService {
     /// Get a node by ID
     pub async fn get_node(&self, graph_id: &str, id: &NodeId) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -352,7 +352,7 @@ impl super::GraphOperationsService {
     /// Update a node
     pub async fn update_node(&self, graph_id: &str, node: Node) -> Result<Arc<Node>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -370,7 +370,7 @@ impl super::GraphOperationsService {
     /// Delete a node
     pub async fn delete_node(&self, graph_id: &str, id: &NodeId) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -393,7 +393,7 @@ impl super::GraphOperationsService {
         id: &NodeId,
     ) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -452,7 +452,7 @@ impl super::GraphOperationsService {
                     if let Some(existing) = map.get(&k)
                         && existing.value() != &node.id
                     {
-                        return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
+                        return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(format!(
                             "Unique constraint violation on (label='{}', property='{}') for value '{}'",
                             clabel, cprop, k
                         )));
@@ -523,7 +523,7 @@ impl super::GraphOperationsService {
                 if let Some(existing) = map.get(&comp)
                     && existing.value() != &node.id
                 {
-                    return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
+                    return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(format!(
                         "Duplicate composite key for unique ({:?})",
                         props
                     )));

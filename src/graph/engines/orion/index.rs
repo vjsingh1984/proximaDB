@@ -26,7 +26,7 @@
 //! - **Composite Indexes**: Multi-property indexes for complex queries
 //! - **Full-Text Indexes**: Text search on string properties (future)
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::{Edge, EdgeId, Node, NodeId, PropertyValue};
 use std::collections::{BTreeMap, HashMap, HashSet};

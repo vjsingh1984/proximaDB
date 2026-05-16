@@ -25,7 +25,7 @@
 //! - **Early Termination**: Filter predicates to stop traversal early
 //! - **SIMD-Ready**: Vectorized operations on neighbor arrays
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::{GraphEngine, orion::OrionGraphEngine};
 use crate::graph::{Edge, Node, NodeId};

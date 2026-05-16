@@ -146,7 +146,7 @@
 pub mod ranking;
 pub mod semantic_traversal;
 
-use crate::core::error::{ProximaDBError, QueryError, VectorDBError};
+use proximadb_kernel::error::{ProximaDBError, QueryError, VectorDBError};
 use crate::graph::{
     Edge, EdgeId, GraphMemoryPool, Node, NodeId,
     query::{QueryContext, QueryResult, QueryStats},

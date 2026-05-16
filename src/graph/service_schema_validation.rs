@@ -9,7 +9,7 @@
 //! - Enforce edge source/target label compatibility
 
 use super::Result;
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::graph::{Edge, Node};
 
 impl super::GraphOperationsService {

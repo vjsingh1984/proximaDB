@@ -22,7 +22,7 @@ pub use orchestrator::ZeroCopyIOSystem;
 // Common traits and types
 pub use traits::{DataRange, EngineMetadata, MetadataSerializer, QueryContext};
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use std::sync::Arc;
 

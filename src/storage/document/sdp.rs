@@ -4,7 +4,7 @@
 //! ([arXiv:2604.17677](https://arxiv.org/abs/2604.17677)) that restructures
 //! documents before embedding to reduce semantic entanglement.
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 
 /// 4-stage preprocessing pipeline (SDP) configuration.

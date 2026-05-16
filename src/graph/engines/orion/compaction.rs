@@ -33,7 +33,7 @@
 //! 3. **Atomic Swap**: Replace old files with compacted versions
 //! 4. **Cleanup**: Remove old files after successful swap
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
