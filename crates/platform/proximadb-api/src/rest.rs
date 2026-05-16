@@ -19,13 +19,16 @@ pub use v1::{
     DocumentQueryHandler, EntityHandler, GraphHandler, GraphTraversalHandler, HybridSearchHandler,
     LogsHandler, MetricsHandler, ProgressiveSearchHandler, UnifiedQueryRestState, VectorHandler,
 };
-pub use v1::{AnalyticsRestState, DocumentRestState, GraphRestState, ObservabilityRestState};
+pub use v1::{
+    AnalyticsRestState, DocumentRestState, GraphRestState, HybridRestState,
+    ObservabilityRestState,
+};
 
 // Re-export v1 router builders
 pub use v1::{
     create_analytics_router, create_collection_router, create_document_router,
-    create_graph_router, create_health_router, create_observability_router, create_sql_router,
-    create_multimodal_router, create_vector_router,
+    create_explain_router, create_graph_router, create_health_router, create_hybrid_search_router,
+    create_multimodal_router, create_observability_router, create_sql_router, create_vector_router,
 };
 
 /// REST API request context

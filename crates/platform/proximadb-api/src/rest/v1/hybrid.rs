@@ -346,11 +346,10 @@ pub async fn readiness_check(State(_state): State<RestAppState>) -> impl IntoRes
 // ── Router configuration ──────────────────────────────────────────────────────
 
 /// Build the hybrid search router (BM25 + vector search and indexing).
-pub fn create_hybrid_search_router(state: HybridRestState) -> Router {
+pub fn create_hybrid_search_router() -> Router<HybridRestState> {
     Router::new()
         .route("/api/v1/hybrid/search", post(hybrid_search))
         .route("/api/v1/hybrid/index", post(hybrid_index))
-        .with_state(state)
 }
 
 /// Build the SQL query router.

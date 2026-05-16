@@ -1162,7 +1162,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             hybrid_port,
             bm25_port: Some(bm25_port),
         };
-        router = router.merge(create_hybrid_search_router(hybrid_state));
+        router = router.merge(create_hybrid_search_router().with_state(hybrid_state));
         info!("✅ Hybrid search at /api/v1/hybrid/* via RestHybridPortImpl (real BM25+vector)");
     }
 
@@ -1172,7 +1172,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         let explain_state = UnifiedQueryRestState {
             unified_query_port: uq_port.clone(),
         };
-        router = router.merge(create_explain_router(explain_state));
+        router = router.merge(create_explain_router().with_state(explain_state));
         info!("✅ SQL explain at /api/v1/sql/explain via port-backed handler (proximadb-api)");
     } else {
         router = router.route("/api/v1/sql/explain", post(explain_sql));

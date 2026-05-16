@@ -406,10 +406,9 @@ pub fn create_multimodal_router() -> Router<UnifiedQueryRestState> {
 /// Delegates to `UnifiedQueryPort::explain_unified_query`, surfacing
 /// the same explanation plan as `/api/v1/unified/explain` but under
 /// the SQL-oriented URL that legacy clients expect.
-pub fn create_explain_router(state: UnifiedQueryRestState) -> Router {
+pub fn create_explain_router() -> Router<UnifiedQueryRestState> {
     Router::new()
         .route("/api/v1/sql/explain", post(explain_query))
-        .with_state(state)
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
