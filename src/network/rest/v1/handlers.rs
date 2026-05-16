@@ -988,38 +988,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         info!("✅ Document API routing via port-based handler (proximadb-api)");
     }
 
-    // Observability API endpoints — use port-based router if available, else root-crate router
-    let observability_service: Option<Arc<crate::observability::ObservabilityService>> = if state
-        .obs_port
-        .is_none()
-    {
-        use crate::observability::{ObservabilityService, ObservabilityStorage};
-
-        let obs_base_path = state.data_dir.join("observability");
-        let obs_path_str = obs_base_path.to_string_lossy().to_string();
-
-        match tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let storage = match ObservabilityStorage::new_with_wal(&obs_path_str).await {
-                    Ok(s) => Arc::new(s),
-                    Err(e) => {
-                        tracing::warn!("Failed to create ObservabilityStorage with WAL: {}. Using non-durable storage.", e);
-                        Arc::new(ObservabilityStorage::new(&obs_path_str))
-                    }
-                };
-                ObservabilityService::new(storage).await
-            })
-        }) {
-            Ok(service) => Some(Arc::new(service)),
-            Err(e) => {
-                tracing::warn!("Observability service initialization failed: {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
+    // Observability routes — port-backed (always wired in production since Phase 9)
     if let Some(ref op) = state.obs_port {
         use proximadb_api::rest::{ObservabilityRestState, create_observability_router};
         router = router.nest(
@@ -1029,78 +998,22 @@ pub fn create_router(state: AppState) -> axum::Router {
             }),
         );
         info!("✅ Observability API routing via port-based handler (proximadb-api)");
-    } else if let Some(ref obs_service) = observability_service {
-        use crate::network::rest::v1::observability::{self, ObservabilityApiState};
-        let obs_state = ObservabilityApiState {
-            observability_service: obs_service.clone(),
-        };
-        router = router.nest(
-            "/api/v1/observability",
-            observability::create_observability_router().with_state(obs_state),
-        );
-        info!("✅ Observability API endpoints enabled at /api/v1/observability");
     }
 
-    // Unified Multi-Model Query API endpoints
-    // Phase 9.9: prefer port-backed router when unified_query_port is available;
-    // fall back to root-crate QueryFacadeAdapter-based router otherwise.
+    // Unified multi-model query routes — port-backed (always wired in production since Phase 9.9)
     if let Some(ref uq_port) = state.unified_query_port {
-        // Port-backed path: delegates to UnifiedQueryPortImpl (real implementation)
         use proximadb_api::rest::UnifiedQueryRestState;
-        let uq_state = UnifiedQueryRestState {
-            unified_query_port: uq_port.clone(),
-        };
-        let uq_router = proximadb_api::rest::create_multimodal_router().with_state(uq_state);
-        router = router.nest("/api/v1/unified", uq_router);
-        info!("✅ Unified Query API enabled at /api/v1/unified (port-backed, Phase 9.9)");
-    } else {
-        // Legacy path: root-crate QueryFacadeAdapter directly
-        let unified_query_router_opt = {
-            use crate::network::rest::v1::multimodal_query::{self, UnifiedQueryApiState};
-            use crate::storage::document::DocumentService;
-
-            let engine = state
-                .request_handlers
-                .vector_operations_service
-                .unified_engine();
-
-            let doc_base_path = state.data_dir.join("documents");
-            let doc_path_str = doc_base_path.to_string_lossy().to_string();
-
-            let document_service = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    match DocumentService::new_with_wal(engine.clone(), &doc_path_str).await {
-                        Ok(svc) => Arc::new(svc),
-                        Err(e) => {
-                            tracing::warn!("Unified query: Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
-                            Arc::new(DocumentService::new(engine.clone()))
-                        }
-                    }
-                })
-            });
-
-            state.query_adapter.clone().map(|adapter| {
-                let unified_state =
-                    UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine)
-                        .with_catalog_manager(state.catalog_manager.clone());
-                multimodal_query::create_router().with_state(unified_state)
-            })
-        };
-
-        if let Some(unified_query_router) = unified_query_router_opt {
-            router = router.nest("/api/v1/unified", unified_query_router);
-            info!("✅ Unified Query API enabled at /api/v1/unified (via QueryFacadeAdapter)");
-        } else {
-            tracing::warn!(
-                "QueryFacadeAdapter not configured in AppState. Skipping unified query endpoints."
-            );
-        }
+        let uq_state = UnifiedQueryRestState { unified_query_port: uq_port.clone() };
+        router = router.nest(
+            "/api/v1/unified",
+            proximadb_api::rest::create_multimodal_router().with_state(uq_state),
+        );
+        info!("✅ Unified Query API enabled at /api/v1/unified (port-backed)");
     }
 
-    // Hybrid search: always use the port-backed router with a real RestHybridPortImpl
-    // backed by the in-process BM25 index + VectorOpsPort.  The legacy root-crate
-    // handlers (hybrid_search / hybrid_index) are retained as fallback only when
-    // fulltext_indexes are unavailable (shouldn't happen in normal startup).
+    // Hybrid search — port-backed via RestHybridPortImpl (real BM25+vector fusion).
+    // Shares the in-process HybridFullTextIndexMap with Bm25IndexPortImpl so indexed
+    // documents are immediately searchable without a separate startup step.
     {
         use crate::network::hybrid_search::{Bm25IndexPortImpl, RestHybridPortImpl};
         use proximadb_api::rest::{HybridRestState, create_hybrid_search_router};
@@ -1122,17 +1035,12 @@ pub fn create_router(state: AppState) -> axum::Router {
         info!("✅ Hybrid search at /api/v1/hybrid/* via RestHybridPortImpl (real BM25+vector)");
     }
 
-    // SQL explain: prefer port-backed (UnifiedQueryPort) when available; fall back to root-crate.
+    // SQL explain — port-backed when unified_query_port is wired (production always)
     if let Some(ref uq_port) = state.unified_query_port {
         use proximadb_api::rest::{UnifiedQueryRestState, create_explain_router};
-        let explain_state = UnifiedQueryRestState {
-            unified_query_port: uq_port.clone(),
-        };
+        let explain_state = UnifiedQueryRestState { unified_query_port: uq_port.clone() };
         router = router.merge(create_explain_router().with_state(explain_state));
         info!("✅ SQL explain at /api/v1/sql/explain via port-backed handler (proximadb-api)");
-    } else {
-        router = router.route("/api/v1/sql/explain", post(explain_sql));
-        info!("✅ SQL explain at /api/v1/sql/explain via root-crate handler");
     }
 
     // Optional enterprise catalog endpoints
