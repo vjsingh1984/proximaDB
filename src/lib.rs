@@ -391,3 +391,19 @@ pub type BoxedResult<T> = std::result::Result<T, Box<dyn std::error::Error + Sen
 
 // Re-export the main database instance from the database module
 pub use database::ProximaDB;
+
+// ── Platform crate re-exports (Phase 9.14) ───────────────────────────────────
+//
+// These re-exports allow root-crate consumers to reach platform-layer types
+// without knowing which extracted crate they live in.  As more code moves to
+// `proximadb-runtime` and `proximadb-api`, add re-exports here so that
+// downstream code (binaries, tests, client crates) doesn't need to change
+// their import paths.
+
+/// Port trait objects for protocol-decoupled handler composition.
+pub use proximadb_runtime::{
+    ApiHandlersPort, CollectionPort, QueryAdapterPort, UnifiedQueryPort, VectorOpsPort,
+};
+
+/// Runtime handler that composes port objects into the API surface.
+pub use proximadb_runtime::UnifiedHandlers as RuntimeUnifiedHandlers;
