@@ -1320,8 +1320,8 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!("   POST   /api/v1/vectors/batch (port-backed via proximadb-api)");
     info!("   GET    /api/v1/vectors/:collection_id/:vector_id (port-backed via proximadb-api)");
     info!("   DELETE /api/v1/vectors/:collection_id/:vector_id (port-backed via proximadb-api)");
-    info!("   POST   /api/v1/hybrid/search (hybrid_search)");
-    info!("   POST   /api/v1/hybrid/index (hybrid_index)");
+    info!("   POST   /api/v1/hybrid/search (RestHybridPortImpl — real BM25+vector)");
+    info!("   POST   /api/v1/hybrid/index (Bm25IndexPortImpl)");
     info!("   POST   /api/v1/experimental/hybrid/search (mock hybrid API)");
 
     router
