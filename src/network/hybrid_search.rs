@@ -11,10 +11,59 @@ use crate::core::search::hybrid::{
 };
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::sql_value::Value as SqlValueKind;
-use crate::storage::engines::core::formats::columnar::fulltext_index::FullTextIndex;
+use crate::storage::engines::core::formats::columnar::fulltext_index::{FullTextIndex, TokenizerConfig};
 
 /// Shared map of per-collection full-text indexes for hybrid BM25+vector search
 pub type HybridFullTextIndexMap = Arc<RwLock<HashMap<String, FullTextIndex>>>;
+
+// ── BM25IndexPort implementation ───────────────────────────────────────────────
+
+use async_trait::async_trait;
+use proximadb_runtime::bm25_port::{BM25Document, BM25IndexPort, BM25IndexResult};
+
+/// Root-crate implementation of `BM25IndexPort` wrapping the in-memory
+/// `HybridFullTextIndexMap`.
+pub struct Bm25IndexPortImpl {
+    indexes: HybridFullTextIndexMap,
+}
+
+impl Bm25IndexPortImpl {
+    pub fn new(indexes: HybridFullTextIndexMap) -> Self {
+        Self { indexes }
+    }
+}
+
+#[async_trait]
+impl BM25IndexPort for Bm25IndexPortImpl {
+    async fn index_documents(
+        &self,
+        collection: String,
+        documents: Vec<BM25Document>,
+    ) -> Result<BM25IndexResult> {
+        let mut map = self
+            .indexes
+            .write()
+            .map_err(|e| anyhow!("BM25 index lock error: {}", e))?;
+        let index = map
+            .entry(collection.clone())
+            .or_insert_with(|| FullTextIndex::new(TokenizerConfig::for_keyword_search()));
+        let mut indexed = 0;
+        for doc in &documents {
+            if index.contains_document(&doc.id) {
+                continue;
+            }
+            if index.add_document(&doc.id, &doc.text).is_ok() {
+                indexed += 1;
+            }
+        }
+        let total = index.document_count();
+        Ok(BM25IndexResult {
+            collection,
+            documents_indexed: indexed,
+            total_documents: total,
+        })
+    }
+}
 
 /// Parameters for executing a hybrid (vector + BM25 text) search
 #[derive(Debug)]

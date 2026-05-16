@@ -1,7 +1,9 @@
 //! # Hybrid Search and SQL Handlers
 //!
-//! REST endpoints for SQL query execution, hybrid vector+keyword search stubs,
-//! and liveness/readiness health probes.  All handlers delegate to `ApiHandlersPort`.
+//! REST endpoints for SQL query execution, hybrid vector+keyword search,
+//! BM25 full-text indexing, and liveness/readiness health probes.
+
+use std::sync::Arc;
 
 use axum::{
     Json, Router,
@@ -10,13 +12,23 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use proximadb_proto::v1::SqlValue;
-use serde::Deserialize;
+use proximadb_proto::v1::{FusionStrategy, HybridFusionSearchRequest, SqlValue};
+use proximadb_runtime::{BM25Document, BM25IndexPort, HybridPort};
+use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::rest::errors::{RestError, RestResult};
 use crate::rest::state::RestAppState;
+
+// ── Hybrid-search state ───────────────────────────────────────────────────────
+
+/// Axum state for hybrid-search REST handlers.
+#[derive(Clone)]
+pub struct HybridRestState {
+    pub hybrid_port: Arc<dyn HybridPort>,
+    pub bm25_port: Option<Arc<dyn BM25IndexPort>>,
+}
 
 // ── Legacy stub types kept for re-export compatibility ────────────────────────
 
@@ -48,6 +60,47 @@ impl Default for ProgressiveSearchHandler {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ── Hybrid search request/response types ──────────────────────────────────────
+
+/// Request body for `POST /api/v1/hybrid/search`.
+#[derive(Debug, Deserialize)]
+pub struct HybridSearchRestRequest {
+    pub collection: String,
+    pub vector: Option<Vec<f32>>,
+    pub text_query: Option<String>,
+    #[serde(default = "default_top_k")]
+    pub top_k: u32,
+    pub vector_weight: Option<f32>,
+    pub rrf_k: Option<u32>,
+}
+
+fn default_top_k() -> u32 {
+    10
+}
+
+/// Request body for `POST /api/v1/hybrid/index`.
+#[derive(Debug, Deserialize)]
+pub struct HybridIndexRestRequest {
+    pub collection: String,
+    pub documents: Vec<HybridDocumentBody>,
+}
+
+/// A text document for BM25 indexing.
+#[derive(Debug, Deserialize)]
+pub struct HybridDocumentBody {
+    pub id: String,
+    pub text: String,
+}
+
+/// Response for `POST /api/v1/hybrid/index`.
+#[derive(Debug, Serialize)]
+pub struct HybridIndexRestResponse {
+    pub success: bool,
+    pub collection: String,
+    pub documents_indexed: usize,
+    pub total_documents: usize,
 }
 
 // ── SQL request/response types ────────────────────────────────────────────────
@@ -94,6 +147,107 @@ pub fn sql_value_to_json(v: &SqlValue) -> serde_json::Value {
 }
 
 // ── Handler functions ──────────────────────────────────────────────────────────
+
+/// `POST /api/v1/hybrid/search` — BM25 + vector hybrid search.
+///
+/// Delegates to `HybridPort::hybrid_search`.
+pub async fn hybrid_search(
+    State(state): State<HybridRestState>,
+    Json(request): Json<HybridSearchRestRequest>,
+) -> RestResult<Json<serde_json::Value>> {
+    if request.collection.is_empty() {
+        return Err(RestError::InvalidArgument(
+            "collection is required".to_string(),
+        ));
+    }
+    if request.vector.is_none() && request.text_query.is_none() {
+        return Err(RestError::InvalidArgument(
+            "at least one of vector or text_query is required".to_string(),
+        ));
+    }
+
+    let proto_request = HybridFusionSearchRequest {
+        collection: request.collection,
+        text_query: request.text_query.unwrap_or_default(),
+        query_vector: request.vector.unwrap_or_default(),
+        fusion_strategy: FusionStrategy::Rrf as i32,
+        fusion_params: None,
+        top_k: request.top_k,
+        filters: std::collections::HashMap::new(),
+    };
+
+    match state.hybrid_port.hybrid_search(proto_request).await {
+        Ok(resp) => {
+            let results: Vec<serde_json::Value> = resp
+                .results
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "fused_score": r.fused_score,
+                        "vector_score": r.vector_score,
+                        "bm25_score": r.bm25_score,
+                        "bm25_rank": r.bm25_rank,
+                        "vector_rank": r.vector_rank,
+                        "metadata": r.metadata,
+                    })
+                })
+                .collect();
+            Ok(Json(serde_json::json!({
+                "results": results,
+                "total": resp.results_count,
+                "fusion_strategy": resp.fusion_strategy,
+            })))
+        }
+        Err(e) => {
+            error!("hybrid_search error: {}", e);
+            Err(RestError::Internal(e.to_string()))
+        }
+    }
+}
+
+/// `POST /api/v1/hybrid/index` — index documents for BM25 full-text search.
+///
+/// Delegates to `BM25IndexPort::index_documents` when the port is wired;
+/// returns 501 otherwise.
+pub async fn hybrid_index(
+    State(state): State<HybridRestState>,
+    Json(request): Json<HybridIndexRestRequest>,
+) -> RestResult<Json<HybridIndexRestResponse>> {
+    if request.collection.is_empty() {
+        return Err(RestError::InvalidArgument(
+            "collection is required".to_string(),
+        ));
+    }
+    if request.documents.is_empty() {
+        return Err(RestError::InvalidArgument(
+            "at least one document is required".to_string(),
+        ));
+    }
+
+    let bm25 = state.bm25_port.as_ref().ok_or_else(|| {
+        RestError::NotImplemented("BM25 indexing not wired in this server mode".to_string())
+    })?;
+
+    let docs: Vec<BM25Document> = request
+        .documents
+        .into_iter()
+        .map(|d| BM25Document { id: d.id, text: d.text })
+        .collect();
+
+    match bm25.index_documents(request.collection, docs).await {
+        Ok(result) => Ok(Json(HybridIndexRestResponse {
+            success: true,
+            collection: result.collection,
+            documents_indexed: result.documents_indexed,
+            total_documents: result.total_documents,
+        })),
+        Err(e) => {
+            error!("hybrid_index error: {}", e);
+            Err(RestError::Internal(e.to_string()))
+        }
+    }
+}
 
 /// `POST /api/v1/sql/execute` — execute a SQL query.
 ///
@@ -190,6 +344,14 @@ pub async fn readiness_check(State(_state): State<RestAppState>) -> impl IntoRes
 }
 
 // ── Router configuration ──────────────────────────────────────────────────────
+
+/// Build the hybrid search router (BM25 + vector search and indexing).
+pub fn create_hybrid_search_router(state: HybridRestState) -> Router {
+    Router::new()
+        .route("/api/v1/hybrid/search", post(hybrid_search))
+        .route("/api/v1/hybrid/index", post(hybrid_index))
+        .with_state(state)
+}
 
 /// Build the SQL query router.
 pub fn create_sql_router() -> Router<RestAppState> {
