@@ -70,11 +70,6 @@ pub struct AppState {
     /// go through `CollectionPort`/`VectorOpsPort` trait objects rather than the
     /// concrete root-crate `UnifiedHandlers`.
     pub api_handlers: Option<Arc<dyn proximadb_runtime::ApiHandlersPort>>,
-    /// Port-backed hybrid search service (Phase 9.13).
-    ///
-    /// When set, `create_router` mounts `create_hybrid_search_router` from
-    /// `proximadb-api` instead of the AppState-backed root-crate handlers.
-    pub hybrid_port: Option<Arc<dyn proximadb_runtime::HybridPort>>,
 }
 
 impl AppState {
@@ -103,7 +98,6 @@ impl AppState {
             obs_port: None,
             unified_query_port: None,
             api_handlers: None,
-            hybrid_port: None,
         }
     }
 
@@ -135,15 +129,6 @@ impl AppState {
         handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
     ) -> Self {
         self.api_handlers = Some(handlers);
-        self
-    }
-
-    /// Inject port-backed hybrid search service (Phase 9.13).
-    pub fn with_hybrid_port(
-        mut self,
-        port: Arc<dyn proximadb_runtime::HybridPort>,
-    ) -> Self {
-        self.hybrid_port = Some(port);
         self
     }
 
@@ -958,20 +943,18 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
-        // Graph database endpoints — use port-based router if available, else root-crate router
-        .nest(
-            "/api/v1/graph",
-            if let Some(ref gp) = state.graph_port {
-                use proximadb_api::rest::{GraphRestState, create_graph_router};
-                create_graph_router().with_state(GraphRestState {
-                    graph_port: gp.clone(),
-                })
-            } else {
-                crate::network::rest::v1::graph::create_graph_router()
-            },
-        )
         // SKS entity endpoints (storage-coupled path)
         .nest("/api", entities_router);
+
+    // Graph routes — port-backed (always wired in production since Phase 9.12)
+    if let Some(ref gp) = state.graph_port {
+        use proximadb_api::rest::{GraphRestState, create_graph_router};
+        router = router.nest(
+            "/api/v1/graph",
+            create_graph_router().with_state(GraphRestState { graph_port: gp.clone() }),
+        );
+        info!("✅ Graph API routing via port-based handler (proximadb-api)");
+    }
 
     // Collection and vector routes via port-backed handlers (proximadb-api).
     // Prefers state.api_handlers (runtime crate's UnifiedHandlers backed by CollectionPort/
@@ -995,42 +978,15 @@ pub fn create_router(state: AppState) -> axum::Router {
     }
     info!("✅ Collection and Vector API routing via port-backed handlers (proximadb-api)");
 
-    // Document API endpoints — use port-based router if available, else root-crate router
-    let document_router = if let Some(ref dp) = state.doc_port {
+    // Document routes — port-backed (always wired in production since Phase 9)
+    if let Some(ref dp) = state.doc_port {
         use proximadb_api::rest::{DocumentRestState, create_document_router};
+        router = router.nest(
+            "/api/v1/documents",
+            create_document_router().with_state(DocumentRestState { document_port: dp.clone() }),
+        );
         info!("✅ Document API routing via port-based handler (proximadb-api)");
-        create_document_router().with_state(DocumentRestState {
-            document_port: dp.clone(),
-        })
-    } else {
-        use crate::network::rest::v1::document::{self, DocumentApiState};
-        use crate::storage::document::DocumentService;
-
-        let engine = state
-            .request_handlers
-            .vector_operations_service
-            .unified_engine();
-
-        let doc_base_path = state.data_dir.join("documents");
-        let doc_path_str = doc_base_path.to_string_lossy().to_string();
-
-        let document_service = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                match DocumentService::new_with_wal(engine.clone(), &doc_path_str).await {
-                    Ok(svc) => Arc::new(svc),
-                    Err(e) => {
-                        tracing::warn!("Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
-                        Arc::new(DocumentService::new(engine))
-                    }
-                }
-            })
-        });
-
-        let doc_state = DocumentApiState { document_service };
-        document::create_document_router().with_state(doc_state)
-    };
-    router = router.nest("/api/v1/documents", document_router);
-    info!("✅ Document API endpoints enabled at /api/v1/documents");
+    }
 
     // Observability API endpoints — use port-based router if available, else root-crate router
     let observability_service: Option<Arc<crate::observability::ObservabilityService>> = if state
@@ -1377,6 +1333,95 @@ mod tests {
         format!("file://{}", path.to_string_lossy())
     }
 
+    // ── Mock ports ────────────────────────────────────────────────────────────
+    // Minimal stubs that let tests build a fully-ported AppState without real
+    // services.  Each method returns an error; the tested routes either fail
+    // before reaching the port (JSON parse, empty-field guard) or are self-
+    // contained redirects that never call the port at all.
+
+    use async_trait::async_trait;
+
+    struct MockDocumentPort;
+    #[async_trait]
+    impl proximadb_runtime::DocumentPort for MockDocumentPort {
+        async fn create_collection(&self, _: crate::proto::v1::CreateDocumentCollectionRequest) -> anyhow::Result<crate::proto::v1::CreateDocumentCollectionResponse> { anyhow::bail!("mock") }
+        async fn list_collections(&self, _: crate::proto::v1::ListDocumentCollectionsRequest) -> anyhow::Result<crate::proto::v1::ListDocumentCollectionsResponse> { anyhow::bail!("mock") }
+        async fn delete_collection(&self, _: crate::proto::v1::DeleteDocumentCollectionRequest) -> anyhow::Result<crate::proto::v1::DeleteDocumentCollectionResponse> { anyhow::bail!("mock") }
+        async fn insert_document(&self, _: crate::proto::v1::InsertDocumentRequest) -> anyhow::Result<crate::proto::v1::InsertDocumentResponse> { anyhow::bail!("mock") }
+        async fn get_document(&self, _: crate::proto::v1::GetDocumentRequest) -> anyhow::Result<crate::proto::v1::GetDocumentResponse> { anyhow::bail!("mock") }
+        async fn update_document(&self, _: crate::proto::v1::UpdateDocumentRequest) -> anyhow::Result<crate::proto::v1::UpdateDocumentResponse> { anyhow::bail!("mock") }
+        async fn delete_document(&self, _: crate::proto::v1::DeleteDocumentRequest) -> anyhow::Result<crate::proto::v1::DeleteDocumentResponse> { anyhow::bail!("mock") }
+        async fn query_documents(&self, _: crate::proto::v1::QueryDocumentsRequest) -> anyhow::Result<crate::proto::v1::QueryDocumentsResponse> { anyhow::bail!("mock") }
+        async fn aggregate_documents(&self, _: crate::proto::v1::AggregateDocumentsRequest) -> anyhow::Result<crate::proto::v1::AggregateDocumentsResponse> { anyhow::bail!("mock") }
+    }
+
+    struct MockGraphPort;
+    #[async_trait]
+    impl proximadb_runtime::GraphPort for MockGraphPort {
+        async fn create_node(&self, _: crate::proto::v1::CreateNodeRequest) -> anyhow::Result<crate::proto::v1::Node> { anyhow::bail!("mock") }
+        async fn get_node(&self, _: crate::proto::v1::GetNodeRequest) -> anyhow::Result<crate::proto::v1::Node> { anyhow::bail!("mock") }
+        async fn update_node(&self, _: crate::proto::v1::UpdateNodeRequest) -> anyhow::Result<crate::proto::v1::Node> { anyhow::bail!("mock") }
+        async fn delete_node(&self, _: crate::proto::v1::DeleteNodeRequest) -> anyhow::Result<crate::proto::v1::Node> { anyhow::bail!("mock") }
+        async fn create_edge(&self, _: crate::proto::v1::CreateEdgeRequest) -> anyhow::Result<crate::proto::v1::Edge> { anyhow::bail!("mock") }
+        async fn get_edge(&self, _: crate::proto::v1::GetEdgeRequest) -> anyhow::Result<crate::proto::v1::Edge> { anyhow::bail!("mock") }
+        async fn update_edge(&self, _: crate::proto::v1::UpdateEdgeRequest) -> anyhow::Result<crate::proto::v1::Edge> { anyhow::bail!("mock") }
+        async fn delete_edge(&self, _: crate::proto::v1::DeleteEdgeRequest) -> anyhow::Result<crate::proto::v1::Edge> { anyhow::bail!("mock") }
+        async fn query_nodes(&self, _: crate::proto::v1::NodeQuery) -> anyhow::Result<crate::proto::v1::BatchResponse> { anyhow::bail!("mock") }
+        async fn query_edges(&self, _: crate::proto::v1::EdgeQuery) -> anyhow::Result<crate::proto::v1::BatchResponse> { anyhow::bail!("mock") }
+        async fn execute_query(&self, _: crate::proto::v1::GraphQueryRequest) -> anyhow::Result<crate::proto::v1::GraphQueryResponse> { anyhow::bail!("mock") }
+        async fn get_neighbors(&self, _: crate::proto::v1::GetNeighborsRequest) -> anyhow::Result<crate::proto::v1::BatchResponse> { anyhow::bail!("mock") }
+        async fn traverse_graph(&self, _: crate::proto::v1::TraversalRequest) -> anyhow::Result<crate::proto::v1::TraversalResponse> { anyhow::bail!("mock") }
+        async fn stream_traverse(&self, _: crate::proto::v1::TraversalRequest) -> anyhow::Result<Vec<crate::proto::v1::TraversalChunk>> { anyhow::bail!("mock") }
+        async fn get_graph_stats(&self, _: crate::proto::v1::GetStatsRequest) -> anyhow::Result<crate::proto::v1::GraphStats> { anyhow::bail!("mock") }
+        async fn shortest_path(&self, _: crate::proto::v1::ShortestPathRequest) -> anyhow::Result<crate::proto::v1::ShortestPathResponse> { anyhow::bail!("mock") }
+        async fn get_connected_components(&self, _: crate::proto::v1::GetStatsRequest) -> anyhow::Result<crate::proto::v1::ConnectedComponentsResponse> { anyhow::bail!("mock") }
+        async fn has_cycle(&self, _: crate::proto::v1::GetStatsRequest) -> anyhow::Result<crate::proto::v1::CycleCheckResponse> { anyhow::bail!("mock") }
+        async fn add_unique_constraint(&self, _: crate::proto::v1::UniqueConstraintRequest) -> anyhow::Result<crate::proto::v1::UniqueConstraintResponse> { anyhow::bail!("mock") }
+        async fn remove_unique_constraint(&self, _: crate::proto::v1::UniqueConstraintRequest) -> anyhow::Result<crate::proto::v1::UniqueConstraintResponse> { anyhow::bail!("mock") }
+        async fn batch_create_nodes(&self, _: crate::proto::v1::BatchNodeRequest) -> anyhow::Result<crate::proto::v1::BatchResponse> { anyhow::bail!("mock") }
+        async fn batch_create_edges(&self, _: crate::proto::v1::BatchEdgeRequest) -> anyhow::Result<crate::proto::v1::BatchResponse> { anyhow::bail!("mock") }
+        async fn execute_hybrid_query(&self, _: crate::proto::v1::HybridSearchRequest) -> anyhow::Result<crate::proto::v1::HybridSearchResponse> { anyhow::bail!("mock") }
+        async fn create_graph_collection(&self, _: crate::proto::v1::CreateGraphRequest) -> anyhow::Result<crate::proto::v1::GraphCollection> { anyhow::bail!("mock") }
+        async fn get_graph_collection(&self, _: String) -> anyhow::Result<Option<crate::proto::v1::GraphCollection>> { anyhow::bail!("mock") }
+        async fn delete_graph_collection(&self, _: String) -> anyhow::Result<bool> { anyhow::bail!("mock") }
+        async fn list_graph_collections(&self) -> anyhow::Result<Vec<crate::proto::v1::GraphCollection>> { anyhow::bail!("mock") }
+        async fn update_graph_schema(&self, _: String, _: crate::proto::v1::GraphSchema) -> anyhow::Result<crate::proto::v1::GraphCollection> { anyhow::bail!("mock") }
+    }
+
+    struct MockObservabilityPort;
+    #[async_trait]
+    impl proximadb_runtime::ObservabilityPort for MockObservabilityPort {
+        async fn create_namespace(&self, _: crate::proto::v1::CreateObservabilityNamespaceRequest) -> anyhow::Result<crate::proto::v1::CreateObservabilityNamespaceResponse> { anyhow::bail!("mock") }
+        async fn list_namespaces(&self, _: crate::proto::v1::ListNamespacesRequest) -> anyhow::Result<crate::proto::v1::ListNamespacesResponse> { anyhow::bail!("mock") }
+        async fn delete_namespace(&self, _: crate::proto::v1::DeleteNamespaceRequest) -> anyhow::Result<crate::proto::v1::DeleteNamespaceResponse> { anyhow::bail!("mock") }
+        async fn ingest_logs(&self, _: crate::proto::v1::IngestLogsRequest) -> anyhow::Result<crate::proto::v1::IngestLogsResponse> { anyhow::bail!("mock") }
+        async fn query_logs(&self, _: crate::proto::v1::QueryLogsRequest) -> anyhow::Result<crate::proto::v1::QueryLogsResponse> { anyhow::bail!("mock") }
+        async fn stream_logs(&self, _: crate::proto::v1::QueryLogsRequest) -> anyhow::Result<Vec<crate::proto::v1::LogEntry>> { anyhow::bail!("mock") }
+        async fn ingest_metrics(&self, _: crate::proto::v1::IngestMetricsRequest) -> anyhow::Result<crate::proto::v1::IngestMetricsResponse> { anyhow::bail!("mock") }
+        async fn query_metrics(&self, _: crate::proto::v1::QueryMetricsRequest) -> anyhow::Result<crate::proto::v1::QueryMetricsResponse> { anyhow::bail!("mock") }
+        async fn aggregate_metrics(&self, _: crate::proto::v1::AggregateMetricsRequest) -> anyhow::Result<crate::proto::v1::AggregateMetricsResponse> { anyhow::bail!("mock") }
+        async fn ingest_traces(&self, _: crate::proto::v1::IngestTracesRequest) -> anyhow::Result<crate::proto::v1::IngestTracesResponse> { anyhow::bail!("mock") }
+        async fn query_traces(&self, _: crate::proto::v1::QueryTracesRequest) -> anyhow::Result<crate::proto::v1::QueryTracesResponse> { anyhow::bail!("mock") }
+        async fn get_trace(&self, _: crate::proto::v1::GetTraceRequest) -> anyhow::Result<crate::proto::v1::GetTraceResponse> { anyhow::bail!("mock") }
+        async fn upsert_alert_rule(&self, _: crate::proto::v1::UpsertAlertRuleRequest) -> anyhow::Result<crate::proto::v1::UpsertAlertRuleResponse> { anyhow::bail!("mock") }
+        async fn delete_alert_rule(&self, _: crate::proto::v1::DeleteAlertRuleRequest) -> anyhow::Result<crate::proto::v1::DeleteAlertRuleResponse> { anyhow::bail!("mock") }
+        async fn list_alerts(&self, _: crate::proto::v1::ListAlertsRequest) -> anyhow::Result<crate::proto::v1::ListAlertsResponse> { anyhow::bail!("mock") }
+    }
+
+    struct MockUnifiedQueryPort;
+    #[async_trait]
+    impl proximadb_runtime::UnifiedQueryPort for MockUnifiedQueryPort {
+        async fn execute_unified_query(&self, _: String, _: Option<Vec<crate::proto::v1::SqlValue>>, _: Option<String>, _: Option<u32>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn execute_multi_model_query(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn execute_federated_query(&self, _: String, _: Option<Vec<crate::proto::v1::SqlValue>>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn execute_distributed_query(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn explain_unified_query(&self, _: String, _: Option<String>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn prepare_statement(&self, _: Option<String>, _: String, _: bool, _: Option<u64>) -> anyhow::Result<String> { anyhow::bail!("mock") }
+        async fn execute_prepared(&self, _: String, _: Option<Vec<crate::proto::v1::SqlValue>>, _: Option<String>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn delete_prepared(&self, _: String) -> anyhow::Result<()> { anyhow::bail!("mock") }
+        async fn get_prepared_stats(&self, _: Vec<String>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+    }
+
     async fn build_test_app_state() -> (AppState, TempDir) {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
@@ -1413,7 +1458,13 @@ mod tests {
             data_dir,
             None,
             None,
-        );
+        )
+        .with_ports(
+            Arc::new(MockDocumentPort),
+            Arc::new(MockGraphPort),
+            Arc::new(MockObservabilityPort),
+        )
+        .with_unified_query_port(Arc::new(MockUnifiedQueryPort));
         (state, temp_dir)
     }
 
