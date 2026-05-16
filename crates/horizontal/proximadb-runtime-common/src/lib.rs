@@ -6,7 +6,9 @@
 //! root, application, or binding crates.
 
 pub mod cache;
+pub mod pool;
 pub mod skiplist;
 
 pub use cache::{CacheEntry, CacheError, CacheStats, LruCache, ThreadSafeLruCache};
+pub use pool::{Pool, PoolConfig, PoolStats, PooledItem, VectorMemoryPool, VectorPoolStats};
 pub use skiplist::{SkipList, SkipListIterator};

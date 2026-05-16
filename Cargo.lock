@@ -6101,6 +6101,11 @@ dependencies = [
 [[package]]
 name = "proximadb-runtime-common"
 version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "parking_lot",
+ "tracing",
+]
 
 [[package]]
 name = "proximadb-sdk"

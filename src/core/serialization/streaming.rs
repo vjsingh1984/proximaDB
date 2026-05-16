@@ -449,10 +449,20 @@ impl StreamingCompressor {
             .map(|v| v.len() * 4) // f32 = 4 bytes
             .sum::<usize>();
 
-        // Serialize vectors using memory pool
-        let compressed_data = memory_pool
-            .serialize_vector_batch_pooled(&work.vectors, &work.config)
-            .context("Failed to serialize vector batch")?;
+        // Serialize vectors using pooled buffer
+        let compressed_data = {
+            let mut pooled = memory_pool.serialization_buffers.acquire();
+            let buf = &mut *pooled;
+            buf.clear();
+            let est = work.vectors.iter().map(|v| v.len() * 4 + 4).sum();
+            buf.reserve(est);
+            for v in &work.vectors {
+                let vd = work.config.serialize_vector(v)?;
+                buf.extend_from_slice(&(vd.len() as u32).to_le_bytes());
+                buf.extend_from_slice(&vd);
+            }
+            buf.clone()
+        };
 
         let processing_time = start_time.elapsed();
         let compressed_size = compressed_data.len();
@@ -503,10 +513,25 @@ impl StreamingDecompressor {
     pub async fn decompress_batch(&self, compressed_data: &[u8]) -> Result<Vec<Vec<f32>>> {
         let start_time = Instant::now();
 
-        let vectors = self
-            .memory_pool
-            .deserialize_vector_batch_pooled(compressed_data, &self.config)
-            .context("Failed to deserialize vector batch")?;
+        let vectors = {
+            let mut result = Vec::new();
+            let mut cursor = 0usize;
+            while cursor + 4 <= compressed_data.len() {
+                let len = u32::from_le_bytes(
+                    compressed_data[cursor..cursor + 4].try_into().unwrap(),
+                ) as usize;
+                cursor += 4;
+                if cursor + len > compressed_data.len() {
+                    return Err(anyhow::anyhow!("Invalid vector data: length mismatch"));
+                }
+                result.push(
+                    self.config
+                        .deserialize_vector(&compressed_data[cursor..cursor + len])?,
+                );
+                cursor += len;
+            }
+            result
+        };
 
         let processing_time = start_time.elapsed();
 
