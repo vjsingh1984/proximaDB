@@ -14,9 +14,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
-// Use core compression directly instead of adapter
-use crate::core::compression::StandardCompression;
 // Use unified quantization engine
+use proximadb_compression::StandardCompression;
 
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::persistence::filesystem::FilesystemFactory;

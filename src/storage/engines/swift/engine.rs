@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
+use proximadb_compression::StandardCompression;
 
 // Universal performance optimization imports - UniversalIOConfig removed as unused
 // VectorMemoryPool now managed by universal optimizer
@@ -35,9 +36,6 @@ use crate::storage::traits::{
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Removed unused compression common imports
 // Removed unused CompressionData import
-
-// Use core compression directly instead of adapter
-use crate::core::compression::StandardCompression;
 
 use super::{SwiftFile, optimized_operations::OptimizedSwiftOperations};
 

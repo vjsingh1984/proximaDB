@@ -100,8 +100,7 @@ pub struct SstSpecificData {
 // ✅ REMOVED: CompositeBloomFilterBuilder - Proxima provides bloom filters automatically
 use crate::proto::proximadb_v1::CompressionConfig;
 
-// Use core compression directly instead of adapter
-use crate::core::compression::{CompressionContext, CompressionProvider, StandardCompression};
+use proximadb_compression::{CompressionContext, CompressionProvider, StandardCompression};
 
 // ProximaCodec system for encoding/decoding
 use crate::storage::engines::core::formats::proximablocks::engine_profile::EngineProfile;

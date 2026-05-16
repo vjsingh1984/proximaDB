@@ -1,7 +1,6 @@
 // NOVA Engine: Next-gen Optimized Vector Analytics with columnar quantization
 // Implements UnifiedStorageEngine trait for integration with ProximaDB
 
-use crate::core::compression::StandardCompression;
 use crate::core::search::DataFreshnessTier;
 use crate::proto::proximadb_v1::VectorRecord;
 // Import column constants from columnar module
@@ -20,12 +19,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
+use proximadb_compression::StandardCompression;
 // Health status handled internally
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
-// Use core compression directly instead of adapter
 use super::operations::{NovaCompactionOperations, NovaFlushOperations, NovaSearchOperations};
 use super::optimized_operations::OptimizedNovaOperations;
 // Arrow schema handled by parquet reader

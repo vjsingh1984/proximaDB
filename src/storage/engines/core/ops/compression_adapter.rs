@@ -5,13 +5,13 @@ use crate::storage::engines::core::ops::compression_common::CompressionStrategy;
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::core::compression::{
-    CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
-};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
 use crate::storage::engines::core::ops::compression_common::{
     AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig,
+};
+use proximadb_compression::{
+    CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
 
 /// Compression adapter that bridges Universal config with Unified implementation

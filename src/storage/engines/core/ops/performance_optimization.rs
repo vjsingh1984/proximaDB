@@ -18,9 +18,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::compression::{CompressionAlgorithm, StandardCompression};
 use crate::core::memory::pool::VectorMemoryPool;
 use crate::storage::persistence::filesystem::{FileStorageTier, FilesystemFactory};
+use proximadb_compression::{CompressionAlgorithm, StandardCompression};
 
 /// Global memory pool configuration
 pub struct MemoryPoolConfig {
@@ -502,7 +502,7 @@ impl UniversalPerformanceOptimizer {
 
     /// Tier-aware compression optimization
     pub async fn compress_for_tier(&self, data: &[u8], tier: FileStorageTier) -> Result<Vec<u8>> {
-        use crate::core::compression::{CompressionContext, CompressionProvider};
+        use proximadb_compression::{CompressionContext, CompressionProvider};
 
         let (algorithm, level) = match tier {
             FileStorageTier::Memory | FileStorageTier::NVMe => {

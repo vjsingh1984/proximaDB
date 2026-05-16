@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use crate::core::compression::CompressionAlgorithm;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
+use proximadb_compression::CompressionAlgorithm;
 
 /// Universal compression configuration
 #[derive(Debug, Clone)]
