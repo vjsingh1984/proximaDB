@@ -327,6 +327,7 @@ impl MultiServer {
                 doc_port: doc_port.clone(),
                 graph_port: graph_port.clone(),
                 obs_port: obs_port.clone(),
+                api_handlers: self.shared_services.api_handlers.clone(),
             });
 
             let streaming_port: Arc<dyn proximadb_runtime::StreamingPort> =
@@ -654,6 +655,7 @@ impl MultiServer {
                 doc_port,
                 graph_port,
                 obs_port,
+                api_handlers: services.api_handlers.clone(),
             }
         };
 

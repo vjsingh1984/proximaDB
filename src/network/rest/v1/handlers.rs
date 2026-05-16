@@ -63,6 +63,13 @@ pub struct AppState {
     pub obs_port: Option<Arc<dyn proximadb_runtime::ObservabilityPort>>,
     /// Port-backed unified query service (Phase 9.9)
     pub unified_query_port: Option<Arc<dyn proximadb_runtime::UnifiedQueryPort>>,
+    /// Port-backed API handler for collection/vector routes (Phase 9.10).
+    ///
+    /// When set, `create_router` passes this as `RestAppState.handlers` so
+    /// `create_collection_router` and `create_vector_router` from `proximadb-api`
+    /// go through `CollectionPort`/`VectorOpsPort` trait objects rather than the
+    /// concrete root-crate `UnifiedHandlers`.
+    pub api_handlers: Option<Arc<dyn proximadb_runtime::ApiHandlersPort>>,
 }
 
 impl AppState {
@@ -90,6 +97,7 @@ impl AppState {
             graph_port: None,
             obs_port: None,
             unified_query_port: None,
+            api_handlers: None,
         }
     }
 
@@ -112,6 +120,15 @@ impl AppState {
         port: Arc<dyn proximadb_runtime::UnifiedQueryPort>,
     ) -> Self {
         self.unified_query_port = Some(port);
+        self
+    }
+
+    /// Inject port-backed API handler for collection/vector routes (Phase 9.10).
+    pub fn with_api_handlers(
+        mut self,
+        handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+    ) -> Self {
+        self.api_handlers = Some(handlers);
         self
     }
 
@@ -946,11 +963,14 @@ pub fn create_router(state: AppState) -> axum::Router {
         .nest("/api", entities_router);
 
     // Collection and vector routes via port-backed handlers (proximadb-api).
-    // Uses RestAppState { handlers: Arc<dyn ApiHandlersPort> } so these routes compile
-    // without coupling to any root-crate concrete service type.
+    // Prefers state.api_handlers (runtime crate's UnifiedHandlers backed by CollectionPort/
+    // VectorOpsPort trait objects) when available; falls back to the concrete root-crate
+    // UnifiedHandlers which also implements ApiHandlersPort.
     {
-        let api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort> =
-            state.request_handlers.clone();
+        let api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort> = state
+            .api_handlers
+            .clone()
+            .unwrap_or_else(|| state.request_handlers.clone() as Arc<dyn proximadb_runtime::ApiHandlersPort>);
         let api_rest_state = proximadb_api::rest::RestAppState::new(api_handlers);
         router = router
             .merge(

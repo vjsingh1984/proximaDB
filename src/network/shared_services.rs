@@ -60,6 +60,11 @@ pub struct SharedServices {
     pub metrics_collector: Option<Arc<MetricsCollector>>,
     /// Optional internal metrics updater for background metric publishing
     pub metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>>,
+    /// Port-backed API handler for collection/vector routes (runtime crate handler).
+    ///
+    /// Backed by `CollectionPort`, `VectorOpsPort`, and `QueryAdapterPort` trait objects
+    /// so the REST/gRPC API surface is decoupled from root-crate concrete services.
+    pub api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
     /// Unified query facade - single entry point for all query types
     /// Consolidates vector search, SQL, and graph query paths
     pub query_facade: Arc<UnifiedQueryFacade>,
@@ -790,8 +795,18 @@ impl SharedServices {
         // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing
         // This enables SQL queries to flow through the facade when unified-facade-routing feature is enabled
         let query_adapter = Arc::new(QueryFacadeAdapter::new(query_facade.clone()));
-        request_handlers.set_query_adapter(query_adapter);
+        request_handlers.set_query_adapter(query_adapter.clone());
         debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
+
+        // Build a port-backed runtime handler for collection/vector REST routes.
+        // Uses trait objects so API routes are decoupled from root-crate concrete services.
+        let runtime_api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort> =
+            Arc::new(proximadb_runtime::UnifiedHandlers::new(
+                collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                vector_operations_service.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>,
+                Some(query_adapter.clone() as Arc<dyn proximadb_runtime::QueryAdapterPort>),
+            ));
+        debug!("✅ SharedServices::new - Port-backed runtime API handlers created");
 
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
@@ -810,6 +825,7 @@ impl SharedServices {
                 metrics_collector,
                 metrics_updater: Some(metrics_updater.clone()),
                 query_facade,
+                api_handlers: runtime_api_handlers,
             },
             collection_service,
         ))

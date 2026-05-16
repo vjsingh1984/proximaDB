@@ -57,6 +57,8 @@ pub struct RestServerPorts {
     pub doc_port: std::sync::Arc<dyn proximadb_runtime::DocumentPort>,
     pub graph_port: std::sync::Arc<dyn proximadb_runtime::GraphPort>,
     pub obs_port: std::sync::Arc<dyn proximadb_runtime::ObservabilityPort>,
+    /// Port-backed handler for collection/vector routes (Phase 9.10).
+    pub api_handlers: std::sync::Arc<dyn proximadb_runtime::ApiHandlersPort>,
 }
 
 /// Authentication configuration for the REST server
@@ -376,7 +378,8 @@ impl RestServer {
             llm_engine,
         );
         let state = if let Some(p) = ports {
-            base_state.with_ports(p.doc_port, p.graph_port, p.obs_port)
+            let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
+            s.with_api_handlers(p.api_handlers)
         } else {
             base_state
         };
@@ -596,7 +599,8 @@ impl RestServer {
             llm_engine,
         );
         let state = if let Some(p) = ports {
-            base_state.with_ports(p.doc_port, p.graph_port, p.obs_port)
+            let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
+            s.with_api_handlers(p.api_handlers)
         } else {
             base_state
         };
