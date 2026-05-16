@@ -76,10 +76,12 @@ use tracing::{debug, info, warn};
 use crate::errors::{ApiError, ApiResult};
 use crate::observability::ObservabilityService;
 use crate::query::QueryFacadeAdapter;
+use crate::query::authority_context::{AuthoritySource, resolve_catalog_authority_context};
 use crate::query::explain::StorageAuthorityExplanation;
 use crate::query::federated::{
     FederatedParser, FederatedQueryContext, QueryType as FederatedQueryType,
 };
+use crate::query::multimodal::plan::PlanContext;
 use crate::query::prepared::{ParameterValue, PreparedStatementCache, PreparedStatementConfig};
 use crate::query::unified::executor::ParallelExecutor;
 use crate::query::unified::{
@@ -881,30 +883,26 @@ async fn explain_storage_authorities(
 
     let mut authorities = Vec::new();
     for target in explain_catalog_targets(sql) {
-        let (catalog, table_id) = match catalog_manager.resolve_table(&target).await {
-            Ok(resolved) => resolved,
+        let mut context = PlanContext::default();
+        match resolve_catalog_authority_context(
+            catalog_manager,
+            AuthoritySource::new(target.clone(), "relational"),
+        )
+        .await
+        {
+            Ok(resolved) => context.resolved_objects.push(resolved),
             Err(error) => {
                 debug!(
                     table = %target,
                     error = %error,
-                    "Unified EXPLAIN storage authority metadata unavailable during catalog resolution"
+                    "Unified EXPLAIN storage authority metadata unavailable during catalog resolution/lookup"
                 );
                 continue;
             }
-        };
+        }
 
-        match catalog.get_table(&table_id).await {
-            Ok(schema) => authorities.push(StorageAuthorityExplanation::from_catalog_table_schema(
-                &schema,
-            )),
-            Err(error) => {
-                debug!(
-                    table = %target,
-                    resolved_table = %table_id,
-                    error = %error,
-                    "Unified EXPLAIN storage authority metadata unavailable during catalog lookup"
-                );
-            }
+        if let Some(authority) = StorageAuthorityExplanation::from_plan_context(&context) {
+            authorities.push(authority);
         }
     }
 

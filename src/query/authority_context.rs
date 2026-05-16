@@ -3,12 +3,15 @@
 //! This module keeps catalog authority semantics in one place for UQL lowering,
 //! port-backed EXPLAIN, and future SQL/federated planners.
 
+use std::sync::Arc;
+
+use anyhow::Result;
 use proximadb_catalog::{
     CatalogAuthorityMode, CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout,
     CatalogTableSchema,
 };
 
-use crate::catalog::TableIdentifier;
+use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::query::multimodal::plan::{
     ResolvedAuthorityMode, ResolvedObjectContext, ResolvedProjectionContext,
     ResolvedStorageLayoutContext,
@@ -76,6 +79,18 @@ pub fn resolved_object_from_catalog_schema(
         external_policy_boundary,
         fallback_behavior: fallback_behavior_for_schema(schema),
     }
+}
+
+/// Resolve a table/source through xCatalog and convert it into planner authority context.
+pub async fn resolve_catalog_authority_context(
+    catalog_manager: &Arc<CatalogManager>,
+    source: AuthoritySource,
+) -> Result<ResolvedObjectContext> {
+    let (catalog, table_id) = catalog_manager.resolve_table(&source.source).await?;
+    let schema = catalog.get_table(&table_id).await?;
+    Ok(resolved_object_from_catalog_schema(
+        source, &table_id, &schema,
+    ))
 }
 
 fn resolved_layout_from_catalog(layout: &CatalogStorageLayout) -> ResolvedStorageLayoutContext {

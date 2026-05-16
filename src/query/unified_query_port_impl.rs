@@ -17,7 +17,7 @@ use proximadb_runtime::UnifiedQueryPort;
 use tracing::{debug, info};
 
 use crate::catalog::CatalogManager;
-use crate::query::authority_context::{AuthoritySource, resolved_object_from_catalog_schema};
+use crate::query::authority_context::{AuthoritySource, resolve_catalog_authority_context};
 use crate::query::explain::StorageAuthorityExplanation;
 use crate::query::multimodal::plan::PlanContext;
 use crate::query::{
@@ -140,33 +140,20 @@ impl UnifiedQueryPortImpl {
         targets.dedup();
 
         for target in targets {
-            let (catalog, table_id) = match catalog_manager.resolve_table(&target).await {
-                Ok(resolved) => resolved,
+            match resolve_catalog_authority_context(
+                catalog_manager,
+                AuthoritySource::new(target.clone(), "relational"),
+            )
+            .await
+            {
+                Ok(resolved) => context.resolved_objects.push(resolved),
                 Err(err) => {
                     debug!(
                         "port-backed EXPLAIN storage authority unavailable for '{}': {}",
                         target, err
                     );
-                    continue;
                 }
-            };
-            let schema = match catalog.get_table(&table_id).await {
-                Ok(schema) => schema,
-                Err(err) => {
-                    debug!(
-                        "port-backed EXPLAIN catalog lookup unavailable for '{}': {}",
-                        table_id, err
-                    );
-                    continue;
-                }
-            };
-            context
-                .resolved_objects
-                .push(resolved_object_from_catalog_schema(
-                    AuthoritySource::new(target.clone(), "relational"),
-                    &table_id,
-                    &schema,
-                ));
+            }
         }
 
         Ok(StorageAuthorityExplanation::from_plan_context(&context))

@@ -49,7 +49,7 @@ use crate::catalog::CatalogManager;
 use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::StorageEngineType;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::query::authority_context::{AuthoritySource, resolved_object_from_catalog_schema};
+use crate::query::authority_context::{AuthoritySource, resolve_catalog_authority_context};
 use crate::query::multimodal::plan::{
     MultiModelPlan, PlanContext, PlanStats, ResolvedObjectContext,
 };
@@ -409,18 +409,12 @@ async fn resolve_source_context(
     catalog_manager: &Arc<CatalogManager>,
     source: DataSource,
 ) -> Result<ResolvedObjectContext> {
-    let (catalog, table_id) = catalog_manager.resolve_table(&source.collection).await?;
-    let schema = catalog.get_table(&table_id).await?;
     let authority_source = AuthoritySource::new(
         source.collection,
         format!("{:?}", source.model).to_lowercase(),
     )
     .with_alias(source.alias);
-    Ok(resolved_object_from_catalog_schema(
-        authority_source,
-        &table_id,
-        &schema,
-    ))
+    resolve_catalog_authority_context(catalog_manager, authority_source).await
 }
 
 /// Facade request structure

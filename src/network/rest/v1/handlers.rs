@@ -29,7 +29,9 @@ use crate::query::aql::sources::document::DocumentAqlSource;
 use crate::query::aql::sources::graph::GraphAqlSource;
 use crate::query::aql::sources::observability::ObservabilityAqlSource;
 use crate::query::aql::sources::vector::VectorAqlSource;
+use crate::query::authority_context::{AuthoritySource, resolve_catalog_authority_context};
 use crate::query::explain::StorageAuthorityExplanation;
+use crate::query::multimodal::plan::PlanContext;
 use serde::{Deserialize, Serialize};
 
 /// Shared application state
@@ -378,32 +380,25 @@ async fn explain_storage_authority(
         return None;
     };
 
-    let (catalog, table_id) = match catalog_manager.resolve_table(&target).await {
-        Ok(resolved) => resolved,
+    let mut context = PlanContext::default();
+    match resolve_catalog_authority_context(
+        catalog_manager,
+        AuthoritySource::new(target.clone(), "relational"),
+    )
+    .await
+    {
+        Ok(resolved) => context.resolved_objects.push(resolved),
         Err(error) => {
             debug!(
                 table = %target,
                 error = %error,
-                "EXPLAIN storage authority metadata unavailable during catalog resolution"
+                "EXPLAIN storage authority metadata unavailable during catalog resolution/lookup"
             );
             return None;
         }
-    };
-
-    match catalog.get_table(&table_id).await {
-        Ok(schema) => Some(StorageAuthorityExplanation::from_catalog_table_schema(
-            &schema,
-        )),
-        Err(error) => {
-            debug!(
-                table = %target,
-                resolved_table = %table_id,
-                error = %error,
-                "EXPLAIN storage authority metadata unavailable during catalog lookup"
-            );
-            None
-        }
     }
+
+    StorageAuthorityExplanation::from_plan_context(&context)
 }
 
 fn first_table_name(query: &crate::query::ast::Query) -> Option<String> {
