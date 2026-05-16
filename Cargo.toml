@@ -84,6 +84,7 @@ proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
+proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }

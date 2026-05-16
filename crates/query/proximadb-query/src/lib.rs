@@ -1,3 +1,4 @@
+pub mod distributed;
 pub mod document_adapter;
 pub mod evolutionary;
 pub mod execution;
@@ -19,6 +20,7 @@ pub mod reranking;
 pub mod results;
 pub mod vector_adapter;
 
+pub use distributed::*;
 pub use document_adapter::*;
 pub use evolutionary::*;
 pub use execution::*;

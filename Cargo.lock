@@ -5896,7 +5896,9 @@ dependencies = [
 name = "proximadb-config"
 version = "0.2.0"
 dependencies = [
+ "chrono",
  "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -6163,6 +6165,7 @@ dependencies = [
  "proximadb-document-query",
  "proximadb-filter-expression",
  "proximadb-graph-query",
+ "proximadb-kernel",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
  "proximadb-observability-query",
@@ -6234,8 +6237,10 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "bincode",
+ "dashmap",
  "parking_lot",
  "serde",
+ "tokio",
  "tracing",
 ]
 
@@ -6284,6 +6289,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "criterion",
+ "proximadb-kernel",
  "proximadb-records",
  "proximadb-runtime-common",
  "serde",

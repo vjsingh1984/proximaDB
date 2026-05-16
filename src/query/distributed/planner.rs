@@ -25,6 +25,7 @@ use tracing::debug;
 
 use crate::cluster::NodeInfo;
 use crate::query::unified::ast::{DataModel, MultiModelQuery, QueryComponent};
+pub use proximadb_query::distributed::planner::ShardedSubQuery;
 
 use super::coordinator::{QueryPlan, ShardInfo};
 
@@ -37,23 +38,6 @@ pub enum DistributionStrategy {
     Distributed,
     /// Broadcast query to all nodes (e.g., global aggregations)
     Broadcast,
-}
-
-/// A subquery targeted at specific shards
-#[derive(Debug, Clone)]
-pub struct ShardedSubQuery {
-    /// Target node for this subquery
-    pub target_node: String,
-    /// Target node address
-    pub target_address: String,
-    /// Shard IDs this subquery covers
-    pub shard_ids: Vec<String>,
-    /// The query component(s) to execute
-    pub components: Vec<QueryComponent>,
-    /// Collection name (if applicable)
-    pub collection: Option<String>,
-    /// Priority (lower = higher priority)
-    pub priority: u32,
 }
 
 /// Query planner for distributed execution

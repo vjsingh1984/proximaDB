@@ -86,6 +86,22 @@ pub enum LLMProvider {
     HuggingFace,
 }
 
+impl std::fmt::Display for LLMProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LLMProvider::OpenAI => write!(f, "OpenAI"),
+            LLMProvider::Anthropic => write!(f, "Anthropic"),
+            LLMProvider::Cohere => write!(f, "Cohere"),
+            LLMProvider::AWSBedrock => write!(f, "AWS Bedrock"),
+            LLMProvider::AzureOpenAI => write!(f, "Azure OpenAI"),
+            LLMProvider::GoogleVertexAI => write!(f, "Google Vertex AI"),
+            LLMProvider::Ollama => write!(f, "Ollama"),
+            LLMProvider::VLLM => write!(f, "VLLM"),
+            LLMProvider::HuggingFace => write!(f, "HuggingFace"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LLMRequest {
     pub prompt: String,
@@ -131,10 +147,16 @@ pub enum LLMError {
     NetworkError(String),
 
     #[error("API error from {provider:?}: {message}")]
-    APIError { provider: LLMProvider, message: String },
+    APIError {
+        provider: LLMProvider,
+        message: String,
+    },
 
     #[error("Authentication failed for provider {provider:?}: {reason}")]
-    AuthenticationFailed { provider: LLMProvider, reason: String },
+    AuthenticationFailed {
+        provider: LLMProvider,
+        reason: String,
+    },
 
     #[error("Rate limit exceeded for provider {provider:?}. Retry after: {retry_after_seconds}s")]
     RateLimitExceeded {
@@ -149,7 +171,10 @@ pub enum LLMError {
     InvalidRequest(String),
 
     #[error("Invalid response from provider {provider:?}: {reason}")]
-    InvalidResponse { provider: LLMProvider, reason: String },
+    InvalidResponse {
+        provider: LLMProvider,
+        reason: String,
+    },
 
     #[error("Parse error: {0}")]
     ParseError(String),
