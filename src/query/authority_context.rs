@@ -1,0 +1,168 @@
+//! Shared xCatalog-to-plan authority context conversion.
+//!
+//! This module keeps catalog authority semantics in one place for UQL lowering,
+//! port-backed EXPLAIN, and future SQL/federated planners.
+
+use proximadb_catalog::{
+    CatalogAuthorityMode, CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout,
+    CatalogTableSchema,
+};
+
+use crate::catalog::TableIdentifier;
+use crate::query::multimodal::plan::{
+    ResolvedAuthorityMode, ResolvedObjectContext, ResolvedProjectionContext,
+    ResolvedStorageLayoutContext,
+};
+
+/// Query source identity attached to resolved xCatalog metadata.
+#[derive(Debug, Clone)]
+pub struct AuthoritySource {
+    pub source: String,
+    pub alias: Option<String>,
+    pub data_model: String,
+}
+
+impl AuthoritySource {
+    pub fn new(source: impl Into<String>, data_model: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            alias: None,
+            data_model: data_model.into(),
+        }
+    }
+
+    pub fn with_alias(mut self, alias: Option<String>) -> Self {
+        self.alias = alias;
+        self
+    }
+}
+
+/// Convert a catalog table schema into planner-native resolved authority context.
+pub fn resolved_object_from_catalog_schema(
+    source: AuthoritySource,
+    table_id: &TableIdentifier,
+    schema: &CatalogTableSchema,
+) -> ResolvedObjectContext {
+    let storage_layouts: Vec<_> = schema
+        .storage_layouts
+        .iter()
+        .map(resolved_layout_from_catalog)
+        .collect();
+    let projections: Vec<_> = schema
+        .projections
+        .iter()
+        .map(resolved_projection_from_catalog)
+        .collect();
+    let authority = storage_layouts
+        .iter()
+        .find(|layout| layout.name == "primary")
+        .map(|layout| layout.authority)
+        .or_else(|| storage_layouts.first().map(|layout| layout.authority))
+        .unwrap_or(ResolvedAuthorityMode::InternalCanonical);
+
+    let external_policy_boundary = storage_layouts.iter().any(|layout| {
+        layout.authority == ResolvedAuthorityMode::ExternalAuthoritative
+            && !layout.policy_enforced_in_proxima
+    });
+
+    ResolvedObjectContext {
+        source: source.source,
+        alias: source.alias,
+        data_model: source.data_model,
+        table_identifier: table_id.to_string(),
+        authority,
+        storage_layouts,
+        projections,
+        external_policy_boundary,
+        fallback_behavior: fallback_behavior_for_schema(schema),
+    }
+}
+
+fn resolved_layout_from_catalog(layout: &CatalogStorageLayout) -> ResolvedStorageLayoutContext {
+    ResolvedStorageLayoutContext {
+        name: layout.name.clone(),
+        authority: resolved_authority(layout.authority),
+        layout_kind: format!("{:?}", layout.layout_kind),
+        physical_format: physical_format_label(&layout.physical_format),
+        write_mode: format!("{:?}", layout.write_mode),
+        location: layout.location.clone(),
+        snapshot_semantics: layout.snapshot_semantics.clone(),
+        policy_enforced_in_proxima: layout.policy_enforced_in_proxima,
+        lossy_type_mappings: layout.lossy_type_mappings.clone(),
+    }
+}
+
+fn resolved_projection_from_catalog(projection: &CatalogProjection) -> ResolvedProjectionContext {
+    ResolvedProjectionContext {
+        name: projection.name.clone(),
+        kind: format!("{:?}", projection.kind),
+        physical_format: physical_format_label(&projection.physical_format),
+        rebuild_source: projection.rebuild_source.clone(),
+        freshness: format!("{:?}", projection.freshness),
+        max_lag_ms: projection.max_lag_ms,
+        rebuildable: projection.rebuildable,
+        lossy: projection.lossy,
+        support_status: projection.support_status.clone(),
+    }
+}
+
+fn resolved_authority(authority: CatalogAuthorityMode) -> ResolvedAuthorityMode {
+    match authority {
+        CatalogAuthorityMode::InternalCanonical => ResolvedAuthorityMode::InternalCanonical,
+        CatalogAuthorityMode::ExternalAuthoritative => ResolvedAuthorityMode::ExternalAuthoritative,
+        CatalogAuthorityMode::ImportedSnapshot => ResolvedAuthorityMode::ImportedSnapshot,
+        CatalogAuthorityMode::ExportedPublication => ResolvedAuthorityMode::ExportedPublication,
+        CatalogAuthorityMode::RebuildableProjection => ResolvedAuthorityMode::RebuildableProjection,
+    }
+}
+
+fn physical_format_label(format: &CatalogPhysicalFormat) -> String {
+    match format {
+        CatalogPhysicalFormat::External(label) => label.clone(),
+        other => format!("{:?}", other),
+    }
+}
+
+fn fallback_behavior_for_schema(schema: &CatalogTableSchema) -> String {
+    if schema
+        .storage_layouts
+        .iter()
+        .any(|layout| layout.authority == CatalogAuthorityMode::ExternalAuthoritative)
+    {
+        "apply Proxima policy boundary, then read external authoritative source".to_string()
+    } else if schema.projections.is_empty() {
+        "read canonical ProximaRecord storage".to_string()
+    } else {
+        "fall back to canonical ProximaRecord storage and rebuild projections as needed".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proximadb_catalog::{CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema};
+
+    #[test]
+    fn test_resolved_object_preserves_external_policy_boundary() {
+        let table_id = TableIdentifier::new(vec!["lake".to_string()], "docs".to_string());
+        let mut schema = CatalogTableSchema::new("docs");
+        schema.storage_layouts = vec![CatalogStorageLayout::external_authoritative(
+            "iceberg",
+            CatalogPhysicalFormat::Iceberg,
+            "s3://warehouse/docs",
+        )];
+
+        let object = resolved_object_from_catalog_schema(
+            AuthoritySource::new("lake.docs", "document"),
+            &table_id,
+            &schema,
+        );
+
+        assert_eq!(
+            object.authority,
+            ResolvedAuthorityMode::ExternalAuthoritative
+        );
+        assert!(object.requires_policy_boundary());
+        assert_eq!(object.storage_layouts[0].physical_format, "Iceberg");
+    }
+}
