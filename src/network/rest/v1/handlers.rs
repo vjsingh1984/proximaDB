@@ -29,8 +29,7 @@ use crate::query::aql::sources::document::DocumentAqlSource;
 use crate::query::aql::sources::graph::GraphAqlSource;
 use crate::query::aql::sources::observability::ObservabilityAqlSource;
 use crate::query::aql::sources::vector::VectorAqlSource;
-use crate::query::execution::QueryEngine;
-use crate::query::explain::{ExplainPlan, StorageAuthorityExplanation};
+use crate::query::explain::StorageAuthorityExplanation;
 use serde::{Deserialize, Serialize};
 
 /// Shared application state
@@ -331,17 +330,6 @@ pub async fn execute_sql(
     }
 }
 
-/// EXPLAIN query request structure  
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExplainQueryRequest {
-    /// SQL query string to explain
-    pub query: String,
-    /// Whether to include execution (ANALYZE)
-    pub analyze: Option<bool>,
-    /// Optional collection context
-    pub collection: Option<String>,
-}
-
 /// Helper: convert proto SqlValue to serde_json::Value (temporary until full internal refactor)
 fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
     use proximadb_v1::sql_value::Value as V;
@@ -436,84 +424,6 @@ fn first_table_name(query: &crate::query::ast::Query) -> Option<String> {
         }
     }
 }
-
-/// EXPLAIN query response
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExplainQueryResponse {
-    /// The explain plan
-    pub plan: ExplainPlan,
-    /// Request ID for tracing
-    pub request_id: String,
-}
-
-/// EXPLAIN SQL query handler - shows query execution plan with vector and graph hints
-pub async fn explain_sql(
-    State(state): State<AppState>,
-    Json(request): Json<ExplainQueryRequest>,
-) -> ApiResult<JsonResponse<ExplainQueryResponse>> {
-    let request_id = Uuid::new_v4().to_string();
-
-    info!(
-        "EXPLAIN query request {} for query: {}",
-        request_id,
-        request.query.chars().take(100).collect::<String>()
-    );
-
-    // Validate request
-    if request.query.trim().is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "SQL query cannot be empty".to_string(),
-        ));
-    }
-
-    // Build a lightweight QueryEngine with vector and graph services
-    let qe = QueryEngine::new(
-        state.request_handlers.vector_operations_service.clone(),
-        state.graph_execution_service.clone(),
-    );
-    // Parse SQL and explain using frontend
-    use crate::query::sql_frontend::parser::SqlFrontendParser;
-    let parser = SqlFrontendParser::new();
-    let parsed = parser
-        .parse(&request.query)
-        .map_err(|e| ApiError::Internal(format!("Failed to parse SQL: {}", e)))?;
-    let storage_authority = explain_storage_authority(
-        &state.catalog_manager,
-        request.collection.as_deref(),
-        &parsed,
-    )
-    .await;
-
-    let explain_result = qe
-        .explain_frontend(parsed)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to explain SQL: {}", e)))?;
-
-    // Convert ExplainResult to ExplainPlan
-    let plan = ExplainPlan {
-        orchestration_steps: explain_result.operations,
-        vector_hints: None, // Deferred: Extract from explain_result if needed
-        graph_hints: None,  // Deferred: Extract from explain_result if needed
-        join_costs: None,
-        query_stats: None,
-        execution_strategy: Some(format!("{:?}", explain_result.query_type)),
-        estimated_total_cost: Some(explain_result.estimated_cost),
-        cost_breakdown: None,
-        join_strategy: None,
-        fusion_strategy: None,
-        storage_authority,
-    };
-
-    let response = ExplainQueryResponse {
-        plan,
-        request_id: request_id.clone(),
-    };
-
-    info!("EXPLAIN query {} completed", request_id);
-    Ok(JsonResponse(response))
-}
-
-// Note: EXPLAIN now uses QueryEngine::explain_sql() for real plans/hints.
 
 // =============================================================================
 // Hybrid Search (BM25 + Vector with RRF Fusion)

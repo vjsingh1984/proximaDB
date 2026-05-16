@@ -5603,6 +5603,7 @@ dependencies = [
  "prost-types",
  "proximadb-api",
  "proximadb-catalog",
+ "proximadb-compression",
  "proximadb-compression-types",
  "proximadb-config",
  "proximadb-data-model",
@@ -5733,6 +5734,22 @@ dependencies = [
  "arrow-schema",
  "proximadb-data-model",
  "serde",
+]
+
+[[package]]
+name = "proximadb-compression"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "brotli 6.0.0",
+ "bzip2",
+ "flate2",
+ "lz4_flex 0.11.5",
+ "proximadb-compression-types",
+ "snap",
+ "tracing",
+ "xz2",
+ "zstd",
 ]
 
 [[package]]
