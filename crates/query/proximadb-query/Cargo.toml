@@ -16,9 +16,11 @@ path = "src/lib.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+base64 = "0.22"
 bincode = "1.3"
 parking_lot = "0.12"
 rand = { version = "0.8", features = ["small_rng"] }
+regex = "1.10"
 serde.workspace = true
 serde_json.workspace = true
 tracing = "0.1"

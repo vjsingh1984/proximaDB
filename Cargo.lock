@@ -6016,13 +6016,7 @@ dependencies = [
 name = "proximadb-graph-subset"
 version = "0.2.0"
 dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "proximadb-graph-query",
- "proximadb-proto",
- "regex",
- "serde_json",
+ "proximadb-query",
  "tokio",
 ]
 
@@ -6160,6 +6154,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "bincode",
  "parking_lot",
  "proximadb-data-model",
@@ -6175,6 +6170,7 @@ dependencies = [
  "proximadb-uql",
  "proximadb-vector-query",
  "rand 0.8.6",
+ "regex",
  "serde",
  "serde_json",
  "tokio",

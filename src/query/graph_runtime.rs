@@ -1,52 +1,18 @@
-//! Shared runtime helpers for declarative graph queries.
-//!
-//! This module now acts as a thin compatibility adapter from root
-//! `GraphQueryExpr` values to the extracted `proximadb-graph-subset` lowered
-//! runtime contract.
-
-use anyhow::Result;
-use proximadb_graph_query::service::GraphQueryReadService;
-use proximadb_graph_subset::{
-    LoweredGraphQueryResult, execute_lowered_graph_query,
-    execute_lowered_graph_query_with_start_nodes,
-};
-
-#[cfg(test)]
-use proximadb_graph_subset::{graph_query_row_id, legacy_graph_row_to_node, shape_graph_query_row};
-
-use crate::query::unified::ast::GraphQueryExpr;
-
-pub(crate) type GraphQueryRuntimeResult = LoweredGraphQueryResult;
-
-/// Execute a lowered declarative graph query through the shared graph subset.
-///
-/// The returned rows are already shaped into the canonical outward contract:
-/// scalar projections preserve their declared columns, while whole-node
-/// projections use the legacy `node_id`/`label`/`properties` row envelope.
-pub(crate) async fn execute_graph_query_expr(
-    graph_ops: &dyn GraphQueryReadService,
-    expr: &GraphQueryExpr,
-) -> Result<GraphQueryRuntimeResult> {
-    execute_lowered_graph_query(graph_ops, expr).await
-}
-
-/// Execute a lowered declarative graph query through the shared graph subset,
-/// optionally constraining the first bound node variable to explicit node IDs.
-pub(crate) async fn execute_graph_query_expr_with_start_nodes(
-    graph_ops: &dyn GraphQueryReadService,
-    expr: &GraphQueryExpr,
-    start_node_ids: Option<&[String]>,
-) -> Result<GraphQueryRuntimeResult> {
-    execute_lowered_graph_query_with_start_nodes(graph_ops, expr, start_node_ids).await
-}
+//! Compatibility shim — implementation now lives in `proximadb-query`.
+pub use proximadb_query::graph_runtime::*;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::graph::GraphOperationsService;
-    use crate::proto::proximadb_v1::{CreateGraphRequest, Node as ProtoNode, property_value};
+    use crate::proto::proximadb_v1::{CreateGraphRequest, Edge, Node as ProtoNode, property_value};
+    use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;
+    use proximadb_graph_subset::{
+        graph_query_row_id, legacy_graph_row_to_node, shape_graph_query_row,
+    };
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    use super::*;
 
     async fn seed_graph_service() -> Arc<GraphOperationsService> {
         let service = Arc::new(GraphOperationsService::new());
@@ -140,7 +106,7 @@ mod tests {
         service
             .create_edge(
                 "social",
-                crate::proto::proximadb_v1::Edge {
+                Edge {
                     id: "knows".to_string(),
                     from_node_id: "alice".to_string(),
                     to_node_id: "bob".to_string(),

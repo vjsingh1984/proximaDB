@@ -3,6 +3,8 @@ pub mod evolutionary;
 pub mod execution;
 pub mod fusion;
 pub mod graph_adapter;
+pub mod graph_lowering;
+pub mod graph_runtime;
 pub mod joins;
 pub mod learned_fusion;
 pub mod lowering;
@@ -22,6 +24,10 @@ pub use evolutionary::*;
 pub use execution::*;
 pub use fusion::*;
 pub use graph_adapter::*;
+pub use graph_lowering::{lower_supported_graph_query_component, lower_supported_graph_query_expr};
+pub use graph_runtime::{
+    GraphQueryRuntimeResult, execute_graph_query_expr, execute_graph_query_expr_with_start_nodes,
+};
 pub use joins::*;
 pub use learned_fusion::*;
 pub use lowering::*;
