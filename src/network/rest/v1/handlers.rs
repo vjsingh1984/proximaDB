@@ -180,20 +180,64 @@ pub async fn execute_sql(
         ));
     }
 
-    // Route through unified facade when adapter is available
+    // Prefer unified query port (decoupled from concrete QueryFacadeAdapter type)
+    if let Some(ref qp) = state.unified_query_port {
+        debug!("Using unified query port for SQL query");
+        let query_with_hint = if let Some(ref seeding) = request.seeding {
+            format!("-- SEEDING: {}\n{}", seeding.to_ascii_uppercase(), request.query)
+        } else {
+            request.query.clone()
+        };
+        return match qp
+            .execute_unified_query(
+                query_with_hint,
+                request.parameters.clone(),
+                request.collection.clone(),
+                None,
+            )
+            .await
+        {
+            Ok(port_result) => {
+                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+                let records = port_result
+                    .get("records")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![]));
+                let total = port_result
+                    .get("total_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let json_data = serde_json::json!({
+                    "rows": records,
+                    "execution_time_ms": execution_time_ms,
+                    "rows_returned": total,
+                    "row_count": total,
+                    "request_id": request_id,
+                });
+                info!(
+                    "SQL query {} (port) completed in {}ms",
+                    request_id, execution_time_ms
+                );
+                Ok(JsonResponse(json_data))
+            }
+            Err(e) => {
+                error!("SQL query {} (port) failed: {}", request_id, e);
+                Err(ApiError::Internal(e.to_string()))
+            }
+        };
+    }
+
+    // Fallback: route through concrete query_adapter facade
     if let Some(ref adapter) = state.query_adapter {
-        debug!("Using unified facade routing for SQL query");
+        debug!("Using query_adapter fallback for SQL query");
         return match adapter.sql_query(&request.query).await {
             Ok(result) => {
                 let execution_time_ms = start_time.elapsed().as_millis() as u64;
-
-                // Convert QueryResult to JSON response
                 let rows = match result.data {
                     crate::query::QueryResultData::Rows(rows) => rows,
                     crate::query::QueryResultData::Empty => vec![],
-                    _ => vec![], // Other types return empty for SQL endpoint
+                    _ => vec![],
                 };
-
                 let json_data = serde_json::json!({
                     "rows": rows,
                     "execution_time_ms": execution_time_ms,
@@ -201,16 +245,14 @@ pub async fn execute_sql(
                     "row_count": rows.len(),
                     "request_id": request_id
                 });
-
                 info!(
-                    "SQL query {} (facade) completed in {}ms",
+                    "SQL query {} (adapter) completed in {}ms",
                     request_id, execution_time_ms
                 );
-
                 Ok(JsonResponse(json_data))
             }
             Err(e) => {
-                error!("SQL query {} (facade) failed: {}", request_id, e);
+                error!("SQL query {} (adapter) failed: {}", request_id, e);
                 Err(ApiError::Internal(e.to_string()))
             }
         };

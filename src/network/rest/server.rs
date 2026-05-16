@@ -372,13 +372,20 @@ impl RestServer {
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
-            query_adapter,
+            query_adapter.clone(),
             llm_engine,
         );
         let state = if let Some(p) = ports {
             base_state.with_ports(p.doc_port, p.graph_port, p.obs_port)
         } else {
             base_state
+        };
+        let state = if let Some(ref adapter) = query_adapter {
+            let port = Arc::new(crate::query::UnifiedQueryPortImpl::new(adapter.clone()))
+                as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
+            state.with_unified_query_port(port)
+        } else {
+            state
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -585,13 +592,20 @@ impl RestServer {
             graph_execution_service,
             security_coordinator.clone(),
             data_dir,
-            query_adapter,
+            query_adapter.clone(),
             llm_engine,
         );
         let state = if let Some(p) = ports {
             base_state.with_ports(p.doc_port, p.graph_port, p.obs_port)
         } else {
             base_state
+        };
+        let state = if let Some(ref adapter) = query_adapter {
+            let port = Arc::new(crate::query::UnifiedQueryPortImpl::new(adapter.clone()))
+                as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
+            state.with_unified_query_port(port)
+        } else {
+            state
         };
 
         // Create metrics router if metrics collector is available

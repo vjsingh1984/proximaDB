@@ -140,6 +140,8 @@ pub mod parsers; // Query language parsers (MongoDB, etc.)
 pub mod prepared; // Prepared statements for parse-once-execute-many pattern
 pub mod query_optimizer;
 pub mod query_router; // Query routing (Issue #46, SB-16)
+pub mod unified_query_port_impl; // Root-crate implementation of UnifiedQueryPort
+pub use unified_query_port_impl::UnifiedQueryPortImpl;
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
 pub mod sql_frontend;
