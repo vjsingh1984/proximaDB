@@ -2414,7 +2414,7 @@ impl CompactionEngine {
 
         if needs_compaction {
             let task = CompactionTask {
-                task_id: crate::utils::uuid::Uuid::new_v4().to_string(),
+                task_id: proximadb_kernel::uuid::Uuid::new_v4().to_string(),
                 collection_id: collection_id.to_string(),
                 compaction_type: CompactionType::FileMerging {
                     target_file_size_mb: self.config.target_file_size_mb,

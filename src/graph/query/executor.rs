@@ -155,7 +155,7 @@ impl QueryExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::utils::Uuid;
+    use proximadb_kernel::uuid::Uuid;
     use std::collections::HashMap;
 
     #[tokio::test]

@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 
 use crate::proto::proximadb_v1::SqlValue;
 use crate::proto::proximadb_v1::{

@@ -548,9 +548,9 @@ impl LocalDiskCache {
             // Remove all matching files using internal glob implementation
             if let Some(parent_dir) = pattern.parent()
                 && let Some(pattern_name) = pattern.file_name().and_then(|n| n.to_str())
-                && let Ok(glob_pattern) = crate::utils::glob::GlobPattern::new(pattern_name)
+                && let Ok(glob_pattern) = proximadb_storage_common::glob::GlobPattern::new(pattern_name)
             {
-                let matcher = crate::utils::glob::GlobMatcher::new(&glob_pattern);
+                let matcher = proximadb_storage_common::glob::GlobMatcher::new(&glob_pattern);
                 if let Ok(entries) = std::fs::read_dir(parent_dir) {
                     for entry in entries.flatten() {
                         if let Some(file_name) = entry.file_name().to_str()

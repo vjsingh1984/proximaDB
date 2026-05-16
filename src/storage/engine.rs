@@ -6,7 +6,7 @@ use crate::storage::{
     persistence::disk_manager::DiskManager,
     traits::InternalCollectionProvider,
 };
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 // Import CollectionMetadata from the appropriate location
 use crate::storage::engines::core::formats::proximablocks::header_metadata::CollectionMetadata;
 use dashmap::DashMap;

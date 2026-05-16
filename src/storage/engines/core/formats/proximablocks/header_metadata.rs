@@ -1,6 +1,6 @@
 // Shared Header and Metadata Structures for SST and SWIFT engines
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 use anyhow::Result;
 use std::collections::HashMap;
 

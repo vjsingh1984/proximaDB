@@ -112,7 +112,7 @@ impl NovaSearchOperations {
 
         // Use standard collection data path (same as other engines)
         let data_path =
-            crate::utils::StoragePath::collection_data_path(base_location, collection_id);
+            proximadb_storage_common::storage_path::StoragePath::collection_data_path(base_location, collection_id);
 
         debug!(
             "📂 NOVA search: base_location={}, collection_id={}",

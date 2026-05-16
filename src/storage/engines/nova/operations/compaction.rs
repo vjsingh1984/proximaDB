@@ -43,7 +43,7 @@ impl NovaCompactionOperations {
 
         // Use standard path: {base_location}/{collection_id}/data
         let data_path =
-            crate::utils::StoragePath::collection_data_path(base_location, collection_id);
+            proximadb_storage_common::storage_path::StoragePath::collection_data_path(base_location, collection_id);
 
         debug!(
             "🔄 NOVA compaction: base_location={}, data_path={}",

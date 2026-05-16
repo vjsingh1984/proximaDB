@@ -11,7 +11,7 @@
 //! - Optimistic concurrency control
 //! - Atomic batch operations
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

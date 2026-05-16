@@ -15,7 +15,7 @@
 //! - **Cleanup**: Automatic cleanup of failed/orphaned operations
 //! - **Unified Interface**: Single API for all storage components
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;

@@ -6,7 +6,7 @@ use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
 use crate::storage::persistence::filesystem::FileStorageTier;
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::collections::HashMap;

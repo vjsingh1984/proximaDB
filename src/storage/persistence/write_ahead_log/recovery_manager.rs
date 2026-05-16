@@ -520,7 +520,7 @@ impl RecoveryManager {
                 Ok(data) => {
                     eprintln!("✅ DEBUG: Read {} bytes from WAL file", data.len());
                     eprintln!("🔍 DEBUG: Validating checksum...");
-                    let checksum = crate::utils::checksum::Crc32::checksum(&data);
+                    let checksum = proximadb_kernel::checksum::Crc32::checksum(&data);
                     if checksum != e.checksum_crc32 {
                         eprintln!(
                             "❌ DEBUG: Checksum mismatch! Expected: {}, Got: {}",

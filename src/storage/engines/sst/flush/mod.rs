@@ -43,7 +43,7 @@ use crate::storage::engines::sst::writer::SstableWriter;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::storage::transaction_coordinator::{StagingConfig, TransactionStageType};
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 
 pub use coordinator::FlushCoordinator;
 pub use operations::FlushOperations;

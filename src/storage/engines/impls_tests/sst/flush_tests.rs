@@ -52,7 +52,7 @@ use crate::storage::traits::{
     StorageQueryMetadata,
 };
 use crate::core::search::SearchParams;
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 use tracing::{info, debug};
 
 // Import test helpers
@@ -640,7 +640,7 @@ async fn setup_test_directories(base_path: &std::path::Path) -> anyhow::Result<(
 }
 
 fn unique_collection_id(prefix: &str) -> String {
-    format!("{}_{}", prefix, crate::utils::uuid::Uuid::new_v4())
+    format!("{}_{}", prefix, proximadb_kernel::uuid::Uuid::new_v4())
 }
 
 fn create_test_filesystem_config() -> FilesystemConfig {

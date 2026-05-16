@@ -14,7 +14,7 @@ mod tests {
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
     };
-    use crate::utils::uuid::Uuid;
+    use proximadb_kernel::uuid::Uuid;
     use async_trait::async_trait;
     use chrono::Utc;
     use std::collections::HashMap;

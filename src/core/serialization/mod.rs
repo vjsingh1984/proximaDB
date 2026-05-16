@@ -135,7 +135,7 @@ impl VectorSerializationConfig {
 
         // Convert to bytes using bytemuck (zero-copy)
         let bytes = cast_slice(vector);
-        let checksum = crate::utils::checksum::crc32_fast(bytes);
+        let checksum = proximadb_kernel::checksum::crc32_fast(bytes);
 
         let (format, compressed_data) = if vector.len() >= self.compression_threshold {
             match self.compression_algorithm {
@@ -348,7 +348,7 @@ impl VectorSerializationConfig {
         };
 
         // Verify checksum
-        let actual_checksum = crate::utils::checksum::crc32_fast(&decompressed_bytes);
+        let actual_checksum = proximadb_kernel::checksum::crc32_fast(&decompressed_bytes);
         if actual_checksum != header.checksum {
             return Err(anyhow::anyhow!("Vector data corrupted: checksum mismatch"));
         }

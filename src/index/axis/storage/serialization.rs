@@ -224,7 +224,7 @@ impl IndexSerializer {
         let index_data = index.serialize_internal()?;
 
         // Calculate checksum
-        let checksum = crate::utils::checksum::crc32_fast(&index_data);
+        let checksum = proximadb_kernel::checksum::crc32_fast(&index_data);
 
         // Create header with updated checksum
         let mut final_metadata = metadata;
@@ -285,7 +285,7 @@ impl IndexSerializer {
 
         // Validate checksum
         let index_data = &data[4 + header_len..];
-        let checksum = crate::utils::checksum::crc32_fast(index_data);
+        let checksum = proximadb_kernel::checksum::crc32_fast(index_data);
 
         if checksum != header.metadata.checksum {
             return Err(SerializationError::ChecksumMismatch);
@@ -321,7 +321,7 @@ impl IndexSerializer {
         let index_data = index.serialize_internal()?;
 
         // Calculate checksum
-        let checksum = crate::utils::checksum::crc32_fast(&index_data);
+        let checksum = proximadb_kernel::checksum::crc32_fast(&index_data);
 
         // Create header with updated checksum
         let mut final_metadata = metadata;
@@ -382,7 +382,7 @@ impl IndexSerializer {
 
         // Validate checksum
         let index_data = &data[4 + header_len..];
-        let checksum = crate::utils::checksum::crc32_fast(index_data);
+        let checksum = proximadb_kernel::checksum::crc32_fast(index_data);
 
         if checksum != header.metadata.checksum {
             return Err(SerializationError::ChecksumMismatch);
@@ -414,7 +414,7 @@ impl IndexSerializer {
             num_vectors: 0, // Will be updated by specific index
             dimension: 0,   // Will be updated by specific index
             timestamp,
-            checksum: crate::utils::checksum::crc32_fast(&index_data),
+            checksum: proximadb_kernel::checksum::crc32_fast(&index_data),
             is_delta: false,
             base_checkpoint_id: None,
             custom_metadata: None,

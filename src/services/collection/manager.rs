@@ -73,7 +73,7 @@ use crate::core::config::StorageConfig;
 use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::InternalCollectionProvider;
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
 
@@ -1220,7 +1220,7 @@ impl CollectionService {
         debug!("🔍 Getting UUID for collection: {}", collection_id);
 
         // First check if it's already a UUID
-        if crate::utils::uuid::Uuid::parse(collection_id).is_ok() {
+        if proximadb_kernel::uuid::Uuid::parse(collection_id).is_ok() {
             // Verify it exists
             if let Some(collection) = self.collection(collection_id).await? {
                 return Ok(Some(collection.id));

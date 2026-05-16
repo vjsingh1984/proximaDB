@@ -131,7 +131,7 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 
 use self::clustering::{HilbertKey, PCAModel};
 

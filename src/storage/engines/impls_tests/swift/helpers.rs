@@ -260,7 +260,7 @@ pub async fn create_test_filesystem() -> Arc<FilesystemFactory> {
 /// # Returns
 /// Unique collection identifier
 pub fn unique_collection_id(prefix: &str) -> String {
-    format!("{}_{}", prefix, crate::utils::uuid::Uuid::new_v4())
+    format!("{}_{}", prefix, proximadb_kernel::uuid::Uuid::new_v4())
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@
 //! 3. **Predictive Loading**: Learn correlations to prefetch related data
 //! 4. **Dynamic Adaptation**: Continuously adjust to changing workloads
 
-use crate::utils::hash::XxHash64;
+use proximadb_kernel::hash::XxHash64;
 use anyhow::Result;
 use dashmap::DashMap;
 use std::collections::{HashMap, VecDeque};

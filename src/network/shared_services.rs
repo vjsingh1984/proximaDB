@@ -33,7 +33,7 @@ use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
 use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 
 /// Shared services for thin protocol handlers

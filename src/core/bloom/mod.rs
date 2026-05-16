@@ -556,7 +556,7 @@ pub mod hash {
 
         let (h1, h2) = match algorithm {
             crate::core::bloom::HashAlgorithm::XXHash => {
-                use crate::utils::hash::{FastHash, XxHasher};
+                use proximadb_kernel::hash::{FastHash, XxHasher};
                 // Two independent hashes using XXHash
                 let h1 = XxHasher::hash_bytes(key) as u32;
                 let h2 = XxHasher::hash_bytes(&[key, b"_salt"].concat()) as u32;
@@ -569,7 +569,7 @@ pub mod hash {
             }
             crate::core::bloom::HashAlgorithm::Fnv1a => {
                 // Use FNV-1a from our internal utils module
-                use crate::utils::hash::{FastHash, FnvHasher};
+                use proximadb_kernel::hash::{FastHash, FnvHasher};
 
                 // First hash
                 let h1 = FnvHasher::hash_bytes(key) as u32;

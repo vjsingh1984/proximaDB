@@ -251,7 +251,7 @@ impl AxisLshIndex {
     /// Add a vector to the index - clean API, no VectorRecord
     pub async fn add_vector(&self, id: Option<String>, vector_data: Vec<f32>) -> Result<()> {
         // Generate ID if not provided
-        let vector_id = id.unwrap_or_else(|| crate::utils::uuid::Uuid::new_v4().to_string());
+        let vector_id = id.unwrap_or_else(|| proximadb_kernel::uuid::Uuid::new_v4().to_string());
         if vector_data.len() != self.dimension {
             return Err(anyhow!(
                 "Vector dimension mismatch: expected {}, got {}",

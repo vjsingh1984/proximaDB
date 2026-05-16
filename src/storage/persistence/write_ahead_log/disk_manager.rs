@@ -14,7 +14,7 @@ use crate::storage::encryption::wal_encryption::WalSegmentMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::BatchId;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
-use crate::utils::checksum::Crc32;
+use proximadb_kernel::checksum::Crc32;
 
 /// Centralized manager for all WAL disk operations
 pub struct WriteAheadLogDiskManager {

@@ -692,7 +692,7 @@ impl Default for SystemMetadata {
     fn default() -> Self {
         Self {
             version: "0.1.0".to_string(),
-            node_id: crate::utils::uuid::Uuid::new_v4().to_string(),
+            node_id: proximadb_kernel::uuid::Uuid::new_v4().to_string(),
             cluster_name: "default".to_string(),
             timestamp: Utc::now().timestamp() as u32,
             updated_at: None,

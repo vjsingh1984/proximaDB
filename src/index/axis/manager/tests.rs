@@ -678,7 +678,7 @@ mod data_structure_tests {
     #[test]
     fn test_migration_status() {
         let migration_status = MigrationStatus {
-            migration_id: crate::utils::uuid::Uuid::new_v4(),
+            migration_id: proximadb_kernel::uuid::Uuid::new_v4(),
             from_strategy: create_test_strategy(),
             to_strategy: create_test_strategy(),
             start_time: Utc::now(),

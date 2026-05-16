@@ -1,6 +1,6 @@
 //! Filter bitmap cache with Roaring bitmap support
 
-use crate::utils::bitmap::RoaringBitmap;
+use proximadb_storage_common::bitmap::RoaringBitmap;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;

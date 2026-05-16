@@ -1,6 +1,6 @@
 use proximadb_kernel::error::ProximaDBError;
-use crate::utils::StoragePath;
-use crate::utils::uuid::Uuid;
+use proximadb_storage_common::storage_path::StoragePath;
+use proximadb_kernel::uuid::Uuid;
 use anyhow::Result;
 use arrow_array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};

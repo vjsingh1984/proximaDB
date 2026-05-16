@@ -472,7 +472,7 @@ impl LicenseManager {
         });
 
         // Sign token with internal key (for air-gapped validation)
-        let token = crate::utils::encoding::base64_encode(token_data.to_string().as_bytes());
+        let token = proximadb_kernel::encoding::base64_encode(token_data.to_string().as_bytes());
         Ok(format!("pt_trial_{}", token))
     }
 

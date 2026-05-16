@@ -25,7 +25,7 @@
 /// // Returns something like "aB3xY9z"
 /// ```
 pub fn slug_for(collection_id: &str) -> String {
-    use crate::utils::hash::HashBuilder;
+    use proximadb_kernel::hash::HashBuilder;
     use std::hash::Hasher;
     let mut hasher = HashBuilder::with_seed(0).build_xxhash();
     hasher.write(collection_id.as_bytes());

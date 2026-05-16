@@ -24,7 +24,7 @@ mod tests {
     // Import test utilities from sst_test_config
     use crate::compute::distance_computation::DistanceMetric;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::utils::StoragePath;
+    use proximadb_storage_common::storage_path::StoragePath;
     use std::path::Path;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -41,7 +41,7 @@ mod tests {
 
     /// Create a unique collection ID for tests
     fn unique_collection_id(prefix: &str) -> String {
-        format!("{}_{}", prefix, crate::utils::uuid::Uuid::new_v4())
+        format!("{}_{}", prefix, proximadb_kernel::uuid::Uuid::new_v4())
     }
 
     /// Helper to create test configuration

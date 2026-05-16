@@ -26,7 +26,7 @@
 //! - S3 → Disk promotion uses /tmp (if NVMe not configured) or HDD as staging
 
 use proximadb_kernel::error::{ProximaDBError, StorageError};
-use crate::utils::encoding::base64_encode;
+use proximadb_kernel::encoding::base64_encode;
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

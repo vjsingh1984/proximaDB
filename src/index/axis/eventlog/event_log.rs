@@ -347,7 +347,7 @@ impl EventLogQueue {
         #[cfg(not(test))]
         {
             // Try transaction coordinator first for cloud-safe writes, fall back to direct write
-            let operation_id = crate::utils::uuid::Uuid::new_v4().to_string();
+            let operation_id = proximadb_kernel::uuid::Uuid::new_v4().to_string();
             let tc_result = self
                 .transaction_coordinator
                 .write_to_staging(&operation_id, "queue_state.json", &json)
@@ -516,7 +516,7 @@ impl IndexEventBuilder {
         has_fp32: bool,
     ) -> IndexEvent {
         IndexEvent {
-            event_id: crate::utils::uuid::Uuid::new_v4().to_string(),
+            event_id: proximadb_kernel::uuid::Uuid::new_v4().to_string(),
             collection_id,
             file_paths,
             vector_count,
@@ -536,7 +536,7 @@ impl IndexEventBuilder {
         storage_engine: StorageEngineType,
     ) -> IndexEvent {
         IndexEvent {
-            event_id: crate::utils::uuid::Uuid::new_v4().to_string(),
+            event_id: proximadb_kernel::uuid::Uuid::new_v4().to_string(),
             collection_id,
             file_paths: output_files,
             vector_count,

@@ -55,7 +55,7 @@ use super::flush::Flush;
 use super::utilities::ViperUtilities;
 // Unified search engine removed - using IntegratedSearchOptimizer
 use super::types::CollectionMetadata;
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 use anyhow::Context;
 // VIPER-specific optimization structures removed - now using universal module
 
@@ -3088,7 +3088,7 @@ mod minimal_compaction_tests {
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::{FlushParameters, traits::CompactionParameters};
-    use crate::utils::StoragePath;
+    use proximadb_storage_common::storage_path::StoragePath;
     use anyhow::Result;
     use tempfile::TempDir;
     use tracing::debug;

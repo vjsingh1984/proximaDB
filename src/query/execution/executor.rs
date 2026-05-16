@@ -863,7 +863,7 @@ impl QueryExecutor {
                                 serde_json::Value::Number(serde_json::Number::from(*i))
                             }
                             Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                                serde_json::Value::String(crate::utils::encoding::base64_encode(b))
+                                serde_json::Value::String(proximadb_kernel::encoding::base64_encode(b))
                             }
                             Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                                 serde_json::Value::Null
@@ -1624,7 +1624,7 @@ impl QueryExecutor {
                         serde_json::Value::Number(serde_json::Number::from(*i))
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                        serde_json::Value::String(crate::utils::encoding::base64_encode(b))
+                        serde_json::Value::String(proximadb_kernel::encoding::base64_encode(b))
                     }
                     Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                         serde_json::Value::Null

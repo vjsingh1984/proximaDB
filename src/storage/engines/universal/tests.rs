@@ -13,7 +13,7 @@ mod tests {
     use crate::storage::engines::universal::storage_integration::{
         EngineType, NOVAAdapter, PRISMAdapter,
     };
-    use crate::utils::uuid::Uuid;
+    use proximadb_kernel::uuid::Uuid;
 
     #[tokio::test]
     async fn test_universal_adapter_creation() {
@@ -237,7 +237,7 @@ pub mod test_utils {
     };
     use crate::storage::engines::universal::conversion::StorageFormat;
     use crate::storage::engines::universal::storage_integration::EngineType;
-    use crate::utils::uuid::Uuid;
+    use proximadb_kernel::uuid::Uuid;
     use std::collections::HashMap;
 
     /// Create a test candidate vector with synthetic data

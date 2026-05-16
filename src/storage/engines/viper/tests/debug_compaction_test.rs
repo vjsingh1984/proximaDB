@@ -10,7 +10,7 @@ use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 
 /// Helper to read and debug parquet file contents
 async fn debug_parquet_file(file_path: &str, label: &str) -> Result<()> {

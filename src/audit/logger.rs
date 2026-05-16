@@ -304,13 +304,13 @@ impl AuditLogger {
         // Encrypt IP addresses for privacy
         if let Some(ref ip) = event.ip_address {
             let encrypted_ip = self.encryption_key.encrypt(ip.as_bytes())?;
-            event.ip_address = Some(crate::utils::encoding::base64_encode(&encrypted_ip));
+            event.ip_address = Some(proximadb_kernel::encoding::base64_encode(&encrypted_ip));
         }
 
         // Encrypt user agent strings
         if let Some(ref user_agent) = event.user_agent {
             let encrypted_ua = self.encryption_key.encrypt(user_agent.as_bytes())?;
-            event.user_agent = Some(crate::utils::encoding::base64_encode(&encrypted_ua));
+            event.user_agent = Some(proximadb_kernel::encoding::base64_encode(&encrypted_ua));
         }
 
         // Encrypt sensitive details
@@ -319,7 +319,7 @@ impl AuditLogger {
                 && let serde_json::Value::String(string_value) = value
             {
                 let encrypted_value = self.encryption_key.encrypt(string_value.as_bytes())?;
-                *value = serde_json::Value::String(crate::utils::encoding::base64_encode(
+                *value = serde_json::Value::String(proximadb_kernel::encoding::base64_encode(
                     &encrypted_value,
                 ));
             }

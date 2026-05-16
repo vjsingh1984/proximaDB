@@ -738,7 +738,7 @@ impl MetadataStoreInterface for MetadataStore {
     async fn begin_transaction(&self) -> Result<Option<String>> {
         if let Some(_atomic_store) = &self.transaction_coordinator {
             // Generate a transaction ID
-            use crate::utils::uuid::Uuid;
+            use proximadb_kernel::uuid::Uuid;
             let tx_id = Uuid::new_v4().to_string();
             // Transaction ID generated; atomic store tracks in-flight operations
             tracing::debug!("Generated transaction ID: {}", tx_id);
@@ -775,7 +775,7 @@ impl MetadataStoreInterface for MetadataStore {
 
     async fn backup(&self, location: &str) -> Result<String> {
         // Generate backup ID
-        use crate::utils::uuid::Uuid;
+        use proximadb_kernel::uuid::Uuid;
         let backup_id = format!(
             "backup-{}-{}",
             Utc::now().timestamp(),

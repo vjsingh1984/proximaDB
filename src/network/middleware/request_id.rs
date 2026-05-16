@@ -36,7 +36,7 @@ use axum::{
 use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 
 /// The header name for request ID
 pub const X_REQUEST_ID: &str = "x-request-id";

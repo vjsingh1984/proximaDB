@@ -25,7 +25,7 @@
 //! All QueueManager references have been replaced with EventLogService integration.
 //! The can_compact() method provides the coordination previously handled by queue status.
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;

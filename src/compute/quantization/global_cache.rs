@@ -13,7 +13,7 @@ use tracing::{debug, info};
 
 use super::quantization_engine::{Codebook, CodebookStore};
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
-use crate::utils::hash::XxHash64;
+use proximadb_kernel::hash::XxHash64;
 
 /// Composite key for global quantization cache
 /// Format: "{collection_id}#{quantization_type}#{level_params}"

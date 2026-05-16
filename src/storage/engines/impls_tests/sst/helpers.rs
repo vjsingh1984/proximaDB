@@ -533,7 +533,7 @@ pub fn create_test_collection_context() -> CollectionContext {
 /// # Returns
 /// Unique collection identifier
 pub fn unique_collection_id(prefix: &str) -> String {
-    format!("{}_{}", prefix, crate::utils::uuid::Uuid::new_v4())
+    format!("{}_{}", prefix, proximadb_kernel::uuid::Uuid::new_v4())
 }
 
 /// Create a test collection with default configuration

@@ -18,7 +18,7 @@ use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 // CompactionStrategy is not needed - it's part of CompactionParameters
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::FIELD_ID;
 

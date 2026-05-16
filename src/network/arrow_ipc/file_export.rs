@@ -80,7 +80,7 @@ use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
-use crate::utils::StoragePath;
+use proximadb_storage_common::storage_path::StoragePath;
 
 /// Configuration for the SST-to-Arrow conversion cache
 #[derive(Debug, Clone)]

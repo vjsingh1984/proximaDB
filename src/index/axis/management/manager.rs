@@ -301,7 +301,7 @@ pub struct AxisManager {
 #[derive(Debug, Clone)]
 pub struct MigrationStatus {
     /// Unique identifier for tracking
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
 
     /// Source index strategy
     pub from_strategy: IndexSelectionStrategy,
@@ -1092,7 +1092,7 @@ impl AxisManager {
         from: IndexSelectionStrategy,
         to: IndexSelectionStrategy,
     ) -> Result<()> {
-        let migration_id = crate::utils::uuid::Uuid::new_v4();
+        let migration_id = proximadb_kernel::uuid::Uuid::new_v4();
 
         // Record migration start
         let mut migrations = self.active_migrations.write().await;

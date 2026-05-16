@@ -83,7 +83,7 @@ impl std::fmt::Debug for IndexMigrationEngine {
 #[derive(Debug, Clone)]
 pub struct MigrationPlan {
     /// Unique identifier for this migration.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Collection being migrated.
     pub collection_id: String,
     /// Source index selection strategy.
@@ -267,7 +267,7 @@ pub struct TrafficDistribution {
 #[derive(Debug, Clone)]
 pub struct MigrationResult {
     /// Unique identifier of the completed migration.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Whether the migration completed successfully.
     pub success: bool,
     /// The new active index strategy after migration.
@@ -331,7 +331,7 @@ pub struct MigrationContext {
     /// Collection being migrated.
     pub collection_id: String,
     /// Unique migration identifier.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Source index strategy.
     pub from_strategy: IndexSelectionStrategy,
     /// Target index strategy.
@@ -392,7 +392,7 @@ pub struct MigrationProgressTracker {
 #[derive(Debug, Clone)]
 pub struct MigrationProgress {
     /// Unique migration identifier.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Index of the currently executing step (0-based).
     pub current_step: usize,
     /// Total number of steps in the migration plan.
@@ -436,7 +436,7 @@ pub enum MigrationPhase {
 #[derive(Debug, Clone)]
 pub struct MigrationHistory {
     /// Unique migration identifier.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Collection that was migrated.
     pub collection_id: String,
     /// Source index strategy before migration.
@@ -579,7 +579,7 @@ impl IndexMigrationEngine {
         from: IndexSelectionStrategy,
         to: IndexSelectionStrategy,
     ) -> Result<MigrationPlan> {
-        let migration_id = crate::utils::uuid::Uuid::new_v4();
+        let migration_id = proximadb_kernel::uuid::Uuid::new_v4();
         let mut steps = Vec::new();
         let rollback_points = Vec::new();
 

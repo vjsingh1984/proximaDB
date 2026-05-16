@@ -3,7 +3,7 @@
 //! This module implements the progressive refinement pipeline that enables
 //! Binary → INT8 → PQ → FP32 distance computation for optimal performance and accuracy.
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

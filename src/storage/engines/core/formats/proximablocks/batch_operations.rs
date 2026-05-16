@@ -9,7 +9,7 @@ use super::block_structures::ProximaDataBlock;
 use super::index_structures::RowBasedIdIndex;
 use crate::core::VectorRecord;
 use proximadb_runtime_common::pool::VectorMemoryPool;
-use crate::utils::Uuid;
+use proximadb_kernel::uuid::Uuid;
 // Quantization now handled by unified compute module
 
 /// Row-based batch operations handler

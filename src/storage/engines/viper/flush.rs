@@ -194,7 +194,7 @@ impl Flush {
             collection_id
         );
 
-        let operation_id = crate::utils::uuid::Uuid::new_v4().to_string();
+        let operation_id = proximadb_kernel::uuid::Uuid::new_v4().to_string();
 
         if vector_records.is_empty() {
             info!(

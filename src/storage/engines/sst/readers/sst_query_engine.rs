@@ -4063,7 +4063,7 @@ impl UnifiedSstableReader {
             // For now, we'll use a simple in-memory cache (should be improved)
 
             // Store a marker in the bitmap cache that bloom filter exists
-            let mut bitmap = crate::utils::bitmap::RoaringBitmap::new();
+            let mut bitmap = proximadb_storage_common::bitmap::RoaringBitmap::new();
             // We'll use a hash of the file path as the marker
             let file_hash = file_path
                 .as_bytes()
