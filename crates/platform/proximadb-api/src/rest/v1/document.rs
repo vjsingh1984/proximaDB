@@ -589,9 +589,9 @@ async fn create_index(
     Json(request): Json<IndexDefinitionRequest>,
 ) -> RestResult<JsonResponse<serde_json::Value>> {
     info!("Creating index on {}: {:?}", collection, request.path);
-    Err(RestError::NotImplemented(
-        "Creating indexes on existing collections is not yet supported. \
-         Specify indexes when creating the collection."
+    Err(RestError::InvalidArgument(
+        "Creating indexes on existing collections is not yet supported; \
+         specify indexes when creating the collection."
             .to_string(),
     ))
 }
