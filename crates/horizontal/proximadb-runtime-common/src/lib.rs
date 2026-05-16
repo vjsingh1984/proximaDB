@@ -5,10 +5,12 @@
 //! necessary, but it must not depend upward into domain, platform, integration,
 //! root, application, or binding crates.
 
+pub mod btree;
 pub mod cache;
 pub mod pool;
 pub mod skiplist;
 
+pub use btree::{BPlusTree, BTreeError, BTreeIterator, BTreeStats, DiskNodeInfo};
 pub use cache::{CacheEntry, CacheError, CacheStats, LruCache, ThreadSafeLruCache};
 pub use pool::{Pool, PoolConfig, PoolStats, PooledItem, VectorMemoryPool, VectorPoolStats};
 pub use skiplist::{SkipList, SkipListIterator};
