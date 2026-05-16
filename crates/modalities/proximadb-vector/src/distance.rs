@@ -16,6 +16,7 @@
 //! - NEON on ARM
 //! - Scalar fallback for other platforms
 
+pub mod avx512;
 pub mod conversion;
 pub mod engine;
 pub mod impls;
