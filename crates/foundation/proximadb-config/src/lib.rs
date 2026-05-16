@@ -3,6 +3,14 @@
 //! Keep this crate limited to serializable configuration shapes. Runtime conversion and service
 //! bootstrap stay in platform/root layers until those boundaries are independently extracted.
 
+pub mod llm_config;
+
+pub use llm_config::{
+    AWSBedrockConfig, AzureOpenAIConfig, FinishReason, GoogleVertexConfig, HuggingFaceConfig,
+    LLMConfig, LLMError, LLMProvider, LLMRequest, LLMRequestContext, LLMResponse, OllamaConfig,
+    ProviderHealthStatus, RequestPriority, TokenUsage, VLLMConfig,
+};
+
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
