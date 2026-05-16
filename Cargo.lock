@@ -5961,6 +5961,8 @@ dependencies = [
 name = "proximadb-filter-expression"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
+ "regex",
  "serde",
  "serde_json",
 ]
