@@ -89,6 +89,7 @@ proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types"
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+dashmap = "6.1.0"
 parking_lot = "0.12"
 prost = "0.14"
 prost-types = "0.14"
