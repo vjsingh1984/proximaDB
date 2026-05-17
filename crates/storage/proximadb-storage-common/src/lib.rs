@@ -16,11 +16,17 @@ pub mod format_conversion;
 pub mod format_traits;
 pub mod glob;
 pub mod hilbert_curve;
+pub mod id_index;
 pub mod metadata_collector;
+pub mod native_metadata;
+pub mod observability_rollups;
 pub mod query_metrics;
 pub mod storage_error;
 pub mod storage_path;
+pub mod transaction_isolation;
+pub mod two_phase_commit;
 pub mod wal_entry;
+pub mod writer_statistics;
 
 pub use bitmap::{BitmapError, BitmapIteratorAll, RoaringBitmap};
 pub use cache_config::{
@@ -65,12 +71,29 @@ pub use format_traits::{
 };
 pub use glob::{GlobError, GlobMatcher, GlobPattern, glob_match};
 pub use hilbert_curve::{HilbertCurve, HilbertStats, HilbertUtils};
+pub use id_index::{
+    BloomFilter, ColumnarIdIndex, IndexStats, PageIdIndex, ParquetLocation, RowGroupIdIndex,
+};
 pub use metadata_collector::{MetadataCollectionConfig, MetadataCollector, NoOpCollector};
+pub use native_metadata::{
+    FieldStatistics, MetadataFieldType, NativeMetadataHandler, NativeMetadataQueryOptimizer,
+    NativeMetadataStats, NativePredicate, OptimizedFilter, PredicateOperator,
+};
+pub use observability_rollups::{
+    AggregationFunction, RollupConfig, RollupInterval, RollupManager, RollupView,
+};
 pub use query_metrics::{QueryStatistics, StatisticsCollector};
 pub use storage_error::{ErrorContext, StorageError, StorageErrorKind};
 pub use storage_path::StoragePath;
+pub use transaction_isolation::{IsolationLevel, IsolationManager, ReadSnapshot, WriteSet};
+pub use two_phase_commit::{
+    CommitResult, ParticipantState, ParticipantType, PrepareResult, TransactionState,
+    TwoPhaseCommitConfig, TwoPhaseCommitProtocol, TwoPhaseCommitStats, TwoPhaseParticipant,
+    TwoPhaseTransaction,
+};
 pub use wal_entry::{
     CanonicalOperation, CanonicalWalEntry, CdcLogicalView, CdcOperation, CdcRecordEvent, EdgeRef,
     ProjectionDirective, ProjectionFreshness, ProjectionRebuilder, RecoveryResult,
     SnapshotManifest, latest_checkpoint, recover_from_canonical_wal,
 };
+pub use writer_statistics::{AggregatedBatchStats, BatchWriteStats, StreamingParquetWriterStats};

@@ -6318,6 +6318,7 @@ dependencies = [
  "chrono",
  "criterion",
  "futures",
+ "parking_lot",
  "parquet",
  "proximadb-compression-types",
  "proximadb-kernel",
@@ -6326,6 +6327,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
  "toml 0.8.23",
  "tracing",
 ]
