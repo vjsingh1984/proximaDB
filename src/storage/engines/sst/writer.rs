@@ -966,7 +966,13 @@ impl SstableWriter {
         // This enables 10-50x speedup by filtering 95% of candidates with Hamming distance
         use crate::storage::engines::core::formats::proximablocks::block_structures::QuantizedSection;
 
-        let vectors: Vec<Vec<f32>> = current_block.iter().map(|r| r.vector.clone()).collect();
+        // Filter out tombstone/upsert records that carry an empty vector; they have no
+        // quantizable data and would cause index-out-of-bounds when building binary codes.
+        let vectors: Vec<Vec<f32>> = current_block
+            .iter()
+            .filter(|r| !r.vector.is_empty())
+            .map(|r| r.vector.clone())
+            .collect();
         if !vectors.is_empty() {
             let dimension = vectors[0].len();
 
