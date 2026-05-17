@@ -817,9 +817,8 @@ impl Compaction {
             merged_vector_records.len()
         );
 
-        // OPTIMIZED: Apply MVCC resolution directly on VectorRecords (no conversions)
         let resolver = MvccResolver::new();
-        let resolved_records = resolver.resolve_batch(merged_vector_records);
+        let resolved_records = resolver.resolve_vector_batch(merged_vector_records);
         info!(
             "🔍 UNIFIED COMPACTION: MVCC resolution: {} records after resolution",
             resolved_records.len()

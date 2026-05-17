@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
 use crate::core::search::FilterExpression;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Qualifying row indices with metadata about the filtering process
 #[derive(Debug, Clone)]
@@ -176,7 +176,7 @@ pub trait IndexBasedDataReader: Send + Sync {
         source_id: &str,
         read_strategy: &ReadStrategy,
         metadata_source: &(dyn MetadataSource + Send + Sync),
-    ) -> Result<Vec<VectorRecord>>;
+    ) -> Result<Vec<ProximaRecord>>;
 
     /// Estimate the cost/benefit of selective reading vs full reading
     fn estimate_selective_read_benefit(&self, indices: &[usize], total_rows: usize) -> f32 {
@@ -213,7 +213,7 @@ where
         &self,
         filter_expr: &FilterExpression,
         sources: &[&(dyn MetadataSource + Send + Sync)],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         info!(
             "Index-based filtering: {} sources to evaluate",
             sources.len()
@@ -269,7 +269,7 @@ where
         );
 
         // Step 3: Execute optimized data reading based on indices
-        let mut all_results = Vec::new();
+        let mut all_results: Vec<ProximaRecord> = Vec::new();
 
         for (source, read_strategy) in read_plans {
             let source_results = self

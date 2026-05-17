@@ -11,7 +11,7 @@ use tracing::{debug, info};
 use crate::core::search::index_based_filter::{
     ColumnData, ColumnMetadata, IndexBasedDataReader, MetadataSource, ReadStrategy,
 };
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER-specific metadata source representing a parquet file
@@ -88,7 +88,7 @@ impl VIPERParquetMetadataSource {
 
         // Read all records to build metadata cache. Batch reading optimization
         // (reading only metadata columns) deferred until Parquet column projection is wired.
-        let all_records: Vec<crate::proto::proximadb_v1::VectorRecord> = Vec::new(); // Placeholder - actual implementation needed
+        let all_records: Vec<ProximaRecord> = Vec::new(); // Placeholder - actual implementation needed
         let total_rows = all_records.len();
 
         // Build column metadata cache
@@ -97,7 +97,7 @@ impl VIPERParquetMetadataSource {
 
         for (row_idx, record) in all_records.iter().enumerate() {
             let metadata_map =
-                crate::core::proto_metadata_helper::proto_metadata_to_json(&record.metadata);
+                crate::core::search::sql_value_filter::proxima_tree_to_json_map(&record.props);
 
             for (field, value) in metadata_map {
                 // Update column info
@@ -222,7 +222,7 @@ impl VIPERIndexBasedReader {
         &self,
         file_path: &str,
         indices: &[usize],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         // For reading records, we don't need dimension - Parquet has the schema
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = self.filesystem_factory.get_filesystem("file://")?;
@@ -244,9 +244,9 @@ impl VIPERIndexBasedReader {
 
         // Selective reading: reads all then filters by index.
         // Parquet-level row selection deferred until arrow predicate pushdown is wired.
-        let all_records: Vec<crate::proto::proximadb_v1::VectorRecord> = Vec::new(); // Placeholder
+        let all_records: Vec<ProximaRecord> = Vec::new(); // Placeholder
 
-        let selective_records: Vec<VectorRecord> = indices
+        let selective_records: Vec<ProximaRecord> = indices
             .iter()
             .filter_map(|&idx| all_records.get(idx).cloned())
             .collect();
@@ -261,7 +261,7 @@ impl VIPERIndexBasedReader {
     }
 
     /// Read full parquet file
-    async fn read_full_file(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    async fn read_full_file(&self, file_path: &str) -> Result<Vec<ProximaRecord>> {
         // For reading records, we don't need dimension - Parquet has the schema
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = self.filesystem_factory.get_filesystem("file://")?;
@@ -319,7 +319,7 @@ impl IndexBasedDataReader for VIPERIndexBasedReader {
         source_id: &str,
         read_strategy: &ReadStrategy,
         _metadata_source: &(dyn MetadataSource + Send + Sync),
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         match read_strategy {
             ReadStrategy::SkipBlock => {
                 debug!("VIPER: Skipping file {} - no qualifying rows", source_id);

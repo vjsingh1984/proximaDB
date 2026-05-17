@@ -11,7 +11,7 @@ use tracing::{debug, info};
 use crate::core::search::index_based_filter::{
     ColumnData, ColumnMetadata, IndexBasedDataReader, MetadataSource, ReadStrategy,
 };
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 /// SST-specific metadata source representing an SST file
@@ -167,7 +167,7 @@ impl SSTIndexBasedReader {
         &self,
         _file_path: &str,
         indices: &[usize],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         // SST Strategy: Read entire blocks, filter using indices
         // This would typically read blocks and filter by indices
         // For now, return empty records with proper structure
@@ -183,7 +183,7 @@ impl SSTIndexBasedReader {
 
     /// Read full SST file - placeholder implementation
     /// Note: SST is optimized for key-based lookups, not full file reads
-    async fn read_full_file(&self, _file_path: &str) -> Result<Vec<VectorRecord>> {
+    async fn read_full_file(&self, _file_path: &str) -> Result<Vec<ProximaRecord>> {
         // SST doesn't support efficient full file reads by design
         // This would require key-based iteration or block-by-block reading
         // For now, return empty - this indicates the optimization should not be used
@@ -230,7 +230,7 @@ impl IndexBasedDataReader for SSTIndexBasedReader {
         source_id: &str,
         read_strategy: &ReadStrategy,
         _metadata_source: &(dyn MetadataSource + Send + Sync),
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         match read_strategy {
             ReadStrategy::SkipBlock => {
                 debug!("SST: Skipping file {} - no qualifying rows", source_id);

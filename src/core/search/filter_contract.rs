@@ -327,68 +327,13 @@ impl FilterContract for NormalizedFilter {
     }
 
     fn evaluate_row(&self, metadata: &serde_json::Value) -> Result<bool> {
-        use crate::core::search::sql_value_filter;
-
-        // Convert serde_json::Value to HashMap<String, SqlValue>
-        let metadata_map = if let Some(obj) = metadata.as_object() {
-            obj.iter()
-                .map(|(k, v)| {
-                    let sql_value = match v {
-                        serde_json::Value::Null => crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(0)),
-                        },
-                        serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
-                                *b,
-                            )),
-                        },
-                        serde_json::Value::Number(n) => {
-                            if let Some(i) = n.as_i64() {
-                                crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
-                                    ),
-                                }
-                            } else if let Some(f) = n.as_f64() {
-                                crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                            f,
-                                        ),
-                                    ),
-                                }
-                            } else {
-                                crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::NullValue(0),
-                                    ),
-                                }
-                            }
-                        }
-                        serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                s.clone(),
-                            )),
-                        },
-                        _ => {
-                            // For complex types, convert to JSON string
-                            crate::proto::proximadb_v1::SqlValue {
-                                value: Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                        v.to_string(),
-                                    ),
-                                ),
-                            }
-                        }
-                    };
-                    (k.clone(), sql_value)
-                })
-                .collect()
-        } else {
-            return Ok(false); // Non-object metadata doesn't match filters
-        };
-
-        Ok(sql_value_filter::evaluate_filter(
+        let metadata_map: std::collections::HashMap<String, serde_json::Value> =
+            if let Some(obj) = metadata.as_object() {
+                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            } else {
+                return Ok(false);
+            };
+        Ok(crate::core::search::json_comparison::evaluate_filter(
             &self.expression,
             &metadata_map,
         ))

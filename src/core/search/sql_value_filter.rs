@@ -35,6 +35,8 @@ use std::collections::HashMap;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::proto::proximadb_v1::SqlValue;
 use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaTree, ProximaTreeNode};
 
 /// Evaluate a filter expression against SqlValue metadata (type-safe, no conversion)
 ///
@@ -228,6 +230,96 @@ fn compare_int64_gte(n: i64, json_val: &serde_json::Value) -> bool {
         }
     }
     false
+}
+
+/// Convert a `ProximaValue` leaf to a `serde_json::Value` for filter evaluation.
+pub fn proxima_value_to_json(pv: &ProximaValue) -> serde_json::Value {
+    match pv {
+        ProximaValue::Null => serde_json::Value::Null,
+        ProximaValue::Boolean(b) => serde_json::Value::Bool(*b),
+        ProximaValue::Int8(n) => serde_json::Value::Number((*n as i64).into()),
+        ProximaValue::Int16(n) => serde_json::Value::Number((*n as i64).into()),
+        ProximaValue::Int32(n) => serde_json::Value::Number((*n as i64).into()),
+        ProximaValue::Int64(n) => serde_json::Value::Number((*n).into()),
+        ProximaValue::UInt8(n) => serde_json::Value::Number((*n as u64).into()),
+        ProximaValue::UInt16(n) => serde_json::Value::Number((*n as u64).into()),
+        ProximaValue::UInt32(n) => serde_json::Value::Number((*n as u64).into()),
+        ProximaValue::UInt64(n) => serde_json::Value::Number((*n).into()),
+        ProximaValue::Float16(f) | ProximaValue::Float32(f) => {
+            serde_json::Number::from_f64(*f as f64)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        ProximaValue::Float64(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        ProximaValue::String(s) | ProximaValue::Symbol(s) | ProximaValue::Decimal(s) => {
+            serde_json::Value::String(s.clone())
+        }
+        ProximaValue::Json(v) => v.clone(),
+        ProximaValue::Jsonb(v) => v.clone(),
+        ProximaValue::Array(items) => {
+            serde_json::Value::Array(items.iter().map(proxima_value_to_json).collect())
+        }
+        ProximaValue::Map(map) | ProximaValue::Struct(map) => {
+            let obj: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), proxima_value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        // Temporal types — represent as milliseconds integer
+        ProximaValue::Timestamp(ns, _) | ProximaValue::TimestampTz(ns, _) => {
+            serde_json::Value::Number((*ns).into())
+        }
+        ProximaValue::Date(d) => serde_json::Value::Number((*d as i64).into()),
+        ProximaValue::Time(t, _) => serde_json::Value::Number((*t).into()),
+        // UUID/ULID — string representation
+        ProximaValue::Uuid(b) | ProximaValue::ULID(b) => {
+            serde_json::Value::String(format!("{b:?}"))
+        }
+        // Binary — base64-ish string
+        ProximaValue::Binary(b) | ProximaValue::BinaryVector(b) => {
+            serde_json::Value::String(format!("[binary:{}]", b.len()))
+        }
+        ProximaValue::DenseVector(v) => {
+            serde_json::Value::Array(v.iter().map(|f| {
+                serde_json::Number::from_f64(*f as f64)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or(serde_json::Value::Null)
+            }).collect())
+        }
+        ProximaValue::SparseVector { .. } => serde_json::Value::String("[sparse_vector]".to_string()),
+    }
+}
+
+/// Flatten a `ProximaTree` to a `HashMap<String, serde_json::Value>` for filter evaluation.
+///
+/// Nested `Object` nodes are serialised as JSON objects. This matches the shape
+/// expected by `json_comparison::evaluate_filter` and `MetadataQueryEngine::evaluate`.
+pub fn proxima_tree_to_json_map(props: &ProximaTree) -> HashMap<String, serde_json::Value> {
+    props
+        .iter()
+        .map(|(key, node)| {
+            let value = match node {
+                ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
+                ProximaTreeNode::Object(subtree) => {
+                    let obj: serde_json::Map<String, serde_json::Value> = subtree
+                        .iter()
+                        .map(|(k, n)| {
+                            let v = match n {
+                                ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
+                                ProximaTreeNode::Object(_) => serde_json::Value::String("[nested]".to_string()),
+                            };
+                            (k.clone(), v)
+                        })
+                        .collect();
+                    serde_json::Value::Object(obj)
+                }
+            };
+            (key.clone(), value)
+        })
+        .collect()
 }
 
 #[cfg(test)]
