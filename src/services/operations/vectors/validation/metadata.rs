@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use proximadb_data_model::ProximaValue;
+
 pub const PROXIMADB_PSEUDO_QUERY_FIELD: &str = "proximadb.pseudo_query";
 pub const PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD: &str = "proximadb.pseudo_query_source_fields";
 
@@ -13,22 +15,30 @@ pub trait PseudoQueryGenerator: Send + Sync {
     /// Build additional metadata entries from source metadata.
     fn generate_metadata(
         &self,
-        metadata: &HashMap<String, crate::proto::proximadb_v1::SqlValue>,
-    ) -> HashMap<String, crate::proto::proximadb_v1::SqlValue>;
+        metadata: &HashMap<String, ProximaValue>,
+    ) -> HashMap<String, ProximaValue>;
 }
 
 #[derive(Debug, Default)]
 pub struct DefaultPseudoQueryGenerator;
 
 impl DefaultPseudoQueryGenerator {
-    fn extract_text(value: &crate::proto::proximadb_v1::SqlValue) -> Option<String> {
-        use crate::proto::proximadb_v1::sql_value::Value as SqlValueVariant;
-
-        match value.value.as_ref()? {
-            SqlValueVariant::StringValue(v) => Some(v.clone()),
-            SqlValueVariant::Int64Value(v) => Some(v.to_string()),
-            SqlValueVariant::NumberValue(v) => Some(v.to_string()),
-            SqlValueVariant::BoolValue(v) => Some(v.to_string()),
+    fn extract_text(value: &ProximaValue) -> Option<String> {
+        match value {
+            ProximaValue::String(v) | ProximaValue::Symbol(v) | ProximaValue::Decimal(v) => {
+                Some(v.clone())
+            }
+            ProximaValue::Int8(v) => Some(v.to_string()),
+            ProximaValue::Int16(v) => Some(v.to_string()),
+            ProximaValue::Int32(v) => Some(v.to_string()),
+            ProximaValue::Int64(v) => Some(v.to_string()),
+            ProximaValue::UInt8(v) => Some(v.to_string()),
+            ProximaValue::UInt16(v) => Some(v.to_string()),
+            ProximaValue::UInt32(v) => Some(v.to_string()),
+            ProximaValue::UInt64(v) => Some(v.to_string()),
+            ProximaValue::Float32(v) => Some(v.to_string()),
+            ProximaValue::Float64(v) => Some(v.to_string()),
+            ProximaValue::Boolean(v) => Some(v.to_string()),
             _ => None,
         }
     }
@@ -46,10 +56,8 @@ impl DefaultPseudoQueryGenerator {
 impl PseudoQueryGenerator for DefaultPseudoQueryGenerator {
     fn generate_metadata(
         &self,
-        metadata: &HashMap<String, crate::proto::proximadb_v1::SqlValue>,
-    ) -> HashMap<String, crate::proto::proximadb_v1::SqlValue> {
-        use crate::proto::proximadb_v1::sql_value::Value as SqlValueVariant;
-
+        metadata: &HashMap<String, ProximaValue>,
+    ) -> HashMap<String, ProximaValue> {
         let candidate_fields = [
             "title",
             "content",
@@ -85,15 +93,11 @@ impl PseudoQueryGenerator for DefaultPseudoQueryGenerator {
         let mut generated = HashMap::new();
         generated.insert(
             PROXIMADB_PSEUDO_QUERY_FIELD.to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(SqlValueVariant::StringValue(pseudo_query)),
-            },
+            ProximaValue::String(pseudo_query),
         );
         generated.insert(
             PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD.to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(SqlValueVariant::StringValue(source_fields.join(","))),
-            },
+            ProximaValue::String(source_fields.join(",")),
         );
 
         generated
@@ -106,9 +110,13 @@ pub fn apply_pseudo_query_metadata(
     pseudo_query_generator: &dyn PseudoQueryGenerator,
 ) {
     for vector in vectors.iter_mut() {
-        let generated = pseudo_query_generator.generate_metadata(&vector.metadata);
+        let metadata = crate::core::search::results::sql_map_to_proxima(vector.metadata.clone());
+        let generated = pseudo_query_generator.generate_metadata(&metadata);
         for (key, value) in generated {
-            vector.metadata.entry(key).or_insert(value);
+            vector
+                .metadata
+                .entry(key)
+                .or_insert_with(|| crate::core::search::results::proxima_value_to_sql_value(value));
         }
     }
 }
@@ -123,19 +131,11 @@ mod tests {
         let mut metadata = HashMap::new();
         metadata.insert(
             "title".to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "Test Document Title".to_string(),
-                )),
-            },
+            ProximaValue::String("Test Document Title".to_string()),
         );
         metadata.insert(
             "content".to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "This is test content with multiple words".to_string(),
-                )),
-            },
+            ProximaValue::String("This is test content with multiple words".to_string()),
         );
 
         let result = generator.generate_metadata(&metadata);
@@ -144,12 +144,12 @@ mod tests {
         assert!(result.contains_key(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD));
 
         let pseudo_query = result.get(PROXIMADB_PSEUDO_QUERY_FIELD).unwrap();
-        if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) =
-            &pseudo_query.value
-        {
+        if let ProximaValue::String(s) = pseudo_query {
             assert!(s.contains("test"));
             assert!(s.contains("document"));
             assert!(s.contains("title"));
+        } else {
+            panic!("pseudo query should be a string");
         }
     }
 }
