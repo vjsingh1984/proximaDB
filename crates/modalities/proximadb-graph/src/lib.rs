@@ -28,6 +28,7 @@ pub mod cypher_functions;
 pub mod parser;
 pub mod projection;
 pub mod query;
+pub mod query_ast;
 pub mod record;
 pub mod storage;
 pub mod traversal;
@@ -41,6 +42,13 @@ pub use traversal::{
 
 pub use cypher_functions::{CypherFunction, CypherFunctionRegistry};
 pub use parser::{FilterExpression, GraphQuery, ParseResult, Pattern, Projection, parse_query};
+pub use query_ast::{
+    CompiledPattern, CreateClause, CreateEdgeSpec, CreateNodeSpec, CypherClause, CypherParser,
+    CypherStatement, DeleteClause, EdgeDirection as QueryEdgeDirection, FoundPath, GraphNode,
+    MatchClause, MatchResult, MergeClause, PatternEdge, PatternNode, PropertyConstraint,
+    PropertyProjection, ReadingClause, RemoveClause, RemoveItem, ReturnClause, SetClause, SetItem,
+    UpdatingClause, WhereClause, WithClause,
+};
 pub use storage::{GraphStorage, MemoryGraphStorage};
 
 /// Graph direction
