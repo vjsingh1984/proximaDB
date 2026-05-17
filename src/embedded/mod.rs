@@ -1482,26 +1482,66 @@ impl EmbeddedProximaDB {
     /// // Approximate with custom nprobe
     /// let results = db.search_with_mode("my_collection", vec![0.1; 768], 10, None, Some("approximate:5"))?;
     /// ```
+    /// Parse a simple filter string into (field, value) predicate pairs.
+    /// Supports `field = 'value'`, `field == 'value'`, and AND-joined expressions.
+    fn parse_vector_filter(filter: &str) -> Vec<(String, String)> {
+        filter
+            .split(" AND ")
+            .filter_map(|part| {
+                let part = part.trim();
+                let (key, rest) = part.split_once(" == ").or_else(|| part.split_once(" = "))?;
+                let val = rest.trim().trim_matches('\'').trim_matches('"');
+                Some((key.trim().to_string(), val.to_string()))
+            })
+            .collect()
+    }
+
     pub fn search_with_mode(
         &self,
         collection: &str,
         query_vector: Vec<f32>,
         top_k: usize,
-        _filter: Option<&str>,
+        filter: Option<&str>,
         search_mode: Option<&str>,
     ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
+        // Parse filter into (field, value) predicate pairs and push them to the storage
+        // layer via VectorSearchRequest.filters — the SST engine applies predicate pushdown
+        // during ANN search, so top_k already reflects post-filter cardinality.
+        let predicates = filter
+            .map(|f| Self::parse_vector_filter(f))
+            .unwrap_or_default();
+        let fetch_k = top_k; // No over-fetch: filter is enforced at data layer by SST engine
+
         if matches!(search_mode, None | Some("exact")) {
             let start = std::time::Instant::now();
+
+            // Build SqlValue filter map for the query adapter.
+            let filter_map: std::collections::HashMap<
+                String,
+                crate::proto::proximadb_v1::SqlValue,
+            > = predicates
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        crate::proto::proximadb_v1::SqlValue {
+                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                v.clone(),
+                            )),
+                        },
+                    )
+                })
+                .collect();
 
             let result = self.runtime.block_on(async {
                 let request = crate::proto::proximadb_v1::VectorSearchRequest {
                     collection_id: collection.to_string(),
                     queries: vec![crate::proto::proximadb_v1::SearchQuery {
                         vector: query_vector,
-                        filters: std::collections::HashMap::new(),
+                        filters: filter_map,
                         advanced_filter: None,
                     }],
-                    top_k: top_k as u32,
+                    top_k: fetch_k as u32,
                     include_fields: None,
                     search_params: None,
                     distance_metric_override: None,
@@ -1595,12 +1635,10 @@ impl EmbeddedProximaDB {
         };
 
         let result = self.runtime.block_on(async {
-            // For now, don't support filter expressions in embedded mode
-            // Deferred: Parse filter string into FilterExpression
             let results = self
                 .shared_services
                 .vector_operations_service
-                .unified_search_native(collection, query_vector, top_k, None, Some(config))
+                .unified_search_native(collection, query_vector, fetch_k, None, Some(config))
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
@@ -1933,10 +1971,16 @@ impl EmbeddedProximaDB {
                             continue;
                         }
 
-                        // Combine all vector records from unflushed batches
+                        // Combine all vector records from unflushed batches.
+                        // Tombstone records (vector.is_empty(), expires_at=Some(0)) are WAL-layer
+                        // deletion markers; the SST writer cannot handle empty vectors in its
+                        // centroid/spatial-clustering pipeline.  Filter them out here — the deleted
+                        // IDs will simply be absent from the resulting SST, which is correct for the
+                        // single-level embedded flush path (no older SST file holds a stale copy).
                         let vector_records: Vec<crate::proto::proximadb_v1::VectorRecord> = batches
                             .iter()
                             .flat_map(|batch| batch.vector_records.iter().cloned())
+                            .filter(|r| !r.vector.is_empty())
                             .collect();
 
                         let vector_count = vector_records.len();

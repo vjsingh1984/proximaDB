@@ -1954,7 +1954,19 @@ impl PyProximaDB {
     ///     db.insert("collection", vectors, ids)
     ///     db.close()  # Flushes and closes gracefully
     fn close(&self) -> PyResult<()> {
-        self.flush()
+        // Always call inner.close() to release file handles even if flush fails.
+        // Without this, a flush error leaves WAL/SST files open, which prevents
+        // TemporaryDirectory cleanup and contributes to FD exhaustion.
+        let flush_result = self.flush();
+        self.inner.close();
+        flush_result
+    }
+
+    fn __del__(&self) {
+        // Best-effort cleanup when Python GC collects this object without an explicit close().
+        // Flushes pending WAL data and releases file handles held by the storage engine.
+        let _ = self.flush();
+        self.inner.close();
     }
 
     // ========================================================================
@@ -2154,14 +2166,14 @@ impl PyProximaDB {
         slf
     }
 
-    /// Context manager exit - ensures flush on exit
+    /// Context manager exit - flushes and closes the database
     fn __exit__(
         &self,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_val: Option<&Bound<'_, PyAny>>,
         _exc_tb: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        self.flush()?;
+        self.close()?;
         Ok(false) // Don't suppress exceptions
     }
 
