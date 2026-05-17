@@ -25,6 +25,7 @@
 
 pub mod core;
 pub mod cypher_functions;
+pub mod cypher_parser;
 pub mod parser;
 pub mod projection;
 pub mod query;
@@ -50,6 +51,18 @@ pub use query_ast::{
     UpdatingClause, WhereClause, WithClause,
 };
 pub use storage::{GraphStorage, MemoryGraphStorage};
+
+/// Parser trait for graph query languages.
+///
+/// This mirrors the root parser trait so modality-owned parsers can compile and
+/// be reused without depending upward on the root query module.
+pub trait QueryParser {
+    /// The type of AST produced by this parser.
+    type Output;
+
+    /// Parse a query string into an AST.
+    fn parse(&self, input: &str) -> anyhow::Result<Self::Output>;
+}
 
 /// Graph direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
