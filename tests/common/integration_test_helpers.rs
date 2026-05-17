@@ -812,7 +812,13 @@ pub mod operations {
                     .as_ref()
                     .map(|v| (**v).clone())
                     .unwrap_or_default(),
-                metadata: record.metadata,
+                metadata: record
+                    .metadata
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (k, proximadb::core::search::results::proxima_value_to_sql_value(v))
+                    })
+                    .collect(),
                 timestamp: Some(record.timestamp.unwrap_or(0)),
                 updated_at: None,
                 expires_at: None,
@@ -883,7 +889,13 @@ pub mod operations {
                     .as_ref()
                     .map(|v| (**v).clone())
                     .unwrap_or_default(),
-                metadata: record.metadata,
+                metadata: record
+                    .metadata
+                    .into_iter()
+                    .map(|(k, v)| {
+                        (k, proximadb::core::search::results::proxima_value_to_sql_value(v))
+                    })
+                    .collect(),
                 timestamp: Some(record.timestamp.unwrap_or(0)),
                 updated_at: None,
                 expires_at: None,
