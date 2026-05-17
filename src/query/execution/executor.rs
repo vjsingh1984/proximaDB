@@ -10,6 +10,7 @@ use crate::query::execution::{
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use anyhow::{Result, anyhow};
+use proximadb_data_model::ProximaValue;
 use proximadb_graph_query::service::GraphExecutionService;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -863,7 +864,9 @@ impl QueryExecutor {
                                 serde_json::Value::Number(serde_json::Number::from(*i))
                             }
                             Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                                serde_json::Value::String(proximadb_kernel::encoding::base64_encode(b))
+                                serde_json::Value::String(
+                                    proximadb_kernel::encoding::base64_encode(b),
+                                )
                             }
                             Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                                 serde_json::Value::Null
@@ -1598,46 +1601,19 @@ impl QueryExecutor {
         }
     }
 
-    /// Convert v1 metadata HashMap to field map for result formatting
-    ///
-    /// This method showcases the HashMap metadata structure in action
+    /// Convert canonical metadata to a field map for result formatting.
     #[allow(dead_code)]
     fn convert_metadata_to_fields(
         &self,
-        metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        metadata: &std::collections::HashMap<String, ProximaValue>,
     ) -> std::collections::HashMap<String, serde_json::Value> {
         metadata
             .iter()
-            .map(|(key, sql_value)| {
-                // Demonstrate efficient HashMap iteration (vs Vec<MetadataItem> linear scan)
-                let json_value = match &sql_value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                        serde_json::Value::String(s.clone())
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                        serde_json::json!(n)
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                        serde_json::Value::Bool(*b)
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                        serde_json::Value::Number(serde_json::Number::from(*i))
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                        serde_json::Value::String(proximadb_kernel::encoding::base64_encode(b))
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
-                        serde_json::Value::Null
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
-                        serde_json::Value::String("[Array]".to_string()) // Simplified for now
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
-                        serde_json::Value::String("[Object]".to_string()) // Simplified for now
-                    }
-                    None => serde_json::Value::Null,
-                };
-                (key.clone(), json_value)
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    crate::core::search::sql_value_filter::proxima_value_to_json(value),
+                )
             })
             .collect()
     }

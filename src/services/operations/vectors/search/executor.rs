@@ -5,6 +5,8 @@
 
 use std::collections::HashMap;
 
+use proximadb_data_model::ProximaValue;
+
 /// Search result with similarity scores.
 #[derive(Debug, Clone)]
 pub struct SearchResult {
@@ -13,7 +15,7 @@ pub struct SearchResult {
     /// Vector data
     pub vector: Option<Vec<f32>>,
     /// Associated metadata
-    pub metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    pub metadata: HashMap<String, ProximaValue>,
     /// Similarity score
     pub score: f32,
 }
