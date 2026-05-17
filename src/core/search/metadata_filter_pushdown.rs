@@ -12,7 +12,7 @@ use tracing::debug;
 
 use crate::core::bloom::{BloomFilter, BloomFilterBuilder};
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Metadata filter optimizer with pushdown capabilities
 pub struct MetadataFilterPushdown {
@@ -103,7 +103,7 @@ impl MetadataFilterPushdown {
     }
 
     /// Build column statistics and indexes from a batch of records
-    pub fn build_statistics(&mut self, records: &[VectorRecord]) {
+    pub fn build_statistics(&mut self, records: &[ProximaRecord]) {
         let mut column_data: HashMap<String, Vec<Option<Value>>> = HashMap::new();
 
         // Collect all metadata values by column
@@ -157,9 +157,9 @@ impl MetadataFilterPushdown {
     /// Apply filter pushdown at the WAL level
     pub fn apply_wal_filter(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         // Estimate filter selectivity
         let selectivity = self.estimate_selectivity(filter);
 
@@ -184,9 +184,9 @@ impl MetadataFilterPushdown {
     /// Apply indexed filtering for very selective filters
     fn apply_indexed_filter(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         // Extract columns used in filter
         let filter_columns = self.extract_filter_columns(filter);
 
@@ -206,16 +206,16 @@ impl MetadataFilterPushdown {
         // Filter records by candidate IDs
         records
             .into_iter()
-            .filter(|record| candidate_ids.contains(&record.id))
+            .filter(|record| candidate_ids.contains(&record.oid))
             .collect()
     }
 
     /// Apply bloom filter before full filtering
     fn apply_bloom_then_filter(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         // First pass: bloom filter
         let bloom_candidates = self.bloom_filter_pass(records, filter);
 
@@ -226,9 +226,9 @@ impl MetadataFilterPushdown {
     /// Bloom filter pass for quick elimination
     fn bloom_filter_pass(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         records
             .into_iter()
             .filter(|_record| {
@@ -270,9 +270,9 @@ impl MetadataFilterPushdown {
     /// Apply direct filter evaluation
     fn apply_direct_filter(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         use crate::core::search::json_comparison::evaluate_filter;
 
         records
@@ -366,53 +366,13 @@ impl MetadataFilterPushdown {
         }
     }
 
-    /// Extract metadata from a record
-    fn extract_metadata(&self, record: &VectorRecord) -> HashMap<String, Value> {
-        let mut metadata = HashMap::new();
-
-        for (key, entry) in &record.metadata {
-            // Convert the protobuf metadata value to serde_json::Value
-            if let Some(ref proto_value) = entry.value {
-                // No longer need sql_value module - using optional fields directly
-                let json_value = match proto_value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                        Value::String(s.clone())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                        if let Some(num) = serde_json::Number::from_f64(*n) {
-                            Value::Number(num)
-                        } else {
-                            continue;
-                        }
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => Value::Bool(*b),
-                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                        if let Some(num) = serde_json::Number::from_f64(*i as f64) {
-                            Value::Number(num)
-                        } else {
-                            continue;
-                        }
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
-                        Value::String("[binary]".to_string())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => Value::Null,
-                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
-                        Value::String("[array]".to_string())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
-                        Value::String("[object]".to_string())
-                    }
-                };
-                metadata.insert(key.clone(), json_value);
-            }
-        }
-
-        metadata
+    /// Extract metadata from a record's props as JSON map
+    fn extract_metadata(&self, record: &ProximaRecord) -> HashMap<String, Value> {
+        crate::core::search::sql_value_filter::proxima_tree_to_json_map(&record.props)
     }
 
     /// Extract metadata as HashMap for filter evaluation
-    fn extract_metadata_hashmap(&self, record: &VectorRecord) -> HashMap<String, Value> {
+    fn extract_metadata_hashmap(&self, record: &ProximaRecord) -> HashMap<String, Value> {
         self.extract_metadata(record)
     }
 
@@ -490,19 +450,19 @@ impl MetadataFilterPushdown {
         &self,
         _column_name: &str,
         values: &[Option<Value>],
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> ColumnIndex {
         let mut inverted_index = HashMap::new();
 
         for (i, value_opt) in values.iter().enumerate() {
             if let Some(value) = value_opt
                 && let Some(record) = records.get(i)
-                && !record.id.is_empty()
+                && !record.oid.is_empty()
             {
                 inverted_index
                     .entry(value.clone())
                     .or_insert_with(HashSet::new)
-                    .insert(record.id.clone());
+                    .insert(record.oid.clone());
             }
         }
 
@@ -621,10 +581,11 @@ impl MetadataBloomBuilder {
     }
 
     /// Add a record's metadata to bloom filters
-    pub fn add_record(&mut self, record: &VectorRecord) {
+    pub fn add_record(&mut self, record: &ProximaRecord) {
         use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
+        use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
 
-        for (key, entry) in &record.metadata {
+        for (key, value) in proxima_tree_to_json_map(&record.props) {
             let config = BloomFilterConfig {
                 strategy: BloomStrategy::BitPacked,
                 bits_per_key: 10,
@@ -638,15 +599,8 @@ impl MetadataBloomBuilder {
                 .entry(key.clone())
                 .or_insert_with(|| BloomFilterBuilder::new(config));
 
-            // Serialize the metadata value for the bloom filter
-            if let Some(ref value) = entry.value {
-                // Create parent SqlValue to use custom serde implementation
-                let sql_value = crate::proto::proximadb_v1::SqlValue {
-                    value: Some(value.clone()),
-                };
-                let serialized = serde_json::to_vec(&sql_value).unwrap_or_default();
-                builder.add(&serialized);
-            }
+            let serialized = serde_json::to_vec(&value).unwrap_or_default();
+            builder.add(&serialized);
         }
     }
 
@@ -686,38 +640,51 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_building() {
-        use crate::proto::proximadb_v1::VectorRecord;
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::{EmbeddingCell, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode};
 
         let mut builder = MetadataBloomBuilder::new(1000);
 
-        let record = VectorRecord {
-            id: "test1".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: {
-                let mut map = std::collections::HashMap::new();
-                map.insert(
-                    "category".to_string(),
-                    crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                            "electronics".to_string(),
-                        )),
-                    },
-                );
-                map.insert(
-                    "price".to_string(),
-                    crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                            99.99,
-                        )),
-                    },
-                );
-                map
-            },
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        let mut props = ProximaTree::new();
+        props.insert(
+            "category".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("electronics".to_string())),
+        );
+        props.insert(
+            "price".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Float64(99.99)),
+        );
+
+        let now_ns = 0i64;
+        let record = ProximaRecord {
+            oid: "test1".to_string(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: 1,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: None,
+            memory_type: None,
+            props,
+            refs: Vec::new(),
+            edge: None,
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                values: vec![1.0, 2.0, 3.0],
+                dim: 3,
+            }],
+            sequence: None,
+            labels: LabelSet::new(),
         };
 
         builder.add_record(&record);

@@ -30,13 +30,13 @@ use crate::core::search::{
 };
 use crate::index::axis::management::manager::AxisManager;
 use crate::index::axis::storage::serialization::Index;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::{
     MetadataStore, QueryCache,
     orchestrator::{CacheType, CrossCacheOrchestrator},
     specialized::query_cache::{CachedQueryResult, QueryKey},
 };
 use crate::storage::traits::StorageQueryContext;
+use proximadb_records::ProximaRecord;
 
 /// Integrated search optimizer with zero-copy and caching
 /// Merged features from IntegratedSearchOptimizer and IntegratedSearchOptimizer
@@ -477,7 +477,7 @@ impl AdvancedSearchOptimizer {
         &self,
         collection_id: &str,
         search_params: &SearchParams,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let start = std::time::Instant::now();
 
@@ -721,7 +721,7 @@ impl AdvancedSearchOptimizer {
     /// Execute zero-copy search for large datasets
     async fn execute_zero_copy_search(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &DistanceMetric,
@@ -772,27 +772,29 @@ impl AdvancedSearchOptimizer {
     }
 
     /// Create zero-copy views of vector data
-    fn create_zero_copy_views(&self, records: &[VectorRecord]) -> Result<Vec<ZeroCopyVectorView>> {
+    fn create_zero_copy_views(&self, records: &[ProximaRecord]) -> Result<Vec<ZeroCopyVectorView>> {
         let mut views = Vec::with_capacity(records.len());
 
         for record in records {
-            // Check if we should use mmap for large vectors
-            let vector_bytes = record.vector.len() * std::mem::size_of::<f32>();
+            let embedding_values = record
+                .embeddings
+                .first()
+                .map(|e| e.values.clone())
+                .unwrap_or_default();
+            let dim = embedding_values.len();
+            let vector_bytes = dim * std::mem::size_of::<f32>();
 
             if self.config.enable_mmap && vector_bytes >= self.config.mmap_threshold_bytes {
-                // For large vectors, we would memory-map them
-                // For now, just use borrowed data
-                let data = VectorData::Owned(record.vector.clone());
+                let data = VectorData::Owned(embedding_values);
                 views.push(ZeroCopyVectorView {
                     data,
-                    dimension: record.vector.len(),
+                    dimension: dim,
                     count: 1,
                 });
             } else {
-                // Use owned data for small vectors
                 views.push(ZeroCopyVectorView {
-                    data: VectorData::Owned(record.vector.clone()),
-                    dimension: record.vector.len(),
+                    data: VectorData::Owned(embedding_values),
+                    dimension: dim,
                     count: 1,
                 });
             }
@@ -850,7 +852,7 @@ impl AdvancedSearchOptimizer {
     /// Execute search based on selected strategy
     async fn execute_strategy_search(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &DistanceMetric,
@@ -978,7 +980,7 @@ impl AdvancedSearchOptimizer {
     /// Execute direct FP32 search
     async fn execute_direct_search(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &DistanceMetric,
@@ -997,21 +999,44 @@ impl AdvancedSearchOptimizer {
         let mut results = Vec::new();
 
         for record in filtered_records {
-            // Skip records with empty IDs for search results
-            if record.id.is_empty() {
+            if record.oid.is_empty() {
                 continue;
             }
 
-            let dist_result =
-                distance_compute.calculate_distance(query_vector, &record.vector, distance_metric);
+            let embedding_values = record
+                .embeddings
+                .first()
+                .map(|e| e.values.as_slice())
+                .unwrap_or(&[]);
+            let dist_result = distance_compute.calculate_distance(
+                query_vector,
+                embedding_values,
+                distance_metric,
+            );
 
-            // Use SqlValue metadata directly - no conversion needed!
+            use proximadb_data_model::ProximaValue;
+            use proximadb_records::ProximaTreeNode;
+            let metadata: std::collections::HashMap<String, ProximaValue> = record
+                .props
+                .iter()
+                .filter_map(|(k, node)| {
+                    if let ProximaTreeNode::Value(v) = node {
+                        Some((k.clone(), v.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             results.push(
-                OptimizedSearchRecord::new(record.id.clone(), dist_result.normalized_score)
+                OptimizedSearchRecord::new(record.oid.clone(), dist_result.normalized_score)
                     .with_similarity(dist_result.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(record.metadata.clone())
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0)),
+                    .add_vector(embedding_values.to_vec())
+                    .with_proxima_metadata(metadata)
+                    .with_version_info(
+                        record.record_version as u32,
+                        record.created_at_ns / 1_000_000,
+                    ),
             );
         }
 
@@ -1044,7 +1069,7 @@ impl AdvancedSearchOptimizer {
         &self,
         _collection_id: &str,
         search_params: &SearchParams,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> Result<StreamingSearchResults> {
         use futures::stream::{self, StreamExt};
 
@@ -1057,7 +1082,7 @@ impl AdvancedSearchOptimizer {
 
         // Create a stream that processes batches lazily
         // Convert records into owned chunks to avoid lifetime issues
-        let chunks: Vec<Vec<VectorRecord>> = records
+        let chunks: Vec<Vec<ProximaRecord>> = records
             .chunks(batch_size)
             .map(|chunk| chunk.to_vec())
             .collect();

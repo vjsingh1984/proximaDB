@@ -16,7 +16,7 @@ use crate::core::search::FilterExpression;
 use crate::core::search::query_preprocessing::{QueryPreprocessor, QueryVectorCache};
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::QuantizationConfig;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Unified progressive search orchestrator
 pub struct UnifiedProgressiveSearchPipeline {
@@ -142,7 +142,7 @@ pub enum SearchStage {
 /// Stage candidate for progressive refinement
 #[derive(Debug, Clone)]
 struct StageCandidate {
-    record: Arc<VectorRecord>,
+    record: Arc<ProximaRecord>,
     score: f32,
     #[allow(dead_code)]
     stage: SearchStage,
@@ -186,7 +186,7 @@ impl UnifiedProgressiveSearchPipeline {
     /// Execute progressive search with dynamic stage selection
     pub async fn search_progressive(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: DistanceMetric,
@@ -279,12 +279,15 @@ impl UnifiedProgressiveSearchPipeline {
     /// Dynamically select stages based on data characteristics
     fn select_dynamic_stages(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         _config: &QuantizationConfig,
         _top_k: usize,
     ) -> Vec<SearchStage> {
         let record_count = records.len();
-        let dimension = records.first().map_or(0, |r| r.vector.len());
+        let dimension = records
+            .first()
+            .and_then(|r| r.embeddings.first())
+            .map_or(0, |e| e.dim as usize);
 
         // Decision logic based on data size and dimension
         if record_count < 1000 || dimension < 64 {
@@ -305,7 +308,7 @@ impl UnifiedProgressiveSearchPipeline {
     /// Execute search stages progressively
     async fn execute_stages(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         query_cache: &Arc<QueryVectorCache>,
         stages: &[SearchStage],
         top_k: usize,
@@ -313,7 +316,7 @@ impl UnifiedProgressiveSearchPipeline {
         metadata_filter: Option<&FilterExpression>,
     ) -> Result<Vec<StageCandidate>> {
         let mut candidates = BinaryHeap::new();
-        let mut current_records: Vec<Arc<VectorRecord>> =
+        let mut current_records: Vec<Arc<ProximaRecord>> =
             records.into_iter().map(Arc::new).collect();
 
         // Apply metadata filter first if present
@@ -452,7 +455,7 @@ impl UnifiedProgressiveSearchPipeline {
     /// Execute binary quantization stage
     async fn execute_binary_stage(
         &self,
-        records: &[Arc<VectorRecord>],
+        records: &[Arc<ProximaRecord>],
         query_binary: &Option<Arc<Vec<u8>>>,
         _distance_metric: &DistanceMetric,
         keep_count: usize,
@@ -484,7 +487,7 @@ impl UnifiedProgressiveSearchPipeline {
     /// Execute INT8 quantization stage
     async fn execute_int8_stage(
         &self,
-        records: &[Arc<VectorRecord>],
+        records: &[Arc<ProximaRecord>],
         query_int8: &Option<Arc<Vec<i8>>>,
         _distance_metric: &DistanceMetric,
         keep_count: usize,
@@ -514,7 +517,7 @@ impl UnifiedProgressiveSearchPipeline {
     /// Execute PQ quantization stage
     async fn execute_pq_stage(
         &self,
-        records: &[Arc<VectorRecord>],
+        records: &[Arc<ProximaRecord>],
         query_pq: &Option<Arc<Vec<u8>>>,
         _distance_metric: &DistanceMetric,
         keep_count: usize,
@@ -545,7 +548,7 @@ impl UnifiedProgressiveSearchPipeline {
     /// Execute FP32 stage (final refinement)
     async fn execute_fp32_stage(
         &self,
-        records: &[Arc<VectorRecord>],
+        records: &[Arc<ProximaRecord>],
         query_fp32: &Arc<Vec<f32>>,
         distance_metric: &DistanceMetric,
         keep_count: usize,
@@ -556,8 +559,13 @@ impl UnifiedProgressiveSearchPipeline {
         let mut candidates = Vec::new();
 
         for record in records {
+            let embedding_values = record
+                .embeddings
+                .first()
+                .map(|e| e.values.as_slice())
+                .unwrap_or(&[]);
             let result =
-                distance_compute.calculate_distance(query_fp32, &record.vector, distance_metric);
+                distance_compute.calculate_distance(query_fp32, embedding_values, distance_metric);
 
             candidates.push(StageCandidate {
                 record: record.clone(),
@@ -664,63 +672,19 @@ impl UnifiedProgressiveSearchPipeline {
     /// Apply metadata filter to records
     fn apply_metadata_filter(
         &self,
-        records: Vec<Arc<VectorRecord>>,
+        records: Vec<Arc<ProximaRecord>>,
         filter: &FilterExpression,
-    ) -> Vec<Arc<VectorRecord>> {
+    ) -> Vec<Arc<ProximaRecord>> {
         use crate::core::search::json_comparison::evaluate_filter;
+        use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
 
         records
             .into_iter()
             .filter(|record| {
-                let metadata = self.convert_metadata(record);
+                let metadata = proxima_tree_to_json_map(&record.props);
                 evaluate_filter(filter, &metadata)
             })
             .collect()
-    }
-
-    /// Convert proto metadata to HashMap
-    fn convert_metadata(&self, record: &VectorRecord) -> HashMap<String, serde_json::Value> {
-        let mut map = HashMap::new();
-
-        for (key, entry) in &record.metadata {
-            if let Some(ref proto_value) = entry.value {
-                use serde_json::Value;
-
-                let json_value = match proto_value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                        Value::String(s.clone())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                        if let Some(num) = serde_json::Number::from_f64(*n) {
-                            Value::Number(num)
-                        } else {
-                            continue;
-                        }
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => Value::Bool(*b),
-                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                        if let Some(num) = serde_json::Number::from_f64(*i as f64) {
-                            Value::Number(num)
-                        } else {
-                            continue;
-                        }
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
-                        Value::String("[binary]".to_string())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => Value::Null,
-                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
-                        Value::String("[array]".to_string())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
-                        Value::String("[object]".to_string())
-                    }
-                };
-                map.insert(key.clone(), json_value);
-            }
-        }
-
-        map
     }
 
     /// Check if we should terminate early
@@ -744,24 +708,40 @@ impl UnifiedProgressiveSearchPipeline {
         candidates: Vec<StageCandidate>,
         top_k: usize,
     ) -> Vec<OptimizedSearchRecord> {
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::ProximaTreeNode;
+
         candidates
             .into_iter()
             .take(top_k)
             .map(|candidate| {
-                let _json_metadata = self.convert_metadata(&candidate.record);
-                // Convert metadata directly to SqlValue format
-                let metadata: std::collections::HashMap<
-                    String,
-                    crate::proto::proximadb_v1::SqlValue,
-                > = candidate.record.metadata.clone();
+                let vector = candidate
+                    .record
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default();
 
-                OptimizedSearchRecord::new(candidate.record.id.clone(), candidate.score)
+                let metadata: HashMap<String, ProximaValue> = candidate
+                    .record
+                    .props
+                    .iter()
+                    .filter_map(|(k, node)| {
+                        if let ProximaTreeNode::Value(v) = node {
+                            Some((k.clone(), v.clone()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                OptimizedSearchRecord::new(candidate.record.oid.clone(), candidate.score)
                     .with_similarity(candidate.score)
-                    .add_vector(candidate.record.vector.clone())
-                    .with_metadata(metadata)
+                    .add_vector(vector)
+                    .with_proxima_metadata(metadata)
                     .with_version_info(
-                        candidate.record.version.unwrap_or(0),
-                        candidate.record.timestamp.unwrap_or(0),
+                        candidate.record.record_version as u32,
+                        candidate.record.created_at_ns / 1_000_000,
                     )
             })
             .collect()
