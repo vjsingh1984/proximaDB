@@ -170,7 +170,7 @@ struct LeaderState {
 }
 
 /// Result of applying a command
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ApplyResult {
     /// Whether the command was successfully applied
     pub success: bool,
@@ -178,6 +178,17 @@ pub struct ApplyResult {
     pub response: Option<Vec<u8>>,
     /// Error message if failed
     pub error: Option<String>,
+}
+
+/// Trait for a Raft state machine
+#[async_trait::async_trait]
+pub trait RaftStateMachine: Send + Sync {
+    /// Apply a command to the state machine
+    async fn apply(&self, command: &Command) -> Result<ApplyResult>;
+    /// Take a snapshot of the state machine
+    async fn snapshot(&self) -> Result<Vec<u8>>;
+    /// Restore the state machine from a snapshot
+    async fn restore(&self, snapshot: &[u8]) -> Result<()>;
 }
 
 /// Raft consensus implementation
@@ -195,6 +206,10 @@ pub struct RaftConsensus {
     leader_state: Arc<RwLock<Option<LeaderState>>>,
     /// Current leader ID
     current_leader: Arc<RwLock<Option<String>>>,
+    /// State machine to apply commands to
+    state_machine: Option<Arc<dyn RaftStateMachine>>,
+    /// Pending proposals waiting for majority (index -> sender)
+    pending_proposals: Arc<RwLock<HashMap<u64, tokio::sync::oneshot::Sender<ApplyResult>>>>,
     /// Whether the consensus module is running
     running: Arc<AtomicBool>,
     /// Transport layer for RPC communication (optional, required for distributed mode)
@@ -224,6 +239,8 @@ impl RaftConsensus {
             volatile: Arc::new(RwLock::new(VolatileState::default())),
             leader_state: Arc::new(RwLock::new(None)),
             current_leader: Arc::new(RwLock::new(None)),
+            state_machine: None,
+            pending_proposals: Arc::new(RwLock::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
             transport: None,
             _connection_manager: None,
@@ -236,25 +253,6 @@ impl RaftConsensus {
     }
 
     /// Create a new Raft consensus instance with RPC transport for distributed mode
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Consensus configuration
-    /// * `node_id` - This node's unique identifier
-    /// * `transport` - The transport layer for RPC communication
-    /// * `peers` - Initial list of peer nodes
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let config = ConsensusConfig::default();
-    /// let transport = Arc::new(GrpcConsensusTransport::new());
-    /// let peers = vec![
-    ///     NodeEndpoint::new("node-2", "192.168.1.2:5679"),
-    ///     NodeEndpoint::new("node-3", "192.168.1.3:5679"),
-    /// ];
-    /// let consensus = RaftConsensus::with_transport(config, "node-1", transport, peers)?;
-    /// ```
     pub fn with_transport(
         config: ConsensusConfig,
         node_id: impl Into<String>,
@@ -285,6 +283,8 @@ impl RaftConsensus {
             volatile: Arc::new(RwLock::new(VolatileState::default())),
             leader_state: Arc::new(RwLock::new(None)),
             current_leader: Arc::new(RwLock::new(None)),
+            state_machine: None,
+            pending_proposals: Arc::new(RwLock::new(HashMap::new())),
             running: Arc::new(AtomicBool::new(false)),
             transport: Some(transport),
             _connection_manager: Some(connection_manager),
@@ -296,6 +296,11 @@ impl RaftConsensus {
             shutdown_tx: None,
             task_handles: Arc::new(RwLock::new(Vec::new())),
         })
+    }
+
+    /// Set the state machine for command application
+    pub fn set_state_machine(&mut self, state_machine: Arc<dyn RaftStateMachine>) {
+        self.state_machine = Some(state_machine);
     }
 
     /// Get this node's ID
@@ -685,7 +690,7 @@ impl RaftConsensus {
         self.current_leader.read().await.clone()
     }
 
-    /// Propose a command to be replicated
+    /// Propose a command to be replicated and applied to the state machine
     pub async fn propose(&self, command: Command) -> Result<ApplyResult> {
         let state = self.state.read().await;
 
@@ -697,28 +702,45 @@ impl RaftConsensus {
             });
         }
 
-        // In a full implementation, this would:
-        // 1. Append to local log
-        // 2. Replicate to followers
-        // 3. Wait for majority acknowledgment
-        // 4. Apply to state machine
-
-        let mut persistent = self.persistent.write().await;
-        let index = persistent.log.len() as u64 + 1;
-        let entry = LogEntry {
-            term: persistent.current_term,
-            index,
-            command,
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let index = {
+            let mut persistent = self.persistent.write().await;
+            let index = persistent.log.len() as u64 + 1;
+            let entry = LogEntry {
+                term: persistent.current_term,
+                index,
+                command,
+            };
+            persistent.log.push(entry);
+            index
         };
-        persistent.log.push(entry);
 
-        tracing::debug!(index, "Command proposed and appended to log");
+        // Track this proposal to notify the caller when it's committed and applied
+        self.pending_proposals.write().await.insert(index, tx);
 
-        Ok(ApplyResult {
-            success: true,
-            response: None,
-            error: None,
-        })
+        tracing::debug!(
+            index,
+            node_id = %self.node_id,
+            "Command proposed, waiting for majority replication"
+        );
+
+        // Single-node clusters can commit immediately. Multi-node clusters still need
+        // follower match indexes before this advances the commit index.
+        self.maybe_update_commit_index().await;
+
+        // Immediately trigger a heartbeat to speed up replication
+        let _ = self.send_heartbeat().await;
+
+        // Wait for replication and application with timeout
+        match tokio::time::timeout(Duration::from_secs(10), rx).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(_)) => Err(anyhow::anyhow!("Proposal channel closed unexpectedly")),
+            Err(_) => {
+                // Remove the pending proposal if it timed out
+                self.pending_proposals.write().await.remove(&index);
+                Err(anyhow::anyhow!("Proposal timed out after 10s"))
+            }
+        }
     }
 
     /// Handle RequestVote RPC
@@ -824,7 +846,15 @@ impl RaftConsensus {
         if leader_commit > self.volatile.read().await.commit_index {
             let last_index = persistent.log.len() as u64;
             let mut volatile = self.volatile.write().await;
+            let old_commit = volatile.commit_index;
             volatile.commit_index = std::cmp::min(leader_commit, last_index);
+            let new_commit = volatile.commit_index;
+            drop(volatile);
+
+            if new_commit > old_commit {
+                // After updating commit index, apply entries to state machine
+                self.apply_to_state_machine().await;
+            }
         }
 
         (persistent.current_term, true)
@@ -1154,55 +1184,56 @@ impl RaftConsensus {
 
         // Send AppendEntries to each peer
         let breakers = self.circuit_breakers.read().await;
-        let futures: Vec<_> = peers
-            .iter()
-            .map(|peer| {
-                let transport = Arc::clone(&transport);
-                let peer = peer.clone();
-                let breaker = breakers.get(&peer.node_id).cloned();
-                let node_id = self.node_id.clone();
+        let mut futures = Vec::new();
 
-                // Get entries to send to this peer
-                let next_idx = ls.next_index.get(&peer.node_id).copied().unwrap_or(1);
-                let (prev_log_index, prev_log_term, entries) = self.get_entries_for_peer(next_idx);
+        for peer in peers {
+            let transport = Arc::clone(&transport);
+            let breaker = breakers.get(&peer.node_id).cloned();
+            let node_id = self.node_id.clone();
+            let next_idx = ls.next_index.get(&peer.node_id).copied().unwrap_or(1);
 
-                let request = AppendEntriesRequest {
-                    term,
-                    leader_id: node_id,
-                    prev_log_index,
-                    prev_log_term,
-                    entries,
-                    leader_commit: commit_index,
-                };
+            // We need to capture the logic to get entries
+            // Since self cannot be moved into the async block, we must get entries first
+            // or pass the necessary Arcs.
+            let (prev_log_index, prev_log_term, entries) =
+                self.get_entries_for_peer(next_idx).await;
 
-                async move {
-                    // Check circuit breaker
-                    if let Some(ref cb) = breaker
-                        && !cb.should_allow_request()
-                    {
-                        return (
-                            peer.node_id.clone(),
-                            Err("Circuit breaker open".to_string()),
-                        );
+            let request = AppendEntriesRequest {
+                term,
+                leader_id: node_id,
+                prev_log_index,
+                prev_log_term,
+                entries,
+                leader_commit: commit_index,
+            };
+
+            futures.push(async move {
+                // Check circuit breaker
+                if let Some(ref cb) = breaker
+                    && !cb.should_allow_request()
+                {
+                    return (
+                        peer.node_id.clone(),
+                        Err("Circuit breaker open".to_string()),
+                    );
+                }
+
+                match transport.append_entries(&peer, request).await {
+                    Ok(response) => {
+                        if let Some(cb) = breaker {
+                            cb.record_success();
+                        }
+                        (peer.node_id.clone(), Ok(response))
                     }
-
-                    match transport.append_entries(&peer, request).await {
-                        Ok(response) => {
-                            if let Some(cb) = breaker {
-                                cb.record_success();
-                            }
-                            (peer.node_id.clone(), Ok(response))
+                    Err(e) => {
+                        if let Some(cb) = breaker {
+                            cb.record_failure();
                         }
-                        Err(e) => {
-                            if let Some(cb) = breaker {
-                                cb.record_failure();
-                            }
-                            (peer.node_id.clone(), Err(e.to_string()))
-                        }
+                        (peer.node_id.clone(), Err(e.to_string()))
                     }
                 }
-            })
-            .collect();
+            });
+        }
 
         drop(leader_state); // Release read lock before awaiting
 
@@ -1215,10 +1246,44 @@ impl RaftConsensus {
     }
 
     /// Helper to get log entries for a specific peer
-    fn get_entries_for_peer(&self, _next_index: u64) -> (u64, u64, Vec<RpcLogEntry>) {
-        // For heartbeat, we send empty entries
-        // Full log replication would include actual entries
-        (0, 0, Vec::new())
+    async fn get_entries_for_peer(&self, next_index: u64) -> (u64, u64, Vec<RpcLogEntry>) {
+        let persistent = self.persistent.read().await;
+        let last_log_idx = persistent.log.len() as u64;
+
+        if next_index > last_log_idx {
+            // Peer is up to date or ahead, send empty heartbeat with latest info
+            let (prev_idx, prev_term) = match persistent.log.last() {
+                Some(e) => (e.index, e.term),
+                None => (0, 0),
+            };
+            return (prev_idx, prev_term, Vec::new());
+        }
+
+        // Send entries from next_index to end (obeying max_entries_per_request)
+        let prev_idx = next_index - 1;
+        let prev_term = if prev_idx == 0 {
+            0
+        } else {
+            persistent
+                .log
+                .get(prev_idx as usize - 1)
+                .map(|e| e.term)
+                .unwrap_or(0)
+        };
+
+        let mut entries = Vec::new();
+        let limit = std::cmp::min(
+            last_log_idx,
+            next_index + self.config.max_entries_per_request as u64 - 1,
+        );
+
+        for i in next_index..=limit {
+            if let Some(entry) = persistent.log.get(i as usize - 1) {
+                entries.push(Self::log_entry_to_rpc(entry));
+            }
+        }
+
+        (prev_idx, prev_term, entries)
     }
 
     /// Process AppendEntries responses and update match_index/next_index
@@ -1297,8 +1362,9 @@ impl RaftConsensus {
         }
 
         match_indices.sort();
-        let majority_idx = match_indices.len() / 2;
-        let new_commit = match_indices[majority_idx];
+        // The median of match indices is the highest index replicated on a majority
+        let majority_idx = (match_indices.len() - 1) / 2;
+        let new_commit = match_indices[match_indices.len() - 1 - majority_idx];
 
         // Only update if new commit index is higher and the entry is from current term
         let persistent = self.persistent.read().await;
@@ -1310,7 +1376,65 @@ impl RaftConsensus {
             let mut volatile = self.volatile.write().await;
             if new_commit > volatile.commit_index {
                 volatile.commit_index = new_commit;
+                drop(volatile);
+                // After updating commit index, apply entries to state machine
+                self.apply_to_state_machine().await;
             }
+        }
+    }
+
+    /// Apply committed entries to the state machine
+    async fn apply_to_state_machine(&self) {
+        let (commit_index, mut last_applied) = {
+            let volatile = self.volatile.read().await;
+            (volatile.commit_index, volatile._last_applied)
+        };
+
+        if commit_index > last_applied {
+            tracing::debug!(
+                commit_index,
+                last_applied,
+                node_id = %self.node_id,
+                "Applying committed entries to state machine"
+            );
+
+            let entries = {
+                let persistent = self.persistent.read().await;
+                if last_applied as usize >= persistent.log.len() {
+                    return;
+                }
+                persistent.log[last_applied as usize..commit_index as usize].to_vec()
+            };
+
+            for entry in entries {
+                let result = if let Some(ref sm) = self.state_machine {
+                    match sm.apply(&entry.command).await {
+                        Ok(res) => res,
+                        Err(e) => ApplyResult {
+                            success: false,
+                            response: None,
+                            error: Some(e.to_string()),
+                        },
+                    }
+                } else {
+                    ApplyResult {
+                        success: true,
+                        response: None,
+                        error: None,
+                    }
+                };
+
+                // Notify pending proposal if we are the leader
+                let mut pending = self.pending_proposals.write().await;
+                if let Some(tx) = pending.remove(&entry.index) {
+                    let _ = tx.send(result);
+                }
+
+                last_applied = entry.index;
+            }
+
+            let mut volatile = self.volatile.write().await;
+            volatile._last_applied = last_applied;
         }
     }
 
@@ -1404,6 +1528,30 @@ mod tests {
                 append_count: Arc::new(AtomicUsize::new(0)),
                 append_success,
             }
+        }
+    }
+
+    struct RecordingStateMachine {
+        applied_count: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl RaftStateMachine for RecordingStateMachine {
+        async fn apply(&self, _command: &Command) -> Result<ApplyResult> {
+            self.applied_count.fetch_add(1, Ordering::SeqCst);
+            Ok(ApplyResult {
+                success: true,
+                response: Some(b"applied".to_vec()),
+                error: None,
+            })
+        }
+
+        async fn snapshot(&self) -> Result<Vec<u8>> {
+            Ok(Vec::new())
+        }
+
+        async fn restore(&self, _snapshot: &[u8]) -> Result<()> {
+            Ok(())
         }
     }
 
@@ -1568,6 +1716,36 @@ mod tests {
 
         assert_eq!(consensus.get_state().await, ConsensusState::Leader);
         assert_eq!(consensus.get_leader().await, Some("node-1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_single_node_propose_applies_state_machine() {
+        let config = ConsensusConfig::default();
+        let transport = Arc::new(MockConsensusTransport::new(true, true));
+        let mut consensus = RaftConsensus::with_transport(config, "node-1", transport, vec![])
+            .expect("failed to create consensus instance");
+        let applied_count = Arc::new(AtomicUsize::new(0));
+
+        consensus.set_state_machine(Arc::new(RecordingStateMachine {
+            applied_count: Arc::clone(&applied_count),
+        }));
+
+        let became_leader = consensus
+            .start_election()
+            .await
+            .expect("election should succeed");
+        assert!(became_leader);
+
+        let result = consensus
+            .propose(Command::Noop)
+            .await
+            .expect("single-node proposal should commit and apply");
+
+        assert!(result.success);
+        assert_eq!(result.response.as_deref(), Some(&b"applied"[..]));
+        assert_eq!(applied_count.load(Ordering::SeqCst), 1);
+        assert_eq!(consensus.volatile.read().await.commit_index, 1);
+        assert_eq!(consensus.volatile.read().await._last_applied, 1);
     }
 
     #[tokio::test]
