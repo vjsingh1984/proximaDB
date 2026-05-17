@@ -36,10 +36,12 @@ pub use lowering::*;
 pub use observability_adapter::*;
 pub use optimizer::*;
 pub use optimizer_support::{
-    EstimationMethod, FusionStrategy as OptimizerFusionStrategy, OptimizedPlan,
-    OptimizerCollectionStats, OptimizerConfig, PlanCache, PlanCacheStats, PushedFilter,
-    QueryHistoryEntry, QueryStatistics, SelectivityEstimate, compute_query_hash,
-    select_fusion_strategy,
+    AccessPath, AccessPathCostEstimate, CsrMaterializationDecision, CsrMaterializationInput,
+    CsrMaterializeTrigger, EstimationMethod, FusionStrategy as OptimizerFusionStrategy,
+    OptimizedPlan, OptimizerCollectionStats, OptimizerConfig, PlanCache, PlanCacheStats,
+    PushedFilter, QueryHistoryEntry, QueryStatistics, SelectivityEstimate, compute_query_hash,
+    csr_auto_materialize_decision, document_filter_access_path, fulltext_access_path,
+    graph_traversal_access_path, select_fusion_strategy, variation_projection_access_path,
 };
 pub use orchestration::*;
 pub use plan_execution_cache::*;

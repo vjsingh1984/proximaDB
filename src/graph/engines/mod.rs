@@ -55,18 +55,20 @@ pub mod quasar;
 // Provide stub modules when features are disabled to maintain API compatibility
 #[cfg(not(feature = "distributed-graph"))]
 pub mod pulsar {
-    //! # PULSAR Graph Engine - FEATURE DISABLED
+    //! # PULSAR Graph Engine - RETIREMENT CANDIDATE
     //!
-    //! This module is disabled by default. To enable PULSAR, build with:
+    //! This module is disabled by default and is marked for retirement in v0.3.0.
+    //! To enable PULSAR, build with:
     //! ```bash
     //! cargo build --features distributed-graph
     //! ```
     //!
-    //! **Note**: PULSAR is experimental and not production-ready.
-    //! For production use, use ORION with application-level sharding.
+    //! **Note**: PULSAR is a legacy experimental engine.
+    //! For production sharding, use ORION with application-level sharding
+    //! as per the Phase 6 consolidation mandate.
 
-    use proximadb_kernel::error::ProximaDBError;
     use crate::graph::{Edge, EdgeId, Node, NodeId};
+    use proximadb_kernel::error::ProximaDBError;
     use std::sync::Arc;
 
     /// PULSAR configuration (stub)
@@ -92,7 +94,8 @@ pub mod pulsar {
         /// Create a new PULSAR engine (requires `distributed-graph` feature).
         pub fn new(_config: PulsarConfig) -> Result<Self, ProximaDBError> {
             Err(ProximaDBError::NotImplemented(
-                "PULSAR requires 'distributed-graph' feature. Build with: cargo build --features distributed-graph".to_string()
+                "PULSAR is a retirement candidate and requires 'distributed-graph' feature."
+                    .to_string(),
             ))
         }
 
@@ -202,18 +205,19 @@ pub mod pulsar {
 
 #[cfg(not(feature = "tiered-graph"))]
 pub mod quasar {
-    //! # QUASAR Graph Engine - FEATURE DISABLED
+    //! # QUASAR Graph Engine - RETIREMENT CANDIDATE
     //!
-    //! This module is disabled by default. To enable QUASAR, build with:
+    //! This module is disabled by default and is marked for retirement in v0.3.0.
+    //! To enable QUASAR, build with:
     //! ```bash
     //! cargo build --features tiered-graph
     //! ```
     //!
-    //! **Note**: QUASAR is experimental and not production-ready.
-    //! For production use, use ORION.
+    //! **Note**: QUASAR is a legacy experimental engine.
+    //! For production use, use ORION as per the Phase 6 consolidation mandate.
 
-    use proximadb_kernel::error::ProximaDBError;
     use crate::graph::{Edge, EdgeId, Node, NodeId};
+    use proximadb_kernel::error::ProximaDBError;
     use std::sync::Arc;
 
     /// QUASAR configuration (stub)
@@ -243,7 +247,7 @@ pub mod quasar {
         /// Create a new QUASAR engine (requires `tiered-graph` feature).
         pub async fn new(_config: QuasarConfig) -> Result<Self, ProximaDBError> {
             Err(ProximaDBError::NotImplemented(
-                "QUASAR requires 'tiered-graph' feature. Build with: cargo build --features tiered-graph".to_string()
+                "QUASAR is a retirement candidate and requires 'tiered-graph' feature.".to_string(),
             ))
         }
     }
@@ -823,23 +827,22 @@ impl Default for PersistenceConfig {
 /// Engine type enumeration for factory creation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphEngineType {
-    /// ORION: In-memory CSR format engine
+    /// ORION: In-memory CSR format engine (Production-ready).
     Orion,
-    /// PULSAR: Distributed sharded engine
+    /// PULSAR: Distributed sharded engine (Experimental / Retirement Candidate).
     Pulsar,
-    /// QUASAR: Hybrid hot/cold tiering engine
+    /// QUASAR: Hybrid hot/cold tiering engine (Experimental / Retirement Candidate).
     Quasar,
 }
 
 /// Enum wrapper for different graph engine implementations
-/// This avoids the dyn compatibility issues with async trait methods
 #[derive(Debug)]
 pub enum GraphEngineImpl {
     /// ORION in-memory CSR engine instance.
     Orion(orion::OrionGraphEngine),
-    /// PULSAR distributed sharded engine instance.
+    /// PULSAR distributed sharded engine instance (Legacy / Retirement Candidate).
     Pulsar(pulsar::PulsarGraphEngine),
-    /// QUASAR hybrid hot/cold tiering engine instance.
+    /// QUASAR hybrid hot/cold tiering engine instance (Legacy / Retirement Candidate).
     Quasar(quasar::QuasarGraphEngine),
 }
 
@@ -1149,8 +1152,9 @@ impl GraphEngineFactory {
                 ],
             },
             GraphEngineType::Pulsar => EngineCapabilities {
-                name: "PULSAR".to_string(),
-                description: "Distributed sharded engine for large graphs".to_string(),
+                name: "PULSAR (Legacy)".to_string(),
+                description: "Experimental distributed sharded engine (Retirement Candidate)"
+                    .to_string(),
                 features: vec![
                     "Consistent hash-based sharding".to_string(),
                     "Configurable replication (1-3x)".to_string(),
@@ -1158,19 +1162,19 @@ impl GraphEngineFactory {
                     "Distributed BFS/DFS traversal".to_string(),
                 ],
                 use_cases: vec![
-                    "Large-scale distributed graphs".to_string(),
-                    "Fault-tolerant graph storage".to_string(),
-                    "Multi-datacenter deployments".to_string(),
+                    "Legacy distributed workloads".to_string(),
+                    "Research and experimentation".to_string(),
                 ],
                 performance_characteristics: vec![
-                    "Scales to 1B+ nodes".to_string(),
-                    "Horizontal scalability".to_string(),
-                    "Cross-shard query optimization".to_string(),
+                    "Experimental horizontal scalability".to_string(),
+                    "Note: Performance may vary significantly from production standards"
+                        .to_string(),
                 ],
             },
             GraphEngineType::Quasar => EngineCapabilities {
-                name: "QUASAR".to_string(),
-                description: "Hybrid hot/cold tiering for cost optimization".to_string(),
+                name: "QUASAR (Legacy)".to_string(),
+                description: "Experimental hybrid hot/cold tiering (Retirement Candidate)"
+                    .to_string(),
                 features: vec![
                     "Automatic hot/cold tiering".to_string(),
                     "LRU-based cache management".to_string(),
@@ -1178,14 +1182,13 @@ impl GraphEngineFactory {
                     "Background data migration".to_string(),
                 ],
                 use_cases: vec![
-                    "Cost-optimized large graphs".to_string(),
-                    "Sparse graph workloads".to_string(),
-                    "Long-term data retention".to_string(),
+                    "Cost-optimization research".to_string(),
+                    "Sparse graph workloads (experimental)".to_string(),
                 ],
                 performance_characteristics: vec![
-                    "80-90% storage cost savings".to_string(),
-                    "Transparent tier access".to_string(),
-                    "Sub-second cold data access".to_string(),
+                    "Experimental storage cost savings".to_string(),
+                    "Note: Cold tier has no canonical record binding in current version"
+                        .to_string(),
                 ],
             },
         }

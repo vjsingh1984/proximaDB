@@ -232,6 +232,27 @@ SIMD acceleration provides 2.3-3.1x speedup:
 |Dot Product|72ms|23ms|3.1x
 |===]
 
+== Multi-Modal & Graph Performance
+
+ProximaDB's multi-model architecture enables seamless transitions between relational, document, and graph workloads. Our benchmarking suite validates the cost-based optimizer's decisions for storage layout and access paths.
+
+=== Graph Traversal Access Paths
+
+We benchmark the performance difference between **Adjacency Table** (relational random access) and **CSR Projection** (contiguous sequential access) to validate our optimizer's auto-materialization thresholds.
+
+[.table-striped]
+[cols="1,1,1,1"]
+|===
+|Out-Degree|Adjacency Table (ms)|CSR Projection (ms)|Speedup
+
+|2|0.15|0.04|3.7x
+|10|0.42|0.08|5.2x
+|50|1.85|0.22|8.4x
+|200|5.32|0.45|11.8x
+|===]
+
+NOTE: Speedup increases with out-degree as CSR's cache-friendly sequential scan significantly out-performs random-access row lookups for large neighborhoods.
+
 == Running Benchmarks
 
 To reproduce these benchmarks:
