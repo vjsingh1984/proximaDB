@@ -46,7 +46,6 @@ use crate::index::axis::management::manager::{
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
-use proximadb_data_model::ProximaValue;
 
 pub use coordinator::SearchCoordinator;
 pub use operations::SearchOperations;
@@ -931,6 +930,7 @@ mod tests {
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use proximadb_data_model::ProximaValue;
     use std::sync::Arc;
 
     #[tokio::test]

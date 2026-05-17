@@ -29,6 +29,8 @@
 pub mod adapter;
 pub mod strategies;
 
+use proximadb_data_model::ProximaValue;
+
 pub use adapter::{ExplainComponent, ExplainResult, QueryFacadeAdapter};
 pub use strategies::{
     ColumnarStrategy, ColumnarStrategyConfig, DocumentStrategy, GraphStrategy,
@@ -107,7 +109,7 @@ pub struct QueryParams {
     /// Return execution metrics
     pub include_metrics: bool,
     /// Simple equality filters for vector search requests
-    pub vector_filters: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    pub vector_filters: std::collections::HashMap<String, ProximaValue>,
     /// Structured filter tree for vector search requests
     pub vector_advanced_filter: Option<crate::proto::proximadb_v1::MetadataFilter>,
     /// Parsed document filter for document query execution
@@ -183,9 +185,26 @@ impl QueryRequest {
     /// Attach simple vector filters to the request
     pub fn with_vector_filters(
         mut self,
-        filters: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        filters: std::collections::HashMap<String, ProximaValue>,
     ) -> Self {
         self.params.vector_filters = filters;
+        self
+    }
+
+    /// Attach v1 wire filters at a compatibility edge.
+    pub fn with_vector_filters_v1(
+        mut self,
+        filters: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    ) -> Self {
+        self.params.vector_filters = filters
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    crate::core::search::results::sql_value_to_proxima_value(value),
+                )
+            })
+            .collect();
         self
     }
 

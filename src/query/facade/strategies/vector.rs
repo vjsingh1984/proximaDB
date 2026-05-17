@@ -92,7 +92,9 @@ impl VectorSearchStrategy {
             collection_id,
             queries: vec![SearchQuery {
                 vector: query_vector,
-                filters: request.params.vector_filters.clone(),
+                filters: crate::core::search::results::proxima_map_to_sql(
+                    request.params.vector_filters.clone(),
+                ),
                 advanced_filter: request.params.vector_advanced_filter.clone(),
             }],
             top_k: top_k as u32,

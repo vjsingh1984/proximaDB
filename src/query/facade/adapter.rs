@@ -333,7 +333,7 @@ impl QueryFacadeAdapter {
         let mut query_request =
             QueryRequest::vector_search(query_vector, top_k).with_target(&collection_id);
         if !simple_filters.is_empty() {
-            query_request = query_request.with_vector_filters(simple_filters);
+            query_request = query_request.with_vector_filters_v1(simple_filters);
         }
         if let Some(filter) = advanced_filter {
             query_request = query_request.with_vector_advanced_filter(filter);
@@ -902,7 +902,10 @@ mod tests {
             .expect("captured mutex should not be poisoned")
             .clone()
             .expect("strategy should capture query request");
-        assert_eq!(request.params.vector_filters, filters);
+        assert_eq!(
+            crate::core::search::results::proxima_map_to_sql(request.params.vector_filters),
+            filters
+        );
     }
 
     #[test]
