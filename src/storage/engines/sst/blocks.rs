@@ -30,7 +30,6 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::proto::proximadb_v1::VectorRecord;
@@ -113,6 +112,7 @@ impl SstRecord {
         &self,
         score: f32,
     ) -> crate::core::search::results::OptimizedSearchRecord {
+        use proximadb_data_model::ProximaValue;
         let metadata = self
             .metadata
             .as_ref()
@@ -120,41 +120,20 @@ impl SstRecord {
                 if let serde_json::Value::Object(map) = json_value {
                     map.iter()
                         .map(|(k, v)| {
-                            let sql_value = match v {
-                                serde_json::Value::String(s) => {
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(
-                                            crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                                s.clone(),
-                                            ),
-                                        ),
-                                    }
-                                }
+                            let pv = match v {
+                                serde_json::Value::String(s) => ProximaValue::String(s.clone()),
                                 serde_json::Value::Number(n) => {
-                                    if let Some(f) = n.as_f64() {
-                                        crate::proto::proximadb_v1::SqlValue {
-                                            value: Some(
-                                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(f),
-                                            ),
-                                        }
-                                    } else {
-                                        crate::proto::proximadb_v1::SqlValue { value: None }
-                                    }
+                                    ProximaValue::Float64(n.as_f64().unwrap_or(0.0))
                                 }
-                                serde_json::Value::Bool(b) => {
-                                    crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(
-                                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(*b),
-                                        ),
-                                    }
-                                }
-                                _ => crate::proto::proximadb_v1::SqlValue { value: None },
+                                serde_json::Value::Bool(b) => ProximaValue::Boolean(*b),
+                                serde_json::Value::Null => ProximaValue::Null,
+                                other => ProximaValue::Json(serde_json::json!(other)),
                             };
-                            (k.clone(), sql_value)
+                            (k.clone(), pv)
                         })
                         .collect()
                 } else {
-                    HashMap::new()
+                    std::collections::HashMap::new()
                 }
             })
             .unwrap_or_default();

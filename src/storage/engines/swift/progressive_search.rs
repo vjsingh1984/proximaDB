@@ -727,18 +727,8 @@ async fn phase4_full_precision(
             score,
             similarity: Some(distance),
             vector: Some(Arc::new(record.vector.clone())),
-            metadata: record.metadata.clone(),
-            debug_info: None,
-            version: None,
-            timestamp: None,
-            updated_at: None,
-            expires_at: None,
-            source: None,
-            expanded_context: vec![],
-            semantic_similarity: None,
-            quantization_info: None,
-            engine_stats: None,
-            index_path: None,
+            metadata: crate::core::search::results::sql_map_to_proxima(record.metadata.clone()),
+            ..Default::default()
         };
 
         priority_queue.try_insert(search_record);
@@ -754,7 +744,7 @@ async fn phase4_full_precision(
                 .vector
                 .map(|v| (*v).clone())
                 .unwrap_or_default(),
-            metadata: search_record.metadata,
+            metadata: crate::core::search::results::proxima_map_to_sql(search_record.metadata),
             version: None,
             timestamp: Some(0),
             expires_at: None,

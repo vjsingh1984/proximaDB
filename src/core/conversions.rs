@@ -222,7 +222,7 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
                 .as_ref()
                 .map(|v| (**v).clone())
                 .unwrap_or_default(),
-            metadata: native.metadata,
+            metadata: crate::core::search::results::proxima_map_to_sql(native.metadata),
             version: native.version,
             similarity: native.similarity,
             timestamp: native.timestamp,
@@ -291,7 +291,7 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
                 .as_ref()
                 .map(|v| (**v).clone())
                 .unwrap_or_default(),
-            metadata: native.metadata.clone(),
+            metadata: crate::core::search::results::proxima_map_to_sql(native.metadata.clone()),
             version: native.version,
             similarity: native.similarity,
             timestamp: native.timestamp,
@@ -496,6 +496,19 @@ pub fn sql_values_to_json_map(
         out.insert(k, json);
     }
     out
+}
+
+/// Convert a ProximaValue metadata map to JSON values.
+pub fn proxima_values_to_json_map(
+    items: HashMap<String, proximadb_data_model::ProximaValue>,
+) -> HashMap<String, serde_json::Value> {
+    items
+        .into_iter()
+        .map(|(k, v)| {
+            let json = crate::embedded::proxima_value_to_json(v);
+            (k, json)
+        })
+        .collect()
 }
 
 /// Convert a JSON map to v1 SqlValue map

@@ -472,7 +472,7 @@ impl ModularBlockReader {
                     OptimizedSearchRecord::new(record.id.clone(), distance.normalized_score)
                         .with_similarity(distance.normalized_score)
                         .add_vector(record.vector.clone())
-                        .with_metadata(HashMap::new());
+                        .with_metadata(record.metadata.clone());
 
                 // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_record);

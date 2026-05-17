@@ -2093,7 +2093,7 @@ impl VectorOperationsService {
         // Group into a single DomainSearchResult (consistent with previous behavior)
         let mut hits = Vec::with_capacity(natives.len());
         for rec in natives {
-            let meta_json = crate::core::conversions::sql_values_to_json_map(rec.metadata);
+            let meta_json = crate::core::conversions::proxima_values_to_json_map(rec.metadata);
             hits.push(crate::core::service_types::SearchHit {
                 id: rec.id,
                 score: rec.score,
@@ -3083,19 +3083,8 @@ impl VectorOperationsService {
                     vector_id: Some(scored_result.vector_id),
                     score: scored_result.similarity,
                     similarity: Some(scored_result.similarity),
-                    vector: None, // AXIS doesn't return vectors by default
-                    metadata: Default::default(),
-                    debug_info: None,
-                    version: None,
-                    timestamp: None,
-                    updated_at: None,
                     expires_at: scored_result.expires_at.map(|dt| dt.timestamp()),
-                    source: None,
-                    expanded_context: Vec::new(),
-                    semantic_similarity: None,
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None,
+                    ..Default::default()
                 },
             )
             .collect();
@@ -3446,10 +3435,42 @@ impl VectorOperationsService {
             return Ok(Some(result));
         }
 
-        // Storage engine doesn't have direct vector retrieval currently
-        // This would require iteration through SST files which is not yet implemented
-        // For now, returning None if not found in WAL
-        // Future: Implement SST iteration for single vector retrieval
+        // WAL miss → scan SST files via bloom-filter-accelerated point lookup
+        let file_paths = self
+            .storage_engine
+            .list_collection_files(collection_id)
+            .await
+            .unwrap_or_default();
+
+        if !file_paths.is_empty() {
+            let search_ops = crate::storage::engines::sst::search::SearchOperations::new(
+                self.storage_engine.clone(),
+            );
+            if let Ok(Some(hit)) = search_ops
+                .point_lookup(&file_paths, vector_id)
+                .await
+            {
+                let mut record = crate::proto::proximadb_v1::VectorRecord {
+                    id: hit.id,
+                    vector: hit.vector.as_deref().cloned().unwrap_or_default(),
+                    metadata: if include_metadata {
+                        crate::core::search::results::proxima_map_to_sql(hit.metadata)
+                    } else {
+                        Default::default()
+                    },
+                    timestamp: hit.timestamp,
+                    updated_at: hit.updated_at,
+                    expires_at: hit.expires_at,
+                    version: hit.version,
+                    ..Default::default()
+                };
+                if !include_vector {
+                    record.vector.clear();
+                }
+                return Ok(Some(record));
+            }
+        }
+
         Ok(None)
     }
 
@@ -3770,11 +3791,8 @@ impl VectorOperationsService {
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
         use crate::proto::proximadb_v1::SearchVectorRecord;
 
-        // OptimizedSearchRecord already has SqlValue metadata, just clone it
-        let metadata_map = result.metadata.clone();
+        let metadata_map = crate::core::search::results::proxima_map_to_sql(result.metadata.clone());
 
-        // Use normalized similarity score for user-facing display (0-1 range, higher = better)
-        // Internal sorting uses result.score (raw distance), but users should see normalized values
         let display_score = result.similarity.unwrap_or(0.0) as f64;
 
         SearchVectorRecord {
@@ -3833,8 +3851,7 @@ impl VectorOperationsService {
         result: &crate::core::search::results::OptimizedSearchRecord,
         include_vector: bool,
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
-        // OptimizedSearchRecord already has SqlValue metadata, just clone it
-        let metadata = result.metadata.clone();
+        let metadata = crate::core::search::results::proxima_map_to_sql(result.metadata.clone());
 
         // Use normalized similarity score for user-facing display (0-1 range, higher = better)
         // Internal sorting uses result.score (raw distance), but users should see normalized values

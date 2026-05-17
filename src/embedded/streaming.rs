@@ -342,24 +342,13 @@ impl StreamingSearchExecutor {
                             .metadata
                             .into_iter()
                             .map(|(k, v)| {
-                                let val_str = match v.value {
-                                    Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                            s,
-                                        ),
-                                    ) => s,
-                                    Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                            f,
-                                        ),
-                                    ) => f.to_string(),
-                                    Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
-                                    ) => i.to_string(),
-                                    Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
-                                    ) => b.to_string(),
-                                    _ => String::new(),
+                                use proximadb_data_model::ProximaValue;
+                                let val_str = match v {
+                                    ProximaValue::String(s) | ProximaValue::Symbol(s) => s,
+                                    ProximaValue::Float64(f) => f.to_string(),
+                                    ProximaValue::Int64(i) => i.to_string(),
+                                    ProximaValue::Boolean(b) => b.to_string(),
+                                    other => crate::embedded::proxima_value_to_string(other),
                                 };
                                 (k, val_str)
                             })

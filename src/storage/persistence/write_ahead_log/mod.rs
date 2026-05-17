@@ -2563,21 +2563,14 @@ impl WriteAheadLogManager {
                     let tombstone_result = crate::core::search::results::OptimizedSearchRecord {
                         id: vector_record.id.clone(),
                         vector_id: Some(vector_record.id.clone()),
-                        score: 0.0, // Tombstone has no similarity score
+                        score: 0.0,
                         similarity: Some(0.0),
-                        vector: None, // Empty vector marker
-                        metadata: std::collections::HashMap::new(),
-                        debug_info: None,
+                        vector: None,
                         version: vector_record.version,
                         timestamp: Some(vector_record.timestamp.unwrap_or(0)),
                         updated_at: vector_record.updated_at,
-                        expires_at: vector_record.expires_at, // Preserve tombstone marker
-                        source: None,
-                        expanded_context: Vec::new(),
-                        semantic_similarity: None,
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
+                        expires_at: vector_record.expires_at,
+                        ..Default::default()
                     };
                     all_results.push(tombstone_result);
                     continue;
@@ -2615,13 +2608,11 @@ impl WriteAheadLogManager {
                     } else {
                         None
                     },
-                    // Use SqlValue metadata directly for OptimizedSearchRecord (no conversion needed)
                     metadata: if include_metadata {
-                        vector_record.metadata.clone()
+                        crate::core::search::results::sql_map_to_proxima(vector_record.metadata.clone())
                     } else {
-                        std::collections::HashMap::new()
+                        Default::default()
                     },
-                    debug_info: None,
                     version: vector_record.version,
                     timestamp: Some(vector_record.timestamp.unwrap_or(0)),
                     updated_at: vector_record.updated_at,
@@ -2635,11 +2626,8 @@ impl WriteAheadLogManager {
                             ),
                         }
                     }),
-                    expanded_context: Vec::new(),
                     semantic_similarity: Some(similarity_result.clone()),
-                    quantization_info: None, // Populated by engine during quantized search
-                    engine_stats: None,      // Populated by engine with I/O metrics
-                    index_path: None,        // Populated when index-based search is used
+                    ..Default::default()
                 };
 
                 // OptimizedSearchRecord is complete with all necessary fields

@@ -896,9 +896,8 @@ impl SstEngine {
             // This ensures consistency with the rest of the codebase and BoundedPriorityQueue
             let similarity_result = SimilarityResult::new(raw_distance, distance_metric);
 
-            // VectorRecord.metadata is already HashMap<String, SqlValue>
-            // Clone it directly for use in OptimizedSearchRecord
-            let metadata = record.metadata.clone();
+            // OptimizedSearchRecord uses canonical ProximaValue metadata internally.
+            let metadata = crate::core::search::results::sql_map_to_proxima(record.metadata.clone());
 
             candidates.push(OptimizedSearchRecord {
                 id: record.id.clone(),

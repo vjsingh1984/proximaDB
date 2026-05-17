@@ -1583,12 +1583,11 @@ impl ViperEngine {
                     .as_ref()
                     .map(|arc| (**arc).clone())
                     .unwrap_or_default();
-                // Use metadata directly - it's already HashMap<String, SqlValue>
                 crate::proto::proximadb_v1::SearchVectorRecord {
                     id: r.id,
                     score: r.similarity.unwrap_or(r.score) as f64,
                     vector,
-                    metadata: r.metadata.clone(),
+                    metadata: crate::core::search::results::proxima_map_to_sql(r.metadata.clone()),
                     version: None,
                     similarity: r.similarity,
                     timestamp: None,

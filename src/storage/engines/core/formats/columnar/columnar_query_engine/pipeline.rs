@@ -360,6 +360,7 @@ impl TopKOperator {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
+            ..Default::default()
         })
     }
 }

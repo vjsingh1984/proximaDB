@@ -1409,7 +1409,7 @@ impl HybridQueryEngine {
                                 vector_record: VectorRecord {
                                     id: rec.id,
                                     vector,
-                                    metadata: rec.metadata.clone(),
+                                    metadata: crate::core::search::results::proxima_map_to_sql(rec.metadata.clone()),
                                     timestamp: Some(rec.timestamp.unwrap_or(0)),
                                     updated_at: Some(rec.updated_at.unwrap_or(0)),
                                     expires_at: None,

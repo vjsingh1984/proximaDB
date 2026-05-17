@@ -1273,7 +1273,7 @@ impl NovaEngine {
                     id: r.id,
                     score: r.similarity.unwrap_or(r.score) as f64,
                     vector,
-                    metadata: r.metadata.clone(),
+                    metadata: crate::core::search::results::proxima_map_to_sql(r.metadata.clone()),
                     version: None,
                     similarity: r.similarity,
                     timestamp: None,
@@ -1858,21 +1858,11 @@ impl NovaEngine {
             let search_record = OptimizedSearchRecord {
                 id: record.id.clone(),
                 vector_id: Some(record.id.clone()),
-                score: similarity_result.normalized_score, // Use normalized score from distance engine
-                similarity: Some(similarity_result.normalized_score), // Consistent similarity scoring
+                score: similarity_result.normalized_score,
+                similarity: Some(similarity_result.normalized_score),
                 vector: Some(Arc::new(record.vector.clone())),
-                metadata: record.metadata.clone(),
-                debug_info: None,
-                version: None,
-                timestamp: None,
-                updated_at: None,
-                expires_at: None,
-                source: None,
-                expanded_context: vec![],
-                semantic_similarity: None,
-                quantization_info: None,
-                engine_stats: None,
-                index_path: None,
+                metadata: crate::core::search::results::sql_map_to_proxima(record.metadata.clone()),
+                ..Default::default()
             };
 
             priority_queue.try_insert(search_record);

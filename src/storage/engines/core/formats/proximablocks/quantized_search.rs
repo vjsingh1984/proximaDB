@@ -310,6 +310,7 @@ impl QuantizedProximaSearch {
                 vector: Some(record.values),
                 metadata: record.metadata,
                 version: record.version,
+                ..Default::default()
             })
             .collect();
 
@@ -348,6 +349,7 @@ impl QuantizedProximaSearch {
                 vector: Some(record.values),
                 metadata: record.metadata,
                 version: record.version,
+                ..Default::default()
             })
             .collect();
 

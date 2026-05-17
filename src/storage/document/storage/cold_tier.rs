@@ -194,32 +194,28 @@ impl StorageEngineColdTierRetriever {
         &self,
         record: &crate::core::search::results::OptimizedSearchRecord,
     ) -> Option<DocumentRecord> {
-        use crate::proto::proximadb_v1::sql_value::Value;
+        use proximadb_data_model::ProximaValue;
 
         // Check if this is a document record
         let type_value = record.metadata.get("_type")?;
-        if let Some(Value::StringValue(t)) = &type_value.value {
-            if t != "document" {
-                return None;
-            }
-        } else {
-            return None;
+        match type_value {
+            ProximaValue::String(t) if t == "document" => {}
+            _ => return None,
         }
 
         // Get collection
         let collection = record.metadata.get("_collection")?;
-        let collection_name = if let Some(Value::StringValue(c)) = &collection.value {
-            c.clone()
-        } else {
-            return None;
+        let collection_name = match collection {
+            ProximaValue::String(c) => c.clone(),
+            _ => return None,
         };
 
         // Get document JSON
         let doc_value = record.metadata.get("_document")?;
-        let doc_json = if let Some(Value::StringValue(j)) = &doc_value.value {
-            j.clone()
-        } else {
-            return None;
+        let doc_json = match doc_value {
+            ProximaValue::String(j) => j.clone(),
+            ProximaValue::Json(j) | ProximaValue::Jsonb(j) => j.to_string(),
+            _ => return None,
         };
 
         // Deserialize document
@@ -243,12 +239,9 @@ impl StorageEngineColdTierRetriever {
         let version = record
             .metadata
             .get("_version")
-            .and_then(|v| {
-                if let Some(Value::Int64Value(i)) = &v.value {
-                    Some(*i as u64)
-                } else {
-                    None
-                }
+            .and_then(|v| match v {
+                ProximaValue::Int64(i) => Some(*i as u64),
+                _ => None,
             })
             .unwrap_or(0);
 

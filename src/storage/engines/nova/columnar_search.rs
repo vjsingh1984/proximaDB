@@ -477,6 +477,7 @@ impl NovaColumnarSearch {
                 quantization_info: None,
                 engine_stats: None,
                 index_path: None,
+                ..Default::default()
             };
             priority_queue.try_insert(search_record);
         }

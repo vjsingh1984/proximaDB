@@ -215,21 +215,13 @@ impl NovaSearchOperations {
                 let search_record = OptimizedSearchRecord {
                     id: record.id.clone(),
                     vector_id: Some(record.id),
-                    score: similarity_result.normalized_score, // Use normalized score from distance engine
-                    similarity: Some(similarity_result.normalized_score), // Consistent with all other engines
+                    score: similarity_result.normalized_score,
+                    similarity: Some(similarity_result.normalized_score),
                     vector: Some(Arc::new(vector.clone())),
-                    metadata: record.metadata,
-                    debug_info: None,
+                    metadata: crate::core::search::results::sql_map_to_proxima(record.metadata),
                     version: record.version,
                     timestamp: record.timestamp,
-                    updated_at: None,
-                    expires_at: None,
-                    source: None,
-                    expanded_context: vec![],
-                    semantic_similarity: None,
-                    quantization_info: None,
-                    engine_stats: None,
-                    index_path: None,
+                    ..Default::default()
                 };
 
                 // Try to insert into bounded queue - only keeps top-k

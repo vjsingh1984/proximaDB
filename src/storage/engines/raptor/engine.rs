@@ -1127,18 +1127,14 @@ impl RaptorEngine {
                                         if let Some(ref f) = filter {
                                             let mut matches = true;
                                             for (key, value) in f {
-                                                let filter_matches = record.metadata.get(key).is_some_and(|sql_val| {
-                                                    if let Some(val) = &sql_val.value {
-                                                        use crate::proto::proximadb_v1::sql_value::Value;
-                                                        match val {
-                                                            Value::StringValue(s) => s == value,
-                                                            Value::Int64Value(i) => &i.to_string() == value,
-                                                            Value::NumberValue(f) => &f.to_string() == value,
-                                                            Value::BoolValue(b) => &b.to_string() == value,
-                                                            _ => false,
-                                                        }
-                                                    } else {
-                                                        false
+                                                let filter_matches = record.metadata.get(key).is_some_and(|pv| {
+                                                    use proximadb_data_model::ProximaValue;
+                                                    match pv {
+                                                        ProximaValue::String(s) => s == value,
+                                                        ProximaValue::Int64(i) => &i.to_string() == value,
+                                                        ProximaValue::Float64(f) => &f.to_string() == value,
+                                                        ProximaValue::Boolean(b) => &b.to_string() == value,
+                                                        _ => false,
                                                     }
                                                 });
                                                 if !filter_matches {

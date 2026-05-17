@@ -23,44 +23,118 @@ use std::collections::HashMap;
 
 use crate::core::types::{TextField, TextStorageStrategy, TypedValue as CoreTypedValue};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value::Value as SqlValueVariant};
+use crate::core::search::results::{sql_value_to_proxima_value, proxima_value_to_sql_value};
+use proximadb_data_model::ProximaValue;
 
-/// ProximaRecord representation using core types (not proto v2).
+/// Modality discriminant for a ProximaRecord in the conversion layer.
 ///
-/// This is the internal representation used for conversion between v1 and v2 record formats.
+/// Mirrors [`crate::core::search::results::RecordType`] but lives here so
+/// RecordConverter does not pull in the search-result crate.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RecordModality {
+    #[default]
+    Vector,
+    Document,
+    Graph,
+    Observability,
+    TimeSeries,
+}
+
+/// Internal ProximaRecord for conversion between v1 VectorRecord and v2 ProximaRecord.
+///
+/// **Migration note**: This type is the *conversion-layer bridge*. It is intentionally
+/// vector-shaped for backward compatibility, but `modality` + the extension groups below
+/// make it multi-model aware. New code should prefer
+/// `proximadb_records::ProximaRecord` (the canonical foundation type) and use
+/// `RecordConverter` only at protocol-edge deserialization.
 #[derive(Debug, Clone)]
 pub struct ProximaRecord {
+    // === Core identity ===
     /// Unique record identifier.
     pub id: String,
+    /// Schema version identifier used during migrations.
+    pub schema_id: Option<String>,
+    /// Modality discriminant — drives interpretation of extension groups.
+    pub modality: RecordModality,
+
+    // === Vector modality ===
     /// Dense vector embedding values.
     pub vector: Vec<f32>,
     /// Declared dimensionality of the vector, if known.
     pub vector_dimension: Option<u32>,
-    /// Strongly-typed metadata fields using the core type system.
+
+    // === Graph modality ===
+    /// (neighbor_id, weight) pairs for graph edge records.
+    pub graph_edges: Option<Vec<(String, f32)>>,
+    /// Parent node for hierarchical graph structures.
+    pub graph_parent_id: Option<String>,
+
+    // === Document modality ===
+    /// Parent document identifier for chunk-level records.
+    pub parent_doc_id: Option<String>,
+    /// MIME / content-type label.
+    pub content_type: Option<String>,
+    /// 0-based chunk ordinal within the parent document.
+    pub chunk_ordinal: Option<u32>,
+
+    // === Observability modality ===
+    /// Trace/span/service fields for observability records.
+    pub trace_id: Option<String>,
+    pub span_id: Option<String>,
+    pub service_name: Option<String>,
+    pub log_level: Option<String>,
+
+    // === TimeSeries modality ===
+    /// Logical series / metric name.
+    pub series_id: Option<String>,
+    /// Aligned time-bucket (nanoseconds since epoch).
+    pub time_bucket_ns: Option<i64>,
+
+    // === Shared metadata ===
+    /// Strongly-typed fields using the core type system.
     pub typed_fields: HashMap<String, CoreTypedValue>,
-    /// Flexible metadata fields expressed as SQL values (v1 compatibility layer).
-    pub flexible_fields: HashMap<String, SqlValue>,
+    /// Flexible metadata using the canonical ProximaValue type.
+    /// Replaces legacy `HashMap<String, SqlValue>` in v0.2+.
+    pub flexible_fields: HashMap<String, ProximaValue>,
     /// Extracted full-text search fields.
     pub text_fields: Vec<TextField>,
-    /// Record creation time as milliseconds since the Unix epoch.
+
+    // === Temporal ===
+    /// Record creation time (milliseconds since Unix epoch).
     pub timestamp_ms: i64,
-    /// Last-update time as milliseconds since the Unix epoch, if set.
+    /// Last-update time (milliseconds since Unix epoch), if set.
     pub updated_at_ms: Option<i64>,
-    /// Expiry time as milliseconds since the Unix epoch, if set.
+    /// Expiry time (milliseconds since Unix epoch), if set.
     pub expires_at_ms: Option<i64>,
     /// Monotonically increasing version counter for optimistic concurrency.
     pub version: Option<u32>,
+
+    // === Provenance ===
     /// Originating data source identifier.
     pub source: Option<String>,
-    /// Schema version identifier used during migrations.
-    pub schema_id: Option<String>,
+    /// Owning tenant (empty = single-tenant / no isolation).
+    pub tenant_id: Option<String>,
 }
 
 impl Default for ProximaRecord {
     fn default() -> Self {
         Self {
             id: String::new(),
+            schema_id: None,
+            modality: RecordModality::Vector,
             vector: Vec::new(),
             vector_dimension: None,
+            graph_edges: None,
+            graph_parent_id: None,
+            parent_doc_id: None,
+            content_type: None,
+            chunk_ordinal: None,
+            trace_id: None,
+            span_id: None,
+            service_name: None,
+            log_level: None,
+            series_id: None,
+            time_bucket_ns: None,
             typed_fields: HashMap::new(),
             flexible_fields: HashMap::new(),
             text_fields: Vec::new(),
@@ -72,7 +146,7 @@ impl Default for ProximaRecord {
             expires_at_ms: None,
             version: None,
             source: None,
-            schema_id: None,
+            tenant_id: None,
         }
     }
 }
@@ -109,11 +183,9 @@ impl RecordConverter {
     ) -> ProximaRecord {
         let mut proxima = ProximaRecord {
             id: v.id.clone(),
+            modality: RecordModality::Vector,
             vector: v.vector.clone(),
             vector_dimension: Some(v.vector.len() as u32),
-            typed_fields: HashMap::new(),
-            flexible_fields: HashMap::new(),
-            text_fields: Vec::new(),
             timestamp_ms: v.timestamp.unwrap_or_else(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -125,9 +197,10 @@ impl RecordConverter {
             version: v.version,
             source: v.source.clone(),
             schema_id: schema_id.map(|s| s.to_string()),
+            ..Default::default()
         };
 
-        // Process metadata: separate text columns from typed fields
+        // Process metadata: separate text columns from typed/flexible fields
         for (key, sql_value) in &v.metadata {
             if text_columns.contains(key) {
                 // Extract as TEXT field
@@ -141,14 +214,14 @@ impl RecordConverter {
                     });
                 }
             } else {
-                // Convert to typed field
+                // Convert to typed field when a strong CoreTypedValue mapping exists
                 if let Some(typed_value) = Self::sql_to_typed(sql_value) {
                     proxima.typed_fields.insert(key.clone(), typed_value);
                 } else {
-                    // Fallback: store in flexible_fields for unrecognized types
+                    // Canonical ProximaValue in flexible_fields (no longer SqlValue)
                     proxima
                         .flexible_fields
-                        .insert(key.clone(), sql_value.clone());
+                        .insert(key.clone(), sql_value_to_proxima_value(sql_value.clone()));
                 }
             }
         }
@@ -186,9 +259,9 @@ impl RecordConverter {
             );
         }
 
-        // Include flexible_fields directly (already SqlValue)
-        for (key, sql_value) in &p.flexible_fields {
-            metadata.insert(key.clone(), sql_value.clone());
+        // Convert flexible_fields (ProximaValue) back to SqlValue for the proto envelope
+        for (key, proxima_value) in &p.flexible_fields {
+            metadata.insert(key.clone(), proxima_value_to_sql_value(proxima_value.clone()));
         }
 
         VectorRecord {

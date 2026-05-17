@@ -587,19 +587,10 @@ impl SharedSstFormatReader {
                         vector_id: Some(record.id.clone()),
                         score: distance_result.normalized_score,
                         similarity: Some(distance_result.normalized_score),
-                        metadata: record.metadata.clone(),
+                        metadata: crate::core::search::results::sql_map_to_proxima(record.metadata.clone()),
                         vector: Some(Arc::new(record.vector.clone())),
-                        debug_info: None,
-                        version: None,
                         timestamp: record.timestamp,
-                        updated_at: None,
-                        expires_at: None,
-                        source: None,
-                        expanded_context: Vec::new(),
-                        semantic_similarity: None,
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
+                        ..Default::default()
                     };
                     all_results.push(search_record);
                 }

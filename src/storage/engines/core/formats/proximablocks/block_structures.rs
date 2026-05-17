@@ -1074,6 +1074,61 @@ pub struct BlockLocation {
     pub estimated_load_time_ms: f32,
 }
 
+/// Convert a SqlValue to a serde_json::Value for JSON serialization.
+/// Used when persisting ObjectValue/ArrayValue to SST with type tag 0x05.
+fn sql_value_to_json(v: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
+    use crate::proto::proximadb_v1::sql_value::Value;
+    match &v.value {
+        Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
+        Some(Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Some(Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
+        Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
+        Some(Value::ObjectValue(obj)) => {
+            let map: serde_json::Map<String, serde_json::Value> = obj
+                .fields
+                .iter()
+                .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(map)
+        }
+        Some(Value::ArrayValue(arr)) => {
+            serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
+        }
+        _ => serde_json::Value::Null,
+    }
+}
+
+/// Inverse of sql_value_to_json — used during deserialization of type tag 0x05.
+fn json_value_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
+    use crate::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, sql_value::Value};
+    let inner = match v {
+        serde_json::Value::String(s) => Value::StringValue(s.clone()),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Value::Int64Value(i)
+            } else {
+                Value::NumberValue(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::Bool(b) => Value::BoolValue(*b),
+        serde_json::Value::Object(map) => {
+            let fields = map
+                .iter()
+                .map(|(k, v)| (k.clone(), json_value_to_sql_value(v)))
+                .collect();
+            Value::ObjectValue(SqlObject { fields })
+        }
+        serde_json::Value::Array(arr) => {
+            let values = arr.iter().map(json_value_to_sql_value).collect();
+            Value::ArrayValue(SqlArray { values })
+        }
+        serde_json::Value::Null => return SqlValue { value: None },
+    };
+    SqlValue { value: Some(inner) }
+}
+
 impl ProximaDataBlock {
     /// DEPRECATED: Use ProximaCodec::global() instead
     ///
@@ -2121,7 +2176,8 @@ impl ProximaDataBlock {
                     presence_bitmap[idx / 8] |= 1 << (idx % 8);
 
                     // Serialize value WITH TYPE TAG for unambiguous deserialization
-                    // Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool, 0x00=None
+                    // Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool,
+                    //            0x05=JSON (ObjectValue/ArrayValue), 0x00=None
                     if let Some(value) = &sql_value.value {
                         let (type_tag, value_bytes): (u8, Vec<u8>) = match value {
                             crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
@@ -2136,7 +2192,29 @@ impl ProximaDataBlock {
                             crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
                                 (0x04, vec![if *b { 1 } else { 0 }])
                             }
-                            _ => (0x00, vec![]), // Handle other variants
+                            crate::proto::proximadb_v1::sql_value::Value::ObjectValue(obj) => {
+                                // Serialize proto SqlObject as JSON string for round-trip fidelity
+                                let json_map: serde_json::Map<String, serde_json::Value> = obj
+                                    .fields
+                                    .iter()
+                                    .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
+                                    .collect();
+                                let json_str = serde_json::to_string(
+                                    &serde_json::Value::Object(json_map),
+                                )
+                                .unwrap_or_default();
+                                (0x05, json_str.into_bytes())
+                            }
+                            crate::proto::proximadb_v1::sql_value::Value::ArrayValue(arr) => {
+                                // Serialize proto SqlArray as JSON string
+                                let json_arr: Vec<serde_json::Value> =
+                                    arr.values.iter().map(sql_value_to_json).collect();
+                                let json_str =
+                                    serde_json::to_string(&serde_json::Value::Array(json_arr))
+                                        .unwrap_or_default();
+                                (0x05, json_str.into_bytes())
+                            }
+                            _ => (0x00, vec![]),
                         };
                         // Write: [u32 total_len][u8 type_tag][value_bytes]
                         let total_len = 1 + value_bytes.len();
@@ -2571,7 +2649,8 @@ impl ProximaDataBlock {
 
     /// Type-tagged deserialization for metadata values
     /// New format (v2): [type_tag:1][value_bytes:N]
-    /// Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool, 0x00=None
+    /// Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool,
+    ///            0x05=JSON (ObjectValue/ArrayValue stored as JSON string), 0x00=None
     /// Falls back to heuristic for legacy data without type tags
     fn deserialize_metadata_value_heuristic(
         val_bytes: &[u8],
@@ -2592,6 +2671,34 @@ impl ProximaDataBlock {
                 let s = String::from_utf8_lossy(payload).to_string();
                 SqlValue {
                     value: Some(Value::StringValue(s)),
+                }
+            }
+            0x05 => {
+                // JSON-encoded ObjectValue or ArrayValue — deserialise and reconstruct proto type
+                let json_str = String::from_utf8_lossy(payload);
+                match serde_json::from_str::<serde_json::Value>(&json_str) {
+                    Ok(serde_json::Value::Object(map)) => {
+                        use crate::proto::proximadb_v1::SqlObject;
+                        let fields: std::collections::HashMap<String, SqlValue> = map
+                            .into_iter()
+                            .map(|(k, v)| (k, json_value_to_sql_value(&v)))
+                            .collect();
+                        SqlValue {
+                            value: Some(Value::ObjectValue(SqlObject { fields })),
+                        }
+                    }
+                    Ok(serde_json::Value::Array(arr)) => {
+                        use crate::proto::proximadb_v1::SqlArray;
+                        let values: Vec<SqlValue> =
+                            arr.iter().map(json_value_to_sql_value).collect();
+                        SqlValue {
+                            value: Some(Value::ArrayValue(SqlArray { values })),
+                        }
+                    }
+                    // Unexpected JSON shape or parse error — keep as string for lossless fallback
+                    _ => SqlValue {
+                        value: Some(Value::StringValue(json_str.into_owned())),
+                    },
                 }
             }
             0x02 if payload.len() == 8 => {

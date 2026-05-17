@@ -336,6 +336,75 @@ pub struct CollectionInfo {
     pub disk_usage_bytes: u64,
 }
 
+/// Convert a ProximaValue to a plain String for the Python-exposed SearchResult.metadata map.
+/// Rich types (Map, Array, Json, Jsonb) are JSON-serialised so no data is lost.
+pub(crate) fn proxima_value_to_string(v: proximadb_data_model::ProximaValue) -> String {
+    use proximadb_data_model::ProximaValue;
+    match v {
+        ProximaValue::String(s) | ProximaValue::Symbol(s) => s,
+        ProximaValue::Float32(f) => f.to_string(),
+        ProximaValue::Float64(f) => f.to_string(),
+        ProximaValue::Int8(i) => i.to_string(),
+        ProximaValue::Int16(i) => i.to_string(),
+        ProximaValue::Int32(i) => i.to_string(),
+        ProximaValue::Int64(i) => i.to_string(),
+        ProximaValue::UInt8(i) => i.to_string(),
+        ProximaValue::UInt16(i) => i.to_string(),
+        ProximaValue::UInt32(i) => i.to_string(),
+        ProximaValue::UInt64(i) => i.to_string(),
+        ProximaValue::Boolean(b) => b.to_string(),
+        ProximaValue::Binary(b) => format!("<{} bytes>", b.len()),
+        ProximaValue::Json(v) | ProximaValue::Jsonb(v) => v.to_string(),
+        ProximaValue::Map(m) => {
+            let json: serde_json::Map<String, serde_json::Value> = m
+                .into_iter()
+                .map(|(k, v)| (k, proxima_value_to_json(v)))
+                .collect();
+            serde_json::to_string(&serde_json::Value::Object(json)).unwrap_or_default()
+        }
+        ProximaValue::Struct(m) => {
+            let json: serde_json::Map<String, serde_json::Value> = m
+                .into_iter()
+                .map(|(k, v)| (k, proxima_value_to_json(v)))
+                .collect();
+            serde_json::to_string(&serde_json::Value::Object(json)).unwrap_or_default()
+        }
+        ProximaValue::Array(arr) => {
+            let json: Vec<serde_json::Value> = arr.into_iter().map(proxima_value_to_json).collect();
+            serde_json::to_string(&serde_json::Value::Array(json)).unwrap_or_default()
+        }
+        ProximaValue::Null => String::new(),
+        other => format!("{:?}", other),
+    }
+}
+
+pub(crate) fn proxima_value_to_json(v: proximadb_data_model::ProximaValue) -> serde_json::Value {
+    use proximadb_data_model::ProximaValue;
+    match v {
+        ProximaValue::String(s) | ProximaValue::Symbol(s) => serde_json::Value::String(s),
+        ProximaValue::Float32(f) => serde_json::Number::from_f64(f as f64)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        ProximaValue::Float64(f) => serde_json::Number::from_f64(f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        ProximaValue::Int64(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        ProximaValue::Int32(i) => serde_json::Value::Number(serde_json::Number::from(i)),
+        ProximaValue::Boolean(b) => serde_json::Value::Bool(b),
+        ProximaValue::Json(v) | ProximaValue::Jsonb(v) => v,
+        ProximaValue::Map(m) | ProximaValue::Struct(m) => serde_json::Value::Object(
+            m.into_iter()
+                .map(|(k, v)| (k, proxima_value_to_json(v)))
+                .collect(),
+        ),
+        ProximaValue::Array(arr) => {
+            serde_json::Value::Array(arr.into_iter().map(proxima_value_to_json).collect())
+        }
+        ProximaValue::Null => serde_json::Value::Null,
+        other => serde_json::Value::String(format!("{:?}", other)),
+    }
+}
+
 fn collection_engine_name(storage_engine: Option<i32>) -> String {
     crate::core::conversions::storage_engine_to_string(
         storage_engine.unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32),
@@ -1556,21 +1625,11 @@ impl EmbeddedProximaDB {
                                     .metadata
                                     .into_iter()
                                     .map(|(k, v)| {
-                                        let val_str = match v.value {
-                                            Some(
-                                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
-                                            ) => s,
-                                            Some(
-                                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(f),
-                                            ) => f.to_string(),
-                                            Some(
-                                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i),
-                                            ) => i.to_string(),
-                                            Some(
-                                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b),
-                                            ) => b.to_string(),
-                                            _ => String::new(),
-                                        };
+                                        // gRPC path: v is SqlValue — convert to ProximaValue first
+                                        use crate::core::search::results::sql_value_to_proxima_value;
+                                        let val_str = proxima_value_to_string(
+                                            sql_value_to_proxima_value(v),
+                                        );
                                         (k, val_str)
                                     })
                                     .collect(),
@@ -1640,21 +1699,7 @@ impl EmbeddedProximaDB {
                         .metadata
                         .into_iter()
                         .map(|(k, v)| {
-                            let val_str = match v.value {
-                                Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s),
-                                ) => s,
-                                Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(f),
-                                ) => f.to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
-                                    i,
-                                )) => i.to_string(),
-                                Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(
-                                    b,
-                                )) => b.to_string(),
-                                _ => String::new(),
-                            };
+                            let val_str = proxima_value_to_string(v);
                             (k, val_str)
                         })
                         .collect(),

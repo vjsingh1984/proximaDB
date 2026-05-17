@@ -587,21 +587,17 @@ impl UnifiedParquetReader {
                         similarity: Some(0.0),
                         vector: Some(Arc::new(record.vector)),
                         metadata: if needs_metadata {
-                            record.metadata
+                            crate::core::search::results::sql_map_to_proxima(record.metadata)
                         } else {
-                            HashMap::new()
+                            Default::default()
                         },
-                        debug_info: None,
                         version: record.version,
                         timestamp: record.timestamp,
-                        updated_at: None,
-                        expires_at: None,
-                        source: None,
-                        expanded_context: vec![],
                         semantic_similarity: None,
                         quantization_info: None,
                         engine_stats: None,
                         index_path: None,
+                        ..Default::default()
                     };
                     if priority_queue.len() < search_plan.top_k {
                         priority_queue.try_insert(search_record);
@@ -1334,9 +1330,11 @@ impl UnifiedParquetReader {
             let timestamp = timestamp_array.map(|a| a.value(row_idx));
 
             let metadata = if needs_metadata {
-                self.extract_metadata_for_row(batch, row_idx)
+                crate::core::search::results::sql_map_to_proxima(
+                    self.extract_metadata_for_row(batch, row_idx)
+                )
             } else {
-                HashMap::new()
+                Default::default()
             };
 
             let search_record = crate::core::search::results::OptimizedSearchRecord {
@@ -1346,17 +1344,9 @@ impl UnifiedParquetReader {
                 similarity: Some(score),
                 vector: Some(Arc::new(vector_slices[row_idx].clone())),
                 metadata,
-                debug_info: None,
                 version,
                 timestamp,
-                updated_at: None,
-                expires_at: None,
-                source: None,
-                expanded_context: vec![],
-                semantic_similarity: None,
-                quantization_info: None,
-                engine_stats: None,
-                index_path: None,
+                ..Default::default()
             };
 
             priority_queue.try_insert(search_record);

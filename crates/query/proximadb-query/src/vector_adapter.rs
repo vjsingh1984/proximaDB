@@ -2,16 +2,24 @@
 
 use std::collections::HashMap;
 
-use proximadb_data_model::DataModel;
-use proximadb_proto::proximadb_v1::SqlValue;
+use proximadb_data_model::{DataModel, ProximaValue};
 
 use crate::UnifiedRecord;
 
-/// Convert SQL-typed vector metadata into the unified string metadata contract.
-pub fn build_vector_metadata(metadata: &HashMap<String, SqlValue>) -> HashMap<String, String> {
+/// Convert ProximaValue-typed vector metadata into the unified string metadata contract.
+pub fn build_vector_metadata(metadata: &HashMap<String, ProximaValue>) -> HashMap<String, String> {
     metadata
         .iter()
-        .map(|(key, value)| (key.clone(), format!("{:?}", value)))
+        .map(|(key, value)| {
+            let s = match value {
+                ProximaValue::String(s) | ProximaValue::Symbol(s) => s.clone(),
+                ProximaValue::Int64(i) => i.to_string(),
+                ProximaValue::Float64(f) => f.to_string(),
+                ProximaValue::Boolean(b) => b.to_string(),
+                other => format!("{:?}", other),
+            };
+            (key.clone(), s)
+        })
         .collect()
 }
 
@@ -36,21 +44,17 @@ pub fn build_vector_search_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_proto::proximadb_v1::sql_value::Value;
 
     #[test]
-    fn build_vector_metadata_formats_sql_values() {
+    fn build_vector_metadata_formats_proxima_values() {
         let metadata = HashMap::from([(
             "tenant".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue("acme".to_string())),
-            },
+            ProximaValue::String("acme".to_string()),
         )]);
 
         let converted = build_vector_metadata(&metadata);
         let tenant = converted.get("tenant").expect("tenant metadata");
-        assert!(tenant.contains("StringValue"));
-        assert!(tenant.contains("acme"));
+        assert_eq!(tenant, "acme");
     }
 
     #[test]

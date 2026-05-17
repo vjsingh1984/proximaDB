@@ -22,7 +22,6 @@ use tracing::debug;
 
 use crate::analytics::entanglement::{self, ChunkEmbedding, EntanglementError, EntanglementReport};
 use crate::errors::{ApiError, ApiResult};
-use crate::proto::proximadb_v1::sql_value::Value;
 use crate::services::VectorOperationsService;
 
 /// State for the analytics router.
@@ -169,15 +168,16 @@ async fn get_collection_entanglement(
     let chunks: Vec<ChunkEmbedding> = records
         .into_iter()
         .filter_map(|r| {
-            let topic = match r.metadata.get(&params.topic_field)?.value.as_ref()? {
-                Value::StringValue(s) => s.clone(),
+            let topic = match r.metadata.get(&params.topic_field)? {
+                proximadb_data_model::ProximaValue::String(s)
+                | proximadb_data_model::ProximaValue::Symbol(s) => s.clone(),
                 _ => return None,
             };
-
+            let embedding = r.vector.as_ref().map(|arc| (**arc).clone())?;
             Some(ChunkEmbedding {
                 chunk_id: r.id,
                 topic,
-                embedding: r.vector,
+                embedding,
             })
         })
         .collect();

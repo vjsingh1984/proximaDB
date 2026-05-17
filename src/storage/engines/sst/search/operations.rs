@@ -206,7 +206,7 @@ impl SearchOperations {
                     updated_at: record.updated_at,
                     expires_at: record.expires_at,
                     version: record.version,
-                    metadata: record.metadata,
+                    metadata: crate::core::search::results::sql_map_to_proxima(record.metadata),
                     ..Default::default()
                 };
 
