@@ -336,7 +336,7 @@ fn decode_pfor_delta_i64_base(data: &[u8], count: usize) -> Result<Vec<i64>> {
 ///
 /// # Returns
 /// (base_i32, patched_deltas)
-pub(crate) fn parse_header_and_patches_f32(data: &[u8], count: usize) -> Result<(i32, Vec<i64>)> {
+pub fn parse_header_and_patches_f32(data: &[u8], count: usize) -> Result<(i32, Vec<i64>)> {
     // Reuse core decode logic but return intermediate results
     if data.len() < 9 {
         return Err(anyhow::anyhow!("PForDelta decode: insufficient data"));
@@ -386,7 +386,7 @@ pub(crate) fn parse_header_and_patches_f32(data: &[u8], count: usize) -> Result<
 /// Reconstruct f32 values from deltas and base (for SIMD compatibility)
 ///
 /// **Helper for SIMD**: Made public to allow SIMD module to provide vectorized version
-pub(crate) fn reconstruct_values_scalar_f32(deltas: &[i64], base_i32: i32) -> Vec<f32> {
+pub fn reconstruct_values_scalar_f32(deltas: &[i64], base_i32: i32) -> Vec<f32> {
     helpers::reconstruct_f32_from_i64(deltas, base_i32)
 }
 

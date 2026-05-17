@@ -144,7 +144,7 @@ pub fn decode_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
 ///
 /// **Note**: Made public for use by simd.rs helpers that need bitpacking
 /// for intermediate results (PForDelta, FrameOfReference, etc.)
-pub(crate) fn bitpack_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
+pub fn bitpack_u32(values: &[u32], bits: u8) -> Result<Vec<u8>> {
     if bits == 0 {
         return Ok(Vec::new());
     }
@@ -217,7 +217,7 @@ fn bitpack_u64(values: &[u64], bits: u8) -> Result<Vec<u8>> {
 ///
 /// **Note**: Made public for use by simd.rs helpers that need bitunpacking
 /// for intermediate results (PForDelta, FrameOfReference, etc.)
-pub(crate) fn unbitpack_u32(data: &[u8], bits: u8, count: usize) -> Result<Vec<u32>> {
+pub fn unbitpack_u32(data: &[u8], bits: u8, count: usize) -> Result<Vec<u32>> {
     if bits == 0 {
         return Ok(vec![0; count]);
     }
@@ -367,7 +367,7 @@ pub(crate) fn bitpack_i64(values: &[i64], bits: u8) -> Result<Vec<u8>> {
 /// // Without sign extension: 31 (unsigned)
 /// // With sign extension: 0xFFFFFFFF = -1 (i32)
 /// ```text
-pub(crate) fn unbitpack_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
+pub fn unbitpack_i32(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
     if bits > 32 {
         return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
     }
@@ -467,7 +467,7 @@ pub(crate) fn unbitpack_i64(data: &[u8], bits: u8, count: usize) -> Result<Vec<i
 /// This variant treats all unpacked values as unsigned and casts directly to i32.
 /// Used by pfor_delta and pfor_double_delta where patches handle full precision.
 #[allow(dead_code)]
-pub(crate) fn unbitpack_i32_unsigned(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
+pub fn unbitpack_i32_unsigned(data: &[u8], bits: u8, count: usize) -> Result<Vec<i32>> {
     if bits > 32 {
         return Err(anyhow::anyhow!("Bit width {} exceeds 32", bits));
     }

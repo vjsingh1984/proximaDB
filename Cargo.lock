@@ -5734,6 +5734,7 @@ dependencies = [
  "prost-types",
  "proximadb-api",
  "proximadb-catalog",
+ "proximadb-codec",
  "proximadb-compression",
  "proximadb-compression-types",
  "proximadb-config",
@@ -5865,6 +5866,14 @@ version = "0.2.0"
 dependencies = [
  "arrow-schema",
  "proximadb-data-model",
+ "serde",
+]
+
+[[package]]
+name = "proximadb-codec"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
  "serde",
 ]
 
@@ -6293,7 +6302,10 @@ name = "proximadb-storage-common"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "arrow",
+ "arrow-array",
  "criterion",
+ "parquet",
  "proximadb-kernel",
  "proximadb-records",
  "proximadb-runtime-common",

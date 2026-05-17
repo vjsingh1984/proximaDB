@@ -45,8 +45,8 @@ from ._proximadb_embedded import (
     ProximaDB,
     SearchResult,
     SearchStreamIterator,
-    StreamingSearchResult,
     StorageStats,
+    StreamingSearchResult,
     init_logging,
 )
 
@@ -63,6 +63,9 @@ __all__ = [
     "GraphEdge",
     "GraphStats",
     "init_logging",
+    "insert_arrow",
+    "upsert_arrow",
+    "insert_pandas",
     "__version__",
 ]
 
@@ -96,3 +99,115 @@ def open(
         cache_size_mb=cache_size_mb,
         default_engine=default_engine,
     )
+
+
+def _arrow_source_to_ipc_bytes(source) -> bytes:
+    """Convert pyarrow/pandas/IPC-byte inputs to Arrow IPC stream bytes."""
+    if isinstance(source, bytes):
+        return source
+    if isinstance(source, bytearray):
+        return bytes(source)
+    if isinstance(source, memoryview):
+        return source.tobytes()
+
+    try:
+        import pyarrow as pa
+        import pyarrow.ipc as ipc
+    except ImportError as exc:
+        raise ImportError(
+            "insert_arrow/insert_pandas require pyarrow. Install with "
+            "`pip install proximadb_embedded[arrow]` or pass Arrow IPC bytes."
+        ) from exc
+
+    if isinstance(source, pa.RecordBatch):
+        table = pa.Table.from_batches([source])
+    elif isinstance(source, pa.Table):
+        table = source
+    else:
+        try:
+            table = pa.Table.from_pandas(source, preserve_index=False)
+        except Exception as exc:
+            raise TypeError(
+                "Expected pyarrow.Table, pyarrow.RecordBatch, pandas.DataFrame, "
+                "or Arrow IPC bytes"
+            ) from exc
+
+    sink = pa.BufferOutputStream()
+    with ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    return sink.getvalue().to_pybytes()
+
+
+def insert_arrow(
+    db: ProximaDB,
+    collection: str,
+    source,
+    *,
+    mode: str = "insert",
+    tenant_id=None,
+) -> int:
+    """Insert/upsert a pyarrow Table/RecordBatch, pandas DataFrame, or IPC bytes."""
+    return db.insert_arrow_ipc(
+        collection,
+        _arrow_source_to_ipc_bytes(source),
+        mode,
+        tenant_id,
+    )
+
+
+def upsert_arrow(
+    db: ProximaDB,
+    collection: str,
+    source,
+    *,
+    tenant_id=None,
+) -> int:
+    """Upsert a pyarrow Table/RecordBatch, pandas DataFrame, or IPC bytes."""
+    return db.upsert_arrow_ipc(
+        collection,
+        _arrow_source_to_ipc_bytes(source),
+        tenant_id,
+    )
+
+
+def insert_pandas(
+    db: ProximaDB,
+    collection: str,
+    dataframe,
+    *,
+    mode: str = "insert",
+    tenant_id=None,
+) -> int:
+    """Insert/upsert a pandas DataFrame through the embedded Arrow batch path."""
+    return insert_arrow(
+        db,
+        collection,
+        dataframe,
+        mode=mode,
+        tenant_id=tenant_id,
+    )
+
+
+try:
+    ProximaDB.insert_arrow = lambda self, collection, source, **kwargs: insert_arrow(
+        self,
+        collection,
+        source,
+        **kwargs,
+    )
+    ProximaDB.upsert_arrow = lambda self, collection, source, **kwargs: upsert_arrow(
+        self,
+        collection,
+        source,
+        **kwargs,
+    )
+    ProximaDB.insert_pandas = lambda self, collection, dataframe, **kwargs: insert_pandas(
+        self,
+        collection,
+        dataframe,
+        **kwargs,
+    )
+except (AttributeError, TypeError):
+    # Some Python extension class builds reject monkey-patching. The module-level
+    # helpers above remain available and route to the same native IPC methods.
+    pass

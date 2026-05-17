@@ -3887,6 +3887,89 @@ impl EmbeddedProximaDB {
         })
     }
 
+    /// Insert or upsert Arrow IPC stream bytes through the embedded rich-record batch path.
+    ///
+    /// This is the in-process equivalent of Arrow Flight bulk_insert/bulk_upsert:
+    /// Arrow IPC stream bytes are decoded to RecordBatches, converted to canonical
+    /// ProximaRecord envelopes, and routed directly to UnifiedHandlers without
+    /// binding ports or starting a Flight server.
+    pub fn insert_arrow_ipc(
+        &self,
+        collection: &str,
+        ipc_stream: &[u8],
+        insert_only: bool,
+        tenant_id: Option<&str>,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        let cursor = std::io::Cursor::new(ipc_stream);
+        let reader = arrow_ipc::reader::StreamReader::try_new(cursor, None).map_err(
+            |e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(format!(
+                    "Failed to read Arrow IPC stream: {}",
+                    e
+                )))
+            },
+        )?;
+
+        let mut batches = Vec::new();
+        for batch in reader {
+            batches.push(
+                batch.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(format!(
+                        "Failed to decode Arrow record batch: {}",
+                        e
+                    )))
+                })?,
+            );
+        }
+
+        let records =
+            crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(batches)
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(format!(
+                        "Failed to convert Arrow batches to ProximaRecords: {}",
+                        e
+                    )))
+                })?;
+        let record_count = records.len() as u64;
+
+        let result = self
+            .runtime
+            .block_on(async {
+                let request = crate::api_handlers::RichRecordBatchRequest {
+                    collection_id: collection.to_string(),
+                    records,
+                };
+
+                if insert_only {
+                    self.shared_services
+                        .request_handlers
+                        .handle_record_insert_batch_for_tenant(request, tenant_id)
+                        .await
+                } else {
+                    self.shared_services
+                        .request_handlers
+                        .handle_record_batch_for_tenant(request, tenant_id)
+                        .await
+                }
+            })
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(e.to_string()))
+            })?;
+
+        if !result.success {
+            return Err(Box::new(std::io::Error::other(format!(
+                "Arrow batch insert failed: {}",
+                result
+                    .errors
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "unknown error".to_string())
+            ))));
+        }
+
+        Ok(record_count)
+    }
+
     fn ensure_catalog_vector_backing_collection(
         &self,
         statement: &crate::services::DdlStatement,

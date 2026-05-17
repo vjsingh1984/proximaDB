@@ -3141,6 +3141,46 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute SQL: {}", e)))
     }
 
+    #[pyo3(signature = (collection, ipc_stream, mode="insert", tenant_id=None))]
+    fn insert_arrow_ipc(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        ipc_stream: Vec<u8>,
+        mode: &str,
+        tenant_id: Option<&str>,
+    ) -> PyResult<u64> {
+        let insert_only = match mode.to_ascii_lowercase().as_str() {
+            "insert" | "bulk_insert" | "batch_insert" => true,
+            "upsert" | "bulk_upsert" | "batch_upsert" => false,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid Arrow write mode '{}'. Use 'insert' or 'upsert'",
+                    other
+                )));
+            }
+        };
+
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || {
+            inner.insert_arrow_ipc(collection, &ipc_stream, insert_only, tenant_id)
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert Arrow batch: {}", e)))
+    }
+
+    #[pyo3(signature = (collection, ipc_stream, tenant_id=None))]
+    fn upsert_arrow_ipc(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        ipc_stream: Vec<u8>,
+        tenant_id: Option<&str>,
+    ) -> PyResult<u64> {
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.insert_arrow_ipc(collection, &ipc_stream, false, tenant_id))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert Arrow batch: {}", e)))
+    }
+
     /// Execute a unified multi-model query
     ///
     /// This executes a SQL-like query that can span multiple data models

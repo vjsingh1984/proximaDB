@@ -1,15 +1,53 @@
 """Tests for ProximaDB Embedded Mode"""
 
 import tempfile
+import uuid
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from proximadb_embedded import DiskConfig, GraphEdge, GraphNode, ProximaDB, SearchResult
+from proximadb_embedded import (
+    DiskConfig,
+    GraphEdge,
+    GraphNode,
+    ProximaDB,
+    SearchResult,
+    insert_arrow,
+    insert_pandas,
+)
 
 
 class TestEmbeddedBasics:
     """Basic functionality tests"""
+
+    def test_embedded_source_avoids_loopback_protocol_clients(self):
+        """Embedded mode must stay wired to in-process services/API handlers."""
+        repo_root = Path(__file__).resolve().parents[3]
+        embedded_sources = [
+            repo_root / "src" / "embedded" / "mod.rs",
+            repo_root / "src" / "embedded" / "python.rs",
+        ]
+        forbidden_tokens = [
+            "127.0.0.1",
+            "localhost",
+            "reqwest",
+            "tonic::transport::Channel",
+            "Channel::from_shared",
+            "connect_lazy",
+            "connect().await",
+            "ArrowFlightServer::new",
+            "RestServer",
+            "GrpcServer",
+        ]
+
+        for source_path in embedded_sources:
+            source = source_path.read_text(encoding="utf-8")
+            for token in forbidden_tokens:
+                assert token not in source, (
+                    f"{source_path.relative_to(repo_root)} contains {token!r}; "
+                    "embedded Python should call in-process services/API handlers"
+                )
 
     def test_create_database(self):
         """Test database creation"""
@@ -251,6 +289,43 @@ class TestVectorOperations:
                 results = db.search("topk_test", query=vectors[0], top_k=k)
                 assert len(results) <= k
 
+    def test_insert_arrow_and_pandas_batches(self):
+        """Arrow/pandas embedded ingest should use the in-process batch path."""
+        pa = pytest.importorskip("pyarrow")
+        pd = pytest.importorskip("pandas")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = ProximaDB(data_dirs=tmpdir)
+            db.create_collection("arrow_vectors", dimension=4)
+
+            table = pa.table(
+                {
+                    "id": ["arrow-1", "arrow-2"],
+                    "vector": pa.array(
+                        [[0.1, 0.2, 0.3, 0.4], [0.4, 0.3, 0.2, 0.1]],
+                        type=pa.list_(pa.float32()),
+                    ),
+                    "tenant_id": ["embedded", "embedded"],
+                    "kind": ["arrow", "arrow"],
+                }
+            )
+            assert insert_arrow(db, "arrow_vectors", table) == 2
+
+            loaded = db.get_vector("arrow_vectors", "arrow-1")
+            assert loaded is not None
+            assert loaded["vector"] == pytest.approx([0.1, 0.2, 0.3, 0.4])
+
+            frame = pd.DataFrame(
+                {
+                    "id": ["pandas-1"],
+                    "vector": [[0.9, 0.8, 0.7, 0.6]],
+                    "tenant_id": ["embedded"],
+                    "kind": ["pandas"],
+                }
+            )
+            assert insert_pandas(db, "arrow_vectors", frame) == 1
+            assert db.get_vector("arrow_vectors", "pandas-1") is not None
+
 
 class TestEmbeddedModalities:
     """Direct embedded tests for non-vector modality facades."""
@@ -259,7 +334,8 @@ class TestEmbeddedModalities:
         """Entity/SKS-style records are represented through graph-first facades."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db = ProximaDB(data_dirs=tmpdir)
-            db.create_graph("entity_graph")
+            graph_id = f"entity_graph_{uuid.uuid4().hex}"
+            db.create_graph(graph_id)
 
             alice = GraphNode(
                 "entity_alice",
@@ -271,7 +347,7 @@ class TestEmbeddedModalities:
                 labels=["Entity", "Organization"],
                 properties={"name": "Acme", "kind": "account"},
             )
-            assert db.create_nodes("entity_graph", [alice, acme]) == 2
+            assert db.create_nodes(graph_id, [alice, acme]) == 2
 
             relation = GraphEdge(
                 "entity_alice",
@@ -281,28 +357,28 @@ class TestEmbeddedModalities:
                 weight=0.75,
                 properties={"source": "embedded_tdd"},
             )
-            assert db.create_edges("entity_graph", [relation]) == 1
+            assert db.create_edges(graph_id, [relation]) == 1
 
-            loaded = db.get_node("entity_graph", "entity_alice")
+            loaded = db.get_node(graph_id, "entity_alice")
             assert loaded is not None
             assert "Entity" in loaded.labels
             assert loaded.properties["name"] == "Alice"
 
-            entities = db.query_nodes_by_labels("entity_graph", ["Entity"])
+            entities = db.query_nodes_by_labels(graph_id, ["Entity"])
             assert {node.id for node in entities} >= {"entity_alice", "entity_acme"}
 
-            outgoing = db.get_outgoing_edges("entity_graph", "entity_alice")
+            outgoing = db.get_outgoing_edges(graph_id, "entity_alice")
             assert len(outgoing) == 1
             assert outgoing[0].edge_type == "WORKS_WITH"
             assert outgoing[0].to_node_id == "entity_acme"
 
-            traversal = db.traverse_graph("entity_graph", "entity_alice", max_depth=1)
+            traversal = db.traverse_graph(graph_id, "entity_alice", max_depth=1)
             assert {node.id for node in traversal["nodes"]} >= {
                 "entity_alice",
                 "entity_acme",
             }
 
-            stats = db.graph_stats("entity_graph")
+            stats = db.graph_stats(graph_id)
             assert stats.total_nodes >= 2
             assert stats.total_edges >= 1
 

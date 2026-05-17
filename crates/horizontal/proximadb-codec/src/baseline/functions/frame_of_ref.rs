@@ -191,7 +191,7 @@ fn decode_frame_of_ref_i64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
 ///
 /// # Returns
 /// (base_i32, bits, offset_to_packed_data)
-pub(crate) fn parse_header_f32(data: &[u8]) -> Result<(i32, u8, usize)> {
+pub fn parse_header_f32(data: &[u8]) -> Result<(i32, u8, usize)> {
     if data.len() < 5 {
         return Err(anyhow::anyhow!("FOR decode: insufficient data"));
     }
@@ -216,7 +216,7 @@ pub(crate) fn parse_header_f32(data: &[u8]) -> Result<(i32, u8, usize)> {
 /// # Arguments
 /// * `offsets` - Unpacked i32 offsets
 /// * `base_i32` - Base value (f32 bit representation as i32)
-pub(crate) fn reconstruct_values_scalar_f32(offsets: &[i32], base_i32: i32) -> Vec<f32> {
+pub fn reconstruct_values_scalar_f32(offsets: &[i32], base_i32: i32) -> Vec<f32> {
     helpers::reconstruct_f32_from_i32(offsets, base_i32)
 }
 
