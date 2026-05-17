@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use proximadb_proto::v1::{SqlValue, sql_value};
+use proximadb_data_model::ProximaValue;
 use proximadb_runtime::UnifiedQueryPort;
 use tracing::{debug, info};
 
@@ -27,21 +27,78 @@ use crate::query::{
 
 // ── Conversion helpers ────────────────────────────────────────────────────────
 
-fn sql_value_to_param(sv: &SqlValue) -> ParameterValue {
-    match sv.value.as_ref() {
-        Some(sql_value::Value::StringValue(s)) => ParameterValue::String(s.clone()),
-        Some(sql_value::Value::Int64Value(i)) => ParameterValue::Int(*i),
-        Some(sql_value::Value::NumberValue(f)) => ParameterValue::Float(*f),
-        Some(sql_value::Value::BoolValue(b)) => ParameterValue::Bool(*b),
-        _ => ParameterValue::Null,
+fn proxima_value_to_param(value: &ProximaValue) -> ParameterValue {
+    match value {
+        ProximaValue::String(s) | ProximaValue::Symbol(s) => ParameterValue::String(s.clone()),
+        ProximaValue::Int8(v) => ParameterValue::Int(*v as i64),
+        ProximaValue::Int16(v) => ParameterValue::Int(*v as i64),
+        ProximaValue::Int32(v) => ParameterValue::Int(*v as i64),
+        ProximaValue::Int64(v) => ParameterValue::Int(*v),
+        ProximaValue::UInt8(v) => ParameterValue::Int(*v as i64),
+        ProximaValue::UInt16(v) => ParameterValue::Int(*v as i64),
+        ProximaValue::UInt32(v) => ParameterValue::Int(*v as i64),
+        ProximaValue::UInt64(v) => i64::try_from(*v)
+            .map(ParameterValue::Int)
+            .unwrap_or_else(|_| ParameterValue::String(v.to_string())),
+        ProximaValue::Float16(v) | ProximaValue::Float32(v) => ParameterValue::Float(*v as f64),
+        ProximaValue::Float64(v) => ParameterValue::Float(*v),
+        ProximaValue::Boolean(v) => ParameterValue::Bool(*v),
+        ProximaValue::DenseVector(values) => ParameterValue::Vector(values.clone()),
+        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => {
+            ParameterValue::Json(value.clone())
+        }
+        ProximaValue::Array(values) => ParameterValue::Json(serde_json::Value::Array(
+            values.iter().map(proxima_value_to_json).collect(),
+        )),
+        ProximaValue::Map(values) | ProximaValue::Struct(values) => {
+            ParameterValue::Json(serde_json::Value::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), proxima_value_to_json(value)))
+                    .collect(),
+            ))
+        }
+        ProximaValue::Null => ParameterValue::Null,
+        other => ParameterValue::String(format!("{other:?}")),
     }
 }
 
-fn sql_values_to_params(values: Option<Vec<SqlValue>>) -> Vec<ParameterValue> {
+fn proxima_value_to_json(value: &ProximaValue) -> serde_json::Value {
+    match value {
+        ProximaValue::String(s) | ProximaValue::Symbol(s) => serde_json::Value::String(s.clone()),
+        ProximaValue::Int8(v) => serde_json::json!(v),
+        ProximaValue::Int16(v) => serde_json::json!(v),
+        ProximaValue::Int32(v) => serde_json::json!(v),
+        ProximaValue::Int64(v) => serde_json::json!(v),
+        ProximaValue::UInt8(v) => serde_json::json!(v),
+        ProximaValue::UInt16(v) => serde_json::json!(v),
+        ProximaValue::UInt32(v) => serde_json::json!(v),
+        ProximaValue::UInt64(v) => serde_json::json!(v),
+        ProximaValue::Float16(v) => serde_json::json!(*v as f64),
+        ProximaValue::Float32(v) => serde_json::json!(*v as f64),
+        ProximaValue::Float64(v) => serde_json::json!(v),
+        ProximaValue::Boolean(v) => serde_json::json!(v),
+        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
+        ProximaValue::Array(values) => {
+            serde_json::Value::Array(values.iter().map(proxima_value_to_json).collect())
+        }
+        ProximaValue::Map(values) | ProximaValue::Struct(values) => serde_json::Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), proxima_value_to_json(value)))
+                .collect(),
+        ),
+        ProximaValue::DenseVector(values) => serde_json::json!(values),
+        ProximaValue::Null => serde_json::Value::Null,
+        other => serde_json::Value::String(format!("{other:?}")),
+    }
+}
+
+fn proxima_values_to_params(values: Option<Vec<ProximaValue>>) -> Vec<ParameterValue> {
     values
         .unwrap_or_default()
         .iter()
-        .map(sql_value_to_param)
+        .map(proxima_value_to_param)
         .collect()
 }
 
@@ -221,7 +278,7 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
     async fn execute_unified_query(
         &self,
         query: String,
-        parameters: Option<Vec<SqlValue>>,
+        parameters: Option<Vec<ProximaValue>>,
         _collection: Option<String>,
         limit: Option<u32>,
     ) -> Result<serde_json::Value> {
@@ -234,7 +291,7 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
         );
         // Parameters are interpolated by the caller or passed inline in the SQL string;
         // QueryFacadeAdapter::federated_query accepts a fully-formed SQL/query string.
-        let _ = sql_values_to_params(parameters); // reserved for future parameterised execution
+        let _ = proxima_values_to_params(parameters); // reserved for future parameterised execution
         let result = self
             .adapter
             .federated_query(&query)
@@ -273,12 +330,12 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
     async fn execute_federated_query(
         &self,
         query: String,
-        parameters: Option<Vec<SqlValue>>,
+        parameters: Option<Vec<ProximaValue>>,
     ) -> Result<serde_json::Value> {
         if query.trim().is_empty() {
             return Err(anyhow!("query cannot be empty"));
         }
-        let _ = sql_values_to_params(parameters);
+        let _ = proxima_values_to_params(parameters);
         debug!(
             "execute_federated_query: {}",
             query.chars().take(120).collect::<String>()
@@ -355,10 +412,10 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
     async fn execute_prepared(
         &self,
         statement_id: String,
-        parameters: Option<Vec<SqlValue>>,
+        parameters: Option<Vec<ProximaValue>>,
         _collection: Option<String>,
     ) -> Result<serde_json::Value> {
-        let params = sql_values_to_params(parameters);
+        let params = proxima_values_to_params(parameters);
         let sql = self
             .cache
             .execute_sql(&statement_id, &params)
@@ -491,25 +548,38 @@ mod tests {
     use proximadb_catalog::{CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema};
 
     #[test]
-    fn test_sql_value_to_param_string() {
-        let sv = SqlValue {
-            value: Some(sql_value::Value::StringValue("hello".into())),
-        };
-        assert!(matches!(sql_value_to_param(&sv), ParameterValue::String(s) if s == "hello"));
+    fn test_proxima_value_to_param_string() {
+        let value = ProximaValue::String("hello".into());
+        assert!(
+            matches!(proxima_value_to_param(&value), ParameterValue::String(s) if s == "hello")
+        );
     }
 
     #[test]
-    fn test_sql_value_to_param_int() {
-        let sv = SqlValue {
-            value: Some(sql_value::Value::Int64Value(42)),
-        };
-        assert!(matches!(sql_value_to_param(&sv), ParameterValue::Int(42)));
+    fn test_proxima_value_to_param_int() {
+        let value = ProximaValue::Int64(42);
+        assert!(matches!(
+            proxima_value_to_param(&value),
+            ParameterValue::Int(42)
+        ));
     }
 
     #[test]
-    fn test_sql_value_to_param_null() {
-        let sv = SqlValue { value: None };
-        assert!(matches!(sql_value_to_param(&sv), ParameterValue::Null));
+    fn test_proxima_value_to_param_composites() {
+        let value = ProximaValue::Array(vec![ProximaValue::Int64(1), ProximaValue::Int64(2)]);
+        assert!(matches!(
+            proxima_value_to_param(&value),
+            ParameterValue::Json(_)
+        ));
+    }
+
+    #[test]
+    fn test_proxima_value_to_param_null() {
+        let value = ProximaValue::Null;
+        assert!(matches!(
+            proxima_value_to_param(&value),
+            ParameterValue::Null
+        ));
     }
 
     #[test]

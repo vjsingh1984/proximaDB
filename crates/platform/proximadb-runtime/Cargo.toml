@@ -20,6 +20,7 @@ serde_json.workspace = true
 proximadb-graph-query = { path = "../../query/proximadb-graph-query" }
 proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
+proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-proto.workspace = true
 num_cpus = "1.16"
 sysinfo = "0.30"

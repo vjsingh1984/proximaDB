@@ -155,6 +155,17 @@ pub struct SqlQueryRequest {
     pub seeding: Option<String>,
 }
 
+fn sql_params_to_proxima_values(
+    parameters: Option<Vec<proximadb_v1::SqlValue>>,
+) -> Option<Vec<proximadb_data_model::ProximaValue>> {
+    parameters.map(|values| {
+        values
+            .iter()
+            .map(proximadb_records::conversions::sql_value_to_proxima)
+            .collect()
+    })
+}
+
 // SQL query response structure
 // For REST, we now return proximadb.v1 ExecuteSqlResponse directly, wrapped by ProtoApiResponse
 /// Column information in SQL results
@@ -207,7 +218,7 @@ pub async fn execute_sql(
         return match qp
             .execute_unified_query(
                 query_with_hint,
-                request.parameters.clone(),
+                sql_params_to_proxima_values(request.parameters.clone()),
                 request.collection.clone(),
                 None,
             )
@@ -974,13 +985,13 @@ mod tests {
     struct MockUnifiedQueryPort;
     #[async_trait]
     impl proximadb_runtime::UnifiedQueryPort for MockUnifiedQueryPort {
-        async fn execute_unified_query(&self, _: String, _: Option<Vec<crate::proto::v1::SqlValue>>, _: Option<String>, _: Option<u32>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn execute_unified_query(&self, _: String, _: Option<Vec<proximadb_data_model::ProximaValue>>, _: Option<String>, _: Option<u32>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
         async fn execute_multi_model_query(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
-        async fn execute_federated_query(&self, _: String, _: Option<Vec<crate::proto::v1::SqlValue>>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn execute_federated_query(&self, _: String, _: Option<Vec<proximadb_data_model::ProximaValue>>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
         async fn execute_distributed_query(&self, _: serde_json::Value) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
         async fn explain_unified_query(&self, _: String, _: Option<String>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
         async fn prepare_statement(&self, _: Option<String>, _: String, _: bool, _: Option<u64>) -> anyhow::Result<String> { anyhow::bail!("mock") }
-        async fn execute_prepared(&self, _: String, _: Option<Vec<crate::proto::v1::SqlValue>>, _: Option<String>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
+        async fn execute_prepared(&self, _: String, _: Option<Vec<proximadb_data_model::ProximaValue>>, _: Option<String>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
         async fn delete_prepared(&self, _: String) -> anyhow::Result<()> { anyhow::bail!("mock") }
         async fn get_prepared_stats(&self, _: Vec<String>) -> anyhow::Result<serde_json::Value> { anyhow::bail!("mock") }
     }

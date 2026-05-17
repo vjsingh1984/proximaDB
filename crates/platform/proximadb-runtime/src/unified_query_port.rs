@@ -12,7 +12,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use proximadb_proto::v1::SqlValue;
+use proximadb_data_model::ProximaValue;
 
 /// Port for cross-model unified and federated query execution.
 ///
@@ -30,7 +30,7 @@ pub trait UnifiedQueryPort: Send + Sync {
     async fn execute_unified_query(
         &self,
         query: String,
-        parameters: Option<Vec<SqlValue>>,
+        parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
         limit: Option<u32>,
     ) -> Result<serde_json::Value>;
@@ -49,7 +49,7 @@ pub trait UnifiedQueryPort: Send + Sync {
     async fn execute_federated_query(
         &self,
         query: String,
-        parameters: Option<Vec<SqlValue>>,
+        parameters: Option<Vec<ProximaValue>>,
     ) -> Result<serde_json::Value>;
 
     /// Execute a distributed query across shards or remote nodes.
@@ -85,7 +85,7 @@ pub trait UnifiedQueryPort: Send + Sync {
     async fn execute_prepared(
         &self,
         statement_id: String,
-        parameters: Option<Vec<SqlValue>>,
+        parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
     ) -> Result<serde_json::Value>;
 

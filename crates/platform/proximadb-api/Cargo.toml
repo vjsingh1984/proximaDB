@@ -17,6 +17,7 @@ axum.workspace = true
 chrono = "0.4"
 hyper.workspace = true
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
+proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
 proximadb-query = { path = "../../query/proximadb-query" }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }

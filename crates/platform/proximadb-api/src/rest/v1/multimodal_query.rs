@@ -34,7 +34,7 @@ use axum::{
     response::IntoResponse,
     routing::{delete, post},
 };
-use proximadb_proto::v1::SqlValue;
+use proximadb_data_model::ProximaValue;
 use proximadb_runtime::UnifiedQueryPort;
 use serde::Deserialize;
 use tracing::{error, info};
@@ -95,25 +95,31 @@ struct ExplainQueryRequest {
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
-fn json_to_sql_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<SqlValue>> {
-    params.map(|ps| {
-        ps.into_iter()
-            .map(|v| {
-                use proximadb_proto::v1::sql_value::Value as V;
-                let value = match v {
-                    serde_json::Value::String(s) => Some(V::StringValue(s)),
-                    serde_json::Value::Number(n) => n
-                        .as_i64()
-                        .map(V::Int64Value)
-                        .or_else(|| n.as_f64().map(V::NumberValue)),
-                    serde_json::Value::Bool(b) => Some(V::BoolValue(b)),
-                    serde_json::Value::Null => Some(V::NullValue(0)),
-                    _ => None,
-                };
-                SqlValue { value }
-            })
-            .collect()
-    })
+fn json_to_proxima_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<ProximaValue>> {
+    params.map(|ps| ps.into_iter().map(|v| json_to_proxima_value(v)).collect())
+}
+
+fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {
+    match value {
+        serde_json::Value::String(s) => ProximaValue::String(s),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(ProximaValue::Int64)
+            .or_else(|| n.as_u64().map(ProximaValue::UInt64))
+            .or_else(|| n.as_f64().map(ProximaValue::Float64))
+            .unwrap_or(ProximaValue::Null),
+        serde_json::Value::Bool(b) => ProximaValue::Boolean(b),
+        serde_json::Value::Null => ProximaValue::Null,
+        serde_json::Value::Array(values) => {
+            ProximaValue::Array(values.into_iter().map(json_to_proxima_value).collect())
+        }
+        serde_json::Value::Object(fields) => ProximaValue::Map(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, json_to_proxima_value(value)))
+                .collect(),
+        ),
+    }
 }
 
 fn not_implemented(description: &str) -> impl IntoResponse {
@@ -148,7 +154,7 @@ async fn execute_query(
         req.query.chars().take(100).collect::<String>()
     );
 
-    let params = json_to_sql_values(req.parameters);
+    let params = json_to_proxima_values(req.parameters);
     match s
         .unified_query_port
         .execute_unified_query(req.query, params, req.collection, req.limit)
@@ -205,7 +211,7 @@ async fn execute_federated_query(
             .into_response();
     }
 
-    let params = json_to_sql_values(req.parameters);
+    let params = json_to_proxima_values(req.parameters);
     match s
         .unified_query_port
         .execute_federated_query(req.query, params)
@@ -311,7 +317,7 @@ async fn execute_prepared_statement(
     Path(statement_id): Path<String>,
     Json(req): Json<ExecutePreparedRequest>,
 ) -> impl IntoResponse {
-    let params = json_to_sql_values(req.parameters);
+    let params = json_to_proxima_values(req.parameters);
     match s
         .unified_query_port
         .execute_prepared(statement_id, params, req.collection)
@@ -407,8 +413,7 @@ pub fn create_multimodal_router() -> Router<UnifiedQueryRestState> {
 /// the same explanation plan as `/api/v1/unified/explain` but under
 /// the SQL-oriented URL that legacy clients expect.
 pub fn create_explain_router() -> Router<UnifiedQueryRestState> {
-    Router::new()
-        .route("/api/v1/sql/explain", post(explain_query))
+    Router::new().route("/api/v1/sql/explain", post(explain_query))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -418,18 +423,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_json_to_sql_values_none() {
-        assert!(json_to_sql_values(None).is_none());
+    fn test_json_to_proxima_values_none() {
+        assert!(json_to_proxima_values(None).is_none());
     }
 
     #[test]
-    fn test_json_to_sql_values_primitives() {
+    fn test_json_to_proxima_values_primitives() {
         let params = vec![
             serde_json::json!("hello"),
             serde_json::json!(42i64),
             serde_json::json!(true),
         ];
-        let result = json_to_sql_values(Some(params)).unwrap();
+        let result = json_to_proxima_values(Some(params)).unwrap();
         assert_eq!(result.len(), 3);
+        assert!(matches!(result[0], ProximaValue::String(ref value) if value == "hello"));
+        assert!(matches!(result[1], ProximaValue::Int64(42)));
+        assert!(matches!(result[2], ProximaValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_json_to_proxima_values_preserves_composites() {
+        let params = vec![serde_json::json!({
+            "tags": ["a", "b"],
+            "score": 9.5,
+        })];
+        let result = json_to_proxima_values(Some(params)).unwrap();
+        assert!(matches!(result[0], ProximaValue::Map(_)));
     }
 }
