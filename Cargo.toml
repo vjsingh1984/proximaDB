@@ -55,6 +55,7 @@ members = [
     "crates/contracts/quantization",
     "crates/query/proximadb-observability-query",
     "crates/query/proximadb-query",
+    "crates/query/proximadb-query-capability",
     "crates/query/proximadb-query-clauses",
     "crates/query/proximadb-query-fusion",
     "crates/query/proximadb-query-filter",
@@ -194,6 +195,7 @@ proximadb-multimodel-plan = { path = "crates/query/proximadb-multimodel-plan" }
 proximadb-observability-query = { path = "crates/query/proximadb-observability-query" }
 proximadb-query = { path = "crates/query/proximadb-query" }
 proximadb-pipeline-operator = { path = "crates/foundation/proximadb-pipeline-operator" }
+proximadb-query-capability = { path = "crates/query/proximadb-query-capability" }
 proximadb-query-clauses = { path = "crates/query/proximadb-query-clauses" }
 proximadb-query-fusion = { path = "crates/query/proximadb-query-fusion" }
 proximadb-query-filter = { path = "crates/query/proximadb-query-filter" }

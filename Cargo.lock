@@ -5757,6 +5757,7 @@ dependencies = [
  "proximadb-proto",
  "proximadb-quantization-types",
  "proximadb-query",
+ "proximadb-query-capability",
  "proximadb-query-clauses",
  "proximadb-query-filter",
  "proximadb-query-fusion",
@@ -6195,6 +6196,13 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-query-capability"
+version = "0.2.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
