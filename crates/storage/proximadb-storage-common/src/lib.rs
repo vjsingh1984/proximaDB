@@ -5,6 +5,8 @@
 
 pub mod bitmap;
 pub mod cache_config;
+pub mod column_projector;
+pub mod metadata_collector;
 pub mod collection_path;
 pub mod engine_profile;
 pub mod columnar_constants;
@@ -46,6 +48,8 @@ pub use engine_constants::{
     RAPTOR_FILE_EXT, RAPTOR_MAGIC, SST_FILE_EXT, SST_MAGIC, STATS_EXT, SWIFT_FILE_EXT,
     SWIFT_MAGIC, VIPER_FILE_EXT, VIPER_MAGIC,
 };
+pub use column_projector::{ColumnProjection, ProjectionBuilder};
+pub use metadata_collector::{MetadataCollectionConfig, MetadataCollector, NoOpCollector};
 pub use engine_type::StorageEngineType;
 pub use glob::{GlobError, GlobMatcher, GlobPattern, glob_match};
 pub use query_metrics::{QueryStatistics, StatisticsCollector};
