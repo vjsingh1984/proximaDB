@@ -3,6 +3,7 @@
 //! Keep this crate narrow. Storage helpers belong here only when they are reused
 //! by multiple storage engines or modality storage implementations.
 
+pub mod auto_scheduler;
 pub mod bitmap;
 pub mod cache_config;
 pub mod collection_path;
@@ -13,21 +14,36 @@ pub mod engine_profile;
 pub mod engine_type;
 pub mod flush_integration;
 pub mod format_conversion;
+pub mod format_splits;
 pub mod format_traits;
+pub mod fused_quantization;
 pub mod glob;
+pub mod hierarchical_stats;
 pub mod hilbert_curve;
 pub mod id_index;
 pub mod metadata_collector;
+pub mod mmap_file;
 pub mod native_metadata;
 pub mod observability_rollups;
+pub mod proxima_schema;
 pub mod query_metrics;
+pub mod smart_io_metrics;
+pub mod spatial_encoding;
 pub mod storage_error;
 pub mod storage_path;
+pub mod swift_id_index;
+pub mod tenant_performance;
+pub mod tiering_retention;
 pub mod transaction_isolation;
 pub mod two_phase_commit;
 pub mod wal_entry;
 pub mod writer_statistics;
+pub mod zero_copy_traits;
 
+pub use auto_scheduler::{
+    AutoSchedulerConfig, CompactionPolicy, OperationPriority, OperationStatus, OperationType,
+    ScheduledOperation,
+};
 pub use bitmap::{BitmapError, BitmapIteratorAll, RoaringBitmap};
 pub use cache_config::{
     AlertThresholds, CacheConfig, CoordinationConfig, EvictionPolicy, FilterCacheConfig,
@@ -61,6 +77,9 @@ pub use format_conversion::{
     CompressionFormat, ConversionError, ConversionResult, ConversionStatistics, FormatConverter,
     QuantizedFormat, StorageFormat,
 };
+pub use format_splits::{
+    ColumnBounds, FileSplit, SpatialBounds, SplitLocality, SplitStatistics, SplitType,
+};
 pub use format_traits::{
     ColumnStats, CompactionContext, CompactionResult, ComparisonOp, DefaultFormatDetector,
     FileEntry, FileStats, FilterExpression as FormatFilterExpression, FormatDetector,
@@ -69,12 +88,21 @@ pub use format_traits::{
     VectorBatch, VectorBatchStream, VectorReadContext, VectorWriteContext, WriteContext, WriteMode,
     WriteResult,
 };
+pub use fused_quantization::{
+    QuantizationParams, fused_decode_binary_to_f32, fused_decode_int4_to_f32,
+    fused_decode_int8_to_f32, progressive_decode_binary_int8_f32,
+};
 pub use glob::{GlobError, GlobMatcher, GlobPattern, glob_match};
+pub use hierarchical_stats::{
+    EnhancedRowGroupStats, QuantizationStats as HierarchicalQuantizationStats, SelectivityHints,
+    SuperBlock, ZoneMap,
+};
 pub use hilbert_curve::{HilbertCurve, HilbertStats, HilbertUtils};
 pub use id_index::{
     BloomFilter, ColumnarIdIndex, IndexStats, PageIdIndex, ParquetLocation, RowGroupIdIndex,
 };
 pub use metadata_collector::{MetadataCollectionConfig, MetadataCollector, NoOpCollector};
+pub use mmap_file::{Advice, MmapFile, MmapMutFile, MmapParquetReader, MmapSstReader, MmapView};
 pub use native_metadata::{
     FieldStatistics, MetadataFieldType, NativeMetadataHandler, NativeMetadataQueryOptimizer,
     NativeMetadataStats, NativePredicate, OptimizedFilter, PredicateOperator,
@@ -82,9 +110,27 @@ pub use native_metadata::{
 pub use observability_rollups::{
     AggregationFunction, RollupConfig, RollupInterval, RollupManager, RollupView,
 };
+pub use proxima_schema::{
+    AvroStyleField, AvroStyleSchema, AvroStyleType, DefaultValue, ProximaColumn, ProximaDataType,
+    ProximaSchema, TimeUnit, VectorElementType,
+};
 pub use query_metrics::{QueryStatistics, StatisticsCollector};
+pub use smart_io_metrics::{FileIoMetrics, IoMetrics, IoMetricsSnapshot};
+pub use spatial_encoding::{CodeType, SpatialCode, U512};
 pub use storage_error::{ErrorContext, StorageError, StorageErrorKind};
 pub use storage_path::StoragePath;
+pub use swift_id_index::{
+    BPlusNode, BlockLocation, IdIndex, IndexStats as SwiftIndexStats, RecordLocation,
+    TwoLevelIdIndex,
+};
+pub use tenant_performance::{
+    PerformanceMonitoringConfig, SLACheckResult, SLAViolationType, TenantMetrics,
+    TenantPerformanceMonitor, TenantSLA,
+};
+pub use tiering_retention::{
+    RetentionAction, RetentionCondition, RetentionMetadata, RetentionOperationStatus,
+    RetentionPolicy, RetentionRule,
+};
 pub use transaction_isolation::{IsolationLevel, IsolationManager, ReadSnapshot, WriteSet};
 pub use two_phase_commit::{
     CommitResult, ParticipantState, ParticipantType, PrepareResult, TransactionState,
@@ -97,3 +143,7 @@ pub use wal_entry::{
     SnapshotManifest, latest_checkpoint, recover_from_canonical_wal,
 };
 pub use writer_statistics::{AggregatedBatchStats, BatchWriteStats, StreamingParquetWriterStats};
+pub use zero_copy_traits::{
+    AccessFrequency, CollectionContext, EngineMetadata, MetadataSerializer,
+    QueryContext as ZeroCopyQueryContext, QueryType,
+};

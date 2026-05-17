@@ -6318,6 +6318,7 @@ dependencies = [
  "chrono",
  "criterion",
  "futures",
+ "memmap2",
  "parking_lot",
  "parquet",
  "proximadb-compression-types",
