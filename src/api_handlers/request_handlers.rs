@@ -3501,9 +3501,15 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
     async fn execute_sql_v1(
         &self,
         query: String,
-        parameters: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
+        parameters: Option<Vec<proximadb_data_model::ProximaValue>>,
         collection: Option<String>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
-        UnifiedHandlers::execute_sql_v1(self, query, parameters, collection).await
+        let legacy_parameters = parameters.map(|values| {
+            values
+                .iter()
+                .map(proximadb_records::conversions::proxima_to_sql_value)
+                .collect()
+        });
+        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection).await
     }
 }

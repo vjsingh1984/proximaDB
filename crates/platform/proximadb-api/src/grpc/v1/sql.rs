@@ -38,7 +38,12 @@ impl SqlService for SqlServiceImpl {
         let parameters = if req.parameters.is_empty() {
             None
         } else {
-            Some(req.parameters)
+            Some(
+                req.parameters
+                    .iter()
+                    .map(proximadb_records::conversions::sql_value_to_proxima)
+                    .collect(),
+            )
         };
         self.port
             .execute_sql_v1(req.query, parameters, req.collection)

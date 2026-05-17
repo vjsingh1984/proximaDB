@@ -20,6 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use proximadb_data_model::ProximaValue;
 use proximadb_proto::v1::{
     CollectionOperation, CollectionRequest, CollectionResponse, ExecuteSqlResponse, HybridSearchRequest,
     HybridSearchResponse, SqlRow, SqlRowField, SqlValue, VectorBatchRequest, VectorOperationResponse,
@@ -272,7 +273,7 @@ impl ApiHandlersPort for UnifiedHandlers {
     async fn execute_sql_v1(
         &self,
         query: String,
-        _parameters: Option<Vec<SqlValue>>,
+        _parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
     ) -> Result<ExecuteSqlResponse> {
         let adapter = self

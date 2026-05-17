@@ -249,6 +249,56 @@ class ProximaDBSyncGrpcClient:
         # Alias for backward compatibility with tests
         self._pool = self._connection_pool
 
+    def _python_to_sql_value(self, value: Any):
+        """Encode Python values into v1 SqlValue without losing nested shape."""
+        from google.protobuf.struct_pb2 import NullValue
+
+        sv = v1_types_pb2.SqlValue()
+        if value is None:
+            sv.null_value = NullValue.NULL_VALUE
+        elif isinstance(value, bool):
+            sv.bool_value = value
+        elif isinstance(value, int) and not isinstance(value, bool):
+            sv.int64_value = value
+        elif isinstance(value, float):
+            sv.number_value = value
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            sv.bytes_value = bytes(value)
+        elif isinstance(value, (list, tuple)):
+            sv.array_value.values.extend(
+                self._python_to_sql_value(item) for item in value
+            )
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                sv.object_value.fields[str(key)].CopyFrom(
+                    self._python_to_sql_value(item)
+                )
+        else:
+            sv.string_value = str(value)
+        return sv
+
+    def _sql_value_to_python(self, value) -> Any:
+        """Decode v1 SqlValue rows into native Python values recursively."""
+        kind = value.WhichOneof("value")
+        if kind == "string_value":
+            return value.string_value
+        if kind == "number_value":
+            return value.number_value
+        if kind == "bool_value":
+            return value.bool_value
+        if kind == "int64_value":
+            return value.int64_value
+        if kind == "bytes_value":
+            return bytes(value.bytes_value)
+        if kind == "array_value":
+            return [self._sql_value_to_python(item) for item in value.array_value.values]
+        if kind == "object_value":
+            return {
+                key: self._sql_value_to_python(item)
+                for key, item in value.object_value.fields.items()
+            }
+        return None
+
     def _init_connection_pool(self):
         """Initialize gRPC connection pool for optimal performance"""
         try:
@@ -488,7 +538,7 @@ class ProximaDBSyncGrpcClient:
 
         Args:
             query: SQL text
-            parameters: Optional list of simple values (str|float|bool)
+            parameters: Optional list of rich values (scalars, bytes, lists, dicts)
             collection: Optional default collection context
         Returns:
             ExecuteSqlResponse as dict-like (via proto object fields)
@@ -507,27 +557,13 @@ class ProximaDBSyncGrpcClient:
                 req = v1_types_pb2.ExecuteSqlRequest(query=query)
                 if parameters:
                     for p in parameters:
-                        sv = v1_types_pb2.SqlValue()
-                        if isinstance(p, bool):
-                            sv.bool_value = p
-                        elif isinstance(p, (int, float)):
-                            sv.number_value = float(p)
-                        else:
-                            sv.string_value = str(p)
-                        req.parameters.append(sv)
+                        req.parameters.append(self._python_to_sql_value(p))
                 if collection:
                     req.collection = collection
                 resp = stub.ExecuteSql(req, timeout=self.timeout)
                 # Return as a simple dict for convenience
                 rows = [
-                    {
-                        f.key: (
-                            f.value.string_value
-                            or f.value.number_value
-                            or f.value.bool_value
-                        )
-                        for f in row.fields
-                    }
+                    {f.key: self._sql_value_to_python(f.value) for f in row.fields}
                     for row in resp.rows
                 ]
                 return {

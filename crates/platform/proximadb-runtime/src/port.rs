@@ -4,15 +4,17 @@
 //! concrete types. The root crate implements the trait on its `UnifiedHandlers` and
 //! injects the `Arc<dyn ApiHandlersPort>` at server startup.
 //!
-//! All method signatures use proto types from `proximadb-proto` so this trait carries
-//! zero dependency on root-crate concrete service types.
+//! Request/response envelopes that are still explicitly v1-compatible use proto
+//! types, but value parameters crossing this runtime seam use the canonical
+//! `ProximaValue` model. Protocol adapters are responsible for converting
+//! legacy wire values at the edge.
 
 use anyhow::Result;
 use async_trait::async_trait;
+use proximadb_data_model::ProximaValue;
 use proximadb_proto::v1::{
     CollectionRequest, CollectionResponse, ExecuteSqlResponse, HybridSearchRequest,
-    HybridSearchResponse, SqlValue, VectorBatchRequest, VectorOperationResponse,
-    VectorSearchRequest,
+    HybridSearchResponse, VectorBatchRequest, VectorOperationResponse, VectorSearchRequest,
 };
 
 /// Port trait that protocol adapters use to dispatch API requests.
@@ -70,7 +72,7 @@ pub trait ApiHandlersPort: Send + Sync {
     async fn execute_sql_v1(
         &self,
         query: String,
-        parameters: Option<Vec<SqlValue>>,
+        parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
     ) -> Result<ExecuteSqlResponse>;
 }

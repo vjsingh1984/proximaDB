@@ -277,9 +277,16 @@ pub async fn execute_sql(
         None => request.query.clone(),
     };
 
+    let parameters = request.parameters.map(|values| {
+        values
+            .iter()
+            .map(proximadb_records::conversions::sql_value_to_proxima)
+            .collect()
+    });
+
     match state
         .handlers
-        .execute_sql_v1(query, request.parameters, request.collection)
+        .execute_sql_v1(query, parameters, request.collection)
         .await
     {
         Ok(v1_resp) => {
