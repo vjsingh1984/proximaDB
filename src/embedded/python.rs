@@ -1541,7 +1541,8 @@ impl PyProximaDB {
 
         for row in array.rows() {
             let query_vec: Vec<f32> = row.to_vec();
-            let results = self.db()?
+            let results = self
+                .db()?
                 .search_with_mode(collection, query_vec, top_k, None, search_mode)
                 .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
 
@@ -1615,7 +1616,8 @@ impl PyProximaDB {
         }
 
         // Create the streaming iterator
-        let iterator = self.db()?
+        let iterator = self
+            .db()?
             .search_streaming_with_config(collection, query_vec, top_k, config)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create streaming search: {}", e))
@@ -1668,7 +1670,8 @@ impl PyProximaDB {
         }
 
         // Create the streaming iterator
-        let iterator = self.db()?
+        let iterator = self
+            .db()?
             .search_streaming_with_config(collection, query_vec, top_k, config)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create streaming search: {}", e))
@@ -2520,7 +2523,8 @@ impl PyProximaDB {
         edge_types: Option<Vec<String>>,
         limit: Option<u32>,
     ) -> PyResult<PyObject> {
-        let result = self.db()?
+        let result = self
+            .db()?
             .traverse_graph(graph_id, start_node_id, max_depth, edge_types, limit)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to traverse graph: {}", e)))?;
 
