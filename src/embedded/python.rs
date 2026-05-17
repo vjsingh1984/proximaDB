@@ -37,7 +37,7 @@ use pyo3::types::{PyAny, PyDict, PyList, PyModule};
 use pyo3::{Bound, IntoPyObject, PyErr};
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // Zero-copy numpy support
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
@@ -973,7 +973,22 @@ impl PyStorageStats {
 ///     ```
 #[pyclass(name = "ProximaDB")]
 pub struct PyProximaDB {
-    inner: Arc<EmbeddedProximaDB>,
+    inner: Mutex<Option<Arc<EmbeddedProximaDB>>>,
+}
+
+impl PyProximaDB {
+    fn db(&self) -> PyResult<Arc<EmbeddedProximaDB>> {
+        self.inner
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Database mutex poisoned"))?
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| PyRuntimeError::new_err("Database has been closed"))
+    }
+
+    fn db_opt(&self) -> Option<Arc<EmbeddedProximaDB>> {
+        self.inner.lock().ok()?.as_ref().cloned()
+    }
 }
 
 fn set_approx_defaults(mode_str: &str) -> (String, f32, usize, usize) {
@@ -1162,7 +1177,7 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create database: {}", e)))?;
 
         Ok(PyProximaDB {
-            inner: Arc::new(db),
+            inner: Mutex::new(Some(Arc::new(db))),
         })
     }
 
@@ -1181,7 +1196,7 @@ impl PyProximaDB {
     ///     RuntimeError: If collection creation fails
     #[pyo3(signature = (name, dimension, engine=None))]
     fn create_collection(&self, name: &str, dimension: u32, engine: Option<&str>) -> PyResult<()> {
-        self.inner
+        self.db()?
             .create_collection(name, dimension, engine)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create collection: {}", e)))
     }
@@ -1194,7 +1209,7 @@ impl PyProximaDB {
     /// Raises:
     ///     RuntimeError: If collection deletion fails
     fn delete_collection(&self, name: &str) -> PyResult<()> {
-        self.inner
+        self.db()?
             .delete_collection(name)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete collection: {}", e)))
     }
@@ -1207,7 +1222,7 @@ impl PyProximaDB {
     /// Returns:
     ///     CollectionInfo or None if collection doesn't exist
     fn get_collection(&self, name: &str) -> PyResult<Option<PyCollectionInfo>> {
-        self.inner
+        self.db()?
             .get_collection(name)
             .map(|opt| {
                 opt.map(|info| PyCollectionInfo {
@@ -1226,7 +1241,7 @@ impl PyProximaDB {
     /// Returns:
     ///     List of CollectionInfo
     fn list_collections(&self) -> PyResult<Vec<PyCollectionInfo>> {
-        self.inner
+        self.db()?
             .list_collections()
             .map(|collections| {
                 collections
@@ -1299,7 +1314,7 @@ impl PyProximaDB {
                 None
             };
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
     }
@@ -1352,7 +1367,7 @@ impl PyProximaDB {
             query.extract()?
         };
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || {
             inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
         })
@@ -1447,7 +1462,7 @@ impl PyProximaDB {
                 None
             };
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
     }
@@ -1483,7 +1498,7 @@ impl PyProximaDB {
             .map(|slice| slice.to_vec())
             .unwrap_or_else(|_| query.as_array().to_vec());
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || {
             inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
         })
@@ -1526,8 +1541,7 @@ impl PyProximaDB {
 
         for row in array.rows() {
             let query_vec: Vec<f32> = row.to_vec();
-            let results = self
-                .inner
+            let results = self.db()?
                 .search_with_mode(collection, query_vec, top_k, None, search_mode)
                 .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
 
@@ -1601,8 +1615,7 @@ impl PyProximaDB {
         }
 
         // Create the streaming iterator
-        let iterator = self
-            .inner
+        let iterator = self.db()?
             .search_streaming_with_config(collection, query_vec, top_k, config)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create streaming search: {}", e))
@@ -1655,8 +1668,7 @@ impl PyProximaDB {
         }
 
         // Create the streaming iterator
-        let iterator = self
-            .inner
+        let iterator = self.db()?
             .search_streaming_with_config(collection, query_vec, top_k, config)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create streaming search: {}", e))
@@ -1694,7 +1706,7 @@ impl PyProximaDB {
         collection: &str,
         vector_id: &str,
     ) -> PyResult<Option<PyObject>> {
-        match self.inner.get_vector(collection, vector_id) {
+        match self.db()?.get_vector(collection, vector_id) {
             Ok(Some(record)) => {
                 let dict = PyDict::new(py);
                 dict.set_item("id", &record.id)?;
@@ -1744,7 +1756,7 @@ impl PyProximaDB {
     ///         print("Vector not found")
     ///     ```
     fn vector_exists(&self, collection: &str, vector_id: &str) -> PyResult<bool> {
-        self.inner
+        self.db()?
             .vector_exists(collection, vector_id)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to check vector existence: {}", e))
@@ -1771,7 +1783,7 @@ impl PyProximaDB {
     ///         print("Vector marked for deletion")
     ///     ```
     fn delete_vector(&self, collection: &str, vector_id: &str) -> PyResult<bool> {
-        self.inner
+        self.db()?
             .delete_vector(collection, vector_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete vector: {}", e)))
     }
@@ -1794,7 +1806,7 @@ impl PyProximaDB {
     ///     print(f"Marked {count} vectors for deletion")
     ///     ```
     fn delete_vectors(&self, collection: &str, vector_ids: Vec<String>) -> PyResult<usize> {
-        self.inner
+        self.db()?
             .delete_vectors(collection, vector_ids)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete vectors: {}", e)))
     }
@@ -1861,7 +1873,7 @@ impl PyProximaDB {
                 None
             };
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert vectors: {}", e)))
     }
@@ -1926,7 +1938,7 @@ impl PyProximaDB {
                 None
             };
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert vectors: {}", e)))
     }
@@ -1936,9 +1948,12 @@ impl PyProximaDB {
     /// This ensures all data is persisted to disk. Called automatically
     /// when the database is closed via close() or context manager exit.
     fn flush(&self) -> PyResult<()> {
-        self.inner
-            .flush()
-            .map_err(|e| PyRuntimeError::new_err(format!("Flush failed: {}", e)))
+        if let Some(db) = self.db_opt() {
+            db.flush()
+                .map_err(|e| PyRuntimeError::new_err(format!("Flush failed: {}", e)))
+        } else {
+            Ok(())
+        }
     }
 
     /// Close the database, flushing all pending writes to disk
@@ -1954,19 +1969,35 @@ impl PyProximaDB {
     ///     db.insert("collection", vectors, ids)
     ///     db.close()  # Flushes and closes gracefully
     fn close(&self) -> PyResult<()> {
-        // Always call inner.close() to release file handles even if flush fails.
-        // Without this, a flush error leaves WAL/SST files open, which prevents
-        // TemporaryDirectory cleanup and contributes to FD exhaustion.
-        let flush_result = self.flush();
-        self.inner.close();
-        flush_result
+        // Take the Arc out of the Option, dropping our reference.
+        // If this was the last Arc clone (all allow_threads closures have returned),
+        // EmbeddedProximaDB is dropped here → Tokio runtime shuts down → file handles closed.
+        let arc = self
+            .inner
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Database mutex poisoned"))?
+            .take();
+        if let Some(arc) = arc {
+            let flush_result = arc
+                .flush()
+                .map_err(|e| PyRuntimeError::new_err(format!("Flush failed: {}", e)));
+            arc.close();
+            drop(arc);
+            flush_result
+        } else {
+            Ok(()) // already closed — idempotent
+        }
     }
 
     fn __del__(&self) {
         // Best-effort cleanup when Python GC collects this object without an explicit close().
-        // Flushes pending WAL data and releases file handles held by the storage engine.
-        let _ = self.flush();
-        self.inner.close();
+        if let Ok(mut guard) = self.inner.lock() {
+            if let Some(arc) = guard.take() {
+                let _ = arc.flush();
+                arc.close();
+                drop(arc);
+            }
+        }
     }
 
     // ========================================================================
@@ -1986,7 +2017,7 @@ impl PyProximaDB {
     ///         print("Read-only mode")
     ///     ```
     fn can_write(&self) -> bool {
-        self.inner.can_write()
+        self.db_opt().map(|db| db.can_write()).unwrap_or(false)
     }
 
     /// Get the current access mode
@@ -1994,7 +2025,9 @@ impl PyProximaDB {
     /// Returns:
     ///     Access mode string: "exclusive", "shared_read", or "leader_follower"
     fn access_mode(&self) -> String {
-        format!("{}", self.inner.access_mode())
+        self.db_opt()
+            .map(|db| format!("{}", db.access_mode()))
+            .unwrap_or_default()
     }
 
     /// Check if this node is the leader (only relevant in leader/follower mode)
@@ -2009,7 +2042,7 @@ impl PyProximaDB {
     ///         print("This process is the leader")
     ///     ```
     fn is_leader(&self) -> bool {
-        self.inner.is_leader()
+        self.db_opt().map(|db| db.is_leader()).unwrap_or(false)
     }
 
     /// Get the current leader ID (only relevant in leader/follower mode)
@@ -2017,7 +2050,7 @@ impl PyProximaDB {
     /// Returns:
     ///     Leader node ID or None if not in leader/follower mode
     fn leader_id(&self) -> Option<String> {
-        self.inner.leader_id()
+        self.db_opt().and_then(|db| db.leader_id())
     }
 
     /// Get storage statistics
@@ -2025,7 +2058,7 @@ impl PyProximaDB {
     /// Returns:
     ///     StorageStats with information about disk usage, vector counts, etc.
     fn stats(&self) -> PyResult<PyStorageStats> {
-        self.inner
+        self.db()?
             .stats()
             .map(|s| PyStorageStats {
                 total_vectors: s.total_vectors,
@@ -2063,7 +2096,7 @@ impl PyProximaDB {
     ///     db.restore_checkpoint("before_experiment")
     ///     ```
     fn checkpoint(&self, name: &str) -> PyResult<PyCheckpointInfo> {
-        self.inner
+        self.db()?
             .checkpoint(name)
             .map(PyCheckpointInfo::from)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create checkpoint: {}", e)))
@@ -2087,7 +2120,7 @@ impl PyProximaDB {
     ///     db.restore_checkpoint("backup")  # Restore - new data is discarded
     ///     ```
     fn restore_checkpoint(&self, name: &str) -> PyResult<()> {
-        self.inner
+        self.db()?
             .restore_checkpoint(name)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to restore checkpoint: {}", e)))
     }
@@ -2114,7 +2147,7 @@ impl PyProximaDB {
     ///     print(f"Delta saved: {delta.entry_count} entries, {delta.size_bytes} bytes")
     ///     ```
     fn save_delta(&self, path: &str) -> PyResult<PyDeltaInfo> {
-        self.inner
+        self.db()?
             .save_delta(path)
             .map(PyDeltaInfo::from)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to save delta: {}", e)))
@@ -2135,7 +2168,7 @@ impl PyProximaDB {
     ///     db.load_delta("/backup/delta_001.delta")
     ///     ```
     fn load_delta(&self, path: &str) -> PyResult<()> {
-        self.inner
+        self.db()?
             .load_delta(path)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to load delta: {}", e)))
     }
@@ -2155,7 +2188,7 @@ impl PyProximaDB {
     ///         print(f"{cp.name}: {len(cp.collections)} collections at LSN {cp.checkpoint_lsn}")
     ///     ```
     fn list_checkpoints(&self) -> PyResult<Vec<PyCheckpointInfo>> {
-        self.inner
+        self.db()?
             .list_checkpoints()
             .map(|cps| cps.into_iter().map(PyCheckpointInfo::from).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list checkpoints: {}", e)))
@@ -2210,7 +2243,7 @@ impl PyProximaDB {
     ///     ```
     #[pyo3(signature = (graph_id, engine=None))]
     fn create_graph(&self, graph_id: &str, engine: Option<&str>) -> PyResult<()> {
-        self.inner
+        self.db()?
             .create_graph(graph_id, engine)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create graph: {}", e)))
     }
@@ -2245,7 +2278,7 @@ impl PyProximaDB {
     ///     ```
     fn create_nodes(&self, graph_id: &str, nodes: Vec<PyGraphNode>) -> PyResult<usize> {
         let rust_nodes: Vec<super::GraphNode> = nodes.into_iter().map(|n| n.into()).collect();
-        self.inner
+        self.db()?
             .create_nodes(graph_id, rust_nodes)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create nodes: {}", e)))
     }
@@ -2269,7 +2302,7 @@ impl PyProximaDB {
     ///     ```
     fn create_edges(&self, graph_id: &str, edges: Vec<PyGraphEdge>) -> PyResult<usize> {
         let rust_edges: Vec<super::GraphEdge> = edges.into_iter().map(|e| e.into()).collect();
-        self.inner
+        self.db()?
             .create_edges(graph_id, rust_edges)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create edges: {}", e)))
     }
@@ -2290,7 +2323,7 @@ impl PyProximaDB {
             }
         }
 
-        self.inner
+        self.db()?
             .create_node(graph_id, node_id, labels.unwrap_or_default(), property_map)
             .map(PyGraphNode::from)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create node: {}", e)))
@@ -2315,7 +2348,7 @@ impl PyProximaDB {
             }
         }
 
-        self.inner
+        self.db()?
             .create_edge(
                 graph_id,
                 id,
@@ -2338,7 +2371,7 @@ impl PyProximaDB {
     /// Returns:
     ///     GraphNode if found, None otherwise
     fn get_node(&self, graph_id: &str, node_id: &str) -> PyResult<Option<PyGraphNode>> {
-        self.inner
+        self.db()?
             .get_node(graph_id, node_id)
             .map(|opt| opt.map(|n| n.into()))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get node: {}", e)))
@@ -2366,7 +2399,7 @@ impl PyProximaDB {
         graph_id: &str,
         labels: Vec<String>,
     ) -> PyResult<Vec<PyGraphNode>> {
-        self.inner
+        self.db()?
             .query_nodes_by_labels(graph_id, labels)
             .map(|nodes| nodes.into_iter().map(|n| n.into()).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to query nodes: {}", e)))
@@ -2389,7 +2422,7 @@ impl PyProximaDB {
             }
         }
 
-        self.inner
+        self.db()?
             .query_nodes(
                 graph_id,
                 labels,
@@ -2421,7 +2454,7 @@ impl PyProximaDB {
         node_id: &str,
         edge_types: Option<Vec<String>>,
     ) -> PyResult<Vec<PyGraphEdge>> {
-        self.inner
+        self.db()?
             .get_outgoing_edges(graph_id, node_id, edge_types)
             .map(|edges| edges.into_iter().map(|e| e.into()).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get outgoing edges: {}", e)))
@@ -2443,7 +2476,7 @@ impl PyProximaDB {
         node_id: &str,
         edge_types: Option<Vec<String>>,
     ) -> PyResult<Vec<PyGraphEdge>> {
-        self.inner
+        self.db()?
             .get_incoming_edges(graph_id, node_id, edge_types)
             .map(|edges| edges.into_iter().map(|e| e.into()).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get incoming edges: {}", e)))
@@ -2458,7 +2491,7 @@ impl PyProximaDB {
     /// Returns:
     ///     True if node was deleted, False if not found
     fn delete_node(&self, graph_id: &str, node_id: &str) -> PyResult<bool> {
-        self.inner
+        self.db()?
             .delete_node(graph_id, node_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete node: {}", e)))
     }
@@ -2471,7 +2504,7 @@ impl PyProximaDB {
     /// Returns:
     ///     GraphStats with total_nodes and total_edges
     fn graph_stats(&self, graph_id: &str) -> PyResult<PyGraphStats> {
-        self.inner
+        self.db()?
             .graph_stats(graph_id)
             .map(|s| s.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get graph stats: {}", e)))
@@ -2487,8 +2520,7 @@ impl PyProximaDB {
         edge_types: Option<Vec<String>>,
         limit: Option<u32>,
     ) -> PyResult<PyObject> {
-        let result = self
-            .inner
+        let result = self.db()?
             .traverse_graph(graph_id, start_node_id, max_depth, edge_types, limit)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to traverse graph: {}", e)))?;
 
@@ -2521,7 +2553,7 @@ impl PyProximaDB {
     /// Args:
     ///     graph_id: Graph identifier
     fn delete_graph(&self, graph_id: &str) -> PyResult<()> {
-        self.inner
+        self.db()?
             .delete_graph(graph_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete graph: {}", e)))
     }
@@ -2546,7 +2578,7 @@ impl PyProximaDB {
         name: &str,
         indexed_paths: Option<Vec<String>>,
     ) -> PyResult<()> {
-        self.inner
+        self.db()?
             .create_document_collection(name, indexed_paths)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create document collection: {}", e))
@@ -2581,7 +2613,7 @@ impl PyProximaDB {
         // Convert Python dict to serde_json::Value
         let json_doc = python_to_json(document.as_any())?;
 
-        self.inner
+        self.db()?
             .insert_document(collection, doc_id, json_doc)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert document: {}", e)))
     }
@@ -2607,7 +2639,7 @@ impl PyProximaDB {
         collection: &str,
         doc_id: &str,
     ) -> PyResult<Option<PyObject>> {
-        match self.inner.get_document(collection, doc_id) {
+        match self.db()?.get_document(collection, doc_id) {
             Ok(Some(doc)) => json_to_python(py, &doc).map(Some),
             Ok(None) => Ok(None),
             Err(e) => Err(PyRuntimeError::new_err(format!(
@@ -2641,7 +2673,7 @@ impl PyProximaDB {
         filter: Option<&str>,
         limit: u32,
     ) -> PyResult<Vec<(String, PyObject)>> {
-        self.inner
+        self.db()?
             .query_documents(collection, filter, limit)
             .map(|results| {
                 results
@@ -2667,7 +2699,7 @@ impl PyProximaDB {
             rust_updates.insert(key, value);
         }
 
-        self.inner
+        self.db()?
             .update_document(collection, doc_id, rust_updates)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to update document: {}", e)))
     }
@@ -2681,7 +2713,7 @@ impl PyProximaDB {
     /// Returns:
     ///     True if deleted, False if not found
     fn delete_document(&self, collection: &str, doc_id: &str) -> PyResult<bool> {
-        self.inner
+        self.db()?
             .delete_document(collection, doc_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete document: {}", e)))
     }
@@ -2691,13 +2723,13 @@ impl PyProximaDB {
     /// Returns:
     ///     List of collection names
     fn list_document_collections(&self) -> PyResult<Vec<String>> {
-        self.inner.list_document_collections().map_err(|e| {
+        self.db()?.list_document_collections().map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to list document collections: {}", e))
         })
     }
 
     fn delete_document_collection(&self, name: &str) -> PyResult<bool> {
-        self.inner.delete_document_collection(name).map_err(|e| {
+        self.db()?.delete_document_collection(name).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to delete document collection: {}", e))
         })
     }
@@ -2724,7 +2756,7 @@ impl PyProximaDB {
     ) -> PyResult<()> {
         // Convert retention_days to retention_hours for the inner API
         let retention_hours = retention_days.map(|d| d as u64 * 24);
-        self.inner
+        self.db()?
             .create_observability_namespace(name, retention_hours)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create observability namespace: {}", e))
@@ -2802,7 +2834,7 @@ impl PyProximaDB {
             });
         }
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.ingest_logs(namespace, rust_logs))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest logs: {}", e)))
     }
@@ -2836,7 +2868,7 @@ impl PyProximaDB {
         query: Option<&str>,
         limit: u32,
     ) -> PyResult<Vec<PyObject>> {
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || {
             inner.query_logs(namespace, start_time_ns, end_time_ns, query, limit)
         })
@@ -2938,7 +2970,7 @@ impl PyProximaDB {
             });
         }
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.ingest_metrics(namespace, rust_samples))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest metrics: {}", e)))
     }
@@ -2954,7 +2986,7 @@ impl PyProximaDB {
         end_time: Option<&str>,
         step_seconds: u32,
     ) -> PyResult<Vec<PyObject>> {
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || {
             inner.aggregate_metrics(
                 namespace,
@@ -3053,7 +3085,7 @@ impl PyProximaDB {
             });
         }
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.ingest_traces(namespace, rust_traces))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest traces: {}", e)))
     }
@@ -3072,7 +3104,7 @@ impl PyProximaDB {
         status: Option<&str>,
         limit: u32,
     ) -> PyResult<Vec<PyObject>> {
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || {
             inner.query_traces(
                 namespace,
@@ -3096,7 +3128,7 @@ impl PyProximaDB {
     }
 
     fn get_trace(&self, py: Python<'_>, namespace: &str, trace_id: &str) -> PyResult<PyObject> {
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.get_trace(namespace, trace_id))
             .and_then(|trace| {
                 let dict = PyDict::new(py);
@@ -3134,7 +3166,7 @@ impl PyProximaDB {
             None
         };
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.execute_sql(query, rust_params, collection))
             .and_then(|result| {
                 let dict = PyDict::new(py);
@@ -3173,7 +3205,7 @@ impl PyProximaDB {
             }
         };
 
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || {
             inner.insert_arrow_ipc(collection, &ipc_stream, insert_only, tenant_id)
         })
@@ -3188,7 +3220,7 @@ impl PyProximaDB {
         ipc_stream: Vec<u8>,
         tenant_id: Option<&str>,
     ) -> PyResult<u64> {
-        let inner = Arc::clone(&self.inner);
+        let inner = self.db()?;
         py.allow_threads(move || inner.insert_arrow_ipc(collection, &ipc_stream, false, tenant_id))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert Arrow batch: {}", e)))
     }
@@ -3225,7 +3257,7 @@ impl PyProximaDB {
         query_vector: Option<Vec<f32>>,
         fusion_strategy: Option<&str>,
     ) -> PyResult<Vec<PyObject>> {
-        self.inner
+        self.db()?
             .execute_unified_query(query, query_vector, fusion_strategy)
             .map(|records| {
                 records
@@ -3281,7 +3313,7 @@ impl PyProximaDB {
     ///         print(f"  {comp['model']}: cost={comp['estimated_cost']}")
     ///     ```
     fn explain_unified_query(&self, py: Python<'_>, query: &str) -> PyResult<PyObject> {
-        self.inner
+        self.db()?
             .explain_unified_query(query)
             .map(|plan| {
                 let dict = PyDict::new(py);
@@ -3348,7 +3380,7 @@ impl PyProximaDB {
             }
         };
 
-        Ok(self.inner.metrics(rolling_window).into())
+        Ok(self.db()?.metrics(rolling_window).into())
     }
 
     /// Reset all metrics to zero
@@ -3364,7 +3396,9 @@ impl PyProximaDB {
     ///     print(f"Benchmark results: {metrics}")
     ///     ```
     fn reset_metrics(&self) {
-        self.inner.reset_metrics();
+        if let Some(db) = self.db_opt() {
+            db.reset_metrics();
+        }
     }
 
     /// Export metrics in Prometheus text format
@@ -3387,7 +3421,9 @@ impl PyProximaDB {
     ///     print(prometheus_text)
     ///     ```
     fn export_prometheus(&self) -> String {
-        self.inner.export_prometheus()
+        self.db_opt()
+            .map(|db| db.export_prometheus())
+            .unwrap_or_default()
     }
 }
 
