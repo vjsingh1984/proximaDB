@@ -35,6 +35,7 @@ members = [
     "crates/control/proximadb-catalog",
     "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
+    "crates/horizontal/proximadb-embedded-common",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-security",
     "crates/horizontal/proximadb-telemetry",
@@ -174,6 +175,7 @@ proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
+proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-common" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }

@@ -5741,6 +5741,7 @@ dependencies = [
  "proximadb-distance-types",
  "proximadb-document",
  "proximadb-document-query",
+ "proximadb-embedded-common",
  "proximadb-filter-expression",
  "proximadb-graph",
  "proximadb-graph-arrow",
@@ -5949,6 +5950,10 @@ dependencies = [
  "proximadb-proto",
  "proximadb-query-filter",
 ]
+
+[[package]]
+name = "proximadb-embedded-common"
+version = "0.2.0"
 
 [[package]]
 name = "proximadb-encoding-types"

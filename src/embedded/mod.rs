@@ -56,16 +56,14 @@
 //! - `--features nodejs` - Node.js NAPI-RS bindings
 //! - `--features embedded-all` - All language bindings
 
-// Embedded mode observability metrics
-pub mod histograms;
-pub mod metrics;
-
 // Multi-process coordination
 pub mod coordination;
 
-// Re-export metrics types for public API
-pub use histograms::{HistogramStats, RollingWindow};
-pub use metrics::{EmbeddedMetrics, EmbeddedMetricsCollector, LatencyStats, LatencyTimer};
+// Re-export embedded support types for public API compatibility.
+pub use proximadb_embedded_common::{
+    EmbeddedMetrics, EmbeddedMetricsCollector, HistogramStats, LatencyStats, LatencyTimer,
+    RollingWindow,
+};
 
 // Re-export coordination types for public API
 pub use coordination::{

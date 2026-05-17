@@ -1,12 +1,48 @@
 # Workspace Refactor Status
 
-**Last Updated**: 2026-05-15
-**Overall Completion**: 100%
-**Current Phase**: Phase 10 (Root Crate Thinning) - COMPLETE
+**Last Updated**: 2026-05-16
+**Overall Completion**: 60-65%
+**Current Phase**: Phase 10 (Root Crate Thinning) - IN PROGRESS
 
 ## Executive Summary
 
-The workspace refactor has achieved substantial completion with proper architectural boundaries established and respected. The quantization module consolidation (Phase 6) successfully migrated vector-specific algorithms to the vector modality while discovering that orchestration logic legitimately belongs in the compute layer.
+The workspace refactor has achieved strong boundary scaffolding, but it is not physically complete.
+`scripts/check_workspace_boundaries.py --strict` passes and the major platform/modality contract
+crates exist, yet the root `proximadb` crate still owns most concrete runtime bodies. A current
+tree audit shows roughly 918k Rust LOC under `src/` and 107k Rust LOC under `crates/`, so the
+practical isolation mandate should be treated as partially complete rather than complete.
+
+The next phase should continue skeleton-first extraction: move root-independent support code and
+stable modality/query contracts before attempting large storage, service-runtime, or embedded
+composition moves. This keeps compatibility imports stable while reducing real rebuild and
+ownership coupling.
+
+## Current Codebase Audit (2026-05-16)
+
+- Workspace boundary checker: passing with zero findings.
+- Workspace crates: 45 after adding `proximadb-embedded-common`.
+- Rust LOC distribution: approximately 918,220 under root `src/`, 106,970 under `crates/`.
+- Root hotspots by file count include `core`, `graph`, `query`, `storage`, `catalog`, `utils`,
+  `streaming`, `network`, `metrics`, and `embedded`.
+- Practical isolation estimate:
+  - Boundary rules and dependency skeleton: 85-90%.
+  - Physical root-crate thinning: 20-25%.
+  - Overall workspace isolation mandate: 60-65%.
+
+## Refined Recommendation
+
+1. Keep the high-level layer map stable: Foundation -> Contracts -> Modality Runtime ->
+   Cross-Model Query Runtime -> Platform Runtime -> Apps/Bindings.
+2. Extract root-independent modules first. The first active move is embedded support metrics into
+   `crates/horizontal/proximadb-embedded-common`, preserving the root `src/embedded` public API as
+   compatibility re-exports.
+3. Continue graph/query AST moves only where the modality crate can own stable language contracts
+   without taking durable record authority away from canonical `ProximaRecord`/xCatalog/WAL paths.
+4. Defer large `src/storage` and embedded runtime-composition moves until record/catalog/log/policy
+   contracts are isolated enough to prevent upward dependencies.
+5. Do not treat a passing boundary script as completion. Completion requires the root crate to be a
+   compatibility/application facade with concrete modality, query, platform, and support logic
+   owned by lower crates.
 
 ## Phase Completion Status
 
@@ -312,12 +348,12 @@ This boundary respects the layering principles and prevents upward dependencies 
 | Modality runtime crates | 5 | 3 + contracts | ⚠️ IN PROGRESS |
 | Platform runtime crates | 2 | 2 | ✅ COMPLETE |
 | Layering violations | 0 | 0 | ✅ COMPLETE |
-| Root crate LOC | < 5,000 | ~8,000 | ⚠️ IN PROGRESS |
+| Root crate LOC | < 5,000 facade LOC | ~918k Rust LOC under `src/` | ⚠️ IN PROGRESS |
 | Circular dependencies | 0 | 0 | ✅ COMPLETE |
 
 ## Conclusion
 
-The workspace refactor has achieved **99% completion** with:
+The workspace refactor has achieved **60-65% completion** with:
 - ✅ Foundation types established and consolidated
 - ✅ Layering principles enforced
 - ✅ Architectural boundaries discovered and respected
@@ -327,7 +363,12 @@ The workspace refactor has achieved **99% completion** with:
 - ✅ Platform runtime crates extracted (`proximadb-api`, `proximadb-runtime`)
 - ✅ All Phase 9 REST handler migration waves complete (9.1–9.14)
 - ✅ All Phase 9 port traits + root-crate impls wired in production server
+- ⚠️ Root crate still owning most concrete service, storage, embedded, query, and modality bodies
 
-The refactor has achieved its primary goals. Phase 10 (root crate thinning) removed the last dead fallback branches in `create_router()` and trimmed obsolete root hybrid handler bodies.
+The refactor has achieved the boundary skeleton and many protocol-port goals, but root thinning
+remains the dominant unfinished work. Phase 10 should continue with small, verified extractions that
+reduce concrete root ownership without destabilizing public compatibility modules.
 
-**Next Steps**: Continue medium-priority modality extraction and query-runtime consolidation without adding new root fallback routes.
+**Next Steps**: Continue medium-priority modality extraction, query-runtime consolidation, and
+root-independent support-code extraction without adding new root fallback routes or hidden durable
+semantics.
