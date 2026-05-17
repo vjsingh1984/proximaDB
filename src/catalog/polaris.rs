@@ -19,7 +19,7 @@ use tracing::{debug, info, warn};
 use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::schema::{apply_evolution, validate_schema};
-use super::traits::{Catalog, CatalogHealth, CatalogTransaction, LakehouseExtension, TableFormat};
+use super::traits::{Catalog, CatalogHealth, LakehouseExtension, TableFormat};
 use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
     CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
@@ -57,6 +57,8 @@ struct IcebergNamespace {
 #[derive(Debug, Serialize, Deserialize)]
 struct IcebergListNamespacesResponse {
     namespaces: Vec<Vec<String>>,
+    #[serde(rename = "next-page-token")]
+    next_page_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -68,6 +70,8 @@ struct IcebergTableIdentifier {
 #[derive(Debug, Serialize, Deserialize)]
 struct IcebergListTablesResponse {
     identifiers: Vec<IcebergTableIdentifier>,
+    #[serde(rename = "next-page-token")]
+    next_page_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -374,7 +378,7 @@ impl PolarisCatalog {
             CatalogDataType::Float32 => serde_json::json!("float"),
             CatalogDataType::Float64 => serde_json::json!("double"),
             CatalogDataType::String => serde_json::json!("string"),
-            CatalogDataType::Binary => serde_json::json!("binary"),
+            CatalogDataType::Binary | CatalogDataType::BinaryVector => serde_json::json!("binary"),
             CatalogDataType::Date => serde_json::json!("date"),
             CatalogDataType::Time => serde_json::json!("time"),
             CatalogDataType::Timestamp | CatalogDataType::TimestampTz => {
@@ -400,7 +404,6 @@ impl PolarisCatalog {
                 "key": "int",
                 "value": "float"
             }),
-            CatalogDataType::BinaryVector => serde_json::json!("binary"),
         }
     }
 
@@ -471,34 +474,46 @@ impl Catalog for PolarisCatalog {
     }
 
     async fn list_namespaces(&self, parent: Option<&[String]>) -> Result<Vec<CatalogNamespace>> {
-        let path = if let Some(p) = parent {
+        let mut all_namespaces = Vec::new();
+        let mut next_page_token = None;
+
+        let base_path = if let Some(p) = parent {
             format!("/namespaces?parent={}", Self::encode_namespace(p))
         } else {
             "/namespaces".to_string()
         };
 
-        let response: IcebergListNamespacesResponse =
-            self.api_request(reqwest::Method::GET, &path, None).await?;
+        loop {
+            let mut path = base_path.clone();
+            if let Some(token) = &next_page_token {
+                let sep = if path.contains('?') { '&' } else { '?' };
+                path.push_str(&format!("{}pageToken={}", sep, token));
+            }
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
+            let response: IcebergListNamespacesResponse =
+                self.api_request(reqwest::Method::GET, &path, None).await?;
 
-        let namespaces: Vec<CatalogNamespace> = response
-            .namespaces
-            .into_iter()
-            .map(|ns| CatalogNamespace {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
+
+            all_namespaces.extend(response.namespaces.into_iter().map(|ns| CatalogNamespace {
                 levels: ns,
                 properties: HashMap::new(),
                 owner: None,
                 location: None,
                 created_at_ms: now,
                 updated_at_ms: now,
-            })
-            .collect();
+            }));
 
-        Ok(namespaces)
+            next_page_token = response.next_page_token;
+            if next_page_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(all_namespaces)
     }
 
     async fn namespace_exists(&self, namespace: &[String]) -> Result<bool> {
@@ -638,18 +653,34 @@ impl Catalog for PolarisCatalog {
 
     async fn list_tables(&self, namespace: &[String]) -> Result<Vec<TableIdentifier>> {
         let encoded_ns = Self::encode_namespace(namespace);
-        let path = format!("/namespaces/{}/tables", encoded_ns);
+        let base_path = format!("/namespaces/{}/tables", encoded_ns);
 
-        let response: IcebergListTablesResponse =
-            self.api_request(reqwest::Method::GET, &path, None).await?;
+        let mut all_tables = Vec::new();
+        let mut next_page_token = None;
 
-        let tables: Vec<TableIdentifier> = response
-            .identifiers
-            .into_iter()
-            .map(|id| TableIdentifier::new(id.namespace, id.name))
-            .collect();
+        loop {
+            let mut path = base_path.clone();
+            if let Some(token) = &next_page_token {
+                path.push_str(&format!("?pageToken={}", token));
+            }
 
-        Ok(tables)
+            let response: IcebergListTablesResponse =
+                self.api_request(reqwest::Method::GET, &path, None).await?;
+
+            all_tables.extend(
+                response
+                    .identifiers
+                    .into_iter()
+                    .map(|id| TableIdentifier::new(id.namespace, id.name)),
+            );
+
+            next_page_token = response.next_page_token;
+            if next_page_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(all_tables)
     }
 
     async fn table_exists(&self, identifier: &TableIdentifier) -> Result<bool> {

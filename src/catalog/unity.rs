@@ -173,11 +173,12 @@ impl UnityCatalog {
         }
 
         CatalogColumn {
+            id: col.position,
             name: col.name.clone(),
             data_type,
             nullable: col.nullable,
             default_value: None,
-            comment: col.comment.clone().unwrap_or_default(),
+            comment: col.comment.clone(),
             properties,
         }
     }
@@ -194,7 +195,7 @@ impl UnityCatalog {
             "float" | "real" => CatalogDataType::Float32,
             "double" => CatalogDataType::Float64,
             "string" => CatalogDataType::String,
-            "binary" => CatalogDataType::Bytes,
+            "binary" => CatalogDataType::Binary,
             "date" => CatalogDataType::Date,
             "timestamp" | "timestamp_ntz" => CatalogDataType::Timestamp,
             "decimal" => CatalogDataType::Decimal,
@@ -212,23 +213,23 @@ impl UnityCatalog {
     ) -> String {
         match data_type {
             CatalogDataType::Boolean => "BOOLEAN".to_string(),
-            CatalogDataType::Int32 => "INT".to_string(),
+            CatalogDataType::Int8 | CatalogDataType::Int16 | CatalogDataType::Int32 => {
+                "INT".to_string()
+            }
             CatalogDataType::Int64 => "BIGINT".to_string(),
             CatalogDataType::Float32 => "FLOAT".to_string(),
             CatalogDataType::Float64 => "DOUBLE".to_string(),
             CatalogDataType::String => "STRING".to_string(),
-            CatalogDataType::Bytes => "BINARY".to_string(),
+            CatalogDataType::Binary | CatalogDataType::BinaryVector => "BINARY".to_string(),
             CatalogDataType::Date => "DATE".to_string(),
-            CatalogDataType::Timestamp => "TIMESTAMP".to_string(),
-            CatalogDataType::TimestampTz => "TIMESTAMP".to_string(),
+            CatalogDataType::Timestamp | CatalogDataType::TimestampTz => "TIMESTAMP".to_string(),
             CatalogDataType::Decimal => "DECIMAL(38,18)".to_string(),
-            CatalogDataType::Json => "STRING".to_string(), // Unity uses STRING for JSON
-            CatalogDataType::Vector | CatalogDataType::Embedding => {
+            CatalogDataType::Json | CatalogDataType::Uuid => "STRING".to_string(), // Unity uses STRING for JSON/UUID
+            CatalogDataType::Vector => {
                 "ARRAY<FLOAT>".to_string() // Vector stored as array
             }
             CatalogDataType::SparseVector => "MAP<INT,FLOAT>".to_string(),
-            CatalogDataType::BinaryVector => "BINARY".to_string(),
-            CatalogDataType::Uuid => "STRING".to_string(),
+            _ => "STRING".to_string(),
         }
     }
 
@@ -322,11 +323,12 @@ impl Catalog for UnityCatalog {
         info!("Created Unity schema: {}.{}", catalog_name, schema_name);
 
         Ok(CatalogNamespace {
-            name: schema_name.clone(),
             levels: namespace.to_vec(),
             properties: schema.properties.unwrap_or_default(),
-            created_at: schema.created_at.unwrap_or(0),
-            updated_at: schema.updated_at.unwrap_or(0),
+            owner: None,
+            location: None,
+            created_at_ms: schema.created_at.unwrap_or(0),
+            updated_at_ms: schema.updated_at.unwrap_or(0),
         })
     }
 
@@ -365,25 +367,36 @@ impl Catalog for UnityCatalog {
 
     async fn list_namespaces(&self, _parent: Option<&[String]>) -> Result<Vec<CatalogNamespace>> {
         let catalog_name = self.unity_catalog_name();
-        let path = format!("/schemas?catalog_name={}", catalog_name);
+        let mut all_namespaces = Vec::new();
+        let mut next_page_token = None;
 
-        let response: UnityListResponse<UnitySchemaInfo> =
-            self.api_request(reqwest::Method::GET, &path, None).await?;
+        loop {
+            let mut path = format!("/schemas?catalog_name={}", catalog_name);
+            if let Some(token) = &next_page_token {
+                path.push_str(&format!("&page_token={}", token));
+            }
 
-        let namespaces: Vec<CatalogNamespace> = response
-            .items
-            .unwrap_or_default()
-            .into_iter()
-            .map(|s| CatalogNamespace {
-                name: s.name.clone(),
-                levels: vec![s.name],
-                properties: s.properties.unwrap_or_default(),
-                created_at: s.created_at.unwrap_or(0),
-                updated_at: s.updated_at.unwrap_or(0),
-            })
-            .collect();
+            let response: UnityListResponse<UnitySchemaInfo> =
+                self.api_request(reqwest::Method::GET, &path, None).await?;
 
-        Ok(namespaces)
+            if let Some(items) = response.items {
+                all_namespaces.extend(items.into_iter().map(|s| CatalogNamespace {
+                    levels: vec![s.name],
+                    properties: s.properties.unwrap_or_default(),
+                    owner: None,
+                    location: None,
+                    created_at_ms: s.created_at.unwrap_or(0),
+                    updated_at_ms: s.updated_at.unwrap_or(0),
+                }));
+            }
+
+            next_page_token = response.next_page_token;
+            if next_page_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(all_namespaces)
     }
 
     async fn namespace_exists(&self, namespace: &[String]) -> Result<bool> {
@@ -410,11 +423,12 @@ impl Catalog for UnityCatalog {
         let schema: UnitySchemaInfo = self.api_request(reqwest::Method::GET, &path, None).await?;
 
         Ok(CatalogNamespace {
-            name: schema_name.clone(),
             levels: namespace.to_vec(),
             properties: schema.properties.unwrap_or_default(),
-            created_at: schema.created_at.unwrap_or(0),
-            updated_at: schema.updated_at.unwrap_or(0),
+            owner: None,
+            location: None,
+            created_at_ms: schema.created_at.unwrap_or(0),
+            updated_at_ms: schema.updated_at.unwrap_or(0),
         })
     }
 
@@ -461,16 +475,14 @@ impl Catalog for UnityCatalog {
             .map(|(pos, col)| {
                 let type_name = Self::data_type_to_unity_type(&col.data_type, &col.properties);
 
-                let comment = if col.data_type == CatalogDataType::Vector
-                    || col.data_type == CatalogDataType::Embedding
-                {
-                    format!(
+                let comment = if col.data_type == CatalogDataType::Vector {
+                    Some(format!(
                         "vector:{}:metric={}",
                         col.properties.get("dimension").unwrap_or(&"0".to_string()),
                         col.properties
                             .get("metric")
                             .unwrap_or(&"cosine".to_string())
-                    )
+                    ))
                 } else {
                     col.comment.clone()
                 };
@@ -543,22 +555,34 @@ impl Catalog for UnityCatalog {
         let catalog_name = self.unity_catalog_name();
         let schema_name = self.schema_name(namespace);
 
-        let path = format!(
-            "/tables?catalog_name={}&schema_name={}",
-            catalog_name, schema_name
-        );
+        let mut all_tables = Vec::new();
+        let mut next_page_token = None;
 
-        let response: UnityListResponse<UnityTableInfo> =
-            self.api_request(reqwest::Method::GET, &path, None).await?;
+        loop {
+            let mut path = format!(
+                "/tables?catalog_name={}&schema_name={}",
+                catalog_name, schema_name
+            );
+            if let Some(token) = &next_page_token {
+                path.push_str(&format!("&page_token={}", token));
+            }
 
-        let tables: Vec<TableIdentifier> = response
-            .items
-            .unwrap_or_default()
-            .into_iter()
-            .map(|t| TableIdentifier::new(namespace.to_vec(), t.name))
-            .collect();
+            let response: UnityListResponse<UnityTableInfo> =
+                self.api_request(reqwest::Method::GET, &path, None).await?;
 
-        Ok(tables)
+            if let Some(items) = response.items {
+                for t in items {
+                    all_tables.push(TableIdentifier::new(namespace.to_vec(), t.name));
+                }
+            }
+
+            next_page_token = response.next_page_token;
+            if next_page_token.is_none() {
+                break;
+            }
+        }
+
+        Ok(all_tables)
     }
 
     async fn table_exists(&self, identifier: &TableIdentifier) -> Result<bool> {
@@ -620,8 +644,10 @@ impl Catalog for UnityCatalog {
             indexes: vec![],
             schema_version,
             properties: table.properties.unwrap_or_default(),
-            created_at: table.created_at.unwrap_or(now),
-            updated_at: table.updated_at.unwrap_or(now),
+            location: table.storage_location,
+            created_at_ms: table.created_at.unwrap_or(now),
+            updated_at_ms: table.updated_at.unwrap_or(now),
+            ..Default::default()
         };
 
         // Update cache
@@ -692,7 +718,7 @@ impl Catalog for UnityCatalog {
                     "type_text": type_name,
                     "position": pos,
                     "nullable": col.nullable,
-                    "comment": col.comment,
+                    "comment": col.comment.clone().unwrap_or_default(),
                 })
             })
             .collect();
