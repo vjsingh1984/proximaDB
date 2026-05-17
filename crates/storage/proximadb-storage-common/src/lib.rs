@@ -6,6 +6,7 @@
 pub mod bitmap;
 pub mod cache_config;
 pub mod column_projector;
+pub mod flush_integration;
 pub mod metadata_collector;
 pub mod collection_path;
 pub mod engine_profile;
@@ -49,6 +50,7 @@ pub use engine_constants::{
     SWIFT_MAGIC, VIPER_FILE_EXT, VIPER_MAGIC,
 };
 pub use column_projector::{ColumnProjection, ProjectionBuilder};
+pub use flush_integration::{FlushConfig, FlushIntegration, FlushStats};
 pub use metadata_collector::{MetadataCollectionConfig, MetadataCollector, NoOpCollector};
 pub use engine_type::StorageEngineType;
 pub use glob::{GlobError, GlobMatcher, GlobPattern, glob_match};

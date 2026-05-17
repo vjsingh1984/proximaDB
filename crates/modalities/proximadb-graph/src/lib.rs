@@ -25,6 +25,7 @@
 
 pub mod core;
 pub mod cypher_functions;
+pub mod parser;
 pub mod projection;
 pub mod query;
 pub mod record;
@@ -39,6 +40,7 @@ pub use traversal::{
 };
 
 pub use cypher_functions::{CypherFunction, CypherFunctionRegistry};
+pub use parser::{FilterExpression, GraphQuery, ParseResult, Pattern, Projection, parse_query};
 pub use storage::{GraphStorage, MemoryGraphStorage};
 
 /// Graph direction
