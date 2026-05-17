@@ -1107,6 +1107,19 @@ Use REST/gRPC for:
 * agent memory/checkpoint/event operations;
 * policy/admin/governance lifecycle.
 
+REST/gRPC should also expose rich data-plane commands when they improve ergonomics:
+`InsertRecords`, `UpsertRecords`, `DocumentQuery`, `GraphTraverse`, `VectorSearch`,
+`ExecuteSql`, `ExecuteLogicalPlan`, and `InsertArrowBatch` are valid API shapes. They
+must remain adapters over the shared xCatalog/type/planner/write path rather than
+protocol-owned semantics. A gRPC message or REST JSON body is parsed into
+`ProximaValue`, `ProximaRecord`, Arrow batches, or a logical plan before policy,
+schema, branch/time, WAL, and storage execution.
+
+Mongo-like document commands, Gremlin/Cypher/PGQ graph commands, Neptune/Titan/
+JanusGraph-style compatibility endpoints, and SDK/embedded helpers follow the same rule:
+they provide ingress ergonomics and compatibility, not independent durable stores,
+catalogs, RLS models, or WAL/recovery paths.
+
 === Arrow Flight
 
 Use Arrow Flight for:
@@ -1115,6 +1128,12 @@ Use Arrow Flight for:
 * training data exchange;
 * high-throughput analytical scans;
 * inter-engine data movement.
+
+Arrow is the primary batch interchange and vectorized execution plane. Arrow schemas map
+to `ProximaType`; Arrow arrays map to `ProximaValue` vectors, canonical records, or
+cataloged columnar projections. Large pandas/numpy/embedded inserts should prefer Arrow
+batch ingress, but ownership, schema evolution, tenant/RLS, branch/time, and recovery
+semantics still come from xCatalog plus WAL/log/manifest.
 
 === SDKs
 

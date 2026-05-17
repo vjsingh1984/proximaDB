@@ -588,8 +588,55 @@ If event replay produces current entity/document/graph state, that state is a ma
    snapshot, type, policy, write, and recovery semantics.
 10. Optional relational constraints are real durable semantics when enabled. They must be
     cataloged, recovered, and protocol-consistent rather than implemented as API-layer checks.
+11. Protocol request/response shapes are adapters, not durable contracts. SQL/pgwire,
+    REST, gRPC, Arrow Flight, Mongo-like document APIs, Gremlin/Cypher/PGQ graph APIs,
+    Neptune/Titan/JanusGraph-style compatibility, SDKs, and embedded helpers must lower
+    into `ProximaValue`, `ProximaRecord`, xCatalog schema/variation metadata, or the
+    shared logical plan before durable write/query execution.
+12. Schema flexibility is cataloged. Strict relational tables, flexible document/entity
+    collections, graph property records, schema-on-write variation registration, and
+    schema-on-read projection behavior are table/collection capabilities in xCatalog; they
+    are not separate type systems or hidden per-protocol insert paths.
 
 == Target Technical Design
+
+=== Protocol and Schema Surface Model
+
+Different database families provide useful ingress ergonomics but should not fragment
+ProximaDB's durable semantics:
+
+* PostgreSQL, MariaDB, MySQL, Oracle, and SQL Server use catalog-first DDL, typed
+  coercion, constraints, defaults, generated columns, indexes, WAL, and binary/prepared
+  protocols. ProximaDB adopts that rigor when a table/collection enables strict or
+  relational capabilities.
+* MongoDB/Couchbase/Dynamo-style APIs accept open documents, optional validators, and
+  path indexes. ProximaDB models those as flexible collections with structural variations,
+  `ProximaTree`/`ProximaValue` props, and cataloged path/full-text/columnar projections.
+* Neptune, Titan/JanusGraph, Neo4j, and Cosmos Gremlin-style APIs expose nodes/vertices,
+  edges, labels, and properties. ProximaDB stores those as canonical node/edge records and
+  keeps adjacency tables, CSR/COO, and graph lake formats as projections/access methods.
+* Arrow/Arrow Flight and pandas/numpy-oriented embedded paths are high-throughput batch
+  ingress/exchange forms. They map through Arrow schema to `ProximaType`/`ProximaValue`
+  and canonical records or columnar projections; Arrow is not a separate semantic store.
+
+The invariant is:
+
+[source,text]
+----
+Protocol shape
+  -> adapter/coercion
+  -> ProximaValue / ProximaRecord / LogicalPlan
+  -> xCatalog policy, schema, variation, branch/time, layout
+  -> WAL/log/manifest
+  -> canonical storage plus cataloged projections/access methods
+----
+
+REST/gRPC may expose rich modality commands (`InsertRecords`, `UpsertRecords`,
+`DocumentQuery`, `GraphTraverse`, `VectorSearch`, `ExecuteSql`, `ExecuteLogicalPlan`,
+`InsertArrowBatch`), but those commands are ergonomic facades over the same pipeline.
+SQL/pgwire may expose relational DDL/DML and pgvector-style syntax, but SQL values are
+converted to `ProximaValue` before internal planning/storage. Legacy v1 `SqlValue` and
+`SqlObject` stay at compatibility boundaries only.
 
 === Canonical record mapping
 

@@ -659,6 +659,46 @@ The catalog stores variations explicitly. Open-shape collections (`document` pro
 allow ad-hoc variations created on first write; closed-shape collections (`relational`
 profile) reject writes that do not match a registered variation.
 
+==== 4.3.1 Schema Modes and Insert Semantics
+
+ProximaDB supports multiple schema disciplines, but all of them are cataloged and all
+write paths converge before WAL/storage:
+
+* **Strict relational**: table schema, keys, constraints, generated columns, indexes,
+  and type coercions are resolved from xCatalog before insert/update. Unknown fields
+  are rejected unless a cataloged JSON/Map/Struct column accepts them.
+* **Flexible document/entity**: records in one collection may carry different shapes.
+  First write of a new shape creates or references a structural variation; configured
+  validation rules, required fields, and indexed paths are checked before commit.
+* **Graph property records**: node and edge labels/types plus property maps are
+  `ProximaRecord` labels, edge shape, and `ProximaValue` props. Adjacency/CSR/COO
+  structures are projections over committed node/edge records.
+* **Schema-on-write**: adapters validate known fields, infer/register allowed
+  variation metadata, and reject non-preserving drift when policy requires it.
+* **Schema-on-read**: query/projection code can discover and project fields lazily,
+  but this is a planner/projection behavior, not a separate durable type system.
+
+Every insert/upsert surface follows the same sequence:
+
+. Parse protocol payload (SQL row, REST JSON, gRPC message, Arrow batch, Mongo-like
+  document command, Gremlin/Cypher/PGQ graph mutation, SDK/embedded object).
+. Convert edge values into `ProximaValue`/`ProximaTree`/`EmbeddingCell` without
+  preserving protocol-specific scalar types internally.
+. Resolve namespace/table/collection/graph/entity type, schema mode, structural
+  variation, policy, branch/time context, and physical layout from xCatalog.
+. Validate/coerce values using `ProximaType`; enforce keys, constraints, RLS/masking,
+  retention, and schema-evolution policy.
+. Build one or more canonical `ProximaRecord` instances and append the canonical WAL/log
+  operation.
+. Update access methods/projections (indexes, adjacency, CSR/COO, HNSW, columnar,
+  full-text, rollups) as cataloged rebuildable structures.
+
+PostgreSQL/MariaDB-style strictness, MongoDB-style flexible documents, Neptune/Titan/
+JanusGraph-style property graph mutations, and Arrow-native batches are therefore
+different ingress ergonomics over one catalog/type/write pipeline. Legacy v1
+`SqlValue` remains an adapter shape only; it must not become the insertion contract for
+new semantics.
+
 Schema evolution operations follow EvoSchema's 10 op types (arXiv:2603.10697):
 
 [cols="1,1,2"]
