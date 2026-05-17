@@ -13,67 +13,65 @@ impl From<crate::storage::persistence::filesystem::FilesystemError> for VectorDB
     }
 }
 
-/// Convert from kernel StorageError to canonical storage::error::StorageError.
+/// Convert from kernel `StorageError` to canonical storage::error::StorageError.
 ///
-/// This bridges the foundational kernel error types to the comprehensive storage error
-/// struct used throughout the storage layer.
-impl From<StorageError> for crate::storage::error::StorageError {
-    fn from(err: StorageError) -> Self {
-        use crate::storage::error::StorageErrorKind;
-        match err {
-            StorageError::SstEngine(msg) => {
-                crate::storage::error::StorageError::new(StorageErrorKind::SstEngine, msg)
-            }
-            StorageError::Mmap(msg) => crate::storage::error::StorageError::new(
-                StorageErrorKind::Io,
-                format!("MMAP: {}", msg),
-            ),
-            StorageError::DiskIO(io_err) => crate::storage::error::StorageError::with_source(
-                StorageErrorKind::Io,
-                io_err.to_string(),
-                io_err,
-            ),
-            StorageError::Serialization(msg) | StorageError::SerializationError(msg) => {
-                crate::storage::error::StorageError::new(
-                    StorageErrorKind::Internal,
-                    format!("Serialization: {}", msg),
-                )
-            }
-            StorageError::Corruption(msg) => {
-                crate::storage::error::StorageError::new(StorageErrorKind::Corruption, msg)
-            }
-            StorageError::AlreadyExists(msg) => crate::storage::error::StorageError::new(
-                StorageErrorKind::Internal,
-                format!("Already exists: {}", msg),
-            ),
-            StorageError::NotFound(msg) | StorageError::KeyNotFound(msg) => {
-                crate::storage::error::StorageError::new(StorageErrorKind::NotFound, msg)
-            }
-            StorageError::IndexError(msg) => {
-                crate::storage::error::StorageError::new(StorageErrorKind::IndexCorruption, msg)
-            }
-            StorageError::WalError(msg) => {
-                crate::storage::error::StorageError::new(StorageErrorKind::WalCorruption, msg)
-            }
-            StorageError::MetadataError(anyhow_err) => crate::storage::error::StorageError::new(
-                StorageErrorKind::Internal,
-                anyhow_err.to_string(),
-            ),
-            StorageError::CollectionNotFound(id) => crate::storage::error::StorageError::new(
-                StorageErrorKind::NotFound,
-                format!("Collection not found: {}", id),
-            ),
-            StorageError::InvalidDimension { expected, actual } => {
-                crate::storage::error::StorageError::new(
-                    StorageErrorKind::InvalidConfiguration,
-                    format!("Dimension mismatch: expected {}, got {}", expected, actual),
-                )
-            }
-            StorageError::TransactionCommitFailed(msg) => crate::storage::error::StorageError::new(
-                StorageErrorKind::Internal,
-                format!("Transaction commit failed: {}", msg),
-            ),
+/// This cannot be a `From` impl now that both types live in external workspace
+/// crates; keeping it as an explicit helper preserves the bridge without
+/// violating Rust's orphan rules.
+pub fn storage_error_from_kernel(err: StorageError) -> crate::storage::error::StorageError {
+    use crate::storage::error::StorageErrorKind;
+    match err {
+        StorageError::SstEngine(msg) => {
+            crate::storage::error::StorageError::new(StorageErrorKind::SstEngine, msg)
         }
+        StorageError::Mmap(msg) => {
+            crate::storage::error::StorageError::new(StorageErrorKind::Io, format!("MMAP: {}", msg))
+        }
+        StorageError::DiskIO(io_err) => crate::storage::error::StorageError::with_source(
+            StorageErrorKind::Io,
+            io_err.to_string(),
+            io_err,
+        ),
+        StorageError::Serialization(msg) | StorageError::SerializationError(msg) => {
+            crate::storage::error::StorageError::new(
+                StorageErrorKind::Internal,
+                format!("Serialization: {}", msg),
+            )
+        }
+        StorageError::Corruption(msg) => {
+            crate::storage::error::StorageError::new(StorageErrorKind::Corruption, msg)
+        }
+        StorageError::AlreadyExists(msg) => crate::storage::error::StorageError::new(
+            StorageErrorKind::Internal,
+            format!("Already exists: {}", msg),
+        ),
+        StorageError::NotFound(msg) | StorageError::KeyNotFound(msg) => {
+            crate::storage::error::StorageError::new(StorageErrorKind::NotFound, msg)
+        }
+        StorageError::IndexError(msg) => {
+            crate::storage::error::StorageError::new(StorageErrorKind::IndexCorruption, msg)
+        }
+        StorageError::WalError(msg) => {
+            crate::storage::error::StorageError::new(StorageErrorKind::WalCorruption, msg)
+        }
+        StorageError::MetadataError(anyhow_err) => crate::storage::error::StorageError::new(
+            StorageErrorKind::Internal,
+            anyhow_err.to_string(),
+        ),
+        StorageError::CollectionNotFound(id) => crate::storage::error::StorageError::new(
+            StorageErrorKind::NotFound,
+            format!("Collection not found: {}", id),
+        ),
+        StorageError::InvalidDimension { expected, actual } => {
+            crate::storage::error::StorageError::new(
+                StorageErrorKind::InvalidConfiguration,
+                format!("Dimension mismatch: expected {}, got {}", expected, actual),
+            )
+        }
+        StorageError::TransactionCommitFailed(msg) => crate::storage::error::StorageError::new(
+            StorageErrorKind::Internal,
+            format!("Transaction commit failed: {}", msg),
+        ),
     }
 }
 
@@ -117,7 +115,9 @@ impl From<ProtocolError> for crate::core::errors::ProximaDBError {
 impl From<VectorDBError> for crate::core::errors::ProximaDBError {
     fn from(err: VectorDBError) -> Self {
         match err {
-            VectorDBError::Storage(e) => crate::core::errors::ProximaDBError::Storage(e.into()),
+            VectorDBError::Storage(e) => {
+                crate::core::errors::ProximaDBError::Storage(storage_error_from_kernel(e))
+            }
             VectorDBError::Config(msg) => {
                 crate::core::errors::ProximaDBError::Internal(format!("Config: {}", msg))
             }
