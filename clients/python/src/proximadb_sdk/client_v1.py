@@ -323,24 +323,9 @@ class ProximaDBClientV1:
         self, metadata_dict: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Convert Python dict metadata to gRPC SqlValue format"""
-        from .v1 import types_pb2
-
         sql_metadata = {}
         for key, value in (metadata_dict or {}).items():
-            sql_value = types_pb2.SqlValue()
-            if isinstance(value, bool):
-                sql_value.bool_value = value
-            elif isinstance(value, int):
-                sql_value.int64_value = value
-            elif isinstance(value, float):
-                sql_value.number_value = value
-            elif isinstance(value, str):
-                sql_value.string_value = value
-            elif value is None:
-                sql_value.null_value = None
-            else:
-                sql_value.string_value = str(value)
-            sql_metadata[key] = sql_value
+            sql_metadata[key] = self._convert_to_sql_value(value)
         return sql_metadata
 
     def _insert_vectors_grpc(
@@ -609,38 +594,35 @@ class ProximaDBClientV1:
             raise NetworkError(f"Health check failed: {e}")
 
     def _convert_to_sql_value(self, value: Any) -> types_pb2.SqlValue:
-        """Convert Python value to SQL proto value"""
+        """Convert Python value to SQL proto value without flattening nested data."""
+        from google.protobuf.struct_pb2 import NullValue
+
+        if value is None:
+            return types_pb2.SqlValue(null_value=NullValue.NULL_VALUE)
+        if isinstance(value, bool):
+            return types_pb2.SqlValue(bool_value=value)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return types_pb2.SqlValue(int64_value=value)
+        if isinstance(value, float):
+            return types_pb2.SqlValue(number_value=value)
         if isinstance(value, str):
             return types_pb2.SqlValue(string_value=value)
-        elif isinstance(value, bool):
-            # Check bool before int since bool is a subclass of int in Python
-            return types_pb2.SqlValue(bool_value=value)
-        elif isinstance(value, int):
-            return types_pb2.SqlValue(int64_value=value)
-        elif isinstance(value, float):
-            return types_pb2.SqlValue(number_value=value)
-            return types_pb2.SqlValue(bool_value=value)
-        elif value is None:
-            from google.protobuf.struct_pb2 import NullValue
-
-            return types_pb2.SqlValue(null_value=NullValue.NULL_VALUE)
-        elif isinstance(value, (bytes, bytearray)):
+        if isinstance(value, (bytes, bytearray, memoryview)):
             return types_pb2.SqlValue(bytes_value=bytes(value))
-        elif isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             array_values = [self._convert_to_sql_value(item) for item in value]
             return types_pb2.SqlValue(
                 array_value=types_pb2.SqlArray(values=array_values)
             )
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             object_fields = {
-                key: self._convert_to_sql_value(val) for key, val in value.items()
+                str(key): self._convert_to_sql_value(val)
+                for key, val in value.items()
             }
             return types_pb2.SqlValue(
                 object_value=types_pb2.SqlObject(fields=object_fields)
             )
-        else:
-            # Fallback: convert to string
-            return types_pb2.SqlValue(string_value=str(value))
+        return types_pb2.SqlValue(string_value=str(value))
 
     def _convert_from_sql_value(self, sql_value: types_pb2.SqlValue) -> Any:
         """Convert SQL proto value to Python value"""
@@ -654,7 +636,7 @@ class ProximaDBClientV1:
         elif sql_value.HasField("bool_value"):
             return sql_value.bool_value
         elif sql_value.HasField("bytes_value"):
-            return sql_value.bytes_value
+            return bytes(sql_value.bytes_value)
         elif sql_value.HasField("null_value"):
             return None
         elif sql_value.HasField("array_value"):
