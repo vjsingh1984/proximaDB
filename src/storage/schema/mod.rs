@@ -48,8 +48,8 @@ pub use evolution::{
     SchemaEvolution, SchemaEvolutionOp, TypeCompatibility,
 };
 pub use proxima_schema::{
-    AutoGenerateType, DefaultValue, ProximaColumn, ProximaDataType, ProximaSchema, TimeUnit,
-    VectorElementType,
+    AutoGenerateType, AvroStyleField, AvroStyleSchema, AvroStyleType, DefaultValue, ProximaColumn,
+    ProximaDataType, ProximaSchema, TimeUnit, VectorElementType,
 };
 pub use registry::{
     InMemorySchemaRegistry, PersistentSchemaRegistry, SchemaRegistry, SchemaVersionInfo,
@@ -58,10 +58,6 @@ pub use type_mapping::TypeMapper;
 
 // VectorRecord bridge exports
 pub use vector_record_bridge::{
-    AvroStyleField,
-    // Avro-style schema serialization
-    AvroStyleSchema,
-    AvroStyleType,
     DefaultVectorRecordBridge,
     MetadataMode,
     // Core trait and implementation

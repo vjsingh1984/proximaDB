@@ -5,6 +5,12 @@
 
 pub mod auto_scheduler;
 pub mod bitmap;
+pub mod delta_simd;
+pub mod observability_cardinality;
+pub mod observability_partitioning;
+pub mod tiering_policy;
+pub mod tst_compression;
+pub mod unified_cache_config;
 pub mod cache_config;
 pub mod collection_path;
 pub mod column_projector;
@@ -146,4 +152,22 @@ pub use writer_statistics::{AggregatedBatchStats, BatchWriteStats, StreamingParq
 pub use zero_copy_traits::{
     AccessFrequency, CollectionContext, EngineMetadata, MetadataSerializer,
     QueryContext as ZeroCopyQueryContext, QueryType,
+};
+pub use delta_simd::{
+    delta_decode_f32, delta_decode_i32_prefix_sum, delta_decode_i64_prefix_sum,
+};
+pub use observability_cardinality::{
+    CardinalityConfig, CardinalityLimiter, CheckResult, LabelStats, LimitAction,
+};
+pub use observability_partitioning::{
+    Partition, PartitionConfig, PartitionGranularity, PartitionRange, TimePartitioner,
+};
+pub use tiering_policy::{
+    PerformanceTier, PolicyAction, PolicyCondition, TieringMetadata, TieringPolicy, TieringRule,
+};
+pub use tst_compression::{TimeSeriesCompressor, TstCompressionConfig};
+pub use unified_cache_config::{
+    CacheBehaviorConfig, ConfigError as UnifiedCacheConfigError, DiskCacheConfig,
+    IOOptimizationConfig, InvalidationStrategy, MemoryConfig, PerformanceConfig, StorageTier,
+    UnifiedCacheConfig, UnifiedEvictionPolicy, WorkloadType,
 };

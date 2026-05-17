@@ -16,6 +16,7 @@ path = "src/lib.rs"
 [dependencies]
 anyhow.workspace = true
 arrow.workspace = true
+bincode.workspace = true
 arrow-array.workspace = true
 arrow-schema.workspace = true
 async-trait.workspace = true
