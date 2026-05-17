@@ -17,8 +17,13 @@ path = "src/lib.rs"
 anyhow.workspace = true
 arrow.workspace = true
 arrow-array.workspace = true
+arrow-schema.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+futures.workspace = true
 parquet.workspace = true
 proximadb-kernel.workspace = true
+proximadb-compression-types.workspace = true
 proximadb-records = { workspace = true }
 proximadb-runtime-common.workspace = true
 serde.workspace = true

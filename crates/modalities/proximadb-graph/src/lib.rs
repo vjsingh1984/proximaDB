@@ -23,6 +23,8 @@
 //! - `proximadb-data-model` - Canonical `ProximaValue` rich type system
 //! - `proximadb-graph-query` - Graph query contracts
 
+pub mod algorithms;
+pub mod compaction;
 pub mod core;
 pub mod cypher_functions;
 pub mod cypher_parser;
@@ -41,6 +43,12 @@ pub use traversal::{
     BreadthFirst, DepthFirst, ShortestPath, Traversal, TraversalOrder, TraversalResult,
 };
 
+pub use algorithms::{
+    AlgorithmComplexity, AllPairsShortestPaths, ApproximateAlgorithm, CentralityScores,
+    CommunityAssignment, GraphAlgorithm, GraphChange, IncrementalAlgorithm, NoInput, NodePairInput,
+    ParallelAlgorithm, ShortestPath as AlgoShortestPath, SingleNodeInput, SubgraphInput,
+};
+pub use compaction::{CompactionConfig, CompactionManager, CompactionStats};
 pub use cypher_functions::{CypherFunction, CypherFunctionRegistry};
 pub use parser::{FilterExpression, GraphQuery, ParseResult, Pattern, Projection, parse_query};
 pub use query_ast::{
