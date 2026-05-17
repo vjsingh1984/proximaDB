@@ -6,6 +6,8 @@
 
 pub mod histograms;
 pub mod metrics;
+pub mod search_filter;
 
 pub use histograms::{HistogramStats, LatencyHistogram, RollingWindow};
 pub use metrics::{EmbeddedMetrics, EmbeddedMetricsCollector, LatencyStats, LatencyTimer};
+pub use search_filter::parse_vector_filter;

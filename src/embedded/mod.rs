@@ -1482,20 +1482,6 @@ impl EmbeddedProximaDB {
     /// // Approximate with custom nprobe
     /// let results = db.search_with_mode("my_collection", vec![0.1; 768], 10, None, Some("approximate:5"))?;
     /// ```
-    /// Parse a simple filter string into (field, value) predicate pairs.
-    /// Supports `field = 'value'`, `field == 'value'`, and AND-joined expressions.
-    fn parse_vector_filter(filter: &str) -> Vec<(String, String)> {
-        filter
-            .split(" AND ")
-            .filter_map(|part| {
-                let part = part.trim();
-                let (key, rest) = part.split_once(" == ").or_else(|| part.split_once(" = "))?;
-                let val = rest.trim().trim_matches('\'').trim_matches('"');
-                Some((key.trim().to_string(), val.to_string()))
-            })
-            .collect()
-    }
-
     pub fn search_with_mode(
         &self,
         collection: &str,
@@ -1508,7 +1494,7 @@ impl EmbeddedProximaDB {
         // layer via VectorSearchRequest.filters — the SST engine applies predicate pushdown
         // during ANN search, so top_k already reflects post-filter cardinality.
         let predicates = filter
-            .map(|f| Self::parse_vector_filter(f))
+            .map(proximadb_embedded_common::parse_vector_filter)
             .unwrap_or_default();
         let fetch_k = top_k; // No over-fetch: filter is enforced at data layer by SST engine
 
