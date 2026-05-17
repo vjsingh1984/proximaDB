@@ -10,7 +10,9 @@ pub struct CypherFunctionRegistry {
 
 impl CypherFunctionRegistry {
     pub fn new() -> Self {
-        Self { functions: HashMap::new() }
+        Self {
+            functions: HashMap::new(),
+        }
     }
 
     pub fn register(&mut self, name: String, function: CypherFunction) {
