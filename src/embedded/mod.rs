@@ -405,6 +405,38 @@ pub(crate) fn proxima_value_to_json(v: proximadb_data_model::ProximaValue) -> se
     }
 }
 
+pub(crate) fn json_to_proxima_value(
+    value: serde_json::Value,
+) -> proximadb_data_model::ProximaValue {
+    use proximadb_data_model::ProximaValue;
+
+    match value {
+        serde_json::Value::Null => ProximaValue::Null,
+        serde_json::Value::Bool(v) => ProximaValue::Boolean(v),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                ProximaValue::Int64(i)
+            } else if let Some(u) = n.as_u64() {
+                ProximaValue::UInt64(u)
+            } else if let Some(f) = n.as_f64() {
+                ProximaValue::Float64(f)
+            } else {
+                ProximaValue::String(n.to_string())
+            }
+        }
+        serde_json::Value::String(v) => ProximaValue::String(v),
+        serde_json::Value::Array(values) => {
+            ProximaValue::Array(values.into_iter().map(json_to_proxima_value).collect())
+        }
+        serde_json::Value::Object(fields) => ProximaValue::Map(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, json_to_proxima_value(value)))
+                .collect(),
+        ),
+    }
+}
+
 fn collection_engine_name(storage_engine: Option<i32>) -> String {
     crate::core::conversions::storage_engine_to_string(
         storage_engine.unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst as i32),
@@ -1426,7 +1458,7 @@ impl EmbeddedProximaDB {
         // Check write access before inserting
         self.check_write_access()?;
 
-        use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
+        use crate::proto::proximadb_v1::VectorRecord;
         use std::sync::Arc;
 
         // Start timing for metrics
@@ -1438,24 +1470,23 @@ impl EmbeddedProximaDB {
             .zip(vectors)
             .enumerate()
             .map(|(i, (id, vector))| {
-                let meta: std::collections::HashMap<String, SqlValue> = metadata
-                    .as_ref()
-                    .and_then(|m| m.get(i))
-                    .map(|m| {
-                        m.iter()
-                            .map(|(k, v)| {
-                                let sql_val = SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                            v.to_string(),
+                let meta: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
+                    metadata
+                        .as_ref()
+                        .and_then(|m| m.get(i))
+                        .map(|m| {
+                            m.iter()
+                                .map(|(k, v)| {
+                                    (
+                                        k.clone(),
+                                        crate::core::search::results::proxima_value_to_sql_value(
+                                            json_to_proxima_value(v.clone()),
                                         ),
-                                    ),
-                                };
-                                (k.clone(), sql_val)
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                                    )
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
 
                 VectorRecord {
                     id,
@@ -4363,28 +4394,9 @@ impl EmbeddedProximaDB {
 
     /// Convert serde_json::Value to SqlValue
     fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
-        use crate::proto::proximadb_v1::{SqlArray, SqlValue, sql_value::Value};
-
-        let inner = match value {
-            serde_json::Value::Null => Value::NullValue(0),
-            serde_json::Value::Bool(b) => Value::BoolValue(*b),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Value::Int64Value(i)
-                } else if let Some(f) = n.as_f64() {
-                    Value::NumberValue(f)
-                } else {
-                    Value::StringValue(n.to_string())
-                }
-            }
-            serde_json::Value::String(s) => Value::StringValue(s.clone()),
-            serde_json::Value::Array(arr) => {
-                let values: Vec<SqlValue> = arr.iter().map(Self::json_to_sql_value).collect();
-                Value::ArrayValue(SqlArray { values })
-            }
-            serde_json::Value::Object(_) => Value::ObjectValue(Self::json_to_sql_object(value)),
-        };
-        SqlValue { value: Some(inner) }
+        crate::core::search::results::proxima_value_to_sql_value(json_to_proxima_value(
+            value.clone(),
+        ))
     }
 
     /// Convert SqlObject to serde_json::Value
