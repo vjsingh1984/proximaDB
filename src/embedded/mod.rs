@@ -3887,12 +3887,12 @@ impl EmbeddedProximaDB {
         })
     }
 
-    /// Insert or upsert Arrow IPC stream bytes through the embedded rich-record batch path.
+    /// Insert or upsert Arrow IPC stream bytes through the embedded vector batch path.
     ///
-    /// This is the in-process equivalent of Arrow Flight bulk_insert/bulk_upsert:
-    /// Arrow IPC stream bytes are decoded to RecordBatches, converted to canonical
-    /// ProximaRecord envelopes, and routed directly to UnifiedHandlers without
-    /// binding ports or starting a Flight server.
+    /// This is the in-process equivalent of Arrow Flight vector bulk_insert/bulk_upsert:
+    /// Arrow IPC stream bytes are decoded to RecordBatches, converted to VectorRecord
+    /// batches with the shared Arrow codec, and routed directly to the embedded
+    /// vector service without binding ports or starting a Flight server.
     pub fn insert_arrow_ipc(
         &self,
         collection: &str,
@@ -3900,6 +3900,9 @@ impl EmbeddedProximaDB {
         insert_only: bool,
         tenant_id: Option<&str>,
     ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        self.check_write_access()?;
+
+        let start = std::time::Instant::now();
         let cursor = std::io::Cursor::new(ipc_stream);
         let reader = arrow_ipc::reader::StreamReader::try_new(cursor, None).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -3922,50 +3925,67 @@ impl EmbeddedProximaDB {
             );
         }
 
-        let records =
-            crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(batches)
+        let mut records =
+            crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_vector_records(batches)
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(format!(
-                        "Failed to convert Arrow batches to ProximaRecords: {}",
-                        e
-                    )))
-                })?;
+                Box::new(std::io::Error::other(format!(
+                    "Failed to convert Arrow batches to VectorRecords: {}",
+                    e
+                )))
+            })?;
+
+        if let Some(tenant_id) = tenant_id {
+            for record in &mut records {
+                record.metadata.entry("tenant_id".to_string()).or_insert(
+                    crate::proto::proximadb_v1::SqlValue {
+                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                            tenant_id.to_string(),
+                        )),
+                    },
+                );
+            }
+        }
+
         let record_count = records.len() as u64;
 
-        let result = self
+        if !insert_only {
+            let mut existing_ids = Vec::new();
+            for record in &records {
+                if self.vector_exists(collection, &record.id)? {
+                    existing_ids.push(record.id.clone());
+                }
+            }
+            if !existing_ids.is_empty() {
+                self.delete_vectors(collection, existing_ids)?;
+            }
+        }
+
+        let response = self
             .runtime
             .block_on(async {
-                let request = crate::api_handlers::RichRecordBatchRequest {
-                    collection_id: collection.to_string(),
-                    records,
-                };
-
-                if insert_only {
-                    self.shared_services
-                        .request_handlers
-                        .handle_record_insert_batch_for_tenant(request, tenant_id)
-                        .await
-                } else {
-                    self.shared_services
-                        .request_handlers
-                        .handle_record_batch_for_tenant(request, tenant_id)
-                        .await
-                }
+                self.shared_services
+                    .vector_operations_service
+                    .vector_batch_v1(crate::proto::proximadb_v1::VectorBatchRequest {
+                        collection_id: collection.to_string(),
+                        vectors: records,
+                    })
+                    .await
             })
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        if !result.success {
+        if !response.success {
             return Err(Box::new(std::io::Error::other(format!(
                 "Arrow batch insert failed: {}",
-                result
-                    .errors
-                    .first()
-                    .cloned()
+                response
+                    .error_message
                     .unwrap_or_else(|| "unknown error".to_string())
             ))));
         }
+
+        self.metrics_collector
+            .record_insert_us(start.elapsed().as_micros() as u64, record_count);
 
         Ok(record_count)
     }
