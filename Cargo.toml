@@ -33,6 +33,7 @@ members = [
     "crates/foundation/proximadb-quantization-types",
     "crates/foundation/proximadb-records",
     "crates/control/proximadb-catalog",
+    "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-security",
@@ -109,6 +110,7 @@ proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
+proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
@@ -168,6 +170,7 @@ proximadb-quantization-types = { path = "crates/foundation/proximadb-quantizatio
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
+proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }

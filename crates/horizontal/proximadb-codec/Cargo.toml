@@ -1,0 +1,18 @@
+[package]
+name = "proximadb-codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Pure-Rust columnar encoding/decoding codec algorithms for ProximaDB"
+
+[lib]
+name = "proximadb_codec"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
