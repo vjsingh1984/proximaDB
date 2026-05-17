@@ -48,10 +48,10 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::engines::pulsar::consensus::GraphCommand;
 use dashmap::DashMap;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

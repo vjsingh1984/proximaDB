@@ -21,13 +21,13 @@
 //! - Write-Ahead Logging (WAL)
 //! - Cloud storage integration via IntelligentFilesystem
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::engines::orion::OrionGraphEngine;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -136,9 +136,9 @@ impl OrionPersistence {
             FilesystemFactory::create(FilesystemConfig::default())
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?,
         );
 
@@ -168,7 +168,9 @@ impl OrionPersistence {
             .create_dir_all(&graph_path)
             .await
             .map_err(|e| {
-                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(e.to_string()))
+                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(
+                    e.to_string(),
+                ))
             })?;
 
         // Store WAL path and initialize WAL writer
@@ -201,9 +203,9 @@ impl OrionPersistence {
             let wal_writer = UnifiedWALWriter::new(wal_path_str.clone())
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
             tracing::debug!("WAL writer created successfully");
 
@@ -320,7 +322,9 @@ impl OrionPersistence {
             .create_dir_all(&snapshots_dir)
             .await
             .map_err(|e| {
-                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(e.to_string()))
+                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(
+                    e.to_string(),
+                ))
             })?;
 
         // Write compressed snapshot
@@ -328,7 +332,9 @@ impl OrionPersistence {
             .write(&snapshot_url, &compressed, None)
             .await
             .map_err(|e| {
-                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(e.to_string()))
+                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(
+                    e.to_string(),
+                ))
             })?;
 
         info!(
@@ -357,7 +363,9 @@ impl OrionPersistence {
             ProximaDBError::InvalidInput("Snapshot path contains invalid UTF-8".to_string())
         })?;
         let compressed = self.filesystem_factory.read(path_str).await.map_err(|e| {
-            ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(e.to_string()))
+            ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(
+                e.to_string(),
+            ))
         })?;
 
         // Decompress data
@@ -461,9 +469,9 @@ impl OrionPersistence {
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed: {:?}", e);
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
 
             tracing::debug!("WAL write completed successfully");
@@ -491,9 +499,9 @@ impl OrionPersistence {
                 .append(unified_op)
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
         }
 
@@ -528,9 +536,9 @@ impl OrionPersistence {
                 .append(unified_op)
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
         }
 
@@ -565,9 +573,9 @@ impl OrionPersistence {
                 .append(unified_op)
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
         }
 
@@ -596,9 +604,9 @@ impl OrionPersistence {
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed for update node: {:?}", e);
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
 
             tracing::debug!("Update node WAL write completed");
@@ -631,9 +639,9 @@ impl OrionPersistence {
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed for delete node: {:?}", e);
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
 
             tracing::debug!("Delete node WAL write completed");
@@ -668,9 +676,9 @@ impl OrionPersistence {
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed for update edge: {:?}", e);
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
 
             tracing::debug!("Update edge WAL write completed");
@@ -703,9 +711,9 @@ impl OrionPersistence {
                 .await
                 .map_err(|e| {
                     tracing::error!("WAL append failed for delete edge: {:?}", e);
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
 
             tracing::debug!("Delete edge WAL write completed");
@@ -730,9 +738,9 @@ impl OrionPersistence {
                 .append(unified_op)
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
         }
 
@@ -764,9 +772,9 @@ impl OrionPersistence {
             let reader = UnifiedWALReader::new(wal_path_str.clone())
                 .await
                 .map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
             let entries = reader.read_all().await.map_err(|e| {
                 ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
@@ -1016,7 +1024,9 @@ impl OrionPersistence {
             .list(&snapshots_dir)
             .await
             .map_err(|e| {
-                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(e.to_string()))
+                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(
+                    e.to_string(),
+                ))
             })?;
 
         for entry in entries {
@@ -1090,7 +1100,9 @@ impl OrionPersistence {
             .write(export_url, json.as_bytes(), None)
             .await
             .map_err(|e| {
-                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(e.to_string()))
+                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(
+                    e.to_string(),
+                ))
             })?;
         info!("Graph {} exported to {:?}", self.graph_id, path.as_ref());
 
@@ -1108,7 +1120,9 @@ impl OrionPersistence {
             .read(import_url)
             .await
             .map_err(|e| {
-                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(e.to_string()))
+                ProximaDBError::Storage(proximadb_kernel::error::StorageError::SstEngine(
+                    e.to_string(),
+                ))
             })?;
 
         let import_data: serde_json::Value = serde_json::from_slice(&data).map_err(|e| {
@@ -1125,9 +1139,9 @@ impl OrionPersistence {
         if let Some(nodes) = import_data["nodes"].as_array() {
             for node_val in nodes {
                 let node: Node = serde_json::from_value(node_val.clone()).map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
                 engine.create_node(node).await?;
             }
@@ -1137,9 +1151,9 @@ impl OrionPersistence {
         if let Some(edges) = import_data["edges"].as_array() {
             for edge_val in edges {
                 let edge: Edge = serde_json::from_value(edge_val.clone()).map_err(|e| {
-                    ProximaDBError::Storage(proximadb_kernel::error::StorageError::SerializationError(
-                        e.to_string(),
-                    ))
+                    ProximaDBError::Storage(
+                        proximadb_kernel::error::StorageError::SerializationError(e.to_string()),
+                    )
                 })?;
                 engine.create_edge(edge).await?;
             }

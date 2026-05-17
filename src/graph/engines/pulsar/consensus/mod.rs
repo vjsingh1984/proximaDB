@@ -44,9 +44,9 @@
 //! ```
 
 use crate::cluster::consensus::{ConsensusConfig, LogEntry, RaftConsensus};
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::proto::proximadb_v1::{Edge, Node};
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;

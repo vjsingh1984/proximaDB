@@ -25,8 +25,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::PulsarGraphEngine;
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
+use proximadb_kernel::error::ProximaDBError;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 

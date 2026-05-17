@@ -56,10 +56,10 @@
 //! - Recommendation graphs (billions of relationships)
 //! - Biological networks (protein interactions)
 
-use proximadb_kernel::error::{ProximaDBError, StorageError};
 use crate::graph::EdgeId;
 use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
 use memmap2::MmapMut;
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;

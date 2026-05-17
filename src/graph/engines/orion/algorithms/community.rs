@@ -44,8 +44,8 @@ use super::traits::{
     AlgorithmComplexity, CommunityAssignment, GraphAlgorithm, GraphChange, IncrementalAlgorithm,
     NoInput, ParallelAlgorithm,
 };
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::orion::storage::CsrStorage;
+use proximadb_kernel::error::ProximaDBError;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

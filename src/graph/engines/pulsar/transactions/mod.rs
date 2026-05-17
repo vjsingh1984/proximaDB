@@ -46,10 +46,10 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::proto::proximadb_v1::{Edge, Node};
 use dashmap::DashMap;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
