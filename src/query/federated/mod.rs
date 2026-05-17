@@ -887,6 +887,7 @@ mod tests {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
+                    ..Default::default()
                 },
                 OptimizedSearchRecord {
                     id: "doc-2".to_string(),
@@ -906,6 +907,7 @@ mod tests {
                     quantization_info: None,
                     engine_stats: None,
                     index_path: None,
+                    ..Default::default()
                 },
             ])
             .await,

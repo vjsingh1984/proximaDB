@@ -46,6 +46,7 @@ use crate::index::axis::management::manager::{
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
+use proximadb_data_model::ProximaValue;
 
 pub use coordinator::SearchCoordinator;
 pub use operations::SearchOperations;
@@ -897,7 +898,8 @@ impl SstEngine {
             let similarity_result = SimilarityResult::new(raw_distance, distance_metric);
 
             // OptimizedSearchRecord uses canonical ProximaValue metadata internally.
-            let metadata = crate::core::search::results::sql_map_to_proxima(record.metadata.clone());
+            let metadata =
+                crate::core::search::results::sql_map_to_proxima(record.metadata.clone());
 
             candidates.push(OptimizedSearchRecord {
                 id: record.id.clone(),
@@ -984,13 +986,10 @@ mod tests {
         record.vector = Some(Arc::new(values));
         record.metadata = {
             let mut metadata = HashMap::new();
-            // Convert to SqlValue for proper metadata type
-            let sql_value = crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "test_value".to_string(),
-                )),
-            };
-            metadata.insert("test_key".to_string(), sql_value);
+            metadata.insert(
+                "test_key".to_string(),
+                ProximaValue::String("test_value".to_string()),
+            );
             metadata
         };
         record

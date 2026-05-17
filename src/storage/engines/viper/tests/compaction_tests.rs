@@ -18,6 +18,7 @@ use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 // CompactionStrategy is not needed - it's part of CompactionParameters
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_data_model::ProximaValue;
 use proximadb_storage_common::storage_path::StoragePath;
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::FIELD_ID;
@@ -1632,7 +1633,7 @@ async fn test_compaction_with_metadata_filtering() {
             result.metadata.keys().collect::<Vec<_>>()
         );
         if let Some(cat) = result.metadata.get("category") {
-            debug!("  Has category: {:?}", cat.value);
+            debug!("  Has category: {:?}", cat);
         }
     }
 
@@ -1651,18 +1652,12 @@ async fn test_compaction_with_metadata_filtering() {
                         r.metadata.keys().collect::<Vec<_>>()
                     );
                     if let Some(cat_val) = r.metadata.get("category") {
-                        debug!("🔍 TEST DEBUG:   category value={:?}", cat_val.value);
+                        debug!("🔍 TEST DEBUG:   category value={:?}", cat_val);
                     }
                 }
 
                 if let Some(sql_value) = r.metadata.get("category") {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(ref s)) =
-                        sql_value.value
-                    {
-                        s == category
-                    } else {
-                        false
-                    }
+                    matches!(sql_value, ProximaValue::String(s) if s == category)
                 } else {
                     false
                 }
