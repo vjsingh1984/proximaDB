@@ -161,7 +161,7 @@ async fn get_collection_entanglement(
 
     // Load records from collection.
     let records = vector_ops
-        .unified_search(&collection_id, vec![], limit, None, None)
+        .unified_search_native(&collection_id, vec![], limit, None, None)
         .await
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 

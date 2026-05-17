@@ -26,10 +26,11 @@ use crate::storage::persistence::write_ahead_log::wal_operations::{
 };
 use crate::storage::traits::UnifiedStorageEngine;
 #[cfg(feature = "canonical-document-store")]
-use proximadb_document::DocumentRecordKey;
+use proximadb_document::{DOCUMENT_COLLECTION_PROP, DOCUMENT_RECORD_LABEL, DocumentRecordKey};
 #[cfg(feature = "canonical-document-store")]
 use proximadb_records::{
-    RecordKey, RecordRecoveryOperation, RecordStorage, replay_record_recovery_operations,
+    RecordKey, RecordRecoveryOperation, RecordScanOptions, RecordStorage,
+    replay_record_recovery_operations,
 };
 
 use super::DocumentStorageEngine;
@@ -1726,12 +1727,18 @@ impl DocumentService {
         let documents: Vec<DocumentRecord> =
             if let Some(record_store) = &self.canonical_record_store {
                 record_store
-                    .scan_records(usize::MAX)
+                    .scan_records_with_options(
+                        RecordScanOptions::unbounded()
+                            .with_required_label(DOCUMENT_RECORD_LABEL)
+                            .with_property(
+                                DOCUMENT_COLLECTION_PROP,
+                                proximadb_data_model::ProximaValue::String(collection.to_string()),
+                            ),
+                    )
                     .await
                     .context("Failed to scan canonical document records")?
                     .iter()
                     .filter_map(proxima_record_to_legacy_document)
-                    .filter(|document| document.collection_id == collection)
                     .collect()
             } else {
                 let docs = self.documents.read().await;

@@ -7,7 +7,8 @@
 
 use async_trait::async_trait;
 
-use crate::ProximaRecord;
+use crate::{ProximaRecord, ProximaTreeNode};
+use proximadb_data_model::ProximaValue;
 
 /// Result type for canonical record-store operations.
 pub type RecordStoreResult<T> = anyhow::Result<T>;
@@ -58,6 +59,82 @@ pub struct RecordRecoverySummary {
     pub deletes_replayed: usize,
 }
 
+/// Predicate/options accepted by canonical record scan implementations.
+///
+/// This remains modality-neutral: document/graph/vector facades express their
+/// scan needs as canonical labels, properties, and RLS fields instead of adding
+/// separate durable query contracts.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RecordScanOptions {
+    /// Maximum number of records to return. `None` means unbounded.
+    pub limit: Option<usize>,
+    /// Required label on the canonical record, if any.
+    pub required_label: Option<String>,
+    /// Required owning tenant, if any.
+    pub tenant_id: Option<String>,
+    /// Required canonical property values.
+    pub properties: Vec<(String, ProximaValue)>,
+}
+
+impl RecordScanOptions {
+    pub fn limit(limit: usize) -> Self {
+        Self {
+            limit: Some(limit),
+            ..Self::default()
+        }
+    }
+
+    pub fn unbounded() -> Self {
+        Self::default()
+    }
+
+    pub fn with_required_label(mut self, label: impl Into<String>) -> Self {
+        self.required_label = Some(label.into());
+        self
+    }
+
+    pub fn with_tenant_id(mut self, tenant_id: impl Into<String>) -> Self {
+        self.tenant_id = Some(tenant_id.into());
+        self
+    }
+
+    pub fn with_property(mut self, key: impl Into<String>, value: ProximaValue) -> Self {
+        self.properties.push((key.into(), value));
+        self
+    }
+
+    pub fn with_string_property(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        self.properties
+            .push((key.into(), ProximaValue::String(value.into())));
+        self
+    }
+
+    pub fn matches_record(&self, record: &ProximaRecord) -> bool {
+        if let Some(label) = &self.required_label {
+            if !record.labels.contains(label) {
+                return false;
+            }
+        }
+
+        if let Some(tenant_id) = &self.tenant_id {
+            if &record.tenant_id != tenant_id {
+                return false;
+            }
+        }
+
+        self.properties.iter().all(|(key, expected)| {
+            matches!(
+                record.props.get(key),
+                Some(ProximaTreeNode::Value(actual)) if actual == expected
+            )
+        })
+    }
+}
+
 /// Narrow canonical store contract over `ProximaRecord`.
 ///
 /// This is intentionally modality-neutral. It does not describe document JSON
@@ -96,6 +173,17 @@ pub trait RecordStore: Send + Sync {
 #[async_trait]
 pub trait RecordScan: Send + Sync {
     async fn scan_records(&self, limit: usize) -> RecordStoreResult<Vec<ProximaRecord>>;
+
+    async fn scan_records_with_options(
+        &self,
+        options: RecordScanOptions,
+    ) -> RecordStoreResult<Vec<ProximaRecord>> {
+        let mut records = self
+            .scan_records(options.limit.unwrap_or(usize::MAX))
+            .await?;
+        records.retain(|record| options.matches_record(record));
+        Ok(records)
+    }
 }
 
 /// Composite canonical storage contract for services that need both point
@@ -190,6 +278,29 @@ mod tests {
                 .cloned()
                 .collect())
         }
+
+        async fn scan_records_with_options(
+            &self,
+            options: RecordScanOptions,
+        ) -> RecordStoreResult<Vec<ProximaRecord>> {
+            let mut records = Vec::new();
+
+            for record in self
+                .records
+                .read()
+                .expect("memory record store read lock")
+                .values()
+            {
+                if options.matches_record(record) {
+                    records.push(record.clone());
+                    if records.len() >= options.limit.unwrap_or(usize::MAX) {
+                        break;
+                    }
+                }
+            }
+
+            Ok(records)
+        }
     }
 
     #[tokio::test]
@@ -246,6 +357,55 @@ mod tests {
         let records = storage.scan_records(10).await.expect("scan");
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].oid, "r1");
+    }
+
+    #[tokio::test]
+    async fn scan_options_filter_by_label_tenant_and_proxima_property() {
+        let store = MemoryRecordStore::default();
+        let mut matching = ProximaRecord {
+            oid: "doc-1".to_string(),
+            tenant_id: "tenant-a".to_string(),
+            ..ProximaRecord::default()
+        };
+        matching.labels.insert("document");
+        matching.props.insert(
+            "_document_collection".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("docs".to_string())),
+        );
+
+        let mut other_collection = matching.clone();
+        other_collection.oid = "doc-2".to_string();
+        other_collection.props.insert(
+            "_document_collection".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("other".to_string())),
+        );
+
+        let mut other_tenant = matching.clone();
+        other_tenant.oid = "doc-3".to_string();
+        other_tenant.tenant_id = "tenant-b".to_string();
+
+        store.upsert_record(matching).await.expect("matching");
+        store
+            .upsert_record(other_collection)
+            .await
+            .expect("other collection");
+        store
+            .upsert_record(other_tenant)
+            .await
+            .expect("other tenant");
+
+        let records = store
+            .scan_records_with_options(
+                RecordScanOptions::unbounded()
+                    .with_required_label("document")
+                    .with_tenant_id("tenant-a")
+                    .with_string_property("_document_collection", "docs"),
+            )
+            .await
+            .expect("filtered scan");
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].oid, "doc-1");
     }
 
     #[tokio::test]

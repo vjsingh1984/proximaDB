@@ -192,6 +192,28 @@ impl RecordScan for CedarEngine {
 
         Ok(records)
     }
+
+    async fn scan_records_with_options(
+        &self,
+        options: proximadb_records::RecordScanOptions,
+    ) -> RecordStoreResult<Vec<ProximaRecord>> {
+        let mut records = Vec::new();
+        let limit = options.limit.unwrap_or(usize::MAX);
+
+        for collection in self.collections.iter() {
+            for document in collection.value().iter() {
+                let record = legacy_document_to_proxima_record(document.value());
+                if options.matches_record(&record) {
+                    records.push(record);
+                    if records.len() >= limit {
+                        return Ok(records);
+                    }
+                }
+            }
+        }
+
+        Ok(records)
+    }
 }
 
 // ---------------------------------------------------------------------------
