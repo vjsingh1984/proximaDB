@@ -821,23 +821,10 @@ class ProximaDBSyncGrpcClient:
                 if "vector" in vector_dict and vector_dict["vector"]:
                     vector_record.vector.extend(vector_dict["vector"])
                 if "metadata" in vector_dict and vector_dict["metadata"]:
-                    # Convert metadata to map<string, SqlValue> format
                     for key, value in vector_dict["metadata"].items():
-                        sql_value = v1_types_pb2.SqlValue()
-                        if isinstance(value, bool):
-                            # Check bool before int since bool is a subclass of int
-                            sql_value.bool_value = value
-                        elif isinstance(value, int):
-                            sql_value.int64_value = value
-                        elif isinstance(value, float):
-                            sql_value.number_value = value
-                        elif isinstance(value, str):
-                            sql_value.string_value = value
-                        else:
-                            # Fallback to string representation
-                            sql_value.string_value = str(value)
-                        # Assign SqlValue directly to the map
-                        vector_record.metadata[key].CopyFrom(sql_value)
+                        vector_record.metadata[str(key)].CopyFrom(
+                            self._python_to_sql_value(value)
+                        )
 
                 # Add timestamp field (accept both 'timestamp' and 'timestamp_ms')
                 if "timestamp" in vector_dict and vector_dict["timestamp"] is not None:
@@ -960,19 +947,10 @@ class ProximaDBSyncGrpcClient:
 
                 # Add metadata filters if provided
                 if metadata_filters:
-                    # Convert to simple filters dict (v1 SearchQuery supports this)
                     for key, value in metadata_filters.items():
-                        sql_value = v1_types_pb2.SqlValue()
-                        if isinstance(value, bool):
-                            # Check bool before int since bool is subclass of int
-                            sql_value.bool_value = value
-                        elif isinstance(value, int):
-                            sql_value.int64_value = value
-                        elif isinstance(value, float):
-                            sql_value.number_value = value
-                        elif isinstance(value, str):
-                            sql_value.string_value = value
-                        query.filters[key].CopyFrom(sql_value)
+                        query.filters[str(key)].CopyFrom(
+                            self._python_to_sql_value(value)
+                        )
 
                 search_queries.append(query)
 

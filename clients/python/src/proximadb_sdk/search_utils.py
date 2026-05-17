@@ -235,7 +235,7 @@ def build_search_params_grpc(
 
 
 def _python_value_to_sql_value(value: Any, types_pb2: Any) -> Any:
-    """Convert Python value to SqlValue proto.
+    """Convert Python value to SqlValue proto without flattening rich values.
 
     Args:
         value: Python value
@@ -244,39 +244,31 @@ def _python_value_to_sql_value(value: Any, types_pb2: Any) -> Any:
     Returns:
         SqlValue instance
     """
-    sql_value = types_pb2.SqlValue()
+    from google.protobuf.struct_pb2 import NullValue
 
-    if isinstance(value, bool):
+    sql_value = types_pb2.SqlValue()
+    if value is None:
+        sql_value.null_value = NullValue.NULL_VALUE
+    elif isinstance(value, bool):
         sql_value.bool_value = value
-    elif isinstance(value, int):
+    elif isinstance(value, int) and not isinstance(value, bool):
         sql_value.int64_value = value
     elif isinstance(value, float):
         sql_value.number_value = value
     elif isinstance(value, str):
         sql_value.string_value = value
-    elif isinstance(value, bytes):
-        sql_value.bytes_value = value
-    elif value is None:
-        # For None, use NullValue from google.protobuf
-        from google.protobuf import struct_pb2
-
-        sql_value.null_value = struct_pb2.NULL_VALUE
-    elif isinstance(value, list):
-        # Convert to SqlArray
-        array_value = types_pb2.SqlArray()
-        for item in value:
-            item_value = _python_value_to_sql_value(item, types_pb2)
-            array_value.values.append(item_value)
-        sql_value.array_value.CopyFrom(array_value)
+    elif isinstance(value, (bytes, bytearray, memoryview)):
+        sql_value.bytes_value = bytes(value)
+    elif isinstance(value, (list, tuple)):
+        sql_value.array_value.values.extend(
+            _python_value_to_sql_value(item, types_pb2) for item in value
+        )
     elif isinstance(value, dict):
-        # Convert to SqlObject
-        object_value = types_pb2.SqlObject()
-        for k, v in value.items():
-            item_value = _python_value_to_sql_value(v, types_pb2)
-            object_value.fields[k].CopyFrom(item_value)
-        sql_value.object_value.CopyFrom(object_value)
+        for key, item in value.items():
+            sql_value.object_value.fields[str(key)].CopyFrom(
+                _python_value_to_sql_value(item, types_pb2)
+            )
     else:
-        # Fallback to string representation
         sql_value.string_value = str(value)
 
     return sql_value

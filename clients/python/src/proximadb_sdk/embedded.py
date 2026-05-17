@@ -52,6 +52,7 @@ Usage:
 """
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -1034,23 +1035,30 @@ prefetch_budget = 4
     def _to_sql_value(self, value: Any) -> Dict[str, Any]:
         """Convert Python value to SqlValue format."""
         if value is None:
-            return {"null_value": 0}
-        elif isinstance(value, bool):
+            return {"null_value": None}
+        if isinstance(value, bool):
             return {"bool_value": value}
-        elif isinstance(value, int):
+        if isinstance(value, int) and not isinstance(value, bool):
             return {"int64_value": value}
-        elif isinstance(value, float):
+        if isinstance(value, float):
             return {"number_value": value}
-        elif isinstance(value, str):
+        if isinstance(value, str):
             return {"string_value": value}
-        elif isinstance(value, (list, tuple)):
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return {"bytes_value": base64.b64encode(bytes(value)).decode("ascii")}
+        if isinstance(value, (list, tuple)):
             return {"array_value": {"values": [self._to_sql_value(v) for v in value]}}
-        else:
-            return {"string_value": str(value)}
+        if isinstance(value, dict):
+            return {
+                "object_value": {
+                    "fields": {str(k): self._to_sql_value(v) for k, v in value.items()}
+                }
+            }
+        return {"string_value": str(value)}
 
     def _convert_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Convert metadata dict to SqlValue format."""
-        return {k: self._to_sql_value(v) for k, v in metadata.items()}
+        return {str(k): self._to_sql_value(v) for k, v in metadata.items()}
 
     async def _insert_vectors(
         self,

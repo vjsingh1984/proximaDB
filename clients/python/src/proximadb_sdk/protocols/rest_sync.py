@@ -19,6 +19,7 @@ limitations under the License.
 import gzip
 import json
 import logging
+import base64
 import time
 import warnings
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
@@ -47,7 +48,6 @@ from ..exceptions import (
     TimeoutError,
     map_http_error,
 )
-from ..metadata_utils import json_compatible_value
 from ..models import (
     BatchResult,
     Collection,
@@ -1271,23 +1271,45 @@ class ProximaDBClient:
         if not metadata_dict:
             return {}
 
-        sql_metadata = {}
-        for key, value in metadata_dict.items():
-            # Convert to SqlValue format
-            if isinstance(value, bool):
-                sql_metadata[key] = {"bool_value": value}
-            elif isinstance(value, int):
-                sql_metadata[key] = {"int64_value": value}
-            elif isinstance(value, float):
-                sql_metadata[key] = {"number_value": value}
-            elif isinstance(value, str):
-                sql_metadata[key] = {"string_value": value}
-            elif value is None:
-                sql_metadata[key] = {"null_value": None}
-            else:
-                sql_metadata[key] = {"string_value": str(value)}
+        sql_metadata = {
+            str(key): self._convert_value_to_rest_sql_value(value)
+            for key, value in metadata_dict.items()
+        }
 
         return sql_metadata
+
+    def _convert_value_to_rest_sql_value(self, value: Any) -> Dict[str, Any]:
+        """Convert Python values to the REST JSON shape for v1 SqlValue."""
+        if value is None:
+            return {"null_value": None}
+        if isinstance(value, bool):
+            return {"bool_value": value}
+        if isinstance(value, int) and not isinstance(value, bool):
+            return {"int64_value": value}
+        if isinstance(value, float):
+            return {"number_value": value}
+        if isinstance(value, str):
+            return {"string_value": value}
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return {"bytes_value": base64.b64encode(bytes(value)).decode("ascii")}
+        if isinstance(value, (list, tuple)):
+            return {
+                "array_value": {
+                    "values": [
+                        self._convert_value_to_rest_sql_value(item) for item in value
+                    ]
+                }
+            }
+        if isinstance(value, dict):
+            return {
+                "object_value": {
+                    "fields": {
+                        str(key): self._convert_value_to_rest_sql_value(item)
+                        for key, item in value.items()
+                    }
+                }
+            }
+        return {"string_value": str(value)}
 
     def insert_vectors(
         self,
