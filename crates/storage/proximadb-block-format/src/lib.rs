@@ -59,8 +59,8 @@
 #![forbid(unsafe_code)]
 
 pub mod header;
-pub mod record;
 pub mod reader;
+pub mod record;
 pub mod row_dir;
 pub mod stripe;
 pub mod writer;
@@ -68,14 +68,14 @@ pub mod writer;
 // ---- Top-level re-exports ----
 
 pub use header::{
-    BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, BLOCK_MAGIC,
-    flags, fnv1a_hash,
-};
-pub use record::{
-    ColumnDescriptor, FlatRow, canonical_columns, col_id,
-    encode_f32_vec_col, encode_i64_col, encode_str_col, update_i64_bounds,
+    BLOCK_MAGIC, BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, flags,
+    fnv1a_hash,
 };
 pub use reader::PaxBlockReader;
-pub use row_dir::{RowDirectory, RowEntry, ROW_ENTRY_SIZE, row_flags};
-pub use stripe::{BlockStats, ColumnMeta, ColumnRole, ColumnStripe, COLUMN_META_SIZE};
-pub use writer::{BlockFooter, PaxBlockWriter, BLOCK_FOOTER_SIZE};
+pub use record::{
+    ColumnDescriptor, FlatRow, canonical_columns, col_id, encode_f32_vec_col, encode_i64_col,
+    encode_str_col, update_i64_bounds,
+};
+pub use row_dir::{ROW_ENTRY_SIZE, RowDirectory, RowEntry, row_flags};
+pub use stripe::{BlockStats, COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe};
+pub use writer::{BLOCK_FOOTER_SIZE, BlockFooter, PaxBlockWriter};

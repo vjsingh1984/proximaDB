@@ -4,7 +4,6 @@
 //! by multiple storage engines or modality storage implementations.
 
 pub mod auto_scheduler;
-pub mod pax_block;
 pub mod bitmap;
 pub mod cache_config;
 pub mod collection_path;
@@ -29,6 +28,7 @@ pub mod native_metadata;
 pub mod observability_cardinality;
 pub mod observability_partitioning;
 pub mod observability_rollups;
+pub mod pax_block;
 pub mod proxima_schema;
 pub mod query_metrics;
 pub mod smart_io_metrics;

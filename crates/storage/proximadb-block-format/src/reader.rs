@@ -19,9 +19,9 @@ use anyhow::{Result, bail};
 
 use crate::{
     header::{BlockHeader, HEADER_SIZE},
-    row_dir::{RowDirectory, ROW_ENTRY_SIZE},
-    stripe::{ColumnMeta, COLUMN_META_SIZE},
-    writer::{BlockFooter, BLOCK_FOOTER_SIZE},
+    row_dir::{ROW_ENTRY_SIZE, RowDirectory},
+    stripe::{COLUMN_META_SIZE, ColumnMeta},
+    writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
 
 /// A parsed but not yet decoded PAX block.
@@ -29,9 +29,9 @@ use crate::{
 /// Holds the header, footer, and column metadata. Stripe bytes are sliced
 /// from the underlying `data` buffer only when `read_stripe()` is called.
 pub struct PaxBlockReader<'a> {
-    data:    &'a [u8],
-    header:  BlockHeader,
-    footer:  BlockFooter,
+    data: &'a [u8],
+    header: BlockHeader,
+    footer: BlockFooter,
     columns: Vec<ColumnMeta>,
 }
 
@@ -61,7 +61,12 @@ impl<'a> PaxBlockReader<'a> {
             columns.push(ColumnMeta::from_bytes(&data[off..])?);
         }
 
-        Ok(Self { data, header, footer, columns })
+        Ok(Self {
+            data,
+            header,
+            footer,
+            columns,
+        })
     }
 
     pub fn header(&self) -> &BlockHeader {
@@ -108,8 +113,8 @@ impl<'a> PaxBlockReader<'a> {
             return Ok(None);
         }
         let start = self.footer.row_dir_offset as usize;
-        let len   = self.footer.n_rows as usize * ROW_ENTRY_SIZE;
-        let end   = start + len;
+        let len = self.footer.n_rows as usize * ROW_ENTRY_SIZE;
+        let end = start + len;
         if end > self.data.len() {
             bail!("row directory out of bounds");
         }
@@ -122,11 +127,14 @@ impl<'a> PaxBlockReader<'a> {
     ///
     /// Returns `None` if the column is not in this block.
     pub fn read_stripe_raw(&self, column_id: i32) -> Option<&[u8]> {
-        self.columns.iter().find(|m| m.column_id == column_id).map(|m| {
-            let start = m.stripe_offset as usize;
-            let end   = start + m.stripe_len as usize;
-            &self.data[start..end]
-        })
+        self.columns
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| {
+                let start = m.stripe_offset as usize;
+                let end = start + m.stripe_len as usize;
+                &self.data[start..end]
+            })
     }
 
     /// Decode all i64 values from a timestamp/temporal column stripe.
@@ -135,7 +143,7 @@ impl<'a> PaxBlockReader<'a> {
     /// for null entries.
     pub fn decode_i64_stripe(&self, column_id: i32) -> Option<Vec<Option<i64>>> {
         let raw = self.read_stripe_raw(column_id)?;
-        let n   = self.row_count() as usize;
+        let n = self.row_count() as usize;
         let mut values = Vec::with_capacity(n);
         let mut pos = 0;
         while pos + 8 <= raw.len() {
@@ -149,7 +157,7 @@ impl<'a> PaxBlockReader<'a> {
     /// Decode all string values from a variable-length string column stripe.
     pub fn decode_str_stripe(&self, column_id: i32) -> Option<Vec<Option<String>>> {
         let raw = self.read_stripe_raw(column_id)?;
-        let n   = self.row_count() as usize;
+        let n = self.row_count() as usize;
         let mut values = Vec::with_capacity(n);
         let mut pos = 0;
         while pos + 4 <= raw.len() {
@@ -159,7 +167,9 @@ impl<'a> PaxBlockReader<'a> {
                 values.push(None);
             } else {
                 let end = pos + len as usize;
-                if end > raw.len() { break; }
+                if end > raw.len() {
+                    break;
+                }
                 let s = String::from_utf8(raw[pos..end].to_vec()).ok()?;
                 values.push(Some(s));
                 pos = end;
@@ -171,7 +181,7 @@ impl<'a> PaxBlockReader<'a> {
     /// Decode f32 vector values from an embedding stripe.
     pub fn decode_f32_vec_stripe(&self, column_id: i32) -> Option<Vec<Option<Vec<f32>>>> {
         let raw = self.read_stripe_raw(column_id)?;
-        let n   = self.row_count() as usize;
+        let n = self.row_count() as usize;
         let mut values = Vec::with_capacity(n);
         let mut pos = 0;
         while pos + 4 <= raw.len() {
@@ -181,7 +191,9 @@ impl<'a> PaxBlockReader<'a> {
                 values.push(None);
             } else {
                 let byte_len = dim as usize * 4;
-                if pos + byte_len > raw.len() { break; }
+                if pos + byte_len > raw.len() {
+                    break;
+                }
                 let mut floats = Vec::with_capacity(dim as usize);
                 for i in 0..dim as usize {
                     let f = f32::from_le_bytes(raw[pos + i * 4..pos + i * 4 + 4].try_into().ok()?);
@@ -198,12 +210,12 @@ impl<'a> PaxBlockReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_records::ProximaRecord;
     use crate::{
         header::{BlockCompression, BlockMode, fnv1a_hash},
-        writer::PaxBlockWriter,
         record::col_id,
+        writer::PaxBlockWriter,
     };
+    use proximadb_records::ProximaRecord;
 
     fn make_record(oid: &str, tenant: &str, ts: i64) -> ProximaRecord {
         ProximaRecord {
@@ -217,11 +229,13 @@ mod tests {
 
     #[test]
     fn reader_pruning() {
-        let mut writer = PaxBlockWriter::new(
-            BlockMode::Pax, BlockCompression::None, "col", 0, 0,
-        );
-        writer.add_record(&make_record("r1", "tenant_a", 1000)).unwrap();
-        writer.add_record(&make_record("r2", "tenant_a", 3000)).unwrap();
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
+        writer
+            .add_record(&make_record("r1", "tenant_a", 1000))
+            .unwrap();
+        writer
+            .add_record(&make_record("r2", "tenant_a", 3000))
+            .unwrap();
         let block = writer.flush().unwrap();
 
         let reader = PaxBlockReader::open(&block).unwrap();
@@ -240,9 +254,7 @@ mod tests {
 
     #[test]
     fn reader_decode_str_stripe() {
-        let mut writer = PaxBlockWriter::new(
-            BlockMode::Olap, BlockCompression::None, "col", 0, 0,
-        );
+        let mut writer = PaxBlockWriter::new(BlockMode::Olap, BlockCompression::None, "col", 0, 0);
         writer.add_record(&make_record("id_one", "t", 1)).unwrap();
         writer.add_record(&make_record("id_two", "t", 2)).unwrap();
         let block = writer.flush().unwrap();
@@ -255,15 +267,16 @@ mod tests {
 
     #[test]
     fn reader_row_directory_lookup() {
-        let mut writer = PaxBlockWriter::new(
-            BlockMode::Pax, BlockCompression::None, "col", 0, 0,
-        );
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0);
         writer.add_record(&make_record("r1", "t", 1000)).unwrap();
         writer.add_record(&make_record("r2", "t", 2000)).unwrap();
         let block = writer.flush().unwrap();
 
         let reader = PaxBlockReader::open(&block).unwrap();
-        let dir = reader.row_directory().unwrap().expect("PAX has row directory");
+        let dir = reader
+            .row_directory()
+            .unwrap()
+            .expect("PAX has row directory");
         let hash = fnv1a_hash("r1");
         let row_idx = dir.find_visible(hash, i64::MAX);
         assert!(row_idx.is_some());

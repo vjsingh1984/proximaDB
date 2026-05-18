@@ -24,13 +24,12 @@ use crc32fast::Hasher as Crc32;
 use proximadb_records::ProximaRecord;
 
 use crate::{
-    header::{BlockCompression, BlockHeader, BlockMode, HEADER_SIZE, fnv1a_hash, flags},
+    header::{BlockCompression, BlockHeader, BlockMode, HEADER_SIZE, flags, fnv1a_hash},
     record::{
-        FlatRow, col_id, encode_f32_vec_col, encode_i64_col, encode_str_col,
-        update_i64_bounds,
+        FlatRow, col_id, encode_f32_vec_col, encode_i64_col, encode_str_col, update_i64_bounds,
     },
     row_dir::{RowDirectory, RowEntry},
-    stripe::{ColumnMeta, ColumnRole, ColumnStripe, COLUMN_META_SIZE},
+    stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
 };
 
 /// Size of the trailing `BlockFooter` in bytes.
@@ -50,10 +49,10 @@ pub const BLOCK_FOOTER_SIZE: usize = 32;
 #[derive(Debug, Clone, Copy)]
 pub struct BlockFooter {
     pub col_footer_offset: u32,
-    pub row_dir_offset:    u32,
-    pub stripe_start:      u32,
-    pub n_columns:         u32,
-    pub n_rows:            u32,
+    pub row_dir_offset: u32,
+    pub stripe_start: u32,
+    pub n_columns: u32,
+    pub n_rows: u32,
 }
 
 impl BlockFooter {
@@ -74,45 +73,45 @@ impl BlockFooter {
         }
         Ok(Self {
             col_footer_offset: u32::from_le_bytes(b[0..4].try_into()?),
-            row_dir_offset:    u32::from_le_bytes(b[4..8].try_into()?),
-            stripe_start:      u32::from_le_bytes(b[8..12].try_into()?),
-            n_columns:         u32::from_le_bytes(b[12..16].try_into()?),
-            n_rows:            u32::from_le_bytes(b[16..20].try_into()?),
+            row_dir_offset: u32::from_le_bytes(b[4..8].try_into()?),
+            stripe_start: u32::from_le_bytes(b[8..12].try_into()?),
+            n_columns: u32::from_le_bytes(b[12..16].try_into()?),
+            n_rows: u32::from_le_bytes(b[16..20].try_into()?),
         })
     }
 }
 
 /// PAX block writer — buffers records and serialises to PAX block bytes.
 pub struct PaxBlockWriter {
-    mode:                BlockMode,
-    compression:         BlockCompression,
-    collection_id_hash:  u64,
-    schema_fingerprint:  u64,
+    mode: BlockMode,
+    compression: BlockCompression,
+    collection_id_hash: u64,
+    schema_fingerprint: u64,
     /// Number of embedding columns expected (from collection schema).
-    embedding_count:     usize,
+    embedding_count: usize,
 
     // Accumulated column data
-    oids:             Vec<String>,
-    tenant_ids:       Vec<String>,
-    created_at:       Vec<i64>,
-    updated_at:       Vec<i64>,
-    valid_from:       Vec<Option<i64>>,
-    valid_to:         Vec<Option<i64>>,
-    actors:           Vec<Option<String>>,
-    origins:          Vec<Option<String>>,
-    props_bytes:      Vec<Option<Vec<u8>>>,
-    labels_bytes:     Vec<Option<Vec<u8>>>,
-    edge_src:         Vec<Option<String>>,
-    edge_tgt:         Vec<Option<String>>,
-    edge_type:        Vec<Option<String>>,
-    edge_weight:      Vec<Option<f64>>,
+    oids: Vec<String>,
+    tenant_ids: Vec<String>,
+    created_at: Vec<i64>,
+    updated_at: Vec<i64>,
+    valid_from: Vec<Option<i64>>,
+    valid_to: Vec<Option<i64>>,
+    actors: Vec<Option<String>>,
+    origins: Vec<Option<String>>,
+    props_bytes: Vec<Option<Vec<u8>>>,
+    labels_bytes: Vec<Option<Vec<u8>>>,
+    edge_src: Vec<Option<String>>,
+    edge_tgt: Vec<Option<String>>,
+    edge_type: Vec<Option<String>>,
+    edge_weight: Vec<Option<f64>>,
     /// One `Vec<Vec<f32>>` per embedding position.
-    embeddings:       Vec<Vec<Option<Vec<f32>>>>,
+    embeddings: Vec<Vec<Option<Vec<f32>>>>,
 
     // MVCC metadata for row directory
     tenant_id_hash_set: u64,
-    min_ts:             i64,
-    max_ts:             i64,
+    min_ts: i64,
+    max_ts: i64,
 }
 
 impl PaxBlockWriter {
@@ -164,8 +163,12 @@ impl PaxBlockWriter {
 
         // Update block-level stats
         let ts = flat.created_at_ns;
-        if ts < self.min_ts { self.min_ts = ts; }
-        if ts > self.max_ts { self.max_ts = ts; }
+        if ts < self.min_ts {
+            self.min_ts = ts;
+        }
+        if ts > self.max_ts {
+            self.max_ts = ts;
+        }
 
         // Track tenant hash — if all rows share one tenant, store it;
         // otherwise use 0 (multi-tenant block, cannot prune).
@@ -226,63 +229,116 @@ impl PaxBlockWriter {
         let mut stripes: Vec<ColumnStripe> = Vec::new();
 
         if mode.has_column_stripes() {
-            stripes.push(self.build_str_stripe(
-                col_id::OID, "id", ColumnRole::Identity, false,
-                &self.oids.iter().map(|s| Some(s.as_str())).collect::<Vec<_>>(),
-            ));
-            stripes.push(self.build_str_stripe(
-                col_id::TENANT_ID, "tenant_id", ColumnRole::Tenant, false,
-                &self.tenant_ids.iter().map(|s| Some(s.as_str())).collect::<Vec<_>>(),
-            ));
+            stripes.push(
+                self.build_str_stripe(
+                    col_id::OID,
+                    "id",
+                    ColumnRole::Identity,
+                    false,
+                    &self
+                        .oids
+                        .iter()
+                        .map(|s| Some(s.as_str()))
+                        .collect::<Vec<_>>(),
+                ),
+            );
+            stripes.push(
+                self.build_str_stripe(
+                    col_id::TENANT_ID,
+                    "tenant_id",
+                    ColumnRole::Tenant,
+                    false,
+                    &self
+                        .tenant_ids
+                        .iter()
+                        .map(|s| Some(s.as_str()))
+                        .collect::<Vec<_>>(),
+                ),
+            );
             stripes.push(self.build_i64_stripe(
-                col_id::CREATED_AT, ColumnRole::Timestamp, false,
+                col_id::CREATED_AT,
+                ColumnRole::Timestamp,
+                false,
                 &self.created_at.iter().map(|&v| Some(v)).collect::<Vec<_>>(),
             ));
             stripes.push(self.build_i64_stripe(
-                col_id::UPDATED_AT, ColumnRole::Timestamp, false,
+                col_id::UPDATED_AT,
+                ColumnRole::Timestamp,
+                false,
                 &self.updated_at.iter().map(|&v| Some(v)).collect::<Vec<_>>(),
             ));
             stripes.push(self.build_i64_stripe(
-                col_id::VALID_FROM, ColumnRole::Temporal, true,
+                col_id::VALID_FROM,
+                ColumnRole::Temporal,
+                true,
                 &self.valid_from,
             ));
             stripes.push(self.build_i64_stripe(
-                col_id::VALID_TO, ColumnRole::Temporal, true,
+                col_id::VALID_TO,
+                ColumnRole::Temporal,
+                true,
                 &self.valid_to,
             ));
 
             for (actor_opt, origin_opt) in self.actors.iter().zip(self.origins.iter()) {
-                let _ = actor_opt; let _ = origin_opt; // will encode below
+                let _ = actor_opt;
+                let _ = origin_opt; // will encode below
             }
-            stripes.push(self.build_str_opt_stripe(col_id::ACTOR,   ColumnRole::Provenance, &self.actors));
-            stripes.push(self.build_str_opt_stripe(col_id::ORIGIN,  ColumnRole::Provenance, &self.origins));
-            stripes.push(self.build_bytes_stripe(col_id::PROPS,  ColumnRole::Props,   &self.props_bytes));
-            stripes.push(self.build_bytes_stripe(col_id::LABELS, ColumnRole::Props,   &self.labels_bytes));
-            stripes.push(self.build_str_opt_stripe(col_id::EDGE_SRC,  ColumnRole::Edge, &self.edge_src));
-            stripes.push(self.build_str_opt_stripe(col_id::EDGE_TGT,  ColumnRole::Edge, &self.edge_tgt));
-            stripes.push(self.build_str_opt_stripe(col_id::EDGE_TYPE, ColumnRole::Edge, &self.edge_type));
+            stripes.push(self.build_str_opt_stripe(
+                col_id::ACTOR,
+                ColumnRole::Provenance,
+                &self.actors,
+            ));
+            stripes.push(self.build_str_opt_stripe(
+                col_id::ORIGIN,
+                ColumnRole::Provenance,
+                &self.origins,
+            ));
+            stripes.push(self.build_bytes_stripe(
+                col_id::PROPS,
+                ColumnRole::Props,
+                &self.props_bytes,
+            ));
+            stripes.push(self.build_bytes_stripe(
+                col_id::LABELS,
+                ColumnRole::Props,
+                &self.labels_bytes,
+            ));
+            stripes.push(self.build_str_opt_stripe(
+                col_id::EDGE_SRC,
+                ColumnRole::Edge,
+                &self.edge_src,
+            ));
+            stripes.push(self.build_str_opt_stripe(
+                col_id::EDGE_TGT,
+                ColumnRole::Edge,
+                &self.edge_tgt,
+            ));
+            stripes.push(self.build_str_opt_stripe(
+                col_id::EDGE_TYPE,
+                ColumnRole::Edge,
+                &self.edge_type,
+            ));
 
             for (i, col) in self.embeddings.iter().enumerate() {
-                let refs: Vec<Option<&[f32]>> = col.iter()
-                    .map(|v| v.as_deref())
-                    .collect();
+                let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
                 let (data, null_count) = encode_f32_vec_col(&refs);
                 let meta = ColumnMeta {
-                    column_id:     col_id::EMBED_BASE + i as i32,
-                    role:          ColumnRole::Vector,
-                    data_type_id:  0x01, // F32
-                    encoding_id:   0,    // Raw (ML embeddings: skip delta/gorilla)
-                    nullable:      true,
-                    has_bloom:     false,
-                    is_sorted:     false,
+                    column_id: col_id::EMBED_BASE + i as i32,
+                    role: ColumnRole::Vector,
+                    data_type_id: 0x01, // F32
+                    encoding_id: 0,     // Raw (ML embeddings: skip delta/gorilla)
+                    nullable: true,
+                    has_bloom: false,
+                    is_sorted: false,
                     stripe_offset: 0, // set below
-                    stripe_len:    data.len() as u32,
+                    stripe_len: data.len() as u32,
                     null_count,
                     distinct_hint: 0,
-                    min_val:       [0u8; 16],
-                    max_val:       [0u8; 16],
-                    bloom_offset:  0,
-                    bloom_len:     0,
+                    min_val: [0u8; 16],
+                    max_val: [0u8; 16],
+                    bloom_offset: 0,
+                    bloom_len: 0,
                 };
                 stripes.push(ColumnStripe::new(meta, data));
             }
@@ -333,25 +389,33 @@ impl PaxBlockWriter {
         // ---- Build header ----
         let block_flags = {
             let mut f = 0u8;
-            if !self.embeddings.is_empty() { f |= flags::HAS_VECTOR; }
-            if self.edge_src.iter().any(|v| v.is_some()) { f |= flags::HAS_EDGE; }
-            if mode.has_row_directory() { f |= flags::HAS_MVCC; }
-            if mode.has_row_directory() { f |= flags::DIR_SORTED; }
+            if !self.embeddings.is_empty() {
+                f |= flags::HAS_VECTOR;
+            }
+            if self.edge_src.iter().any(|v| v.is_some()) {
+                f |= flags::HAS_EDGE;
+            }
+            if mode.has_row_directory() {
+                f |= flags::HAS_MVCC;
+            }
+            if mode.has_row_directory() {
+                f |= flags::DIR_SORTED;
+            }
             f
         };
         let header = BlockHeader {
-            block_mode:         mode,
-            compression:        self.compression,
-            flags:              block_flags,
-            column_count:       stripes.len() as u16,
-            row_count:          n as u32,
-            block_size:         total_size,
+            block_mode: mode,
+            compression: self.compression,
+            flags: block_flags,
+            column_count: stripes.len() as u16,
+            row_count: n as u32,
+            block_size: total_size,
             checksum,
             collection_id_hash: self.collection_id_hash,
             schema_fingerprint: self.schema_fingerprint,
-            min_timestamp_ns:   if n == 0 { 0 } else { self.min_ts },
-            max_timestamp_ns:   if n == 0 { 0 } else { self.max_ts },
-            tenant_id_hash:     self.tenant_id_hash_set,
+            min_timestamp_ns: if n == 0 { 0 } else { self.min_ts },
+            max_timestamp_ns: if n == 0 { 0 } else { self.max_ts },
+            tenant_id_hash: self.tenant_id_hash_set,
         };
 
         // ---- Assemble full block ----
@@ -377,7 +441,9 @@ impl PaxBlockWriter {
         self.edge_tgt.clear();
         self.edge_type.clear();
         self.edge_weight.clear();
-        for col in &mut self.embeddings { col.clear(); }
+        for col in &mut self.embeddings {
+            col.clear();
+        }
         self.tenant_id_hash_set = 0;
         self.min_ts = i64::MAX;
         self.max_ts = i64::MIN;
@@ -385,33 +451,69 @@ impl PaxBlockWriter {
 
     // ---- Private helpers ----
 
-    fn build_str_stripe(&self, id: i32, _name: &str, role: ColumnRole, nullable: bool, vals: &[Option<&str>]) -> ColumnStripe {
+    fn build_str_stripe(
+        &self,
+        id: i32,
+        _name: &str,
+        role: ColumnRole,
+        nullable: bool,
+        vals: &[Option<&str>],
+    ) -> ColumnStripe {
         let (data, null_count) = encode_str_col(vals);
         let meta = ColumnMeta {
-            column_id: id, role, data_type_id: 0xff, encoding_id: 0,
-            nullable, has_bloom: false, is_sorted: false,
-            stripe_offset: 0, stripe_len: data.len() as u32,
-            null_count, distinct_hint: 0,
-            min_val: [0u8; 16], max_val: [0u8; 16],
-            bloom_offset: 0, bloom_len: 0,
+            column_id: id,
+            role,
+            data_type_id: 0xff,
+            encoding_id: 0,
+            nullable,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: 0,
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
         };
         ColumnStripe::new(meta, data)
     }
 
-    fn build_str_opt_stripe(&self, id: i32, role: ColumnRole, vals: &[Option<String>]) -> ColumnStripe {
+    fn build_str_opt_stripe(
+        &self,
+        id: i32,
+        role: ColumnRole,
+        vals: &[Option<String>],
+    ) -> ColumnStripe {
         let refs: Vec<Option<&str>> = vals.iter().map(|v| v.as_deref()).collect();
         self.build_str_stripe(id, "", role, true, &refs)
     }
 
-    fn build_i64_stripe(&self, id: i32, role: ColumnRole, nullable: bool, vals: &[Option<i64>]) -> ColumnStripe {
+    fn build_i64_stripe(
+        &self,
+        id: i32,
+        role: ColumnRole,
+        nullable: bool,
+        vals: &[Option<i64>],
+    ) -> ColumnStripe {
         let (data, null_count) = encode_i64_col(vals);
         let mut meta = ColumnMeta {
-            column_id: id, role, data_type_id: 0x03, encoding_id: 3, // I64, DoubleDelta
-            nullable, has_bloom: false, is_sorted: false,
-            stripe_offset: 0, stripe_len: data.len() as u32,
-            null_count, distinct_hint: 0,
-            min_val: [0u8; 16], max_val: [0u8; 16],
-            bloom_offset: 0, bloom_len: 0,
+            column_id: id,
+            role,
+            data_type_id: 0x03,
+            encoding_id: 3, // I64, DoubleDelta
+            nullable,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: 0,
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
         };
         for v in vals.iter().flatten() {
             update_i64_bounds(&mut meta, *v);
@@ -419,11 +521,19 @@ impl PaxBlockWriter {
         ColumnStripe::new(meta, data)
     }
 
-    fn build_bytes_stripe(&self, id: i32, role: ColumnRole, vals: &[Option<Vec<u8>>]) -> ColumnStripe {
-        let refs: Vec<Option<&str>> = vals.iter().map(|v| {
-            // Treat bytes as raw; encode length-prefixed
-            v.as_ref().map(|_| "")
-        }).collect();
+    fn build_bytes_stripe(
+        &self,
+        id: i32,
+        role: ColumnRole,
+        vals: &[Option<Vec<u8>>],
+    ) -> ColumnStripe {
+        let refs: Vec<Option<&str>> = vals
+            .iter()
+            .map(|v| {
+                // Treat bytes as raw; encode length-prefixed
+                v.as_ref().map(|_| "")
+            })
+            .collect();
         // Encode as raw bytes with 4B length prefix
         let mut data = Vec::new();
         let mut null_count = 0u32;
@@ -441,12 +551,21 @@ impl PaxBlockWriter {
         }
         let _ = refs; // suppress warning
         let meta = ColumnMeta {
-            column_id: id, role, data_type_id: 0xff, encoding_id: 0,
-            nullable: true, has_bloom: false, is_sorted: false,
-            stripe_offset: 0, stripe_len: data.len() as u32,
-            null_count, distinct_hint: 0,
-            min_val: [0u8; 16], max_val: [0u8; 16],
-            bloom_offset: 0, bloom_len: 0,
+            column_id: id,
+            role,
+            data_type_id: 0xff,
+            encoding_id: 0,
+            nullable: true,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: 0,
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
         };
         ColumnStripe::new(meta, data)
     }
@@ -476,8 +595,12 @@ mod tests {
             0x1234,
             0,
         );
-        writer.add_record(&make_record("r1", "tenant_a", 1000)).unwrap();
-        writer.add_record(&make_record("r2", "tenant_a", 2000)).unwrap();
+        writer
+            .add_record(&make_record("r1", "tenant_a", 1000))
+            .unwrap();
+        writer
+            .add_record(&make_record("r2", "tenant_a", 2000))
+            .unwrap();
 
         let block = writer.flush().unwrap();
         assert!(block.len() > HEADER_SIZE);
@@ -493,13 +616,7 @@ mod tests {
 
     #[test]
     fn olap_write_no_row_directory() {
-        let mut writer = PaxBlockWriter::new(
-            BlockMode::Olap,
-            BlockCompression::None,
-            "col",
-            0,
-            0,
-        );
+        let mut writer = PaxBlockWriter::new(BlockMode::Olap, BlockCompression::None, "col", 0, 0);
         writer.add_record(&make_record("r1", "t", 1)).unwrap();
         let block = writer.flush().unwrap();
         let header = BlockHeader::from_bytes(&block).unwrap();

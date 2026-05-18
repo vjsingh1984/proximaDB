@@ -40,8 +40,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use proximadb_block_format::{
-    BlockCompression, BlockMode, BlockStats, PaxBlockReader, PaxBlockWriter,
-    header::fnv1a_hash,
+    BlockCompression, BlockMode, BlockStats, PaxBlockReader, PaxBlockWriter, header::fnv1a_hash,
 };
 use proximadb_records::ProximaRecord;
 use serde::{Deserialize, Serialize};
@@ -62,7 +61,7 @@ pub struct BlockIndexEntry {
     /// Byte offset from the start of the segment file.
     pub offset: u64,
     /// Block byte length (matches the block's header + body + footer).
-    pub size:   u32,
+    pub size: u32,
 }
 
 /// Index appended at the tail of a segment file.
@@ -104,7 +103,7 @@ impl SegmentIndex {
         for i in 0..n {
             let off = 4 + i * 12;
             let offset = u64::from_le_bytes(data[off..off + 8].try_into()?);
-            let size   = u32::from_le_bytes(data[off + 8..off + 12].try_into()?);
+            let size = u32::from_le_bytes(data[off + 8..off + 12].try_into()?);
             blocks.push(BlockIndexEntry { offset, size });
         }
         Ok(Self { blocks })
@@ -118,10 +117,10 @@ impl SegmentIndex {
 /// Maps directly to Iceberg `DataFile` fields for manifest generation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SegmentMeta {
-    pub path:        PathBuf,
-    pub size_bytes:  u64,
+    pub path: PathBuf,
+    pub size_bytes: u64,
     pub block_count: u32,
-    pub row_count:   u64,
+    pub row_count: u64,
     /// Per-block statistics for Iceberg manifest data-file descriptors.
     pub block_stats: Vec<BlockStats>,
 }
@@ -133,19 +132,19 @@ pub struct SegmentMeta {
 /// Records are buffered in a `PaxBlockWriter`; when the estimated block size
 /// reaches `block_size_threshold`, the block is flushed and a new one begins.
 pub struct PaxSegmentWriter {
-    path:                   PathBuf,
-    mode:                   BlockMode,
-    compression:            BlockCompression,
-    collection_id:          String,
-    schema_fingerprint:     u64,
-    embedding_count:        usize,
-    block_size_threshold:   usize,
+    path: PathBuf,
+    mode: BlockMode,
+    compression: BlockCompression,
+    collection_id: String,
+    schema_fingerprint: u64,
+    embedding_count: usize,
+    block_size_threshold: usize,
 
-    current_writer:         PaxBlockWriter,
-    index:                  SegmentIndex,
-    block_stats:            Vec<BlockStats>,
-    file_buf:               Vec<u8>,
-    row_count:              u64,
+    current_writer: PaxBlockWriter,
+    index: SegmentIndex,
+    block_stats: Vec<BlockStats>,
+    file_buf: Vec<u8>,
+    row_count: u64,
 }
 
 impl PaxSegmentWriter {
@@ -213,23 +212,26 @@ impl PaxSegmentWriter {
             return Ok(());
         }
         let block_bytes = self.current_writer.flush()?;
-        let block_size  = block_bytes.len() as u32;
-        let offset      = self.file_buf.len() as u64;
+        let block_size = block_bytes.len() as u32;
+        let offset = self.file_buf.len() as u64;
 
         // Collect stats before consuming the block bytes.
         // Timestamps and column stats are populated per-block by PaxBlockWriter.
         // We use placeholder bounds here; callers can enrich from header if needed.
         let stats = BlockStats {
-            row_count:        self.current_writer.row_count() as u32,
+            row_count: self.current_writer.row_count() as u32,
             block_size_bytes: block_size,
             min_timestamp_ns: 0,
             max_timestamp_ns: 0,
-            null_counts:      std::collections::HashMap::new(),
-            lower_bounds:     std::collections::HashMap::new(),
-            upper_bounds:     std::collections::HashMap::new(),
+            null_counts: std::collections::HashMap::new(),
+            lower_bounds: std::collections::HashMap::new(),
+            upper_bounds: std::collections::HashMap::new(),
         };
 
-        self.index.blocks.push(BlockIndexEntry { offset, size: block_size });
+        self.index.blocks.push(BlockIndexEntry {
+            offset,
+            size: block_size,
+        });
         self.file_buf.extend_from_slice(&block_bytes);
         self.block_stats.push(stats);
 
@@ -270,10 +272,10 @@ impl PaxSegmentWriter {
         f.write_all(&self.file_buf)?;
 
         Ok(SegmentMeta {
-            path:        self.path,
-            size_bytes:  total_bytes,
+            path: self.path,
+            size_bytes: total_bytes,
             block_count: self.index.blocks.len() as u32,
-            row_count:   self.row_count,
+            row_count: self.row_count,
             block_stats: self.block_stats,
         })
     }
@@ -287,16 +289,22 @@ pub struct ScanPredicate {
     /// If set, skip blocks whose tenant hash doesn't match.
     pub tenant_hash: Option<u64>,
     /// If set, skip blocks with no overlap with `[from_ns, to_ns]`.
-    pub time_range:  Option<(i64, i64)>,
+    pub time_range: Option<(i64, i64)>,
 }
 
 impl ScanPredicate {
     pub fn for_tenant(tenant_id: &str) -> Self {
-        Self { tenant_hash: Some(fnv1a_hash(tenant_id)), ..Default::default() }
+        Self {
+            tenant_hash: Some(fnv1a_hash(tenant_id)),
+            ..Default::default()
+        }
     }
 
     pub fn for_time_range(from_ns: i64, to_ns: i64) -> Self {
-        Self { time_range: Some((from_ns, to_ns)), ..Default::default() }
+        Self {
+            time_range: Some((from_ns, to_ns)),
+            ..Default::default()
+        }
     }
 
     pub fn with_tenant(mut self, tenant_id: &str) -> Self {
@@ -316,10 +324,10 @@ impl ScanPredicate {
 /// each block that passes the predicate. Callers decode individual stripes via
 /// `PaxBlockReader`.
 pub struct PaxSegmentScanner {
-    data:      Vec<u8>,
-    index:     SegmentIndex,
+    data: Vec<u8>,
+    index: SegmentIndex,
     predicate: ScanPredicate,
-    cursor:    usize,
+    cursor: usize,
 }
 
 impl PaxSegmentScanner {
@@ -346,7 +354,12 @@ impl PaxSegmentScanner {
         // (binary search would be ideal, but CRC validation is cheap enough).
         let index = Self::parse_index(&data[..magic_start])?;
 
-        Ok(Self { data, index, predicate, cursor: 0 })
+        Ok(Self {
+            data,
+            index,
+            predicate,
+            cursor: 0,
+        })
     }
 
     fn parse_index(before_magic: &[u8]) -> Result<SegmentIndex> {
@@ -364,7 +377,9 @@ impl PaxSegmentScanner {
             }
             let idx_start = before_magic.len() - index_len;
             let n_in_data = u32::from_le_bytes(
-                before_magic[idx_start..idx_start + 4].try_into().unwrap_or([0; 4]),
+                before_magic[idx_start..idx_start + 4]
+                    .try_into()
+                    .unwrap_or([0; 4]),
             ) as usize;
             if n_in_data == candidate_n {
                 // Candidate matches — validate CRC
@@ -384,7 +399,7 @@ impl PaxSegmentScanner {
             self.cursor += 1;
 
             let start = entry.offset as usize;
-            let end   = start + entry.size as usize;
+            let end = start + entry.size as usize;
             if end > self.data.len() {
                 continue; // corrupted index entry — skip
             }
@@ -439,8 +454,8 @@ mod tests {
 
     fn make_record(oid: &str, tenant: &str, ts: i64) -> ProximaRecord {
         ProximaRecord {
-            oid:           oid.into(),
-            tenant_id:     tenant.into(),
+            oid: oid.into(),
+            tenant_id: tenant.into(),
             created_at_ns: ts,
             updated_at_ns: ts,
             ..Default::default()
@@ -451,12 +466,18 @@ mod tests {
     fn segment_index_round_trip() {
         let idx = SegmentIndex {
             blocks: vec![
-                BlockIndexEntry { offset: 0,    size: 4096 },
-                BlockIndexEntry { offset: 4096, size: 8192 },
+                BlockIndexEntry {
+                    offset: 0,
+                    size: 4096,
+                },
+                BlockIndexEntry {
+                    offset: 4096,
+                    size: 8192,
+                },
             ],
         };
         let bytes = idx.to_bytes();
-        let idx2  = SegmentIndex::from_bytes(&bytes).unwrap();
+        let idx2 = SegmentIndex::from_bytes(&bytes).unwrap();
         assert_eq!(idx2.blocks.len(), 2);
         assert_eq!(idx2.blocks[0].size, 4096);
         assert_eq!(idx2.blocks[1].offset, 4096);
@@ -477,19 +498,23 @@ mod tests {
             Some(1), // 1-byte threshold → each record gets its own block
         );
 
-        writer.add_record(&make_record("r1", "tenant_a", 1000)).unwrap();
-        writer.add_record(&make_record("r2", "tenant_a", 2000)).unwrap();
-        writer.add_record(&make_record("r3", "tenant_b", 3000)).unwrap();
+        writer
+            .add_record(&make_record("r1", "tenant_a", 1000))
+            .unwrap();
+        writer
+            .add_record(&make_record("r2", "tenant_a", 2000))
+            .unwrap();
+        writer
+            .add_record(&make_record("r3", "tenant_b", 3000))
+            .unwrap();
 
         let meta = writer.finish().unwrap();
         assert_eq!(meta.row_count, 3);
         assert!(meta.size_bytes > 0);
 
         // Scan with tenant_a predicate
-        let mut scanner = PaxSegmentScanner::open(
-            &path,
-            ScanPredicate::for_tenant("tenant_a"),
-        ).unwrap();
+        let mut scanner =
+            PaxSegmentScanner::open(&path, ScanPredicate::for_tenant("tenant_a")).unwrap();
 
         let mut matched_blocks = 0usize;
         while scanner.next_block().is_some() {
@@ -505,7 +530,12 @@ mod tests {
         let path = dir.path().join("time.pax");
 
         let mut writer = PaxSegmentWriter::new(
-            &path, BlockMode::Olap, BlockCompression::None, "col_b", 0, 0,
+            &path,
+            BlockMode::Olap,
+            BlockCompression::None,
+            "col_b",
+            0,
+            0,
             Some(1), // one record per block
         );
         writer.add_record(&make_record("a", "t", 500)).unwrap();
@@ -514,10 +544,8 @@ mod tests {
         let meta = writer.finish().unwrap();
 
         // Only the [5000..9999] blocks should survive a [4000..6000] scan
-        let mut scanner = PaxSegmentScanner::open(
-            &path,
-            ScanPredicate::for_time_range(4000, 6000),
-        ).unwrap();
+        let mut scanner =
+            PaxSegmentScanner::open(&path, ScanPredicate::for_time_range(4000, 6000)).unwrap();
         let mut hits = 0usize;
         while scanner.next_block().is_some() {
             hits += 1;

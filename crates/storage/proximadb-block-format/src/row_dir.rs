@@ -18,8 +18,8 @@ pub const ROW_ENTRY_SIZE: usize = 32;
 
 /// Flags for a row directory entry.
 pub mod row_flags {
-    pub const DELETED: u32  = 0x0000_0001;
-    pub const UPDATED: u32  = 0x0000_0002;
+    pub const DELETED: u32 = 0x0000_0001;
+    pub const UPDATED: u32 = 0x0000_0002;
     pub const TOMBSTONE: u32 = 0x0000_0004;
 }
 
@@ -36,14 +36,14 @@ pub mod row_flags {
 #[derive(Debug, Clone, Copy)]
 pub struct RowEntry {
     /// FNV-1a hash of the record's `oid` string — for fast directory scan.
-    pub row_id_hash:   u64,
+    pub row_id_hash: u64,
     /// MVCC lower bound (`valid_from_ns`). 0 = no lower bound.
     pub valid_from_ns: i64,
     /// MVCC upper bound (`valid_to_ns`). `i64::MAX` = currently visible.
-    pub valid_to_ns:   i64,
-    pub flags:         u32,
+    pub valid_to_ns: i64,
+    pub flags: u32,
     /// Row index within the column stripes (same position in every stripe).
-    pub row_index:     u32,
+    pub row_index: u32,
 }
 
 impl RowEntry {
@@ -63,9 +63,7 @@ impl RowEntry {
 
     /// True if this row is visible at snapshot time `at_ns`.
     pub fn visible_at(&self, at_ns: i64) -> bool {
-        !self.is_deleted()
-            && self.valid_from_ns <= at_ns
-            && self.valid_to_ns >= at_ns
+        !self.is_deleted() && self.valid_from_ns <= at_ns && self.valid_to_ns >= at_ns
     }
 
     pub fn to_bytes(self) -> [u8; ROW_ENTRY_SIZE] {
@@ -83,11 +81,11 @@ impl RowEntry {
             bail!("RowEntry slice too short: {} < {ROW_ENTRY_SIZE}", b.len());
         }
         Ok(Self {
-            row_id_hash:   u64::from_le_bytes(b[0..8].try_into()?),
+            row_id_hash: u64::from_le_bytes(b[0..8].try_into()?),
             valid_from_ns: i64::from_le_bytes(b[8..16].try_into()?),
-            valid_to_ns:   i64::from_le_bytes(b[16..24].try_into()?),
-            flags:         u32::from_le_bytes(b[24..28].try_into()?),
-            row_index:     u32::from_le_bytes(b[28..32].try_into()?),
+            valid_to_ns: i64::from_le_bytes(b[16..24].try_into()?),
+            flags: u32::from_le_bytes(b[24..28].try_into()?),
+            row_index: u32::from_le_bytes(b[28..32].try_into()?),
         })
     }
 }
@@ -95,12 +93,15 @@ impl RowEntry {
 /// In-memory row directory (OLTP/PAX blocks).
 pub struct RowDirectory {
     entries: Vec<RowEntry>,
-    sorted:  bool,
+    sorted: bool,
 }
 
 impl RowDirectory {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), sorted: false }
+        Self {
+            entries: Vec::new(),
+            sorted: false,
+        }
     }
 
     pub fn push(&mut self, entry: RowEntry) {
@@ -171,7 +172,10 @@ impl RowDirectory {
             entries.push(RowEntry::from_bytes(&data[i * ROW_ENTRY_SIZE..])?);
         }
         // Assume sorted (writer sorts before serialising)
-        Ok(Self { entries, sorted: true })
+        Ok(Self {
+            entries,
+            sorted: true,
+        })
     }
 
     pub fn entries(&self) -> &[RowEntry] {

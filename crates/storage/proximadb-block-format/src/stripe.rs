@@ -25,23 +25,23 @@ use serde::{Deserialize, Serialize};
 #[repr(u8)]
 pub enum ColumnRole {
     /// ProximaRecord.oid / id — identity, string
-    Identity    = 0,
+    Identity = 0,
     /// ProximaRecord.tenant_id — RLS partition key, string
-    Tenant      = 1,
+    Tenant = 1,
     /// created_at_ns / updated_at_ns — delta-encoded i64
-    Timestamp   = 2,
+    Timestamp = 2,
     /// valid_from_ns / valid_to_ns — MVCC temporal bounds, nullable i64
-    Temporal    = 3,
+    Temporal = 3,
     /// props / labels — opaque msgpack bytes
-    Props       = 4,
+    Props = 4,
     /// embedding values — f32[] with ML codec
-    Vector      = 5,
+    Vector = 5,
     /// Graph edge fields (source_id, target_id, edge_type, weight)
-    Edge        = 6,
+    Edge = 6,
     /// User-defined column from CatalogTableSchema
     UserDefined = 7,
     /// Provenance: actor, origin
-    Provenance  = 8,
+    Provenance = 8,
 }
 
 impl ColumnRole {
@@ -83,29 +83,29 @@ pub const COLUMN_META_SIZE: usize = 64;
 
 #[derive(Debug, Clone)]
 pub struct ColumnMeta {
-    pub column_id:     i32,
-    pub role:          ColumnRole,
+    pub column_id: i32,
+    pub role: ColumnRole,
     /// Codec `TypeId` byte; `0xff` for variable-length (string, bytes, vec).
-    pub data_type_id:  u8,
+    pub data_type_id: u8,
     /// `ProximaScheme` ordinal from `proximadb-codec`.
-    pub encoding_id:   u8,
-    pub nullable:      bool,
-    pub has_bloom:     bool,
-    pub is_sorted:     bool,
+    pub encoding_id: u8,
+    pub nullable: bool,
+    pub has_bloom: bool,
+    pub is_sorted: bool,
     /// Byte offset of this column's stripe from the start of the block body
     /// (i.e., from `HEADER_SIZE + row_dir_size`).
     pub stripe_offset: u32,
-    pub stripe_len:    u32,
-    pub null_count:    u32,
+    pub stripe_len: u32,
+    pub null_count: u32,
     /// Approximate distinct value count (HyperLogLog, 2-byte precision).
     pub distinct_hint: u32,
     /// Type-specific min value, little-endian encoded into 16 bytes.
-    pub min_val:       [u8; 16],
+    pub min_val: [u8; 16],
     /// Type-specific max value.
-    pub max_val:       [u8; 16],
+    pub max_val: [u8; 16],
     /// Offset of bloom filter bytes from start of footer section (0 = none).
-    pub bloom_offset:  u32,
-    pub bloom_len:     u32,
+    pub bloom_offset: u32,
+    pub bloom_len: u32,
 }
 
 impl ColumnMeta {
@@ -115,9 +115,8 @@ impl ColumnMeta {
         b[4] = self.role as u8;
         b[5] = self.data_type_id;
         b[6] = self.encoding_id;
-        b[7] = (self.nullable  as u8)
-             | ((self.has_bloom as u8) << 1)
-             | ((self.is_sorted as u8) << 2);
+        b[7] =
+            (self.nullable as u8) | ((self.has_bloom as u8) << 1) | ((self.is_sorted as u8) << 2);
         b[8..12].copy_from_slice(&self.stripe_offset.to_le_bytes());
         b[12..16].copy_from_slice(&self.stripe_len.to_le_bytes());
         b[16..20].copy_from_slice(&self.null_count.to_le_bytes());
@@ -131,7 +130,10 @@ impl ColumnMeta {
 
     pub fn from_bytes(b: &[u8]) -> Result<Self> {
         if b.len() < COLUMN_META_SIZE {
-            bail!("ColumnMeta slice too short: {} < {COLUMN_META_SIZE}", b.len());
+            bail!(
+                "ColumnMeta slice too short: {} < {COLUMN_META_SIZE}",
+                b.len()
+            );
         }
         let flags = b[7];
         let mut min_val = [0u8; 16];
@@ -139,21 +141,21 @@ impl ColumnMeta {
         min_val.copy_from_slice(&b[24..40]);
         max_val.copy_from_slice(&b[40..56]);
         Ok(Self {
-            column_id:     i32::from_le_bytes(b[0..4].try_into()?),
-            role:          ColumnRole::from_u8(b[4])?,
-            data_type_id:  b[5],
-            encoding_id:   b[6],
-            nullable:      flags & 0x01 != 0,
-            has_bloom:     flags & 0x02 != 0,
-            is_sorted:     flags & 0x04 != 0,
+            column_id: i32::from_le_bytes(b[0..4].try_into()?),
+            role: ColumnRole::from_u8(b[4])?,
+            data_type_id: b[5],
+            encoding_id: b[6],
+            nullable: flags & 0x01 != 0,
+            has_bloom: flags & 0x02 != 0,
+            is_sorted: flags & 0x04 != 0,
             stripe_offset: u32::from_le_bytes(b[8..12].try_into()?),
-            stripe_len:    u32::from_le_bytes(b[12..16].try_into()?),
-            null_count:    u32::from_le_bytes(b[16..20].try_into()?),
+            stripe_len: u32::from_le_bytes(b[12..16].try_into()?),
+            null_count: u32::from_le_bytes(b[16..20].try_into()?),
             distinct_hint: u32::from_le_bytes(b[20..24].try_into()?),
             min_val,
             max_val,
-            bloom_offset:  u32::from_le_bytes(b[56..60].try_into()?),
-            bloom_len:     u32::from_le_bytes(b[60..64].try_into()?),
+            bloom_offset: u32::from_le_bytes(b[56..60].try_into()?),
+            bloom_len: u32::from_le_bytes(b[60..64].try_into()?),
         })
     }
 
@@ -189,16 +191,16 @@ impl ColumnStripe {
 /// manifest entry for external engine split planning.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockStats {
-    pub row_count:        u32,
+    pub row_count: u32,
     pub block_size_bytes: u32,
     pub min_timestamp_ns: i64,
     pub max_timestamp_ns: i64,
     /// Per-column null counts indexed by column_id.
-    pub null_counts:      std::collections::HashMap<i32, u32>,
+    pub null_counts: std::collections::HashMap<i32, u32>,
     /// Lower bounds (i64 representation) per column_id.
-    pub lower_bounds:     std::collections::HashMap<i32, i64>,
+    pub lower_bounds: std::collections::HashMap<i32, i64>,
     /// Upper bounds per column_id.
-    pub upper_bounds:     std::collections::HashMap<i32, i64>,
+    pub upper_bounds: std::collections::HashMap<i32, i64>,
 }
 
 impl BlockStats {
@@ -242,29 +244,29 @@ mod tests {
     #[test]
     fn column_meta_round_trip() {
         let m = ColumnMeta {
-            column_id:     2,
-            role:          ColumnRole::Timestamp,
-            data_type_id:  0x03, // TypeId::I64
-            encoding_id:   5,    // DoubleDelta
-            nullable:      false,
-            has_bloom:     false,
-            is_sorted:     true,
+            column_id: 2,
+            role: ColumnRole::Timestamp,
+            data_type_id: 0x03, // TypeId::I64
+            encoding_id: 5,     // DoubleDelta
+            nullable: false,
+            has_bloom: false,
+            is_sorted: true,
             stripe_offset: 1024,
-            stripe_len:    512,
-            null_count:    0,
+            stripe_len: 512,
+            null_count: 0,
             distinct_hint: 1000,
-            min_val:       {
+            min_val: {
                 let mut v = [0u8; 16];
                 v[0..8].copy_from_slice(&100i64.to_le_bytes());
                 v
             },
-            max_val:       {
+            max_val: {
                 let mut v = [0u8; 16];
                 v[0..8].copy_from_slice(&200i64.to_le_bytes());
                 v
             },
-            bloom_offset:  0,
-            bloom_len:     0,
+            bloom_offset: 0,
+            bloom_len: 0,
         };
         let bytes = m.to_bytes();
         let m2 = ColumnMeta::from_bytes(&bytes).unwrap();

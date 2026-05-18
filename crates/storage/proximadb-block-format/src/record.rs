@@ -20,33 +20,33 @@ use crate::stripe::ColumnRole;
 /// Canonical column IDs for ProximaRecord fields in PAX blocks.
 /// These are stable and must not change between format versions.
 pub mod col_id {
-    pub const OID:          i32 = 0;
-    pub const TENANT_ID:    i32 = 1;
-    pub const CREATED_AT:   i32 = 2;
-    pub const UPDATED_AT:   i32 = 3;
-    pub const VALID_FROM:   i32 = 4;
-    pub const VALID_TO:     i32 = 5;
-    pub const ACTOR:        i32 = 6;
-    pub const ORIGIN:       i32 = 7;
-    pub const PROPS:        i32 = 8;
-    pub const LABELS:       i32 = 9;
-    pub const EDGE_SRC:     i32 = 10;
-    pub const EDGE_TGT:     i32 = 11;
-    pub const EDGE_TYPE:    i32 = 12;
-    pub const EDGE_WEIGHT:  i32 = 13;
+    pub const OID: i32 = 0;
+    pub const TENANT_ID: i32 = 1;
+    pub const CREATED_AT: i32 = 2;
+    pub const UPDATED_AT: i32 = 3;
+    pub const VALID_FROM: i32 = 4;
+    pub const VALID_TO: i32 = 5;
+    pub const ACTOR: i32 = 6;
+    pub const ORIGIN: i32 = 7;
+    pub const PROPS: i32 = 8;
+    pub const LABELS: i32 = 9;
+    pub const EDGE_SRC: i32 = 10;
+    pub const EDGE_TGT: i32 = 11;
+    pub const EDGE_TYPE: i32 = 12;
+    pub const EDGE_WEIGHT: i32 = 13;
     /// First column ID for embedding stripes (embedding_0, embedding_1, …).
-    pub const EMBED_BASE:   i32 = 20;
+    pub const EMBED_BASE: i32 = 20;
     /// First column ID for user-defined columns from CatalogTableSchema.
-    pub const USER_BASE:    i32 = 100;
+    pub const USER_BASE: i32 = 100;
 }
 
 /// Descriptor for a single column stripe in a PAX block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ColumnDescriptor {
-    pub column_id:   i32,
-    pub name:        String,
-    pub role:        ColumnRole,
-    pub nullable:    bool,
+    pub column_id: i32,
+    pub name: String,
+    pub role: ColumnRole,
+    pub nullable: bool,
 }
 
 /// Returns the canonical fixed column descriptors for every ProximaDB collection.
@@ -55,20 +55,90 @@ pub struct ColumnDescriptor {
 /// Embedding columns are generated dynamically based on the registered models.
 pub fn canonical_columns() -> Vec<ColumnDescriptor> {
     vec![
-        ColumnDescriptor { column_id: col_id::OID,        name: "id".into(),         role: ColumnRole::Identity,   nullable: false },
-        ColumnDescriptor { column_id: col_id::TENANT_ID,  name: "tenant_id".into(),  role: ColumnRole::Tenant,     nullable: false },
-        ColumnDescriptor { column_id: col_id::CREATED_AT, name: "created_at".into(), role: ColumnRole::Timestamp,  nullable: false },
-        ColumnDescriptor { column_id: col_id::UPDATED_AT, name: "updated_at".into(), role: ColumnRole::Timestamp,  nullable: false },
-        ColumnDescriptor { column_id: col_id::VALID_FROM, name: "valid_from".into(), role: ColumnRole::Temporal,   nullable: true  },
-        ColumnDescriptor { column_id: col_id::VALID_TO,   name: "valid_to".into(),   role: ColumnRole::Temporal,   nullable: true  },
-        ColumnDescriptor { column_id: col_id::ACTOR,      name: "actor".into(),      role: ColumnRole::Provenance, nullable: true  },
-        ColumnDescriptor { column_id: col_id::ORIGIN,     name: "origin".into(),     role: ColumnRole::Provenance, nullable: true  },
-        ColumnDescriptor { column_id: col_id::PROPS,      name: "props".into(),      role: ColumnRole::Props,      nullable: true  },
-        ColumnDescriptor { column_id: col_id::LABELS,     name: "labels".into(),     role: ColumnRole::Props,      nullable: true  },
-        ColumnDescriptor { column_id: col_id::EDGE_SRC,   name: "edge_source_id".into(), role: ColumnRole::Edge,  nullable: true  },
-        ColumnDescriptor { column_id: col_id::EDGE_TGT,   name: "edge_target_id".into(), role: ColumnRole::Edge,  nullable: true  },
-        ColumnDescriptor { column_id: col_id::EDGE_TYPE,  name: "edge_type".into(),  role: ColumnRole::Edge,       nullable: true  },
-        ColumnDescriptor { column_id: col_id::EDGE_WEIGHT,name: "edge_weight".into(),role: ColumnRole::Edge,       nullable: true  },
+        ColumnDescriptor {
+            column_id: col_id::OID,
+            name: "id".into(),
+            role: ColumnRole::Identity,
+            nullable: false,
+        },
+        ColumnDescriptor {
+            column_id: col_id::TENANT_ID,
+            name: "tenant_id".into(),
+            role: ColumnRole::Tenant,
+            nullable: false,
+        },
+        ColumnDescriptor {
+            column_id: col_id::CREATED_AT,
+            name: "created_at".into(),
+            role: ColumnRole::Timestamp,
+            nullable: false,
+        },
+        ColumnDescriptor {
+            column_id: col_id::UPDATED_AT,
+            name: "updated_at".into(),
+            role: ColumnRole::Timestamp,
+            nullable: false,
+        },
+        ColumnDescriptor {
+            column_id: col_id::VALID_FROM,
+            name: "valid_from".into(),
+            role: ColumnRole::Temporal,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::VALID_TO,
+            name: "valid_to".into(),
+            role: ColumnRole::Temporal,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::ACTOR,
+            name: "actor".into(),
+            role: ColumnRole::Provenance,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::ORIGIN,
+            name: "origin".into(),
+            role: ColumnRole::Provenance,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::PROPS,
+            name: "props".into(),
+            role: ColumnRole::Props,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::LABELS,
+            name: "labels".into(),
+            role: ColumnRole::Props,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::EDGE_SRC,
+            name: "edge_source_id".into(),
+            role: ColumnRole::Edge,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::EDGE_TGT,
+            name: "edge_target_id".into(),
+            role: ColumnRole::Edge,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::EDGE_TYPE,
+            name: "edge_type".into(),
+            role: ColumnRole::Edge,
+            nullable: true,
+        },
+        ColumnDescriptor {
+            column_id: col_id::EDGE_WEIGHT,
+            name: "edge_weight".into(),
+            role: ColumnRole::Edge,
+            nullable: true,
+        },
     ]
 }
 
@@ -79,25 +149,25 @@ pub fn canonical_columns() -> Vec<ColumnDescriptor> {
 #[derive(Debug, Clone)]
 pub struct FlatRow {
     /// Record identifier (oid). Never null.
-    pub oid:           String,
+    pub oid: String,
     /// Tenant identifier. Never null; engine-level RLS.
-    pub tenant_id:     String,
+    pub tenant_id: String,
     pub created_at_ns: i64,
     pub updated_at_ns: i64,
     pub valid_from_ns: Option<i64>,
-    pub valid_to_ns:   Option<i64>,
-    pub actor:         Option<String>,
-    pub origin:        Option<String>,
+    pub valid_to_ns: Option<i64>,
+    pub actor: Option<String>,
+    pub origin: Option<String>,
     /// msgpack-serialised props tree bytes.
-    pub props_bytes:   Option<Vec<u8>>,
+    pub props_bytes: Option<Vec<u8>>,
     /// msgpack-serialised label list bytes.
-    pub labels_bytes:  Option<Vec<u8>>,
-    pub edge_src:      Option<String>,
-    pub edge_tgt:      Option<String>,
-    pub edge_type:     Option<String>,
-    pub edge_weight:   Option<f64>,
+    pub labels_bytes: Option<Vec<u8>>,
+    pub edge_src: Option<String>,
+    pub edge_tgt: Option<String>,
+    pub edge_type: Option<String>,
+    pub edge_weight: Option<f64>,
     /// One entry per embedding (model order from record).
-    pub embeddings:    Vec<Vec<f32>>,
+    pub embeddings: Vec<Vec<f32>>,
 }
 
 impl FlatRow {
@@ -136,14 +206,14 @@ impl FlatRow {
             .collect();
 
         Ok(FlatRow {
-            oid:           record.oid.clone(),
-            tenant_id:     record.tenant_id.clone(),
+            oid: record.oid.clone(),
+            tenant_id: record.tenant_id.clone(),
             created_at_ns: record.created_at_ns,
             updated_at_ns: record.updated_at_ns,
             valid_from_ns: record.valid_from_ns,
-            valid_to_ns:   record.valid_to_ns,
-            actor:         record.actor.clone(),
-            origin:        record.origin.clone(),
+            valid_to_ns: record.valid_to_ns,
+            actor: record.actor.clone(),
+            origin: record.origin.clone(),
             props_bytes,
             labels_bytes,
             edge_src,
@@ -158,7 +228,7 @@ impl FlatRow {
     ///
     /// Embedding model IDs are provided externally (from the collection schema).
     pub fn into_record(self, embedding_model_ids: &[String]) -> anyhow::Result<ProximaRecord> {
-        use proximadb_records::{EmbeddingCell, EdgeShape, LabelSet};
+        use proximadb_records::{EdgeShape, EmbeddingCell, LabelSet};
         use std::collections::HashMap;
 
         let props = match self.props_bytes {
@@ -178,8 +248,8 @@ impl FlatRow {
             (Some(src), Some(tgt), Some(etype)) => Some(EdgeShape {
                 source_id: src,
                 target_id: tgt,
-                edge_type:  etype,
-                weight:     self.edge_weight,
+                edge_type: etype,
+                weight: self.edge_weight,
             }),
             _ => None,
         };
@@ -203,14 +273,14 @@ impl FlatRow {
             .collect();
 
         Ok(ProximaRecord {
-            oid:           self.oid,
-            tenant_id:     self.tenant_id,
+            oid: self.oid,
+            tenant_id: self.tenant_id,
             created_at_ns: self.created_at_ns,
             updated_at_ns: self.updated_at_ns,
             valid_from_ns: self.valid_from_ns,
-            valid_to_ns:   self.valid_to_ns,
-            actor:         self.actor,
-            origin:        self.origin,
+            valid_to_ns: self.valid_to_ns,
+            actor: self.actor,
+            origin: self.origin,
             props,
             labels,
             edge,
@@ -283,8 +353,16 @@ pub fn update_i64_bounds(meta: &mut crate::stripe::ColumnMeta, value: i64) {
     let cur_min = i64::from_le_bytes(meta.min_val[0..8].try_into().unwrap_or([0; 8]));
     let cur_max = i64::from_le_bytes(meta.max_val[0..8].try_into().unwrap_or([0; 8]));
 
-    let new_min = if cur_min == 0 && cur_max == 0 { value } else { cur_min.min(value) };
-    let new_max = if cur_min == 0 && cur_max == 0 { value } else { cur_max.max(value) };
+    let new_min = if cur_min == 0 && cur_max == 0 {
+        value
+    } else {
+        cur_min.min(value)
+    };
+    let new_max = if cur_min == 0 && cur_max == 0 {
+        value
+    } else {
+        cur_max.max(value)
+    };
 
     meta.min_val[0..8].copy_from_slice(&new_min.to_le_bytes());
     meta.max_val[0..8].copy_from_slice(&new_max.to_le_bytes());
@@ -293,12 +371,12 @@ pub fn update_i64_bounds(meta: &mut crate::stripe::ColumnMeta, value: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_records::{EdgeShape, EmbeddingCell, LabelSet, ProximaRecord, ProximaTreeNode};
     use crate::{
         header::{BlockCompression, BlockMode},
-        writer::PaxBlockWriter,
         reader::PaxBlockReader,
+        writer::PaxBlockWriter,
     };
+    use proximadb_records::{EdgeShape, EmbeddingCell, LabelSet, ProximaRecord, ProximaTreeNode};
     use std::collections::HashMap;
 
     /// Build a richly populated ProximaRecord with all field types.
@@ -318,27 +396,27 @@ mod tests {
         labels.insert("test");
 
         ProximaRecord {
-            oid:           oid.into(),
-            tenant_id:     "tenant_x".into(),
+            oid: oid.into(),
+            tenant_id: "tenant_x".into(),
             created_at_ns: 1_000_000,
             updated_at_ns: 2_000_000,
             valid_from_ns: Some(500_000),
-            valid_to_ns:   Some(9_000_000),
-            actor:         Some("agent-1".into()),
-            origin:        Some("rest-api".into()),
+            valid_to_ns: Some(9_000_000),
+            actor: Some("agent-1".into()),
+            origin: Some("rest-api".into()),
             props,
             labels,
             edge: Some(EdgeShape {
                 source_id: "node_a".into(),
                 target_id: "node_b".into(),
-                edge_type:  "knows".into(),
-                weight:     Some(0.75),
+                edge_type: "knows".into(),
+                weight: Some(0.75),
             }),
             embeddings: vec![EmbeddingCell {
                 model_id: "text-embed-v1".into(),
                 modality: "text".into(),
-                values:   vec![0.1, 0.2, 0.3, 0.4],
-                dim:      4,
+                values: vec![0.1, 0.2, 0.3, 0.4],
+                dim: 4,
             }],
             ..Default::default()
         }
@@ -368,14 +446,15 @@ mod tests {
 
     #[test]
     fn pax_block_record_round_trip() {
-        let records = vec![
-            rich_record("r1"),
-            rich_record("r2"),
-        ];
+        let records = vec![rich_record("r1"), rich_record("r2")];
 
         // Write
         let mut writer = PaxBlockWriter::new(
-            BlockMode::Pax, BlockCompression::None, "collection_rt", 0, 1,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "collection_rt",
+            0,
+            1,
         );
         for r in &records {
             writer.add_record(r).unwrap();
@@ -407,16 +486,22 @@ mod tests {
 
     #[test]
     fn olap_block_no_row_directory() {
-        let mut writer = PaxBlockWriter::new(
-            BlockMode::Olap, BlockCompression::None, "col_olap", 0, 0,
-        );
-        writer.add_record(&ProximaRecord {
-            oid: "x".into(), tenant_id: "t".into(),
-            created_at_ns: 1, updated_at_ns: 1,
-            ..Default::default()
-        }).unwrap();
+        let mut writer =
+            PaxBlockWriter::new(BlockMode::Olap, BlockCompression::None, "col_olap", 0, 0);
+        writer
+            .add_record(&ProximaRecord {
+                oid: "x".into(),
+                tenant_id: "t".into(),
+                created_at_ns: 1,
+                updated_at_ns: 1,
+                ..Default::default()
+            })
+            .unwrap();
         let block_bytes = writer.flush().unwrap();
         let reader = PaxBlockReader::open(&block_bytes).unwrap();
-        assert!(reader.row_directory().unwrap().is_none(), "OLAP block must not have row directory");
+        assert!(
+            reader.row_directory().unwrap().is_none(),
+            "OLAP block must not have row directory"
+        );
     }
 }

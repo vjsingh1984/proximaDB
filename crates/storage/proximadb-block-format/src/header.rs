@@ -32,7 +32,7 @@ pub const HEADER_SIZE: usize = 64;
 pub enum BlockMode {
     Oltp = 1,
     Olap = 2,
-    Pax  = 3,
+    Pax = 3,
 }
 
 impl BlockMode {
@@ -61,9 +61,9 @@ impl BlockMode {
 #[repr(u8)]
 pub enum BlockCompression {
     #[default]
-    None   = 0,
-    Lz4    = 1,
-    Zstd   = 2,
+    None = 0,
+    Lz4 = 1,
+    Zstd = 2,
     Snappy = 3,
 }
 
@@ -82,15 +82,15 @@ impl BlockCompression {
 /// Block-level capability flags (u8 bitfield in header byte [7]).
 pub mod flags {
     /// Block contains Bloom filter data in footer.
-    pub const HAS_BLOOM: u8   = 0b0000_0001;
+    pub const HAS_BLOOM: u8 = 0b0000_0001;
     /// Block contains graph edge columns (edge_source_id, edge_target_id, …).
-    pub const HAS_EDGE: u8    = 0b0000_0010;
+    pub const HAS_EDGE: u8 = 0b0000_0010;
     /// Block contains at least one embedding column.
-    pub const HAS_VECTOR: u8  = 0b0000_0100;
+    pub const HAS_VECTOR: u8 = 0b0000_0100;
     /// Block uses MVCC version chain (valid_from_ns / valid_to_ns).
-    pub const HAS_MVCC: u8    = 0b0000_1000;
+    pub const HAS_MVCC: u8 = 0b0000_1000;
     /// Row directory is sorted by row_id_hash (enables binary search).
-    pub const DIR_SORTED: u8  = 0b0001_0000;
+    pub const DIR_SORTED: u8 = 0b0001_0000;
 }
 
 /// Fixed 64-byte block header, written at offset 0 of every block file.
@@ -115,25 +115,25 @@ pub mod flags {
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct BlockHeader {
-    pub block_mode:          BlockMode,
-    pub compression:         BlockCompression,
-    pub flags:               u8,
-    pub column_count:        u16,
-    pub row_count:           u32,
+    pub block_mode: BlockMode,
+    pub compression: BlockCompression,
+    pub flags: u8,
+    pub column_count: u16,
+    pub row_count: u32,
     /// Total block size in bytes (including this 64-byte header).
-    pub block_size:          u32,
+    pub block_size: u32,
     /// crc32c checksum of bytes [22..block_size] (everything after the checksum field).
-    pub checksum:            u32,
+    pub checksum: u32,
     /// xxhash64 of the UTF-8 collection identifier.
-    pub collection_id_hash:  u64,
+    pub collection_id_hash: u64,
     /// Schema fingerprint from `CatalogTableSchema.fingerprint` or equivalent.
-    pub schema_fingerprint:  u64,
+    pub schema_fingerprint: u64,
     /// Minimum `created_at_ns` of any row in the block (for time-range pruning).
-    pub min_timestamp_ns:    i64,
+    pub min_timestamp_ns: i64,
     /// Maximum `created_at_ns` of any row in the block.
-    pub max_timestamp_ns:    i64,
+    pub max_timestamp_ns: i64,
     /// xxhash64 of the tenant_id string (for RLS block-skip without row decode).
-    pub tenant_id_hash:      u64,
+    pub tenant_id_hash: u64,
 }
 
 impl BlockHeader {
@@ -171,18 +171,18 @@ impl BlockHeader {
         }
 
         Ok(Self {
-            block_mode:         BlockMode::from_u8(buf[5])?,
-            compression:        BlockCompression::from_u8(buf[6])?,
-            flags:              buf[7],
-            column_count:       u16::from_le_bytes(buf[8..10].try_into()?),
-            row_count:          u32::from_le_bytes(buf[10..14].try_into()?),
-            block_size:         u32::from_le_bytes(buf[14..18].try_into()?),
-            checksum:           u32::from_le_bytes(buf[18..22].try_into()?),
+            block_mode: BlockMode::from_u8(buf[5])?,
+            compression: BlockCompression::from_u8(buf[6])?,
+            flags: buf[7],
+            column_count: u16::from_le_bytes(buf[8..10].try_into()?),
+            row_count: u32::from_le_bytes(buf[10..14].try_into()?),
+            block_size: u32::from_le_bytes(buf[14..18].try_into()?),
+            checksum: u32::from_le_bytes(buf[18..22].try_into()?),
             collection_id_hash: u64::from_le_bytes(buf[24..32].try_into()?),
             schema_fingerprint: u64::from_le_bytes(buf[32..40].try_into()?),
-            min_timestamp_ns:   i64::from_le_bytes(buf[40..48].try_into()?),
-            max_timestamp_ns:   i64::from_le_bytes(buf[48..56].try_into()?),
-            tenant_id_hash:     u64::from_le_bytes(buf[56..64].try_into()?),
+            min_timestamp_ns: i64::from_le_bytes(buf[40..48].try_into()?),
+            max_timestamp_ns: i64::from_le_bytes(buf[48..56].try_into()?),
+            tenant_id_hash: u64::from_le_bytes(buf[56..64].try_into()?),
         })
     }
 
@@ -205,8 +205,9 @@ impl BlockHeader {
 /// engine layer when the dependency is acceptable.
 pub fn fnv1a_hash(s: &str) -> u64 {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-    const PRIME:  u64 = 0x0000_0100_0000_01b3;
-    s.bytes().fold(OFFSET, |h, b| (h ^ b as u64).wrapping_mul(PRIME))
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    s.bytes()
+        .fold(OFFSET, |h, b| (h ^ b as u64).wrapping_mul(PRIME))
 }
 
 #[cfg(test)]
@@ -216,18 +217,18 @@ mod tests {
     #[test]
     fn header_round_trip() {
         let h = BlockHeader {
-            block_mode:         BlockMode::Pax,
-            compression:        BlockCompression::Lz4,
-            flags:              flags::HAS_VECTOR | flags::HAS_MVCC,
-            column_count:       12,
-            row_count:          1024,
-            block_size:         4 * 1024 * 1024,
-            checksum:           0xdeadbeef,
+            block_mode: BlockMode::Pax,
+            compression: BlockCompression::Lz4,
+            flags: flags::HAS_VECTOR | flags::HAS_MVCC,
+            column_count: 12,
+            row_count: 1024,
+            block_size: 4 * 1024 * 1024,
+            checksum: 0xdeadbeef,
             collection_id_hash: fnv1a_hash("my_collection"),
             schema_fingerprint: 0x1234_5678_9abc_def0,
-            min_timestamp_ns:   1_000_000_000,
-            max_timestamp_ns:   2_000_000_000,
-            tenant_id_hash:     fnv1a_hash("tenant_a"),
+            min_timestamp_ns: 1_000_000_000,
+            max_timestamp_ns: 2_000_000_000,
+            tenant_id_hash: fnv1a_hash("tenant_a"),
         };
         let bytes = h.to_bytes();
         assert_eq!(bytes.len(), HEADER_SIZE);
