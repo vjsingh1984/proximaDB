@@ -15,7 +15,7 @@ mod tests {
         VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, 
         QuantizationLevel
     };
-    use proximadb::core::VectorRecord;
+    use proximadb::proto::proximadb_v1::VectorRecord;
 
     /// Generate test vectors for quantization testing
     fn generate_test_vectors(count: usize, dimensions: usize) -> Vec<Vec<f32>> {

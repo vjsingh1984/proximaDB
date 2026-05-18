@@ -1524,13 +1524,22 @@ impl FlightService for ProximaFlightService {
                         .vector(collection_id, vector_id, include_vectors, include_metadata)
                         .await
                     {
-                        let record =
-                            proximadb_records::conversions::proxima_record_to_vector(&record);
                         found_vectors.push(serde_json::json!({
-                            "id": record.id,
-                            "vector": if include_vectors { Some(&record.vector) } else { None },
-                            "metadata": record.metadata,
-                            "timestamp": record.timestamp
+                            "id": &record.oid,
+                            "oid": &record.oid,
+                            "vector": if include_vectors {
+                                record.embeddings.first().map(|embedding| &embedding.values)
+                            } else {
+                                None
+                            },
+                            "metadata": if include_metadata {
+                                Some(&record.props)
+                            } else {
+                                None
+                            },
+                            "tenant_id": &record.tenant_id,
+                            "created_at_ns": record.created_at_ns,
+                            "updated_at_ns": record.updated_at_ns
                         }));
                     }
                 }

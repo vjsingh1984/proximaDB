@@ -13,7 +13,7 @@ use std::sync::Arc;
 use proximadb::storage::engines::viper::quantization::{
     VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, QuantizationLevel
 };
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use tracing::{debug, error, info};
 
 /// Generate test vectors for quantization testing

@@ -14,7 +14,8 @@ use crate::compute::distance_computation::{
     DistanceMetric, Int8VectorData, PQVectorData, QuantizedDistanceResult, QuantizedVectorData,
     SelectedFormat, SimilarityResult, UnifiedDistanceCompute,
 };
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::proto::proximadb_v1::VectorRecord;
 
 use super::{
     config::ProgressiveRefinementConfig as ConfigProgressiveRefinementConfig,

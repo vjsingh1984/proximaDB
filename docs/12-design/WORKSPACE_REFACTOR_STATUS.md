@@ -303,6 +303,7 @@ This boundary respects the layering principles and prevents upward dependencies 
 ### Medium Priority (P1)
 1. **Complete vector modality extraction** (Phase 6 continuation)
    - Distance computation (`src/compute/distance_computation/`) has 405 usages across root crate
+   - ✅ AXIS transform/disentangled projection contracts now live in `proximadb-vector`; root `src/index/axis` only re-exports them for compatibility.
    - `selection.rs` / `smart_defaults.rs` contain orchestration that correctly stays in compute layer
    - Accept that ~7,000 lines legitimately remain in compute layer
    - Multi-sprint effort

@@ -38,7 +38,8 @@ use proximadb_compression_types::CompressionAlgorithm as FoundationCompressionAl
 
 // use super::ml_clustering::{KMeansConfig, MLClusteringEngine}; // Moved to AXIS
 // Quantization now handled by unified compute module
-use crate::core::{String, VectorRecord};
+use crate::core::String;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Data Processing Pipeline coordinator
@@ -3462,7 +3463,7 @@ impl CompactionEngine {
 
         // Calculate realistic compression based on data characteristics
         let base_compression = avg_sparsity * 0.4 + avg_metadata_repetition * 0.3; // Up to 70% from data
-        let algorithm_compression = 0.25; // Additional 25% from compression algorithm
+        let algorithm_compression = 0.25f32; // Additional 25% from compression algorithm
 
         let total_compression = (base_compression + algorithm_compression).min(0.8f32); // Cap at 80%
 

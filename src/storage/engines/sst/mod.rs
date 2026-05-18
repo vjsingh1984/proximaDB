@@ -289,8 +289,9 @@ pub use text_column_support::{
 };
 
 // Main SST Storage implementation (contents from original lsm/mod.rs)
+use crate::core::SstConfig;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::{SstConfig, VectorRecord};
+use crate::proto::proximadb_v1::VectorRecord;
 // SearchResult is now proto type, not in core::search
 use crate::core::search::json_value_serde;
 // use crate::core::serialization::VectorSerializationConfig;  // Not needed

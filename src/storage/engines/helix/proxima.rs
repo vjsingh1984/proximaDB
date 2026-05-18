@@ -19,7 +19,8 @@ use crate::storage::engines::core::formats::proximablocks::block_structures::{
 };
 use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
 
-use crate::core::{VectorRecord, compression::CompressionAlgorithm};
+use crate::core::compression::CompressionAlgorithm;
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::constants::HELIX_MAGIC;
 
 // ProximaDataBlock now uses ProximaCodec internally

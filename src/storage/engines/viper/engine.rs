@@ -42,9 +42,10 @@ use crate::storage::engines::core::ops::performance_optimization::{
 };
 // VectorMemoryPool now managed by universal optimizer
 use super::types::*;
+use crate::core::String;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::core::{String, VectorRecord};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};

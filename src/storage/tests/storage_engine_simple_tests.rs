@@ -7,32 +7,31 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::{Config, VectorRecord};
+use crate::core::Config;
 use crate::storage::engine::StorageEngine;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
-/// Create test vector record
-fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
-    VectorRecord {
-        id: id.to_string(),
-        vector,
-        metadata: {
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert(
-                "test_key".to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "test_value".to_string(),
-                    )),
-                },
-            );
-            metadata
-        },
-        timestamp: Some(chrono::Utc::now().timestamp()),
-        updated_at: Some(chrono::Utc::now().timestamp()),
-        expires_at: None,
-        version: Some(1),
-        source: None,
+fn create_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
+    let dim = vector.len() as u32;
+    let mut record = ProximaRecord {
+        oid: id.to_string(),
+        record_version: 1,
+        ..ProximaRecord::default()
+    };
+    record.props.insert(
+        "test_key".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String("test_value".to_string())),
+    );
+    if !vector.is_empty() {
+        record.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values: vector,
+            dim,
+        });
     }
+    record
 }
 
 /// Create basic storage engine for testing
@@ -270,10 +269,10 @@ async fn test_create_test_vector_function() {
     // Test the test utility function itself
     let vector = create_test_vector("test_id", vec![1.0, 2.0, 3.0]);
 
-    assert_eq!(vector.id, "test_id".to_string());
-    assert_eq!(vector.vector, vec![1.0, 2.0, 3.0]);
-    assert_eq!(vector.metadata.len(), 1);
-    assert_eq!(vector.version, Some(1));
+    assert_eq!(vector.oid, "test_id");
+    assert_eq!(vector.embeddings[0].values, vec![1.0, 2.0, 3.0]);
+    assert_eq!(vector.props.len(), 1);
+    assert_eq!(vector.record_version, 1);
 }
 
 #[tokio::test]
@@ -304,7 +303,7 @@ async fn test_vector_with_no_id() {
 
     // Test vector with no ID
     let mut no_id_vector = create_test_vector("temp", vec![1.0, 2.0]);
-    no_id_vector.id = "".to_string();
+    no_id_vector.oid = "".to_string();
 
     let result = storage_engine.write("test_collection", &no_id_vector).await;
     // With WAL manager, write should succeed

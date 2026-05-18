@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use tempfile::TempDir;
 use proximadb::utils::uuid::Uuid;
 
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, StorageEngine, IndexingAlgorithm, MetadataItem
 };

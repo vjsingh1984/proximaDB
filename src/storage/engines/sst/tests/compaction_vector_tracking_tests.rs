@@ -10,7 +10,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::super::*;
-    use crate::core::{SstConfig, VectorId, VectorRecord};
+    use crate::core::{SstConfig, VectorId};
+    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::transaction_coordinator::TransactionCoordinator;
     use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
 
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, IndexingAlgorithm, MetadataItem, StorageEngine,
 };

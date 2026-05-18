@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 use chrono::Utc;
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};

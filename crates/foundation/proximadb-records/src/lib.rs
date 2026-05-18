@@ -336,6 +336,37 @@ impl ProximaRecord {
 }
 
 // ---------------------------------------------------------------------------
+// Search result types (spec §1490)
+// ---------------------------------------------------------------------------
+
+/// Canonical search result carrier per MULTIMODAL_OVERHAUL_SPEC §1490.
+///
+/// Replaces the legacy proto v1 `SearchVectorRecord` type everywhere outside
+/// of wire-format protocol adapters. The triple `(record, score, rank)` is
+/// the authoritative internal shape for search results.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScoredRecord {
+    pub record: ProximaRecord,
+    /// Similarity/relevance score (higher is more relevant).
+    pub score: f32,
+    /// 1-based rank in the result set.
+    pub rank: u32,
+}
+
+/// Top-level search response envelope (v2).
+///
+/// Returned by query execution, search services, and hybrid search orchestrators.
+/// Protocol adapters (gRPC/REST/Arrow) serialize this into wire shapes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SearchResponse {
+    pub records: Vec<ScoredRecord>,
+    pub total_found: i64,
+    pub collection_id: String,
+    /// Query execution time in microseconds.
+    pub query_time_us: u64,
+}
+
+// ---------------------------------------------------------------------------
 // Tests (TDD)
 // ---------------------------------------------------------------------------
 

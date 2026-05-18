@@ -33,7 +33,11 @@ fn nvme_tier() -> InfrastructureTier {
     }
 }
 
-fn vector_record(id: &str, vector: Vec<f32>, modality: &str) -> proximadb::core::VectorRecord {
+fn vector_record(
+    id: &str,
+    vector: Vec<f32>,
+    modality: &str,
+) -> proximadb::proto::proximadb_v1::VectorRecord {
     use proximadb::proto::proximadb_v1::{SqlValue, sql_value};
 
     let mut metadata = HashMap::new();
@@ -44,7 +48,7 @@ fn vector_record(id: &str, vector: Vec<f32>, modality: &str) -> proximadb::core:
         },
     );
 
-    proximadb::core::VectorRecord {
+    proximadb::proto::proximadb_v1::VectorRecord {
         id: id.to_string(),
         vector,
         metadata,

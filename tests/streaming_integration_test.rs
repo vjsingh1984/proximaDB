@@ -22,7 +22,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use proximadb_records::{EmbeddingCell, ProximaRecord};
 use proximadb::streaming::kafka::{
     CommitStrategy, DeserializationFormat, DlqConfig, KafkaConsumerConfig, MessageDeserializer,
 };
@@ -33,6 +32,7 @@ use proximadb::streaming::{
     BackpressureLevel, RingBuffer, SessionConfig, SessionState, StreamConfig, StreamCoordinator,
     StreamId, Watermarks,
 };
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 
 // =============================================================================
 // Helper Functions
@@ -337,8 +337,8 @@ async fn test_coordinator_push_and_drain() {
     // Drain vectors
     let drained = coordinator.drain_records(&session_id, 50).unwrap();
     assert_eq!(drained.len(), 50);
-    assert_eq!(drained[0].id, "vec_0");
-    assert_eq!(drained[49].id, "vec_49");
+    assert_eq!(drained[0].oid, "vec_0");
+    assert_eq!(drained[49].oid, "vec_49");
 
     // Check remaining
     let info = coordinator.get_session_info(&session_id).unwrap();

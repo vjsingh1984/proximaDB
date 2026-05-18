@@ -11,7 +11,7 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::core::{Config, VectorRecord};
+    use crate::core::Config;
     use crate::proto::proximadb_v1::VectorRecord as ProtoVectorRecord;
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::sst::SstEngine;

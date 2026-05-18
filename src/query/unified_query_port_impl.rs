@@ -157,9 +157,9 @@ impl UnifiedQueryPortImpl {
                 .take(limit)
                 .map(|m| {
                     serde_json::json!({
-                        "id": m.id,
+                        "id": m.record.oid,
                         "score": m.score,
-                        "metadata": m.metadata,
+                        "rank": m.rank,
                     })
                 })
                 .collect(),

@@ -10,7 +10,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio;
 
-use proximadb::core::{VectorRecord, SstConfig};
+use proximadb::core::SstConfig;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default;
 use proximadb::compute::quantization::{UnifiedQuantizationEngine, InMemoryCodebookStore};
 use proximadb::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};

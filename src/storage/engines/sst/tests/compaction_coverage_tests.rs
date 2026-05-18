@@ -6,7 +6,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::compaction::*;
-    use crate::core::{SstConfig, VectorRecord};
+    use crate::core::SstConfig;
+    use crate::proto::proximadb_v1::VectorRecord;
     use std::path::PathBuf;
     use std::sync::Arc;
 

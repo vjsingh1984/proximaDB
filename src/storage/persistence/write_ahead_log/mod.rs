@@ -83,7 +83,8 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute,
 };
-use crate::core::{String, VectorId, VectorRecord};
+use crate::core::{String, VectorId};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
 use proximadb_records::ProximaRecord;

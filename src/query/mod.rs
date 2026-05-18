@@ -198,9 +198,9 @@ pub use facade::{
     QueryResultData,
     QueryStrategy,
     QueryType,
+    ScoredRecord,
     SqlStrategy,
     UnifiedQueryFacade,
-    VectorMatch,
     // Real strategy implementations
     VectorSearchStrategy,
 };

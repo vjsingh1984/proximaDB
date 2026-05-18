@@ -1960,9 +1960,9 @@ impl UnifiedHandlers {
                     .into_iter()
                     .map(|m| {
                         serde_json::json!({
-                            "id": m.id,
+                            "id": m.record.oid,
                             "score": m.score,
-                            "metadata": m.metadata
+                            "metadata": m.record.props
                         })
                     })
                     .collect()

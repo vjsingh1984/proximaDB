@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::Collection;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Unified scan strategy based on RAPTOR's successful pattern
 #[derive(Debug, Clone)]
@@ -112,7 +112,7 @@ pub struct ScanCapabilities {
 #[async_trait]
 pub trait ScanIterator: Send {
     /// Get next batch (all engines use batched reading)
-    async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>>;
+    async fn next_batch(&mut self) -> Result<Option<Vec<ProximaRecord>>>;
 
     /// Skip to position (for range scans)
     async fn seek(&mut self, _key: &str) -> Result<()> {

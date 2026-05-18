@@ -561,16 +561,28 @@ impl QueryFacadeAdapter {
         let mut search_records = Vec::new();
 
         match result.data {
-            QueryResultData::VectorResults(matches) => {
-                for m in matches {
+            QueryResultData::VectorResults(scored) => {
+                for m in scored {
+                    // Wire boundary: convert ScoredRecord → proto SearchVectorRecord
+                    let ts = if m.record.created_at_ns != 0 {
+                        Some(m.record.created_at_ns / 1_000_000)
+                    } else {
+                        None
+                    };
+                    let vector = m
+                        .record
+                        .embeddings
+                        .first()
+                        .map(|e| e.values.clone())
+                        .unwrap_or_default();
                     search_records.push(SearchVectorRecord {
-                        id: m.id,
+                        id: m.record.oid,
                         score: m.score as f64,
-                        vector: vec![], // Don't return vectors by default to save bandwidth
+                        vector,
                         metadata: std::collections::HashMap::new(),
                         version: None,
                         similarity: Some(m.score),
-                        timestamp: None,
+                        timestamp: ts,
                         source: None,
                         expanded_context: vec![],
                         semantic_similarity: None,
@@ -666,7 +678,7 @@ impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
             QueryResultData::Rows(rows) => rows,
             QueryResultData::VectorResults(matches) => matches
                 .into_iter()
-                .map(|m| serde_json::json!({"id": m.id, "score": m.score, "metadata": m.metadata}))
+                .map(|m| serde_json::json!({"id": m.record.oid, "score": m.score, "rank": m.rank}))
                 .collect(),
             QueryResultData::Empty => vec![],
             QueryResultData::Graph(g) => g
@@ -690,8 +702,10 @@ mod tests {
     use std::sync::Mutex;
 
     use crate::proto::proximadb_v1::SearchQuery;
+    use proximadb_records::{ProximaRecord, ScoredRecord};
+
     use crate::query::facade::{
-        FacadeConfig, QueryContent, QueryContext, QueryStrategy, QueryType, VectorMatch,
+        FacadeConfig, QueryContent, QueryContext, QueryStrategy, QueryType,
     };
     use async_trait::async_trait;
 
@@ -726,15 +740,21 @@ mod tests {
         ) -> Result<QueryResult> {
             Ok(QueryResult {
                 data: QueryResultData::VectorResults(vec![
-                    VectorMatch {
-                        id: "vec1".to_string(),
+                    ScoredRecord {
+                        record: ProximaRecord {
+                            oid: "vec1".to_string(),
+                            ..Default::default()
+                        },
                         score: 0.95,
-                        metadata: None,
+                        rank: 1,
                     },
-                    VectorMatch {
-                        id: "vec2".to_string(),
+                    ScoredRecord {
+                        record: ProximaRecord {
+                            oid: "vec2".to_string(),
+                            ..Default::default()
+                        },
                         score: 0.87,
-                        metadata: None,
+                        rank: 2,
                     },
                 ]),
                 metrics: None,

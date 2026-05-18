@@ -837,10 +837,11 @@ impl ArrowProtoCodec {
         ]))
     }
 
-    /// Convert SearchVectorRecords to Arrow RecordBatch (for search results).
+    /// Convert protocol search results to an Arrow RecordBatch.
     ///
-    /// Eliminates the intermediate VectorRecord conversion that previously existed
-    /// in the Arrow Flight search handler.
+    /// Search still receives a v1 protocol result shape at this edge, but the
+    /// Arrow handler must not rehydrate the legacy vector-only envelope as an
+    /// internal representation.
     pub fn search_results_to_batch(
         results: &[crate::proto::proximadb_v1::SearchVectorRecord],
         dimension: usize,

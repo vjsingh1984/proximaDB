@@ -922,14 +922,9 @@ impl SharedServices {
 
                 // Insert each vector into the VectorOperationsService memtable
                 for vector_record in batch.vector_records.iter() {
-                    let vector_record_v1 =
-                        proximadb_records::conversions::proxima_record_to_vector(vector_record);
                     match self
                         .vector_operations_service
-                        .insert_vectors_direct(
-                            collection_id,
-                            Arc::new(vec![vector_record_v1.into()]),
-                        )
+                        .insert_vectors_direct(collection_id, Arc::new(vec![vector_record.clone()]))
                         .await
                     {
                         Ok(_) => {

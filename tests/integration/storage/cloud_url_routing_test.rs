@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::{debug, error, info, warn};
 
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::BatchId;
 use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};

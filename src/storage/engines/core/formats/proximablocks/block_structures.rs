@@ -110,7 +110,8 @@ use std::collections::HashMap;
 use tracing::{debug, info, trace, warn};
 
 use crate::core::bloom::SstableBloomFilter;
-use crate::core::{VectorRecord, compression::CompressionAlgorithm};
+use crate::core::compression::CompressionAlgorithm;
+use crate::proto::proximadb_v1::VectorRecord;
 
 // ProximaCodec system for encoding/decoding
 use super::engine_profile::EngineProfile;

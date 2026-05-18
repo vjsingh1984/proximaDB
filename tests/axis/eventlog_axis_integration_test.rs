@@ -15,7 +15,7 @@ use tokio::time::{sleep, timeout};
 use tracing::{debug, info};
 
 use proximadb::core::config::{ProximaConfig, CompactionConfig};
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::index::axis::{AxisManager, AxisConfig};
 use proximadb::index::axis::eventlog::{EventLogService, EventType, StorageEngineType};
 use proximadb::index::axis::eventlog_consumer::{start_axis_consumer, ConsumerConfig};

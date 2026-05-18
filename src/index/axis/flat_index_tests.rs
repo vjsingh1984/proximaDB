@@ -21,7 +21,10 @@ mod tests {
 
     #[allow(dead_code)]
     fn create_test_vector(id: &str, values: Vec<f32>) -> TestVector {
-        TestVector { id: id.to_string(), vector: values }
+        TestVector {
+            id: id.to_string(),
+            vector: values,
+        }
     }
 
     fn calculate_distance(v1: &[f32], v2: &[f32], metric: DistanceMetric) -> f32 {

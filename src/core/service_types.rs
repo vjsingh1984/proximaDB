@@ -1,7 +1,7 @@
 //! Service Types Module - Core Types for Vector Operations Service
 //!
 //! This module defines all the essential types for vector operations, including
-//! VectorRecord (service-level, not proto), search requests/responses, collection operations,
+//! collection operations, search requests/responses, service metrics,
 //! and metrics. These types form the core API for the vector operations service.
 
 use crate::core::search::OptimizedSearchRecord;

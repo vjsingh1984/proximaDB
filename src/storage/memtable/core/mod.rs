@@ -128,6 +128,7 @@ impl Default for MemtableConfig {
 }
 
 // Re-export common types for convenience (these may not exist yet)
-// pub use crate::core::{VectorId, VectorRecord};
+// VectorRecord is intentionally not re-exported from core; legacy v1 wire users
+// must import crate::proto::proximadb_v1::VectorRecord explicitly.
 // pub use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 // pub use crate::storage::engines::sst::LsmEntry;

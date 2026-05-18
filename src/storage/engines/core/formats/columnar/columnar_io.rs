@@ -35,11 +35,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::constants::{
     DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
 };
 use crate::storage::scan_strategy::{ScanIterator, ScanStrategy};
+use proximadb_records::ProximaRecord;
 
 /// Unified columnar I/O configuration
 #[derive(Debug, Clone)]
@@ -495,7 +495,7 @@ impl UnifiedColumnarWriter {
     /// Write records using appropriate format
     pub async fn write_records(
         &mut self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         output_path: &str,
         use_ipc_for_temp: bool,
     ) -> Result<WriteResult> {
@@ -511,7 +511,7 @@ impl UnifiedColumnarWriter {
     /// Write Parquet with all optimizations
     async fn write_parquet(
         &mut self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         output_path: &str,
     ) -> Result<WriteResult> {
         let schema = self.create_parquet_schema(&records)?;
@@ -551,7 +551,7 @@ impl UnifiedColumnarWriter {
     /// Write Arrow IPC for maximum speed
     async fn write_ipc(
         &mut self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         output_path: &str,
     ) -> Result<WriteResult> {
         let schema = self.create_arrow_schema(&records)?;
@@ -638,7 +638,7 @@ impl UnifiedColumnarWriter {
     }
 
     /// Create schema for Parquet
-    fn create_parquet_schema(&self, _records: &[VectorRecord]) -> Result<Schema> {
+    fn create_parquet_schema(&self, _records: &[ProximaRecord]) -> Result<Schema> {
         // Deferred: Implement schema creation based on records
         Ok(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -648,23 +648,26 @@ impl UnifiedColumnarWriter {
     }
 
     /// Create schema for Arrow
-    fn create_arrow_schema(&self, records: &[VectorRecord]) -> Result<Schema> {
+    fn create_arrow_schema(&self, records: &[ProximaRecord]) -> Result<Schema> {
         // Similar to Parquet but potentially with different types
         self.create_parquet_schema(records)
     }
 
     /// Convert records to Arrow RecordBatch
-    fn records_to_batch(&self, _records: &[VectorRecord]) -> Result<RecordBatch> {
+    fn records_to_batch(&self, _records: &[ProximaRecord]) -> Result<RecordBatch> {
         // Deferred: Implement conversion
         Err(anyhow::anyhow!(
             "Record to batch conversion not implemented"
         ))
     }
 
-    fn calculate_compression_ratio(&self, records: &[VectorRecord], compressed_size: usize) -> f64 {
+    fn calculate_compression_ratio(&self, records: &[ProximaRecord], compressed_size: usize) -> f64 {
         let uncompressed_size: usize = records
             .iter()
-            .map(|r| r.vector.len() * 4 + r.id.len() + 100) // Rough estimate
+            .map(|r| {
+                let vec_bytes = r.embeddings.first().map(|e| e.values.len() * 4).unwrap_or(0);
+                vec_bytes + r.oid.len() + 100
+            })
             .sum();
         uncompressed_size as f64 / compressed_size as f64
     }
@@ -684,7 +687,7 @@ impl IpcStreamIterator {
 
 #[async_trait::async_trait]
 impl ScanIterator for IpcStreamIterator {
-    async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
+    async fn next_batch(&mut self) -> Result<Option<Vec<ProximaRecord>>> {
         // Deferred: Implement IPC to VectorRecord conversion
         Ok(None)
     }
@@ -716,7 +719,7 @@ impl IpcFileIterator {
 
 #[async_trait::async_trait]
 impl ScanIterator for IpcFileIterator {
-    async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
+    async fn next_batch(&mut self) -> Result<Option<Vec<ProximaRecord>>> {
         // Deferred: Implement
         Ok(None)
     }
@@ -758,7 +761,7 @@ impl ParquetFilteredIterator {
 
 #[async_trait::async_trait]
 impl ScanIterator for ParquetFilteredIterator {
-    async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
+    async fn next_batch(&mut self) -> Result<Option<Vec<ProximaRecord>>> {
         // Deferred: Implement filtered Parquet reading
         Ok(None)
     }
@@ -787,7 +790,7 @@ impl ParquetStandardIterator {
 
 #[async_trait::async_trait]
 impl ScanIterator for ParquetStandardIterator {
-    async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
+    async fn next_batch(&mut self) -> Result<Option<Vec<ProximaRecord>>> {
         // Deferred: Implement standard Parquet reading
         Ok(None)
     }

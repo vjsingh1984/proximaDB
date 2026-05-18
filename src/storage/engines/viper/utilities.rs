@@ -27,7 +27,8 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::Instant;
 use tracing::info;
 
-use crate::core::{CompressionAlgorithm, String, VectorRecord};
+use crate::core::{CompressionAlgorithm, String};
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// VIPER Utilities coordinator - Central management for all utility services

@@ -2,7 +2,7 @@ use anyhow::Result;
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::bloom::BloomFilterConfig;
 use proximadb::core::search::SearchParams;
-use proximadb::core::{MetadataItem, VectorRecord};
+use proximadb::proto::proximadb_v1::{MetadataItem, VectorRecord};
 use proximadb::storage::engines::sst::SstEntry;
 use proximadb::storage::engines::sst::readers::unified_sstable_reader::{
     CollectionContext, ReaderConfig, UnifiedSstableReader,

@@ -26,8 +26,8 @@ use arrow_array::{Float32Array, RecordBatch, StringArray};
 #[cfg(feature = "datafusion-integration")]
 use arrow_schema::{DataType, Field, Schema};
 
-use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::SqlValue;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::formats::{
     CacheStatus, FileSplit, ScalarPredicate, ScalarValue, SpatialBounds, SplitLocality,
     SplitPlanner, SplitType, StorageTier,

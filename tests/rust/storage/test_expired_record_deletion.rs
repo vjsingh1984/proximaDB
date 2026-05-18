@@ -4,7 +4,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::engines::sst::compaction::{CompactionManager, CompactionTask, CompactionPriority};
 use proximadb::storage::engines::sst::mod::SstEntry;
 use proximadb::core::SstConfig;

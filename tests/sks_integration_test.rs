@@ -11,7 +11,6 @@
 mod sks_integration_tests {
     use anyhow::Result;
     use chrono::Utc;
-    use proximadb::core::VectorRecord;
     use proximadb::proto::proximadb_v1::{
         EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
     };
@@ -22,6 +21,7 @@ mod sks_integration_tests {
     use proximadb::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
     };
+    use proximadb_records::ProximaRecord;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -102,7 +102,7 @@ mod sks_integration_tests {
                 _collection_id: &str,
                 _base_path: &str,
                 _vector_id: &str,
-            ) -> Result<Option<VectorRecord>> {
+            ) -> Result<Option<ProximaRecord>> {
                 Ok(None)
             }
 

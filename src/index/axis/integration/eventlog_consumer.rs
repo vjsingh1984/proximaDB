@@ -746,11 +746,15 @@ impl AxisEventLogConsumer {
                                         .map(|(k, val)| {
                                             use proximadb_data_model::ProximaValue;
                                             let pv = match val {
-                                                serde_json::Value::String(s) => ProximaValue::String(s),
+                                                serde_json::Value::String(s) => {
+                                                    ProximaValue::String(s)
+                                                }
                                                 serde_json::Value::Number(n) => {
                                                     ProximaValue::Float64(n.as_f64().unwrap_or(0.0))
                                                 }
-                                                serde_json::Value::Bool(b) => ProximaValue::Boolean(b),
+                                                serde_json::Value::Bool(b) => {
+                                                    ProximaValue::Boolean(b)
+                                                }
                                                 _ => ProximaValue::Null,
                                             };
                                             (k, proximadb_records::ProximaTreeNode::Value(pv))

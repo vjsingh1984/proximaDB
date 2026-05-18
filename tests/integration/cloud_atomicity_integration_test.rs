@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::transaction_coordinatority::AtomicityManager;
 use proximadb::storage::memtable::specialized::write_ahead_log_behavior::WriteBufferVectorBatch;
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};

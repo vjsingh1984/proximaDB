@@ -7,9 +7,12 @@ use crate::compute::quantization::selection::QuantizationSelector;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
-use crate::compute::quantization::quantization_engine::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
+use crate::compute::quantization::quantization_engine::{
+    UnifiedQuantizationEngine, UnifiedQuantizationLevel,
+};
+use crate::core::Collection;
+use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_runtime_common::pool::VectorMemoryPool;
-use crate::core::{Collection, VectorRecord};
 
 /// Pairs original records with their quantized representations
 /// This is the standard format for all engines

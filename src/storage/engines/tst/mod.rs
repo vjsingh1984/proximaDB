@@ -1534,9 +1534,7 @@ struct TimeSeriesScanIterator {
 
 #[async_trait]
 impl ScanIterator for TimeSeriesScanIterator {
-    async fn next_batch(
-        &mut self,
-    ) -> Result<Option<Vec<crate::proto::proximadb_v1::VectorRecord>>> {
+    async fn next_batch(&mut self) -> Result<Option<Vec<proximadb_records::ProximaRecord>>> {
         let batch_size = 100; // Default batch size
         let mut results = Vec::new();
 
@@ -1563,7 +1561,7 @@ impl ScanIterator for TimeSeriesScanIterator {
                 while self.current_record_index < records.len() && results.len() < batch_size {
                     let record = &records[self.current_record_index];
                     if self.matches_strategy(record) {
-                        results.push(record.clone());
+                        results.push(proximadb_records::ProximaRecord::from(record.clone()));
                     }
                     self.current_record_index += 1;
                 }

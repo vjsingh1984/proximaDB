@@ -29,9 +29,9 @@
 pub mod adapter;
 pub mod strategies;
 
-use proximadb_data_model::ProximaValue;
-
 pub use adapter::{ExplainComponent, ExplainResult, QueryFacadeAdapter};
+use proximadb_data_model::ProximaValue;
+pub use proximadb_records::ScoredRecord;
 pub use strategies::{
     ColumnarStrategy, ColumnarStrategyConfig, DocumentStrategy, GraphStrategy,
     ObservabilityStrategy, SqlStrategy, VectorSearchStrategy,
@@ -249,22 +249,14 @@ pub struct QueryResult {
 /// Query result data variants
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueryResultData {
-    /// Vector search results
-    VectorResults(Vec<VectorMatch>),
+    /// Vector search results (spec §1490 — canonical (ProximaRecord, score, rank) triples)
+    VectorResults(Vec<ScoredRecord>),
     /// Tabular results (SQL, document queries)
     Rows(Vec<serde_json::Value>),
     /// Graph results (nodes, edges, paths)
     Graph(GraphQueryResult),
     /// Empty result
     Empty,
-}
-
-/// Vector similarity match
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorMatch {
-    pub id: String,
-    pub score: f32,
-    pub metadata: Option<serde_json::Value>,
 }
 
 /// Graph query result
@@ -538,10 +530,13 @@ mod tests {
             _ctx: &QueryContext,
         ) -> Result<QueryResult> {
             Ok(QueryResult {
-                data: QueryResultData::VectorResults(vec![VectorMatch {
-                    id: "test_1".to_string(),
+                data: QueryResultData::VectorResults(vec![ScoredRecord {
+                    record: proximadb_records::ProximaRecord {
+                        oid: "test_1".to_string(),
+                        ..Default::default()
+                    },
                     score: 0.95,
-                    metadata: None,
+                    rank: 1,
                 }]),
                 metrics: Some(ExecutionMetrics {
                     execution_path: "unified".to_string(),

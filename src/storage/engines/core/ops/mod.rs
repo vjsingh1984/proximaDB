@@ -213,7 +213,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::proto::proximadb_v1::VectorRecord;
 
 // Temporary placeholder types until modules are created
 #[derive(Debug, Clone)]

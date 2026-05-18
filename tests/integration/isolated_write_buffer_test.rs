@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 use std::sync::Arc;
 
 use common::integration_test_helpers::{UnifiedTestEnvironment as IsolatedTestEnvironment, setup_hardware_capabilities};
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::proto::proximadb_v1::MetadataItem;
 use proximadb::storage::persistence::write_ahead_log::WriteBufferConfig;
 use proximadb::storage::persistence::write_ahead_log::optimized_write_ahead_log_writer::OptimizedWriteBufferWriter;

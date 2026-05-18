@@ -4,7 +4,7 @@
 
 use chrono::Utc;
 use std::sync::Once;
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::index::axis::{
     AxisConfig, AxisManager, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
 };

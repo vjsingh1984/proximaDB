@@ -2213,9 +2213,9 @@ fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde
             .iter()
             .map(|m| {
                 serde_json::json!({
-                    "id": m.id,
+                    "id": m.record.oid,
                     "score": m.score,
-                    "metadata": m.metadata
+                    "metadata": &m.record.props
                 })
             })
             .collect(),

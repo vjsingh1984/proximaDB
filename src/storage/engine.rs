@@ -1,4 +1,4 @@
-use crate::core::{StorageConfig, String, VectorId, VectorRecord};
+use crate::core::{StorageConfig, String, VectorId};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
@@ -6,6 +6,7 @@ use crate::storage::{
     persistence::disk_manager::DiskManager,
     traits::InternalCollectionProvider,
 };
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use proximadb_storage_common::storage_path::StoragePath;
 // Import CollectionMetadata from the appropriate location
 use crate::storage::engines::core::formats::proximablocks::header_metadata::CollectionMetadata;
@@ -483,13 +484,16 @@ impl StorageEngine {
     pub async fn write(
         &self,
         collection_id: &str,
-        record: &VectorRecord,
+        record: &ProximaRecord,
     ) -> crate::storage::Result<()> {
-        // Direct field access - no function call overhead, no match expressions
-        let vector_ref = &record.vector[..];
-        let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<VectorRecord>();
+        let vector_ref = record
+            .embeddings
+            .first()
+            .map(|e| e.values.as_slice())
+            .unwrap_or(&[]);
+        let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<ProximaRecord>();
         let start = std::time::Instant::now();
-        let vector_id = &record.id;
+        let vector_id = &record.oid;
 
         tracing::debug!(
             "🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}",
@@ -499,17 +503,13 @@ impl StorageEngine {
             vector_size
         );
 
-        // Note: SST storage is now a singleton - no per-collection initialization needed
-
-        // Write through WAL → memtable → flush pipeline
         tracing::debug!(
             "💾 Writing vector {} to WAL for collection {}",
             vector_id,
             collection_id
         );
 
-        // Convert VectorRecord → ProximaRecord at the storage boundary before WAL.
-        let vectors = Arc::new(vec![proximadb_records::ProximaRecord::from(record)]);
+        let vectors = Arc::new(vec![record.clone()]);
 
         // Write to WAL (which handles memtable insertion)
         self.write_ahead_log_manager
@@ -1064,14 +1064,13 @@ impl StorageEngine {
     pub async fn batch_write(
         &self,
         collection_id: &str,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> crate::storage::Result<Vec<VectorId>> {
         tracing::debug!("🚀 Starting batch_write for {} records", records.len());
         let mut inserted_ids = Vec::with_capacity(records.len());
 
-        // Use existing write method for each record to ensure consistency
         for (index, record) in records.iter().enumerate() {
-            let record_id = record.id.clone();
+            let record_id = record.oid.clone();
             tracing::debug!(
                 "📝 Processing record {}/{}: vector_id={}, collection_id={}",
                 index + 1,
@@ -1181,20 +1180,15 @@ impl StorageEngine {
     pub async fn all_vectors(
         &self,
         collection_id: &str,
-    ) -> crate::storage::Result<Vec<VectorRecord>> {
-        let mut vectors = Vec::new();
+    ) -> crate::storage::Result<Vec<ProximaRecord>> {
+        let mut vectors: Vec<ProximaRecord> = Vec::new();
 
-        // LSM is now pure SSTable storage - no vectors to get from memtable
-        // All LSM data is in SSTables which should be accessed via the search API
-        // Use search API instead
         tracing::debug!(
-            "LSM is pure SSTable storage - vectors for collection {} must be accessed via search API",
+            "Scanning vectors for collection {} via SST storage",
             collection_id
         );
 
-        // Get vectors from SST storage (if available)
         if let Some(sst_storage) = self.sst_storages.get(collection_id) {
-            // Implement SST iteration for get_all_vectors
             match sst_storage
                 .value()
                 .scan_all_vectors(collection_id, 0, None)
@@ -1206,24 +1200,41 @@ impl StorageEngine {
                         sst_vectors.len(),
                         collection_id
                     );
-                    // Convert service_types::VectorRecord to proximadb_v1::VectorRecord
-                    let converted_vectors: Vec<VectorRecord> = sst_vectors
+                    let converted: Vec<ProximaRecord> = sst_vectors
                         .into_iter()
                         .map(|v| {
-                            // Manual conversion since Into trait is not implemented
-                            VectorRecord {
-                                id: v.id,
-                                vector: v.vector,
-                                metadata: HashMap::new(), // Convert metadata later if needed
-                                timestamp: v.timestamp,
-                                updated_at: v.updated_at,
-                                expires_at: v.expires_at,
-                                version: v.version,
-                                source: None,
+                            let dim = v.vector.len() as u32;
+                            let now_ns = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_nanos() as i64;
+                            ProximaRecord {
+                                oid: v.id,
+                                created_at_ns: v
+                                    .timestamp
+                                    .map(|ms| ms * 1_000_000)
+                                    .unwrap_or(now_ns),
+                                updated_at_ns: v
+                                    .updated_at
+                                    .map(|ms| ms * 1_000_000)
+                                    .unwrap_or(now_ns),
+                                valid_to_ns: v.expires_at.map(|ms| ms * 1_000_000),
+                                record_version: v.version.map(|v| v as u64).unwrap_or(0),
+                                embeddings: if !v.vector.is_empty() {
+                                    vec![EmbeddingCell {
+                                        model_id: "default".to_string(),
+                                        modality: "vector".to_string(),
+                                        values: v.vector,
+                                        dim,
+                                    }]
+                                } else {
+                                    vec![]
+                                },
+                                ..ProximaRecord::default()
                             }
                         })
                         .collect();
-                    vectors.extend(converted_vectors);
+                    vectors.extend(converted);
                 }
                 Err(e) => {
                     warn!(
@@ -1232,14 +1243,10 @@ impl StorageEngine {
                     );
                 }
             }
-            debug!(
-                "SST storage scan completed for collection {}",
-                collection_id
-            );
         }
 
         tracing::info!(
-            "get_all_vectors retrieved {} total vectors for collection {}",
+            "all_vectors retrieved {} records for collection {}",
             vectors.len(),
             collection_id
         );

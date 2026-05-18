@@ -536,16 +536,13 @@ fn transform_query_result_to_response(
             .take(limit)
             .map(|m| {
                 let metadata = m
-                    .metadata
-                    .and_then(|v| v.as_object().cloned())
-                    .map(|obj| {
-                        obj.into_iter()
-                            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
-                            .collect()
-                    })
-                    .unwrap_or_default();
+                    .record
+                    .props
+                    .iter()
+                    .map(|(k, v)| (k.clone(), format!("{v:?}")))
+                    .collect();
                 UnifiedRecordResponse {
-                    id: m.id,
+                    id: m.record.oid,
                     source_model: "vector".to_string(),
                     data: serde_json::json!({ "score": m.score }),
                     score: Some(m.score as f64),
@@ -1318,16 +1315,13 @@ async fn execute_federated_via_adapter(
                 .map(|m| {
                     // Convert metadata from Value to HashMap<String, String>
                     let metadata = m
-                        .metadata
-                        .and_then(|v| v.as_object().cloned())
-                        .map(|obj| {
-                            obj.into_iter()
-                                .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                        .record
+                        .props
+                        .iter()
+                        .map(|(k, v)| (k.clone(), format!("{v:?}")))
+                        .collect();
                     FederatedRecordResponse {
-                        id: m.id,
+                        id: m.record.oid,
                         source_model: "vector".to_string(),
                         data: serde_json::json!({ "score": m.score }),
                         score: Some(m.score as f64),

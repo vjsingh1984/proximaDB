@@ -16,12 +16,12 @@
 
 //! Integration tests for atomic write patterns with TransactionCoordinator
 
-use crate::core::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemConfig;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType,
 };
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio;
@@ -194,26 +194,24 @@ async fn test_atomic_wal_to_storage_flow() {
 
     // Write WAL batch data
     let vectors = vec![
-        VectorRecord {
-            id: "vec1".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        ProximaRecord {
+            oid: "vec1".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![1.0, 2.0, 3.0],
+                dim: 3,
+            }],
             ..Default::default()
         },
-        VectorRecord {
-            id: "vec2".to_string(),
-            vector: vec![4.0, 5.0, 6.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        ProximaRecord {
+            oid: "vec2".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![4.0, 5.0, 6.0],
+                dim: 3,
+            }],
             ..Default::default()
         },
     ];

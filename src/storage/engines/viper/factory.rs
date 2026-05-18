@@ -24,7 +24,8 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 // Types come from crate::core (avro_unified) and specific modules
-use crate::core::{String, VectorRecord};
+use crate::core::String;
+use crate::proto::proximadb_v1::VectorRecord;
 // Index types imported as needed in implementations
 
 /// VIPER Factory - Main entry point for creating VIPER components

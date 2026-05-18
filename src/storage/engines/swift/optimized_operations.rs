@@ -8,10 +8,10 @@ use tracing::{debug, info};
 use crate::compute::distance_computation::{DistanceMetric, DistanceMode, UnifiedDistanceCompute};
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::{
-    VectorRecord,
     hardware_capabilities::{HardwareBackend, HardwareCapabilities},
     memory::pool::VectorMemoryPool,
 };
+use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::search::search_modes::{
     CandidateRecord, CandidateState, SearchCandidate,
 };

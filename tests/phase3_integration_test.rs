@@ -42,18 +42,22 @@ use tempfile::TempDir;
 
 mod streaming_flush_tests {
     use super::*;
-    use proximadb::proto::proximadb_v1::VectorRecord;
     use proximadb::streaming::{
         BackpressureLevel, FlushRetryConfig, SessionConfig, StreamConfig, StreamCoordinator,
     };
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     /// Helper to create test vectors
-    fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<VectorRecord> {
+    fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<ProximaRecord> {
         (0..count)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", start_id + i),
-                vector: vec![0.1 * (i as f32); dimension],
-                metadata: Default::default(),
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", start_id + i),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    values: vec![0.1 * (i as f32); dimension],
+                    dim: dimension as u32,
+                    ..Default::default()
+                }],
                 ..Default::default()
             })
             .collect()
@@ -1715,18 +1719,22 @@ mod cross_workstream_tests {
     use super::*;
     use proximadb::graph::Node;
     use proximadb::graph::service::GraphOperationsService;
-    use proximadb::proto::proximadb_v1::VectorRecord;
     use proximadb::proto::proximadb_v1::{
         CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
     };
     use proximadb::streaming::{SessionConfig, StreamConfig, StreamCoordinator};
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
-    fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
+    fn create_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
         (0..count)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![0.1 * (i as f32); dimension],
-                metadata: Default::default(),
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    values: vec![0.1 * (i as f32); dimension],
+                    dim: dimension as u32,
+                    ..Default::default()
+                }],
                 ..Default::default()
             })
             .collect()
@@ -1879,18 +1887,22 @@ mod stress_tests {
     use super::*;
     use proximadb::graph::Node;
     use proximadb::graph::service::GraphOperationsService;
-    use proximadb::proto::proximadb_v1::VectorRecord;
     use proximadb::proto::proximadb_v1::{
         CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
     };
     use proximadb::streaming::{SessionConfig, StreamConfig, StreamCoordinator};
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
-    fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
+    fn create_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
         (0..count)
-            .map(|i| VectorRecord {
-                id: format!("stress_vec_{}", i),
-                vector: vec![0.1; dimension],
-                metadata: Default::default(),
+            .map(|i| ProximaRecord {
+                oid: format!("stress_vec_{}", i),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    values: vec![0.1; dimension],
+                    dim: dimension as u32,
+                    ..Default::default()
+                }],
                 ..Default::default()
             })
             .collect()
