@@ -2144,7 +2144,10 @@ impl UnifiedStorageEngine for HelixEngine {
                         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
                         if let Some(vector_cache) = orchestrator.get_vector_cache() {
                             let _ = vector_cache
-                                .put(cache_key, proximadb_records::ProximaRecord::from(vector.clone()))
+                                .put(
+                                    cache_key,
+                                    proximadb_records::ProximaRecord::from(vector.clone()),
+                                )
                                 .await;
                         }
                     }

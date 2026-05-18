@@ -169,7 +169,11 @@ impl VectorSearchEngine {
     ) -> Result<()> {
         if let Some(index) = &self.axis_index {
             for (id, record) in vectors {
-                let values = record.embeddings.first().map(|e| e.values.clone()).unwrap_or_default();
+                let values = record
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default();
                 index.add(id, values).await?;
             }
             Ok(())

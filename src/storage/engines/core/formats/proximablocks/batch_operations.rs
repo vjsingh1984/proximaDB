@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use super::block_structures::ProximaDataBlock;
 use super::index_structures::RowBasedIdIndex;
-use proximadb_records::ProximaRecord;
 use proximadb_kernel::uuid::Uuid;
+use proximadb_records::ProximaRecord;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 // Quantization now handled by unified compute module
 

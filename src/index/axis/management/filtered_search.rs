@@ -88,13 +88,13 @@ use crate::core::search::filter_contract::{
 };
 use crate::core::search::hybrid::{HybridExecutionStrategy, HybridQuery};
 use crate::index::axis::management::manager::AxisManager;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Extended filtered search result with candidate set information
 #[derive(Debug, Clone)]
 pub struct FilteredSearchResult {
     /// Final search results
-    pub results: Vec<VectorRecord>,
+    pub results: Vec<ProximaRecord>,
 
     /// Number of candidates processed
     pub candidates_processed: usize,
@@ -294,7 +294,7 @@ impl AxisManager {
         query_vector: &[f32],
         top_k: usize,
         filter: Option<&dyn FilterContract>,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         info!(
             "Executing filtered HNSW search for {} with top_k={}",
             collection_id, top_k
@@ -334,7 +334,7 @@ impl AxisManager {
         query_vector: &[f32],
         top_k: usize,
         filter: Option<&dyn FilterContract>,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         info!(
             "Executing filtered IVF search for {} with top_k={}",
             collection_id, top_k
@@ -373,7 +373,7 @@ impl AxisManager {
         collection_id: &str,
         _query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         trace!(
             "Executing unfiltered HNSW search for {} with top_k={}",
             collection_id, top_k
@@ -391,7 +391,7 @@ impl AxisManager {
         collection_id: &str,
         _query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         trace!(
             "Executing unfiltered IVF search for {} with top_k={}",
             collection_id, top_k

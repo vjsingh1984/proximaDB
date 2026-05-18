@@ -1118,7 +1118,9 @@ impl UnifiedIvfIndex {
                 };
 
                 let engine = AxisClusteringEngine::new(config);
-                let model = engine.train_model(&self.collection_id, training_vectors.clone()).await?;
+                let model = engine
+                    .train_model(&self.collection_id, training_vectors.clone())
+                    .await?;
                 Arc::new(model.centroids)
             }
         };

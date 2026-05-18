@@ -33,8 +33,7 @@ use tracing::info;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb_v1::VectorRecord;
-// VectorRecord eliminated - using ZeroOverheadVector for 75-96% memory savings
+// ZeroOverheadVector used for 75-96% memory savings vs VectorRecord
 use crate::index::axis::eventlog::{ExtractionMode, IndexEvent};
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};
 use crate::index::axis::types::IndexAlgorithm;
@@ -942,7 +941,9 @@ impl AxisHnswIndex {
         &self,
         query: &[f32],
         top_k: usize,
-        _filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        _filter: Option<
+            &(dyn for<'a> Fn(&'a proximadb_records::ProximaRecord) -> bool + Send + Sync),
+        >,
     ) -> Result<Vec<(String, f32)>> {
         let start = std::time::Instant::now();
 
@@ -1195,7 +1196,9 @@ impl AxisHnswIndex {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        filter: Option<
+            &(dyn for<'a> Fn(&'a proximadb_records::ProximaRecord) -> bool + Send + Sync),
+        >,
     ) -> Result<Vec<(String, f32)>> {
         if !self.has_quantized_storage() {
             // No quantized vectors available, use standard search

@@ -17,10 +17,10 @@ use crate::audit::logger::AuditLogger;
 use crate::core::search::FilterExpression;
 use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
 use crate::security::encryption::{EncryptedField, FieldEncryption};
-use proximadb_data_model::ProximaValue;
-use proximadb_records::{ProximaRecord, ProximaTreeNode};
 use crate::security::rbac_service::UnifiedUserContext;
 use crate::security::rls::{CollectionRLS, Operation as RLSOperation, RLSFilterResult};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTreeNode};
 use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
 /// Helper to extract string from a ProximaTreeNode value

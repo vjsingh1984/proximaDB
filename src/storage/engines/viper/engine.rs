@@ -1351,7 +1351,10 @@ impl ViperEngine {
             && let Some(vector_cache) = orchestrator.get_vector_cache()
         {
             let _ = vector_cache
-                .put(cache_key, proximadb_records::ProximaRecord::from(record.clone()))
+                .put(
+                    cache_key,
+                    proximadb_records::ProximaRecord::from(record.clone()),
+                )
                 .await;
         }
 

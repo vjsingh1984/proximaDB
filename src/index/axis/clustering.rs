@@ -261,6 +261,7 @@ impl AxisClusteringEngine {
             collection_id,
             vector_data.len()
         );
+        let vector_count = vector_data.len() as u64;
 
         // Check minimum vectors requirement
         if vector_data.len() < self.config.min_vectors_for_clustering {
@@ -285,7 +286,7 @@ impl AxisClusteringEngine {
         {
             let mut stats = self.stats.write().await;
             stats.total_clustering_ops += 1;
-            stats.total_vectors_clustered += vectors.len() as u64;
+            stats.total_vectors_clustered += vector_count;
             stats.avg_clustering_time_ms = (stats.avg_clustering_time_ms
                 * (stats.total_clustering_ops - 1) as f64
                 + elapsed.as_millis() as f64)
@@ -381,11 +382,7 @@ impl AxisClusteringEngine {
     }
 
     /// Add vector for incremental update
-    pub async fn add_pending_vector(
-        &self,
-        collection_id: &str,
-        vector: Vec<f32>,
-    ) -> Result<()> {
+    pub async fn add_pending_vector(&self, collection_id: &str, vector: Vec<f32>) -> Result<()> {
         let mut pending = self.pending_vectors.write().await;
         pending
             .entry(collection_id.to_string())
@@ -1027,11 +1024,7 @@ mod tests {
         let engine = AxisClusteringEngine::new(config);
 
         // Create test vectors
-        let vectors = vec![
-            vec![1.0_f32, 0.0],
-            vec![0.0, 1.0],
-            vec![-1.0, 0.0],
-        ];
+        let vectors = vec![vec![1.0_f32, 0.0], vec![0.0, 1.0], vec![-1.0, 0.0]];
 
         let model = engine.train_model("test", vectors).await.unwrap();
         assert_eq!(model.centroids.len(), 3);

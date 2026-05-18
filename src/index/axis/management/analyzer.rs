@@ -17,7 +17,6 @@ use crate::index::axis::{
     AccessFrequencyMetrics, CollectionCharacteristics, MetadataComplexity, PerformanceMetrics,
     QueryDistribution, QueryPatternAnalysis, QueryPatternType, TemporalPattern,
 };
-use crate::proto::proximadb_v1::VectorRecord;
 
 /// Analyzer for collection characteristics and behavior patterns
 pub struct CollectionAnalyzer {
@@ -274,7 +273,7 @@ impl CollectionAnalyzer {
     pub async fn analyze_vector_sample(
         &self,
         collection_id: &str,
-        vectors: &[VectorRecord],
+        vectors: &[Vec<f32>],
     ) -> Result<()> {
         self.vector_analyzer
             .analyze_sample(collection_id, vectors)
@@ -517,19 +516,19 @@ impl VectorCharacteristicsAnalyzer {
     }
 
     /// Analyze a sample of vectors
-    async fn analyze_sample(&self, collection_id: &str, vectors: &[VectorRecord]) {
+    async fn analyze_sample(&self, collection_id: &str, vectors: &[Vec<f32>]) {
         if vectors.is_empty() {
             return;
         }
 
-        let dimension = vectors[0].vector.len();
+        let dimension = vectors[0].len();
         let mut total_sparsity = 0.0;
         let mut sparsity_values = Vec::new();
 
         // Calculate sparsity statistics
         for vector in vectors {
-            let zero_count = vector.vector.iter().filter(|&&x| x == 0.0).count();
-            let sparsity = zero_count as f32 / vector.vector.len() as f32;
+            let zero_count = vector.iter().filter(|&&x| x == 0.0).count();
+            let sparsity = zero_count as f32 / vector.len() as f32;
             total_sparsity += sparsity;
             sparsity_values.push(sparsity);
         }
@@ -546,7 +545,7 @@ impl VectorCharacteristicsAnalyzer {
         // Calculate dimension variance
         let mut dimension_means = vec![0.0; dimension];
         for vector in vectors {
-            for (i, &value) in vector.vector.iter().enumerate() {
+            for (i, &value) in vector.iter().enumerate() {
                 if i < dimension {
                     dimension_means[i] += value;
                 }
@@ -559,7 +558,7 @@ impl VectorCharacteristicsAnalyzer {
 
         let mut dimension_variance = vec![0.0; dimension];
         for vector in vectors {
-            for (i, &value) in vector.vector.iter().enumerate() {
+            for (i, &value) in vector.iter().enumerate() {
                 if i < dimension {
                     let diff = value - dimension_means[i];
                     dimension_variance[i] += diff * diff;

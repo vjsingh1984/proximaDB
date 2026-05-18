@@ -52,7 +52,6 @@ use crate::storage::traits::{
     StorageQueryContext, UnifiedStorageEngine,
 };
 
-
 // ---------------------------------------------------------------------------
 // TitanEngine -- thin UnifiedStorageEngine wrapper for factory registration
 // ---------------------------------------------------------------------------

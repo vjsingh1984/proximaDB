@@ -218,7 +218,6 @@ where
 pub mod utils {
     use crate::proto::proximadb_v1 as proximadb;
 
-
     /// Convert metadata items to JSON object
     pub fn metadata_to_json(
         items: &[proximadb::MetadataItem],

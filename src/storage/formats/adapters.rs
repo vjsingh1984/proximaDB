@@ -507,7 +507,9 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
 
 fn proxima_tree_node_to_json(node: &ProximaTreeNode) -> serde_json::Value {
     match node {
-        ProximaTreeNode::Value(value) => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+        ProximaTreeNode::Value(value) => {
+            serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+        }
         other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
     }
 }

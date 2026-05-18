@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use proximadb::proto::proximadb_v1::VectorRecord;
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use proximadb::streaming::kafka::{
     CommitStrategy, DeserializationFormat, DlqConfig, KafkaConsumerConfig, MessageDeserializer,
 };
@@ -38,12 +38,17 @@ use proximadb::streaming::{
 // Helper Functions
 // =============================================================================
 
-fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<VectorRecord> {
+fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<ProximaRecord> {
+    let dim = dimension as u32;
     (0..count)
-        .map(|i| VectorRecord {
-            id: format!("vec_{}", start_id + i),
-            vector: vec![0.1 * (i as f32); dimension],
-            metadata: Default::default(),
+        .map(|i| ProximaRecord {
+            oid: format!("vec_{}", start_id + i),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                values: vec![0.1 * (i as f32); dimension],
+                dim,
+            }],
             ..Default::default()
         })
         .collect()

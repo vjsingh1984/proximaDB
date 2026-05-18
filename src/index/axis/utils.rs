@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::proto::proximadb_v1::MetadataItem;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// High-performance concurrent vector storage
 /// Used by INDEX implementations to store vector data for search operations
@@ -41,8 +41,8 @@ use crate::proto::proximadb_v1::VectorRecord;
 /// caches store computed results for fast repeated access.
 #[derive(Debug)]
 pub struct IndexVectorStore {
-    /// Vector data storage: vector_id -> VectorRecord  
-    vectors: DashMap<String, Arc<VectorRecord>>,
+    /// Vector data storage: vector_id -> ProximaRecord
+    vectors: DashMap<String, Arc<ProximaRecord>>,
     /// Count of stored vectors (atomic for lock-free updates)
     count: AtomicUsize,
     /// Total dimension (for validation and memory estimation)
@@ -60,13 +60,13 @@ impl IndexVectorStore {
     }
 
     /// Insert a vector record
-    pub fn insert(&self, id: String, vector: Arc<VectorRecord>) -> Result<()> {
-        // Validate dimension
-        if vector.vector.len() != self.dimension {
+    pub fn insert(&self, id: String, vector: Arc<ProximaRecord>) -> Result<()> {
+        let vec_dim = vector.embeddings.first().map_or(0, |e| e.values.len());
+        if vec_dim != self.dimension {
             return Err(anyhow::anyhow!(
                 "Vector dimension mismatch: expected {}, got {}",
                 self.dimension,
-                vector.vector.len()
+                vec_dim
             ));
         }
 
@@ -78,12 +78,12 @@ impl IndexVectorStore {
     }
 
     /// Get a vector by ID
-    pub fn get(&self, id: &str) -> Option<Arc<VectorRecord>> {
+    pub fn get(&self, id: &str) -> Option<Arc<ProximaRecord>> {
         self.vectors.get(id).map(|entry| entry.value().clone())
     }
 
     /// Remove a vector by ID
-    pub fn remove(&self, id: &str) -> Option<Arc<VectorRecord>> {
+    pub fn remove(&self, id: &str) -> Option<Arc<ProximaRecord>> {
         if let Some((_, removed)) = self.vectors.remove(id) {
             self.count.fetch_sub(1, Ordering::Relaxed);
             Some(removed)
@@ -111,7 +111,8 @@ impl IndexVectorStore {
     pub fn memory_usage(&self) -> usize {
         let vector_data = self.len() * self.dimension * std::mem::size_of::<f32>();
         let metadata_estimate = self.len() * 200; // Rough estimate for metadata
-        let overhead = self.vectors.capacity() * std::mem::size_of::<(String, Arc<VectorRecord>)>();
+        let overhead =
+            self.vectors.capacity() * std::mem::size_of::<(String, Arc<ProximaRecord>)>();
         vector_data + metadata_estimate + overhead
     }
 
@@ -475,19 +476,19 @@ mod tests {
 
     #[test]
     fn test_concurrent_vector_store() {
-        use crate::proto::proximadb_v1::VectorRecord;
+        use proximadb_records::{EmbeddingCell, ProximaRecord};
 
         let store = IndexVectorStore::new(3);
 
-        let vector = Arc::new(VectorRecord {
-            id: "test1".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        let vector = Arc::new(ProximaRecord {
+            oid: "test1".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![1.0, 2.0, 3.0],
+                dim: 3,
+            }],
+            ..Default::default()
         });
 
         // Test insert
