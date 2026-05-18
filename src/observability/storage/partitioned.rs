@@ -11,6 +11,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
+use proximadb_data_model::ProximaValue;
+use proximadb_observability::log_entry_to_proxima_record;
+use proximadb_records::ProximaTreeNode;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -22,6 +25,8 @@ pub struct PartitionedStorage {
     /// Base path for storage
     #[allow(dead_code)]
     base_path: String,
+    /// Observability namespace represented by this partition set.
+    namespace: String,
     /// Partitions by timestamp (hour granularity)
     partitions: RwLock<BTreeMap<i64, Arc<Partition>>>,
     /// Partition duration in nanoseconds (1 hour default)
@@ -100,11 +105,17 @@ fn estimate_sql_value_size(value: &SqlValue) -> u64 {
 impl PartitionedStorage {
     /// Create a new partitioned storage
     pub fn new(base_path: &str) -> Result<Self> {
+        Self::new_for_namespace(base_path, "default")
+    }
+
+    /// Create a new partitioned storage for a namespace.
+    pub fn new_for_namespace(base_path: &str, namespace: &str) -> Result<Self> {
         // Default to hourly partitions
         let partition_duration_ns = 3600 * 1_000_000_000i64;
 
         Ok(Self {
             base_path: base_path.to_string(),
+            namespace: namespace.to_string(),
             partitions: RwLock::new(BTreeMap::new()),
             partition_duration_ns,
             entry_count: AtomicU64::new(0),
@@ -116,6 +127,7 @@ impl PartitionedStorage {
     /// Create a new partitioned storage with storage engine for tier transitions
     pub fn new_with_engine(
         base_path: &str,
+        namespace: &str,
         storage_engine: Arc<dyn UnifiedStorageEngine>,
     ) -> Result<Self> {
         // Default to hourly partitions
@@ -123,6 +135,7 @@ impl PartitionedStorage {
 
         Ok(Self {
             base_path: base_path.to_string(),
+            namespace: namespace.to_string(),
             partitions: RwLock::new(BTreeMap::new()),
             partition_duration_ns,
             entry_count: AtomicU64::new(0),
@@ -401,7 +414,7 @@ impl PartitionedStorage {
         let vector_records: Vec<proximadb_records::ProximaRecord> = entries
             .iter()
             .enumerate()
-            .map(|(i, log)| self.log_entry_to_proxima_record(log, partition_key, i))
+            .map(|(i, log)| self.log_projection_record(log, partition_key, i))
             .collect();
 
         let count = vector_records.len();
@@ -486,49 +499,16 @@ impl PartitionedStorage {
             .iter()
             .enumerate()
             .map(|(i, log)| {
-                let mut props = proximadb_records::ProximaTree::new();
-                props.insert(
+                let mut record = self.log_projection_record(log, partition_key, i);
+                record.props.insert(
                     "_cold".to_string(),
-                    proximadb_records::ProximaTreeNode::Value(
-                        proximadb_data_model::ProximaValue::Boolean(true),
-                    ),
+                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
                 );
-                props.insert(
-                    "_partition_key".to_string(),
-                    proximadb_records::ProximaTreeNode::Value(
-                        proximadb_data_model::ProximaValue::Int64(partition_key),
-                    ),
-                );
-                props.insert(
+                record.props.insert(
                     "_compressed".to_string(),
-                    proximadb_records::ProximaTreeNode::Value(
-                        proximadb_data_model::ProximaValue::Boolean(true),
-                    ),
+                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
                 );
-                if let Some(source) = &log.source {
-                    props.insert(
-                        "source".to_string(),
-                        proximadb_records::ProximaTreeNode::Value(
-                            proximadb_data_model::ProximaValue::String(source.clone()),
-                        ),
-                    );
-                }
-                if let Some(service) = &log.service {
-                    props.insert(
-                        "service".to_string(),
-                        proximadb_records::ProximaTreeNode::Value(
-                            proximadb_data_model::ProximaValue::String(service.clone()),
-                        ),
-                    );
-                }
-                proximadb_records::ProximaRecord {
-                    oid: format!("{}:{}", partition_key, i),
-                    props,
-                    created_at_ns: log.timestamp_ns,
-                    updated_at_ns: log.timestamp_ns,
-                    origin: Some("observability_log".to_string()),
-                    ..Default::default()
-                }
+                record
             })
             .collect();
 
@@ -557,77 +537,19 @@ impl PartitionedStorage {
         }
     }
 
-    /// Convert a LogEntry to a canonical ProximaRecord for SST storage.
-    fn log_entry_to_proxima_record(
+    /// Convert a LogEntry to canonical observability record plus projection hints.
+    fn log_projection_record(
         &self,
         log: &LogEntry,
         partition_key: i64,
         seq: usize,
     ) -> proximadb_records::ProximaRecord {
-        let mut props = proximadb_records::ProximaTree::new();
-
-        props.insert(
-            "_type".to_string(),
-            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
-                "log".to_string(),
-            )),
+        let mut record = log_entry_to_proxima_record(&self.namespace, log, seq);
+        record.props.insert(
+            "_partition_key".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Int64(partition_key)),
         );
-        props.insert(
-            "_partition".to_string(),
-            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Int64(
-                partition_key,
-            )),
-        );
-        props.insert(
-            "severity".to_string(),
-            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Int64(
-                log.severity as i64,
-            )),
-        );
-        props.insert(
-            "message".to_string(),
-            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
-                log.message.clone(),
-            )),
-        );
-
-        if let Some(ref source) = log.source {
-            props.insert(
-                "source".to_string(),
-                proximadb_records::ProximaTreeNode::Value(
-                    proximadb_data_model::ProximaValue::String(source.clone()),
-                ),
-            );
-        }
-
-        if let Some(ref service) = log.service {
-            props.insert(
-                "service".to_string(),
-                proximadb_records::ProximaTreeNode::Value(
-                    proximadb_data_model::ProximaValue::String(service.clone()),
-                ),
-            );
-        }
-
-        for (key, value) in &log.fields {
-            if let Ok(json_str) = serde_json::to_string(value) {
-                props.insert(
-                    format!("field_{}", key),
-                    proximadb_records::ProximaTreeNode::Value(
-                        proximadb_data_model::ProximaValue::String(json_str),
-                    ),
-                );
-            }
-        }
-
-        proximadb_records::ProximaRecord {
-            oid: format!("log_{}_{}", partition_key, seq),
-            props,
-            created_at_ns: log.timestamp_ns,
-            updated_at_ns: log.timestamp_ns,
-            origin: log.source.clone(),
-            ..Default::default()
-        }
+        record
     }
 
     /// Force flush all hot partitions to SST
@@ -775,5 +697,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(storage.partition_count().await, 3);
+    }
+
+    #[test]
+    fn projection_record_uses_observability_canonical_shape() {
+        let storage =
+            PartitionedStorage::new_for_namespace("/tmp/test_projection", "tenant-a").unwrap();
+        let record = storage.log_projection_record(&make_log(42, "canonical"), 0, 7);
+
+        assert_eq!(record.oid, "obs://tenant-a/log/42:7");
+        assert_eq!(record.tenant_id, "tenant-a");
+        assert!(record.labels.contains(proximadb_observability::LOG_LABEL));
+        assert!(record.props.contains_key("_partition_key"));
     }
 }

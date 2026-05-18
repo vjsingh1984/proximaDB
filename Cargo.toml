@@ -193,6 +193,7 @@ proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
+proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
 proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }

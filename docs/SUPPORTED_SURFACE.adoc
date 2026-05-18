@@ -55,18 +55,18 @@ This matrix is the support contract.
 
 | Document CRUD, query, and aggregation
 | Beta
-| WAL-backed collections, CRUD, aggregation, change events, and in-memory query execution are implemented.
-| Path-filter depth, geo indexes, and deeper block-level pruning/compression are incomplete.
+| WAL-backed collections, CRUD, aggregation, change events, and in-memory query execution are implemented. Canonical `ProximaRecord` storage exists as the convergence path.
+| Canonical record storage is not yet the default durable authority across all server wiring. Path-filter depth, geo indexes, and deeper block-level pruning/compression are incomplete.
 
 | ORION graph operations
 | Beta
-| Node/edge CRUD, traversal, neighbors, and shortest-path APIs are usable.
-| Declarative graph query execution is still incomplete on the canonical gRPC path.
+| Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable.
+| Declarative graph query execution is still incomplete on the canonical gRPC path. ORION/PULSAR/QUASAR remain projections or compatibility engines unless an ADR promotes additional durable semantics.
 
 | Observability ingestion and query
 | Beta
-| Logs, metrics, and traces ingestion exist alongside full-text log search and PromQL execution.
-| Alerting, operator workflow depth, and some gRPC query mappings remain incomplete.
+| Logs, metrics, and traces ingestion exist alongside full-text log search, PromQL execution, CHRONO integration, and canonical observability record mapping.
+| Canonical observability replay into shared record storage is not yet the default. Alerting, operator workflow depth, and some gRPC query mappings remain incomplete.
 
 | Security runtime
 | Beta
@@ -107,5 +107,6 @@ ProximaDB should currently be positioned as a developer-first context database:
 The next maturity step is to move from "broad but uneven" to "narrow but reliable":
 
 * One canonical execution path for vector, hybrid, graph, document, and observability queries.
+* Canonical `ProximaRecord`/xCatalog/WAL authority is default for document, graph, and observability writes; modality engines are cataloged projections.
 * No roadmap or README claims that exceed the supported surface defined here.
 * Distributed claims backed by real transport and failover verification.

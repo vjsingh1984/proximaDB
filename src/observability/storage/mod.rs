@@ -130,10 +130,10 @@ impl ObservabilityStorage {
                                 format!("{}/observability/{}", self.base_path, namespace);
                             let namespace_storage = NamespaceStorage {
                                 config: config.clone(),
-                                logs: partitioned::PartitionedStorage::new(&format!(
-                                    "{}/logs",
-                                    namespace_path
-                                ))?,
+                                logs: partitioned::PartitionedStorage::new_for_namespace(
+                                    &format!("{}/logs", namespace_path),
+                                    &namespace,
+                                )?,
                                 metrics: metrics::MetricStorage::new(&format!(
                                     "{}/metrics",
                                     namespace_path
@@ -246,7 +246,10 @@ impl ObservabilityStorage {
 
         let namespace_storage = NamespaceStorage {
             config: config.clone(),
-            logs: partitioned::PartitionedStorage::new(&format!("{}/logs", namespace_path))?,
+            logs: partitioned::PartitionedStorage::new_for_namespace(
+                &format!("{}/logs", namespace_path),
+                name,
+            )?,
             metrics: metrics::MetricStorage::new(&format!("{}/metrics", namespace_path))?,
             traces: traces::TraceStorage::new(&format!("{}/traces", namespace_path))?,
         };

@@ -1,0 +1,293 @@
+= Multi-Model Trajectory Alignment
+:toc:
+:toclevels: 3
+:sectnums:
+
+Status: Active execution guide +
+Date: 2026-05-18 +
+Scope: vector, document, graph, observability, storage, query, catalog, protocol surfaces
+
+This document converts the May 2026 multi-model review into implementation guardrails.
+It is subordinate to:
+
+* `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`
+* `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
+* `docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc`
+* `docs/12-design/adr/ADR-009-schema-modes-and-proximarecord-surfaces.adoc`
+* `docs/12-design/adr/ADR-010-pax-block-format.adoc`
+
+== Directional Rule
+
+Every modality service is a facade over the canonical stack:
+
+[source,text]
+----
+Protocol/API facade
+  -> modality/query service
+  -> shared logical algebra and xCatalog validation
+  -> ProximaRecord / ProximaType / ProximaValue
+  -> WAL/log/manifest
+  -> storage layouts and rebuildable projections
+----
+
+No new vector, document, graph, or observability feature may introduce an independent durable
+record envelope, hidden catalog, separate WAL, or protocol-owned type system.
+
+== Immediate Corrections
+
+=== Vector
+
+Current state:
+
+* Root `VectorOperationsService` is still the real production path.
+* Extracted `proximadb-vector` must stay dependency-light and must not fabricate search results.
+* AXIS has a predicate-aware HNSW primitive, but metadata lookup and result materialization are
+  still incomplete at the manager layer.
+
+Required trajectory:
+
+* Keep `VectorQueryService` returning canonical `ProximaRecord`.
+* Expose AXIS/search behind a narrow root-independent trait before moving production search into
+  `crates/modalities/proximadb-vector`.
+* Replace `VectorRecord` internals one engine at a time, starting with the lowest-risk engine
+  selected by current benchmark/test coverage.
+
+Touchpoints:
+
+* `src/services/operations/vectors/legacy.rs`
+* `crates/modalities/proximadb-vector/src/service.rs`
+* `src/index/axis/management/filtered_search.rs`
+* `src/index/axis/indexes/hnsw_index.rs`
+* `src/storage/engines/{sst,swift,viper,nova,raptor}/`
+
+Done criteria:
+
+* v1 protocol conversion happens only at REST/gRPC/SDK edges.
+* `search_vectors_unified` consumes rich predicates with tenant/RLS pushdown.
+* Filtered ANN returns materialized records, not placeholder candidate counts.
+
+=== Document
+
+Current state:
+
+* `proximadb-document` defines canonical document mapping.
+* `DocumentService` can use a canonical record store behind `canonical-document-store`.
+* CEDAR is correctly described as a projection/access method.
+
+Required trajectory:
+
+* Make canonical record storage the default server wiring for document CRUD.
+* Keep JSON path, full-text, and shape variation indexes rebuildable.
+* Move legacy `SqlObject` to compatibility adapters only.
+
+Touchpoints:
+
+* `crates/modalities/proximadb-document/src/record.rs`
+* `src/storage/document/service.rs`
+* `src/storage/document/indexes/`
+* `src/storage/engines/cedar/mod.rs`
+* `src/network/rest/v1/document.rs`
+* `src/network/grpc/document_service.rs`
+
+Done criteria:
+
+* Insert/update/delete paths write canonical `ProximaRecord` before projection maintenance.
+* xCatalog owns schema mode and variation metadata.
+* Recovery replays canonical record operations, then rebuilds projections.
+
+=== Graph
+
+Current state:
+
+* Graph node/edge canonical mapping exists.
+* `GraphOperationsService` can mirror writes into `RecordStore`.
+* Adjacency projections and ORION CSR freshness epochs exist.
+* ORION/PULSAR/QUASAR still carry compatibility WAL/recovery paths.
+
+Required trajectory:
+
+* Make canonical record store mandatory in production graph service wiring.
+* Treat ORION/PULSAR/QUASAR as topology/query projections unless an ADR promotes specific
+  retained aggregates.
+* Route Cypher/PGQ pattern matching through shared logical operators and projection-aware
+  planning.
+
+Touchpoints:
+
+* `crates/modalities/proximadb-graph/src/record.rs`
+* `src/graph/service.rs`
+* `src/graph/service_edge_ops.rs`
+* `src/graph/adjacency_projection.rs`
+* `src/graph/engines/orion/`
+* `src/query/graph_lowering.rs`
+
+Done criteria:
+
+* Graph CRUD writes are canonical by default.
+* Endpoint-bound queries prefer fresh CSR/projection and can rebuild from canonical edge records.
+* Legacy graph WAL does not define durable graph truth.
+
+=== Observability
+
+Current state:
+
+* Root observability service has ingestion/query, partitioned storage, Tantivy log search, trace
+  storage, and CHRONO.
+* CHRONO is an `ObservabilityStorageEngine`, now wired when configured.
+* `proximadb-observability` now defines canonical `ProximaRecord` mapping for logs, metric samples,
+  and trace spans.
+* Root storage still writes legacy log/metric/span shapes before those records are replayed through
+  shared canonical record storage.
+
+Required trajectory:
+
+* Extend canonical observability record mapping to alerts, profiles, exemplars, and retained rollups.
+* Wire log, metric, and span writes into the shared record store/WAL path before projection
+  maintenance.
+* Keep time partitions, rollups, Tantivy indexes, trace assembly, and service graphs as
+  projections over canonical records or retained aggregate records.
+* Preserve compatibility with OTLP/PromQL/LogQL style inputs as adapters.
+
+Touchpoints:
+
+* `src/observability/mod.rs`
+* `src/observability/storage/`
+* `src/observability/query/`
+* `src/storage/engines/chrono/mod.rs`
+* `crates/modalities/proximadb-observability/src/lib.rs`
+* `src/observability/graph_linking.rs`
+
+Done criteria:
+
+* CHRONO ingest/query is exercised by service-level tests.
+* Observability records can be replayed from WAL into canonical record storage.
+* Correlation queries can traverse log/span/service dependency records without a separate truth
+  store.
+
+== Cross-Cutting Workstreams
+
+=== Storage Spine
+
+Use `ProximaRecord` plus ADR-010 PAX segments as the forward internal contract. Existing
+`VectorRecord` storage internals are migration debt, not target design.
+
+Required work:
+
+* Select one storage engine for first full `ProximaRecord` conversion.
+* Add conversion parity tests before replacing internals.
+* Preserve existing v1 protocol compatibility through edge adapters.
+
+=== Query Plane
+
+Shared logical operators must become the convergence point for:
+
+* `VectorTopK`
+* `Filter`
+* `Project`
+* `PatternMatch`
+* `HybridTraverse`
+* `CrossModelJoin`
+* `SemanticJoin`
+* `LogTimeFilter`
+* `MetricAggregate`
+
+Every operator must carry tenant/RLS predicates and xCatalog table/collection identity.
+
+=== xCatalog
+
+xCatalog must own:
+
+* schema mode;
+* variation id;
+* index/projection descriptors;
+* storage authority mode;
+* freshness and rebuild semantics;
+* external table authority boundaries;
+* type mapping and lossy conversion flags.
+
+=== Product Surface
+
+Supported-surface documents must distinguish:
+
+* production-ready path;
+* beta path;
+* experimental path;
+* architectural target only.
+
+No release note, README, or API doc should imply production parity with Milvus, Neo4j, MongoDB,
+Splunk, Datadog, Loki, Elastic, or Tempo until the corresponding benchmark and recovery tests
+exist.
+
+== Best-in-Class Alignment
+
+ProximaDB should not chase four isolated databases. It should match the critical primitives that
+make each class credible, then expose combinations that single-model systems do not make cheap.
+
+[cols="1,2,2,2",options="header"]
+|===
+|Class
+|Best systems to respect
+|Must-have parity work
+|ProximaDB wedge
+
+|Vector
+|Milvus, Weaviate, Pinecone, Vespa
+|Predicate-aware ANN, hybrid BM25+dense+sparse retrieval, reranking, filtered recall benchmarks,
+tenant/RLS pushdown
+|Canonical records plus graph/document/time predicates in one query plan
+
+|Graph
+|Neo4j, TigerGraph, Neptune, JanusGraph
+|Pattern matching, bounded/deep traversal performance, fresh topology projections, explainable
+projection choice, recovery from canonical edges
+|Semantic traversal over graph neighborhoods with vector and telemetry context
+
+|Document
+|MongoDB, CouchDB
+|Flexible schema evolution, JSON path indexing, full-text, secondary indexes, schema variation
+cataloging, update semantics
+|Documents participate in relational constraints, vector retrieval, and graph projections without
+a separate durable document store
+
+|Observability
+|Splunk, Datadog, Loki, Elastic, Tempo
+|High-throughput log/metric/span ingest, time partition pruning, text search, trace assembly,
+retention/rollups, correlation queries
+|Native semantic incident search across logs, traces, service graph, deployments, and runbooks
+|===
+
+== Positioning
+
+ProximaDB is the primary context store for agentic systems: one canonical record, catalog, policy,
+and projection plane for semantic vectors, documents, graph topology, and telemetry. Its durable
+moat is not a faster clone of any one category; it is cross-model retrieval where agents can ask
+for meaning, relationships, time, provenance, and operational state in a single governed query.
+
+== Phase Roadmap
+
+=== Phase 0: Stop Drift
+
+* Remove fabricated/mock behavior from query-facing services.
+* Wire configured engines into service paths.
+* Add canonical-authority checks in service constructors.
+* Update supported-surface claims.
+
+=== Phase 1: Canonical Default
+
+* Make document and graph canonical record stores default in server composition.
+* Add canonical observability mapping.
+* Complete AXIS filtered-search materialization.
+* Add engine-level tenant/RLS predicates to vector and graph projection scans.
+
+=== Phase 2: Engine Conversion
+
+* Convert one storage engine to native `ProximaRecord` internals.
+* Move PAX segment writer/scanner into an actual engine flush/read path.
+* Rebuild indexes/projections from canonical records in recovery tests.
+
+=== Phase 3: Best-in-Class Proof
+
+* Publish repeatable benchmark suites against vector, graph, document, and observability systems.
+* Add explain plans for cross-model queries.
+* Validate distributed ownership, freshness, and rebuild semantics.
+* Treat semantic + graph + telemetry as the product wedge, not four separate databases.

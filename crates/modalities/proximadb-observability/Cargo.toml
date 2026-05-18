@@ -18,8 +18,10 @@ anyhow.workspace = true
 arrow.workspace = true
 async-trait.workspace = true
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
+proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
+proximadb-records = { path = "../../foundation/proximadb-records" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
