@@ -31,7 +31,9 @@ use crate::api_handlers::{
 use crate::catalog::CatalogManager;
 use crate::proto::proximadb_v1::VectorSearchRequest;
 use crate::security::{AuthenticationData, ClientCertificateData, SecurityCoordinator};
-use crate::services::operations::BatchOperationResult;
+use crate::services::operations::{
+    BatchOperationResult, BulkWriteMode, CatalogBulkWriteResult, CatalogBulkWriteService,
+};
 use chrono::Utc;
 
 use super::codec::{ArrowProtoCodec, FlightWriteOperation, WriteMode};
@@ -483,10 +485,45 @@ impl ProximaFlightService {
         Self::insert_request_conflict_result(records, seen_ids)
     }
 
+    fn catalog_bulk_write_mode(
+        operation: FlightWriteOperation,
+        write_mode: WriteMode,
+    ) -> BulkWriteMode {
+        match (operation, write_mode) {
+            (_, WriteMode::Direct) => BulkWriteMode::Append,
+            (FlightWriteOperation::Insert, _) => BulkWriteMode::InsertIfNotExists,
+            (FlightWriteOperation::Upsert, _) => BulkWriteMode::Upsert,
+            (FlightWriteOperation::Delete, _) => BulkWriteMode::Append,
+        }
+    }
+
+    async fn records_for_write_batches(
+        catalog_manager: Option<&Arc<CatalogManager>>,
+        table_fqn: Option<&str>,
+        operation: FlightWriteOperation,
+        write_mode: WriteMode,
+        batches: &[arrow_array::RecordBatch],
+    ) -> Result<(Vec<ProximaRecord>, Option<CatalogBulkWriteResult>)> {
+        if let (Some(catalog_manager), Some(table_fqn)) = (catalog_manager, table_fqn) {
+            let service = CatalogBulkWriteService::with_defaults(catalog_manager.clone());
+            let (records, result) = service
+                .prepare_bulk_write(
+                    table_fqn,
+                    batches,
+                    Self::catalog_bulk_write_mode(operation, write_mode),
+                )
+                .await?;
+            return Ok((records, Some(result)));
+        }
+
+        ArrowProtoCodec::batches_to_proxima_records(batches.to_vec()).map(|records| (records, None))
+    }
+
     /// Handle bulk vector insert (DoPut)
     async fn handle_record_insert(
         &self,
         collection_id: String,
+        table_fqn: Option<String>,
         operation: FlightWriteOperation,
         write_mode: WriteMode,
         trigger_compaction: bool,
@@ -503,13 +540,30 @@ impl ProximaFlightService {
 
         // Convert Arrow batches to canonical ProximaRecord envelopes so rich
         // scalar fields and modality columns survive the Flight boundary.
-        let records = ArrowProtoCodec::batches_to_proxima_records(batches)?;
+        // Relational/table descriptors additionally validate through xCatalog.
+        let (records, catalog_result) = Self::records_for_write_batches(
+            self.catalog_manager.as_ref(),
+            table_fqn.as_deref(),
+            operation,
+            write_mode,
+            &batches,
+        )
+        .await?;
 
         info!(
             collection_id = %collection_id,
+            table_fqn = ?table_fqn,
             records = records.len(),
             "Converted Arrow batches to ProximaRecords"
         );
+        if let Some(catalog_result) = catalog_result {
+            debug!(
+                table_created = catalog_result.table_created,
+                schema_evolved = catalog_result.schema_evolved,
+                records_prepared = catalog_result.records_written,
+                "Arrow Flight catalog bulk write preparation completed"
+            );
+        }
 
         if operation == FlightWriteOperation::Insert {
             let mut seen_ids = HashSet::with_capacity(records.len());
@@ -931,6 +985,12 @@ impl FlightService for ProximaFlightService {
 
         let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
             .map_err(|e| TonicStatus::invalid_argument(format!("Invalid descriptor: {}", e)))?;
+        let table_fqn = Self::table_fqn_from_descriptor(&descriptor).map_err(|e| {
+            TonicStatus::invalid_argument(format!("Invalid table descriptor: {}", e))
+        })?;
+        let write_target = table_fqn
+            .clone()
+            .unwrap_or_else(|| metadata.collection_id.clone());
 
         // Collect all RecordBatches from stream
         let mut flight_messages = vec![first_msg];
@@ -955,7 +1015,8 @@ impl FlightService for ProximaFlightService {
         let result = match operation {
             FlightWriteOperation::Upsert | FlightWriteOperation::Insert => {
                 self.handle_record_insert(
-                    metadata.collection_id.clone(),
+                    write_target.clone(),
+                    table_fqn,
                     operation,
                     metadata.write_mode,
                     metadata.trigger_compaction,
@@ -966,7 +1027,7 @@ impl FlightService for ProximaFlightService {
             }
             FlightWriteOperation::Delete => {
                 self.handle_record_delete(
-                    metadata.collection_id.clone(),
+                    write_target.clone(),
                     metadata.trigger_compaction,
                     tenant_id.clone(),
                     batches,
@@ -1833,10 +1894,15 @@ impl FlightService for ProximaFlightService {
         let (exchange_type, collection_id, write_operation) =
             Self::parse_exchange_descriptor(&descriptor)
                 .map_err(|e| TonicStatus::invalid_argument(format!("Invalid descriptor: {}", e)))?;
+        let table_fqn = Self::table_fqn_from_descriptor(&descriptor).map_err(|e| {
+            TonicStatus::invalid_argument(format!("Invalid table descriptor: {}", e))
+        })?;
+        let write_target = table_fqn.clone().unwrap_or_else(|| collection_id.clone());
 
         info!(
             exchange_type = %exchange_type,
-            collection_id = %collection_id,
+            collection_id = %write_target,
+            table_fqn = ?table_fqn,
             "Arrow Flight: do_exchange initiated"
         );
 
@@ -1844,7 +1910,8 @@ impl FlightService for ProximaFlightService {
             "bulk_insert" | "bulk_upsert" => {
                 let operation = write_operation.unwrap_or_default();
                 self.handle_bulk_write_exchange(
-                    collection_id,
+                    write_target,
+                    table_fqn,
                     operation,
                     tenant_id,
                     first_msg,
@@ -1854,7 +1921,8 @@ impl FlightService for ProximaFlightService {
             }
             "bulk_delete" => {
                 self.handle_bulk_write_exchange(
-                    collection_id,
+                    write_target,
+                    table_fqn,
                     FlightWriteOperation::Delete,
                     tenant_id,
                     first_msg,
@@ -1883,6 +1951,7 @@ impl ProximaFlightService {
     async fn handle_bulk_write_exchange(
         &self,
         collection_id: String,
+        table_fqn: Option<String>,
         operation: FlightWriteOperation,
         tenant_id: Option<String>,
         first_msg: FlightData,
@@ -1913,8 +1982,28 @@ impl ProximaFlightService {
 
             let result = match operation {
                 FlightWriteOperation::Upsert | FlightWriteOperation::Insert => {
-                    let records = match ArrowProtoCodec::batches_to_proxima_records(vec![batch]) {
-                        Ok(v) => v,
+                    let batch_vec = vec![batch];
+                    let records = match Self::records_for_write_batches(
+                        self.catalog_manager.as_ref(),
+                        table_fqn.as_deref(),
+                        operation,
+                        WriteMode::WAL,
+                        &batch_vec,
+                    )
+                    .await
+                    {
+                        Ok((records, catalog_result)) => {
+                            if let Some(catalog_result) = catalog_result {
+                                debug!(
+                                    table_fqn = ?table_fqn,
+                                    table_created = catalog_result.table_created,
+                                    schema_evolved = catalog_result.schema_evolved,
+                                    records_prepared = catalog_result.records_written,
+                                    "Arrow Flight exchange catalog bulk write preparation completed"
+                                );
+                            }
+                            records
+                        }
                         Err(e) => {
                             warn!("Failed to convert batch {}: {}", total_batches, e);
                             total_failed += batch_rows as u64;
@@ -2329,6 +2418,54 @@ mod tests {
                 Box::new(arrow_schema::Field::new("item", DataType::Float32, true)).into()
             )
         );
+    }
+
+    #[tokio::test]
+    async fn test_records_for_write_batches_uses_catalog_bulk_validation_for_tables() {
+        let manager = Arc::new(CatalogManager::new());
+        let temp_dir = tempfile::tempdir().unwrap();
+        let catalog = manager
+            .create_native_catalog("default", &format!("file://{}", temp_dir.path().display()))
+            .await
+            .unwrap();
+        let _ = catalog
+            .create_namespace(&["default".to_string()], Default::default())
+            .await;
+
+        let table_id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
+        let table_schema = CatalogTableSchema::new("events")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "payload", CatalogDataType::String));
+        catalog.create_table(&table_id, table_schema).await.unwrap();
+
+        let schema = Arc::new(Schema::new(vec![
+            arrow_schema::Field::new("id", DataType::Utf8, false),
+            arrow_schema::Field::new("payload", DataType::Utf8, true),
+        ]));
+        let batch = arrow_array::RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(arrow_array::StringArray::from(vec!["event-1"])),
+                Arc::new(arrow_array::StringArray::from(vec!["loaded"])),
+            ],
+        )
+        .unwrap();
+
+        let (records, catalog_result) = ProximaFlightService::records_for_write_batches(
+            Some(&manager),
+            Some("events"),
+            FlightWriteOperation::Upsert,
+            WriteMode::WAL,
+            &[batch],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].oid, "event-1");
+        let catalog_result = catalog_result.expect("catalog preparation result");
+        assert_eq!(catalog_result.records_written, 1);
+        assert!(!catalog_result.table_created);
     }
 
     #[test]

@@ -1139,7 +1139,8 @@ Tasks:
 ** Vector collection descriptors still fall back to `ArrowProtoCodec::create_vector_schema`.
 * [x] Wire server composition to inject the shared xCatalog manager into every `ProximaFlightService` instance.
 ** `SharedServices` now owns the shared `CatalogManager`; REST app state, standalone Arrow Flight servers, and unified-mode internal Flight services receive that same manager.
-* [ ] Wire live Arrow Flight DoPut/DoExchange relational/table ingestion through `CatalogBulkWriteService` so the catalog-validated `ProximaRecord` preparation path is exercised by the protocol handler.
+* [x] Wire live Arrow Flight DoPut/DoExchange relational/table ingestion through `CatalogBulkWriteService` so the catalog-validated `ProximaRecord` preparation path is exercised by the protocol handler.
+** DoPut and DoExchange now detect relational/table/sql descriptors, prepare Arrow batches through catalog-aware bulk validation, and preserve vector descriptors as compatibility fallback paths.
 ** Preserve large-batch behavior by using canonical-record routing decisions, not vector-count-only heuristics.
 * [ ] Replace remaining REST/gRPC/embedded insert and streaming shims with v2 `ProximaRecord`/`ProximaValue` contracts below protocol compatibility adapters.
 ** Legacy v1 `VectorRecord`, metadata maps, `SqlValue`, and `SqlObject` may remain only as adapter inputs/outputs until the v1 compatibility surface is retired.
