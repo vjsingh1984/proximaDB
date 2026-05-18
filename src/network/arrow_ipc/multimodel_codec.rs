@@ -17,6 +17,7 @@
 //! complementing the vector-only codec in `codec.rs`.
 
 use arrow_schema::{DataType, Field, Schema};
+use proximadb_catalog::CatalogTableSchema;
 use std::sync::Arc;
 
 // --- Document ---
@@ -167,6 +168,26 @@ pub fn relational_schema(column_names: &[String], column_types: &[String]) -> Ar
     Arc::new(Schema::new(fields))
 }
 
+/// Build an Arrow schema directly from xCatalog table metadata.
+///
+/// This is the canonical relational Arrow path: SQL, REST/gRPC, embedded, and
+/// Arrow Flight should agree on xCatalog `CatalogDataType` and nullability
+/// instead of maintaining separate string-based type maps.
+pub fn relational_schema_from_catalog(table_schema: &CatalogTableSchema) -> Arc<Schema> {
+    let fields: Vec<Field> = table_schema
+        .columns
+        .iter()
+        .map(|column| {
+            Field::new(
+                column.name.clone(),
+                column.data_type.to_arrow_datatype(),
+                column.nullable,
+            )
+        })
+        .collect();
+    Arc::new(Schema::new(fields))
+}
+
 /// Detect model type from a FlightDescriptor path.
 ///
 /// Convention: `path[0]` is the model type, `path[1]` is the collection/table name.
@@ -289,6 +310,37 @@ mod tests {
         for field in schema.fields() {
             assert!(field.is_nullable());
         }
+    }
+
+    #[test]
+    fn test_relational_schema_from_catalog_uses_catalog_types_and_nullability() {
+        use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema};
+
+        let table = CatalogTableSchema::new("events")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "payload", CatalogDataType::Json))
+            .with_column(CatalogColumn::new(3, "embedding", CatalogDataType::Vector))
+            .with_column(CatalogColumn::new(
+                4,
+                "created_at",
+                CatalogDataType::TimestampTz,
+            ));
+
+        let schema = relational_schema_from_catalog(&table);
+        assert_eq!(schema.fields().len(), 4);
+        assert_eq!(schema.field(0).name(), "id");
+        assert_eq!(*schema.field(0).data_type(), DataType::Int64);
+        assert!(!schema.field(0).is_nullable());
+        assert_eq!(schema.field(1).name(), "payload");
+        assert_eq!(*schema.field(1).data_type(), DataType::Utf8);
+        assert_eq!(
+            *schema.field(2).data_type(),
+            DataType::List(Box::new(Field::new("item", DataType::Float32, true)).into())
+        );
+        assert_eq!(
+            *schema.field(3).data_type(),
+            DataType::Timestamp(arrow_schema::TimeUnit::Nanosecond, Some("UTC".into()))
+        );
     }
 
     #[test]
