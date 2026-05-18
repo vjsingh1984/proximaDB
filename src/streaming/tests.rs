@@ -30,11 +30,16 @@ async fn test_end_to_end_streaming() {
 
     // Push records in batches
     for batch in 0..10 {
-        let records: Vec<crate::proto::proximadb_v1::VectorRecord> = (0..100)
-            .map(|i| crate::proto::proximadb_v1::VectorRecord {
-                id: format!("vec_{}_{}", batch, i),
-                vector: vec![0.1 * (i as f32); 128],
-                metadata: Default::default(),
+        let records: Vec<proximadb_records::ProximaRecord> = (0..100)
+            .map(|i| proximadb_records::ProximaRecord {
+                oid: format!("vec_{}_{}", batch, i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: vec![0.1 * (i as f32); 128],
+                }],
+                record_version: 1,
                 ..Default::default()
             })
             .collect();
@@ -80,11 +85,16 @@ async fn test_backpressure_signaling() {
         .expect("Failed to create session");
 
     // Fill the buffer
-    let records: Vec<crate::proto::proximadb_v1::VectorRecord> = (0..128)
-        .map(|i| crate::proto::proximadb_v1::VectorRecord {
-            id: format!("vec_{}", i),
-            vector: vec![0.1; 128],
-            metadata: Default::default(),
+    let records: Vec<proximadb_records::ProximaRecord> = (0..128)
+        .map(|i| proximadb_records::ProximaRecord {
+            oid: format!("vec_{}", i),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: 128,
+                values: vec![0.1; 128],
+            }],
+            record_version: 1,
             ..Default::default()
         })
         .collect();
@@ -115,11 +125,16 @@ async fn test_concurrent_sessions() {
 
             // Push some records
             for _ in 0..5 {
-                let records: Vec<crate::proto::proximadb_v1::VectorRecord> = (0..50)
-                    .map(|j| crate::proto::proximadb_v1::VectorRecord {
-                        id: format!("vec_{}_{}", i, j),
-                        vector: vec![0.1; 64],
-                        metadata: Default::default(),
+                let records: Vec<proximadb_records::ProximaRecord> = (0..50)
+                    .map(|j| proximadb_records::ProximaRecord {
+                        oid: format!("vec_{}_{}", i, j),
+                        embeddings: vec![proximadb_records::EmbeddingCell {
+                            model_id: "default".to_string(),
+                            modality: "vector".to_string(),
+                            dim: 64,
+                            values: vec![0.1; 64],
+                        }],
+                        record_version: 1,
                         ..Default::default()
                     })
                     .collect();
@@ -157,11 +172,16 @@ async fn test_session_stats() {
         .unwrap();
 
     // Push some records
-    let records: Vec<crate::proto::proximadb_v1::VectorRecord> = (0..100)
-        .map(|i| crate::proto::proximadb_v1::VectorRecord {
-            id: format!("vec_{}", i),
-            vector: vec![0.1; 64],
-            metadata: Default::default(),
+    let records: Vec<proximadb_records::ProximaRecord> = (0..100)
+        .map(|i| proximadb_records::ProximaRecord {
+            oid: format!("vec_{}", i),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: 64,
+                values: vec![0.1; 64],
+            }],
+            record_version: 1,
             ..Default::default()
         })
         .collect();
@@ -259,11 +279,16 @@ async fn test_rate_limiter_integration() {
         .unwrap();
 
     // First batch should succeed (within burst capacity)
-    let records: Vec<crate::proto::proximadb_v1::VectorRecord> = (0..100)
-        .map(|i| crate::proto::proximadb_v1::VectorRecord {
-            id: format!("vec_{}", i),
-            vector: vec![0.1; 64],
-            metadata: Default::default(),
+    let records: Vec<proximadb_records::ProximaRecord> = (0..100)
+        .map(|i| proximadb_records::ProximaRecord {
+            oid: format!("vec_{}", i),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: 64,
+                values: vec![0.1; 64],
+            }],
+            record_version: 1,
             ..Default::default()
         })
         .collect();
@@ -272,11 +297,16 @@ async fn test_rate_limiter_integration() {
     assert!(result.is_ok());
 
     // Second immediate batch should be rate limited
-    let records: Vec<crate::proto::proximadb_v1::VectorRecord> = (100..200)
-        .map(|i| crate::proto::proximadb_v1::VectorRecord {
-            id: format!("vec_{}", i),
-            vector: vec![0.1; 64],
-            metadata: Default::default(),
+    let records: Vec<proximadb_records::ProximaRecord> = (100..200)
+        .map(|i| proximadb_records::ProximaRecord {
+            oid: format!("vec_{}", i),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: 64,
+                values: vec![0.1; 64],
+            }],
+            record_version: 1,
             ..Default::default()
         })
         .collect();

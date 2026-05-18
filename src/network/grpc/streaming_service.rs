@@ -43,7 +43,7 @@ use crate::proto::proximadb_streaming_v1::{
     VectorBatch,
     streaming_service_server::{StreamingService, StreamingServiceServer},
 };
-use crate::proto::proximadb_v1::{SearchVectorRecord, VectorRecord};
+use crate::proto::proximadb_v1::SearchVectorRecord;
 use crate::streaming::{
     BackpressureLevel, SessionConfig, SessionState, StreamConfig, StreamCoordinator, StreamId,
     subscriptions::{
@@ -241,8 +241,12 @@ impl StreamingService for StreamingServiceImpl {
                             continue;
                         };
 
-                        // Convert proto vectors to internal format
-                        let records: Vec<VectorRecord> = request.vectors;
+                        // Convert proto VectorRecord → canonical ProximaRecord at protocol boundary
+                        let records: Vec<proximadb_records::ProximaRecord> = request
+                            .vectors
+                            .into_iter()
+                            .map(|v| proximadb_records::ProximaRecord::from(v))
+                            .collect();
 
                         // Push records to coordinator
                         match coordinator.push_records(sid, records).await {
@@ -474,8 +478,15 @@ impl StreamingService for StreamingServiceImpl {
                     };
                     let batch_size = batch.vectors.len() as u64;
 
+                    // Convert proto VectorRecord → canonical ProximaRecord at protocol boundary
+                    let batch_records: Vec<proximadb_records::ProximaRecord> = batch
+                        .vectors
+                        .into_iter()
+                        .map(|v| proximadb_records::ProximaRecord::from(v))
+                        .collect();
+
                     // Push records
-                    match coordinator.push_records(sid, batch.vectors).await {
+                    match coordinator.push_records(sid, batch_records).await {
                         Ok(result) => {
                             total_vectors += result.pushed as u64;
                             vectors_dropped += result.dropped as u64;

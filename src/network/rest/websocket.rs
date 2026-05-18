@@ -86,7 +86,7 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use crate::proto::proximadb_v1::{SqlValue, sql_value};
 use crate::streaming::{
     BackpressureLevel, SessionConfig, StreamConfig, StreamCoordinator, StreamId,
 };
@@ -131,6 +131,22 @@ fn json_to_sql_value(v: &serde_json::Value) -> SqlValue {
                 value: Some(sql_value::Value::StringValue(v.to_string())),
             }
         }
+    }
+}
+
+/// Convert JSON value to ProximaValue at the protocol boundary
+fn json_value_to_proxima_value(v: &serde_json::Value) -> proximadb_data_model::ProximaValue {
+    match v {
+        serde_json::Value::String(s) => proximadb_data_model::ProximaValue::String(s.clone()),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                proximadb_data_model::ProximaValue::Int64(i)
+            } else {
+                proximadb_data_model::ProximaValue::Float64(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::Bool(b) => proximadb_data_model::ProximaValue::Boolean(*b),
+        _ => proximadb_data_model::ProximaValue::String(v.to_string()),
     }
 }
 
@@ -383,28 +399,36 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
             Ok(Message::Text(text)) => {
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(ClientMessage::Insert(msg)) => {
-                        // Convert vectors to VectorRecords
-                        let records: Vec<VectorRecord> = msg
+                        // Convert incoming JSON vectors to canonical ProximaRecord at protocol boundary
+                        let records: Vec<proximadb_records::ProximaRecord> = msg
                             .vectors
                             .into_iter()
                             .map(|v| {
-                                // Convert JSON metadata to SqlValue map
-                                let metadata: std::collections::HashMap<
-                                    String,
-                                    crate::proto::proximadb_v1::SqlValue,
-                                > = v
-                                    .metadata
-                                    .into_iter()
-                                    .map(|(k, v)| {
-                                        let sql_value = json_to_sql_value(&v);
-                                        (k, sql_value)
-                                    })
-                                    .collect();
-
-                                VectorRecord {
-                                    id: v.id,
-                                    vector: v.vector,
-                                    metadata,
+                                let dim = v.vector.len() as u32;
+                                let mut props = proximadb_records::ProximaTree::new();
+                                for (k, jv) in v.metadata {
+                                    let pv = json_value_to_proxima_value(&jv);
+                                    props.insert(
+                                        k,
+                                        proximadb_records::ProximaTreeNode::Value(pv),
+                                    );
+                                }
+                                proximadb_records::ProximaRecord {
+                                    oid: v.id,
+                                    embeddings: vec![proximadb_records::EmbeddingCell {
+                                        model_id: "default".to_string(),
+                                        modality: "vector".to_string(),
+                                        dim,
+                                        values: v.vector,
+                                    }],
+                                    props,
+                                    record_version: 1,
+                                    created_at_ns: chrono::Utc::now()
+                                        .timestamp_nanos_opt()
+                                        .unwrap_or(0),
+                                    updated_at_ns: chrono::Utc::now()
+                                        .timestamp_nanos_opt()
+                                        .unwrap_or(0),
                                     ..Default::default()
                                 }
                             })

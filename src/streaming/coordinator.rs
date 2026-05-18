@@ -35,8 +35,8 @@ use super::{
     BackpressureLevel, RateLimiter, SessionConfig, SessionState, StreamConfig, StreamError,
     StreamId, StreamMetrics, StreamResult, StreamSession,
 };
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::UnifiedStorageEngine;
+use proximadb_records::ProximaRecord;
 
 /// Result of pushing records to a stream
 #[derive(Debug, Clone)]
@@ -171,7 +171,7 @@ impl StreamCoordinator {
     pub async fn push_records(
         &self,
         session_id: &StreamId,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> StreamResult<PushResult> {
         let start = Instant::now();
         let record_count = records.len();
@@ -280,7 +280,7 @@ impl StreamCoordinator {
         &self,
         session_id: &StreamId,
         max: usize,
-    ) -> StreamResult<Vec<VectorRecord>> {
+    ) -> StreamResult<Vec<ProximaRecord>> {
         let session =
             self.sessions
                 .get(session_id)
@@ -451,23 +451,21 @@ impl StreamCoordinator {
         let bytes_estimate = records
             .iter()
             .map(|r| {
-                // Estimate: id + vector data + metadata overhead
-                r.id.len() + (r.vector.len() * 4) + 100
+                r.oid.len()
+                    + r.embeddings
+                        .first()
+                        .map(|e| e.values.len() * 4)
+                        .unwrap_or(0)
+                    + 100
             })
             .sum::<usize>();
-
-        // Convert VectorRecord → ProximaRecord for FlushParameters canonical boundary
-        let proxima_records: Vec<proximadb_records::ProximaRecord> = records
-            .iter()
-            .map(|vr| proximadb_records::ProximaRecord::from(vr))
-            .collect();
 
         // Create flush parameters for storage engine
         let flush_params = crate::storage::traits::FlushParameters {
             collection_id: Some(collection_id.clone()),
             force: true,
             synchronous: true,
-            vector_records: proxima_records,
+            vector_records: records,
             trigger_compaction: false,
             collection_config: collection_config.cloned(),
             estimated_size: bytes_estimate,
@@ -651,21 +649,22 @@ impl StreamCoordinator {
         let count = records.len();
         let bytes_estimate = records
             .iter()
-            .map(|r| r.id.len() + (r.vector.len() * 4) + 100)
+            .map(|r| {
+                r.oid.len()
+                    + r.embeddings
+                        .first()
+                        .map(|e| e.values.len() * 4)
+                        .unwrap_or(0)
+                    + 100
+            })
             .sum::<usize>();
-
-        // Convert VectorRecord → ProximaRecord for FlushParameters canonical boundary
-        let proxima_records: Vec<proximadb_records::ProximaRecord> = records
-            .iter()
-            .map(|vr| proximadb_records::ProximaRecord::from(vr))
-            .collect();
 
         // Create flush parameters
         let flush_params = crate::storage::traits::FlushParameters {
             collection_id: Some(collection_id.clone()),
             force: true,
             synchronous: true,
-            vector_records: proxima_records,
+            vector_records: records,
             trigger_compaction: false,
             collection_config: collection_config.cloned(),
             estimated_size: bytes_estimate,
@@ -883,11 +882,16 @@ mod tests {
             .await
             .expect("Failed to create session");
 
-        let records: Vec<VectorRecord> = (0..100)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![0.1; 128],
-                metadata: Default::default(),
+        let records: Vec<ProximaRecord> = (0..100)
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: vec![0.1; 128],
+                }],
+                record_version: 1,
                 ..Default::default()
             })
             .collect();
@@ -911,11 +915,16 @@ mod tests {
             .await
             .expect("Failed to create session");
 
-        let records: Vec<VectorRecord> = (0..100)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![0.1; 128],
-                metadata: Default::default(),
+        let records: Vec<ProximaRecord> = (0..100)
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: vec![0.1; 128],
+                }],
+                record_version: 1,
                 ..Default::default()
             })
             .collect();
