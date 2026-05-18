@@ -1,7 +1,13 @@
 //! Catalog Trait Definitions
 //!
-//! Defines the core trait that all catalog backends must implement.
-//! Uses internal catalog types for Serde compatibility.
+//! The canonical `Catalog` trait and `TableIdentifier` now also live in the
+//! `proximadb-catalog` workspace crate (crates/control/proximadb-catalog) so
+//! that catalog backend crates can implement the trait without depending on the
+//! root `proximadb` crate (workspace isolation mandate).
+//!
+//! Migration path: new catalog implementations should implement
+//! `proximadb_catalog::Catalog` and `TableIdentifier` from that crate.
+//! The definitions here remain the runtime authority until all callers migrate.
 
 use std::collections::HashMap;
 use std::sync::Arc;

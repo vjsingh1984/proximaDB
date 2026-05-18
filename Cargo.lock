@@ -5998,7 +5998,9 @@ dependencies = [
 name = "proximadb-catalog"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "arrow-schema",
+ "async-trait",
  "proximadb-data-model",
  "serde",
 ]

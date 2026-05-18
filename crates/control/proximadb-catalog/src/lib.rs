@@ -1,7 +1,12 @@
-//! xCatalog contract types
+//! xCatalog contract types and the `Catalog` trait.
 //!
 //! These serializable contracts are shared by catalog implementations, query planning, storage
 //! selection, and protocol/API boundaries without requiring the root runtime crate.
+//!
+//! ## Key exports
+//! - `TableIdentifier` — namespace + table name tuple for addressing tables
+//! - `Catalog` — the core async trait every catalog backend implements
+//! - All `Catalog*` types used in trait method signatures
 
 use arrow_schema::DataType as ArrowDataType;
 use serde::{Deserialize, Serialize};
@@ -1240,5 +1245,149 @@ mod tests {
         assert_eq!(schema.projections.len(), 1);
         assert_eq!(schema.projections[0].kind, CatalogProjectionKind::FullText);
         assert!(schema.relational_capabilities.has_enforced_semantics());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TableIdentifier
+// ---------------------------------------------------------------------------
+
+/// Fully-qualified table address: namespace path + table name.
+///
+/// Mirrors the Iceberg REST catalog `{namespace}/{table}` addressing scheme
+/// so that OLTP, lake, and Iceberg REST catalog backends share one type.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TableIdentifier {
+    /// Namespace hierarchy (e.g., `["db", "schema"]`).
+    pub namespace: Vec<String>,
+    /// Unqualified table name.
+    pub name: String,
+}
+
+impl TableIdentifier {
+    pub fn new(namespace: Vec<String>, name: impl Into<String>) -> Self {
+        Self { namespace, name: name.into() }
+    }
+
+    /// Parse from a dot-separated fully-qualified name (e.g., `"db.schema.table"`).
+    pub fn parse(s: &str) -> Self {
+        let parts: Vec<&str> = s.split('.').collect();
+        if parts.len() == 1 {
+            Self::new(vec![], parts[0])
+        } else {
+            let namespace = parts[..parts.len() - 1].iter().map(|p| p.to_string()).collect();
+            Self::new(namespace, parts[parts.len() - 1])
+        }
+    }
+
+    /// Dot-joined fully-qualified name.
+    pub fn to_fqn(&self) -> String {
+        if self.namespace.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{}.{}", self.namespace.join("."), self.name)
+        }
+    }
+}
+
+impl std::fmt::Display for TableIdentifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_fqn())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Catalog trait
+// ---------------------------------------------------------------------------
+
+/// Core catalog trait — every ProximaDB catalog backend implements this.
+///
+/// The trait uses only types from this crate (`proximadb-catalog`) so
+/// implementations can live in any workspace crate without depending on the
+/// root `proximadb` crate.
+#[async_trait::async_trait]
+pub trait Catalog: Send + Sync {
+    fn name(&self) -> &str;
+    fn catalog_type(&self) -> &str;
+
+    // Namespace operations
+    async fn create_namespace(
+        &self,
+        namespace: &[String],
+        properties: HashMap<String, String>,
+    ) -> anyhow::Result<CatalogNamespace>;
+
+    async fn drop_namespace(&self, namespace: &[String], cascade: bool) -> anyhow::Result<bool>;
+    async fn list_namespaces(&self, parent: Option<&[String]>) -> anyhow::Result<Vec<CatalogNamespace>>;
+    async fn namespace_exists(&self, namespace: &[String]) -> anyhow::Result<bool>;
+    async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<CatalogNamespace>;
+    async fn update_namespace_properties(
+        &self,
+        namespace: &[String],
+        updates: HashMap<String, String>,
+        removals: Vec<String>,
+    ) -> anyhow::Result<()>;
+
+    // Table operations
+    async fn create_table(
+        &self,
+        identifier: &TableIdentifier,
+        schema: CatalogTableSchema,
+    ) -> anyhow::Result<CatalogTableSchema>;
+
+    async fn drop_table(&self, identifier: &TableIdentifier, purge: bool) -> anyhow::Result<bool>;
+    async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>>;
+    async fn table_exists(&self, identifier: &TableIdentifier) -> anyhow::Result<bool>;
+    async fn get_table(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableSchema>;
+    async fn rename_table(&self, from: &TableIdentifier, to: &TableIdentifier) -> anyhow::Result<()>;
+
+    // Schema evolution
+    async fn evolve_schema(
+        &self,
+        identifier: &TableIdentifier,
+        evolution: CatalogSchemaEvolution,
+    ) -> anyhow::Result<CatalogTableSchema>;
+
+    async fn get_schema_version(&self, identifier: &TableIdentifier) -> anyhow::Result<i32>;
+    async fn get_schema_by_version(
+        &self,
+        identifier: &TableIdentifier,
+        version: i32,
+    ) -> anyhow::Result<CatalogTableSchema>;
+
+    // Index operations
+    async fn create_index(
+        &self,
+        identifier: &TableIdentifier,
+        index: CatalogIndex,
+    ) -> anyhow::Result<CatalogIndex>;
+
+    async fn drop_index(&self, identifier: &TableIdentifier, index_name: &str) -> anyhow::Result<bool>;
+    async fn list_indexes(&self, identifier: &TableIdentifier) -> anyhow::Result<Vec<CatalogIndex>>;
+
+    // Statistics
+    async fn get_statistics(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableStatistics>;
+    async fn update_statistics(
+        &self,
+        identifier: &TableIdentifier,
+        stats: CatalogTableStatistics,
+    ) -> anyhow::Result<()>;
+
+    // Partitioning (default: not supported)
+    async fn get_partition_spec(
+        &self,
+        identifier: &TableIdentifier,
+    ) -> anyhow::Result<Option<CatalogPartitionSpec>> {
+        let _ = identifier;
+        Ok(None)
+    }
+
+    async fn update_partition_spec(
+        &self,
+        identifier: &TableIdentifier,
+        spec: CatalogPartitionSpec,
+    ) -> anyhow::Result<()> {
+        let _ = (identifier, spec);
+        Err(anyhow::anyhow!("partitioning not supported by this catalog"))
     }
 }
