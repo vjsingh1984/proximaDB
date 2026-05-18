@@ -17,7 +17,7 @@ use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 // Old test utilities are no longer used - using UnifiedTestEnvironment instead
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb_v1::{StorageEngine};
+use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
@@ -53,7 +53,11 @@ fn create_compressible_test_vectors(
             for j in 0..dimension {
                 let block_size = 64;
                 let block_value = (i % 10) as f32 * 0.1;
-                values[j] = if (j / block_size) % 2 == 0 { block_value } else { 0.0 };
+                values[j] = if (j / block_size) % 2 == 0 {
+                    block_value
+                } else {
+                    0.0
+                };
             }
             let mut props = proximadb_records::ProximaTree::new();
             props.insert(
@@ -347,9 +351,9 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
         let mut props = proximadb_records::ProximaTree::new();
         props.insert(
             "type".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String("sparse".to_string()),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "sparse".to_string(),
+            )),
         );
         all_vectors.push(proximadb_records::ProximaRecord {
             oid: format!("sparse_{}", i),
@@ -373,9 +377,9 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
         let mut props = proximadb_records::ProximaTree::new();
         props.insert(
             "type".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String("dense".to_string()),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "dense".to_string(),
+            )),
         );
         all_vectors.push(proximadb_records::ProximaRecord {
             oid: format!("dense_{}", i),

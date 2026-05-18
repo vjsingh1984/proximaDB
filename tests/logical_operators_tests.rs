@@ -16,63 +16,41 @@ mod tests {
     use proximadb::core::{
         ComparisonOperator, FieldQuery, MetadataQuery, MetadataQueryBuilder, MetadataQueryEngine,
     };
-    use proximadb::proto::proximadb_v1::VectorRecord;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 
     /// Create a test vector record with metadata
-    fn create_test_vector(id: &str, metadata: HashMap<String, serde_json::Value>) -> VectorRecord {
-        // Convert HashMap<String, serde_json::Value> to HashMap<String, SqlValue>
-        let metadata_items: HashMap<String, proximadb::proto::proximadb_v1::SqlValue> = metadata
-            .iter()
-            .map(|(key, value)| {
-                let metadata_value = match value {
-                    serde_json::Value::String(s) => Some(
-                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(s.clone()),
-                    ),
-                    serde_json::Value::Number(n) => {
-                        if let Some(f) = n.as_f64() {
-                            Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(f))
-                        } else {
-                            Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    n.to_string(),
-                                ),
-                            )
-                        }
-                    }
-                    serde_json::Value::Bool(b) => Some(
-                        proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(*b),
-                    ),
-                    _ => Some(
-                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                            value.to_string(),
-                        ),
-                    ),
-                };
-                (
-                    key.clone(),
-                    proximadb::proto::proximadb_v1::SqlValue {
-                        value: metadata_value,
-                    },
-                )
-            })
-            .collect();
-
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![1.0, 2.0, 3.0, 4.0],
-            metadata: metadata_items,
-            timestamp: Some(Utc::now().timestamp()),
-            updated_at: Some(Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    fn create_test_vector(id: &str, metadata: HashMap<String, serde_json::Value>) -> ProximaRecord {
+        let mut props = ProximaTree::new();
+        for (key, value) in &metadata {
+            let pv = match value {
+                serde_json::Value::String(s) => ProximaValue::String(s.clone()),
+                serde_json::Value::Number(n) => ProximaValue::Float64(n.as_f64().unwrap_or(0.0)),
+                serde_json::Value::Bool(b) => ProximaValue::Boolean(*b),
+                _ => ProximaValue::String(value.to_string()),
+            };
+            props.insert(key.clone(), ProximaTreeNode::Value(pv));
+        }
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: 4,
+                values: vec![1.0, 2.0, 3.0, 4.0],
+            }],
+            props,
+            record_version: 1,
+            created_at_ns: Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            updated_at_ns: Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            ..Default::default()
         }
     }
 
     /// Create test tiered search result
-    fn create_tiered_result(vector_record: VectorRecord, similarity: f32) -> TieredSearchCandidate {
+    fn create_tiered_result(record: ProximaRecord, similarity: f32) -> TieredSearchCandidate {
         TieredSearchCandidate {
-            vector_record,
+            record,
             similarity,
             tier: DataFreshnessTier::Unflushed,
             engine: DeduplicationStorageEngine::WAL,
@@ -450,7 +428,7 @@ mod tests {
         let final_results = deduplicator.get_final_results(10);
 
         assert_eq!(final_results.len(), 1);
-        assert_eq!(final_results[0].vector_record.id, "vec1".to_string());
+        assert_eq!(final_results[0].record.oid, "vec1".to_string());
         assert_eq!(final_results[0].similarity, 0.9);
     }
 

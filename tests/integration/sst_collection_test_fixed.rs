@@ -8,7 +8,7 @@
 mod common;
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
-use proximadb::proto::proximadb_v1::{StorageEngine};
+use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use tracing::{debug, info};
 
@@ -36,9 +36,9 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         let mut props = proximadb_records::ProximaTree::new();
         props.insert(
             "category".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String(category.to_string()),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                category.to_string(),
+            )),
         );
         proximadb_records::ProximaRecord {
             oid,
@@ -56,9 +56,24 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
         }
     };
     let vectors = vec![
-        make_record(format!("{}_vec1", collection_id), vec![1.0, 0.0, 0.0], "A", 1000),
-        make_record(format!("{}_vec2", collection_id), vec![0.0, 1.0, 0.0], "B", 1001),
-        make_record(format!("{}_vec3", collection_id), vec![0.0, 0.0, 1.0], "A", 1002),
+        make_record(
+            format!("{}_vec1", collection_id),
+            vec![1.0, 0.0, 0.0],
+            "A",
+            1000,
+        ),
+        make_record(
+            format!("{}_vec2", collection_id),
+            vec![0.0, 1.0, 0.0],
+            "B",
+            1001,
+        ),
+        make_record(
+            format!("{}_vec3", collection_id),
+            vec![0.0, 0.0, 1.0],
+            "A",
+            1002,
+        ),
     ];
 
     info!("Test 1: Flush vectors to SST engine");

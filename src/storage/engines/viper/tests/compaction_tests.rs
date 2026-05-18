@@ -1502,11 +1502,9 @@ async fn test_compaction_with_metadata_filtering() {
         let mut vectors = Vec::new();
         for i in 0..20 {
             let mut vector = create_test_vector(&format!("meta_{}_{}", category, i), 128);
-            vector.metadata.insert(
+            vector.props.insert(
                 "category".to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(Value::StringValue(category.to_string())),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(category.to_string())),
             );
             vectors.push(vector);
         }
@@ -1664,7 +1662,7 @@ async fn test_compaction_with_metadata_filtering() {
                 }
 
                 if let Some(sql_value) = r.metadata.get("category") {
-                    matches!(sql_value, ProximaValue::String(s) if s == category)
+                    matches!(sql_value, ProximaValue::String(s) if s.as_str() == *category)
                 } else {
                     false
                 }

@@ -3,12 +3,12 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 use proximadb::storage::engines::raptor::RaptorEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use proximadb_records::ProximaRecord;
 
 // Import test utilities
 #[path = "../common/collection_builder.rs"]
@@ -42,7 +42,7 @@ async fn create_test_setup() -> (Arc<RaptorEngine>, TempDir) {
 
 /// Create test vectors
 /// REFACTORED: Now uses vector_generator::sequential()
-fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
+fn create_test_vectors(count: usize) -> Vec<ProximaRecord> {
     sequential("raptor_test_collection", count, 128)
 }
 

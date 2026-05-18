@@ -42,20 +42,24 @@ mod raptor_recall_tests {
 
     /// Compute ground truth using brute force
     fn compute_ground_truth(
-        vectors: &[proximadb::proto::proximadb_v1::VectorRecord],
+        vectors: &[proximadb_records::ProximaRecord],
         query: &[f32],
         k: usize,
     ) -> Vec<String> {
         let mut distances: Vec<(String, f32)> = vectors
             .iter()
             .map(|v| {
-                let dist: f32 = v
-                    .vector
+                let values = v
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.as_slice())
+                    .unwrap_or(&[]);
+                let dist: f32 = values
                     .iter()
                     .zip(query.iter())
                     .map(|(a, b)| (a - b).powi(2))
                     .sum();
-                (v.id.clone(), dist)
+                (v.oid.clone(), dist)
             })
             .collect();
 
@@ -132,7 +136,7 @@ mod raptor_recall_tests {
         let batch_ids: Vec<BatchId> = (0..NUM_VECTORS).map(|_| BatchId::new()).collect();
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
-            vector_records: vectors.clone(),
+            vector_records: vectors.clone(), // vectors is already Vec<ProximaRecord>
             batch_ids,
             force: true,
             synchronous: true,
@@ -164,7 +168,12 @@ mod raptor_recall_tests {
         let queries: Vec<Vec<f32>> = vectors
             .iter()
             .take(num_queries)
-            .map(|v| v.vector.clone())
+            .map(|v| {
+                v.embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default()
+            })
             .collect();
 
         let collection_arc = Arc::new(collection.clone());

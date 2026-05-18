@@ -13,7 +13,56 @@ use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 
-use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode};
+
+/// Helper to get the current time in nanoseconds since Unix epoch.
+fn now_ns() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as i64
+}
+
+/// Build a ProximaRecord from its essential fields.
+fn make_record(id: &str, vector: Vec<f32>, props: ProximaTree) -> ProximaRecord {
+    let ts = now_ns();
+    let dim = vector.len() as u32;
+    ProximaRecord {
+        oid: id.to_string(),
+        local_id: None,
+        tid: None,
+        variation_id: None,
+        record_version: 1,
+        spec_version: 1,
+        tenant_id: String::new(),
+        permitted_principals: Vec::new(),
+        rls_policy_id: None,
+        created_at_ns: ts,
+        updated_at_ns: ts,
+        valid_from_ns: None,
+        valid_to_ns: None,
+        origin: None,
+        actor: None,
+        method: Some("test".to_string()),
+        memory_type: None,
+        props,
+        refs: Vec::new(),
+        edge: None,
+        embeddings: if !vector.is_empty() {
+            vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                dim,
+                values: vector,
+            }]
+        } else {
+            vec![]
+        },
+        sequence: None,
+        labels: LabelSet::new(),
+    }
+}
 
 /// Generate random vectors with uniform distribution
 ///
@@ -24,21 +73,15 @@ use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 ///
 /// let vectors = vector_generator::random("my_collection", 1000, 128);
 /// assert_eq!(vectors.len(), 1000);
-/// assert_eq!(vectors[0].vector.len(), 128);
+/// assert_eq!(vectors[0].embeddings[0].values.len(), 128);
 /// ```
-pub fn random(collection_id: &str, count: usize, dimension: usize) -> Vec<VectorRecord> {
+pub fn random(collection_id: &str, count: usize, dimension: usize) -> Vec<ProximaRecord> {
     let mut rng = rand::thread_rng();
 
     (0..count)
-        .map(|i| VectorRecord {
-            id: format!("vec_{}", i),
-            vector: (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        .map(|i| {
+            let vector: Vec<f32> = (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect();
+            make_record(&format!("vec_{}", i), vector, HashMap::new())
         })
         .collect()
 }
@@ -51,7 +94,7 @@ pub fn random_seeded(
     count: usize,
     dimension: usize,
     seed: u64,
-) -> Vec<VectorRecord> {
+) -> Vec<ProximaRecord> {
     random_seeded_with_prefix("vec", count, dimension, seed)
 }
 
@@ -63,19 +106,13 @@ pub fn random_seeded_with_prefix(
     count: usize,
     dimension: usize,
     seed: u64,
-) -> Vec<VectorRecord> {
+) -> Vec<ProximaRecord> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     (0..count)
-        .map(|i| VectorRecord {
-            id: format!("{}_{}", id_prefix, i),
-            vector: (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        .map(|i| {
+            let vector: Vec<f32> = (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect();
+            make_record(&format!("{}_{}", id_prefix, i), vector, HashMap::new())
         })
         .collect()
 }
@@ -83,17 +120,11 @@ pub fn random_seeded_with_prefix(
 /// Generate sequential vectors (useful for debugging)
 ///
 /// Each dimension increases linearly: [0.0, 1.0, 2.0, ...]
-pub fn sequential(collection_id: &str, count: usize, dimension: usize) -> Vec<VectorRecord> {
+pub fn sequential(collection_id: &str, count: usize, dimension: usize) -> Vec<ProximaRecord> {
     (0..count)
-        .map(|i| VectorRecord {
-            id: format!("vec_{}", i),
-            vector: (0..dimension).map(|d| (i * dimension + d) as f32).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        .map(|i| {
+            let vector: Vec<f32> = (0..dimension).map(|d| (i * dimension + d) as f32).collect();
+            make_record(&format!("vec_{}", i), vector, HashMap::new())
         })
         .collect()
 }
@@ -101,7 +132,7 @@ pub fn sequential(collection_id: &str, count: usize, dimension: usize) -> Vec<Ve
 /// Generate normalized random vectors (unit length)
 ///
 /// Useful for cosine similarity testing
-pub fn normalized(collection_id: &str, count: usize, dimension: usize) -> Vec<VectorRecord> {
+pub fn normalized(collection_id: &str, count: usize, dimension: usize) -> Vec<ProximaRecord> {
     let mut rng = rand::thread_rng();
 
     (0..count)
@@ -114,16 +145,7 @@ pub fn normalized(collection_id: &str, count: usize, dimension: usize) -> Vec<Ve
                 vec.iter_mut().for_each(|x| *x /= magnitude);
             }
 
-            VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec,
-                metadata: HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }
+            make_record(&format!("vec_{}", i), vec, HashMap::new())
         })
         .collect()
 }
@@ -137,7 +159,7 @@ pub fn clustered(
     count: usize,
     dimension: usize,
     num_clusters: usize,
-) -> Vec<VectorRecord> {
+) -> Vec<ProximaRecord> {
     let mut rng = rand::thread_rng();
     let per_cluster = count / num_clusters;
 
@@ -158,25 +180,14 @@ pub fn clustered(
                 .map(|&c| c + rng.gen_range(-1.0..1.0)) // Small deviation from center
                 .collect();
 
-            vectors.push(VectorRecord {
-                id,
-                vector,
-                metadata: {
-                    let mut m = HashMap::new();
-                    m.insert(
-                        "cluster".to_string(),
-                        SqlValue {
-                            value: Some(sql_value::Value::Int64Value(cluster_idx as i64)),
-                        },
-                    );
-                    m
-                },
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            });
+            let mut props = HashMap::new();
+            props.insert(
+                "cluster".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Int64(cluster_idx as i64)),
+            );
+            // (Int64 is correct for cluster index)
+
+            vectors.push(make_record(&id, vector, props));
         }
     }
 
@@ -191,22 +202,16 @@ pub fn with_metadata<F>(
     count: usize,
     dimension: usize,
     metadata_fn: F,
-) -> Vec<VectorRecord>
+) -> Vec<ProximaRecord>
 where
-    F: Fn(usize) -> HashMap<String, SqlValue>,
+    F: Fn(usize) -> ProximaTree,
 {
     let mut rng = rand::thread_rng();
 
     (0..count)
-        .map(|i| VectorRecord {
-            id: format!("vec_{}", i),
-            vector: (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect(),
-            metadata: metadata_fn(i),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        .map(|i| {
+            let vector: Vec<f32> = (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect();
+            make_record(&format!("vec_{}", i), vector, metadata_fn(i))
         })
         .collect()
 }
@@ -220,43 +225,35 @@ pub mod presets {
         collection_id: &str,
         count: usize,
         dimension: usize,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         with_metadata(collection_id, count, dimension, |i| {
-            let mut metadata = HashMap::new();
+            let mut props = HashMap::new();
 
             // String metadata
-            metadata.insert(
+            props.insert(
                 "category".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::StringValue(format!("category_{}", i % 5))),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(format!("category_{}", i % 5))),
             );
 
             // Float metadata
-            metadata.insert(
+            props.insert(
                 "price".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::NumberValue((i as f64) * 10.0)),
-                },
+                ProximaTreeNode::Value(ProximaValue::Float64((i as f64) * 10.0)),
             );
 
             // Boolean metadata
-            metadata.insert(
+            props.insert(
                 "in_stock".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::BoolValue(i % 2 == 0)),
-                },
+                ProximaTreeNode::Value(ProximaValue::Boolean(i % 2 == 0)),
             );
 
             // Integer metadata
-            metadata.insert(
+            props.insert(
                 "created_at".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::Int64Value(1600000000 + (i as i64))),
-                },
+                ProximaTreeNode::Value(ProximaValue::Int64(1600000000 + (i as i64))),
             );
 
-            metadata
+            props
         })
     }
 
@@ -265,96 +262,76 @@ pub mod presets {
         collection_id: &str,
         count: usize,
         dimension: usize,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         with_metadata(collection_id, count, dimension, |i| {
-            let mut metadata = HashMap::new();
+            let mut props = HashMap::new();
             let categories = ["electronics", "clothing", "home", "toys", "books"];
             let brands = ["BrandA", "BrandB", "BrandC", "BrandD", "BrandE"];
 
-            metadata.insert(
+            props.insert(
                 "category".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::StringValue(
-                        categories[i % categories.len()].to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(
+                    categories[i % categories.len()].to_string(),
+                )),
             );
 
-            metadata.insert(
+            props.insert(
                 "brand".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::StringValue(
-                        brands[i % brands.len()].to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(brands[i % brands.len()].to_string())),
             );
 
-            metadata.insert(
+            props.insert(
                 "price".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::NumberValue(
-                        10.0 + (i % 1000) as f64 * 0.99,
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::Float64(10.0 + (i % 1000) as f64 * 0.99)),
             );
 
-            metadata.insert(
+            props.insert(
                 "rating".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::NumberValue(1.0 + (i % 5) as f64 * 0.8)),
-                },
+                ProximaTreeNode::Value(ProximaValue::Float64(1.0 + (i % 5) as f64 * 0.8)),
             );
 
-            metadata.insert(
+            props.insert(
                 "in_stock".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::BoolValue(i % 3 != 0)),
-                },
+                ProximaTreeNode::Value(ProximaValue::Boolean(i % 3 != 0)),
             );
 
-            metadata
+            props
         })
     }
 
     /// Generate document vectors for RAG testing
-    pub fn rag_documents(collection_id: &str, count: usize, dimension: usize) -> Vec<VectorRecord> {
+    pub fn rag_documents(
+        collection_id: &str,
+        count: usize,
+        dimension: usize,
+    ) -> Vec<ProximaRecord> {
         with_metadata(collection_id, count, dimension, |i| {
-            let mut metadata = HashMap::new();
+            let mut props = HashMap::new();
             let doc_types = ["article", "paper", "blog", "documentation"];
 
-            metadata.insert(
+            props.insert(
                 "doc_type".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::StringValue(
-                        doc_types[i % doc_types.len()].to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(
+                    doc_types[i % doc_types.len()].to_string(),
+                )),
             );
 
-            metadata.insert(
+            props.insert(
                 "word_count".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::Int64Value(100 + (i % 2000) as i64)),
-                },
+                ProximaTreeNode::Value(ProximaValue::Int64(100 + (i % 2000) as i64)),
             );
 
-            metadata.insert(
+            props.insert(
                 "published_date".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::Int64Value(
-                        1640000000 + (i as i64 * 86400),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::Int64(1640000000 + (i as i64 * 86400))),
             );
 
-            metadata.insert(
+            props.insert(
                 "verified".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::BoolValue(i % 4 != 0)),
-                },
+                ProximaTreeNode::Value(ProximaValue::Boolean(i % 4 != 0)),
             );
 
-            metadata
+            props
         })
     }
 }
@@ -362,13 +339,22 @@ pub mod presets {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_records::ProximaTreeNode;
+
+    fn get_values(record: &ProximaRecord) -> &[f32] {
+        record
+            .embeddings
+            .first()
+            .map(|e| e.values.as_slice())
+            .unwrap_or(&[])
+    }
 
     #[test]
     fn test_random_generation() {
         let vectors = random("test_coll", 100, 128);
         assert_eq!(vectors.len(), 100);
-        assert_eq!(vectors[0].vector.len(), 128);
-        assert!(vectors[0].timestamp.is_some());
+        assert_eq!(get_values(&vectors[0]).len(), 128);
+        assert!(!vectors[0].oid.is_empty());
     }
 
     #[test]
@@ -378,24 +364,25 @@ mod tests {
 
         // Same seed should produce identical vectors
         for (v1, v2) in vectors1.iter().zip(vectors2.iter()) {
-            assert_eq!(v1.vector, v2.vector);
+            assert_eq!(get_values(v1), get_values(v2));
         }
     }
 
     #[test]
     fn test_sequential_generation() {
         let vectors = sequential("test_coll", 10, 8);
-        assert_eq!(vectors[0].vector[0], 0.0);
-        assert_eq!(vectors[0].vector[1], 1.0);
-        assert_eq!(vectors[1].vector[0], 8.0);
+        assert_eq!(get_values(&vectors[0])[0], 0.0);
+        assert_eq!(get_values(&vectors[0])[1], 1.0);
+        assert_eq!(get_values(&vectors[1])[0], 8.0);
     }
 
     #[test]
     fn test_normalized_generation() {
         let vectors = normalized("test_coll", 10, 128);
 
-        for vec in vectors {
-            let magnitude: f32 = vec.vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+        for rec in vectors {
+            let vals = get_values(&rec);
+            let magnitude: f32 = vals.iter().map(|x| x * x).sum::<f32>().sqrt();
             assert!(
                 (magnitude - 1.0).abs() < 0.001,
                 "Vector not normalized: {}",
@@ -410,10 +397,14 @@ mod tests {
         assert_eq!(vectors.len(), 100);
 
         // Verify cluster metadata
-        for (i, vec) in vectors.iter().enumerate() {
-            assert!(vec.metadata.contains_key("cluster"));
-            let cluster_id = match &vec.metadata["cluster"].value {
-                Some(sql_value::Value::Int64Value(id)) => *id,
+        for (i, rec) in vectors.iter().enumerate() {
+            assert!(
+                rec.props.contains_key("cluster"),
+                "record {} missing cluster prop",
+                i
+            );
+            let cluster_id = match &rec.props["cluster"] {
+                ProximaTreeNode::Value(ProximaValue::Int64(id)) => *id,
                 _ => panic!("Invalid cluster metadata"),
             };
             assert_eq!(cluster_id, (i / 20) as i64);
@@ -422,21 +413,20 @@ mod tests {
 
     #[test]
     fn test_with_metadata() {
+        use proximadb_records::ProximaTreeNode;
         let vectors = with_metadata("test_coll", 10, 64, |i| {
-            let mut m = HashMap::new();
-            m.insert(
+            let mut props = HashMap::new();
+            props.insert(
                 "index".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::Int64Value(i as i64)),
-                },
+                ProximaTreeNode::Value(ProximaValue::Int64(i as i64)),
             );
-            m
+            props
         });
 
-        for (i, vec) in vectors.iter().enumerate() {
-            assert!(vec.metadata.contains_key("index"));
-            let idx = match &vec.metadata["index"].value {
-                Some(sql_value::Value::Int64Value(id)) => *id,
+        for (i, rec) in vectors.iter().enumerate() {
+            assert!(rec.props.contains_key("index"));
+            let idx = match &rec.props["index"] {
+                ProximaTreeNode::Value(ProximaValue::Int64(id)) => *id,
                 _ => panic!("Invalid index metadata"),
             };
             assert_eq!(idx, i as i64);
@@ -447,11 +437,11 @@ mod tests {
     fn test_preset_filter_tests() {
         let vectors = presets::for_filter_tests("test_coll", 20, 128);
 
-        for vec in vectors {
-            assert!(vec.metadata.contains_key("category"));
-            assert!(vec.metadata.contains_key("price"));
-            assert!(vec.metadata.contains_key("in_stock"));
-            assert!(vec.metadata.contains_key("created_at"));
+        for rec in vectors {
+            assert!(rec.props.contains_key("category"));
+            assert!(rec.props.contains_key("price"));
+            assert!(rec.props.contains_key("in_stock"));
+            assert!(rec.props.contains_key("created_at"));
         }
     }
 
@@ -459,12 +449,12 @@ mod tests {
     fn test_preset_ecommerce() {
         let vectors = presets::ecommerce_products("test_coll", 20, 128);
 
-        for vec in vectors {
-            assert!(vec.metadata.contains_key("category"));
-            assert!(vec.metadata.contains_key("brand"));
-            assert!(vec.metadata.contains_key("price"));
-            assert!(vec.metadata.contains_key("rating"));
-            assert!(vec.metadata.contains_key("in_stock"));
+        for rec in vectors {
+            assert!(rec.props.contains_key("category"));
+            assert!(rec.props.contains_key("brand"));
+            assert!(rec.props.contains_key("price"));
+            assert!(rec.props.contains_key("rating"));
+            assert!(rec.props.contains_key("in_stock"));
         }
     }
 }

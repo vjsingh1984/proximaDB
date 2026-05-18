@@ -296,7 +296,10 @@ async fn setup_test_collection(
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         batch_ids: vec![],
         hints: HashMap::new(),
         timeout_ms: None,

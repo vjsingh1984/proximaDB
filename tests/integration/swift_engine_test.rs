@@ -3,13 +3,13 @@
 use std::sync::Arc;
 use tempfile::TempDir;
 
-use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 use proximadb::services::collection::manager::CollectionService;
 use proximadb::storage::engines::swift::SwiftEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::BatchId;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use proximadb_records::ProximaRecord;
 use std::collections::HashMap;
 
 // Import test utilities
@@ -68,7 +68,7 @@ async fn create_test_setup() -> (Arc<SwiftEngine>, Arc<CollectionService>, TempD
 
 /// Create test vectors
 /// REFACTORED: Now uses vector_generator::sequential() - much cleaner!
-fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
+fn create_test_vectors(count: usize) -> Vec<ProximaRecord> {
     // OLD: 18 lines of manual vector construction
     // NEW: 1 line using test utility
     sequential("swift_test_collection", count, 128)

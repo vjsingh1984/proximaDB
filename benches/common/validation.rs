@@ -1,8 +1,8 @@
 #![allow(dead_code, unused_imports, unused_variables)]
 use proximadb::core::search::results::OptimizedSearchRecord;
-use proximadb::proto::proximadb_v1::SqlValue;
 /// Validation utilities for benchmarks to ensure correctness
 use proximadb::storage::traits::FlushResult as TraitFlushResult;
+use proximadb_data_model::ProximaValue;
 use tracing::debug;
 
 /// Validate flush operation results
@@ -140,7 +140,7 @@ pub fn validate_search_results(
 pub fn validate_metadata_filter(
     results: &[OptimizedSearchRecord],
     field: &str,
-    expected_value: &SqlValue,
+    expected_value: &ProximaValue,
     engine: &str,
     compression: &str,
 ) -> bool {

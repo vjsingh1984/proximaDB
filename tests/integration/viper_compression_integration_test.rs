@@ -1091,7 +1091,11 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
     );
 
     // Search for vec_0 (first vector)
-    let query_vector = vectors[0].embeddings.first().map(|e| e.values.clone()).unwrap_or_default();
+    let query_vector = vectors[0]
+        .embeddings
+        .first()
+        .map(|e| e.values.clone())
+        .unwrap_or_default();
     let collection =
         env.create_test_collection_with_settings(StorageEngine::Viper, dimension as i32, None);
     let collection_arc = Arc::new(collection.clone());
@@ -1210,7 +1214,11 @@ async fn test_nova_search_with_none_compression() -> anyhow::Result<()> {
 
     // For now, use the search wrapper since flush requires full implementation
     // This test verifies the search path logic is correct
-    let query_vector = vectors[0].embeddings.first().map(|e| e.values.clone()).unwrap_or_default();
+    let query_vector = vectors[0]
+        .embeddings
+        .first()
+        .map(|e| e.values.clone())
+        .unwrap_or_default();
 
     // Test the wrapper function that benchmarks use
     let results = engine

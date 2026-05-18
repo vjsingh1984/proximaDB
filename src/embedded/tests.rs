@@ -283,7 +283,11 @@ mod tests {
             .get_vector("agent_store", "record-1")
             .expect("get updated record")
             .expect("updated record should exist");
-        let updated_vec = updated_record.embeddings.first().map(|e| e.values.as_slice()).unwrap_or(&[]);
+        let updated_vec = updated_record
+            .embeddings
+            .first()
+            .map(|e| e.values.as_slice())
+            .unwrap_or(&[]);
         assert_eq!(updated_vec.len(), 64);
         assert!((updated_vec[0] - 9.9).abs() < 0.001);
 

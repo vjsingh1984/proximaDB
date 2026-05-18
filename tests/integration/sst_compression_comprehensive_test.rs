@@ -127,7 +127,13 @@ async fn test_compression_for_data(
     );
     info!(
         "  • Vectors per block: ~{}",
-        256 * 1024 / (vectors[0].embeddings.first().map(|e| e.dim as usize).unwrap_or(1) * 4)
+        256 * 1024
+            / (vectors[0]
+                .embeddings
+                .first()
+                .map(|e| e.dim as usize)
+                .unwrap_or(1)
+                * 4)
     );
 
     let uncompressed_size =

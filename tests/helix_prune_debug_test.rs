@@ -86,8 +86,12 @@ mod helix_prune_debug {
 
         // Generate test vectors - use 1000 vectors to have multiple blocks
         let vectors = vector_generator::random_seeded_with_prefix("vec", 1000, DIMENSION, 42);
-        let query = vectors[0].vector.clone();
-        let expected_id = &vectors[0].id;
+        let query = vectors[0]
+            .embeddings
+            .first()
+            .map(|e| e.values.clone())
+            .unwrap_or_default();
+        let expected_id = &vectors[0].oid;
 
         eprintln!("Query vector id: {}", expected_id);
         eprintln!("Query vector dimension: {}", query.len());
@@ -209,8 +213,12 @@ mod helix_prune_debug {
         let num_queries = 10;
 
         for i in 0..num_queries {
-            let q = vectors[i].vector.clone();
-            let expected = &vectors[i].id;
+            let q = vectors[i]
+                .embeddings
+                .first()
+                .map(|e| e.values.clone())
+                .unwrap_or_default();
+            let expected = &vectors[i].oid;
 
             // Exact
             let ctx = create_search_context(
@@ -282,9 +290,16 @@ mod helix_prune_debug {
 
         // Generate test vectors - use 5000 to create multiple blocks
         let vectors = vector_generator::random_seeded_with_prefix("vec", 5000, DIMENSION, 42);
-        let query_vectors: Vec<Vec<f32>> =
-            vectors[0..10].iter().map(|v| v.vector.clone()).collect();
-        let expected_ids: Vec<String> = vectors[0..10].iter().map(|v| v.id.clone()).collect();
+        let query_vectors: Vec<Vec<f32>> = vectors[0..10]
+            .iter()
+            .map(|v| {
+                v.embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let expected_ids: Vec<String> = vectors[0..10].iter().map(|v| v.oid.clone()).collect();
 
         let collection = create_collection(collection_id, &temp_dir);
 
@@ -439,7 +454,11 @@ mod helix_prune_debug {
         let collection_id = "centroid_test";
 
         let vectors = vector_generator::random_seeded_with_prefix("vec", 1000, DIMENSION, 456);
-        let _query = vectors[0].vector.clone();
+        let _query = vectors[0]
+            .embeddings
+            .first()
+            .map(|e| e.values.clone())
+            .unwrap_or_default();
 
         let collection = create_collection(collection_id, &temp_dir);
         let engine = HelixEngine::new().await.unwrap();
@@ -528,8 +547,12 @@ mod helix_prune_debug {
         for (name, prune_config) in configs {
             let mut found_count = 0;
             for i in 0..10 {
-                let q = vectors[i].vector.clone();
-                let expected = &vectors[i].id;
+                let q = vectors[i]
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default();
+                let expected = &vectors[i].oid;
 
                 let ctx = create_search_context(
                     q.clone(),
@@ -613,8 +636,12 @@ mod helix_prune_debug {
         eprintln!("\n--- Testing Approximate Mode (Sqrt) on Clustered Data ---");
         let mut approx_recall = 0;
         for &idx in &test_indices {
-            let query = vectors[idx].vector.clone();
-            let expected_id = &vectors[idx].id;
+            let query = vectors[idx]
+                .embeddings
+                .first()
+                .map(|e| e.values.clone())
+                .unwrap_or_default();
+            let expected_id = &vectors[idx].oid;
 
             let ctx = create_search_context(
                 query.clone(),
@@ -632,8 +659,12 @@ mod helix_prune_debug {
         eprintln!("\n--- Testing Exact Mode on Clustered Data ---");
         let mut exact_recall = 0;
         for &idx in &test_indices {
-            let query = vectors[idx].vector.clone();
-            let expected_id = &vectors[idx].id;
+            let query = vectors[idx]
+                .embeddings
+                .first()
+                .map(|e| e.values.clone())
+                .unwrap_or_default();
+            let expected_id = &vectors[idx].oid;
 
             let ctx = create_search_context(
                 query.clone(),

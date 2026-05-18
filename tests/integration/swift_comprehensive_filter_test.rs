@@ -166,7 +166,7 @@ async fn test_swift_string_equals_filter() {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         collection_config: Some(collection.clone()),
-        vector_records: vectors.clone(),
+        vector_records: vectors.iter().map(|v: &VectorRecord| v.into()).collect(),
         force: true,
         synchronous: true,
         ..Default::default()
@@ -211,7 +211,10 @@ async fn test_swift_number_less_than_filter() {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         collection_config: Some(collection.clone()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         synchronous: true,
         ..Default::default()
@@ -252,7 +255,10 @@ async fn test_swift_boolean_filter() {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         collection_config: Some(collection.clone()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         synchronous: true,
         ..Default::default()
@@ -293,7 +299,10 @@ async fn test_swift_integer_filter() {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         collection_config: Some(collection.clone()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         synchronous: true,
         ..Default::default()
@@ -334,7 +343,10 @@ async fn test_swift_and_filter() {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         collection_config: Some(collection.clone()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         synchronous: true,
         ..Default::default()
@@ -388,7 +400,10 @@ async fn test_swift_or_filter() {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         collection_config: Some(collection.clone()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         synchronous: true,
         ..Default::default()
@@ -438,7 +453,10 @@ async fn test_swift_not_filter() {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         collection_config: Some(collection.clone()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         synchronous: true,
         ..Default::default()
@@ -479,7 +497,10 @@ async fn test_swift_complex_nested_filter() {
     let params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         collection_config: Some(collection.clone()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         synchronous: true,
         ..Default::default()

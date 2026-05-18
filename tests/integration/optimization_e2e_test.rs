@@ -295,7 +295,10 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let start = Instant::now();
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("optimization_test".to_string()),
-        vector_records: sst_vectors.clone(),
+        vector_records: sst_vectors
+            .iter()
+            .map(|v: &VectorRecord| v.into())
+            .collect(),
         force: true,
         collection_config: Some(collection.clone()), // Pass the collection config with storage assignment
         ..Default::default()
@@ -313,7 +316,10 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let start = Instant::now();
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("optimization_test".to_string()),
-        vector_records: viper_vectors,
+        vector_records: viper_vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         collection_config: Some(collection.clone()), // Pass the collection config with storage assignment
         ..Default::default()

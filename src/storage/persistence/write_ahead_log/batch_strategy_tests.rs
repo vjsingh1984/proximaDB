@@ -503,11 +503,19 @@ mod write_ahead_log_batch_strategy_tests {
         let recovered_vectors: Vec<ProximaRecord> = bincode::deserialize(&data).unwrap();
         assert_eq!(recovered_vectors.len(), 2);
         assert_eq!(
-            recovered_vectors[0].embeddings.first().map(|e| e.values.as_slice()).unwrap_or(&[]),
+            recovered_vectors[0]
+                .embeddings
+                .first()
+                .map(|e| e.values.as_slice())
+                .unwrap_or(&[]),
             &[1.0f32, 2.0, 3.0]
         );
         assert_eq!(
-            recovered_vectors[1].embeddings.first().map(|e| e.values.as_slice()).unwrap_or(&[]),
+            recovered_vectors[1]
+                .embeddings
+                .first()
+                .map(|e| e.values.as_slice())
+                .unwrap_or(&[]),
             &[4.0f32, 5.0, 6.0]
         );
     }
