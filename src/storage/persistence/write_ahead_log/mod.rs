@@ -289,8 +289,8 @@ pub struct FlushCycle {
     pub collection_id: String,
     /// WAL batches marked for flush (replaces Vec<WalEntry>)
     pub batches: Vec<WALVectorBatch>,
-    /// Extracted vector records ready for storage
-    pub vector_records: Vec<VectorRecord>,
+    /// Extracted canonical records ready for storage
+    pub vector_records: Vec<proximadb_records::ProximaRecord>,
     /// Disk segments marked as flush-pending
     pub marked_segments: Vec<String>,
     /// Sequence ranges marked as flush-pending

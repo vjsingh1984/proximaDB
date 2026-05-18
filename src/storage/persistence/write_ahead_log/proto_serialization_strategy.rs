@@ -14,7 +14,6 @@ use super::{BatchId, FlushResult, WALConfig, WALStats};
 use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute,
 };
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -258,7 +257,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         &self,
         collection_id: &str,
         vector_id: &crate::core::VectorId,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .search_vector_by_id(collection_id, vector_id)
             .await
@@ -270,7 +269,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         _query_vector: &[f32],
         _k: usize,
         _distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
-    ) -> Result<Vec<(String, f32, VectorRecord)>> {
+    ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
         // For now, similarity search is delegated to storage engine
         let engine = self.storage_engine.read().await;
         if let Some(_engine) = engine.as_ref() {
@@ -283,7 +282,10 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         }
     }
 
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .get_collection_vectors(collection_id)
             .await

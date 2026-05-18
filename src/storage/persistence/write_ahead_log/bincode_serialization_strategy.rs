@@ -14,7 +14,6 @@ use tracing::{debug, info, warn};
 use super::batch_strategy::WALBatchStrategy;
 use super::{BatchId, FlushResult, WALConfig, WALStats};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
@@ -264,7 +263,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         &self,
         collection_id: &str,
         vector_id: &crate::core::VectorId,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .search_vector_by_id(collection_id, vector_id)
             .await
@@ -276,7 +275,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
-    ) -> Result<Vec<(String, f32, VectorRecord)>> {
+    ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
         // For tests, we can do a simple search in memtable
         let vectors = self
             .memtable_manager
@@ -293,13 +292,16 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         // Use the unified distance compute to calculate distances
         let metric =
             distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
-        let mut results: Vec<(String, f32, VectorRecord)> = Vec::new();
+        let mut results: Vec<(String, f32, proximadb_records::ProximaRecord)> = Vec::new();
 
         for vector in vectors {
+            let Some(embedding) = vector.embeddings.first() else {
+                continue;
+            };
             let distance_result =
-                distance_compute.calculate_distance(query_vector, &vector.vector, &metric);
+                distance_compute.calculate_distance(query_vector, &embedding.values, &metric);
             // Use empty string for vectors without IDs
-            let id = vector.id.clone();
+            let id = vector.oid.clone();
             // Use rank_value for sorting (lower = more similar)
             results.push((id, distance_result.rank_value, vector));
         }
@@ -311,7 +313,10 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         Ok(results)
     }
 
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .get_collection_vectors(collection_id)
             .await

@@ -25,7 +25,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::metadata_types::MetadataValue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
+use crate::proto::proximadb_v1::sql_value;
 use crate::services::operations::vectors::VectorOperationsService;
 use std::collections::HashMap;
 
@@ -51,36 +51,6 @@ fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
         crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
             MetadataValue::String(Arc::from("[object]"))
         }
-    }
-}
-
-/// Helper function to convert proto metadata Value to SqlValue
-fn convert_proto_value_to_sql(value: sql_value::Value) -> proximadb_v1::SqlValue {
-    match value {
-        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::BytesValue(b) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::NullValue(n) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(n)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o)),
-        },
     }
 }
 

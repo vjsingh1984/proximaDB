@@ -326,7 +326,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         &self,
         collection_id: &str,
         vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Check Write Buffer data (unflushed)
@@ -338,7 +338,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     .is_some_and(|expires| expires / 1_000_000_000 < current_time);
 
                 if !is_expired {
-                    return Ok(Some(wal_record.into()));
+                    return Ok(Some(wal_record));
                 }
             }
             // Deferred: Add storage engine lookup for flushed data
@@ -355,7 +355,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<CoreDistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
+    ) -> Result<Vec<(VectorId, f32, proximadb_records::ProximaRecord)>> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Convert CoreDistanceMetric to unified DistanceMetric (they're the same due to alias)
@@ -418,10 +418,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 .await?;
 
             // Convert SearchResult objects to the expected format
-            let converted_results: Vec<(VectorId, f32, VectorRecord)> = results
+            let converted_results: Vec<(VectorId, f32, proximadb_records::ProximaRecord)> = results
                 .into_iter()
                 .map(|search_result| {
-                    // Create VectorRecord from SearchResult
+                    // SearchResult is still a vector-shaped protocol edge. Convert immediately
+                    // into the canonical record envelope before returning from the strategy.
                     let vector_record = VectorRecord {
                         id: search_result.id.clone(),
                         vector: search_result.vector.clone(),
@@ -432,7 +433,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                         version: search_result.version,
                         source: None,
                     };
-                    (search_result.id, search_result.score as f32, vector_record)
+                    (
+                        search_result.id,
+                        search_result.score as f32,
+                        vector_record.into(),
+                    )
                 })
                 .collect();
 
@@ -445,7 +450,10 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     // 🎯 COLLECTION MANAGEMENT
 
     /// Get all vector records for a collection (for flush operations)
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Get all unflushed batches for the collection
@@ -454,7 +462,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Extract all vector records from batches
             let mut vectors = Vec::new();
             for batch in batches {
-                vectors.extend(batch.vector_records.iter().map(Into::into));
+                vectors.extend(batch.vector_records.iter().cloned());
             }
 
             Ok(vectors)
@@ -990,7 +998,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             let mut marked_sequences = Vec::new();
 
             for batch in &unflushed_batches {
-                all_vector_records.extend(batch.vector_records.iter().map(Into::into));
+                all_vector_records.extend(batch.vector_records.iter().cloned());
                 batch_ids.push(batch.batch_id);
                 // CompactBatchId doesn't have sequence_range, use a placeholder
                 marked_sequences.push((0, 0));
@@ -1074,7 +1082,10 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 bytes_reclaimed: flush_cycle
                     .vector_records
                     .iter()
-                    .map(|v| (v.vector.len() * 4 + 256) as u64)
+                    .map(|v| {
+                        let dimension = v.embeddings.first().map(|e| e.values.len()).unwrap_or(0);
+                        (dimension * 4 + 256) as u64
+                    })
                     .sum(),
             })
         } else {
@@ -1085,7 +1096,10 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 bytes_reclaimed: flush_cycle
                     .vector_records
                     .iter()
-                    .map(|v| (v.vector.len() * 4 + 256) as u64)
+                    .map(|v| {
+                        let dimension = v.embeddings.first().map(|e| e.values.len()).unwrap_or(0);
+                        (dimension * 4 + 256) as u64
+                    })
                     .sum(),
             })
         }

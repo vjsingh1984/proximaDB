@@ -103,9 +103,7 @@ pub use agent_memory::{
 // Re-export streaming types
 pub use streaming::{EmbeddedSearchIterator, StreamingSearchConfig, StreamingSearchResult};
 
-// Import VectorRecord for get_vector and vector_exists operations
 use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
-use crate::proto::proximadb_v1::VectorRecord;
 
 /// Embedded database configuration for multi-disk support
 #[derive(Debug, Clone)]
