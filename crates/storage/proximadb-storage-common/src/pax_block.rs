@@ -211,18 +211,20 @@ impl PaxSegmentWriter {
         if self.current_writer.is_empty() {
             return Ok(());
         }
+        // Capture timestamp bounds before flush (flush does not reset internal state).
+        let min_ts = self.current_writer.min_ts();
+        let max_ts = self.current_writer.max_ts();
+        let row_count = self.current_writer.row_count() as u32;
+
         let block_bytes = self.current_writer.flush()?;
         let block_size = block_bytes.len() as u32;
         let offset = self.file_buf.len() as u64;
 
-        // Collect stats before consuming the block bytes.
-        // Timestamps and column stats are populated per-block by PaxBlockWriter.
-        // We use placeholder bounds here; callers can enrich from header if needed.
         let stats = BlockStats {
-            row_count: self.current_writer.row_count() as u32,
+            row_count,
             block_size_bytes: block_size,
-            min_timestamp_ns: 0,
-            max_timestamp_ns: 0,
+            min_timestamp_ns: min_ts,
+            max_timestamp_ns: max_ts,
             null_counts: std::collections::HashMap::new(),
             lower_bounds: std::collections::HashMap::new(),
             upper_bounds: std::collections::HashMap::new(),

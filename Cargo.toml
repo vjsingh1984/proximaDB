@@ -188,6 +188,7 @@ proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-commo
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }

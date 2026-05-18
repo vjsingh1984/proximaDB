@@ -157,6 +157,24 @@ impl PaxBlockWriter {
         self.oids.is_empty()
     }
 
+    /// Minimum `created_at_ns` seen across all buffered records. Returns 0 if empty.
+    pub fn min_ts(&self) -> i64 {
+        if self.min_ts == i64::MAX {
+            0
+        } else {
+            self.min_ts
+        }
+    }
+
+    /// Maximum `created_at_ns` seen across all buffered records. Returns 0 if empty.
+    pub fn max_ts(&self) -> i64 {
+        if self.max_ts == i64::MIN {
+            0
+        } else {
+            self.max_ts
+        }
+    }
+
     /// Buffer one `ProximaRecord` for inclusion in the next `flush()`.
     pub fn add_record(&mut self, record: &ProximaRecord) -> Result<()> {
         let flat = FlatRow::from_record(record)?;

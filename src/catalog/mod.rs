@@ -40,6 +40,10 @@ pub mod internal;
 // Iceberg REST catalog server — service layer translating internal ↔ Iceberg REST types
 pub mod iceberg_rest_service;
 
+// PAX segment registry — bridges write path (gRPC v2) with Iceberg REST snapshot stats
+pub mod segment_registry;
+pub use segment_registry::SegmentRegistry;
+
 // OLTP catalog backend (PostgreSQL / Neon / Supabase / MariaDB / SQLite)
 pub mod oltp;
 

@@ -5848,6 +5848,7 @@ dependencies = [
  "prost",
  "prost-types",
  "proximadb-api",
+ "proximadb-block-format",
  "proximadb-catalog",
  "proximadb-codec",
  "proximadb-compression",
