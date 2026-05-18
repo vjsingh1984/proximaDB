@@ -217,8 +217,8 @@ impl WALOperation {
         size
     }
 
-    /// Extract VectorRecord from WAL entry operation
-    pub fn extract_vector_record(&self) -> Result<VectorRecord, anyhow::Error> {
+    /// Extract the first canonical record from a WAL entry operation.
+    pub fn extract_vector_record(&self) -> Result<proximadb_records::ProximaRecord, anyhow::Error> {
         // Proto-first architecture: payload format determines deserialization
         if self.operation_type == "upsert_batch" || self.operation_type == "delete_batch" {
             match self.payload_format.as_str() {
@@ -1747,9 +1747,11 @@ impl WriteAheadLogManager {
         // Calculate actual size - approximate based on vector dimensions and metadata
         let total_size_bytes = record.vector.len() * 4 + 256; // 4 bytes per f32 + metadata overhead
 
+        // Convert to canonical ProximaRecord at the protocol boundary
+        let proxima_record = proximadb_records::ProximaRecord::from(record);
         let batch = WALVectorBatch {
             batch_id,
-            vector_records: Arc::new(vec![record.clone()]),
+            vector_records: Arc::new(vec![proxima_record]),
             timestamp: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
@@ -1783,8 +1785,10 @@ impl WriteAheadLogManager {
         records: Vec<(VectorId, VectorRecord)>,
     ) -> Result<Vec<u64>> {
         // Use the modern batch API directly
-        let vector_records: Vec<VectorRecord> =
-            records.into_iter().map(|(_, record)| record).collect();
+        let vector_records: Vec<proximadb_records::ProximaRecord> = records
+            .into_iter()
+            .map(|(_, record)| record.into())
+            .collect();
         self.insert_vectors(collection_id, vector_records).await
     }
 
@@ -1797,8 +1801,10 @@ impl WriteAheadLogManager {
         records: Vec<(VectorId, VectorRecord)>,
         _immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let vector_records: Vec<VectorRecord> =
-            records.into_iter().map(|(_, record)| record).collect();
+        let vector_records: Vec<proximadb_records::ProximaRecord> = records
+            .into_iter()
+            .map(|(_, record)| record.into())
+            .collect();
 
         // Just insert to WAL/memtable - sync will happen during flush via atomic coordinator
         self.insert_vectors(collection_id, vector_records).await
@@ -1872,7 +1878,9 @@ impl WriteAheadLogManager {
         // Create MemtableConfig from MemTableConfig
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        wal_behavior.vector_by_id(collection_id, vector_id).await
+        // Convert ProximaRecord back to VectorRecord at the protocol boundary
+        let result = wal_behavior.vector_by_id(collection_id, vector_id).await?;
+        Ok(result.map(|r| VectorRecord::from(r)))
     }
 
     /// Read vector batches for recovery or replication (modern API)
@@ -1887,11 +1895,12 @@ impl WriteAheadLogManager {
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let vectors = wal_behavior.get_collection_vectors(collection_id).await?;
 
-        // Apply sequence filtering and limit if needed
+        // Apply sequence filtering and limit if needed, converting to legacy VectorRecord
         let filtered: Vec<VectorRecord> = vectors
             .into_iter()
             .skip(from_sequence as usize)
             .take(limit.unwrap_or(usize::MAX))
+            .map(VectorRecord::from)
             .collect();
 
         Ok(filtered)
@@ -1931,18 +1940,22 @@ impl WriteAheadLogManager {
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         let vectors = wal_behavior.get_collection_vectors(collection_id).await?;
 
-        // Apply limit if specified
+        // Apply limit and convert from ProximaRecord to legacy VectorRecord for serialization
         let limited_vectors: Vec<VectorRecord> = if let Some(lim) = limit {
-            vectors.into_iter().take(lim).collect()
-        } else {
             vectors
+                .into_iter()
+                .take(lim)
+                .map(VectorRecord::from)
+                .collect()
+        } else {
+            vectors.into_iter().map(VectorRecord::from).collect()
         };
 
         // Serialize each vector to proto bytes (proto-first architecture)
         let mut proto_payloads = Vec::new();
         for vector in limited_vectors {
-            // VectorRecord is already proto type in proto-first architecture
-            let proto_record: crate::proto::proximadb_v1::VectorRecord = vector.clone();
+            // Convert back to proto VectorRecord for wire encoding
+            let proto_record: crate::proto::proximadb_v1::VectorRecord = vector;
             let proto_bytes = {
                 use prost::Message;
                 proto_record.encode_to_vec()
@@ -1971,26 +1984,20 @@ impl WriteAheadLogManager {
         let proto_serializer = ProtocolBuffersSerializer::new();
         if let Ok(records) = proto_serializer.deserialize_batch(payload) {
             // Use the modern batch API with sync option
-            if immediate_sync {
-                self.insert_batch_with_sync(
-                    collection_id.to_string(),
-                    records.into_iter().map(|r| (r.id.clone(), r)).collect(),
-                    true,
-                )
+            let _ = immediate_sync;
+            self.insert_vectors(collection_id.to_string(), records)
                 .await
                 .map(|sequences| sequences.into_iter().next().unwrap_or(0))
-            } else {
-                self.insert_vectors(collection_id.to_string(), records)
-                    .await
-                    .map(|sequences| sequences.into_iter().next().unwrap_or(0))
-            }
         } else {
             anyhow::bail!("Failed to deserialize batch payload")
         }
     }
 
     /// Get all vectors for a collection (modern batch approach)
-    pub async fn get_collection_entries(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn get_collection_entries(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.get_collection_vectors(collection_id).await
@@ -2123,9 +2130,13 @@ impl WriteAheadLogManager {
         // Create native WALVectorBatch with Arc (zero-copy)
         let batch_id = crate::storage::persistence::write_ahead_log::BatchId::new();
 
+        let proxima_vectors: Vec<proximadb_records::ProximaRecord> = native_vectors
+            .iter()
+            .map(proximadb_records::ProximaRecord::from)
+            .collect();
         let native_batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
             batch_id,
-            vector_records: native_vectors.clone(), // Clone Arc (cheap)
+            vector_records: Arc::new(proxima_vectors),
             timestamp: std::time::SystemTime::now(),
             total_size_bytes: 0, // Will be calculated by strategy
             is_flushed: false,
@@ -2180,7 +2191,8 @@ impl WriteAheadLogManager {
                 "🔄 DEBUG: Serializing {} vectors",
                 native_batch.vector_records.len()
             );
-            let serialized = match serializer.serialize_batch(&native_batch.vector_records) {
+            let serialized = match serializer.serialize_batch(native_batch.vector_records.as_ref())
+            {
                 Ok(data) => {
                     info!(
                         "🔄 DEBUG: Serialization successful, size: {} bytes",
@@ -2282,7 +2294,7 @@ impl WriteAheadLogManager {
     pub async fn insert_vectors(
         &self,
         collection_id: String,
-        records: Vec<VectorRecord>,
+        records: Vec<proximadb_records::ProximaRecord>,
     ) -> Result<Vec<u64>> {
         if records.is_empty() {
             return Ok(Vec::new());
@@ -2293,7 +2305,13 @@ impl WriteAheadLogManager {
         use crate::storage::persistence::write_ahead_log::BatchId;
         let total_size_bytes: usize = records
             .iter()
-            .map(|r| r.vector.len() * 4 + 256) // 4 bytes per f32 + metadata overhead
+            .map(|r| {
+                r.embeddings
+                    .first()
+                    .map(|embedding| embedding.values.len() * 4)
+                    .unwrap_or(0)
+                    + 256
+            })
             .sum();
         let batch_id = BatchId::new();
 
@@ -2339,7 +2357,7 @@ impl WriteAheadLogManager {
             // Create serializer and serialize batch
             let serializer = SerializerFactory::create(format);
             let serialized = serializer
-                .serialize_batch(&batch.vector_records)
+                .serialize_batch(batch.vector_records.as_ref())
                 .context("Failed to serialize batch for WAL")?;
 
             // Determine if we should sync based on sync mode
@@ -2426,7 +2444,8 @@ impl WriteAheadLogManager {
         {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            wal_behavior.vector_by_id(collection_id, vector_id).await
+            let record = wal_behavior.vector_by_id(collection_id, vector_id).await?;
+            Ok(record.map(|r| proximadb_records::conversions::proxima_record_to_vector(&r)))
         }
     }
 
@@ -2548,28 +2567,26 @@ impl WriteAheadLogManager {
 
         for batch in filtered_batches {
             for vector_record in batch.vector_records.iter() {
-                // Check if this is a tombstone (empty vector + expires_at in past)
-                // IMPORTANT: Tombstones MUST be returned to the merge phase so they can
-                // override storage results. The merge phase filters them out after deduplication.
-                let is_tombstone = vector_record.vector.is_empty()
-                    && vector_record
-                        .expires_at
-                        .is_some_and(|e| e <= current_time_secs);
+                let embedding = vector_record.embeddings.first();
+                let vec_values = embedding.map(|e| e.values.as_slice()).unwrap_or(&[]);
+                let expires_at_secs = vector_record.valid_to_ns.map(|ns| ns / 1_000_000_000);
+
+                // Check if this is a tombstone (empty vector + valid_to in past)
+                let is_tombstone = vec_values.is_empty()
+                    && expires_at_secs.is_some_and(|e| e <= current_time_secs);
 
                 if is_tombstone {
-                    // Return tombstone as a special marker for the merge phase
-                    // Score is 0.0 since we can't compute distance for empty vectors
-                    tracing::trace!("Returning tombstone marker for: {}", vector_record.id);
+                    tracing::trace!("Returning tombstone marker for: {}", vector_record.oid);
                     let tombstone_result = crate::core::search::results::OptimizedSearchRecord {
-                        id: vector_record.id.clone(),
-                        vector_id: Some(vector_record.id.clone()),
+                        id: vector_record.oid.clone(),
+                        vector_id: Some(vector_record.oid.clone()),
                         score: 0.0,
                         similarity: Some(0.0),
                         vector: None,
-                        version: vector_record.version,
-                        timestamp: Some(vector_record.timestamp.unwrap_or(0)),
-                        updated_at: vector_record.updated_at,
-                        expires_at: vector_record.expires_at,
+                        version: Some(vector_record.record_version as u32),
+                        timestamp: Some(vector_record.created_at_ns / 1_000_000),
+                        updated_at: Some(vector_record.updated_at_ns / 1_000_000),
+                        expires_at: expires_at_secs,
                         ..Default::default()
                     };
                     all_results.push(tombstone_result);
@@ -2577,7 +2594,7 @@ impl WriteAheadLogManager {
                 }
 
                 // Skip empty vectors that aren't tombstones (malformed records)
-                if vector_record.vector.is_empty() {
+                if vec_values.is_empty() {
                     continue;
                 }
 
@@ -2591,41 +2608,43 @@ impl WriteAheadLogManager {
                 // Calculate distance
                 let similarity_result = distance_calculator.calculate_distance(
                     query_vector,
-                    &vector_record.vector,
+                    vec_values,
                     &distance_metric,
                 );
 
-                // Create optimized search result with SqlValue metadata
-                // IMPORTANT: Use normalized_score for consistency across all engines
-                // Higher similarity = better match, VOS sorts descending
+                let metadata = if include_metadata {
+                    use proximadb_records::ProximaTreeNode;
+                    vector_record
+                        .props
+                        .iter()
+                        .filter_map(|(k, node)| {
+                            if let ProximaTreeNode::Value(pv) = node {
+                                Some((k.clone(), pv.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    Default::default()
+                };
+
                 let search_result = crate::core::search::results::OptimizedSearchRecord {
-                    id: vector_record.id.clone(),
-                    vector_id: Some(vector_record.id.clone()),
+                    id: vector_record.oid.clone(),
+                    vector_id: Some(vector_record.oid.clone()),
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
                     vector: if include_vectors {
-                        Some(Arc::new(vector_record.vector.clone()))
+                        Some(Arc::new(vec_values.to_vec()))
                     } else {
                         None
                     },
-                    metadata: if include_metadata {
-                        crate::core::search::results::sql_map_to_proxima(vector_record.metadata.clone())
-                    } else {
-                        Default::default()
-                    },
-                    version: vector_record.version,
-                    timestamp: Some(vector_record.timestamp.unwrap_or(0)),
-                    updated_at: vector_record.updated_at,
-                    expires_at: vector_record.expires_at,
-                    source: vector_record.source.as_ref().map(|s| {
-                        crate::proto::proximadb_v1::SourceContent {
-                            data: Some(
-                                crate::proto::proximadb_v1::source_content::Data::TextContent(
-                                    s.clone(),
-                                ),
-                            ),
-                        }
-                    }),
+                    metadata,
+                    version: Some(vector_record.record_version as u32),
+                    timestamp: Some(vector_record.created_at_ns / 1_000_000),
+                    updated_at: Some(vector_record.updated_at_ns / 1_000_000),
+                    expires_at: expires_at_secs,
+                    source: None,
                     semantic_similarity: Some(similarity_result.clone()),
                     ..Default::default()
                 };
@@ -2762,10 +2781,12 @@ impl WriteAheadLogManager {
     /// Evaluate filter expression on a vector record with proper enum handling
     fn evaluate_filter_on_record(
         &self,
-        record: &crate::proto::proximadb_v1::VectorRecord,
+        record: &proximadb_records::ProximaRecord,
         filter: &crate::core::search::FilterExpression,
     ) -> bool {
         use crate::core::search::FilterExpression;
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::ProximaTreeNode;
 
         match filter {
             FilterExpression::Comparison {
@@ -2773,39 +2794,21 @@ impl WriteAheadLogManager {
                 operator,
                 value,
             } => {
-                // Find the metadata field in the record
-                for (key, sql_value) in &record.metadata {
+                // Find the metadata field in the record's ProximaTree props
+                for (key, node) in &record.props {
                     if key == field {
-                        // Get the metadata value as string for comparison
-                        let metadata_value = sql_value
-                            .value
-                            .as_ref()
-                            .map(|v| match v {
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                                    s.clone()
-                                }
-                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                                    n.to_string()
-                                }
-                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                                    b.to_string()
-                                }
-                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                                    i.to_string()
-                                }
-                                _ => "".to_string(),
-                            })
-                            .clone();
-
-                        // Compare based on operator
-                        if let Some(metadata_str) = metadata_value {
+                        let metadata_str = match node {
+                            ProximaTreeNode::Value(ProximaValue::String(s)) => s.clone(),
+                            ProximaTreeNode::Value(ProximaValue::Float64(n)) => n.to_string(),
+                            ProximaTreeNode::Value(ProximaValue::Int64(i)) => i.to_string(),
+                            ProximaTreeNode::Value(ProximaValue::Boolean(b)) => b.to_string(),
+                            _ => String::new(),
+                        };
+                        if !metadata_str.is_empty() {
                             return self.compare_values(&metadata_str, operator, value);
-                        } else {
-                            return false;
                         }
                     }
                 }
-                // Field not found, consider it a non-match
                 false
             }
             FilterExpression::And(exprs) => exprs
@@ -2923,7 +2926,10 @@ impl WriteAheadLogManager {
     }
 
     /// Get all vectors for a collection (modern API)
-    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
@@ -3007,8 +3013,10 @@ impl WriteAheadLogManager {
         // }
 
         // 3. Write to memory using existing strategy
-        let vector_records: Vec<VectorRecord> =
-            records.into_iter().map(|(_, record)| record).collect();
+        let vector_records: Vec<proximadb_records::ProximaRecord> = records
+            .into_iter()
+            .map(|(_, record)| record.into())
+            .collect();
         let sequences = self
             .insert_vectors(collection_id.clone(), vector_records)
             .await?;
@@ -3061,12 +3069,21 @@ impl WriteAheadLogManager {
             .context("Failed to get collection vectors from memtable")?;
 
         // Filter vectors by sequences (for now, just take all vectors since we don't have reliable sequence mapping)
-        let batch_vectors: Vec<VectorRecord> = collection_vectors;
+        let batch_vectors = collection_vectors;
 
         let batch_id = BatchId::new();
 
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-        let total_size_bytes: usize = batch_vectors.iter().map(|r| r.vector.len() * 4 + 256).sum();
+        let total_size_bytes: usize = batch_vectors
+            .iter()
+            .map(|r| {
+                r.embeddings
+                    .first()
+                    .map(|e| e.values.len() * 4)
+                    .unwrap_or(0)
+                    + 256
+            })
+            .sum();
 
         Ok(WALVectorBatch {
             batch_id,

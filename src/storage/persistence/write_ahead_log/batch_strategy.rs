@@ -172,7 +172,12 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             use super::BatchId;
             let batch = WALVectorBatch {
                 batch_id: BatchId::new(),
-                vector_records: Arc::new(vector_records),
+                vector_records: Arc::new(
+                    vector_records
+                        .into_iter()
+                        .map(proximadb_records::ProximaRecord::from)
+                        .collect(),
+                ),
                 timestamp: std::time::SystemTime::now(),
                 total_size_bytes: batch_bytes.len(),
                 is_flushed: false,
@@ -219,7 +224,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             payload.len()
         );
 
-        // Step 1: Deserialize payload to common VectorRecord format
+        // Step 1: Deserialize payload to canonical ProximaRecord format.
         let vector_records = match payload_format {
             "avro" => {
                 use crate::storage::persistence::write_ahead_log::serialization::{
@@ -239,9 +244,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     .deserialize_batch(payload)
                     .context("Failed to deserialize Proto payload")?
             }
-            "bincode" => bincode::deserialize::<Vec<VectorRecord>>(payload)
+            "bincode" => bincode::deserialize::<Vec<proximadb_records::ProximaRecord>>(payload)
                 .context("Failed to deserialize Bincode payload")?,
-            "json" => serde_json::from_slice::<Vec<VectorRecord>>(payload)
+            "json" => serde_json::from_slice::<Vec<proximadb_records::ProximaRecord>>(payload)
                 .context("Failed to deserialize JSON payload")?,
             _ => {
                 return Err(anyhow::anyhow!(
@@ -270,7 +275,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             .await?;
 
         // Step 3: Create WALOperation using strategy-specific serialization
-        let strategy_payload = self.serialize_vectors_for_disk(&batch.vector_records)?;
+        let strategy_payload = self.serialize_records_for_disk(batch.vector_records.as_ref())?;
         let wal_operation = super::WALOperation {
             operation_type: "upsert_batch".to_string(),
             payload_data: strategy_payload,
@@ -329,11 +334,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 // Check if not expired
                 let current_time = chrono::Utc::now().timestamp();
                 let is_expired = wal_record
-                    .expires_at
-                    .is_some_and(|expires| expires < current_time);
+                    .valid_to_ns
+                    .is_some_and(|expires| expires / 1_000_000_000 < current_time);
 
                 if !is_expired {
-                    return Ok(Some(wal_record));
+                    return Ok(Some(wal_record.into()));
                 }
             }
             // Deferred: Add storage engine lookup for flushed data
@@ -449,7 +454,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             // Extract all vector records from batches
             let mut vectors = Vec::new();
             for batch in batches {
-                vectors.extend(batch.vector_records.iter().cloned());
+                vectors.extend(batch.vector_records.iter().map(Into::into));
             }
 
             Ok(vectors)
@@ -623,24 +628,27 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
     // 🎯 STRATEGY-SPECIFIC SERIALIZATION (Only methods strategies need to implement)
 
-    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Serialize vectors in strategy format
-    /// - Bincode: bincode::serialize(vectors)
-    /// - Avro: serialize_avro_vector_batch(vectors)
-    /// - Proto: serialize_proto_vector_batch(vectors)
-    fn serialize_vectors_for_disk(&self, _vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Serialize canonical records in strategy format
+    fn serialize_records_for_disk(
+        &self,
+        _records: &[proximadb_records::ProximaRecord],
+    ) -> Result<Vec<u8>> {
         // Default implementation - strategies must override
         Err(anyhow::anyhow!(
-            "serialize_vectors_for_disk not implemented for {}",
+            "serialize_records_for_disk not implemented for {}",
             self.strategy_name()
         ))
     }
 
-    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Deserialize vectors from strategy format
+    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Deserialize canonical records from strategy format
     /// Used during recovery to load Write Buffer files back into memtable
-    fn deserialize_vectors_from_disk(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
+    fn deserialize_records_from_disk(
+        &self,
+        _data: &[u8],
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         // Default implementation - strategies must override
         Err(anyhow::anyhow!(
-            "deserialize_vectors_from_disk not implemented for {}",
+            "deserialize_records_from_disk not implemented for {}",
             self.strategy_name()
         ))
     }
@@ -919,7 +927,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         let batch_id = BatchId::new();
         let batch = WALVectorBatch {
             batch_id,
-            vector_records: Arc::new(vec![tombstone]),
+            vector_records: Arc::new(vec![tombstone.into()]),
             timestamp: std::time::SystemTime::now(),
             total_size_bytes: std::mem::size_of::<VectorRecord>(),
             is_flushed: false,
@@ -982,7 +990,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             let mut marked_sequences = Vec::new();
 
             for batch in &unflushed_batches {
-                all_vector_records.extend(batch.vector_records.iter().cloned());
+                all_vector_records.extend(batch.vector_records.iter().map(Into::into));
                 batch_ids.push(batch.batch_id);
                 // CompactBatchId doesn't have sequence_range, use a placeholder
                 marked_sequences.push((0, 0));

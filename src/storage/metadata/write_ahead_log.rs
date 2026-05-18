@@ -235,8 +235,8 @@ impl MetadataWriteAheadLog {
         // Convert metadata to vector record
         let vector_record = self.metadata_to_vector_record(&metadata)?;
 
-        // Create modern batch operation - use vector records directly
-        let batch_records = vec![vector_record];
+        // Create modern batch operation using canonical records.
+        let batch_records = vec![proximadb_records::ProximaRecord::from(vector_record)];
 
         // Write to write buffer using modern batch architecture through WALBehaviorWrapper
         {
@@ -525,7 +525,7 @@ impl MetadataWriteAheadLog {
             };
 
             // Write delete record to write buffer using modern batch architecture through WALBehaviorWrapper
-            let delete_batch_records = vec![delete_record];
+            let delete_batch_records = vec![proximadb_records::ProximaRecord::from(delete_record)];
             {
                 let behavior_wrapper = self.write_buffer_strategy.get_wal_behavior_wrapper();
                 // Create WALVectorBatch for the delete
@@ -654,10 +654,14 @@ impl MetadataWriteAheadLog {
     /// Convert vector record back to metadata
     fn vector_record_to_metadata(
         &self,
-        record: &crate::proto::proximadb_v1::VectorRecord,
+        record: &proximadb_records::ProximaRecord,
     ) -> Result<VersionedCollectionMetadata> {
         // Convert float vector back to bytes
-        let bytes: Vec<u8> = record.vector.iter().map(|&f| f as u8).collect();
+        let bytes: Vec<u8> = record
+            .embeddings
+            .first()
+            .map(|embedding| embedding.values.iter().map(|&f| f as u8).collect())
+            .unwrap_or_default();
 
         // Deserialize from JSON
         let metadata: VersionedCollectionMetadata = serde_json::from_slice(&bytes)?;

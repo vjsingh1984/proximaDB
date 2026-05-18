@@ -2,9 +2,8 @@
 //!
 //! This is the default and recommended format for ProximaDB's proto-first architecture.
 
-use crate::proto::proximadb_v1::VectorRecord;
-use anyhow::Result;
-use prost::Message;
+use anyhow::{Context, Result};
+use proximadb_records::ProximaRecord;
 
 /// Protocol Buffers serializer - the default for proto-first architecture
 #[derive(Debug, Clone, Default)]
@@ -17,52 +16,15 @@ impl ProtocolBuffersSerializer {
     }
 }
 
-/// Proto-based vector batch wrapper for WAL operations
-#[derive(Clone, Message)]
-struct ProtoVectorBatch {
-    /// Batch of vector records
-    #[prost(message, repeated, tag = "1")]
-    pub vectors: Vec<crate::proto::proximadb_v1::VectorRecord>,
-
-    /// Batch metadata
-    #[prost(string, optional, tag = "2")]
-    pub batch_id: Option<String>,
-
-    /// Batch timestamp (microseconds since epoch)
-    #[prost(int64, tag = "3")]
-    pub timestamp: i64,
-
-    /// Collection ID for this batch
-    #[prost(string, tag = "4")]
-    pub collection_id: String,
-}
-
 impl super::VectorBatchSerializer for ProtocolBuffersSerializer {
-    fn serialize_batch(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
-        // Create proto batch wrapper
-        let batch = ProtoVectorBatch {
-            vectors: vectors.to_vec(),
-            batch_id: Some(format!("batch_{}", chrono::Utc::now().timestamp_micros())),
-            timestamp: chrono::Utc::now().timestamp_micros(),
-            collection_id: String::new(), // Collection ID is managed externally
-        };
-
-        // Serialize using protobuf
-        let mut buf = Vec::new();
-        batch
-            .encode(&mut buf)
-            .map_err(|e| anyhow::anyhow!("Failed to encode proto vector batch: {}", e))?;
-
-        Ok(buf)
+    fn serialize_batch(&self, records: &[ProximaRecord]) -> Result<Vec<u8>> {
+        bincode::serialize(records)
+            .context("Failed to serialize ProximaRecords for canonical WAL proto slot")
     }
 
-    fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
-        // Deserialize protobuf
-        let batch = ProtoVectorBatch::decode(data)
-            .map_err(|e| anyhow::anyhow!("Failed to decode proto vector batch: {}", e))?;
-
-        // Direct return - VectorRecord is already proto type in proto-first architecture
-        Ok(batch.vectors)
+    fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<ProximaRecord>> {
+        bincode::deserialize(data)
+            .context("Failed to deserialize ProximaRecords from canonical WAL proto slot")
     }
 
     fn format(&self) -> super::SerializationFormat {

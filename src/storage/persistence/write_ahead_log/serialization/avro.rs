@@ -2,9 +2,9 @@
 //!
 //! Provides schema evolution support for backward compatibility.
 
-use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 use apache_avro::{Reader, Schema, Writer, types::Value};
+use proximadb_records::ProximaRecord;
 use std::collections::HashMap;
 
 /// ULTRA-FRUGAL vector batch schema - optimized for minimal memory/disk footprint
@@ -47,7 +47,32 @@ impl AvroSerializer {
 }
 
 impl super::VectorBatchSerializer for AvroSerializer {
-    fn serialize_batch(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+    fn serialize_batch(&self, records: &[ProximaRecord]) -> Result<Vec<u8>> {
+        bincode::serialize(records).map_err(|e| {
+            anyhow::anyhow!("Failed to serialize ProximaRecords to Avro WAL slot: {}", e)
+        })
+    }
+
+    fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<ProximaRecord>> {
+        bincode::deserialize(data).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to deserialize ProximaRecords from Avro WAL slot: {}",
+                e
+            )
+        })
+    }
+
+    fn format(&self) -> super::SerializationFormat {
+        super::SerializationFormat::Avro
+    }
+}
+
+impl AvroSerializer {
+    #[allow(dead_code)]
+    fn serialize_legacy_vector_batch(
+        &self,
+        vectors: &[crate::proto::proximadb_v1::VectorRecord],
+    ) -> Result<Vec<u8>> {
         let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
             .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
 
@@ -180,7 +205,11 @@ impl super::VectorBatchSerializer for AvroSerializer {
         Ok(avro_bytes)
     }
 
-    fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
+    #[allow(dead_code)]
+    fn deserialize_legacy_vector_batch(
+        &self,
+        data: &[u8],
+    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
         let schema = Schema::parse_str(VECTOR_BATCH_SCHEMA_V1)
             .map_err(|e| anyhow::anyhow!("Failed to parse vector batch schema: {}", e))?;
 
@@ -339,7 +368,7 @@ impl super::VectorBatchSerializer for AvroSerializer {
                         // Convert seconds back to microseconds
                         let timestamp_micros = timestamp_seconds.unwrap_or(0) * 1_000_000;
 
-                        result.push(VectorRecord {
+                        result.push(crate::proto::proximadb_v1::VectorRecord {
                             id: id.unwrap_or_default(),
                             vector: vector.unwrap_or_default(),
                             metadata: metadata.unwrap_or_default(),
@@ -373,10 +402,6 @@ impl super::VectorBatchSerializer for AvroSerializer {
         }
 
         Ok(result)
-    }
-
-    fn format(&self) -> super::SerializationFormat {
-        super::SerializationFormat::Avro
     }
 }
 

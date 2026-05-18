@@ -475,31 +475,38 @@ impl StreamingSearchService {
 
             for batch in unflushed_batches {
                 for record in batch.vector_records.iter() {
+                    let vector = record
+                        .embeddings
+                        .first()
+                        .map(|embedding| embedding.values.as_slice())
+                        .unwrap_or(&[]);
+                    if vector.is_empty() {
+                        continue;
+                    }
+
                     // Calculate similarity
                     let similarity = self.distance_compute.calculate_distance(
-                        &record.vector,
+                        vector,
                         query_vector,
                         &distance_metric,
                     );
 
-                    // Create OptimizedSearchRecord directly with all VectorRecord information
+                    // Create OptimizedSearchRecord directly from canonical ProximaRecord data.
                     let mut metadata_map = HashMap::new();
-                    for (key, item) in &record.metadata {
-                        let value = &item.value;
-                        if let Some(value) = value {
-                            metadata_map
-                                .insert(key.clone(), convert_proto_value_to_sql(value.clone()));
+                    for (key, node) in &record.props {
+                        if let proximadb_records::ProximaTreeNode::Value(value) = node {
+                            metadata_map.insert(key.clone(), value.clone());
                         }
                     }
 
                     let search_result =
-                        OptimizedSearchRecord::new(record.id.clone(), similarity.normalized_score)
+                        OptimizedSearchRecord::new(record.oid.clone(), similarity.normalized_score)
                             .with_similarity(similarity.rank_value)
-                            .add_vector(record.vector.clone())
-                            .with_metadata(metadata_map)
+                            .add_vector(vector.to_vec())
+                            .with_proxima_metadata(metadata_map)
                             .with_version_info(
-                                record.version.unwrap_or(0),
-                                record.timestamp.unwrap_or(0),
+                                record.record_version as u32,
+                                record.created_at_ns / 1_000_000,
                             );
 
                     results.push(search_result);

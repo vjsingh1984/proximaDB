@@ -874,12 +874,17 @@ impl StorageEngine {
 
                                 // Extract metadata from the first vector entry
                                 if let Some(record) = entries.first() {
+                                    let dimension = record
+                                        .embeddings
+                                        .first()
+                                        .map(|embedding| embedding.values.len())
+                                        .unwrap_or_default();
                                     let collection =
                                         crate::proto::proximadb_v1::Collection {
                                             id: collection_id.to_string(),
                                             config: Some(crate::proto::proximadb_v1::CollectionConfig {
                                                 name: collection_id.to_string(),
-                                                dimension: record.vector.len() as u32,
+                                                dimension: dimension as u32,
                                                 distance_metric: Some(
                                                     crate::proto::proximadb_v1::DistanceMetric::Cosine
                                                         as i32,
@@ -888,10 +893,7 @@ impl StorageEngine {
                                             }),
                                             stats: Some(crate::proto::proximadb_v1::CollectionStats {
                                                 vector_count: entries.len() as i64,
-                                                data_size_bytes: (entries.len()
-                                                    * record.vector.len()
-                                                    * 4)
-                                                    as i64,
+                                                data_size_bytes: (entries.len() * dimension * 4) as i64,
                                                 ..Default::default()
                                             }),
                                             created_at: chrono::Utc::now().timestamp_micros(),

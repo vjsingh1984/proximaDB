@@ -2,8 +2,8 @@
 //!
 //! Provides maximum performance for native Rust serialization.
 
-use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::{Context, Result};
+use proximadb_records::ProximaRecord;
 
 /// Bincode serializer - optimized for performance
 #[derive(Debug, Clone, Default)]
@@ -17,12 +17,12 @@ impl BincodeSerializer {
 }
 
 impl super::VectorBatchSerializer for BincodeSerializer {
-    fn serialize_batch(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
-        bincode::serialize(vectors).context("Failed to serialize vectors to Bincode format")
+    fn serialize_batch(&self, records: &[ProximaRecord]) -> Result<Vec<u8>> {
+        bincode::serialize(records).context("Failed to serialize ProximaRecords to Bincode format")
     }
 
-    fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
-        bincode::deserialize(data).context("Failed to deserialize Bincode vectors")
+    fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<ProximaRecord>> {
+        bincode::deserialize(data).context("Failed to deserialize Bincode ProximaRecords")
     }
 
     fn format(&self) -> super::SerializationFormat {

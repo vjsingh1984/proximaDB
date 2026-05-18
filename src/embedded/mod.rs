@@ -2033,16 +2033,15 @@ impl EmbeddedProximaDB {
                             continue;
                         }
 
-                        // Combine all vector records from unflushed batches.
-                        // Tombstone records (vector.is_empty(), expires_at=Some(0)) are WAL-layer
-                        // deletion markers; the SST writer cannot handle empty vectors in its
+                        // Combine all canonical records from unflushed batches.
+                        // Tombstone records have no embeddings; the SST writer cannot handle empty vectors in its
                         // centroid/spatial-clustering pipeline.  Filter them out here — the deleted
                         // IDs will simply be absent from the resulting SST, which is correct for the
                         // single-level embedded flush path (no older SST file holds a stale copy).
-                        let vector_records: Vec<crate::proto::proximadb_v1::VectorRecord> = batches
+                        let vector_records: Vec<proximadb_records::ProximaRecord> = batches
                             .iter()
                             .flat_map(|batch| batch.vector_records.iter().cloned())
-                            .filter(|r| !r.vector.is_empty())
+                            .filter(|r| r.embeddings.first().is_some_and(|e| !e.values.is_empty()))
                             .collect();
 
                         let vector_count = vector_records.len();
@@ -2244,7 +2243,8 @@ impl EmbeddedProximaDB {
         &self,
         collection: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>, Box<dyn std::error::Error + Send + Sync>>
+    {
         use crate::storage::persistence::write_ahead_log::get_global_write_buffer_behavior;
 
         self.runtime.block_on(async {
@@ -2274,7 +2274,7 @@ impl EmbeddedProximaDB {
                     if record.vector.is_empty() && record.version.is_none() {
                         Ok(None)
                     } else {
-                        Ok(Some(record))
+                        Ok(Some(record.into()))
                     }
                 }
                 Ok(None) => Ok(None),
@@ -2929,8 +2929,8 @@ impl EmbeddedProximaDB {
                 for collection_id in collections {
                     if let Ok(batches) = write_buffer.get_unflushed_batches(&collection_id).await {
                         for batch in batches {
-                            // Serialize vector records - dereference Arc to get the Vec
-                            let records: &Vec<crate::proto::proximadb_v1::VectorRecord> =
+                            // Serialize canonical records - dereference Arc to get the Vec.
+                            let records: &Vec<proximadb_records::ProximaRecord> =
                                 batch.vector_records.as_ref();
                             let vector_data = bincode::serialize(records).map_err(
                                 |e| -> Box<dyn std::error::Error + Send + Sync> {

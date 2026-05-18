@@ -750,7 +750,7 @@ impl RecoveryManager {
     /// Flush recovered vectors to storage engine
     async fn flush_recovered_vectors(
         file_info: &WalFileInfo,
-        vectors: Vec<crate::proto::proximadb_v1::VectorRecord>,
+        vectors: Vec<proximadb_records::ProximaRecord>,
         _disk_manager: &Arc<WriteAheadLogDiskManager>,
         storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
         _recovery_mode: RecoveryMode,
@@ -1154,14 +1154,14 @@ mod tests {
             let vector = create_test_vector(&format!("test{}", i));
             let batch = WALVectorBatch {
                 batch_id: BatchId::new(),
-                vector_records: Arc::new(vec![vector.clone()]),
+                vector_records: Arc::new(vec![vector.clone().into()]),
                 timestamp: std::time::SystemTime::now(),
                 total_size_bytes: 256,
                 is_flushed: false,
                 metadata_bloom_filter: None,
             };
             let data = serializer
-                .serialize_batch(&batch.vector_records)
+                .serialize_batch(std::slice::from_ref(&vector))
                 .expect("Failed to serialize");
             disk_manager
                 .write_batch(

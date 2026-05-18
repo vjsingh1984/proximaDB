@@ -187,7 +187,9 @@ impl WALBatchStrategy for AvroSerializationStrategy {
 
         // Persist to disk if configured
         if self.should_persist_to_disk() {
-            let serialized = self.serializer.serialize_batch(&batch.vector_records)?;
+            let serialized = self
+                .serializer
+                .serialize_batch(batch.vector_records.as_ref())?;
 
             // Determine if we should sync based on sync mode
             let should_sync = matches!(
@@ -350,7 +352,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         let mut total_bytes = 0u64;
 
         // Prepare vectors for flush
-        let mut all_vectors = Vec::new();
+        let mut all_vectors: Vec<proximadb_records::ProximaRecord> = Vec::new();
         let mut batch_ids = Vec::new();
 
         for batch in &unflushed {

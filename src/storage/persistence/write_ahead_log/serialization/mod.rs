@@ -3,19 +3,19 @@
 //! This module provides clean serialization/deserialization interfaces
 //! without any I/O operations, memtable management, or other concerns.
 
-use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
+use proximadb_records::ProximaRecord;
 
 /// Trait for vector batch serialization
 ///
 /// Implementations should ONLY handle data format conversion,
 /// not I/O, memtable operations, or any other concerns.
 pub trait VectorBatchSerializer: Send + Sync {
-    /// Convert a batch of vector records to serialized bytes
-    fn serialize_batch(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>>;
+    /// Convert a batch of canonical records to serialized bytes
+    fn serialize_batch(&self, records: &[ProximaRecord]) -> Result<Vec<u8>>;
 
-    /// Convert serialized bytes back to vector records
-    fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<VectorRecord>>;
+    /// Convert serialized bytes back to canonical records
+    fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<ProximaRecord>>;
 
     /// Get the serialization format identifier
     fn format(&self) -> SerializationFormat;
