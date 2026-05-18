@@ -4,17 +4,13 @@
 //! by multiple storage engines or modality storage implementations.
 
 pub mod auto_scheduler;
+pub mod pax_block;
 pub mod bitmap;
-pub mod delta_simd;
-pub mod observability_cardinality;
-pub mod observability_partitioning;
-pub mod tiering_policy;
-pub mod tst_compression;
-pub mod unified_cache_config;
 pub mod cache_config;
 pub mod collection_path;
 pub mod column_projector;
 pub mod columnar_constants;
+pub mod delta_simd;
 pub mod engine_constants;
 pub mod engine_profile;
 pub mod engine_type;
@@ -30,6 +26,8 @@ pub mod id_index;
 pub mod metadata_collector;
 pub mod mmap_file;
 pub mod native_metadata;
+pub mod observability_cardinality;
+pub mod observability_partitioning;
 pub mod observability_rollups;
 pub mod proxima_schema;
 pub mod query_metrics;
@@ -39,9 +37,12 @@ pub mod storage_error;
 pub mod storage_path;
 pub mod swift_id_index;
 pub mod tenant_performance;
+pub mod tiering_policy;
 pub mod tiering_retention;
 pub mod transaction_isolation;
+pub mod tst_compression;
 pub mod two_phase_commit;
+pub mod unified_cache_config;
 pub mod wal_entry;
 pub mod writer_statistics;
 pub mod zero_copy_traits;
@@ -68,6 +69,7 @@ pub use columnar_constants::{
     PARQUET_EXTENSION, QUANTIZATION_COLUMNS, QUANTIZATION_PARAMETER_COLUMNS,
     QUANTIZED_VECTOR_COLUMNS, REQUIRED_COLUMNS, TEMPORAL_COLUMNS, VIPER_FILE_EXTENSION,
 };
+pub use delta_simd::{delta_decode_f32, delta_decode_i32_prefix_sum, delta_decode_i64_prefix_sum};
 pub use engine_constants::{
     BLOOM_FILTER_EXT, DEFAULT_BLOCK_METADATA_OVERHEAD_BYTES, DEFAULT_TARGET_BLOCK_SIZE_BYTES,
     ENGINE_COLUMNAR, ENGINE_HELIX, ENGINE_NOVA, ENGINE_RAPTOR, ENGINE_SST, ENGINE_SWIFT,
@@ -113,6 +115,12 @@ pub use native_metadata::{
     FieldStatistics, MetadataFieldType, NativeMetadataHandler, NativeMetadataQueryOptimizer,
     NativeMetadataStats, NativePredicate, OptimizedFilter, PredicateOperator,
 };
+pub use observability_cardinality::{
+    CardinalityConfig, CardinalityLimiter, CheckResult, LabelStats, LimitAction,
+};
+pub use observability_partitioning::{
+    Partition, PartitionConfig, PartitionGranularity, PartitionRange, TimePartitioner,
+};
 pub use observability_rollups::{
     AggregationFunction, RollupConfig, RollupInterval, RollupManager, RollupView,
 };
@@ -133,15 +141,24 @@ pub use tenant_performance::{
     PerformanceMonitoringConfig, SLACheckResult, SLAViolationType, TenantMetrics,
     TenantPerformanceMonitor, TenantSLA,
 };
+pub use tiering_policy::{
+    PerformanceTier, PolicyAction, PolicyCondition, TieringMetadata, TieringPolicy, TieringRule,
+};
 pub use tiering_retention::{
     RetentionAction, RetentionCondition, RetentionMetadata, RetentionOperationStatus,
     RetentionPolicy, RetentionRule,
 };
 pub use transaction_isolation::{IsolationLevel, IsolationManager, ReadSnapshot, WriteSet};
+pub use tst_compression::{TimeSeriesCompressor, TstCompressionConfig};
 pub use two_phase_commit::{
     CommitResult, ParticipantState, ParticipantType, PrepareResult, TransactionState,
     TwoPhaseCommitConfig, TwoPhaseCommitProtocol, TwoPhaseCommitStats, TwoPhaseParticipant,
     TwoPhaseTransaction,
+};
+pub use unified_cache_config::{
+    CacheBehaviorConfig, ConfigError as UnifiedCacheConfigError, DiskCacheConfig,
+    IOOptimizationConfig, InvalidationStrategy, MemoryConfig, PerformanceConfig, StorageTier,
+    UnifiedCacheConfig, UnifiedEvictionPolicy, WorkloadType,
 };
 pub use wal_entry::{
     CanonicalOperation, CanonicalWalEntry, CdcLogicalView, CdcOperation, CdcRecordEvent, EdgeRef,
@@ -152,22 +169,4 @@ pub use writer_statistics::{AggregatedBatchStats, BatchWriteStats, StreamingParq
 pub use zero_copy_traits::{
     AccessFrequency, CollectionContext, EngineMetadata, MetadataSerializer,
     QueryContext as ZeroCopyQueryContext, QueryType,
-};
-pub use delta_simd::{
-    delta_decode_f32, delta_decode_i32_prefix_sum, delta_decode_i64_prefix_sum,
-};
-pub use observability_cardinality::{
-    CardinalityConfig, CardinalityLimiter, CheckResult, LabelStats, LimitAction,
-};
-pub use observability_partitioning::{
-    Partition, PartitionConfig, PartitionGranularity, PartitionRange, TimePartitioner,
-};
-pub use tiering_policy::{
-    PerformanceTier, PolicyAction, PolicyCondition, TieringMetadata, TieringPolicy, TieringRule,
-};
-pub use tst_compression::{TimeSeriesCompressor, TstCompressionConfig};
-pub use unified_cache_config::{
-    CacheBehaviorConfig, ConfigError as UnifiedCacheConfigError, DiskCacheConfig,
-    IOOptimizationConfig, InvalidationStrategy, MemoryConfig, PerformanceConfig, StorageTier,
-    UnifiedCacheConfig, UnifiedEvictionPolicy, WorkloadType,
 };

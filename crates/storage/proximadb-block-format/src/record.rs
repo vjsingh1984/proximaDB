@@ -289,3 +289,134 @@ pub fn update_i64_bounds(meta: &mut crate::stripe::ColumnMeta, value: i64) {
     meta.min_val[0..8].copy_from_slice(&new_min.to_le_bytes());
     meta.max_val[0..8].copy_from_slice(&new_max.to_le_bytes());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proximadb_records::{EdgeShape, EmbeddingCell, LabelSet, ProximaRecord, ProximaTreeNode};
+    use crate::{
+        header::{BlockCompression, BlockMode},
+        writer::PaxBlockWriter,
+        reader::PaxBlockReader,
+    };
+    use std::collections::HashMap;
+
+    /// Build a richly populated ProximaRecord with all field types.
+    fn rich_record(oid: &str) -> ProximaRecord {
+        let mut props = HashMap::new();
+        props.insert(
+            "score".into(),
+            ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Float64(0.95)),
+        );
+        props.insert(
+            "tag".into(),
+            ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String("hello".into())),
+        );
+
+        let mut labels = LabelSet::new();
+        labels.insert("ml");
+        labels.insert("test");
+
+        ProximaRecord {
+            oid:           oid.into(),
+            tenant_id:     "tenant_x".into(),
+            created_at_ns: 1_000_000,
+            updated_at_ns: 2_000_000,
+            valid_from_ns: Some(500_000),
+            valid_to_ns:   Some(9_000_000),
+            actor:         Some("agent-1".into()),
+            origin:        Some("rest-api".into()),
+            props,
+            labels,
+            edge: Some(EdgeShape {
+                source_id: "node_a".into(),
+                target_id: "node_b".into(),
+                edge_type:  "knows".into(),
+                weight:     Some(0.75),
+            }),
+            embeddings: vec![EmbeddingCell {
+                model_id: "text-embed-v1".into(),
+                modality: "text".into(),
+                values:   vec![0.1, 0.2, 0.3, 0.4],
+                dim:      4,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn flat_row_from_record_preserves_all_fields() {
+        let rec = rich_record("r1");
+        let flat = FlatRow::from_record(&rec).unwrap();
+
+        assert_eq!(flat.oid, "r1");
+        assert_eq!(flat.tenant_id, "tenant_x");
+        assert_eq!(flat.created_at_ns, 1_000_000);
+        assert_eq!(flat.valid_from_ns, Some(500_000));
+        assert_eq!(flat.valid_to_ns, Some(9_000_000));
+        assert_eq!(flat.actor.as_deref(), Some("agent-1"));
+        assert_eq!(flat.origin.as_deref(), Some("rest-api"));
+        assert!(flat.props_bytes.is_some(), "props should be serialised");
+        assert!(flat.labels_bytes.is_some(), "labels should be serialised");
+        assert_eq!(flat.edge_src.as_deref(), Some("node_a"));
+        assert_eq!(flat.edge_tgt.as_deref(), Some("node_b"));
+        assert_eq!(flat.edge_type.as_deref(), Some("knows"));
+        assert_eq!(flat.edge_weight, Some(0.75));
+        assert_eq!(flat.embeddings.len(), 1);
+        assert_eq!(flat.embeddings[0], vec![0.1f32, 0.2, 0.3, 0.4]);
+    }
+
+    #[test]
+    fn pax_block_record_round_trip() {
+        let records = vec![
+            rich_record("r1"),
+            rich_record("r2"),
+        ];
+
+        // Write
+        let mut writer = PaxBlockWriter::new(
+            BlockMode::Pax, BlockCompression::None, "collection_rt", 0, 1,
+        );
+        for r in &records {
+            writer.add_record(r).unwrap();
+        }
+        let block_bytes = writer.flush().unwrap();
+
+        // Read back field-by-field via stripe decoders
+        let reader = PaxBlockReader::open(&block_bytes).unwrap();
+        assert_eq!(reader.row_count(), 2);
+
+        let oids = reader.decode_str_stripe(col_id::OID).unwrap();
+        assert_eq!(oids[0].as_deref(), Some("r1"));
+        assert_eq!(oids[1].as_deref(), Some("r2"));
+
+        let actors = reader.decode_str_stripe(col_id::ACTOR).unwrap();
+        assert_eq!(actors[0].as_deref(), Some("agent-1"));
+
+        let valid_from = reader.decode_i64_stripe(col_id::VALID_FROM).unwrap();
+        assert_eq!(valid_from[0], Some(500_000));
+
+        let edge_src = reader.decode_str_stripe(col_id::EDGE_SRC).unwrap();
+        assert_eq!(edge_src[0].as_deref(), Some("node_a"));
+
+        let embeddings = reader.decode_f32_vec_stripe(col_id::EMBED_BASE).unwrap();
+        let emb0 = embeddings[0].as_ref().unwrap();
+        assert!((emb0[0] - 0.1f32).abs() < 1e-6);
+        assert!((emb0[3] - 0.4f32).abs() < 1e-6);
+    }
+
+    #[test]
+    fn olap_block_no_row_directory() {
+        let mut writer = PaxBlockWriter::new(
+            BlockMode::Olap, BlockCompression::None, "col_olap", 0, 0,
+        );
+        writer.add_record(&ProximaRecord {
+            oid: "x".into(), tenant_id: "t".into(),
+            created_at_ns: 1, updated_at_ns: 1,
+            ..Default::default()
+        }).unwrap();
+        let block_bytes = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block_bytes).unwrap();
+        assert!(reader.row_directory().unwrap().is_none(), "OLAP block must not have row directory");
+    }
+}
