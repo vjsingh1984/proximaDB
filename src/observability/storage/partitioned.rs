@@ -14,8 +14,7 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::proto::proximadb_v1::sql_value::Value;
-use crate::proto::proximadb_v1::{LogEntry, SqlValue, VectorRecord};
+use crate::proto::proximadb_v1::LogEntry;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
 /// Time-partitioned storage for logs
@@ -399,24 +398,17 @@ impl PartitionedStorage {
             return Ok(0);
         }
 
-        // Convert log entries to VectorRecords then ProximaRecords for FlushParameters
-        let vector_records_v1: Vec<VectorRecord> = entries
+        let vector_records: Vec<proximadb_records::ProximaRecord> = entries
             .iter()
             .enumerate()
-            .map(|(i, log)| self.log_entry_to_vector_record(log, partition_key, i))
+            .map(|(i, log)| self.log_entry_to_proxima_record(log, partition_key, i))
             .collect();
 
-        let count = vector_records_v1.len();
-        let estimated_size: usize = vector_records_v1
+        let count = vector_records.len();
+        let estimated_size: usize = vector_records
             .iter()
-            .map(|r| r.id.len() + 4 + r.metadata.len() * 100) // rough estimate
+            .map(|r| r.oid.len() + 4 + r.props.len() * 100)
             .sum();
-
-        // Convert VectorRecord → ProximaRecord for FlushParameters canonical boundary
-        let vector_records: Vec<proximadb_records::ProximaRecord> = vector_records_v1
-            .iter()
-            .map(|vr| proximadb_records::ProximaRecord::from(vr))
-            .collect();
 
         // Build flush parameters
         let params = FlushParameters {
@@ -490,69 +482,54 @@ impl PartitionedStorage {
         // 2. Store in VIPER (compressed SST) for maximum efficiency
         // 3. Update partition metadata to point to cold files
 
-        // Convert to VectorRecords for storage (will convert to ProximaRecord below)
-        let vector_records_v1: Vec<VectorRecord> = entries
+        let vector_records: Vec<proximadb_records::ProximaRecord> = entries
             .iter()
             .enumerate()
             .map(|(i, log)| {
-                // Create a record with compressed metadata
-                let mut metadata = std::collections::HashMap::new();
-
-                // Add cold storage marker
-                metadata.insert(
+                let mut props = proximadb_records::ProximaTree::new();
+                props.insert(
                     "_cold".to_string(),
-                    SqlValue {
-                        value: Some(Value::StringValue("true".to_string())),
-                    },
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::Boolean(true),
+                    ),
                 );
-                metadata.insert(
+                props.insert(
                     "_partition_key".to_string(),
-                    SqlValue {
-                        value: Some(Value::StringValue(partition_key.to_string())),
-                    },
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::Int64(partition_key),
+                    ),
                 );
-                metadata.insert(
+                props.insert(
                     "_compressed".to_string(),
-                    SqlValue {
-                        value: Some(Value::StringValue("true".to_string())),
-                    },
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::Boolean(true),
+                    ),
                 );
-
-                // Add selected fields for querying
                 if let Some(source) = &log.source {
-                    metadata.insert(
+                    props.insert(
                         "source".to_string(),
-                        SqlValue {
-                            value: Some(Value::StringValue(source.clone())),
-                        },
+                        proximadb_records::ProximaTreeNode::Value(
+                            proximadb_data_model::ProximaValue::String(source.clone()),
+                        ),
                     );
                 }
                 if let Some(service) = &log.service {
-                    metadata.insert(
+                    props.insert(
                         "service".to_string(),
-                        SqlValue {
-                            value: Some(Value::StringValue(service.clone())),
-                        },
+                        proximadb_records::ProximaTreeNode::Value(
+                            proximadb_data_model::ProximaValue::String(service.clone()),
+                        ),
                     );
                 }
-
-                VectorRecord {
-                    id: format!("{}:{}", partition_key, i),
-                    vector: vec![], // No vector in logs
-                    metadata,
-                    timestamp: Some(log.timestamp_ns),
-                    updated_at: Some(log.timestamp_ns),
-                    expires_at: None,
-                    version: Some(0),
-                    source: Some("observability_log".to_string()),
+                proximadb_records::ProximaRecord {
+                    oid: format!("{}:{}", partition_key, i),
+                    props,
+                    created_at_ns: log.timestamp_ns,
+                    updated_at_ns: log.timestamp_ns,
+                    origin: Some("observability_log".to_string()),
+                    ..Default::default()
                 }
             })
-            .collect();
-
-        // Convert VectorRecord → ProximaRecord for FlushParameters canonical boundary
-        let vector_records: Vec<proximadb_records::ProximaRecord> = vector_records_v1
-            .iter()
-            .map(|vr| proximadb_records::ProximaRecord::from(vr))
             .collect();
 
         // Build flush parameters with compression hints
@@ -580,89 +557,76 @@ impl PartitionedStorage {
         }
     }
 
-    /// Convert a LogEntry to VectorRecord for SST storage
-    fn log_entry_to_vector_record(
+    /// Convert a LogEntry to a canonical ProximaRecord for SST storage.
+    fn log_entry_to_proxima_record(
         &self,
         log: &LogEntry,
         partition_key: i64,
         seq: usize,
-    ) -> VectorRecord {
-        let mut metadata = HashMap::new();
+    ) -> proximadb_records::ProximaRecord {
+        let mut props = proximadb_records::ProximaTree::new();
 
-        // Store log type marker
-        metadata.insert(
+        props.insert(
             "_type".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue("log".to_string())),
-            },
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String("log".to_string()),
+            ),
         );
-
-        // Store partition key
-        metadata.insert(
+        props.insert(
             "_partition".to_string(),
-            SqlValue {
-                value: Some(Value::Int64Value(partition_key)),
-            },
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::Int64(partition_key),
+            ),
         );
-
-        // Store severity
-        metadata.insert(
+        props.insert(
             "severity".to_string(),
-            SqlValue {
-                value: Some(Value::Int64Value(log.severity as i64)),
-            },
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::Int64(log.severity as i64),
+            ),
         );
-
-        // Store message
-        metadata.insert(
+        props.insert(
             "message".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue(log.message.clone())),
-            },
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String(log.message.clone()),
+            ),
         );
 
-        // Store source if present
         if let Some(ref source) = log.source {
-            metadata.insert(
+            props.insert(
                 "source".to_string(),
-                SqlValue {
-                    value: Some(Value::StringValue(source.clone())),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(source.clone()),
+                ),
             );
         }
 
-        // Store service if present
         if let Some(ref service) = log.service {
-            metadata.insert(
+            props.insert(
                 "service".to_string(),
-                SqlValue {
-                    value: Some(Value::StringValue(service.clone())),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(service.clone()),
+                ),
             );
         }
 
-        // Store additional fields
         for (key, value) in &log.fields {
-            // Serialize the value to string for storage
-            if let Ok(json_value) = serde_json::to_string(value) {
-                metadata.insert(
+            if let Ok(json_str) = serde_json::to_string(value) {
+                props.insert(
                     format!("field_{}", key),
-                    SqlValue {
-                        value: Some(Value::StringValue(json_value)),
-                    },
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::String(json_str),
+                    ),
                 );
             }
         }
 
-        VectorRecord {
-            id: format!("log_{}_{}", partition_key, seq),
-            vector: vec![0.0], // Placeholder - logs don't have vectors
-            metadata,
-            timestamp: Some(log.timestamp_ns / 1_000_000), // Convert ns to ms
-            updated_at: Some(log.timestamp_ns / 1_000_000),
-            expires_at: None,
-            version: Some(0),
-            source: log.source.clone(),
+        proximadb_records::ProximaRecord {
+            oid: format!("log_{}_{}", partition_key, seq),
+            props,
+            created_at_ns: log.timestamp_ns,
+            updated_at_ns: log.timestamp_ns,
+            origin: log.source.clone(),
+            ..Default::default()
         }
     }
 

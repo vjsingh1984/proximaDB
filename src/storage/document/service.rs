@@ -547,7 +547,6 @@ impl DocumentService {
     /// - vector: [0.0] placeholder (documents don't have inherent vectors)
     /// - metadata: "_document" contains serialized JSON, "_collection" for routing
     pub async fn flush_to_storage(&self, collection: &str) -> Result<FlushToStorageResult> {
-        use crate::proto::proximadb_v1::VectorRecord;
         use crate::storage::traits::FlushParameters;
 
         info!(
@@ -585,23 +584,16 @@ impl DocumentService {
             });
         }
 
-        // Convert documents to VectorRecords then to ProximaRecords for FlushParameters
-        let vector_records_v1: Vec<VectorRecord> = docs_to_flush
+        let vector_records: Vec<proximadb_records::ProximaRecord> = docs_to_flush
             .iter()
-            .filter_map(|doc| self.document_to_vector_record(doc, collection))
+            .filter_map(|doc| self.document_to_proxima_record(doc, collection))
             .collect();
 
-        let record_count = vector_records_v1.len();
-        let estimated_size: usize = vector_records_v1
+        let record_count = vector_records.len();
+        let estimated_size: usize = vector_records
             .iter()
-            .map(|r| r.id.len() + 4 + r.metadata.len() * 50) // rough estimate
+            .map(|r| r.oid.len() + 4 + r.props.len() * 50)
             .sum();
-
-        // Convert to ProximaRecord for FlushParameters canonical boundary
-        let vector_records: Vec<proximadb_records::ProximaRecord> = vector_records_v1
-            .iter()
-            .map(|vr| proximadb_records::ProximaRecord::from(vr))
-            .collect();
 
         // Build flush parameters
         let params = FlushParameters {
@@ -632,15 +624,11 @@ impl DocumentService {
     }
 
     /// Convert a DocumentRecord to VectorRecord for storage engine persistence
-    fn document_to_vector_record(
+    fn document_to_proxima_record(
         &self,
         doc: &DocumentRecord,
         collection: &str,
-    ) -> Option<crate::proto::proximadb_v1::VectorRecord> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-        use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
-
-        // Serialize the document to JSON string
+    ) -> Option<proximadb_records::ProximaRecord> {
         let doc_json = match serde_json::to_string(&doc.document) {
             Ok(json) => json,
             Err(e) => {
@@ -649,50 +637,39 @@ impl DocumentService {
             }
         };
 
-        // Build metadata map
-        let mut metadata = HashMap::new();
-
-        // Store document type marker
-        metadata.insert(
+        let mut props = proximadb_records::ProximaTree::new();
+        props.insert(
             "_type".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue("document".to_string())),
-            },
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String("document".to_string()),
+            ),
         );
-
-        // Store collection for routing
-        metadata.insert(
+        props.insert(
             "_collection".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue(collection.to_string())),
-            },
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String(collection.to_string()),
+            ),
         );
-
-        // Store serialized document
-        metadata.insert(
+        props.insert(
             "_document".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue(doc_json)),
-            },
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String(doc_json),
+            ),
         );
-
-        // Store version
-        metadata.insert(
+        props.insert(
             "_version".to_string(),
-            SqlValue {
-                value: Some(Value::Int64Value(doc.version as i64)),
-            },
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::Int64(doc.version as i64),
+            ),
         );
 
-        Some(VectorRecord {
-            id: format!("{}::{}", collection, doc.id),
-            vector: vec![0.0], // Placeholder - documents don't have vectors
-            metadata,
-            timestamp: Some(doc.updated_at_ns / 1_000_000), // Convert ns to ms
-            updated_at: Some(doc.updated_at_ns / 1_000_000),
-            expires_at: None,
-            version: Some(doc.version as u32), // VectorRecord uses u32, DocumentRecord uses u64
-            source: None,
+        Some(proximadb_records::ProximaRecord {
+            oid: format!("{}::{}", collection, doc.id),
+            props,
+            created_at_ns: doc.updated_at_ns,
+            updated_at_ns: doc.updated_at_ns,
+            record_version: doc.version,
+            ..Default::default()
         })
     }
 

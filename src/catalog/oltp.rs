@@ -173,7 +173,11 @@ mod pool_impl {
         sqlx::any::install_default_drivers();
         // SQLite in-memory databases are per-connection. Cap to 1 so DDL and DML
         // always use the same connection and share the same in-memory schema.
-        let effective_max = if url.contains(":memory:") { 1 } else { max_connections };
+        let effective_max = if url.contains(":memory:") {
+            1
+        } else {
+            max_connections
+        };
         let pool = sqlx::pool::PoolOptions::<sqlx::Any>::new()
             .max_connections(effective_max)
             .connect(url)
