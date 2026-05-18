@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::proto::proximadb_v1::{MetadataItem, SqlValue, VectorRecord, VectorSearchRequest};
+use crate::proto::proximadb_v1::{SqlValue, VectorSearchRequest};
 
 /// Write mode for Arrow IPC operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -124,20 +124,6 @@ impl ArrowProtoCodec {
             Field::new("timestamp", DataType::Int64, true),
             Field::new("score", DataType::Float32, true),
         ]))
-    }
-
-    /// Convert Arrow RecordBatch to VectorRecord protos
-    ///
-    /// Reuses existing batch_to_vector_records from arrow_ipc_scanner.rs
-    pub fn batches_to_vector_records(batches: Vec<RecordBatch>) -> Result<Vec<VectorRecord>> {
-        let mut all_records = Vec::new();
-
-        for batch in batches {
-            let records = Self::batch_to_vector_records(&batch)?;
-            all_records.extend(records);
-        }
-
-        Ok(all_records)
     }
 
     /// Convert Arrow RecordBatches to canonical ProximaRecord envelopes.
@@ -302,93 +288,6 @@ impl ArrowProtoCodec {
             }
 
             records.push(record);
-        }
-
-        Ok(records)
-    }
-
-    /// Convert single RecordBatch to VectorRecords
-    ///
-    /// This is adapted from arrow_ipc_scanner.rs::batch_to_vector_records
-    fn batch_to_vector_records(batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
-        let mut records = Vec::with_capacity(batch.num_rows());
-
-        // Extract id column
-        let ids = Self::required_string_column_values(
-            batch.column_by_name("id").context("Missing 'id' column")?,
-            "id",
-            batch.num_rows(),
-        )?;
-
-        // Extract vector column (supports FixedSizeList or Binary)
-        let vector_array = batch
-            .column_by_name("vector")
-            .context("Missing 'vector' column")?;
-
-        let vectors = Self::extract_vectors(vector_array, batch.num_rows())?;
-
-        // Extract optional metadata
-        let metadata_items = if let Some(meta_col) = batch.column_by_name("metadata") {
-            Self::extract_metadata(meta_col, batch.num_rows())?
-        } else {
-            vec![Vec::new(); batch.num_rows()]
-        };
-
-        // Extract optional timestamp
-        let timestamps = if let Some(ts_col) = batch.column_by_name("timestamp") {
-            if let Some(ts_array) = ts_col.as_any().downcast_ref::<Int64Array>() {
-                (0..batch.num_rows())
-                    .map(|i| {
-                        if ts_array.is_null(i) {
-                            None
-                        } else {
-                            Some(ts_array.value(i))
-                        }
-                    })
-                    .collect()
-            } else {
-                vec![None; batch.num_rows()]
-            }
-        } else {
-            vec![None; batch.num_rows()]
-        };
-
-        // Build VectorRecord objects
-        for i in 0..batch.num_rows() {
-            // Convert Vec<MetadataItem> to HashMap<String, SqlValue>
-            let metadata_map = metadata_items[i]
-                .iter()
-                .filter_map(|item| {
-                    item.value.as_ref().map(|meta_value| {
-                        use crate::proto::proximadb_v1::metadata_item::Value as MetaValue;
-                        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
-
-                        let sql_value = match meta_value {
-                            MetaValue::StringValue(s) => SqlValue {
-                                value: Some(SqlVal::StringValue(s.clone())),
-                            },
-                            MetaValue::NumberValue(n) => SqlValue {
-                                value: Some(SqlVal::NumberValue(*n)),
-                            },
-                            MetaValue::BoolValue(b) => SqlValue {
-                                value: Some(SqlVal::BoolValue(*b)),
-                            },
-                        };
-                        (item.key.clone(), sql_value)
-                    })
-                })
-                .collect();
-
-            records.push(VectorRecord {
-                id: ids[i].clone(),
-                vector: vectors[i].clone(),
-                metadata: metadata_map,
-                timestamp: timestamps[i],
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            });
         }
 
         Ok(records)
@@ -840,93 +739,9 @@ impl ArrowProtoCodec {
             .collect())
     }
 
-    /// Extract metadata from Arrow struct column
-    fn extract_metadata(array: &ArrayRef, num_rows: usize) -> Result<Vec<Vec<MetadataItem>>> {
-        // Handle StructArray with key/value fields
-        if let Some(struct_array) = array.as_any().downcast_ref::<StructArray>() {
-            let key_array = struct_array
-                .column_by_name("key")
-                .context("Missing 'key' field in metadata struct")?
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .context("'key' field not StringArray")?;
-
-            let value_array = struct_array
-                .column_by_name("value")
-                .context("Missing 'value' field in metadata struct")?
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .context("'value' field not StringArray")?;
-
-            // Assume each row has one metadata item (or null)
-            return Ok((0..num_rows)
-                .map(|i| {
-                    if struct_array.is_null(i) {
-                        Vec::new()
-                    } else {
-                        use crate::proto::proximadb_v1::metadata_item::Value;
-                        vec![MetadataItem {
-                            key: key_array.value(i).to_string(),
-                            value: Some(Value::StringValue(value_array.value(i).to_string())),
-                        }]
-                    }
-                })
-                .collect());
-        }
-
-        // Fallback: StringArray with JSON metadata
-        if let Some(string_array) = array.as_any().downcast_ref::<StringArray>() {
-            return (0..num_rows)
-                .map(|i| {
-                    if string_array.is_null(i) {
-                        Ok(Vec::new())
-                    } else {
-                        let json_str = string_array.value(i);
-                        Self::parse_metadata_json(json_str)
-                    }
-                })
-                .collect();
-        }
-
-        Ok(vec![Vec::new(); num_rows])
-    }
-
-    /// Parse JSON metadata string
-    fn parse_metadata_json(json: &str) -> Result<Vec<MetadataItem>> {
-        let map: HashMap<String, serde_json::Value> = serde_json::from_str(json)?;
-
-        Ok(map
-            .into_iter()
-            .map(|(key, value)| MetadataItem {
-                key,
-                value: Some(Self::json_value_to_metadata_value(value)),
-            })
-            .collect())
-    }
-
-    /// Convert serde_json::Value to metadata_item::Value
-    fn json_value_to_metadata_value(
-        value: serde_json::Value,
-    ) -> crate::proto::proximadb_v1::metadata_item::Value {
-        use crate::proto::proximadb_v1::metadata_item::Value;
-
-        match value {
-            serde_json::Value::String(s) => Value::StringValue(s),
-            serde_json::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    Value::NumberValue(f)
-                } else {
-                    Value::StringValue(n.to_string())
-                }
-            }
-            serde_json::Value::Bool(b) => Value::BoolValue(b),
-            _ => Value::StringValue(value.to_string()),
-        }
-    }
-
-    /// Convert VectorRecords to Arrow RecordBatch (for search results)
+    /// Convert ProximaRecords to Arrow RecordBatch (for write/insert operations)
     pub fn vector_records_to_batch(
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         dimension: usize,
     ) -> Result<RecordBatch> {
         if records.is_empty() {
@@ -935,31 +750,30 @@ impl ArrowProtoCodec {
 
         let schema = Self::create_vector_schema(dimension);
 
-        // Build id array
-        let id_array = StringArray::from_iter_values(records.iter().map(|r| r.id.as_str()));
+        let id_array = StringArray::from_iter_values(records.iter().map(|r| r.oid.as_str()));
 
-        // Build vector array (FixedSizeList<Float32>)
         let mut vector_values = Vec::with_capacity(records.len() * dimension);
         for record in &records {
-            vector_values.extend_from_slice(&record.vector);
+            let vals = record.embeddings.first().map(|e| e.values.as_slice()).unwrap_or(&[]);
+            vector_values.extend_from_slice(vals);
+            if vals.len() < dimension {
+                vector_values.extend(std::iter::repeat(0.0f32).take(dimension - vals.len()));
+            }
         }
         let flat_array = Arc::new(Float32Array::from(vector_values)) as ArrayRef;
         let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
         let vector_array =
             FixedSizeListArray::new(vector_field, dimension as i32, flat_array, None);
 
-        // Build metadata array (Struct<key, value>)
         let metadata_array = Self::build_metadata_struct_array(&records)?;
 
-        // Build timestamp array
         let timestamp_array = Int64Array::from(
             records
                 .iter()
-                .map(|r| r.timestamp)
+                .map(|r| if r.created_at_ns == 0 { None } else { Some(r.created_at_ns / 1_000_000) })
                 .collect::<Vec<Option<i64>>>(),
         );
 
-        // Build score array (None for insert, Some for search)
         let score_array = Float32Array::from(vec![None; records.len()]);
 
         RecordBatch::try_new(
@@ -975,29 +789,30 @@ impl ArrowProtoCodec {
         .context("Failed to create RecordBatch")
     }
 
-    /// Build StructArray for metadata
-    fn build_metadata_struct_array(records: &[VectorRecord]) -> Result<StructArray> {
-        let mut keys = Vec::new();
-        let mut values = Vec::new();
+    /// Build StructArray for metadata from ProximaRecord props
+    fn build_metadata_struct_array(records: &[ProximaRecord]) -> Result<StructArray> {
+        let mut keys: Vec<Option<String>> = Vec::new();
+        let mut values: Vec<Option<String>> = Vec::new();
 
         for record in records {
-            if record.metadata.is_empty() {
+            if record.props.is_empty() {
                 keys.push(None);
                 values.push(None);
+            } else if let Some((key, node)) = record.props.iter().next() {
+                let val_str = match node {
+                    ProximaTreeNode::Value(pv) => Some(format!("{pv:?}")),
+                    _ => None,
+                };
+                keys.push(Some(key.clone()));
+                values.push(val_str);
             } else {
-                // Take first metadata item (simplification)
-                if let Some((key, value)) = record.metadata.iter().next() {
-                    keys.push(Some(key.as_str()));
-                    values.push(Some(Self::sql_value_to_string(value)));
-                } else {
-                    keys.push(None);
-                    values.push(None);
-                }
+                keys.push(None);
+                values.push(None);
             }
         }
 
-        let key_array = StringArray::from(keys);
-        let value_array = StringArray::from(values);
+        let key_array = StringArray::from(keys.iter().map(|k| k.as_deref()).collect::<Vec<_>>());
+        let value_array = StringArray::from(values.iter().map(|v| v.as_deref()).collect::<Vec<_>>());
 
         Ok(StructArray::from(vec![
             (
@@ -1777,30 +1592,23 @@ mod tests {
     }
 
     #[test]
-    fn test_arrow_batch_to_vector_records() {
-        // Create a test batch with known data and convert to VectorRecords
+    fn test_arrow_batch_to_proxima_records() {
         let batch = create_test_batch(3, 4);
 
-        let records = ArrowProtoCodec::batch_to_vector_records(&batch)
-            .expect("Failed to convert batch to records");
+        let records = ArrowProtoCodec::batches_to_proxima_records(vec![batch])
+            .expect("Failed to convert batch to ProximaRecords");
 
         assert_eq!(records.len(), 3);
-        assert_eq!(records[0].id, "id_0");
-        assert_eq!(records[1].id, "id_1");
-        assert_eq!(records[2].id, "id_2");
+        assert_eq!(records[0].oid, "id_0");
+        assert_eq!(records[1].oid, "id_1");
+        assert_eq!(records[2].oid, "id_2");
 
-        // Verify vector dimensions
-        assert_eq!(records[0].vector.len(), 4);
-        assert_eq!(records[1].vector.len(), 4);
-
-        // Verify timestamps
-        assert_eq!(records[0].timestamp, Some(0));
-        assert_eq!(records[1].timestamp, Some(1000));
-        assert_eq!(records[2].timestamp, Some(2000));
+        assert_eq!(records[0].embeddings[0].values.len(), 4);
+        assert_eq!(records[1].embeddings[0].values.len(), 4);
     }
 
     #[test]
-    fn test_arrow_batch_to_vector_records_accepts_large_utf8_ids() {
+    fn test_arrow_batch_large_utf8_ids() {
         let ids = LargeStringArray::from(vec!["vec_large_1", "vec_large_2"]);
         let flat_values = Arc::new(Float32Array::from(vec![0.1, 0.2, 0.3, 0.4])) as ArrayRef;
         let vector_array = FixedSizeListArray::new(
@@ -1821,54 +1629,39 @@ mod tests {
         let batch =
             RecordBatch::try_new(schema, vec![Arc::new(ids), Arc::new(vector_array)]).unwrap();
 
-        let records = ArrowProtoCodec::batch_to_vector_records(&batch)
-            .expect("LargeUtf8 ids should decode for vector Flight clients");
+        let records = ArrowProtoCodec::batches_to_proxima_records(vec![batch])
+            .expect("LargeUtf8 ids should decode");
 
         assert_eq!(records.len(), 2);
-        assert_eq!(records[0].id, "vec_large_1");
-        assert_eq!(records[1].id, "vec_large_2");
-        assert_eq!(records[1].vector, vec![0.3, 0.4]);
+        assert_eq!(records[0].oid, "vec_large_1");
+        assert_eq!(records[1].oid, "vec_large_2");
+        assert_eq!(records[1].embeddings[0].values, vec![0.3, 0.4]);
     }
 
     #[test]
     fn test_vector_records_to_arrow_batch() {
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
-
-        let mut meta_a = HashMap::new();
-        meta_a.insert(
-            "color".to_string(),
-            SqlValue {
-                value: Some(SqlVal::StringValue("red".to_string())),
-            },
-        );
-        let mut meta_b = HashMap::new();
-        meta_b.insert(
-            "color".to_string(),
-            SqlValue {
-                value: Some(SqlVal::StringValue("blue".to_string())),
-            },
-        );
-
         let records = vec![
-            VectorRecord {
-                id: "vec_a".to_string(),
-                vector: vec![1.0, 2.0, 3.0],
-                metadata: meta_a,
-                timestamp: Some(100),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            ProximaRecord {
+                oid: "vec_a".to_string(),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    values: vec![1.0, 2.0, 3.0],
+                    dim: 3,
+                }],
+                created_at_ns: 100_000_000,
+                ..Default::default()
             },
-            VectorRecord {
-                id: "vec_b".to_string(),
-                vector: vec![4.0, 5.0, 6.0],
-                metadata: meta_b,
-                timestamp: Some(200),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            ProximaRecord {
+                oid: "vec_b".to_string(),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    values: vec![4.0, 5.0, 6.0],
+                    dim: 3,
+                }],
+                created_at_ns: 200_000_000,
+                ..Default::default()
             },
         ];
 
@@ -1876,9 +1669,8 @@ mod tests {
             .expect("Failed to convert records to batch");
 
         assert_eq!(batch.num_rows(), 2);
-        assert_eq!(batch.num_columns(), 5); // id, vector, metadata, timestamp, score
+        assert_eq!(batch.num_columns(), 5);
 
-        // Verify id column
         let id_col = batch
             .column_by_name("id")
             .expect("Missing id column")
@@ -1891,60 +1683,41 @@ mod tests {
 
     #[test]
     fn test_multimodal_codec_vector() {
-        // Test round-trip: VectorRecords -> RecordBatch -> VectorRecords
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
-
-        let mut meta_1 = HashMap::new();
-        meta_1.insert(
-            "tag".to_string(),
-            SqlValue {
-                value: Some(SqlVal::StringValue("alpha".to_string())),
-            },
-        );
-        let mut meta_2 = HashMap::new();
-        meta_2.insert(
-            "tag".to_string(),
-            SqlValue {
-                value: Some(SqlVal::StringValue("beta".to_string())),
-            },
-        );
-
+        // Test round-trip: ProximaRecords -> RecordBatch -> ProximaRecords
         let original_records = vec![
-            VectorRecord {
-                id: "rt_1".to_string(),
-                vector: vec![0.5, 1.5, 2.5, 3.5],
-                metadata: meta_1,
-                timestamp: Some(1000),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            ProximaRecord {
+                oid: "rt_1".to_string(),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    values: vec![0.5, 1.5, 2.5, 3.5],
+                    dim: 4,
+                }],
+                ..Default::default()
             },
-            VectorRecord {
-                id: "rt_2".to_string(),
-                vector: vec![4.5, 5.5, 6.5, 7.5],
-                metadata: meta_2,
-                timestamp: Some(2000),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            ProximaRecord {
+                oid: "rt_2".to_string(),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    values: vec![4.5, 5.5, 6.5, 7.5],
+                    dim: 4,
+                }],
+                ..Default::default()
             },
         ];
 
-        // Encode to batch
         let batch = ArrowProtoCodec::vector_records_to_batch(original_records.clone(), 4)
             .expect("Failed to encode to batch");
 
-        // Decode back
-        let decoded =
-            ArrowProtoCodec::batch_to_vector_records(&batch).expect("Failed to decode from batch");
+        let decoded = ArrowProtoCodec::batches_to_proxima_records(vec![batch])
+            .expect("Failed to decode from batch");
 
         assert_eq!(decoded.len(), 2);
-        assert_eq!(decoded[0].id, "rt_1");
-        assert_eq!(decoded[1].id, "rt_2");
-        assert_eq!(decoded[0].vector, vec![0.5, 1.5, 2.5, 3.5]);
-        assert_eq!(decoded[1].vector, vec![4.5, 5.5, 6.5, 7.5]);
+        assert_eq!(decoded[0].oid, "rt_1");
+        assert_eq!(decoded[1].oid, "rt_2");
+        assert_eq!(decoded[0].embeddings[0].values, vec![0.5, 1.5, 2.5, 3.5]);
+        assert_eq!(decoded[1].embeddings[0].values, vec![4.5, 5.5, 6.5, 7.5]);
     }
 
     #[test]
@@ -2114,7 +1887,7 @@ mod tests {
         assert!(result.is_err(), "Empty records should return an error");
 
         // Verify empty batch list conversion works without panic
-        let result = ArrowProtoCodec::batches_to_vector_records(vec![]);
+        let result = ArrowProtoCodec::batches_to_proxima_records(vec![]);
         assert!(result.is_ok());
         assert!(result.expect("Should succeed for empty batches").is_empty());
 
