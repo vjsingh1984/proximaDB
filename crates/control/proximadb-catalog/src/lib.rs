@@ -12,6 +12,10 @@ use arrow_schema::DataType as ArrowDataType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod cache;
+pub mod oltp;
+pub mod schema;
+
 /// Namespace metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogNamespace {
@@ -1266,7 +1270,10 @@ pub struct TableIdentifier {
 
 impl TableIdentifier {
     pub fn new(namespace: Vec<String>, name: impl Into<String>) -> Self {
-        Self { namespace, name: name.into() }
+        Self {
+            namespace,
+            name: name.into(),
+        }
     }
 
     /// Parse from a dot-separated fully-qualified name (e.g., `"db.schema.table"`).
@@ -1275,7 +1282,10 @@ impl TableIdentifier {
         if parts.len() == 1 {
             Self::new(vec![], parts[0])
         } else {
-            let namespace = parts[..parts.len() - 1].iter().map(|p| p.to_string()).collect();
+            let namespace = parts[..parts.len() - 1]
+                .iter()
+                .map(|p| p.to_string())
+                .collect();
             Self::new(namespace, parts[parts.len() - 1])
         }
     }
@@ -1293,6 +1303,39 @@ impl TableIdentifier {
 impl std::fmt::Display for TableIdentifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_fqn())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CatalogHealth
+// ---------------------------------------------------------------------------
+
+/// Catalog backend health and connectivity status.
+#[derive(Debug, Clone)]
+pub struct CatalogHealth {
+    pub is_healthy: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+    pub details: HashMap<String, String>,
+}
+
+impl CatalogHealth {
+    pub fn healthy(latency_ms: u64) -> Self {
+        Self {
+            is_healthy: true,
+            latency_ms,
+            error: None,
+            details: HashMap::new(),
+        }
+    }
+
+    pub fn unhealthy(error: impl Into<String>) -> Self {
+        Self {
+            is_healthy: false,
+            latency_ms: 0,
+            error: Some(error.into()),
+            details: HashMap::new(),
+        }
     }
 }
 
@@ -1318,7 +1361,10 @@ pub trait Catalog: Send + Sync {
     ) -> anyhow::Result<CatalogNamespace>;
 
     async fn drop_namespace(&self, namespace: &[String], cascade: bool) -> anyhow::Result<bool>;
-    async fn list_namespaces(&self, parent: Option<&[String]>) -> anyhow::Result<Vec<CatalogNamespace>>;
+    async fn list_namespaces(
+        &self,
+        parent: Option<&[String]>,
+    ) -> anyhow::Result<Vec<CatalogNamespace>>;
     async fn namespace_exists(&self, namespace: &[String]) -> anyhow::Result<bool>;
     async fn get_namespace(&self, namespace: &[String]) -> anyhow::Result<CatalogNamespace>;
     async fn update_namespace_properties(
@@ -1339,7 +1385,11 @@ pub trait Catalog: Send + Sync {
     async fn list_tables(&self, namespace: &[String]) -> anyhow::Result<Vec<TableIdentifier>>;
     async fn table_exists(&self, identifier: &TableIdentifier) -> anyhow::Result<bool>;
     async fn get_table(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableSchema>;
-    async fn rename_table(&self, from: &TableIdentifier, to: &TableIdentifier) -> anyhow::Result<()>;
+    async fn rename_table(
+        &self,
+        from: &TableIdentifier,
+        to: &TableIdentifier,
+    ) -> anyhow::Result<()>;
 
     // Schema evolution
     async fn evolve_schema(
@@ -1362,11 +1412,19 @@ pub trait Catalog: Send + Sync {
         index: CatalogIndex,
     ) -> anyhow::Result<CatalogIndex>;
 
-    async fn drop_index(&self, identifier: &TableIdentifier, index_name: &str) -> anyhow::Result<bool>;
-    async fn list_indexes(&self, identifier: &TableIdentifier) -> anyhow::Result<Vec<CatalogIndex>>;
+    async fn drop_index(
+        &self,
+        identifier: &TableIdentifier,
+        index_name: &str,
+    ) -> anyhow::Result<bool>;
+    async fn list_indexes(&self, identifier: &TableIdentifier)
+    -> anyhow::Result<Vec<CatalogIndex>>;
 
     // Statistics
-    async fn get_statistics(&self, identifier: &TableIdentifier) -> anyhow::Result<CatalogTableStatistics>;
+    async fn get_statistics(
+        &self,
+        identifier: &TableIdentifier,
+    ) -> anyhow::Result<CatalogTableStatistics>;
     async fn update_statistics(
         &self,
         identifier: &TableIdentifier,
@@ -1388,6 +1446,16 @@ pub trait Catalog: Send + Sync {
         spec: CatalogPartitionSpec,
     ) -> anyhow::Result<()> {
         let _ = (identifier, spec);
-        Err(anyhow::anyhow!("partitioning not supported by this catalog"))
+        Err(anyhow::anyhow!(
+            "partitioning not supported by this catalog"
+        ))
+    }
+
+    async fn health_check(&self) -> anyhow::Result<CatalogHealth> {
+        Ok(CatalogHealth::healthy(0))
+    }
+
+    async fn close(&self) -> anyhow::Result<()> {
+        Ok(())
     }
 }

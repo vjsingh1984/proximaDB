@@ -13,9 +13,23 @@ description = "xCatalog contract types shared by catalog, query, API, and storag
 name = "proximadb_catalog"
 path = "src/lib.rs"
 
+[features]
+# OLTP catalog backends — bring in sqlx. Enable the matching backend feature too.
+oltp-catalog-postgres = ["oltp-catalog", "sqlx/postgres"]
+oltp-catalog-mysql    = ["oltp-catalog", "sqlx/mysql"]
+oltp-catalog-sqlite   = ["oltp-catalog", "sqlx/sqlite"]
+oltp-catalog          = ["dep:sqlx"]
+
 [dependencies]
 anyhow.workspace = true
 arrow-schema = { workspace = true, default-features = false }
 async-trait.workspace = true
+parking_lot.workspace = true
 proximadb-data-model = { workspace = true }
 serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, optional = true }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1.37", features = ["full"] }
