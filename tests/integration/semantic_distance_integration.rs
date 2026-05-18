@@ -25,10 +25,10 @@
 
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use proximadb::core::VectorRecord;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use proximadb::storage::persistence::write_ahead_log::BatchId;
+use proximadb_records::ProximaRecord;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
@@ -215,46 +215,23 @@ async fn test_memtable_semantic_search() {
     let collection_id = "test_collection";
 
     // Create test vectors
+    let make_record = |oid: &str, values: Vec<f32>| ProximaRecord {
+        oid: oid.to_string(),
+        embeddings: vec![proximadb_records::EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            dim: values.len() as u32,
+            values,
+        }],
+        record_version: 1,
+        created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        ..Default::default()
+    };
     let test_vectors = vec![
-        VectorRecord {
-            id: "identical".to_string(),
-            vector: vec![1.0, 0.0, 0.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            updated_at: Some(chrono::Utc::now().timestamp_millis()),
-            expires_at: None,
-            version: Some(1),
-            // rank field no longer exists
-            // score field no longer exists
-            // distance field no longer exists
-            ..Default::default()
-        },
-        VectorRecord {
-            id: "similar".to_string(),
-            vector: vec![0.9, 0.1, 0.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            updated_at: Some(chrono::Utc::now().timestamp_millis()),
-            expires_at: None,
-            version: Some(1),
-            // rank field no longer exists
-            // score field no longer exists
-            // distance field no longer exists
-            ..Default::default()
-        },
-        VectorRecord {
-            id: "orthogonal".to_string(),
-            vector: vec![0.0, 1.0, 0.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            updated_at: Some(chrono::Utc::now().timestamp_millis()),
-            expires_at: None,
-            version: Some(1),
-            // rank field no longer exists
-            // score field no longer exists
-            // distance field no longer exists
-            ..Default::default()
-        },
+        make_record("identical", vec![1.0, 0.0, 0.0]),
+        make_record("similar", vec![0.9, 0.1, 0.0]),
+        make_record("orthogonal", vec![0.0, 1.0, 0.0]),
     ];
 
     // Create WAL batch
@@ -287,7 +264,7 @@ async fn test_memtable_semantic_search() {
             debug!(
                 "  {}: id={:?}, raw={:.3}, norm={:.3}, rank={:.3}",
                 i,
-                record.id,
+                record.oid,
                 similarity_result.raw_value,
                 similarity_result.normalized_score,
                 similarity_result.rank_value
@@ -298,7 +275,7 @@ async fn test_memtable_semantic_search() {
 
         // First result should be the identical vector
         assert_eq!(
-            results[0].1.id.as_str(),
+            results[0].1.oid.as_str(),
             "identical",
             "Most similar vector should be identical for {:?}",
             metric

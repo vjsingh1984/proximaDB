@@ -366,16 +366,19 @@ mod tests {
     async fn test_batch_processor() {
         let processor = BatchFlushProcessor::new(100, 4, 128);
 
-        let vectors: Vec<VectorRecord> = (0..100)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32; 128],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp() as i64),
-                source: None,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
+        let vectors: Vec<ProximaRecord> = (0..100)
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: vec![i as f32; 128],
+                }],
+                record_version: 1,
+                created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                ..Default::default()
             })
             .collect();
 
@@ -387,16 +390,19 @@ mod tests {
     async fn test_optimized_coordinator() {
         let coordinator = OptimizedFlushCoordinator::new(50, 2, 128);
 
-        let vectors: Vec<VectorRecord> = (0..50)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32; 128],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp() as i64),
-                source: None,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
+        let vectors: Vec<ProximaRecord> = (0..50)
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: vec![i as f32; 128],
+                }],
+                record_version: 1,
+                created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                ..Default::default()
             })
             .collect();
 

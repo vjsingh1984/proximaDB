@@ -5,10 +5,10 @@ mod common;
 use anyhow::Result;
 use proximadb::compute::quantization::{ProductQuantization as PqConfig, UnifiedQuantizationLevel};
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use proximadb_records::ProximaRecord;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
@@ -113,7 +113,11 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
 
         // Test search to verify data integrity
         // Test search using unified interface
-        let query = vectors[0].vector.clone();
+        let query = vectors[0]
+            .embeddings
+            .first()
+            .map(|e| e.values.clone())
+            .unwrap_or_default();
         use proximadb::storage::traits::StorageQueryContext;
 
         let search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
@@ -268,7 +272,7 @@ async fn test_pq_quantization_256kb_blocks() -> Result<()> {
     Ok(())
 }
 
-fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
+fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<ProximaRecord> {
     let mut rng = StdRng::seed_from_u64(42);
     let mut vectors = Vec::with_capacity(count);
 
@@ -285,59 +289,61 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<VectorRecord> {
 
         // Generate vectors around this center
         for i in 0..vectors_per_cluster {
-            let mut vector = center.clone();
+            let mut values = center.clone();
 
             // Add noise
-            for val in &mut vector {
+            for val in &mut values {
                 *val += rng.gen_range(-0.1..0.1);
             }
 
             // Normalize
-            let norm: f32 = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let norm: f32 = values.iter().map(|x| x * x).sum::<f32>().sqrt();
             if norm > 0.0 {
-                for val in &mut vector {
+                for val in &mut values {
                     *val /= norm;
                 }
             }
 
             let global_idx = cluster_id * vectors_per_cluster + i;
-            vectors.push(VectorRecord {
-                id: format!("vec_{}", global_idx),
-                vector,
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0i64),
-                updated_at: Some(0i64),
-                expires_at: None,
-                version: Some(1),
-                source: None,
+            vectors.push(ProximaRecord {
+                oid: format!("vec_{}", global_idx),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: dim as u32,
+                    values,
+                }],
+                record_version: 1,
+                ..Default::default()
             });
         }
     }
 
     // Add remaining vectors if count is not divisible by clusters
     for i in (clusters * vectors_per_cluster)..count {
-        let mut vector = vec![0.0f32; dim];
-        for val in &mut vector {
+        let mut values = vec![0.0f32; dim];
+        for val in &mut values {
             *val = rng.gen_range(-1.0..1.0);
         }
 
         // Normalize
-        let norm: f32 = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm: f32 = values.iter().map(|x| x * x).sum::<f32>().sqrt();
         if norm > 0.0 {
-            for val in &mut vector {
+            for val in &mut values {
                 *val /= norm;
             }
         }
 
-        vectors.push(VectorRecord {
-            id: format!("vec_{}", i),
-            vector,
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(0i64),
-            updated_at: Some(0i64),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        vectors.push(ProximaRecord {
+            oid: format!("vec_{}", i),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: dim as u32,
+                values,
+            }],
+            record_version: 1,
+            ..Default::default()
         });
     }
 

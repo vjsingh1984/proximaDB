@@ -10,7 +10,7 @@ mod vector_generator;
 #[cfg(test)]
 mod performance_comparison_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
-    use proximadb::proto::proximadb_v1::VectorRecord;
+    use proximadb_records::ProximaRecord;
 
     use proximadb::core::search::BlockPruneConfig;
     use proximadb::storage::engines::helix::{HelixConfig, HelixEngine};
@@ -41,7 +41,7 @@ mod performance_comparison_tests {
         dims: usize,
         distribution: &str,
         seed: u64,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         match distribution {
             "uniform" => {
                 // Use random_seeded for uniformly distributed vectors
@@ -127,7 +127,7 @@ mod performance_comparison_tests {
     /// Benchmark a storage engine
     async fn benchmark_engine(
         engine: Arc<dyn UnifiedStorageEngine>,
-        vectors: &[VectorRecord],
+        vectors: &[ProximaRecord],
         query_vectors: &[Vec<f32>],
         collection_id: &str,
         base_path: &str,
@@ -155,7 +155,7 @@ mod performance_comparison_tests {
         let flush_start = Instant::now();
         let flush_params = FlushParameters {
             collection_id: Some(collection_id.to_string()),
-            vector_records: vectors.iter().map(|v| v.clone().into()).collect(),
+            vector_records: vectors.to_vec(),
             force: true,
             synchronous: true,
             hints: HashMap::new(),
@@ -351,7 +351,13 @@ mod performance_comparison_tests {
         // Create test data
         let vectors = create_test_vectors(NUM_VECTORS, VECTOR_DIMS, "uniform", 42);
         let query_vectors: Vec<Vec<f32>> = (0..NUM_QUERIES)
-            .map(|i| vectors[i * 100].vector.clone())
+            .map(|i| {
+                vectors[i * 100]
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default()
+            })
             .collect();
 
         // Create engines
@@ -433,7 +439,13 @@ mod performance_comparison_tests {
         // Create clustered test data
         let vectors = create_test_vectors(NUM_VECTORS, VECTOR_DIMS, "clustered", 42);
         let query_vectors: Vec<Vec<f32>> = (0..NUM_QUERIES)
-            .map(|i| vectors[i * 100].vector.clone())
+            .map(|i| {
+                vectors[i * 100]
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default()
+            })
             .collect();
 
         // Create engines
@@ -502,7 +514,15 @@ mod performance_comparison_tests {
 
         for &size in &sizes {
             let vectors = create_test_vectors(size, VECTOR_DIMS, "uniform", 42);
-            let query_vectors: Vec<Vec<f32>> = (0..10).map(|i| vectors[i].vector.clone()).collect();
+            let query_vectors: Vec<Vec<f32>> = (0..10)
+                .map(|i| {
+                    vectors[i]
+                        .embeddings
+                        .first()
+                        .map(|e| e.values.clone())
+                        .unwrap_or_default()
+                })
+                .collect();
 
             // Test HELIX
             {
@@ -659,9 +679,21 @@ mod performance_comparison_tests {
 
         // Query from different clusters and measure performance
         let cluster_queries = vec![
-            vectors[50].vector.clone(),   // Cluster 0
-            vectors[1050].vector.clone(), // Cluster 1
-            vectors[2050].vector.clone(), // Cluster 2
+            vectors[50]
+                .embeddings
+                .first()
+                .map(|e| e.values.clone())
+                .unwrap_or_default(), // Cluster 0
+            vectors[1050]
+                .embeddings
+                .first()
+                .map(|e| e.values.clone())
+                .unwrap_or_default(), // Cluster 1
+            vectors[2050]
+                .embeddings
+                .first()
+                .map(|e| e.values.clone())
+                .unwrap_or_default(), // Cluster 2
         ];
 
         for (i, query) in cluster_queries.iter().enumerate() {
@@ -722,17 +754,9 @@ mod performance_comparison_tests {
             let correct_cluster = results
                 .iter()
                 .filter(|r| {
-                    // Convert to tuple access for HashMap-style metadata
                     r.metadata.iter().any(|(key, value)| {
                         key == "cluster_id"
-                            && match &value.value {
-                                Some(
-                                    proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                        s,
-                                    ),
-                                ) => s == &expected_cluster,
-                                _ => false,
-                            }
+                            && matches!(value, proximadb_data_model::ProximaValue::String(s) if s == &expected_cluster)
                     })
                 })
                 .count();
@@ -811,7 +835,7 @@ mod performance_comparison_tests {
             // Flush data
             let flush_params = FlushParameters {
                 collection_id: Some("test_collection".to_string()),
-                vector_records: vectors.iter().map(|v| v.clone().into()).collect(),
+                vector_records: vectors.to_vec(),
                 force: true,
                 synchronous: true,
                 hints: HashMap::new(),
@@ -852,8 +876,15 @@ mod performance_comparison_tests {
         println!("\n===== CONCURRENT QUERY PERFORMANCE =====");
 
         let vectors = create_test_vectors(10000, VECTOR_DIMS, "uniform", 42);
-        let query_vectors: Vec<Vec<f32>> =
-            (0..50).map(|i| vectors[i * 200].vector.clone()).collect();
+        let query_vectors: Vec<Vec<f32>> = (0..50)
+            .map(|i| {
+                vectors[i * 200]
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
 
         // Create HELIX engine
         let temp_dir = TempDir::new().unwrap();
@@ -880,7 +911,7 @@ mod performance_comparison_tests {
         // Load data
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+            vector_records: vectors,
             force: true,
             synchronous: true,
             hints: HashMap::new(),

@@ -13,7 +13,7 @@ mod vector_generator;
 mod helix_integration_tests {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::core::search::SearchParams;
-    use proximadb::proto::proximadb_v1::{Collection, VectorRecord};
+    use proximadb::proto::proximadb_v1::Collection;
     use proximadb::storage::engines::helix::{HelixConfig, HelixEngine};
     use proximadb::storage::traits::{
         CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
@@ -82,7 +82,11 @@ mod helix_integration_tests {
 
     /// Helper to create test vectors
     /// REFACTORED: Now uses vector_generator::random_seeded_with_prefix() with seed for determinism
-    fn create_test_vectors(count: usize, dims: usize, seed: u64) -> Vec<VectorRecord> {
+    fn create_test_vectors(
+        count: usize,
+        dims: usize,
+        seed: u64,
+    ) -> Vec<proximadb_records::ProximaRecord> {
         vector_generator::random_seeded_with_prefix("test_vec", count, dims, seed)
     }
 
@@ -104,7 +108,11 @@ mod helix_integration_tests {
 
         // Test flush
         let vectors = create_test_vectors(100, 128, 42);
-        let query = vectors[0].vector.clone(); // Store query before moving vectors
+        let query = vectors[0]
+            .embeddings
+            .first()
+            .map(|e| e.values.clone())
+            .unwrap_or_default(); // Store query before moving vectors
 
         // Create collection config with storage assignment
         let collection_config = Collection {
@@ -125,7 +133,7 @@ mod helix_integration_tests {
 
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+            vector_records: vectors,
             force: true,
             synchronous: true,
             hints: HashMap::new(),
@@ -317,59 +325,55 @@ mod helix_integration_tests {
 
         // Cluster 1: vectors around [1.0, 0.0, ...]
         for i in 0..50 {
-            let mut vector = vec![1.0; 128];
-            vector[0] += (i as f32) * 0.01;
-            all_vectors.push(VectorRecord {
-                id: format!("cluster1_vec_{}", i),
-                vector,
-                metadata: {
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "cluster".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    "1".to_string(),
-                                ),
-                            ),
-                        },
-                    );
-                    metadata
-                },
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            let mut values = vec![1.0f32; 128];
+            values[0] += (i as f32) * 0.01;
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "cluster".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String("1".to_string()),
+                ),
+            );
+            all_vectors.push(proximadb_records::ProximaRecord {
+                oid: format!("cluster1_vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values,
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: i as i64 * 1_000_000_000,
+                updated_at_ns: i as i64 * 1_000_000_000,
+                ..Default::default()
             });
         }
 
         // Cluster 2: vectors around [-1.0, 0.0, ...]
         for i in 0..50 {
-            let mut vector = vec![-1.0; 128];
-            vector[0] += (i as f32) * 0.01;
-            all_vectors.push(VectorRecord {
-                id: format!("cluster2_vec_{}", i),
-                vector,
-                metadata: {
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "cluster".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    "2".to_string(),
-                                ),
-                            ),
-                        },
-                    );
-                    metadata
-                },
-                timestamp: Some((50 + i) as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            let mut values = vec![-1.0f32; 128];
+            values[0] += (i as f32) * 0.01;
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "cluster".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String("2".to_string()),
+                ),
+            );
+            all_vectors.push(proximadb_records::ProximaRecord {
+                oid: format!("cluster2_vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values,
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: (50 + i) as i64 * 1_000_000_000,
+                updated_at_ns: (50 + i) as i64 * 1_000_000_000,
+                ..Default::default()
             });
         }
 
@@ -393,7 +397,7 @@ mod helix_integration_tests {
         // Flush the data
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            vector_records: all_vectors.into_iter().map(|v| v.into()).collect(),
+            vector_records: all_vectors,
             force: true,
             synchronous: true,
             hints: HashMap::new(),
@@ -472,68 +476,50 @@ mod helix_integration_tests {
         let engine = HelixEngine::new().await.unwrap();
 
         // Create vectors with different metadata (String, Integer, Boolean, Float)
-        let mut vectors = Vec::new();
+        let mut vectors: Vec<proximadb_records::ProximaRecord> = Vec::new();
         for i in 0..100 {
-            vectors.push(VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32 / 100.0; 128],
-                metadata: {
-                    let mut metadata = std::collections::HashMap::new();
-                    // String field
-                    metadata.insert(
-                        "category".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    if i % 2 == 0 {
-                                        "even".to_string()
-                                    } else {
-                                        "odd".to_string()
-                                    },
-                                ),
-                            ),
-                        },
-                    );
-                    // Float field
-                    metadata.insert(
-                        "batch".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                    (i / 10) as f64,
-                                ),
-                            ),
-                        },
-                    );
-                    // Integer field
-                    metadata.insert(
-                        "count".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(
-                                    i as i64 * 10,
-                                ),
-                            ),
-                        },
-                    );
-                    // Boolean field
-                    metadata.insert(
-                        "enabled".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(
-                                    i % 2 == 0,
-                                ),
-                            ),
-                        },
-                    );
-                    metadata
-                },
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "category".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(if i % 2 == 0 {
+                        "even".to_string()
+                    } else {
+                        "odd".to_string()
+                    }),
+                ),
+            );
+            props.insert(
+                "batch".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Float64((i / 10) as f64),
+                ),
+            );
+            props.insert(
+                "count".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Int64(i as i64 * 10),
+                ),
+            );
+            props.insert(
+                "enabled".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Boolean(i % 2 == 0),
+                ),
+            );
+            vectors.push(proximadb_records::ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: vec![i as f32 / 100.0; 128],
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: i as i64 * 1_000_000_000,
+                updated_at_ns: i as i64 * 1_000_000_000,
+                ..Default::default()
             });
         }
 
@@ -594,7 +580,7 @@ mod helix_integration_tests {
 
         let flush_params = FlushParameters {
             collection_id: Some("test_collection".to_string()),
-            vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+            vector_records: vectors,
             force: true,
             synchronous: true,
             hints: HashMap::new(),
@@ -717,30 +703,28 @@ mod helix_integration_tests {
         let engine = HelixEngine::new().await.unwrap();
 
         // Create vectors with integer metadata
-        let mut vectors = Vec::new();
+        let mut vectors: Vec<proximadb_records::ProximaRecord> = Vec::new();
         for i in 0..100 {
-            vectors.push(VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32 / 100.0; 128],
-                metadata: {
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "count".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(
-                                    i as i64 * 10,
-                                ),
-                            ),
-                        },
-                    );
-                    metadata
-                },
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "count".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Int64(i as i64 * 10),
+                ),
+            );
+            vectors.push(proximadb_records::ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: vec![i as f32 / 100.0; 128],
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: i as i64 * 1_000_000_000,
+                updated_at_ns: i as i64 * 1_000_000_000,
+                ..Default::default()
             });
         }
 
@@ -771,7 +755,7 @@ mod helix_integration_tests {
         engine
             .do_flush(&FlushParameters {
                 collection_id: Some("test_helix_int".to_string()),
-                vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+                vector_records: vectors,
                 force: true,
                 synchronous: true,
                 hints: HashMap::new(),
@@ -835,30 +819,28 @@ mod helix_integration_tests {
         let engine = HelixEngine::new().await.unwrap();
 
         // Create vectors with boolean metadata
-        let mut vectors = Vec::new();
+        let mut vectors: Vec<proximadb_records::ProximaRecord> = Vec::new();
         for i in 0..100 {
-            vectors.push(VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32 / 100.0; 128],
-                metadata: {
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "enabled".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(
-                                    i % 2 == 0,
-                                ),
-                            ),
-                        },
-                    );
-                    metadata
-                },
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "enabled".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Boolean(i % 2 == 0),
+                ),
+            );
+            vectors.push(proximadb_records::ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: vec![i as f32 / 100.0; 128],
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: i as i64 * 1_000_000_000,
+                updated_at_ns: i as i64 * 1_000_000_000,
+                ..Default::default()
             });
         }
 
@@ -889,7 +871,7 @@ mod helix_integration_tests {
         engine
             .do_flush(&FlushParameters {
                 collection_id: Some("test_helix_bool".to_string()),
-                vector_records: vectors.into_iter().map(|v| v.into()).collect(),
+                vector_records: vectors,
                 force: true,
                 synchronous: true,
                 hints: HashMap::new(),
