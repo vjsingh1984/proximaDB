@@ -293,7 +293,10 @@ async fn test_viper_engine_flush_creates_compressed_parquet_files() -> anyhow::R
     let vectors = create_test_vectors(1000, 256, "flush_test");
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         collection_config: Some(collection.clone()),
         ..Default::default()
@@ -409,7 +412,10 @@ async fn test_viper_search_compressed_data() -> anyhow::Result<()> {
     let vectors = create_test_vectors(2000, 512, "search");
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("search_test".to_string()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         collection_config: Some(collection.clone()),
         ..Default::default()
@@ -797,7 +803,10 @@ async fn test_compressions_comparison() -> anyhow::Result<()> {
 
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("algo_test".to_string()),
-            vector_records: vectors,
+            vector_records: vectors
+                .into_iter()
+                .map(|v: VectorRecord| v.into())
+                .collect(),
             force: true,
             collection_config: Some(collection.clone()),
             ..Default::default()
@@ -944,7 +953,10 @@ async fn test_compression_vs_disabled() -> anyhow::Result<()> {
         );
         let flush_params = proximadb::storage::traits::FlushParameters {
             collection_id: Some("compression_test".to_string()),
-            vector_records: vectors,
+            vector_records: vectors
+                .into_iter()
+                .map(|v: VectorRecord| v.into())
+                .collect(),
             force: true,
             collection_config: Some(collection.clone()),
             ..Default::default()
@@ -1079,7 +1091,7 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
     );
 
     // Search for vec_0 (first vector)
-    let query_vector = vectors[0].vector.clone();
+    let query_vector = vectors[0].embeddings.first().map(|e| e.values.clone()).unwrap_or_default();
     let collection =
         env.create_test_collection_with_settings(StorageEngine::Viper, dimension as i32, None);
     let collection_arc = Arc::new(collection.clone());
@@ -1198,7 +1210,7 @@ async fn test_nova_search_with_none_compression() -> anyhow::Result<()> {
 
     // For now, use the search wrapper since flush requires full implementation
     // This test verifies the search path logic is correct
-    let query_vector = vectors[0].vector.clone();
+    let query_vector = vectors[0].embeddings.first().map(|e| e.values.clone()).unwrap_or_default();
 
     // Test the wrapper function that benchmarks use
     let results = engine

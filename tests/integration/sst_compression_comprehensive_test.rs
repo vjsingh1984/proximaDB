@@ -11,7 +11,6 @@ mod common;
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
@@ -21,14 +20,13 @@ use tracing::{debug, info};
 
 /// Create dense random vectors (hard to compress)
 fn create_dense_vectors(
-    env: &UnifiedTestEnvironment,
+    _env: &UnifiedTestEnvironment,
     count: usize,
     dimension: usize,
-) -> Vec<VectorRecord> {
+) -> Vec<proximadb_records::ProximaRecord> {
     (0..count)
         .map(|i| {
-            // Generate pseudo-random dense data using sine/cosine waves
-            let vector: Vec<f32> = (0..dimension)
+            let values: Vec<f32> = (0..dimension)
                 .map(|j| {
                     ((i as f32 * 0.1 + j as f32 * 0.01).sin()
                         * (i as f32 * 0.05 + j as f32 * 0.02).cos()
@@ -36,41 +34,50 @@ fn create_dense_vectors(
                     .abs()
                 })
                 .collect();
-
-            env.create_test_vector_record(
-                format!("dense_{}", i),
-                vector,
-                (1000 + i) as i64,
-                None,
-                std::collections::HashMap::new(),
-            )
+            proximadb_records::ProximaRecord {
+                oid: format!("dense_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: dimension as u32,
+                    values,
+                }],
+                record_version: 1,
+                created_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                updated_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                ..Default::default()
+            }
         })
         .collect()
 }
 
 /// Create sparse vectors (mostly zeros - easy to compress)
 fn create_sparse_vectors(
-    env: &UnifiedTestEnvironment,
+    _env: &UnifiedTestEnvironment,
     count: usize,
     dimension: usize,
-) -> Vec<VectorRecord> {
+) -> Vec<proximadb_records::ProximaRecord> {
     (0..count)
         .map(|i| {
-            let mut vector = vec![0.0; dimension];
-            // Only set 1% of values to non-zero (99% sparse)
+            let mut values = vec![0.0f32; dimension];
             let non_zero_count = dimension / 100;
             for j in 0..non_zero_count {
                 let idx = (i * 7 + j * 13) % dimension;
-                vector[idx] = (i as f32 + j as f32) * 0.1;
+                values[idx] = (i as f32 + j as f32) * 0.1;
             }
-
-            env.create_test_vector_record(
-                format!("sparse_{}", i),
-                vector,
-                (1000 + i) as i64,
-                None,
-                std::collections::HashMap::new(),
-            )
+            proximadb_records::ProximaRecord {
+                oid: format!("sparse_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: dimension as u32,
+                    values,
+                }],
+                record_version: 1,
+                created_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                updated_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                ..Default::default()
+            }
         })
         .collect()
 }
@@ -78,7 +85,7 @@ fn create_sparse_vectors(
 /// Test compression on a specific data type with a specific algorithm
 async fn test_compression_for_data(
     data_type: &str,
-    vectors: Vec<VectorRecord>,
+    vectors: Vec<proximadb_records::ProximaRecord>,
     algorithm: &str,
     level: i32,
 ) -> anyhow::Result<(u64, u64, f64)> {
@@ -120,7 +127,7 @@ async fn test_compression_for_data(
     );
     info!(
         "  • Vectors per block: ~{}",
-        256 * 1024 / (vectors[0].vector.len() * 4)
+        256 * 1024 / (vectors[0].embeddings.first().map(|e| e.dim as usize).unwrap_or(1) * 4)
     );
 
     let uncompressed_size =
@@ -136,11 +143,11 @@ async fn test_compression_for_data(
 
     // Save dimensions before vectors is moved
     let vector_count = vectors.len();
-    let vector_dim = if !vectors.is_empty() {
-        vectors[0].vector.len()
-    } else {
-        0
-    };
+    let vector_dim = vectors
+        .first()
+        .and_then(|v| v.embeddings.first())
+        .map(|e| e.dim as usize)
+        .unwrap_or(0);
 
     // Build flush params with compression config in the collection
     let mut flush_params_compressed =

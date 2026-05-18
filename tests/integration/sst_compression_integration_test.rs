@@ -17,7 +17,7 @@ use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 // Old test utilities are no longer used - using UnifiedTestEnvironment instead
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb_v1::{SqlValue, StorageEngine, VectorRecord, sql_value};
+use proximadb::proto::proximadb_v1::{StorageEngine};
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use std::sync::Arc;
@@ -41,48 +41,47 @@ fn create_sst_config_with_algorithm(
 
 /// Create test vectors with compression-friendly patterns
 fn create_compressible_test_vectors(
-    env: &UnifiedTestEnvironment,
+    _env: &UnifiedTestEnvironment,
     count: usize,
     dimension: usize,
     prefix: &str,
-) -> Vec<VectorRecord> {
+) -> Vec<proximadb_records::ProximaRecord> {
     (0..count)
         .map(|i| {
-            let mut vector = vec![0.0; dimension];
+            let mut values = vec![0.0f32; dimension];
             // Create highly compressible pattern - many repeated values
             for j in 0..dimension {
-                // Create blocks of repeated values for better compression
                 let block_size = 64;
                 let block_value = (i % 10) as f32 * 0.1;
-                vector[j] = if (j / block_size) % 2 == 0 {
-                    block_value
-                } else {
-                    0.0
-                };
+                values[j] = if (j / block_size) % 2 == 0 { block_value } else { 0.0 };
             }
-
-            env.create_test_vector_record(
-                format!("{}_{}", prefix, i),
-                vector,
-                (1000 + i) as i64,
-                None,
-                {
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "category".to_string(),
-                        SqlValue {
-                            value: Some(sql_value::Value::StringValue(format!("cat_{}", i % 3))),
-                        },
-                    );
-                    metadata.insert(
-                        "timestamp".to_string(),
-                        SqlValue {
-                            value: Some(sql_value::Value::NumberValue(i as f64)),
-                        },
-                    );
-                    metadata
-                },
-            )
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "category".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(format!("cat_{}", i % 3)),
+                ),
+            );
+            props.insert(
+                "timestamp".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Float64(i as f64),
+                ),
+            );
+            proximadb_records::ProximaRecord {
+                oid: format!("{}_{}", prefix, i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: dimension as u32,
+                    values,
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                updated_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                ..Default::default()
+            }
         })
         .collect()
 }
@@ -104,13 +103,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
 
     // Create test vectors for compression
     let vectors = create_compressible_test_vectors(&env, 100, 512, "test");
-    let sst_records: Vec<_> = vectors
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            proximadb::storage::engines::sst::SstEntry::from_vector_record(v.clone(), i as u64, 0)
-        })
-        .collect();
+    let vector_count = vectors.len();
 
     // Create SST storage to test compression
     let collection = std::sync::Arc::new(env.create_test_collection());
@@ -136,7 +129,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     );
 
     // Verify records can be retrieved after compression
-    assert_eq!(sst_records.len(), 100, "Should have 100 SST records");
+    assert_eq!(vector_count, 100, "Should have 100 SST records");
 
     // Check compression was applied through flush result
     assert!(
@@ -148,7 +141,7 @@ async fn test_sst_datablock_zstd_compression_roundtrip() -> anyhow::Result<()> {
     // Compression ratio: 1 - (compressed/uncompressed)
     // Standard definition: higher is better, negative means expansion
     let bytes_written = flush_result.bytes_written.unwrap_or(0) as f32;
-    let estimated_uncompressed = (sst_records.len() * 512 * 4) as f32; // 512 dims * 4 bytes per f32
+    let estimated_uncompressed = (vector_count * 512 * 4) as f32; // 512 dims * 4 bytes per f32
     let compression_ratio = if estimated_uncompressed > 0.0 {
         1.0 - (bytes_written / estimated_uncompressed)
     } else {
@@ -343,59 +336,61 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
     let engine = SstEngine::new().await?;
 
     // Create diverse test data - sparse and dense vectors
-    let mut all_vectors = Vec::new();
+    let mut all_vectors: Vec<proximadb_records::ProximaRecord> = Vec::new();
 
-    // Create sparse vectors (compress well) using unified helper
+    // Create sparse vectors (compress well)
     for i in 0..100 {
-        let mut vector = vec![0.0; 512];
+        let mut values = vec![0.0f32; 512];
         for j in 0..50 {
-            vector[j * 10] = (i + j) as f32;
+            values[j * 10] = (i + j) as f32;
         }
-        all_vectors.push(env.create_test_vector_record(
-            format!("sparse_{}", i),
-            vector,
-            (1000 + i) as i64,
-            None,
-            {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert(
-                    "type".to_string(),
-                    proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(
-                            proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                "sparse".to_string(),
-                            ),
-                        ),
-                    },
-                );
-                metadata
-            },
-        ));
+        let mut props = proximadb_records::ProximaTree::new();
+        props.insert(
+            "type".to_string(),
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String("sparse".to_string()),
+            ),
+        );
+        all_vectors.push(proximadb_records::ProximaRecord {
+            oid: format!("sparse_{}", i),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: 512,
+                values,
+            }],
+            props,
+            record_version: 1,
+            created_at_ns: (1000 + i) as i64 * 1_000_000_000,
+            updated_at_ns: (1000 + i) as i64 * 1_000_000_000,
+            ..Default::default()
+        });
     }
 
     // Create dense vectors (less compressible)
     for i in 0..100 {
-        let vector: Vec<f32> = (0..512).map(|j| ((i * 512 + j) as f32).sin()).collect();
-        all_vectors.push(env.create_test_vector_record(
-            format!("dense_{}", i),
-            vector,
-            (2000 + i) as i64,
-            None,
-            {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert(
-                    "type".to_string(),
-                    proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(
-                            proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                "dense".to_string(),
-                            ),
-                        ),
-                    },
-                );
-                metadata
-            },
-        ));
+        let values: Vec<f32> = (0..512).map(|j| ((i * 512 + j) as f32).sin()).collect();
+        let mut props = proximadb_records::ProximaTree::new();
+        props.insert(
+            "type".to_string(),
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String("dense".to_string()),
+            ),
+        );
+        all_vectors.push(proximadb_records::ProximaRecord {
+            oid: format!("dense_{}", i),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: 512,
+                values,
+            }],
+            props,
+            record_version: 1,
+            created_at_ns: (2000 + i) as i64 * 1_000_000_000,
+            updated_at_ns: (2000 + i) as i64 * 1_000_000_000,
+            ..Default::default()
+        });
     }
 
     info!(

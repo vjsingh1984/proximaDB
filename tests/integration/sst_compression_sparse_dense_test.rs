@@ -10,7 +10,6 @@ mod common;
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
-use proximadb::core::VectorRecord;
 use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -25,34 +24,34 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
     let base_env = UnifiedTestEnvironment::new().await?;
 
     // Create sparse vectors (mostly zeros with few non-zero values)
-    let vectors: Vec<VectorRecord> = (0..500)
+    let vectors: Vec<proximadb_records::ProximaRecord> = (0..500)
         .map(|i| {
-            let mut vector = vec![0.0; 1024];
-            // Only set 10 random positions to non-zero (99% sparse)
+            let mut values = vec![0.0f32; 1024];
             for j in 0..10 {
-                let idx = (i * 7 + j * 13) % 1024; // Deterministic but scattered
-                vector[idx] = (i as f32) * 0.1;
+                let idx = (i * 7 + j * 13) % 1024;
+                values[idx] = (i as f32) * 0.1;
             }
-            base_env.create_test_vector_record(
-                format!("sparse_{}", i),
-                vector,
-                (1000 + i) as i64,
-                None,
-                {
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "type".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    "sparse".to_string(),
-                                ),
-                            ),
-                        },
-                    );
-                    metadata
-                },
-            )
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "type".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String("sparse".to_string()),
+                ),
+            );
+            proximadb_records::ProximaRecord {
+                oid: format!("sparse_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 1024,
+                    values,
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                updated_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                ..Default::default()
+            }
         })
         .collect();
 
@@ -158,36 +157,35 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
     let base_env = UnifiedTestEnvironment::new().await?;
 
     // Create dense random vectors (hard to compress)
-    let vectors: Vec<VectorRecord> = (0..500)
+    let vectors: Vec<proximadb_records::ProximaRecord> = (0..500)
         .map(|i| {
-            // Generate pseudo-random dense data using sine waves
-            let vector: Vec<f32> = (0..1024)
+            let values: Vec<f32> = (0..1024)
                 .map(|j| {
                     ((i as f32 * 0.1 + j as f32 * 0.01).sin()
                         * (i as f32 * 0.05 + j as f32 * 0.02).cos())
                 })
                 .collect();
-
-            base_env.create_test_vector_record(
-                format!("dense_{}", i),
-                vector,
-                (1000 + i) as i64,
-                None,
-                {
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "type".to_string(),
-                        proximadb::proto::proximadb_v1::SqlValue {
-                            value: Some(
-                                proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                                    "dense".to_string(),
-                                ),
-                            ),
-                        },
-                    );
-                    metadata
-                },
-            )
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "type".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String("dense".to_string()),
+                ),
+            );
+            proximadb_records::ProximaRecord {
+                oid: format!("dense_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 1024,
+                    values,
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                updated_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                ..Default::default()
+            }
         })
         .collect();
 

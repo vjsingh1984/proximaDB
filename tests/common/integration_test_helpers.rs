@@ -692,24 +692,25 @@ pub mod operations {
     /// Build correct FlushParameters - the critical configuration that was causing failures
     pub async fn build_flush_params(
         environment: &UnifiedTestEnvironment,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         engine: StorageEngine,
     ) -> Result<FlushParameters> {
         // Ensure directories exist
         environment.ensure_all_directories().await?;
 
         // Detect dimension from vectors
-        let dimension = vectors.first().map(|v| v.vector.len() as i32).unwrap_or(3); // Fallback to 3 if no vectors
+        let dimension = vectors
+            .first()
+            .and_then(|v| v.embeddings.first())
+            .map(|e| e.dim as i32)
+            .unwrap_or(3);
 
         let collection_config =
             environment.create_test_collection_with_settings(engine, dimension, None);
 
         Ok(FlushParameters {
             collection_id: Some(environment.collection_id().to_string()),
-            vector_records: vectors
-                .into_iter()
-                .map(|v: VectorRecord| v.into())
-                .collect(),
+            vector_records: vectors,
             force: true,
             synchronous: true,
             collection_config: Some(collection_config),
@@ -720,17 +721,14 @@ pub mod operations {
     /// Build FlushParameters for SST with custom compression - uses provided collection config
     pub async fn build_sst_flush_params_with_collection(
         environment: &UnifiedTestEnvironment,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         collection: Collection,
     ) -> Result<FlushParameters> {
         environment.ensure_all_directories().await?;
 
         Ok(FlushParameters {
             collection_id: Some(environment.collection_id().to_string()),
-            vector_records: vectors
-                .into_iter()
-                .map(|v: VectorRecord| v.into())
-                .collect(),
+            vector_records: vectors,
             force: true,
             synchronous: true,
             collection_config: Some(collection),
@@ -745,7 +743,7 @@ pub mod operations {
     /// VIPER/Parquet supports: none, snappy, gzip, lz4, zstd, brotli (limited by Parquet format)
     pub async fn build_viper_flush_params_with_compression(
         environment: &UnifiedTestEnvironment,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         compression_algo: &str,
         _compression_level: i32,
     ) -> Result<FlushParameters> {
@@ -781,10 +779,7 @@ pub mod operations {
 
         Ok(FlushParameters {
             collection_id: Some(environment.collection_id().to_string()),
-            vector_records: vectors
-                .into_iter()
-                .map(|v: VectorRecord| v.into())
-                .collect(),
+            vector_records: vectors,
             force: true,
             synchronous: true,
             collection_config: Some(collection),

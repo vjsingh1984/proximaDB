@@ -169,7 +169,7 @@ async fn test_isolated_sst_metadata_based_filtering() -> Result<()> {
     let vectors = env.create_test_vectors(15);
     eprintln!("DEBUG TEST: Created {} vectors", vectors.len());
     if let Some(first) = vectors.first() {
-        eprintln!("DEBUG TEST: First vector metadata: {:?}", first.metadata);
+        eprintln!("DEBUG TEST: First vector props: {:?}", first.props);
     }
     let flush_params = operations::build_flush_params(&env, vectors, StorageEngine::Sst).await?;
 
@@ -314,20 +314,26 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
 
     // Flush each batch separately to create multiple SST files
     for batch in 0..num_batches {
-        let vectors = (0..batch_size)
+        let vectors: Vec<proximadb_records::ProximaRecord> = (0..batch_size)
             .map(|i| {
                 let global_id = batch * batch_size + i;
-                env.create_test_vector_record(
-                    format!("{}_{}", env.collection_id(), global_id),
-                    vec![
-                        global_id as f32,
-                        (global_id + 1) as f32,
-                        (global_id + 2) as f32,
-                    ],
-                    (1000 + global_id) as i64,
-                    None,
-                    std::collections::HashMap::new(),
-                )
+                proximadb_records::ProximaRecord {
+                    oid: format!("{}_{}", env.collection_id(), global_id),
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        dim: 3,
+                        values: vec![
+                            global_id as f32,
+                            (global_id + 1) as f32,
+                            (global_id + 2) as f32,
+                        ],
+                    }],
+                    record_version: 1,
+                    created_at_ns: (1000 + global_id) as i64 * 1_000_000_000,
+                    updated_at_ns: (1000 + global_id) as i64 * 1_000_000_000,
+                    ..Default::default()
+                }
             })
             .collect();
 
