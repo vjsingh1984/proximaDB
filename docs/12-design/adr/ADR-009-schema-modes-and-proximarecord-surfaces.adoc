@@ -182,10 +182,23 @@ Negative / migration cost:
 
 == Implementation Trajectory
 
-1. Make WAL and storage flush paths `ProximaRecord`-native.
-2. Replace REST/gRPC insert/search payloads with record/table APIs and modality facades over records.
-3. Make Arrow Flight use xCatalog-derived `ProximaType` schemas and record batches.
-4. Make SQL lowering produce `ProximaValue` expressions and `ProximaRecord` writes.
-5. Add `CREATE EXTERNAL TABLE` and external table registration metadata.
-6. Migrate SDK and embedded helpers to accept dict/pandas/Arrow/numpy inputs that normalize to records.
-7. Remove or quarantine v1 vector-shaped APIs as deprecated compatibility code.
+1. [ ] Make WAL and storage flush paths `ProximaRecord`-native. Status: in progress.
+   Canonical WAL/search migration work is underway; legacy vector envelopes remain only where v1 compatibility paths still require them.
+2. [ ] Replace REST/gRPC insert/search payloads with record/table APIs and modality facades over records.
+   v2 `ProximaRecord` services exist, but remaining v1 REST/gRPC/streaming shims must be reduced to compatibility adapters.
+3. [ ] Make Arrow Flight use xCatalog-derived `ProximaType` schemas and record batches. Status: in progress.
+   Completed: catalog-backed relational Arrow schema derivation and multimodal schema facade exports.
+   Completed: catalog-aware bulk write preparation now returns `ProximaRecord` and uses canonical-record batch sizing.
+   Pending: live Flight `GetSchema` and DoPut/DoExchange handlers must resolve xCatalog and call the catalog-aware record path.
+4. [x] Make SQL lowering produce `ProximaValue` expressions and `ProximaRecord` writes for cataloged inserts.
+   `CatalogRow` validates against `CatalogTableSchema`, stores rich `ProximaValue` props, extracts vector embeddings, and projects inserts to canonical `ProximaRecord`.
+5. [ ] Add `CREATE EXTERNAL TABLE` and external table registration metadata.
+6. [ ] Migrate SDK and embedded helpers to accept dict/pandas/Arrow/numpy inputs that normalize to records.
+7. [ ] Remove or quarantine v1 vector-shaped APIs as deprecated compatibility code.
+
+Progress ledger:
+
+* 2026-05-18: SQL DML insert path aligned with xCatalog row validation and `CatalogRow -> ProximaRecord` projection.
+* 2026-05-18: Arrow multimodel relational schema builder aligned with `CatalogTableSchema -> Arrow Schema`.
+* 2026-05-18: Arrow multimodal facade now exposes relational, document, graph, and observability schema builders through one surface.
+* 2026-05-18: Catalog-aware Arrow bulk write preparation now emits `ProximaRecord` and uses canonical-record direct-write routing.

@@ -1116,6 +1116,40 @@ Acceptance:
 * Retained projections have workload-specific benchmarks.
 * Deprecated durable paths have removal plans or compatibility wrappers.
 
+=== Phase 7: Protocol And Relational Surface Convergence
+
+Goal: make REST, gRPC, Arrow Flight, PostgreSQL wire, SDK, and embedded ingestion/query surfaces converge on xCatalog + `ProximaRecord`/`ProximaValue` instead of legacy vector-shaped or `SqlValue`-centric internal contracts.
+
+Tasks:
+
+* [x] Route SQL `INSERT` lowering through xCatalog row validation and canonical record construction.
+** `CatalogRow::validate_against_schema` validates required columns, unknown columns, nullability, and type compatibility before storage.
+** `CatalogRow::to_proxima_record` projects validated rows to `ProximaRecord` with `ProximaValue` props and vector embeddings.
+** SQL DML insert paths build canonical records from `CatalogTableSchema` instead of treating `SqlValue` as the internal durable representation.
+* [x] Add catalog-backed Arrow relational schemas.
+** `relational_schema_from_catalog(&CatalogTableSchema)` derives Arrow fields from xCatalog `CatalogDataType` and nullability.
+** The Arrow multimodal facade re-exports document, graph, observability, relational, and catalog-backed schema builders through one stable module path.
+* [x] Move catalog-aware Arrow bulk write preparation to canonical records.
+** `CatalogBulkWriteService::prepare_bulk_write` validates/infer-checks the Arrow schema through xCatalog and returns `Vec<ProximaRecord>`.
+** `BulkWriteRouter::should_use_direct_write_records` estimates rich canonical record batches without downcasting to legacy `VectorRecord`.
+* [x] Keep vector-only WAL/search compatibility paths from becoming new authority.
+** WAL/search migration work should use `ProximaRecord` as the canonical in-memory/storage envelope and leave `VectorRecord` only at v1 compatibility edges.
+* [ ] Wire Arrow Flight `GetSchema` to resolve xCatalog table schemas and return catalog-derived Arrow schemas when a relational/table descriptor is supplied.
+** Current live service still falls back to `ArrowProtoCodec::create_vector_schema` for collection descriptors; this is the next Arrow Flight schema task.
+* [ ] Wire live Arrow Flight DoPut/DoExchange relational/table ingestion through `CatalogBulkWriteService` so the catalog-validated `ProximaRecord` preparation path is exercised by the protocol handler.
+** Preserve large-batch behavior by using canonical-record routing decisions, not vector-count-only heuristics.
+* [ ] Replace remaining REST/gRPC/embedded insert and streaming shims with v2 `ProximaRecord`/`ProximaValue` contracts below protocol compatibility adapters.
+** Legacy v1 `VectorRecord`, metadata maps, `SqlValue`, and `SqlObject` may remain only as adapter inputs/outputs until the v1 compatibility surface is retired.
+* [ ] Add pandas/numpy/Arrow embedded normalization tests that prove dict/object, DataFrame, ndarray/vector, graph, document, and observability inputs normalize to xCatalog-validated canonical records.
+* [ ] Add cross-surface parity tests for SQL/pgwire `INSERT`, REST/gRPC record insert, Arrow Flight batch insert, and embedded batch insert against one cataloged relational/vector table.
+
+Acceptance:
+
+* All write surfaces validate through xCatalog before WAL/storage.
+* Arrow schemas exposed by Flight, embedded, SDK, and SQL/pgwire introspection derive from one catalog type mapping.
+* No new internal implementation accepts `VectorRecord` or `SqlValue` as the target durable contract.
+* Remaining legacy uses are named compatibility adapters with retirement tasks.
+
 == Progress Tracking Template
 
 Use this template in PR descriptions and roadmap updates for work in this area:
