@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 pub mod cache;
 pub mod oltp;
+pub mod relational;
 pub mod schema;
 
 /// Namespace metadata
