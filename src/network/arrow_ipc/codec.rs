@@ -754,7 +754,11 @@ impl ArrowProtoCodec {
 
         let mut vector_values = Vec::with_capacity(records.len() * dimension);
         for record in &records {
-            let vals = record.embeddings.first().map(|e| e.values.as_slice()).unwrap_or(&[]);
+            let vals = record
+                .embeddings
+                .first()
+                .map(|e| e.values.as_slice())
+                .unwrap_or(&[]);
             vector_values.extend_from_slice(vals);
             if vals.len() < dimension {
                 vector_values.extend(std::iter::repeat(0.0f32).take(dimension - vals.len()));
@@ -770,7 +774,13 @@ impl ArrowProtoCodec {
         let timestamp_array = Int64Array::from(
             records
                 .iter()
-                .map(|r| if r.created_at_ns == 0 { None } else { Some(r.created_at_ns / 1_000_000) })
+                .map(|r| {
+                    if r.created_at_ns == 0 {
+                        None
+                    } else {
+                        Some(r.created_at_ns / 1_000_000)
+                    }
+                })
                 .collect::<Vec<Option<i64>>>(),
         );
 
@@ -812,7 +822,8 @@ impl ArrowProtoCodec {
         }
 
         let key_array = StringArray::from(keys.iter().map(|k| k.as_deref()).collect::<Vec<_>>());
-        let value_array = StringArray::from(values.iter().map(|v| v.as_deref()).collect::<Vec<_>>());
+        let value_array =
+            StringArray::from(values.iter().map(|v| v.as_deref()).collect::<Vec<_>>());
 
         Ok(StructArray::from(vec![
             (

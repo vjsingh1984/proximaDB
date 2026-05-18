@@ -169,12 +169,10 @@
 
 pub mod catalog_introspection;
 pub mod collection;
-pub mod conversion;
 pub mod ddl;
 pub mod dml;
 pub mod events;
 pub mod graph_collection;
-pub mod migration;
 pub mod operations;
 pub mod schema;
 pub mod search;
@@ -184,7 +182,6 @@ pub mod tenant_access;
 // Re-export main service types with cleaner names
 pub use catalog_introspection::{CatalogIntrospectionResult, CatalogIntrospectionService};
 pub use collection::Collections;
-pub use conversion::RecordConverter;
 pub use ddl::{
     AlterTableChange, ColumnDefinition, DdlResult, DdlService, DdlStatement, IndexType, SqlDataType,
 };
@@ -194,9 +191,7 @@ pub use dml::{
 };
 pub use events::EventLog;
 pub use graph_collection::GraphCollectionService;
-pub use migration::RecordMigrationService;
 pub use operations::VectorOps;
-pub use schema::SchemaInferenceService;
 pub use search::StreamingSearch;
 
 // Legacy compatibility exports (will be removed)
