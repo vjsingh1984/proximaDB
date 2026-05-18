@@ -95,7 +95,6 @@ pub use service_transactions::{
     UnitOfWork,
 };
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
     adjacency_projection::{
@@ -111,6 +110,7 @@ use crate::storage::cache::orchestrator::{
 };
 use dashmap::DashMap;
 use proximadb_graph::projection::{GraphTopologyProjection, TopologyEpoch};
+use proximadb_kernel::error::ProximaDBError;
 use proximadb_records::{RecordKey, RecordStore};
 use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry, SnapshotManifest};
 use std::collections::{HashMap, HashSet};

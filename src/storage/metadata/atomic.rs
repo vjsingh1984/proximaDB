@@ -11,10 +11,10 @@
 //! - Optimistic concurrency control
 //! - Atomic batch operations
 
-use proximadb_kernel::uuid::Uuid;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use proximadb_kernel::uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};

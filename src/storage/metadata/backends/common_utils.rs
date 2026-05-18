@@ -8,8 +8,8 @@
 //! Provides shared functionality used across different metadata backend implementations
 //! to reduce code duplication and ensure consistency.
 
-use proximadb_kernel::uuid::Uuid;
 use anyhow::{Context, Result};
+use proximadb_kernel::uuid::Uuid;
 use std::path::{Path, PathBuf};
 
 use crate::proto::proximadb_v1::Collection;

@@ -452,10 +452,12 @@ impl super::GraphOperationsService {
                     if let Some(existing) = map.get(&k)
                         && existing.value() != &node.id
                     {
-                        return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(format!(
-                            "Unique constraint violation on (label='{}', property='{}') for value '{}'",
-                            clabel, cprop, k
-                        )));
+                        return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                            format!(
+                                "Unique constraint violation on (label='{}', property='{}') for value '{}'",
+                                clabel, cprop, k
+                            ),
+                        ));
                     }
                 }
             }
@@ -523,10 +525,9 @@ impl super::GraphOperationsService {
                 if let Some(existing) = map.get(&comp)
                     && existing.value() != &node.id
                 {
-                    return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(format!(
-                        "Duplicate composite key for unique ({:?})",
-                        props
-                    )));
+                    return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                        format!("Duplicate composite key for unique ({:?})", props),
+                    ));
                 }
             }
         }

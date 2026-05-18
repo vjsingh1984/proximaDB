@@ -11,7 +11,9 @@ use crate::core::search::hybrid::{
 };
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::sql_value::Value as SqlValueKind;
-use crate::storage::engines::core::formats::columnar::fulltext_index::{FullTextIndex, TokenizerConfig};
+use crate::storage::engines::core::formats::columnar::fulltext_index::{
+    FullTextIndex, TokenizerConfig,
+};
 
 /// Shared map of per-collection full-text indexes for hybrid BM25+vector search
 pub type HybridFullTextIndexMap = Arc<RwLock<HashMap<String, FullTextIndex>>>;
@@ -68,9 +70,9 @@ impl BM25IndexPort for Bm25IndexPortImpl {
 // ── RestHybridPortImpl ─────────────────────────────────────────────────────────
 
 use proximadb_proto::v1::{
-    FusionStrategyInfo, HybridFusionSearchRequest, HybridFusionSearchResponse,
-    HybridSearchMetrics, HybridSearchResult, ListFusionStrategiesRequest,
-    ListFusionStrategiesResponse, TextHighlight as ProtoTextHighlight,
+    FusionStrategyInfo, HybridFusionSearchRequest, HybridFusionSearchResponse, HybridSearchMetrics,
+    HybridSearchResult, ListFusionStrategiesRequest, ListFusionStrategiesResponse,
+    TextHighlight as ProtoTextHighlight,
 };
 use proximadb_runtime::HybridPort;
 
@@ -89,7 +91,10 @@ impl RestHybridPortImpl {
         vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
         indexes: HybridFullTextIndexMap,
     ) -> Self {
-        Self { vector_ops, indexes }
+        Self {
+            vector_ops,
+            indexes,
+        }
     }
 }
 
@@ -178,10 +183,11 @@ impl HybridPort for RestHybridPortImpl {
 
         // ── Fusion ─────────────────────────────────────────────────────────
         let fusion_start = std::time::Instant::now();
-        let internal_strategy = match proximadb_proto::v1::FusionStrategy::try_from(request.fusion_strategy) {
-            Ok(proximadb_proto::v1::FusionStrategy::BordaCount) => FusionStrategy::BordaCount,
-            _ => FusionStrategy::ReciprocalRank { k: 60 },
-        };
+        let internal_strategy =
+            match proximadb_proto::v1::FusionStrategy::try_from(request.fusion_strategy) {
+                Ok(proximadb_proto::v1::FusionStrategy::BordaCount) => FusionStrategy::BordaCount,
+                _ => FusionStrategy::ReciprocalRank { k: 60 },
+            };
         let fused = HybridFusionEngine::new(internal_strategy)
             .fuse(bm25_results, vector_results)
             .map_err(|e| anyhow!("Fusion failed: {}", e))?;

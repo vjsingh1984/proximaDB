@@ -48,6 +48,7 @@ use crate::core::{String, VectorRecord};
 use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
+use proximadb_records::conversions::proxima_record_to_vector;
 // Schema now uses shared ColumnarSchema from columnar module
 use super::compaction::ViperCompactionService;
 use super::flush::Flush;
@@ -55,8 +56,8 @@ use super::flush::Flush;
 use super::utilities::ViperUtilities;
 // Unified search engine removed - using IntegratedSearchOptimizer
 use super::types::CollectionMetadata;
-use proximadb_storage_common::storage_path::StoragePath;
 use anyhow::Context;
+use proximadb_storage_common::storage_path::StoragePath;
 // VIPER-specific optimization structures removed - now using universal module
 
 // Using unified quantization engine directly from compute module
@@ -1942,12 +1943,19 @@ impl UnifiedStorageEngine for ViperEngine {
             batch_id_strings
         );
 
+        // Convert ProximaRecord → VectorRecord for VIPER engine internals (protocol adapter boundary)
+        let vector_records_v1: Vec<VectorRecord> = params
+            .vector_records
+            .iter()
+            .map(proxima_record_to_vector)
+            .collect();
+
         // Use the modular flush manager to flush vectors with provided collection config
         let mut flush_result = self
             .flush_manager
             .flush_vectors(
                 &collection_id,
-                &params.vector_records,
+                &vector_records_v1,
                 &batch_id_strings,
                 params.force,
                 params.synchronous,
@@ -2006,7 +2014,7 @@ impl UnifiedStorageEngine for ViperEngine {
             vec![]
         };
         if let Err(e) = flush_handler
-            .notify_flush_complete(params, file_paths, &params.vector_records)
+            .notify_flush_complete(params, file_paths, &vector_records_v1)
             .await
         {
             // Log but don't fail the flush - EventLog notification is best-effort
@@ -3087,8 +3095,8 @@ mod minimal_compaction_tests {
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::{FlushParameters, traits::CompactionParameters};
-    use proximadb_storage_common::storage_path::StoragePath;
     use anyhow::Result;
+    use proximadb_storage_common::storage_path::StoragePath;
     use tempfile::TempDir;
     use tracing::debug;
 
@@ -3194,7 +3202,10 @@ mod minimal_compaction_tests {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: true,
-            vector_records: vectors,
+            vector_records: vectors
+                .into_iter()
+                .map(proximadb_records::ProximaRecord::from)
+                .collect(),
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,

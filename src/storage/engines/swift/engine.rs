@@ -6,14 +6,14 @@ use crate::storage::engines::core::ops::{
     UniversalOptimizationStrategy, UniversalPerformanceOptimizer, UniversallyOptimized,
 };
 use crate::storage::persistence::filesystem::FileStorageTier;
-use proximadb_storage_common::storage_path::StoragePath;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use proximadb_compression::StandardCompression;
+use proximadb_storage_common::storage_path::StoragePath;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
-use proximadb_compression::StandardCompression;
 
 // Universal performance optimization imports - UniversalIOConfig removed as unused
 // VectorMemoryPool now managed by universal optimizer
@@ -32,6 +32,7 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult, StorageEngineStrategy, UnifiedStorageEngine,
 };
+use proximadb_records::conversions::proxima_record_to_vector;
 // Removed unused import: IndexingAlgorithm
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Removed unused compression common imports
@@ -1120,8 +1121,12 @@ impl UnifiedStorageEngine for SwiftEngine {
         );
 
         // Build blocks from vectors passed in flush parameters
-        // This is the actual data that needs to be persisted
-        let records = params.vector_records.clone();
+        // Convert ProximaRecord → VectorRecord for SWIFT engine internals (protocol adapter boundary)
+        let records: Vec<VectorRecord> = params
+            .vector_records
+            .iter()
+            .map(proxima_record_to_vector)
+            .collect();
 
         // Get compression config from storage config
         let compression_config = params
@@ -1190,7 +1195,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         if params.vector_records.len() >= 100 {
             // Only train with enough samples
             match self
-                .train_and_cache_pca_model(&collection_id, &data_dir, &params.vector_records)
+                .train_and_cache_pca_model(&collection_id, &data_dir, &records)
                 .await
             {
                 Ok(()) => {

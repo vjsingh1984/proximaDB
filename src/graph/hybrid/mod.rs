@@ -146,13 +146,13 @@
 pub mod ranking;
 pub mod semantic_traversal;
 
-use proximadb_kernel::error::{ProximaDBError, QueryError, VectorDBError};
 use crate::graph::{
     Edge, EdgeId, GraphMemoryPool, Node, NodeId,
     query::{QueryContext, QueryResult, QueryStats},
 };
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::vector_operations_service::VectorOperationsService;
+use proximadb_kernel::error::{ProximaDBError, QueryError, VectorDBError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -1409,7 +1409,9 @@ impl HybridQueryEngine {
                                 vector_record: VectorRecord {
                                     id: rec.id,
                                     vector,
-                                    metadata: crate::core::search::results::proxima_map_to_sql(rec.metadata.clone()),
+                                    metadata: crate::core::search::results::proxima_map_to_sql(
+                                        rec.metadata.clone(),
+                                    ),
                                     timestamp: Some(rec.timestamp.unwrap_or(0)),
                                     updated_at: Some(rec.updated_at.unwrap_or(0)),
                                     expires_at: None,

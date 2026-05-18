@@ -456,12 +456,18 @@ impl StreamCoordinator {
             })
             .sum::<usize>();
 
+        // Convert VectorRecord → ProximaRecord for FlushParameters canonical boundary
+        let proxima_records: Vec<proximadb_records::ProximaRecord> = records
+            .iter()
+            .map(|vr| proximadb_records::ProximaRecord::from(vr))
+            .collect();
+
         // Create flush parameters for storage engine
         let flush_params = crate::storage::traits::FlushParameters {
             collection_id: Some(collection_id.clone()),
             force: true,
             synchronous: true,
-            vector_records: records,
+            vector_records: proxima_records,
             trigger_compaction: false,
             collection_config: collection_config.cloned(),
             estimated_size: bytes_estimate,
@@ -648,12 +654,18 @@ impl StreamCoordinator {
             .map(|r| r.id.len() + (r.vector.len() * 4) + 100)
             .sum::<usize>();
 
+        // Convert VectorRecord → ProximaRecord for FlushParameters canonical boundary
+        let proxima_records: Vec<proximadb_records::ProximaRecord> = records
+            .iter()
+            .map(|vr| proximadb_records::ProximaRecord::from(vr))
+            .collect();
+
         // Create flush parameters
         let flush_params = crate::storage::traits::FlushParameters {
             collection_id: Some(collection_id.clone()),
             force: true,
             synchronous: true,
-            vector_records: records,
+            vector_records: proxima_records,
             trigger_compaction: false,
             collection_config: collection_config.cloned(),
             estimated_size: bytes_estimate,

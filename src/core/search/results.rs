@@ -13,9 +13,7 @@ const JSONB_MAGIC: &[u8] = b"\xff\xfeJSNB";
 
 /// Used at WAL/gRPC boundary deserialization so the rest of the system
 /// works entirely with ProximaValue.
-pub fn sql_value_to_proxima_value(
-    v: crate::proto::proximadb_v1::SqlValue,
-) -> ProximaValue {
+pub fn sql_value_to_proxima_value(v: crate::proto::proximadb_v1::SqlValue) -> ProximaValue {
     use crate::proto::proximadb_v1::sql_value::Value;
     match v.value {
         Some(Value::StringValue(s)) => ProximaValue::String(s),
@@ -51,9 +49,7 @@ pub fn sql_value_to_proxima_value(
 }
 
 /// Convert a canonical ProximaValue back to v1 SqlValue for WAL/gRPC writes.
-pub fn proxima_value_to_sql_value(
-    v: ProximaValue,
-) -> crate::proto::proximadb_v1::SqlValue {
+pub fn proxima_value_to_sql_value(v: ProximaValue) -> crate::proto::proximadb_v1::SqlValue {
     use crate::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, sql_value::Value};
     let inner = match v {
         ProximaValue::String(s) | ProximaValue::Symbol(s) => Value::StringValue(s),

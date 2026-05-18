@@ -9,6 +9,7 @@ use tracing::{debug, info};
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, FlushResult};
+use proximadb_records::conversions::proxima_record_to_vector;
 
 use crate::storage::engines::nova::nova_meta_collector::NovaMetadataCollector;
 
@@ -54,7 +55,10 @@ impl NovaFlushOperations {
 
         // Use standard path: {base_location}/{collection_id}/data (same as other engines)
         let storage_path =
-            proximadb_storage_common::storage_path::StoragePath::collection_data_path(base_location, collection_id);
+            proximadb_storage_common::storage_path::StoragePath::collection_data_path(
+                base_location,
+                collection_id,
+            );
         let full_path = format!("{}/{}", storage_path, file_name);
 
         debug!(
@@ -220,7 +224,11 @@ impl NovaFlushOperations {
         // Get dimension from collection config FIRST (authoritative), then fall back to actual vectors
         let dimension = params.collection_config.as_ref()
             .and_then(|c| c.config.as_ref().map(|cfg| cfg.dimension as usize))
-            .or_else(|| params.vector_records.first().map(|r| r.vector.len()))
+            .or_else(|| {
+                params.vector_records.first().map(|r| {
+                    r.embeddings.first().map(|e| e.dim as usize).unwrap_or(0)
+                })
+            })
             .ok_or_else(|| anyhow::anyhow!(
                 "Cannot determine vector dimension: no collection config and no vectors provided"
             ))?;
@@ -246,11 +254,18 @@ impl NovaFlushOperations {
             .and_then(|c| c.config.as_ref())
             .map(|cfg| cfg.filterable_columns.clone());
 
+        // Convert ProximaRecord → VectorRecord for the columnar writer (protocol adapter boundary)
+        let vector_records_v1: Vec<VectorRecord> = params
+            .vector_records
+            .iter()
+            .map(proxima_record_to_vector)
+            .collect();
+
         // Delegate to write_nova_file_to_disk
         let (path, bytes_written, _metadata) = self
             .write_nova_file_to_disk(
                 params.collection_id.as_deref().unwrap_or("default"),
-                params.vector_records.clone(),
+                vector_records_v1,
                 compression_algo,
                 dimension,
                 base_location,

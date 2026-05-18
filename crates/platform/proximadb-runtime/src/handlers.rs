@@ -22,9 +22,9 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use proximadb_data_model::ProximaValue;
 use proximadb_proto::v1::{
-    CollectionOperation, CollectionRequest, CollectionResponse, ExecuteSqlResponse, HybridSearchRequest,
-    HybridSearchResponse, SqlRow, SqlRowField, SqlValue, VectorBatchRequest, VectorOperationResponse,
-    VectorSearchRequest, sql_value,
+    CollectionOperation, CollectionRequest, CollectionResponse, ExecuteSqlResponse,
+    HybridSearchRequest, HybridSearchResponse, SqlRow, SqlRowField, SqlValue, VectorBatchRequest,
+    VectorOperationResponse, VectorSearchRequest, sql_value,
 };
 
 use crate::port::ApiHandlersPort;
@@ -165,7 +165,8 @@ impl ApiHandlersPort for UnifiedHandlers {
         request: CollectionRequest,
         tenant_id: Option<&str>,
     ) -> Result<CollectionResponse> {
-        let op = CollectionOperation::try_from(request.operation).unwrap_or(CollectionOperation::Unspecified);
+        let op = CollectionOperation::try_from(request.operation)
+            .unwrap_or(CollectionOperation::Unspecified);
         let collection_id = request.collection_id.as_deref().unwrap_or("");
         let start = Instant::now();
 
@@ -187,12 +188,18 @@ impl ApiHandlersPort for UnifiedHandlers {
                 let config = request
                     .collection_config
                     .ok_or_else(|| anyhow!("collection_config required for UPDATE"))?;
-                let col = self.collection.update_collection(collection_id, config, tenant_id).await?;
+                let col = self
+                    .collection
+                    .update_collection(collection_id, config, tenant_id)
+                    .await?;
                 resp.success = true;
                 resp.collection = Some(col);
             }
             CollectionOperation::CollectionGet => {
-                let col = self.collection.get_collection(collection_id, tenant_id).await?;
+                let col = self
+                    .collection
+                    .get_collection(collection_id, tenant_id)
+                    .await?;
                 resp.success = col.is_some();
                 resp.collection = col;
             }
@@ -203,7 +210,10 @@ impl ApiHandlersPort for UnifiedHandlers {
                 resp.collections = cols;
             }
             CollectionOperation::CollectionDelete => {
-                let deleted = self.collection.delete_collection(collection_id, tenant_id).await?;
+                let deleted = self
+                    .collection
+                    .delete_collection(collection_id, tenant_id)
+                    .await?;
                 resp.success = deleted;
                 resp.affected_count = if deleted { 1 } else { 0 };
             }
@@ -255,7 +265,13 @@ impl ApiHandlersPort for UnifiedHandlers {
         tenant_id: Option<&str>,
     ) -> Result<VectorOperationResponse> {
         self.vector_ops
-            .get_vector(collection_id, vector_id, include_vector, include_metadata, tenant_id)
+            .get_vector(
+                collection_id,
+                vector_id,
+                include_vector,
+                include_metadata,
+                tenant_id,
+            )
             .await
     }
 
@@ -294,7 +310,11 @@ impl ApiHandlersPort for UnifiedHandlers {
         let columns: Vec<String> = json_result
             .get("columns")
             .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
 
         let rows: Vec<SqlRow> = records
@@ -313,7 +333,10 @@ impl ApiHandlersPort for UnifiedHandlers {
                         value: Some(json_to_sql_value(record)),
                     }],
                 };
-                SqlRow { fields, similarity: None }
+                SqlRow {
+                    fields,
+                    similarity: None,
+                }
             })
             .collect();
 

@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use proximadb_compression::{CompressionAlgorithm, CompressionContext};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::CompressionConfig as ProtoCompressionConfig;
+use proximadb_compression::{CompressionAlgorithm, CompressionContext};
 
 /// Row-based compression configuration
 #[derive(Debug, Clone)]

@@ -19,9 +19,9 @@
 //! This module provides indexing for events by entity, type, and timestamp
 //! to enable efficient temporal queries and event replay.
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::eventlog::{EntityId, Event, EventSequence, EventType};
 use chrono::{DateTime, Utc};
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

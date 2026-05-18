@@ -17,7 +17,9 @@ pub struct ShardedMapCache<K, V> {
 
 impl<K: Eq + Hash, V> ShardedMapCache<K, V> {
     pub fn new() -> Self {
-        Self { inner: DashMap::new() }
+        Self {
+            inner: DashMap::new(),
+        }
     }
 }
 

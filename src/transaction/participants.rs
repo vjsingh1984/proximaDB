@@ -25,9 +25,9 @@
 //! - Applies changes during commit phase
 //! - Rolls back changes during abort phase
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::transaction::two_phase_commit::{TransactionId, TransactionParticipant, Vote};
 use async_trait::async_trait;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

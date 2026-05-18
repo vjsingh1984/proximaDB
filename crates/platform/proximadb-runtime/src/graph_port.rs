@@ -11,11 +11,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_proto::v1::{
     BatchEdgeRequest, BatchNodeRequest, BatchResponse, ConnectedComponentsResponse,
-    CreateEdgeRequest, CreateGraphRequest, CreateNodeRequest, CycleCheckResponse, DeleteEdgeRequest,
-    DeleteNodeRequest, Edge, EdgeQuery, GetEdgeRequest, GetNeighborsRequest, GetNodeRequest,
-    GetStatsRequest, GraphCollection, GraphQueryRequest, GraphQueryResponse, GraphSchema, GraphStats,
-    HybridSearchRequest, HybridSearchResponse, Node, NodeQuery, ShortestPathRequest,
-    ShortestPathResponse, TraversalChunk, TraversalRequest, TraversalResponse,
+    CreateEdgeRequest, CreateGraphRequest, CreateNodeRequest, CycleCheckResponse,
+    DeleteEdgeRequest, DeleteNodeRequest, Edge, EdgeQuery, GetEdgeRequest, GetNeighborsRequest,
+    GetNodeRequest, GetStatsRequest, GraphCollection, GraphQueryRequest, GraphQueryResponse,
+    GraphSchema, GraphStats, HybridSearchRequest, HybridSearchResponse, Node, NodeQuery,
+    ShortestPathRequest, ShortestPathResponse, TraversalChunk, TraversalRequest, TraversalResponse,
     UniqueConstraintRequest, UniqueConstraintResponse, UpdateEdgeRequest, UpdateNodeRequest,
 };
 
@@ -95,7 +95,8 @@ pub trait GraphPort: Send + Sync {
     // ── Graph collection management ───────────────────────────────────────
 
     /// Create a named graph collection (metadata + schema).
-    async fn create_graph_collection(&self, request: CreateGraphRequest) -> Result<GraphCollection>;
+    async fn create_graph_collection(&self, request: CreateGraphRequest)
+    -> Result<GraphCollection>;
 
     /// Fetch a graph collection by ID. Returns `None` when not found.
     async fn get_graph_collection(&self, graph_id: String) -> Result<Option<GraphCollection>>;

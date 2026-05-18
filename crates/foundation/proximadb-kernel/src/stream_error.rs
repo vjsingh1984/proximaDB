@@ -8,29 +8,58 @@ pub type StreamResult<T> = Result<T, StreamError>;
 /// Errors that can occur during streaming operations
 #[derive(Debug, Clone)]
 pub enum StreamError {
-    TooManySessions { max: usize, current: usize },
-    SessionNotFound { session_id: String },
-    SessionClosed { session_id: String },
+    TooManySessions {
+        max: usize,
+        current: usize,
+    },
+    SessionNotFound {
+        session_id: String,
+    },
+    SessionClosed {
+        session_id: String,
+    },
     RateLimited {
         current_rate: u64,
         max_rate: u64,
         retry_after_ms: u64,
     },
-    BufferFull { capacity: usize, dropped: usize },
-    InvalidConfig { message: String },
-    CollectionNotFound { collection: String },
-    StorageError { message: String },
-    SerializationError { message: String },
-    ConnectionError { message: String },
-    Timeout { operation: String, timeout_ms: u64 },
-    Internal { message: String },
+    BufferFull {
+        capacity: usize,
+        dropped: usize,
+    },
+    InvalidConfig {
+        message: String,
+    },
+    CollectionNotFound {
+        collection: String,
+    },
+    StorageError {
+        message: String,
+    },
+    SerializationError {
+        message: String,
+    },
+    ConnectionError {
+        message: String,
+    },
+    Timeout {
+        operation: String,
+        timeout_ms: u64,
+    },
+    Internal {
+        message: String,
+    },
 }
 
 impl fmt::Display for StreamError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             StreamError::TooManySessions { max, current } => {
-                write!(f, "Too many concurrent sessions: {} (max: {})", current, max)
+                write!(
+                    f,
+                    "Too many concurrent sessions: {} (max: {})",
+                    current, max
+                )
             }
             StreamError::SessionNotFound { session_id } => {
                 write!(f, "Session not found: {}", session_id)

@@ -2199,10 +2199,9 @@ impl ProximaDataBlock {
                                     .iter()
                                     .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
                                     .collect();
-                                let json_str = serde_json::to_string(
-                                    &serde_json::Value::Object(json_map),
-                                )
-                                .unwrap_or_default();
+                                let json_str =
+                                    serde_json::to_string(&serde_json::Value::Object(json_map))
+                                        .unwrap_or_default();
                                 (0x05, json_str.into_bytes())
                             }
                             crate::proto::proximadb_v1::sql_value::Value::ArrayValue(arr) => {
@@ -4522,11 +4521,11 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
 
-        use proximadb_compression::{CompressionContext, compress};
         use crate::storage::engines::core::ops::proximacodec::TypeId;
         use crate::storage::engines::core::ops::proximacodec::{
             ProximaCodec, ProximaScheme as CodecScheme, analysis,
         };
+        use proximadb_compression::{CompressionContext, compress};
         use rayon::prelude::*;
 
         let mut field_data = Vec::new();

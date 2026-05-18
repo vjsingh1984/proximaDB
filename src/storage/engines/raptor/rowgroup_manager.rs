@@ -14,13 +14,13 @@ use super::smart_rowgroup_sizing::{OptimalRowGroupSize, SmartRowGroupSizer};
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::proto::proximadb_v1::VectorRecord;
 // ProximaCodec system for encoding/decoding
-use proximadb_compression::CompressionAlgorithm;
 use crate::storage::engines::core::formats::proximablocks::{
     BlockCompressionConfig, VectorEncodingLayout,
 };
 use crate::storage::engines::core::ops::proximacodec::{
     ProximaCodec, analysis, types::ProximaScheme,
 };
+use proximadb_compression::CompressionAlgorithm;
 
 // RowGroup removed - consolidated into common::RowGroup
 // The unified RowGroup now includes columnar_data field

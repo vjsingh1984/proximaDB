@@ -345,7 +345,9 @@ mod tests {
         let context = create_test_context(collection_id, StorageEngineType::Viper);
 
         // Execute coordinated flush with metrics
-        let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(test_vectors);
+        let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
+            test_vectors.into_iter().map(proximadb_records::ProximaRecord::from).collect()
+        );
 
         let flush_result = flush_coordinator
             .execute_coordinated_flush(collection_id, flush_data, None, Some(&context))
@@ -554,7 +556,9 @@ mod tests {
 
         // Step 2: Execute FlushCoordinator operation
         let test_vectors = create_test_vectors(25);
-        let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(test_vectors);
+        let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
+            test_vectors.into_iter().map(proximadb_records::ProximaRecord::from).collect()
+        );
 
         let flush_result = flush_coordinator
             .execute_coordinated_flush(collection_id, flush_data, None, Some(&context))
@@ -712,7 +716,9 @@ mod tests {
 
             // Execute flush for each collection
             let test_vectors = create_test_vectors(10 + (i * 5));
-            let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(test_vectors);
+            let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
+            test_vectors.into_iter().map(proximadb_records::ProximaRecord::from).collect()
+        );
 
             flush_coordinator
                 .execute_coordinated_flush(collection_id, flush_data, None, Some(&context))

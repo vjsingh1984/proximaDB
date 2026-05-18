@@ -172,7 +172,11 @@ impl MvccResolver {
 /// Treat `record_version == 0` as version 1 (legacy VectorRecord compatibility).
 #[inline]
 fn effective_version(r: &ProximaRecord) -> u64 {
-    if r.record_version == 0 { 1 } else { r.record_version }
+    if r.record_version == 0 {
+        1
+    } else {
+        r.record_version
+    }
 }
 
 impl Default for MvccResolver {

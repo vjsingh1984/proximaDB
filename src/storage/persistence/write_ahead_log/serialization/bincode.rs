@@ -34,17 +34,20 @@ impl super::VectorBatchSerializer for BincodeSerializer {
 mod tests {
     use super::*;
     use crate::storage::persistence::write_ahead_log::serialization::VectorBatchSerializer;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
-    fn create_test_vector() -> VectorRecord {
-        VectorRecord {
-            id: "test_vector_1".to_string(),
-            vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: None,
-            version: Some(1),
-            source: Some("test".to_string()),
+    fn create_test_vector() -> ProximaRecord {
+        ProximaRecord {
+            oid: "test_vector_1".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![0.1, 0.2, 0.3, 0.4],
+                dim: 4,
+            }],
+            origin: Some("test".to_string()),
+            record_version: 1,
+            ..Default::default()
         }
     }
 
@@ -64,8 +67,11 @@ mod tests {
             .deserialize_batch(&serialized)
             .expect("Failed to deserialize batch");
         assert_eq!(deserialized.len(), 1);
-        assert_eq!(deserialized[0].id, vectors[0].id);
-        assert_eq!(deserialized[0].vector, vectors[0].vector);
+        assert_eq!(deserialized[0].oid, vectors[0].oid);
+        assert_eq!(
+            deserialized[0].embeddings.first().map(|e| &e.values),
+            vectors[0].embeddings.first().map(|e| &e.values)
+        );
     }
 
     #[test]
@@ -91,7 +97,12 @@ mod tests {
     fn test_high_dimensional_vector() {
         let serializer = BincodeSerializer::new();
         let mut vector = create_test_vector();
-        vector.vector = vec![0.1; 1024]; // 1024-dimensional vector
+        vector.embeddings = vec![EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values: vec![0.1; 1024],
+            dim: 1024,
+        }];
 
         let vectors = vec![vector];
         let serialized = serializer
@@ -101,7 +112,10 @@ mod tests {
             .deserialize_batch(&serialized)
             .expect("Failed to deserialize high-dimensional vector");
 
-        assert_eq!(deserialized[0].vector.len(), 1024);
+        assert_eq!(
+            deserialized[0].embeddings.first().map(|e| e.values.len()),
+            Some(1024)
+        );
     }
 
     #[test]

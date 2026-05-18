@@ -3,8 +3,8 @@
 //! This module provides the main implementation of the universal distance adapter
 //! that integrates PQ and INT8 optimized distance computations across all storage engines.
 
-use proximadb_kernel::uuid::Uuid;
 use anyhow::Result;
+use proximadb_kernel::uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;

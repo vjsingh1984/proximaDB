@@ -64,11 +64,11 @@ pub mod search;
 pub mod ssd_layout;
 pub mod vamana;
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::index::diskann::pq::{PQConfig, PQEncoder};
 use crate::index::diskann::search::{DiskANNSearch, SearchConfig};
 use crate::index::diskann::ssd_layout::{NodeOrdering, SsdLayoutOptimizer};
 use crate::index::diskann::vamana::{VamanaConfig, VamanaGraph};
+use proximadb_kernel::error::ProximaDBError;
 use tracing::info;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;

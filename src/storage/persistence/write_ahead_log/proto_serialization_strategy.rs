@@ -759,10 +759,10 @@ impl ProtoSerializationStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::{SqlValue, sql_value};
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use std::collections::HashMap;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
     use std::sync::Arc;
 
     fn create_test_config() -> WALConfig {
@@ -788,37 +788,35 @@ mod tests {
         }
     }
 
-    fn create_proto_test_vector(id: &str, dimension: usize) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: (0..dimension)
-                .map(|i| (i as f32) / (dimension as f32))
-                .collect(),
-            metadata: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "proto_version".to_string(),
-                    SqlValue {
-                        value: Some(sql_value::Value::StringValue("3".to_string())),
-                    },
-                );
-                map.insert(
-                    "encoding".to_string(),
-                    SqlValue {
-                        value: Some(sql_value::Value::StringValue("protobuf".to_string())),
-                    },
-                );
-                map
-            },
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: Some(1234567890 + 86400),
-            version: Some(1),
-            source: None,
+    fn create_proto_test_vector(id: &str, dimension: usize) -> ProximaRecord {
+        let mut props = ProximaTree::new();
+        props.insert(
+            "proto_version".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("3".to_string())),
+        );
+        props.insert(
+            "encoding".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("protobuf".to_string())),
+        );
+
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: (0..dimension)
+                    .map(|i| (i as f32) / (dimension as f32))
+                    .collect(),
+                dim: dimension as u32,
+            }],
+            props,
+            record_version: 1,
+            valid_to_ns: Some((1234567890 + 86400) * 1_000_000_000),
+            ..Default::default()
         }
     }
 
-    fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
+    fn create_test_batch(vectors: Vec<ProximaRecord>) -> WALVectorBatch {
         let vector_count = vectors.len();
         WALVectorBatch {
             batch_id: BatchId::new(),
@@ -861,46 +859,41 @@ mod tests {
         let batch = create_test_batch(vec![vector.clone()]);
 
         assert_eq!(batch.vector_records.len(), 1);
-        assert_eq!(batch.vector_records[0].id, "test".to_string());
+        assert_eq!(batch.vector_records[0].oid, "test".to_string());
     }
 
     #[tokio::test]
     async fn test_proto_metadata_encoding() {
         let mut vector = create_proto_test_vector("meta_test", 64);
-        vector.metadata.insert(
+        vector.props.insert(
             "unicode".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue("Hello 世界 🌍".to_string())),
-            },
+            ProximaTreeNode::Value(ProximaValue::String("Hello 世界 🌍".to_string())),
         );
-        vector.metadata.insert(
+        vector.props.insert(
             "special_chars".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue(
-                    "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::String(
+                "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
+            )),
         );
-        vector.metadata.insert(
+        vector.props.insert(
             "empty".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue("".to_string())),
-            },
+            ProximaTreeNode::Value(ProximaValue::String("".to_string())),
         );
 
-        assert_eq!(vector.metadata.len(), 5);
-        assert!(vector.metadata.contains_key("unicode"));
-        if let Some(sql_value) = vector.metadata.get("unicode") {
-            if let Some(sql_value::Value::StringValue(s)) = &sql_value.value {
-                assert_eq!(s, "Hello 世界 🌍");
-            }
+        assert_eq!(vector.props.len(), 5);
+        assert!(vector.props.contains_key("unicode"));
+        if let Some(ProximaTreeNode::Value(ProximaValue::String(s))) = vector.props.get("unicode") {
+            assert_eq!(s, "Hello 世界 🌍");
         }
     }
 
     #[tokio::test]
     async fn test_proto_large_vector_handling() {
         let large_vector = create_proto_test_vector("large", 4096);
-        assert_eq!(large_vector.vector.len(), 4096);
+        assert_eq!(
+            large_vector.embeddings.first().map(|e| e.values.len()),
+            Some(4096)
+        );
 
         let batch = create_test_batch(vec![large_vector]);
         assert_eq!(batch.vector_records.len(), 1);
@@ -908,7 +901,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_proto_batch_atomicity() {
-        let vectors: Vec<VectorRecord> = (0..100)
+        let vectors: Vec<ProximaRecord> = (0..100)
             .map(|i| create_proto_test_vector(&format!("atomic_{}", i), 128))
             .collect();
 
@@ -923,7 +916,7 @@ mod tests {
         let vec1 = create_proto_test_vector("col1_vec", 64);
         let vec2 = create_proto_test_vector("col2_vec", 64);
 
-        assert_ne!(vec1.id, vec2.id);
+        assert_ne!(vec1.oid, vec2.oid);
     }
 
     #[tokio::test]
@@ -944,7 +937,7 @@ mod tests {
     #[tokio::test]
     async fn test_proto_similarity_search_with_metadata() {
         let vector = create_proto_test_vector("search_test", 128);
-        assert!(vector.metadata.len() > 0);
-        assert_eq!(vector.vector.len(), 128);
+        assert!(!vector.props.is_empty());
+        assert_eq!(vector.embeddings.first().map(|e| e.values.len()), Some(128));
     }
 }

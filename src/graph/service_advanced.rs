@@ -21,10 +21,10 @@
 //! **WARNING**: PULSAR and QUASAR are experimental and not production-ready.
 //! For production use, use ORION with application-level sharding or caching.
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::{GraphEngineConfig, GraphEngineImpl, GraphEngineType};
 use crate::graph::service::GraphOperationsService;
 use crate::proto::v1::GetStatsRequest;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::{debug, info, warn};

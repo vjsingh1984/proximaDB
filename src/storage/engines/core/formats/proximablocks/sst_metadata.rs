@@ -8,10 +8,10 @@ use std::sync::Arc;
 use tracing::warn;
 
 use crate::core::bloom::SstableBloomFilter;
-use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext,
 };
+use proximadb_kernel::error::ProximaDBError;
 
 /// SST Global metadata (fixed size, bytemuck-compatible)
 #[repr(C)]

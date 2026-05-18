@@ -13,12 +13,11 @@ use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
 use tracing::{debug, error, warn};
 
-use crate::proto::proximadb_v1::{VectorRecord, sql_value::Value};
 use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
-use crate::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
-// CompactionStrategy is not needed - it's part of CompactionParameters
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
 use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use proximadb_storage_common::storage_path::StoragePath;
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::FIELD_ID;
@@ -106,26 +105,28 @@ fn create_test_collection(
 }
 
 /// Create test vector
-fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
-    let mut metadata = HashMap::new();
-    metadata.insert(
+fn create_test_vector(id: &str, dimension: usize) -> ProximaRecord {
+    let mut props = ProximaTree::new();
+    props.insert(
         "compaction_test".to_string(),
-        crate::proto::proximadb_v1::SqlValue {
-            value: Some(Value::StringValue("true".to_string())),
-        },
+        ProximaTreeNode::Value(ProximaValue::String("true".to_string())),
     );
-
-    VectorRecord {
-        id: id.to_string(),
-        vector: (0..dimension)
-            .map(|i| (i as f32) / (dimension as f32))
-            .collect(),
-        metadata,
-        timestamp: Some(chrono::Utc::now().timestamp()),
-        updated_at: Some(chrono::Utc::now().timestamp()),
-        expires_at: None,
-        version: Some(1),
-        source: None,
+    let values: Vec<f32> = (0..dimension)
+        .map(|i| (i as f32) / (dimension as f32))
+        .collect();
+    ProximaRecord {
+        oid: id.to_string(),
+        embeddings: vec![EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            dim: dimension as u32,
+            values,
+        }],
+        props,
+        record_version: 1,
+        created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        ..Default::default()
     }
 }
 
@@ -172,7 +173,7 @@ async fn test_insert_flush_compact_flow() {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        vector_records: all_vectors, // Pass vectors here for VIPER batch insert
+        vector_records: all_vectors.into_iter().map(|v: ProximaRecord| v).collect(), // Pass vectors here for VIPER batch insert
         batch_ids: vec![],
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
@@ -473,7 +474,7 @@ async fn test_basic_compaction() {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: false,
-            vector_records: vectors,
+            vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(),
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
@@ -882,7 +883,10 @@ async fn test_concurrent_compaction_and_reads() {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        vector_records: initial_vectors,
+        vector_records: initial_vectors
+            .into_iter()
+            .map(|v: ProximaRecord| v)
+            .collect(),
         batch_ids: vec![],
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
@@ -907,7 +911,10 @@ async fn test_concurrent_compaction_and_reads() {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: false,
-            vector_records: additional_vectors,
+            vector_records: additional_vectors
+                .into_iter()
+                .map(|v: ProximaRecord| v)
+                .collect(),
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
@@ -1066,7 +1073,7 @@ async fn test_concurrent_compaction_across_collections() {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: true,
-            vector_records: vectors,
+            vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(),
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
@@ -1090,7 +1097,7 @@ async fn test_concurrent_compaction_across_collections() {
                 collection_id: Some(collection_id.to_string()),
                 force: true,
                 synchronous: false,
-                vector_records: more_vectors,
+                vector_records: more_vectors.into_iter().map(|v: ProximaRecord| v).collect(),
                 batch_ids: vec![],
                 hints: std::collections::HashMap::new(),
                 timeout_ms: None,
@@ -1197,7 +1204,7 @@ async fn test_atomic_coordinator_prevents_concurrent_same_collection_compaction(
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        vector_records: vectors,
+        vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(),
         batch_ids: vec![],
         hints: std::collections::HashMap::new(),
         timeout_ms: None,
@@ -1382,7 +1389,7 @@ async fn test_size_tiered_compaction_strategy() {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: false,
-            vector_records: vectors,
+            vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(),
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
@@ -1522,7 +1529,7 @@ async fn test_compaction_with_metadata_filtering() {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: false,
-            vector_records: vectors,
+            vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(),
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,

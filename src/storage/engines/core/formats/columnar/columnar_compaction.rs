@@ -256,10 +256,10 @@ impl UnifiedColumnarCompaction {
         use crate::compute::quantization::storage_engine::{
             StorageQuantizationConfig, StorageQuantizationEngine,
         };
-        use proximadb_runtime_common::pool::VectorMemoryPool;
         use crate::storage::engines::core::formats::columnar::constants;
         use arrow::array::ArrayRef;
         use arrow_array::{FixedSizeListArray, Float32Array, builder::BinaryBuilder};
+        use proximadb_runtime_common::pool::VectorMemoryPool;
         use std::sync::Arc;
 
         // Extract vector column from batch

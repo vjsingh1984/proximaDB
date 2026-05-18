@@ -52,8 +52,8 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::GraphMemoryPool;
+use proximadb_kernel::error::ProximaDBError;
 use proximadb_kernel::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};

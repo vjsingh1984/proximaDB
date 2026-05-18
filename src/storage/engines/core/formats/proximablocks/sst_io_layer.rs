@@ -59,9 +59,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use tracing::info;
 
-use proximadb_kernel::error::{ProximaDBError, StorageError};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 
 /// File type enum for cache key discrimination
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -587,7 +587,9 @@ impl SharedSstFormatReader {
                         vector_id: Some(record.id.clone()),
                         score: distance_result.normalized_score,
                         similarity: Some(distance_result.normalized_score),
-                        metadata: crate::core::search::results::sql_map_to_proxima(record.metadata.clone()),
+                        metadata: crate::core::search::results::sql_map_to_proxima(
+                            record.metadata.clone(),
+                        ),
                         vector: Some(Arc::new(record.vector.clone())),
                         timestamp: record.timestamp,
                         ..Default::default()

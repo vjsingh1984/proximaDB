@@ -110,9 +110,9 @@ pub use crate::proto::proximadb_v1::{
     TraversalStats, property_value::Value,
 };
 
-use proximadb_kernel::error::ProximaDBError;
 use dashmap::DashMap;
 use parking_lot::RwLock as ParkingRwLock;
+use proximadb_kernel::error::ProximaDBError;
 use std::sync::Arc;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 

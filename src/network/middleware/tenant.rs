@@ -311,9 +311,10 @@ pub async fn tenant_middleware(
             // Inject tenant context into request extensions
             let context = TenantContext::new(tenant_id, source);
             // Also inject api-crate TenantContext for port-backed handlers in proximadb-api
-            req.extensions_mut().insert(proximadb_api::rest::TenantContext {
-                tenant_id: context.tenant_id.clone(),
-            });
+            req.extensions_mut()
+                .insert(proximadb_api::rest::TenantContext {
+                    tenant_id: context.tenant_id.clone(),
+                });
             req.extensions_mut().insert(context);
 
             next.run(req).await
@@ -328,9 +329,10 @@ pub async fn tenant_middleware(
             } else {
                 // No tenant required, use anonymous context
                 let default_ctx = TenantContext::default_tenant();
-                req.extensions_mut().insert(proximadb_api::rest::TenantContext {
-                    tenant_id: default_ctx.tenant_id.clone(),
-                });
+                req.extensions_mut()
+                    .insert(proximadb_api::rest::TenantContext {
+                        tenant_id: default_ctx.tenant_id.clone(),
+                    });
                 req.extensions_mut().insert(default_ctx);
                 next.run(req).await
             }

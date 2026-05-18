@@ -12,11 +12,11 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
 use super::QuantizationConfig;
-use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::{FilterableColumnSpec, FilterableDataType};
 use crate::storage::engines::core::formats::columnar::constants::{
     DEFAULT_PAGE_SIZE, DEFAULT_ROW_GROUP_SIZE,
 };
+use proximadb_compression::CompressionAlgorithm;
 
 /// Convert proto FilterableColumnSpec to internal ColumnarFilterableSpec
 pub fn convert_filterable_spec(spec: &FilterableColumnSpec) -> ColumnarFilterableSpec {

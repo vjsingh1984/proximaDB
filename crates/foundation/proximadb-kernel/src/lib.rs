@@ -20,11 +20,11 @@ pub mod uuid;
 
 pub use base62::*;
 pub use checksum::*;
+pub use config_error::ConfigError;
 pub use encoding::*;
 pub use error::*;
 pub use foundation::*;
 pub use hash::*;
-pub use config_error::ConfigError;
 pub use index_types::{Index, MetadataIndex, VectorIndex};
 pub use metadata_error::MetadataError;
 pub use request_limits::RequestLimits;

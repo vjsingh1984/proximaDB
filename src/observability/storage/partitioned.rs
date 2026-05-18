@@ -399,18 +399,24 @@ impl PartitionedStorage {
             return Ok(0);
         }
 
-        // Convert log entries to VectorRecords
-        let vector_records: Vec<VectorRecord> = entries
+        // Convert log entries to VectorRecords then ProximaRecords for FlushParameters
+        let vector_records_v1: Vec<VectorRecord> = entries
             .iter()
             .enumerate()
             .map(|(i, log)| self.log_entry_to_vector_record(log, partition_key, i))
             .collect();
 
-        let count = vector_records.len();
-        let estimated_size: usize = vector_records
+        let count = vector_records_v1.len();
+        let estimated_size: usize = vector_records_v1
             .iter()
             .map(|r| r.id.len() + 4 + r.metadata.len() * 100) // rough estimate
             .sum();
+
+        // Convert VectorRecord → ProximaRecord for FlushParameters canonical boundary
+        let vector_records: Vec<proximadb_records::ProximaRecord> = vector_records_v1
+            .iter()
+            .map(|vr| proximadb_records::ProximaRecord::from(vr))
+            .collect();
 
         // Build flush parameters
         let params = FlushParameters {
@@ -484,8 +490,8 @@ impl PartitionedStorage {
         // 2. Store in VIPER (compressed SST) for maximum efficiency
         // 3. Update partition metadata to point to cold files
 
-        // Convert to VectorRecords for storage
-        let vector_records: Vec<VectorRecord> = entries
+        // Convert to VectorRecords for storage (will convert to ProximaRecord below)
+        let vector_records_v1: Vec<VectorRecord> = entries
             .iter()
             .enumerate()
             .map(|(i, log)| {
@@ -541,6 +547,12 @@ impl PartitionedStorage {
                     source: Some("observability_log".to_string()),
                 }
             })
+            .collect();
+
+        // Convert VectorRecord → ProximaRecord for FlushParameters canonical boundary
+        let vector_records: Vec<proximadb_records::ProximaRecord> = vector_records_v1
+            .iter()
+            .map(|vr| proximadb_records::ProximaRecord::from(vr))
             .collect();
 
         // Build flush parameters with compression hints

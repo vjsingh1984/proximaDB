@@ -2212,17 +2212,16 @@ impl RaptorReader {
                     };
 
                     // Decompress if needed
-                    let decompressed = if compression_algo
-                        != proximadb_compression::CompressionAlgorithm::None
-                    {
-                        proximadb_compression::decompress(
-                            &matrix_data,
-                            compression_algo,
-                            proximadb_compression::CompressionContext::Column,
-                        )?
-                    } else {
-                        matrix_data
-                    };
+                    let decompressed =
+                        if compression_algo != proximadb_compression::CompressionAlgorithm::None {
+                            proximadb_compression::decompress(
+                                &matrix_data,
+                                compression_algo,
+                                proximadb_compression::CompressionContext::Column,
+                            )?
+                        } else {
+                            matrix_data
+                        };
 
                     // Deserialize to VectorCentroidMatrix
                     let matrix: VectorCentroidMatrix = bincode::deserialize(&decompressed)?;
@@ -2542,9 +2541,7 @@ impl RaptorReader {
 
     /// Decompress bloom filter using unified compression module
     fn decompress_bloom_filter(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
-        use proximadb_compression::{
-            CompressionContext, CompressionProvider, StandardCompression,
-        };
+        use proximadb_compression::{CompressionContext, CompressionProvider, StandardCompression};
 
         // Create decompression context
         let decompressor = StandardCompression;
@@ -2900,9 +2897,7 @@ impl RaptorReader {
 
     /// Decompress P² matrix using unified compression
     fn decompress_p2_matrix(&self, compressed_data: &[u8]) -> Result<Vec<u8>> {
-        use proximadb_compression::{
-            CompressionContext, CompressionProvider, StandardCompression,
-        };
+        use proximadb_compression::{CompressionContext, CompressionProvider, StandardCompression};
 
         let decompressor = StandardCompression;
         let context = CompressionContext::Column; // P² matrix contains homogeneous distance values

@@ -5,11 +5,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Parquet Footer metadata (fixed size, bytemuck-compatible)
 #[repr(C)]

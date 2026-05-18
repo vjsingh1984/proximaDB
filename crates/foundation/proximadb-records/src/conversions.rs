@@ -194,6 +194,22 @@ pub fn proxima_record_to_vector(record: &ProximaRecord) -> VectorRecord {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ProximaRecord → VectorRecord
+// ---------------------------------------------------------------------------
+
+impl From<ProximaRecord> for VectorRecord {
+    fn from(r: ProximaRecord) -> Self {
+        proxima_record_to_vector(&r)
+    }
+}
+
+impl From<&ProximaRecord> for VectorRecord {
+    fn from(r: &ProximaRecord) -> Self {
+        proxima_record_to_vector(r)
+    }
+}
+
 /// Convert a proto `PropertyValue` to a `ProximaValue`.
 ///
 /// Used for property maps in graph `Node` and `Edge`.
@@ -241,6 +257,12 @@ fn ms_to_ns(ms: i64) -> i64 {
 // ---------------------------------------------------------------------------
 // VectorRecord → ProximaRecord
 // ---------------------------------------------------------------------------
+
+impl From<VectorRecord> for ProximaRecord {
+    fn from(v: VectorRecord) -> Self {
+        ProximaRecord::from(&v)
+    }
+}
 
 impl From<&VectorRecord> for ProximaRecord {
     fn from(v: &VectorRecord) -> Self {

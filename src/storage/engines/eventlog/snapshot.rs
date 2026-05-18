@@ -19,9 +19,9 @@
 //! This module provides snapshot management for efficient state reconstruction,
 //! avoiding full event replay for entities with many events.
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::eventlog::{EntityId, EventSequence};
 use chrono::{DateTime, Utc};
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

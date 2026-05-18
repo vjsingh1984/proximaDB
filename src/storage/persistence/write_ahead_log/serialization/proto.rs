@@ -36,27 +36,27 @@ impl super::VectorBatchSerializer for ProtocolBuffersSerializer {
 mod tests {
     use super::*;
     use crate::storage::persistence::write_ahead_log::serialization::VectorBatchSerializer;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 
-    fn create_test_vector() -> VectorRecord {
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert(
+    fn create_test_vector() -> ProximaRecord {
+        let mut props = ProximaTree::new();
+        props.insert(
             "category".to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "test".to_string(),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::Text("test".to_string())),
         );
 
-        VectorRecord {
-            id: "test_vector_1".to_string(),
-            vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata,
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        ProximaRecord {
+            oid: "test_vector_1".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![0.1, 0.2, 0.3, 0.4],
+                dim: 4,
+            }],
+            props,
+            record_version: 1,
+            ..Default::default()
         }
     }
 
@@ -76,14 +76,17 @@ mod tests {
             .deserialize_batch(&serialized)
             .expect("Failed to deserialize batch");
         assert_eq!(deserialized.len(), 1);
-        assert_eq!(deserialized[0].id, vectors[0].id);
-        assert_eq!(deserialized[0].vector, vectors[0].vector);
+        assert_eq!(deserialized[0].oid, vectors[0].oid);
+        assert_eq!(
+            deserialized[0].embeddings.first().map(|e| &e.values),
+            vectors[0].embeddings.first().map(|e| &e.values)
+        );
     }
 
     #[test]
     fn test_empty_batch_handling() {
         let serializer = ProtocolBuffersSerializer::new();
-        let vectors = vec![];
+        let vectors: Vec<ProximaRecord> = vec![];
 
         let serialized = serializer
             .serialize_batch(&vectors)

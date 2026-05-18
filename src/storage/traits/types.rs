@@ -27,8 +27,10 @@ pub struct FlushParameters {
     /// Maximum time to wait for operation
     pub timeout_ms: Option<u64>,
 
-    /// Vector records to flush (provided by FlushCoordinator from WAL)
-    pub vector_records: Vec<crate::proto::proximadb_v1::VectorRecord>,
+    /// Canonical records to flush (provided by FlushCoordinator from WAL).
+    /// Protocol adapters (REST, gRPC, Arrow, pgwire) convert to `ProximaRecord` before
+    /// inserting into WAL/flush path. `VectorRecord` no longer crosses this boundary.
+    pub vector_records: Vec<proximadb_records::ProximaRecord>,
 
     /// Whether to trigger compaction after flush
     pub trigger_compaction: bool,

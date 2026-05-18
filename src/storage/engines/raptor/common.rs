@@ -1,6 +1,6 @@
-use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
+use proximadb_compression::CompressionAlgorithm;
 /// Common types and structures shared across RAPTOR modules
 /// This eliminates duplication between reader, writer, compaction, and other modules
 use serde::{Deserialize, Serialize};

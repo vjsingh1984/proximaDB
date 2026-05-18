@@ -2209,11 +2209,11 @@ mod bplustree_tests {
 #[cfg(test)]
 mod compression_tests_unified {
     use super::*;
+    use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
     use proximadb_compression::markers::*;
     use proximadb_compression::{
         CompressionAlgorithm as UnifiedCompressionAlgorithm, CompressionContext,
     };
-    use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
 
     fn create_test_record(id: &str, vector_dim: usize) -> VectorRecord {
         VectorRecord {
@@ -3108,10 +3108,10 @@ mod decompression_cache_tests {
 #[cfg(test)]
 mod compression_tests {
     use super::*;
-    use proximadb_compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
-    use proximadb_compression::markers::*;
     use crate::proto::proximadb_v1::CompressionAlgorithm;
     use crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout;
+    use proximadb_compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
+    use proximadb_compression::markers::*;
 
     fn create_test_record(id: &str, vector_dim: usize) -> VectorRecord {
         VectorRecord {

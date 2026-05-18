@@ -53,14 +53,18 @@ impl DiskCacheManager {
         if let Some(mut entry) = self.entries.get_mut(key) {
             entry.last_accessed = Instant::now();
             entry.access_count += 1;
-            self.stats.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.stats
+                .hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let path = entry.local_path.clone();
             if path.exists() {
                 debug!("Disk cache hit for {}", key);
                 return Some(path.to_string_lossy().to_string());
             }
         }
-        self.stats.misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.stats
+            .misses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         None
     }
 
@@ -69,7 +73,9 @@ impl DiskCacheManager {
         if let Some(path) = self.get(key).await {
             match tokio::fs::read(&path).await {
                 Ok(data) => {
-                    self.stats.bytes_saved.fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                    self.stats
+                        .bytes_saved
+                        .fetch_add(data.len() as u64, std::sync::atomic::Ordering::Relaxed);
                     Some(data)
                 }
                 Err(e) => {
@@ -88,7 +94,8 @@ impl DiskCacheManager {
         let size = data.len();
         let mut current_size = self.current_size.write().await;
         if *current_size + size > self.max_size_bytes {
-            self.evict_lru(*current_size + size - self.max_size_bytes).await;
+            self.evict_lru(*current_size + size - self.max_size_bytes)
+                .await;
             *current_size = *self.current_size.read().await;
         }
         let cache_path = self.get_cache_path(key);
@@ -133,7 +140,8 @@ impl DiskCacheManager {
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
-        self.cache_dir.join(format!("{:016x}.cache", hasher.finish()))
+        self.cache_dir
+            .join(format!("{:016x}.cache", hasher.finish()))
     }
 
     async fn evict_lru(&self, bytes_needed: usize) {
@@ -150,7 +158,9 @@ impl DiskCacheManager {
             }
             self.invalidate(&key).await;
             freed += size;
-            self.stats.evictions.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.stats
+                .evictions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -158,8 +168,14 @@ impl DiskCacheManager {
         DiskCacheStatistics {
             hits: self.stats.hits.load(std::sync::atomic::Ordering::Relaxed),
             misses: self.stats.misses.load(std::sync::atomic::Ordering::Relaxed),
-            evictions: self.stats.evictions.load(std::sync::atomic::Ordering::Relaxed),
-            bytes_saved: self.stats.bytes_saved.load(std::sync::atomic::Ordering::Relaxed),
+            evictions: self
+                .stats
+                .evictions
+                .load(std::sync::atomic::Ordering::Relaxed),
+            bytes_saved: self
+                .stats
+                .bytes_saved
+                .load(std::sync::atomic::Ordering::Relaxed),
             entries: self.entries.len(),
         }
     }
@@ -177,6 +193,10 @@ pub struct DiskCacheStatistics {
 impl DiskCacheStatistics {
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
-        if total == 0 { 0.0 } else { self.hits as f64 / total as f64 }
+        if total == 0 {
+            0.0
+        } else {
+            self.hits as f64 / total as f64
+        }
     }
 }

@@ -11,8 +11,8 @@
 //! - Records without OIDs are included without deduplication
 
 use crate::core::search::mvcc_resolution::MvccResolver;
-use crate::core::{MetadataQuery, MetadataQueryEngine};
 use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
+use crate::core::{MetadataQuery, MetadataQueryEngine};
 use chrono::{DateTime, Utc};
 use proximadb_records::ProximaRecord;
 use serde_json::Value as JsonValue;
@@ -147,7 +147,11 @@ impl MultiTierDeduplicator {
                     if !result {
                         tracing::debug!(
                             "Query filter: record '{}' did not match logical query",
-                            if record.oid.is_empty() { "<no-id>" } else { &record.oid }
+                            if record.oid.is_empty() {
+                                "<no-id>"
+                            } else {
+                                &record.oid
+                            }
                         );
                     }
                     return result;
@@ -155,7 +159,11 @@ impl MultiTierDeduplicator {
                 Err(e) => {
                     tracing::warn!(
                         "Query evaluation error for record '{}': {}",
-                        if record.oid.is_empty() { "<no-id>" } else { &record.oid },
+                        if record.oid.is_empty() {
+                            "<no-id>"
+                        } else {
+                            &record.oid
+                        },
                         e
                     );
                     return false;
@@ -173,7 +181,9 @@ impl MultiTierDeduplicator {
                         Some(actual) => {
                             tracing::debug!(
                                 "Simple filter mismatch: {} expected {:?}, got {:?}",
-                                key, expected, actual
+                                key,
+                                expected,
+                                actual
                             );
                             return false;
                         }
@@ -203,7 +213,11 @@ impl MultiTierDeduplicator {
             if !self.matches_filters(&result.record) {
                 tracing::debug!(
                     "Filter: skipping record '{}' due to metadata mismatch",
-                    if result.record.oid.is_empty() { "<no-id>" } else { &result.record.oid }
+                    if result.record.oid.is_empty() {
+                        "<no-id>"
+                    } else {
+                        &result.record.oid
+                    }
                 );
                 continue;
             }
@@ -235,8 +249,14 @@ impl MultiTierDeduplicator {
                         tracing::debug!(
                             "Dedup: replacing '{}' {:?}/{:?} (seq:{}, v:{}) with {:?}/{:?} (seq:{}, v:{})",
                             oid,
-                            existing.tier, existing.engine, existing.sequence, existing.record.record_version,
-                            result.tier, result.engine, result.sequence, result.record.record_version,
+                            existing.tier,
+                            existing.engine,
+                            existing.sequence,
+                            existing.record.record_version,
+                            result.tier,
+                            result.engine,
+                            result.sequence,
+                            result.record.record_version,
                         );
                     }
                     self.id_to_latest.insert(oid.clone(), result);
@@ -308,7 +328,10 @@ impl MultiTierDeduplicator {
 
         tracing::info!(
             "Multi-tier dedup: {} unique IDs, {} without ID, {} tombstones filtered, {} final",
-            unique_ids_count, without_id_count, tombstones_filtered, final_results.len()
+            unique_ids_count,
+            without_id_count,
+            tombstones_filtered,
+            final_results.len()
         );
         final_results
     }
@@ -344,8 +367,8 @@ impl Default for MultiTierDeduplicator {
 mod tests {
     use super::*;
     use chrono::Duration;
-    use proximadb_records::{EmbeddingCell, LabelSet, ProximaTree, ProximaTreeNode};
     use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, LabelSet, ProximaTree, ProximaTreeNode};
 
     fn make_record(oid: &str, version: u64, values: Vec<f32>) -> ProximaRecord {
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
@@ -385,13 +408,24 @@ mod tests {
         }
     }
 
-    fn make_record_with_props(oid: &str, version: u64, values: Vec<f32>, props: ProximaTree) -> ProximaRecord {
+    fn make_record_with_props(
+        oid: &str,
+        version: u64,
+        values: Vec<f32>,
+        props: ProximaTree,
+    ) -> ProximaRecord {
         let mut r = make_record(oid, version, values);
         r.props = props;
         r
     }
 
-    fn candidate(record: ProximaRecord, similarity: f32, tier: DataFreshnessTier, engine: DeduplicationStorageEngine, seq: u64) -> TieredSearchCandidate {
+    fn candidate(
+        record: ProximaRecord,
+        similarity: f32,
+        tier: DataFreshnessTier,
+        engine: DeduplicationStorageEngine,
+        seq: u64,
+    ) -> TieredSearchCandidate {
         TieredSearchCandidate {
             record,
             similarity,
@@ -592,8 +626,12 @@ mod tests {
         let results: Vec<TieredSearchCandidate> = vec![
             // doc1: matches
             candidate(
-                make_record_with_props("doc1", 1, vec![1.0, 0.0],
-                    props_from(&[("category", "science"), ("published", "true")])),
+                make_record_with_props(
+                    "doc1",
+                    1,
+                    vec![1.0, 0.0],
+                    props_from(&[("category", "science"), ("published", "true")]),
+                ),
                 0.9,
                 DataFreshnessTier::Flushed,
                 DeduplicationStorageEngine::SST,
@@ -601,8 +639,12 @@ mod tests {
             ),
             // doc2: wrong category
             candidate(
-                make_record_with_props("doc2", 1, vec![0.0, 1.0],
-                    props_from(&[("category", "history"), ("published", "true")])),
+                make_record_with_props(
+                    "doc2",
+                    1,
+                    vec![0.0, 1.0],
+                    props_from(&[("category", "history"), ("published", "true")]),
+                ),
                 0.8,
                 DataFreshnessTier::Flushed,
                 DeduplicationStorageEngine::SST,
@@ -626,16 +668,24 @@ mod tests {
 
         let results: Vec<TieredSearchCandidate> = vec![
             candidate(
-                make_record_with_props("doc1", 1, vec![1.0, 0.0],
-                    props_from(&[("language", "en"), ("category", "tech")])),
+                make_record_with_props(
+                    "doc1",
+                    1,
+                    vec![1.0, 0.0],
+                    props_from(&[("language", "en"), ("category", "tech")]),
+                ),
                 0.9,
                 DataFreshnessTier::Flushed,
                 DeduplicationStorageEngine::VIPER,
                 0,
             ),
             candidate(
-                make_record_with_props("doc2", 1, vec![0.0, 1.0],
-                    props_from(&[("language", "fr"), ("category", "tech")])),
+                make_record_with_props(
+                    "doc2",
+                    1,
+                    vec![0.0, 1.0],
+                    props_from(&[("language", "fr"), ("category", "tech")]),
+                ),
                 0.8,
                 DataFreshnessTier::Flushed,
                 DeduplicationStorageEngine::VIPER,
@@ -659,9 +709,27 @@ mod tests {
         let mut dedup = MultiTierDeduplicator::new();
 
         let results = vec![
-            candidate(make_record("vec1", 1, vec![1.0, 0.0, 0.0]), 0.8, DataFreshnessTier::Compacted, DeduplicationStorageEngine::SST, 100),
-            candidate(make_record("vec1", 2, vec![1.0, 0.0, 0.0]), 0.85, DataFreshnessTier::Compacted, DeduplicationStorageEngine::VIPER, 200),
-            candidate(make_record("vec1", 3, vec![1.0, 0.0, 0.0]), 0.9, DataFreshnessTier::Unflushed, DeduplicationStorageEngine::WAL, 300),
+            candidate(
+                make_record("vec1", 1, vec![1.0, 0.0, 0.0]),
+                0.8,
+                DataFreshnessTier::Compacted,
+                DeduplicationStorageEngine::SST,
+                100,
+            ),
+            candidate(
+                make_record("vec1", 2, vec![1.0, 0.0, 0.0]),
+                0.85,
+                DataFreshnessTier::Compacted,
+                DeduplicationStorageEngine::VIPER,
+                200,
+            ),
+            candidate(
+                make_record("vec1", 3, vec![1.0, 0.0, 0.0]),
+                0.9,
+                DataFreshnessTier::Unflushed,
+                DeduplicationStorageEngine::WAL,
+                300,
+            ),
         ];
 
         dedup.add_tier_results(results);
@@ -677,13 +745,15 @@ mod tests {
         let mut dedup = MultiTierDeduplicator::new();
 
         let results: Vec<TieredSearchCandidate> = (0..20)
-            .map(|i| candidate(
-                make_record(&format!("vec{}", i), 1, vec![i as f32, 0.0, 0.0]),
-                i as f32 * 0.01,
-                DataFreshnessTier::Flushed,
-                DeduplicationStorageEngine::SST,
-                i as u64,
-            ))
+            .map(|i| {
+                candidate(
+                    make_record(&format!("vec{}", i), 1, vec![i as f32, 0.0, 0.0]),
+                    i as f32 * 0.01,
+                    DataFreshnessTier::Flushed,
+                    DeduplicationStorageEngine::SST,
+                    i as u64,
+                )
+            })
             .collect();
 
         dedup.add_tier_results(results);
@@ -702,13 +772,32 @@ mod tests {
 
         // vecA: in all tiers
         for (ver, tier, engine, seq) in [
-            (1u64, DataFreshnessTier::Compacted, DeduplicationStorageEngine::SST, 100u64),
-            (2, DataFreshnessTier::Flushed, DeduplicationStorageEngine::SST, 200),
-            (3, DataFreshnessTier::Unflushed, DeduplicationStorageEngine::WAL, 300),
+            (
+                1u64,
+                DataFreshnessTier::Compacted,
+                DeduplicationStorageEngine::SST,
+                100u64,
+            ),
+            (
+                2,
+                DataFreshnessTier::Flushed,
+                DeduplicationStorageEngine::SST,
+                200,
+            ),
+            (
+                3,
+                DataFreshnessTier::Unflushed,
+                DeduplicationStorageEngine::WAL,
+                300,
+            ),
         ] {
             results.push(candidate(
-                make_record_with_props("vecA", ver, vec![1.0, 0.0, 0.0],
-                    props_from(&[("version", &ver.to_string())])),
+                make_record_with_props(
+                    "vecA",
+                    ver,
+                    vec![1.0, 0.0, 0.0],
+                    props_from(&[("version", &ver.to_string())]),
+                ),
                 0.95,
                 tier,
                 engine,
@@ -718,8 +807,18 @@ mod tests {
 
         // vecB: compacted + flushed only
         for (ver, tier, engine, seq) in [
-            (1u64, DataFreshnessTier::Compacted, DeduplicationStorageEngine::VIPER, 150u64),
-            (2, DataFreshnessTier::Flushed, DeduplicationStorageEngine::VIPER, 250),
+            (
+                1u64,
+                DataFreshnessTier::Compacted,
+                DeduplicationStorageEngine::VIPER,
+                150u64,
+            ),
+            (
+                2,
+                DataFreshnessTier::Flushed,
+                DeduplicationStorageEngine::VIPER,
+                250,
+            ),
         ] {
             results.push(candidate(
                 make_record("vecB", ver, vec![0.0, 1.0, 0.0]),
@@ -765,13 +864,15 @@ mod tests {
         dedup.set_requires_ordering(false);
 
         let candidates: Vec<TieredSearchCandidate> = (0..5)
-            .map(|i| candidate(
-                make_record(&format!("vector_{}", i), 1, vec![i as f32, 0.0, 0.0]),
-                i as f32,
-                DataFreshnessTier::Unflushed,
-                DeduplicationStorageEngine::WAL,
-                100 + i as u64,
-            ))
+            .map(|i| {
+                candidate(
+                    make_record(&format!("vector_{}", i), 1, vec![i as f32, 0.0, 0.0]),
+                    i as f32,
+                    DataFreshnessTier::Unflushed,
+                    DeduplicationStorageEngine::WAL,
+                    100 + i as u64,
+                )
+            })
             .collect();
 
         dedup.add_tier_results(candidates[0..2].to_vec());
@@ -789,13 +890,15 @@ mod tests {
         dedup.set_requires_ordering(true);
 
         let candidates: Vec<TieredSearchCandidate> = (0..5)
-            .map(|i| candidate(
-                make_record(&format!("vector_{}", i), 1, vec![i as f32, 0.0, 0.0]),
-                (5 - i) as f32,
-                DataFreshnessTier::Unflushed,
-                DeduplicationStorageEngine::WAL,
-                100 + i as u64,
-            ))
+            .map(|i| {
+                candidate(
+                    make_record(&format!("vector_{}", i), 1, vec![i as f32, 0.0, 0.0]),
+                    (5 - i) as f32,
+                    DataFreshnessTier::Unflushed,
+                    DeduplicationStorageEngine::WAL,
+                    100 + i as u64,
+                )
+            })
             .collect();
 
         dedup.add_tier_results(candidates[0..2].to_vec());
@@ -817,13 +920,15 @@ mod tests {
             dedup.set_requires_ordering(true);
 
             let candidates: Vec<TieredSearchCandidate> = (0..5)
-                .map(|i| candidate(
-                    make_record(&format!("vec_{}", i), 1, vec![i as f32]),
-                    (5 - i) as f32,
-                    DataFreshnessTier::Unflushed,
-                    DeduplicationStorageEngine::WAL,
-                    i as u64,
-                ))
+                .map(|i| {
+                    candidate(
+                        make_record(&format!("vec_{}", i), 1, vec![i as f32]),
+                        (5 - i) as f32,
+                        DataFreshnessTier::Unflushed,
+                        DeduplicationStorageEngine::WAL,
+                        i as u64,
+                    )
+                })
                 .collect();
 
             dedup.add_tier_results(candidates);
@@ -839,13 +944,15 @@ mod tests {
             dedup.set_requires_ordering(false);
 
             let candidates: Vec<TieredSearchCandidate> = (0..5)
-                .map(|i| candidate(
-                    make_record(&format!("vec_{}", i), 1, vec![i as f32]),
-                    i as f32,
-                    DataFreshnessTier::Unflushed,
-                    DeduplicationStorageEngine::WAL,
-                    i as u64,
-                ))
+                .map(|i| {
+                    candidate(
+                        make_record(&format!("vec_{}", i), 1, vec![i as f32]),
+                        i as f32,
+                        DataFreshnessTier::Unflushed,
+                        DeduplicationStorageEngine::WAL,
+                        i as u64,
+                    )
+                })
                 .collect();
 
             dedup.add_tier_results(candidates[0..2].to_vec());

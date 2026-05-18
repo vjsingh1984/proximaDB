@@ -18,9 +18,9 @@ use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
 use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
-use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_compression::CompressionAlgorithm;
 
 /// Common configuration for VIPER and NOVA engines
 #[derive(Debug, Clone, Default)]

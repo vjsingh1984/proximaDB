@@ -7,11 +7,11 @@ use std::sync::Arc;
 // Bytemuck imports removed - using manual serialization for flexibility
 use tracing::{debug, trace, warn};
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::traits::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext, QueryType,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_kernel::error::ProximaDBError;
 
 /// NOVA file footer information (bytemuck compatible)
 #[repr(C)]

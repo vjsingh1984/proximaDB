@@ -15,16 +15,16 @@ mod tests {
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::search::search_interface::{CollectionConfig, SearchPlan, StorageInfo};
-    use crate::proto::proximadb_v1::SqlValue;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::engines::core::formats::columnar::FIELD_ID;
     use crate::storage::engines::core::formats::columnar::FIELD_TIMESTAMP;
     use crate::storage::engines::viper::ViperEngine;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
-    use proximadb_storage_common::storage_path::StoragePath;
     use arrow_array::{Int32Array, RecordBatch, StringArray};
     use arrow_schema::{DataType, Field, Schema};
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
+    use proximadb_storage_common::storage_path::StoragePath;
     use std::collections::HashMap;
     use std::fs::File;
     // TODO: Refactor test code to use columnar module's exports
@@ -149,34 +149,34 @@ mod tests {
     }
 
     /// Create test vector with metadata
-    fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
-        let mut metadata = HashMap::new();
-        metadata.insert(
+    fn create_test_vector(id: &str, dimension: usize, value: f32) -> ProximaRecord {
+        let mut props = ProximaTree::new();
+        props.insert(
             "category".to_string(),
-            SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    format!("cat_{}", (value * 10.0) as i32 % 5),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::String(format!(
+                "cat_{}",
+                (value * 10.0) as i32 % 5
+            ))),
         );
-        metadata.insert(
+        props.insert(
             FIELD_TIMESTAMP.to_string(),
-            SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    chrono::Utc::now().timestamp().to_string(),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::String(
+                chrono::Utc::now().timestamp().to_string(),
+            )),
         );
-
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![value; dimension],
-            metadata,
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: dimension as u32,
+                values: vec![value; dimension],
+            }],
+            props,
+            record_version: 1,
+            created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            ..Default::default()
         }
     }
 
@@ -360,7 +360,13 @@ mod tests {
             collection_id
         );
         let search_params = crate::core::search::SearchParams {
-            vector: Some(_vector.vector.clone()),
+            vector: Some(
+                _vector
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default(),
+            ),
             top_k: Some(1),
             distance_metric: Some(crate::compute::distance_computation::DistanceMetric::Cosine),
             ..Default::default()
@@ -484,7 +490,7 @@ mod tests {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: true, // Make it synchronous to ensure data is written
-            vector_records: vectors, // Pass the actual vectors to flush
+            vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(), // Pass the actual vectors to flush
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
@@ -625,7 +631,7 @@ mod tests {
                 collection_id: Some(collection_id.to_string()),
                 force: true,
                 synchronous: false,
-                vector_records: vectors,
+                vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(),
                 batch_ids: vec![],
                 hints: std::collections::HashMap::new(),
                 estimated_size: 4096,
@@ -709,7 +715,7 @@ mod tests {
                 collection_id: Some(collection.clone()),
                 force: true,
                 synchronous: true,
-                vector_records: vectors,
+                vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(),
                 batch_ids: vec![],
                 hints: std::collections::HashMap::new(),
                 timeout_ms: None,
@@ -862,17 +868,26 @@ mod tests {
 
         let mut vectors_to_flush = vec![];
         for (id, vector_data, key, value) in vectors_data {
-            let mut vector = create_test_vector(id, 3, 0.0);
-            vector.vector = vector_data;
-            vector.metadata.clear();
-            vector.metadata.insert(
+            let dim = vector_data.len() as u32;
+            let mut props = ProximaTree::new();
+            props.insert(
                 key.to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        value.to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(value.to_string())),
             );
+            let vector = ProximaRecord {
+                oid: id.to_string(),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim,
+                    values: vector_data,
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                ..Default::default()
+            };
             vectors_to_flush.push(vector);
         }
 
@@ -888,7 +903,10 @@ mod tests {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: true,
-            vector_records: vectors_to_flush, // Pass the actual vectors to flush
+            vector_records: vectors_to_flush
+                .into_iter()
+                .map(|v: ProximaRecord| v)
+                .collect(), // Pass the actual vectors to flush
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
@@ -1264,7 +1282,7 @@ mod tests {
             collection_id: Some(collection_id.to_string()),
             force: true,
             synchronous: true,
-            vector_records: all_vectors, // Pass all the vectors to flush
+            vector_records: all_vectors.into_iter().map(|v: ProximaRecord| v).collect(), // Pass all the vectors to flush
             batch_ids: vec![],
             hints: std::collections::HashMap::new(),
             timeout_ms: None,

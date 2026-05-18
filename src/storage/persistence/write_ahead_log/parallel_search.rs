@@ -551,7 +551,7 @@ mod tests {
         let mut candidates = vec![];
         for i in 0..1000 {
             candidates.push(SearchCandidate {
-                record: VectorRecord::default(),
+                record: ProximaRecord::default(),
                 score: (i as f32) / 1000.0,
                 include_vectors: false,
                 include_metadata: false,

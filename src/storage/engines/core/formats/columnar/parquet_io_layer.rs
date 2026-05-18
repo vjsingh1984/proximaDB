@@ -60,9 +60,9 @@ use tracing::{debug, info, warn};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system
-use proximadb_kernel::error::{ProximaDBError, StorageError};
 use crate::core::search::FilterExpression;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 
 const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024; // 8MB max footer size
 #[allow(dead_code)]
@@ -548,7 +548,8 @@ impl LocalDiskCache {
             // Remove all matching files using internal glob implementation
             if let Some(parent_dir) = pattern.parent()
                 && let Some(pattern_name) = pattern.file_name().and_then(|n| n.to_str())
-                && let Ok(glob_pattern) = proximadb_storage_common::glob::GlobPattern::new(pattern_name)
+                && let Ok(glob_pattern) =
+                    proximadb_storage_common::glob::GlobPattern::new(pattern_name)
             {
                 let matcher = proximadb_storage_common::glob::GlobMatcher::new(&glob_pattern);
                 if let Ok(entries) = std::fs::read_dir(parent_dir) {

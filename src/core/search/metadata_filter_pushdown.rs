@@ -641,7 +641,9 @@ mod tests {
     #[test]
     fn test_bloom_filter_building() {
         use proximadb_data_model::ProximaValue;
-        use proximadb_records::{EmbeddingCell, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode};
+        use proximadb_records::{
+            EmbeddingCell, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode,
+        };
 
         let mut builder = MetadataBloomBuilder::new(1000);
 

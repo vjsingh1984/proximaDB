@@ -29,11 +29,11 @@
 //! ```
 
 use super::Result;
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, Node};
 use crate::proto::proximadb_v1::{Edge as ProtoEdge, Node as ProtoNode};
 use dashmap::DashMap;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

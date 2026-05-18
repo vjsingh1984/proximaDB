@@ -489,8 +489,12 @@ impl StorageQueryContext {
 
     /// Get collection-specific storage path.
     pub fn collection_storage_path(&self) -> Option<String> {
-        self.storage_url()
-            .map(|base| proximadb_storage_common::storage_path::StoragePath::collection_data_path(base, self.collection_id()))
+        self.storage_url().map(|base| {
+            proximadb_storage_common::storage_path::StoragePath::collection_data_path(
+                base,
+                self.collection_id(),
+            )
+        })
     }
 }
 

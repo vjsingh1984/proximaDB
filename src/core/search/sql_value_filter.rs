@@ -282,14 +282,18 @@ pub fn proxima_value_to_json(pv: &ProximaValue) -> serde_json::Value {
         ProximaValue::Binary(b) | ProximaValue::BinaryVector(b) => {
             serde_json::Value::String(format!("[binary:{}]", b.len()))
         }
-        ProximaValue::DenseVector(v) => {
-            serde_json::Value::Array(v.iter().map(|f| {
-                serde_json::Number::from_f64(*f as f64)
-                    .map(serde_json::Value::Number)
-                    .unwrap_or(serde_json::Value::Null)
-            }).collect())
+        ProximaValue::DenseVector(v) => serde_json::Value::Array(
+            v.iter()
+                .map(|f| {
+                    serde_json::Number::from_f64(*f as f64)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null)
+                })
+                .collect(),
+        ),
+        ProximaValue::SparseVector { .. } => {
+            serde_json::Value::String("[sparse_vector]".to_string())
         }
-        ProximaValue::SparseVector { .. } => serde_json::Value::String("[sparse_vector]".to_string()),
     }
 }
 
@@ -309,7 +313,9 @@ pub fn proxima_tree_to_json_map(props: &ProximaTree) -> HashMap<String, serde_js
                         .map(|(k, n)| {
                             let v = match n {
                                 ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
-                                ProximaTreeNode::Object(_) => serde_json::Value::String("[nested]".to_string()),
+                                ProximaTreeNode::Object(_) => {
+                                    serde_json::Value::String("[nested]".to_string())
+                                }
                             };
                             (k.clone(), v)
                         })

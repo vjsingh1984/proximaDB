@@ -24,8 +24,8 @@
 //! These methods are exposed via GraphOperationsService and can be called from
 //! REST, gRPC, or embedded APIs.
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::service::GraphOperationsService;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::sync::Arc;
 

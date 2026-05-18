@@ -215,8 +215,8 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use proximadb_compression::CompressionAlgorithm;
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_compression::CompressionAlgorithm;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
 // Proxima encoding for columnar vector optimization

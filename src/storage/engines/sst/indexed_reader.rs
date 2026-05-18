@@ -11,8 +11,8 @@ use tracing::{debug, info};
 use crate::core::search::index_based_filter::{
     ColumnData, ColumnMetadata, IndexBasedDataReader, MetadataSource, ReadStrategy,
 };
-use proximadb_records::ProximaRecord;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use proximadb_records::ProximaRecord;
 
 /// SST-specific metadata source representing an SST file
 pub struct SSTMetadataSource {

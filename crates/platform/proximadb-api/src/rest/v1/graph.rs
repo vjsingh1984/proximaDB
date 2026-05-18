@@ -44,15 +44,15 @@ use axum::{
     response::{IntoResponse, Json, Response},
     routing::{delete, get, post, put},
 };
+use proximadb_proto::v1::PropertyValue;
 use proximadb_proto::v1::{
     BatchEdgeRequest, BatchNodeRequest, CreateEdgeRequest, CreateGraphRequest, CreateNodeRequest,
-    DeleteEdgeRequest, DeleteNodeRequest, Edge, EmbeddingVersion, GetEdgeRequest,
+    DeleteEdgeRequest, DeleteNodeRequest, Edge, EdgeQuery, EmbeddingVersion, GetEdgeRequest,
     GetNeighborsRequest, GetNodeRequest, GetStatsRequest, GraphQueryRequest, GraphSchema, Node,
-    NodeQuery, EdgeQuery, PropertyFilter, PropertyFilterOperator, ShortestPathAlgorithm,
-    TraversalAlgorithm, TraversalRequest, UniqueConstraintRequest, UpdateEdgeRequest,
-    UpdateNodeRequest, property_value,
+    NodeQuery, PropertyFilter, PropertyFilterOperator, ShortestPathAlgorithm, TraversalAlgorithm,
+    TraversalRequest, UniqueConstraintRequest, UpdateEdgeRequest, UpdateNodeRequest,
+    property_value,
 };
-use proximadb_proto::v1::PropertyValue;
 use proximadb_runtime::GraphPort;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
@@ -71,16 +71,24 @@ pub struct GraphHandler;
 pub struct GraphTraversalHandler;
 
 impl GraphHandler {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 impl Default for GraphHandler {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl GraphTraversalHandler {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 }
 impl Default for GraphTraversalHandler {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── Canonical response types (inlined — no root-crate dep) ───────────────────
@@ -98,10 +106,20 @@ pub struct GraphResponse<T> {
 
 impl<T> GraphResponse<T> {
     pub fn success(data: T) -> Self {
-        Self { success: true, data: Some(data), error: None, metadata: None }
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+            metadata: None,
+        }
     }
     pub fn error(error: GraphError) -> Self {
-        Self { success: false, data: None, error: Some(error), metadata: None }
+        Self {
+            success: false,
+            data: None,
+            error: Some(error),
+            metadata: None,
+        }
     }
     pub fn from_error(code: ErrorCode, message: impl Into<String>) -> Self {
         Self::error(GraphError::new(code, message))
@@ -118,7 +136,11 @@ pub struct GraphError {
 
 impl GraphError {
     pub fn new(code: ErrorCode, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), details: None }
+        Self {
+            code,
+            message: message.into(),
+            details: None,
+        }
     }
     pub fn not_found(entity_type: &str, id: &str) -> Self {
         Self {
@@ -255,7 +277,12 @@ pub struct QueryResults<T> {
 
 impl<T> QueryResults<T> {
     fn new(items: Vec<T>, has_more: bool) -> Self {
-        Self { items, total_count: None, has_more, next_token: None }
+        Self {
+            items,
+            total_count: None,
+            has_more,
+            next_token: None,
+        }
     }
     fn with_next_token(mut self, token: impl Into<String>) -> Self {
         self.next_token = Some(token.into());
@@ -275,7 +302,13 @@ pub struct BatchResults<T> {
 impl<T> BatchResults<T> {
     fn new(results: Vec<T>) -> Self {
         let created_count = results.len();
-        Self { created_count, updated_count: 0, failed_count: 0, results, errors: vec![] }
+        Self {
+            created_count,
+            updated_count: 0,
+            failed_count: 0,
+            results,
+            errors: vec![],
+        }
     }
 }
 
@@ -308,10 +341,18 @@ pub struct ShortestPathResult {
 
 impl ShortestPathResult {
     fn found(path: Vec<String>, total_weight: f64) -> Self {
-        Self { path, total_weight: Some(total_weight), found: true }
+        Self {
+            path,
+            total_weight: Some(total_weight),
+            found: true,
+        }
     }
     fn not_found() -> Self {
-        Self { path: vec![], total_weight: None, found: false }
+        Self {
+            path: vec![],
+            total_weight: None,
+            found: false,
+        }
     }
 }
 
@@ -348,10 +389,14 @@ struct RestEdgeInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateNodeBody { node: RestNodeInput }
+struct CreateNodeBody {
+    node: RestNodeInput,
+}
 
 #[derive(Debug, Deserialize)]
-struct CreateEdgeBody { edge: RestEdgeInput }
+struct CreateEdgeBody {
+    edge: RestEdgeInput,
+}
 
 #[derive(Debug, Deserialize)]
 struct RestTraversalRequest {
@@ -367,8 +412,12 @@ struct RestTraversalRequest {
     limit: Option<u32>,
 }
 
-fn default_max_depth() -> u32 { 5 }
-fn default_algorithm() -> String { "bfs".to_string() }
+fn default_max_depth() -> u32 {
+    5
+}
+fn default_algorithm() -> String {
+    "bfs".to_string()
+}
 
 #[derive(Debug, Deserialize)]
 struct WalkRequest {
@@ -379,8 +428,12 @@ struct WalkRequest {
     limit: u32,
 }
 
-fn default_walk_depth() -> u32 { 2 }
-fn default_walk_limit() -> u32 { 100 }
+fn default_walk_depth() -> u32 {
+    2
+}
+fn default_walk_limit() -> u32 {
+    100
+}
 
 #[derive(Debug, Deserialize)]
 struct WalkStepRequest {
@@ -391,7 +444,9 @@ struct WalkStepRequest {
     limit: u32,
 }
 
-fn default_step_limit() -> u32 { 50 }
+fn default_step_limit() -> u32 {
+    50
+}
 
 #[derive(Debug, Deserialize, Clone)]
 struct RestNodeQuery {
@@ -419,7 +474,9 @@ struct RestEdgeQuery {
     continuation_token: Option<String>,
 }
 
-fn default_query_limit() -> u32 { 100 }
+fn default_query_limit() -> u32 {
+    100
+}
 
 #[derive(Debug, Deserialize)]
 struct RestShortestPathRequest {
@@ -456,7 +513,9 @@ struct RestGraphQueryRequest {
     timeout_ms: Option<u32>,
 }
 
-fn default_query_language() -> String { "native".to_string() }
+fn default_query_language() -> String {
+    "native".to_string()
+}
 
 // ── Property conversion helpers ───────────────────────────────────────────────
 
@@ -467,10 +526,11 @@ fn fmt_ts(ms: i64) -> String {
     )
 }
 
-fn props_to_json(
-    props: &HashMap<String, PropertyValue>,
-) -> HashMap<String, serde_json::Value> {
-    props.iter().filter_map(|(k, v)| pv_to_json(v).map(|jv| (k.clone(), jv))).collect()
+fn props_to_json(props: &HashMap<String, PropertyValue>) -> HashMap<String, serde_json::Value> {
+    props
+        .iter()
+        .filter_map(|(k, v)| pv_to_json(v).map(|jv| (k.clone(), jv)))
+        .collect()
 }
 
 fn pv_to_json(pv: &PropertyValue) -> Option<serde_json::Value> {
@@ -486,8 +546,7 @@ fn pv_to_json(pv: &PropertyValue) -> Option<serde_json::Value> {
             serde_json::Value::String(hex)
         }
         Value::ArrayValue(arr) => {
-            let items: Vec<serde_json::Value> =
-                arr.values.iter().filter_map(pv_to_json).collect();
+            let items: Vec<serde_json::Value> = arr.values.iter().filter_map(pv_to_json).collect();
             serde_json::Value::Array(items)
         }
         Value::ObjectValue(obj) => {
@@ -502,10 +561,11 @@ fn pv_to_json(pv: &PropertyValue) -> Option<serde_json::Value> {
     })
 }
 
-fn json_to_props(
-    props: HashMap<String, serde_json::Value>,
-) -> HashMap<String, PropertyValue> {
-    props.into_iter().filter_map(|(k, v)| json_to_pv(v).map(|pv| (k, pv))).collect()
+fn json_to_props(props: HashMap<String, serde_json::Value>) -> HashMap<String, PropertyValue> {
+    props
+        .into_iter()
+        .filter_map(|(k, v)| json_to_pv(v).map(|pv| (k, pv)))
+        .collect()
 }
 
 fn json_to_pv(v: serde_json::Value) -> Option<PropertyValue> {
@@ -527,12 +587,13 @@ fn json_to_pv(v: serde_json::Value) -> Option<PropertyValue> {
         serde_json::Value::String(s) => Value::StringValue(s),
         serde_json::Value::Array(arr) => {
             if arr.iter().all(|v| v.is_number()) {
-                let floats: Vec<f32> =
-                    arr.iter().filter_map(|v| v.as_f64().map(|f| f as f32)).collect();
+                let floats: Vec<f32> = arr
+                    .iter()
+                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                    .collect();
                 Value::VectorValue(VectorData { values: floats })
             } else {
-                let values: Vec<PropertyValue> =
-                    arr.into_iter().filter_map(json_to_pv).collect();
+                let values: Vec<PropertyValue> = arr.into_iter().filter_map(json_to_pv).collect();
                 Value::ArrayValue(PropertyArray { values })
             }
         }
@@ -619,10 +680,17 @@ fn is_not_found(err: &anyhow::Error) -> bool {
 fn err_response<T: Serialize>(err: anyhow::Error) -> Response {
     if is_not_found(&err) {
         let graph_error = GraphError::new(ErrorCode::NotFound, err.to_string());
-        (StatusCode::NOT_FOUND, Json(GraphResponse::<T>::error(graph_error))).into_response()
+        (
+            StatusCode::NOT_FOUND,
+            Json(GraphResponse::<T>::error(graph_error)),
+        )
+            .into_response()
     } else {
         let graph_error = GraphError::internal(err.to_string());
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(GraphResponse::<T>::error(graph_error)))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(GraphResponse::<T>::error(graph_error)),
+        )
             .into_response()
     }
 }
@@ -642,7 +710,10 @@ pub fn create_graph_router() -> Router<GraphRestState> {
         .route("/graphs/:graph_id/nodes/:id", get(get_node))
         .route("/graphs/:graph_id/nodes/:id", put(update_node))
         .route("/graphs/:graph_id/nodes/:id", delete(delete_node))
-        .route("/graphs/:graph_id/nodes/:id/neighbors", get(get_node_neighbors))
+        .route(
+            "/graphs/:graph_id/nodes/:id/neighbors",
+            get(get_node_neighbors),
+        )
         // Edge CRUD
         .route("/graphs/:graph_id/edges", post(create_edge))
         .route("/graphs/:graph_id/edges/:id", get(get_edge))
@@ -665,19 +736,46 @@ pub fn create_graph_router() -> Router<GraphRestState> {
         .route("/graphs/:graph_id/edges/batch", post(batch_create_edges))
         // Statistics + analysis
         .route("/graphs/:graph_id/stats", get(get_graph_stats))
-        .route("/graphs/:graph_id/components", get(get_connected_components))
+        .route(
+            "/graphs/:graph_id/components",
+            get(get_connected_components),
+        )
         .route("/graphs/:graph_id/cycles", get(check_cycles))
         // Constraints DDL
-        .route("/graphs/:graph_id/constraints/unique", post(add_unique_constraint))
-        .route("/graphs/:graph_id/constraints/unique", delete(remove_unique_constraint))
+        .route(
+            "/graphs/:graph_id/constraints/unique",
+            post(add_unique_constraint),
+        )
+        .route(
+            "/graphs/:graph_id/constraints/unique",
+            delete(remove_unique_constraint),
+        )
         // PULSAR / QUASAR (not in GraphPort → 501)
         .route("/graphs/:graph_id/engine", post(not_implemented_handler))
-        .route("/graphs/:graph_id/pulsar/stats", get(not_implemented_handler))
-        .route("/graphs/:graph_id/pulsar/query", post(not_implemented_handler))
-        .route("/graphs/:graph_id/pulsar/rebalance", post(not_implemented_handler))
-        .route("/graphs/:graph_id/quasar/stats", get(not_implemented_handler))
-        .route("/graphs/:graph_id/quasar/tiers", get(not_implemented_handler))
-        .route("/graphs/:graph_id/quasar/migrate", post(not_implemented_handler))
+        .route(
+            "/graphs/:graph_id/pulsar/stats",
+            get(not_implemented_handler),
+        )
+        .route(
+            "/graphs/:graph_id/pulsar/query",
+            post(not_implemented_handler),
+        )
+        .route(
+            "/graphs/:graph_id/pulsar/rebalance",
+            post(not_implemented_handler),
+        )
+        .route(
+            "/graphs/:graph_id/quasar/stats",
+            get(not_implemented_handler),
+        )
+        .route(
+            "/graphs/:graph_id/quasar/tiers",
+            get(not_implemented_handler),
+        )
+        .route(
+            "/graphs/:graph_id/quasar/migrate",
+            post(not_implemented_handler),
+        )
         // Legacy redirects (self-contained, no port needed)
         .route("/nodes", post(create_node_legacy))
         .route("/nodes/:id", get(get_node_legacy))
@@ -693,7 +791,11 @@ async fn not_implemented_handler() -> impl IntoResponse {
         "This endpoint is not yet available in the platform API. \
          Use the root-crate server until the relevant port trait is extracted.",
     );
-    (StatusCode::NOT_IMPLEMENTED, Json(GraphResponse::<()>::error(graph_error))).into_response()
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(GraphResponse::<()>::error(graph_error)),
+    )
+        .into_response()
 }
 
 // ── Node handlers ─────────────────────────────────────────────────────────────
@@ -705,10 +807,20 @@ async fn create_node(
 ) -> impl IntoResponse {
     debug!("Creating node {} in graph {}", body.node.id, graph_id);
     let proto_node = rest_node_to_proto(body.node);
-    match s.graph_port.create_node(CreateNodeRequest { graph_id, node: Some(proto_node) }).await {
+    match s
+        .graph_port
+        .create_node(CreateNodeRequest {
+            graph_id,
+            node: Some(proto_node),
+        })
+        .await
+    {
         Ok(node) => {
             info!("Created node {}", node.id);
-            (StatusCode::CREATED, Json(GraphResponse::success(CanonicalNode::from_proto(&node))))
+            (
+                StatusCode::CREATED,
+                Json(GraphResponse::success(CanonicalNode::from_proto(&node))),
+            )
                 .into_response()
         }
         Err(e) => {
@@ -723,13 +835,23 @@ async fn get_node(
     Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     debug!("Getting node {} from graph {}", node_id, graph_id);
-    match s.graph_port.get_node(GetNodeRequest { graph_id, node_id: node_id.clone() }).await {
+    match s
+        .graph_port
+        .get_node(GetNodeRequest {
+            graph_id,
+            node_id: node_id.clone(),
+        })
+        .await
+    {
         Ok(node) => Json(GraphResponse::success(CanonicalNode::from_proto(&node))).into_response(),
         Err(e) => {
             if is_not_found(&e) {
                 warn!("Node not found: {node_id}");
                 let graph_error = GraphError::not_found("Node", &node_id);
-                (StatusCode::NOT_FOUND, Json(GraphResponse::<CanonicalNode>::error(graph_error)))
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(GraphResponse::<CanonicalNode>::error(graph_error)),
+                )
                     .into_response()
             } else {
                 error!("Failed to get node {node_id}: {e}");
@@ -747,7 +869,14 @@ async fn update_node(
     debug!("Updating node {} in graph {}", node_id, graph_id);
     input.id = node_id;
     let proto_node = rest_node_to_proto(input);
-    match s.graph_port.update_node(UpdateNodeRequest { graph_id, node: Some(proto_node) }).await {
+    match s
+        .graph_port
+        .update_node(UpdateNodeRequest {
+            graph_id,
+            node: Some(proto_node),
+        })
+        .await
+    {
         Ok(node) => Json(GraphResponse::success(CanonicalNode::from_proto(&node))).into_response(),
         Err(e) => {
             error!("Failed to update node: {e}");
@@ -763,7 +892,10 @@ async fn delete_node(
     debug!("Deleting node {} from graph {}", node_id, graph_id);
     match s
         .graph_port
-        .delete_node(DeleteNodeRequest { graph_id, node_id: node_id.clone() })
+        .delete_node(DeleteNodeRequest {
+            graph_id,
+            node_id: node_id.clone(),
+        })
         .await
     {
         Ok(node) => Json(GraphResponse::success(CanonicalNode::from_proto(&node))).into_response(),
@@ -771,7 +903,10 @@ async fn delete_node(
             if is_not_found(&e) {
                 warn!("Node not found for deletion: {node_id}");
                 let graph_error = GraphError::not_found("Node", &node_id);
-                (StatusCode::NOT_FOUND, Json(GraphResponse::<CanonicalNode>::error(graph_error)))
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(GraphResponse::<CanonicalNode>::error(graph_error)),
+                )
                     .into_response()
             } else {
                 error!("Failed to delete node {node_id}: {e}");
@@ -785,10 +920,17 @@ async fn get_node_neighbors(
     State(s): State<GraphRestState>,
     Path((graph_id, node_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
-    debug!("Getting neighbors for node {} in graph {}", node_id, graph_id);
+    debug!(
+        "Getting neighbors for node {} in graph {}",
+        node_id, graph_id
+    );
     match s
         .graph_port
-        .get_neighbors(GetNeighborsRequest { graph_id, node_id: node_id.clone(), edge_type: None })
+        .get_neighbors(GetNeighborsRequest {
+            graph_id,
+            node_id: node_id.clone(),
+            edge_type: None,
+        })
         .await
     {
         Ok(batch) => {
@@ -812,10 +954,20 @@ async fn create_edge(
 ) -> impl IntoResponse {
     debug!("Creating edge {} in graph {}", body.edge.id, graph_id);
     let proto_edge = rest_edge_to_proto(body.edge);
-    match s.graph_port.create_edge(CreateEdgeRequest { graph_id, edge: Some(proto_edge) }).await {
+    match s
+        .graph_port
+        .create_edge(CreateEdgeRequest {
+            graph_id,
+            edge: Some(proto_edge),
+        })
+        .await
+    {
         Ok(edge) => {
             info!("Created edge {}", edge.id);
-            (StatusCode::CREATED, Json(GraphResponse::success(CanonicalEdge::from_proto(&edge))))
+            (
+                StatusCode::CREATED,
+                Json(GraphResponse::success(CanonicalEdge::from_proto(&edge))),
+            )
                 .into_response()
         }
         Err(e) => {
@@ -830,13 +982,23 @@ async fn get_edge(
     Path((graph_id, edge_id)): Path<(String, String)>,
 ) -> impl IntoResponse {
     debug!("Getting edge {} from graph {}", edge_id, graph_id);
-    match s.graph_port.get_edge(GetEdgeRequest { graph_id, edge_id: edge_id.clone() }).await {
+    match s
+        .graph_port
+        .get_edge(GetEdgeRequest {
+            graph_id,
+            edge_id: edge_id.clone(),
+        })
+        .await
+    {
         Ok(edge) => Json(GraphResponse::success(CanonicalEdge::from_proto(&edge))).into_response(),
         Err(e) => {
             if is_not_found(&e) {
                 warn!("Edge not found: {edge_id}");
                 let graph_error = GraphError::not_found("Edge", &edge_id);
-                (StatusCode::NOT_FOUND, Json(GraphResponse::<CanonicalEdge>::error(graph_error)))
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(GraphResponse::<CanonicalEdge>::error(graph_error)),
+                )
                     .into_response()
             } else {
                 error!("Failed to get edge {edge_id}: {e}");
@@ -854,7 +1016,14 @@ async fn update_edge(
     debug!("Updating edge {} in graph {}", edge_id, graph_id);
     input.id = edge_id;
     let proto_edge = rest_edge_to_proto(input);
-    match s.graph_port.update_edge(UpdateEdgeRequest { graph_id, edge: Some(proto_edge) }).await {
+    match s
+        .graph_port
+        .update_edge(UpdateEdgeRequest {
+            graph_id,
+            edge: Some(proto_edge),
+        })
+        .await
+    {
         Ok(edge) => Json(GraphResponse::success(CanonicalEdge::from_proto(&edge))).into_response(),
         Err(e) => {
             error!("Failed to update edge: {e}");
@@ -870,7 +1039,10 @@ async fn delete_edge(
     debug!("Deleting edge {} from graph {}", edge_id, graph_id);
     match s
         .graph_port
-        .delete_edge(DeleteEdgeRequest { graph_id, edge_id: edge_id.clone() })
+        .delete_edge(DeleteEdgeRequest {
+            graph_id,
+            edge_id: edge_id.clone(),
+        })
         .await
     {
         Ok(edge) => Json(GraphResponse::success(CanonicalEdge::from_proto(&edge))).into_response(),
@@ -878,7 +1050,10 @@ async fn delete_edge(
             if is_not_found(&e) {
                 warn!("Edge not found for deletion: {edge_id}");
                 let graph_error = GraphError::not_found("Edge", &edge_id);
-                (StatusCode::NOT_FOUND, Json(GraphResponse::<CanonicalEdge>::error(graph_error)))
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(GraphResponse::<CanonicalEdge>::error(graph_error)),
+                )
                     .into_response()
             } else {
                 error!("Failed to delete edge {edge_id}: {e}");
@@ -954,7 +1129,11 @@ async fn query_edges(
         graph_id,
         from_node_id: q.from_node_id.clone(),
         to_node_id: q.to_node_id.clone(),
-        edge_types: if q.edge_type.is_empty() { vec![] } else { vec![q.edge_type.clone()] },
+        edge_types: if q.edge_type.is_empty() {
+            vec![]
+        } else {
+            vec![q.edge_type.clone()]
+        },
         filters: props_filter_from_map(q.properties.clone()),
         limit: Some(q.limit),
         offset: q.offset,
@@ -1019,8 +1198,14 @@ async fn execute_graph_query(
                 })
                 .collect();
             #[derive(Serialize)]
-            struct QueryResult { rows: Vec<serde_json::Value>, row_count: u64 }
-            let result = QueryResult { row_count: rows.len() as u64, rows };
+            struct QueryResult {
+                rows: Vec<serde_json::Value>,
+                row_count: u64,
+            }
+            let result = QueryResult {
+                row_count: rows.len() as u64,
+                rows,
+            };
             Json(GraphResponse::success(result)).into_response()
         }
         Err(e) => {
@@ -1074,7 +1259,12 @@ async fn traverse_graph(
                 max_depth_reached: st.max_depth_reached,
                 execution_time_ms: Some(st.execution_time_microseconds / 1000),
             });
-            let result = TraversalResults { nodes: canonical_nodes, edges: canonical_edges, paths, stats };
+            let result = TraversalResults {
+                nodes: canonical_nodes,
+                edges: canonical_edges,
+                paths,
+                stats,
+            };
             Json(GraphResponse::success(result)).into_response()
         }
         Err(e) => {
@@ -1176,7 +1366,11 @@ async fn get_graph_stats(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     debug!("Getting graph stats for {}", graph_id);
-    match s.graph_port.get_graph_stats(GetStatsRequest { graph_id }).await {
+    match s
+        .graph_port
+        .get_graph_stats(GetStatsRequest { graph_id })
+        .await
+    {
         Ok(stats) => {
             #[derive(Serialize)]
             struct GraphStatsJson {
@@ -1259,12 +1453,18 @@ async fn get_connected_components(
     State(s): State<GraphRestState>,
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
-    match s.graph_port.get_connected_components(GetStatsRequest { graph_id }).await {
+    match s
+        .graph_port
+        .get_connected_components(GetStatsRequest { graph_id })
+        .await
+    {
         Ok(resp) => {
             let components: Vec<Vec<String>> =
                 resp.components.into_iter().map(|c| c.node_ids).collect();
             #[derive(Serialize)]
-            struct ComponentsData { components: Vec<Vec<String>> }
+            struct ComponentsData {
+                components: Vec<Vec<String>>,
+            }
             Json(GraphResponse::success(ComponentsData { components })).into_response()
         }
         Err(e) => {
@@ -1281,8 +1481,13 @@ async fn check_cycles(
     match s.graph_port.has_cycle(GetStatsRequest { graph_id }).await {
         Ok(resp) => {
             #[derive(Serialize)]
-            struct CycleData { has_cycle: bool }
-            Json(GraphResponse::success(CycleData { has_cycle: resp.has_cycle })).into_response()
+            struct CycleData {
+                has_cycle: bool,
+            }
+            Json(GraphResponse::success(CycleData {
+                has_cycle: resp.has_cycle,
+            }))
+            .into_response()
         }
         Err(e) => {
             error!("Failed to check cycles: {e}");
@@ -1309,8 +1514,13 @@ async fn add_unique_constraint(
     {
         Ok(resp) => {
             #[derive(Serialize)]
-            struct DdlResult { success: bool }
-            Json(GraphResponse::success(DdlResult { success: resp.success })).into_response()
+            struct DdlResult {
+                success: bool,
+            }
+            Json(GraphResponse::success(DdlResult {
+                success: resp.success,
+            }))
+            .into_response()
         }
         Err(e) => {
             error!("Failed to add unique constraint: {e}");
@@ -1335,8 +1545,13 @@ async fn remove_unique_constraint(
     {
         Ok(resp) => {
             #[derive(Serialize)]
-            struct DdlResult { success: bool }
-            Json(GraphResponse::success(DdlResult { success: resp.success })).into_response()
+            struct DdlResult {
+                success: bool,
+            }
+            Json(GraphResponse::success(DdlResult {
+                success: resp.success,
+            }))
+            .into_response()
         }
         Err(e) => {
             error!("Failed to remove unique constraint: {e}");
@@ -1352,9 +1567,17 @@ async fn batch_create_nodes(
     Path(graph_id): Path<String>,
     Json(req): Json<BatchCreateNodesRequest>,
 ) -> impl IntoResponse {
-    debug!("Batch creating {} nodes in graph {}", req.nodes.len(), graph_id);
+    debug!(
+        "Batch creating {} nodes in graph {}",
+        req.nodes.len(),
+        graph_id
+    );
     let nodes: Vec<Node> = req.nodes.into_iter().map(rest_node_to_proto).collect();
-    match s.graph_port.batch_create_nodes(BatchNodeRequest { graph_id, nodes }).await {
+    match s
+        .graph_port
+        .batch_create_nodes(BatchNodeRequest { graph_id, nodes })
+        .await
+    {
         Ok(batch) => {
             let canonical: Vec<CanonicalNode> =
                 batch.nodes.iter().map(CanonicalNode::from_proto).collect();
@@ -1373,9 +1596,17 @@ async fn batch_create_edges(
     Path(graph_id): Path<String>,
     Json(req): Json<BatchCreateEdgesRequest>,
 ) -> impl IntoResponse {
-    debug!("Batch creating {} edges in graph {}", req.edges.len(), graph_id);
+    debug!(
+        "Batch creating {} edges in graph {}",
+        req.edges.len(),
+        graph_id
+    );
     let edges: Vec<Edge> = req.edges.into_iter().map(rest_edge_to_proto).collect();
-    match s.graph_port.batch_create_edges(BatchEdgeRequest { graph_id, edges }).await {
+    match s
+        .graph_port
+        .batch_create_edges(BatchEdgeRequest { graph_id, edges })
+        .await
+    {
         Ok(batch) => {
             let canonical: Vec<CanonicalEdge> =
                 batch.edges.iter().map(CanonicalEdge::from_proto).collect();
@@ -1435,8 +1666,10 @@ async fn list_graph_collections(State(s): State<GraphRestState>) -> impl IntoRes
     debug!("Listing graph collections");
     match s.graph_port.list_graph_collections().await {
         Ok(cols) => {
-            let data: Vec<serde_json::Value> =
-                cols.iter().map(|c| serde_json::to_value(c).unwrap_or_default()).collect();
+            let data: Vec<serde_json::Value> = cols
+                .iter()
+                .map(|c| serde_json::to_value(c).unwrap_or_default())
+                .collect();
             Json(GraphResponse::success(data)).into_response()
         }
         Err(e) => {
@@ -1507,7 +1740,11 @@ async fn update_graph_schema(
             return (StatusCode::BAD_REQUEST, Json(err_resp)).into_response();
         }
     };
-    match s.graph_port.update_graph_schema(graph_id.clone(), schema).await {
+    match s
+        .graph_port
+        .update_graph_schema(graph_id.clone(), schema)
+        .await
+    {
         Ok(col) => {
             let data = serde_json::to_value(&col).unwrap_or_default();
             Json(GraphResponse::success(data)).into_response()
@@ -1563,7 +1800,9 @@ async fn create_node_legacy() -> impl IntoResponse {
 }
 
 async fn get_node_legacy(Path(node_id): Path<String>) -> impl IntoResponse {
-    legacy_redirect(format!("/api/v1/graph/graphs/{DEFAULT_GRAPH_ID}/nodes/{node_id}"))
+    legacy_redirect(format!(
+        "/api/v1/graph/graphs/{DEFAULT_GRAPH_ID}/nodes/{node_id}"
+    ))
 }
 
 async fn create_edge_legacy() -> impl IntoResponse {
@@ -1619,8 +1858,14 @@ mod tests {
 
     #[test]
     fn test_parse_traversal_algorithm() {
-        assert_eq!(parse_traversal_algorithm("bfs"), TraversalAlgorithm::Bfs as i32);
-        assert_eq!(parse_traversal_algorithm("dfs"), TraversalAlgorithm::Dfs as i32);
+        assert_eq!(
+            parse_traversal_algorithm("bfs"),
+            TraversalAlgorithm::Bfs as i32
+        );
+        assert_eq!(
+            parse_traversal_algorithm("dfs"),
+            TraversalAlgorithm::Dfs as i32
+        );
         assert_eq!(
             parse_traversal_algorithm("parallel_bfs"),
             TraversalAlgorithm::ParallelBfs as i32

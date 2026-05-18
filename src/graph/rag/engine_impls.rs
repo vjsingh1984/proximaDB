@@ -5,11 +5,11 @@
 //! traversal stacks.
 
 use super::{NodeRetriever, RagQuery, Result, Subgraph, SubgraphBuilder, SubgraphEdge};
-use proximadb_kernel::error::{ProximaDBError, StorageError};
 use crate::graph::NodeId;
 use crate::graph::engines::GraphEngine;
 use crate::services::VectorOperationsService;
 use async_trait::async_trait;
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 

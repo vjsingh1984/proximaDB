@@ -3446,10 +3446,7 @@ impl VectorOperationsService {
             let search_ops = crate::storage::engines::sst::search::SearchOperations::new(
                 self.storage_engine.clone(),
             );
-            if let Ok(Some(hit)) = search_ops
-                .point_lookup(&file_paths, vector_id)
-                .await
-            {
+            if let Ok(Some(hit)) = search_ops.point_lookup(&file_paths, vector_id).await {
                 let mut record = crate::proto::proximadb_v1::VectorRecord {
                     id: hit.id,
                     vector: hit.vector.as_deref().cloned().unwrap_or_default(),
@@ -3791,7 +3788,8 @@ impl VectorOperationsService {
     ) -> crate::proto::proximadb_v1::SearchVectorRecord {
         use crate::proto::proximadb_v1::SearchVectorRecord;
 
-        let metadata_map = crate::core::search::results::proxima_map_to_sql(result.metadata.clone());
+        let metadata_map =
+            crate::core::search::results::proxima_map_to_sql(result.metadata.clone());
 
         let display_score = result.similarity.unwrap_or(0.0) as f64;
 

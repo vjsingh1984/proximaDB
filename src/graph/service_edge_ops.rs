@@ -33,10 +33,12 @@ impl super::GraphOperationsService {
             ))
             .is_some()
         {
-            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(format!(
-                "Composite edge already exists: (from='{}', to='{}', type='{}')",
-                edge.from_node_id, edge.to_node_id, edge.edge_type
-            )));
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                format!(
+                    "Composite edge already exists: (from='{}', to='{}', type='{}')",
+                    edge.from_node_id, edge.to_node_id, edge.edge_type
+                ),
+            ));
         }
 
         // Schema validation for edge using endpoint labels if schema defines constraints

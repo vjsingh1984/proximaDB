@@ -131,6 +131,7 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
+use proximadb_records::conversions::proxima_record_to_vector;
 use proximadb_storage_common::storage_path::StoragePath;
 
 use self::clustering::{HilbertKey, PCAModel};
@@ -1245,7 +1246,12 @@ impl UnifiedStorageEngine for HelixEngine {
         let collection_id = self.get_collection_id_from_params(params)?;
         info!("HELIX flush started for collection {}", collection_id);
 
-        let records = params.vector_records.clone();
+        // Convert ProximaRecord → VectorRecord for HELIX engine internals (protocol adapter boundary)
+        let records: Vec<VectorRecord> = params
+            .vector_records
+            .iter()
+            .map(proxima_record_to_vector)
+            .collect();
         let num_records = records.len();
 
         if records.is_empty() {

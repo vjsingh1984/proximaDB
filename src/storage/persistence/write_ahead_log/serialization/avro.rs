@@ -408,30 +408,28 @@ impl AvroSerializer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // Note: MetadataItem replaced with HashMap<String, SqlValue>
     use crate::storage::persistence::write_ahead_log::serialization::VectorBatchSerializer;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 
-    fn create_test_vector() -> VectorRecord {
-        VectorRecord {
-            id: "test_vector_1".to_string(),
-            vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: {
-                let mut map = std::collections::HashMap::new();
-                map.insert(
-                    "category".to_string(),
-                    crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                            "test".to_string(),
-                        )),
-                    },
-                );
-                map
-            },
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    fn create_test_vector() -> ProximaRecord {
+        let mut props = ProximaTree::new();
+        props.insert(
+            "category".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Text("test".to_string())),
+        );
+
+        ProximaRecord {
+            oid: "test_vector_1".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![0.1, 0.2, 0.3, 0.4],
+                dim: 4,
+            }],
+            props,
+            record_version: 1,
+            ..Default::default()
         }
     }
 
@@ -451,8 +449,11 @@ mod tests {
             .deserialize_batch(&serialized)
             .expect("Failed to deserialize batch");
         assert_eq!(deserialized.len(), 1);
-        assert_eq!(deserialized[0].id, vectors[0].id);
-        assert_eq!(deserialized[0].vector, vectors[0].vector);
+        assert_eq!(deserialized[0].oid, vectors[0].oid);
+        assert_eq!(
+            deserialized[0].embeddings.first().map(|e| &e.values),
+            vectors[0].embeddings.first().map(|e| &e.values)
+        );
     }
 
     #[test]
@@ -460,24 +461,16 @@ mod tests {
         let serializer = AvroSerializer::new();
         let mut vector = create_test_vector();
         {
-            let mut map = std::collections::HashMap::new();
-            map.insert(
+            let mut props = ProximaTree::new();
+            props.insert(
                 "key1".to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "value1".to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::Text("value1".to_string())),
             );
-            map.insert(
+            props.insert(
                 "key2".to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "value2".to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::Text("value2".to_string())),
             );
-            vector.metadata = map;
+            vector.props = props;
         }
 
         let vectors = vec![vector];
@@ -488,25 +481,20 @@ mod tests {
             .deserialize_batch(&serialized)
             .expect("Failed to deserialize batch");
 
-        assert_eq!(deserialized[0].metadata.len(), 2);
+        assert_eq!(deserialized[0].props.len(), 2);
 
         // Check that both keys are present (order doesn't matter due to HashMap)
-        let keys: std::collections::HashSet<String> = deserialized[0]
-            .metadata
-            .iter()
-            .map(|(key, _value)| key.clone())
-            .collect();
-        assert!(keys.contains("key1"));
-        assert!(keys.contains("key2"));
+        assert!(deserialized[0].props.contains_key("key1"));
+        assert!(deserialized[0].props.contains_key("key2"));
 
         // Find and verify each key-value pair
-        let key1_value = deserialized[0].metadata.get("key1").unwrap();
-        let key2_value = deserialized[0].metadata.get("key2").unwrap();
+        let key1_value = deserialized[0].props.get("key1").unwrap();
+        let key2_value = deserialized[0].props.get("key2").unwrap();
         assert!(
-            matches!(&key1_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "value1")
+            matches!(key1_value, ProximaTreeNode::Value(ProximaValue::Text(s)) if s == "value1")
         );
         assert!(
-            matches!(&key2_value.value, Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "value2")
+            matches!(key2_value, ProximaTreeNode::Value(ProximaValue::Text(s)) if s == "value2")
         );
     }
 

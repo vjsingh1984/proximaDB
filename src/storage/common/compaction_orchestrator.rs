@@ -25,11 +25,11 @@
 //! All QueueManager references have been replaced with EventLogService integration.
 //! The can_compact() method provides the coordination previously handled by queue status.
 
-use proximadb_kernel::uuid::Uuid;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use once_cell::sync::OnceCell;
+use proximadb_kernel::uuid::Uuid;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -232,7 +232,10 @@ pub async fn hybrid_index(
     let docs: Vec<BM25Document> = request
         .documents
         .into_iter()
-        .map(|d| BM25Document { id: d.id, text: d.text })
+        .map(|d| BM25Document {
+            id: d.id,
+            text: d.text,
+        })
         .collect();
 
     match bm25.index_documents(request.collection, docs).await {

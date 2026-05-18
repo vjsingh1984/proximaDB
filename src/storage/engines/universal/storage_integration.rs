@@ -3,8 +3,8 @@
 //! This module provides integration adapters for all storage engines to work
 //! with the universal distance adapter system.
 
-use proximadb_kernel::uuid::Uuid;
 use async_trait::async_trait;
+use proximadb_kernel::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 

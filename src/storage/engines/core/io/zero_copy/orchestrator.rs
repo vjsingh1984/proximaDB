@@ -15,11 +15,11 @@ use super::metrics::SystemPerformanceMetrics;
 use super::traits::{
     DataRange, FileAccessRequest, MetadataSerializer, QueryContext, RequestPriority,
 };
-use proximadb_kernel::error::ProximaDBError;
 use crate::storage::cache::specialized::filesystem_metadata_store::{
     FilesystemMetadata, FilesystemMetadataStore,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Result of I/O optimization analysis
 #[derive(Debug, Clone)]

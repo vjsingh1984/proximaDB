@@ -111,8 +111,10 @@ impl NovaSearchOperations {
         let collection_id = &ctx.collection.id;
 
         // Use standard collection data path (same as other engines)
-        let data_path =
-            proximadb_storage_common::storage_path::StoragePath::collection_data_path(base_location, collection_id);
+        let data_path = proximadb_storage_common::storage_path::StoragePath::collection_data_path(
+            base_location,
+            collection_id,
+        );
 
         debug!(
             "📂 NOVA search: base_location={}, collection_id={}",

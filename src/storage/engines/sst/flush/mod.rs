@@ -43,6 +43,7 @@ use crate::storage::engines::sst::writer::SstableWriter;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::storage::transaction_coordinator::{StagingConfig, TransactionStageType};
+use proximadb_records::conversions::proxima_record_to_vector;
 use proximadb_storage_common::storage_path::StoragePath;
 
 pub use coordinator::FlushCoordinator;
@@ -98,9 +99,16 @@ impl SstEngine {
             collection_storage_url, collection_id
         );
 
-        // Sort vectors for optimal SSTable encoding
+        // Convert ProximaRecord → VectorRecord for SST engine internals
+        let vector_records_v1: Vec<VectorRecord> = params
+            .vector_records
+            .iter()
+            .map(proxima_record_to_vector)
+            .collect();
+
+        // Sort vectors for optimal SSTable encoding (clone since vector_records_v1 needed later for PCA)
         let (sorted_vectors, sort_stats) = self
-            .sort_vectors_for_sstable_encoding(params.vector_records.clone())
+            .sort_vectors_for_sstable_encoding(vector_records_v1.clone())
             .await?;
 
         // Convert the result to expected format
@@ -153,7 +161,7 @@ impl SstEngine {
                 .train_and_cache_pca_model(
                     collection_id,
                     &collection_storage_url,
-                    &params.vector_records,
+                    &vector_records_v1,
                 )
                 .await
             {

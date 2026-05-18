@@ -1,10 +1,10 @@
-use proximadb_kernel::error::ProximaDBError;
-use proximadb_storage_common::storage_path::StoragePath;
-use proximadb_kernel::uuid::Uuid;
 use anyhow::Result;
 use arrow_array::{ArrayRef, Float32Array, Int64Array, RecordBatch, StringArray, UInt32Array};
 use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
+use proximadb_kernel::error::ProximaDBError;
+use proximadb_kernel::uuid::Uuid;
+use proximadb_storage_common::storage_path::StoragePath;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -26,6 +26,7 @@ use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
     UnifiedStorageEngine,
 };
+use proximadb_records::conversions::proxima_record_to_vector;
 // IvfManager removed - Matrix Trinity handles clustering
 use super::smart_rowgroup_sizing::SmartRowGroupSizer;
 
@@ -2226,17 +2227,24 @@ impl UnifiedStorageEngine for RaptorEngine {
         )
         .await?;
 
+        // Convert ProximaRecord → VectorRecord for RAPTOR writer (protocol adapter boundary)
+        let vector_records_v1: Vec<VectorRecord> = params
+            .vector_records
+            .iter()
+            .map(proxima_record_to_vector)
+            .collect();
+
         // Write the vectors from params to the writer first
         debug!(
             "RAPTOR FLUSH: Writing {} vectors to writer",
-            params.vector_records.len()
+            vector_records_v1.len()
         );
-        writer.write_vectors(&params.vector_records).await?;
+        writer.write_vectors(&vector_records_v1).await?;
         debug!("RAPTOR FLUSH: Vectors written to writer");
 
         // Close the writer - this will flush, update metadata, and finalize
         debug!("RAPTOR FLUSH: Closing writer");
-        let vectors_flushed = params.vector_records.len(); // Use the input count
+        let vectors_flushed = vector_records_v1.len(); // Use the input count
         writer.close().await?;
         debug!(
             "RAPTOR FLUSH: Writer closed, {} vectors written to {}",

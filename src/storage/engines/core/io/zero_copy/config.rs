@@ -8,8 +8,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{MetadataSerializer, ZeroCopyIOSystem};
-use proximadb_kernel::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Workload types for configuration presets
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

@@ -33,8 +33,8 @@ use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
 use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use proximadb_kernel::uuid::Uuid;
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
+use proximadb_kernel::uuid::Uuid;
 
 /// Shared services for thin protocol handlers
 /// Responsibilities: business logic, metadata configuration, service coordination
@@ -913,9 +913,11 @@ impl SharedServices {
 
                 // Insert each vector into the VectorOperationsService memtable
                 for vector_record in batch.vector_records.iter() {
+                    let vector_record_v1 =
+                        proximadb_records::conversions::proxima_record_to_vector(vector_record);
                     match self
                         .vector_operations_service
-                        .insert_vectors_direct(collection_id, Arc::new(vec![vector_record.clone()]))
+                        .insert_vectors_direct(collection_id, Arc::new(vec![vector_record_v1]))
                         .await
                     {
                         Ok(_) => {
@@ -924,7 +926,7 @@ impl SharedServices {
                         Err(e) => {
                             warn!(
                                 "Failed to recover vector {} for collection {}: {}",
-                                &vector_record.id, collection_id, e
+                                &vector_record.oid, collection_id, e
                             );
                         }
                     }

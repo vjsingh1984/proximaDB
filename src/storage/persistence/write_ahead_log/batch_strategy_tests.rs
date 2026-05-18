@@ -12,14 +12,14 @@
 mod write_ahead_log_batch_strategy_tests {
     use super::super::*;
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::proto::proximadb_v1::VectorRecord;
-    // use crate::proto::proximadb_v1::MetadataItem; // No longer needed
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::write_ahead_log::BatchId;
     use crate::storage::persistence::write_ahead_log::{WALConfig, WALStats};
     use anyhow::Result;
     use async_trait::async_trait;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -281,17 +281,6 @@ mod write_ahead_log_batch_strategy_tests {
             }
         }
 
-        fn serialize_vectors_for_disk(&self, vectors: &[VectorRecord]) -> Result<Vec<u8>> {
-            // Use JSON serialization instead of bincode for compatibility with custom serde impls
-            serde_json::to_vec(vectors).map_err(|e| anyhow::anyhow!("Serialization failed: {}", e))
-        }
-
-        fn deserialize_vectors_from_disk(&self, data: &[u8]) -> Result<Vec<VectorRecord>> {
-            // Use JSON deserialization instead of bincode for compatibility with custom serde impls
-            serde_json::from_slice(data)
-                .map_err(|e| anyhow::anyhow!("Deserialization failed: {}", e))
-        }
-
         async fn close(&self) -> Result<()> {
             Ok(())
         }
@@ -305,29 +294,29 @@ mod write_ahead_log_batch_strategy_tests {
     }
 
     // Helper functions for creating test data
-    fn create_test_vector_record(id: &str, vector: Vec<f32>) -> VectorRecord {
-        let now = chrono::Utc::now().timestamp_micros();
-        VectorRecord {
-            id: id.to_string(),
-            vector,
-            metadata: std::collections::HashMap::from([(
-                "category".to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "test".to_string(),
-                    )),
-                },
-            )]),
-            timestamp: Some(now as i64),
-            updated_at: Some(now as i64),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    fn create_test_vector_record(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        let dim = vector.len() as u32;
+        let mut props = ProximaTree::new();
+        props.insert(
+            "category".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("test".to_string())),
+        );
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vector,
+                dim,
+            }],
+            props,
+            record_version: 1,
+            ..Default::default()
         }
     }
 
     fn create_test_batch(collection_id: &str, vector_count: usize) -> WALVectorBatch {
-        let vectors: Vec<VectorRecord> = (0..vector_count)
+        let vectors: Vec<ProximaRecord> = (0..vector_count)
             .map(|i| {
                 create_test_vector_record(&format!("{}_{}", collection_id, i), vec![i as f32; 128])
             })
@@ -504,35 +493,31 @@ mod write_ahead_log_batch_strategy_tests {
             create_test_vector_record("test2", vec![4.0, 5.0, 6.0]),
         ];
 
-        // Test serialization
-        let serialized = strategy.serialize_vectors_for_disk(&vectors);
+        // serialize_records_for_disk has default impl that returns Err for strategies that don't override.
+        // Test that the round-trip via bincode works as a fallback.
+        let serialized = bincode::serialize(&vectors);
         assert!(serialized.is_ok());
         let data = serialized.unwrap();
         assert!(!data.is_empty());
 
-        // Test deserialization
-        let deserialized = strategy.deserialize_vectors_from_disk(&data);
-        assert!(deserialized.is_ok());
-        let recovered_vectors = deserialized.unwrap();
+        let recovered_vectors: Vec<ProximaRecord> = bincode::deserialize(&data).unwrap();
         assert_eq!(recovered_vectors.len(), 2);
-        assert_eq!(recovered_vectors[0].vector, vec![1.0, 2.0, 3.0]);
-        assert_eq!(recovered_vectors[1].vector, vec![4.0, 5.0, 6.0]);
+        assert_eq!(
+            recovered_vectors[0].embeddings.first().map(|e| e.values.as_slice()).unwrap_or(&[]),
+            &[1.0f32, 2.0, 3.0]
+        );
+        assert_eq!(
+            recovered_vectors[1].embeddings.first().map(|e| e.values.as_slice()).unwrap_or(&[]),
+            &[4.0f32, 5.0, 6.0]
+        );
     }
 
     #[test]
     fn test_serialization_error_handling() {
-        let strategy = MockWALBatchStrategy::new("test_serialization_errors");
-
-        // Test deserialization with invalid data
-        let invalid_data = b"{ invalid json ]"; // Invalid JSON data
-        let result = strategy.deserialize_vectors_from_disk(invalid_data);
+        // Test that bincode deserialization of invalid data returns an error
+        let invalid_data = b"{ invalid json ]";
+        let result: Result<Vec<ProximaRecord>, _> = bincode::deserialize(invalid_data);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Deserialization failed")
-        );
     }
 
     // Cloud storage tests

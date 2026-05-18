@@ -585,17 +585,23 @@ impl DocumentService {
             });
         }
 
-        // Convert documents to VectorRecords
-        let vector_records: Vec<VectorRecord> = docs_to_flush
+        // Convert documents to VectorRecords then to ProximaRecords for FlushParameters
+        let vector_records_v1: Vec<VectorRecord> = docs_to_flush
             .iter()
             .filter_map(|doc| self.document_to_vector_record(doc, collection))
             .collect();
 
-        let record_count = vector_records.len();
-        let estimated_size: usize = vector_records
+        let record_count = vector_records_v1.len();
+        let estimated_size: usize = vector_records_v1
             .iter()
             .map(|r| r.id.len() + 4 + r.metadata.len() * 50) // rough estimate
             .sum();
+
+        // Convert to ProximaRecord for FlushParameters canonical boundary
+        let vector_records: Vec<proximadb_records::ProximaRecord> = vector_records_v1
+            .iter()
+            .map(|vr| proximadb_records::ProximaRecord::from(vr))
+            .collect();
 
         // Build flush parameters
         let params = FlushParameters {

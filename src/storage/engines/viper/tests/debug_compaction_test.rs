@@ -6,10 +6,11 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use proximadb_storage_common::storage_path::StoragePath;
 
 /// Helper to read and debug parquet file contents
@@ -142,26 +143,28 @@ fn create_test_collection(
 }
 
 /// Create test vector
-fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
-    let mut metadata = std::collections::HashMap::new();
-    metadata.insert(
+fn create_test_vector(id: &str, dimension: usize) -> ProximaRecord {
+    let mut props = ProximaTree::new();
+    props.insert(
         "test_key".to_string(),
-        SqlValue {
-            value: Some(sql_value::Value::StringValue("test_value".to_string())),
-        },
+        ProximaTreeNode::Value(ProximaValue::String("test_value".to_string())),
     );
-
-    VectorRecord {
-        id: id.to_string(),
-        vector: (0..dimension)
-            .map(|i| (i as f32) / (dimension as f32))
-            .collect(),
-        metadata,
-        timestamp: Some(chrono::Utc::now().timestamp()),
-        updated_at: Some(chrono::Utc::now().timestamp()),
-        expires_at: None,
-        version: Some(1),
-        source: Some("test".to_string()),
+    let values: Vec<f32> = (0..dimension)
+        .map(|i| (i as f32) / (dimension as f32))
+        .collect();
+    ProximaRecord {
+        oid: id.to_string(),
+        embeddings: vec![EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            dim: dimension as u32,
+            values,
+        }],
+        props,
+        record_version: 1,
+        created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        ..Default::default()
     }
 }
 
@@ -223,7 +226,7 @@ async fn test_viper_flush_and_compaction_debug() -> Result<()> {
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        vector_records: vectors,
+        vector_records: vectors.into_iter().map(|v: ProximaRecord| v).collect(),
         batch_ids: vec![],
         hints: std::collections::HashMap::new(),
         timeout_ms: None,

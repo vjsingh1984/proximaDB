@@ -85,10 +85,7 @@ fn analyze_i64(values: &[i64]) -> DataPattern {
 }
 
 /// Select best scheme based on data pattern
-fn select_scheme_i64(
-    pattern: &DataPattern,
-    values: &[i64],
-) -> crate::types::ProximaScheme {
+fn select_scheme_i64(pattern: &DataPattern, values: &[i64]) -> crate::types::ProximaScheme {
     use crate::types::ProximaScheme;
 
     // Constant data -> RunLength
@@ -166,36 +163,18 @@ pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
 
     // Encode using selected scheme
     match scheme {
-        crate::types::ProximaScheme::Delta { base } => {
-            delta::encode_f32(values, base)
-        }
-        crate::types::ProximaScheme::BitPacked { bits } => {
-            bitpack::encode_f32(values, bits)
-        }
+        crate::types::ProximaScheme::Delta { base } => delta::encode_f32(values, base),
+        crate::types::ProximaScheme::BitPacked { bits } => bitpack::encode_f32(values, bits),
         crate::types::ProximaScheme::FrameOfReference { reference, bits: _ } => {
             frame_of_ref::encode_f32(values, reference)
         }
-        crate::types::ProximaScheme::SparseBitmap => {
-            sparse_bitmap::encode_f32(values)
-        }
-        crate::types::ProximaScheme::SparseCOO => {
-            sparse_coo::encode_f32(values)
-        }
-        crate::types::ProximaScheme::RunLength => {
-            run_length::encode_f32(values)
-        }
-        crate::types::ProximaScheme::DoubleDelta { .. } => {
-            double_delta::encode_f32(values)
-        }
-        crate::types::ProximaScheme::Dictionary => {
-            dictionary::encode_f32(values)
-        }
-        crate::types::ProximaScheme::Simple8b => {
-            simple8b::encode_f32(values)
-        }
-        crate::types::ProximaScheme::VByte => {
-            vbyte::encode_f32(values)
-        }
+        crate::types::ProximaScheme::SparseBitmap => sparse_bitmap::encode_f32(values),
+        crate::types::ProximaScheme::SparseCOO => sparse_coo::encode_f32(values),
+        crate::types::ProximaScheme::RunLength => run_length::encode_f32(values),
+        crate::types::ProximaScheme::DoubleDelta { .. } => double_delta::encode_f32(values),
+        crate::types::ProximaScheme::Dictionary => dictionary::encode_f32(values),
+        crate::types::ProximaScheme::Simple8b => simple8b::encode_f32(values),
+        crate::types::ProximaScheme::VByte => vbyte::encode_f32(values),
         _ => {
             // Fallback to delta
             delta::encode_f32(values, 0)
@@ -213,39 +192,19 @@ pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
     let scheme = select_scheme_i64(&pattern, values);
 
     match scheme {
-        crate::types::ProximaScheme::Delta { base } => {
-            delta::encode_i64(values, base)
-        }
-        crate::types::ProximaScheme::BitPacked { bits } => {
-            bitpack::encode_i64(values, bits)
-        }
+        crate::types::ProximaScheme::Delta { base } => delta::encode_i64(values, base),
+        crate::types::ProximaScheme::BitPacked { bits } => bitpack::encode_i64(values, bits),
         crate::types::ProximaScheme::FrameOfReference { reference, bits: _ } => {
             frame_of_ref::encode_i64(values, reference)
         }
-        crate::types::ProximaScheme::SparseBitmap => {
-            sparse_bitmap::encode_i64(values)
-        }
-        crate::types::ProximaScheme::SparseCOO => {
-            sparse_coo::encode_i64(values)
-        }
-        crate::types::ProximaScheme::RunLength => {
-            run_length::encode_i64(values)
-        }
-        crate::types::ProximaScheme::DoubleDelta { .. } => {
-            double_delta::encode_i64(values)
-        }
-        crate::types::ProximaScheme::Dictionary => {
-            dictionary::encode_i64(values)
-        }
-        crate::types::ProximaScheme::Simple8b => {
-            simple8b::encode_i64(values)
-        }
-        crate::types::ProximaScheme::VByte => {
-            vbyte::encode_i64(values)
-        }
-        _ => {
-            delta::encode_i64(values, 0)
-        }
+        crate::types::ProximaScheme::SparseBitmap => sparse_bitmap::encode_i64(values),
+        crate::types::ProximaScheme::SparseCOO => sparse_coo::encode_i64(values),
+        crate::types::ProximaScheme::RunLength => run_length::encode_i64(values),
+        crate::types::ProximaScheme::DoubleDelta { .. } => double_delta::encode_i64(values),
+        crate::types::ProximaScheme::Dictionary => dictionary::encode_i64(values),
+        crate::types::ProximaScheme::Simple8b => simple8b::encode_i64(values),
+        crate::types::ProximaScheme::VByte => vbyte::encode_i64(values),
+        _ => delta::encode_i64(values, 0),
     }
 }
 
@@ -260,39 +219,19 @@ pub fn encode_i32(values: &[i32]) -> Result<Vec<u8>> {
     let scheme = select_scheme_i64(&pattern, &ints);
 
     match scheme {
-        crate::types::ProximaScheme::Delta { base } => {
-            delta::encode_i32(values, base)
-        }
-        crate::types::ProximaScheme::BitPacked { bits } => {
-            bitpack::encode_i32(values, bits)
-        }
+        crate::types::ProximaScheme::Delta { base } => delta::encode_i32(values, base),
+        crate::types::ProximaScheme::BitPacked { bits } => bitpack::encode_i32(values, bits),
         crate::types::ProximaScheme::FrameOfReference { reference, bits: _ } => {
             frame_of_ref::encode_i32(values, reference)
         }
-        crate::types::ProximaScheme::SparseBitmap => {
-            sparse_bitmap::encode_i32(values)
-        }
-        crate::types::ProximaScheme::SparseCOO => {
-            sparse_coo::encode_i32(values)
-        }
-        crate::types::ProximaScheme::RunLength => {
-            run_length::encode_i32(values)
-        }
-        crate::types::ProximaScheme::DoubleDelta { .. } => {
-            double_delta::encode_i32(values)
-        }
-        crate::types::ProximaScheme::Dictionary => {
-            dictionary::encode_i32(values)
-        }
-        crate::types::ProximaScheme::Simple8b => {
-            simple8b::encode_i32(values)
-        }
-        crate::types::ProximaScheme::VByte => {
-            vbyte::encode_i32(values)
-        }
-        _ => {
-            delta::encode_i32(values, 0)
-        }
+        crate::types::ProximaScheme::SparseBitmap => sparse_bitmap::encode_i32(values),
+        crate::types::ProximaScheme::SparseCOO => sparse_coo::encode_i32(values),
+        crate::types::ProximaScheme::RunLength => run_length::encode_i32(values),
+        crate::types::ProximaScheme::DoubleDelta { .. } => double_delta::encode_i32(values),
+        crate::types::ProximaScheme::Dictionary => dictionary::encode_i32(values),
+        crate::types::ProximaScheme::Simple8b => simple8b::encode_i32(values),
+        crate::types::ProximaScheme::VByte => vbyte::encode_i32(values),
+        _ => delta::encode_i32(values, 0),
     }
 }
 
@@ -428,8 +367,7 @@ mod tests {
         // Should select sparse encoding
         assert!(matches!(
             scheme,
-            crate::types::ProximaScheme::SparseBitmap
-                | crate::types::ProximaScheme::SparseCOO
+            crate::types::ProximaScheme::SparseBitmap | crate::types::ProximaScheme::SparseCOO
         ));
     }
 }

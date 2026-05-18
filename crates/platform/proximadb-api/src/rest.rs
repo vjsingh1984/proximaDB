@@ -20,8 +20,7 @@ pub use v1::{
     LogsHandler, MetricsHandler, ProgressiveSearchHandler, UnifiedQueryRestState, VectorHandler,
 };
 pub use v1::{
-    AnalyticsRestState, DocumentRestState, GraphRestState, HybridRestState,
-    ObservabilityRestState,
+    AnalyticsRestState, DocumentRestState, GraphRestState, HybridRestState, ObservabilityRestState,
 };
 
 // Re-export v1 router builders

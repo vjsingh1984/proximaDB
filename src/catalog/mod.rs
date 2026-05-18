@@ -79,6 +79,9 @@ pub use self::partition_pruning::{
 };
 pub use self::traits::*;
 pub use self::types::*;
+// Explicitly re-export the local Catalog trait to disambiguate from proximadb_catalog::Catalog
+// (which is also pulled in via `pub use self::types::*` through proximadb_catalog::*).
+pub use self::traits::Catalog;
 
 /// Catalog manager - manages multiple catalog instances
 pub struct CatalogManager {

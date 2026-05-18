@@ -19,9 +19,9 @@
 //! 3. **Predictive Loading**: Learn correlations to prefetch related data
 //! 4. **Dynamic Adaptation**: Continuously adjust to changing workloads
 
-use proximadb_kernel::hash::XxHash64;
 use anyhow::Result;
 use dashmap::DashMap;
+use proximadb_kernel::hash::XxHash64;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::sync::Arc;

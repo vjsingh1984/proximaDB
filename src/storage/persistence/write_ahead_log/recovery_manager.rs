@@ -1067,6 +1067,7 @@ mod tests {
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::persistence::write_ahead_log::{BatchId, SerializationFormat};
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
     use tempfile::TempDir;
 
     async fn create_test_managers() -> (
@@ -1112,16 +1113,17 @@ mod tests {
         (disk_manager, flush_coordinator, recovery_manager, temp_dir)
     }
 
-    fn create_test_vector(id: &str) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    fn create_test_vector(id: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![0.1, 0.2, 0.3, 0.4],
+                dim: 4,
+            }],
+            record_version: 1,
+            ..Default::default()
         }
     }
 
@@ -1154,7 +1156,7 @@ mod tests {
             let vector = create_test_vector(&format!("test{}", i));
             let batch = WALVectorBatch {
                 batch_id: BatchId::new(),
-                vector_records: Arc::new(vec![vector.clone().into()]),
+                vector_records: Arc::new(vec![vector.clone()]),
                 timestamp: std::time::SystemTime::now(),
                 total_size_bytes: 256,
                 is_flushed: false,
@@ -1219,7 +1221,7 @@ mod tests {
         use std::collections::HashMap;
 
         struct MockStorageEngine {
-            vectors_received: Arc<tokio::sync::Mutex<Vec<VectorRecord>>>,
+            vectors_received: Arc<tokio::sync::Mutex<Vec<proximadb_records::ProximaRecord>>>,
             filesystem_factory: FilesystemFactory,
         }
 
@@ -1307,7 +1309,9 @@ mod tests {
         });
 
         Arc::new(MockStorageEngine {
-            vectors_received: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            vectors_received: Arc::new(tokio::sync::Mutex::new(Vec::<
+                proximadb_records::ProximaRecord,
+            >::new())),
             filesystem_factory,
         })
     }

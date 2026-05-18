@@ -43,9 +43,9 @@
 // Deferred: Implement complete flow in flush_row_page_columnar()
 // ============================================================================
 
-use proximadb_kernel::hash::FastHash;
 use anyhow::Result;
 use arrow_array::RecordBatch;
+use proximadb_kernel::hash::FastHash;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -55,10 +55,10 @@ use tracing::debug;
 
 // Reuse existing platform capabilities
 use super::common::VectorStats;
+use crate::core::hardware_capabilities::get_hardware_capabilities;
 use proximadb_compression::{
     CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
-use crate::core::hardware_capabilities::get_hardware_capabilities;
 
 // Import bloom filter types from common
 use super::common::{
@@ -70,8 +70,8 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use proximadb_runtime_common::pool::VectorMemoryPool;
 use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 // ProximaCodec system for encoding/decoding
 use crate::storage::engines::core::ops::proximacodec::{
     ProximaCodec, analysis, types::ProximaScheme,

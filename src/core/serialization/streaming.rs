@@ -15,8 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, trace, warn};
 
-use proximadb_runtime_common::pool::VectorMemoryPool;
 use crate::core::serialization::VectorSerializationConfig;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 
 /// Configuration for streaming compression
 #[derive(Debug, Clone)]

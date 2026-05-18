@@ -84,9 +84,9 @@ pub use engine_impls::{KHopSubgraphBuilder, VectorNodeRetriever};
 #[cfg(test)]
 mod engine_impls_test;
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::NodeId;
 use async_trait::async_trait;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashSet;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;

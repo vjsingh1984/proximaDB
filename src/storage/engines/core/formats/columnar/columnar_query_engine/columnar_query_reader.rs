@@ -1331,7 +1331,7 @@ impl UnifiedParquetReader {
 
             let metadata = if needs_metadata {
                 crate::core::search::results::sql_map_to_proxima(
-                    self.extract_metadata_for_row(batch, row_idx)
+                    self.extract_metadata_for_row(batch, row_idx),
                 )
             } else {
                 Default::default()

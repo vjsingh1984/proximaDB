@@ -37,8 +37,8 @@
 //! - Log warnings when experimental engines are requested
 
 use super::Result;
-use proximadb_kernel::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
+use proximadb_kernel::error::ProximaDBError;
 use std::sync::Arc;
 
 impl super::GraphOperationsService {

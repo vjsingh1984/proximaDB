@@ -21,9 +21,9 @@
 
 use std::collections::HashMap;
 
+use crate::core::search::results::{proxima_value_to_sql_value, sql_value_to_proxima_value};
 use crate::core::types::{TextField, TextStorageStrategy, TypedValue as CoreTypedValue};
 use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value::Value as SqlValueVariant};
-use crate::core::search::results::{sql_value_to_proxima_value, proxima_value_to_sql_value};
 use proximadb_data_model::ProximaValue;
 
 /// Modality discriminant for a ProximaRecord in the conversion layer.
@@ -261,7 +261,10 @@ impl RecordConverter {
 
         // Convert flexible_fields (ProximaValue) back to SqlValue for the proto envelope
         for (key, proxima_value) in &p.flexible_fields {
-            metadata.insert(key.clone(), proxima_value_to_sql_value(proxima_value.clone()));
+            metadata.insert(
+                key.clone(),
+                proxima_value_to_sql_value(proxima_value.clone()),
+            );
         }
 
         VectorRecord {

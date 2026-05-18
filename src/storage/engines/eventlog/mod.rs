@@ -54,9 +54,9 @@
 //! - **Temporal Queries**: Point-in-time data reconstruction
 //! - **Audit Trails**: Complete change history
 
-use proximadb_kernel::error::ProximaDBError;
 use crate::storage::persistence::filesystem::{FileSystem, UnifiedCachingFilesystem};
 use chrono::{DateTime, Utc};
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
