@@ -1,0 +1,191 @@
+= ADR-009: Schema Modes and ProximaRecord-Centric API Surfaces
+:status: Accepted
+:date: 2026-05-17
+:deciders: ProximaDB Architecture
+:supersedes: none
+
+== Status
+
+Accepted
+
+== Context
+
+ProximaDB is moving from a vector-first database into a stacked storage platform where the primary
+semantic model is relational/record-oriented and vector, document, graph, observability, entity, and
+event capabilities are modality profiles over the same durable spine.
+
+The existing product still has many vector-shaped protocol and service contracts. Those contracts
+made sense for the original vector-only system, but they are too rigid for:
+
+* relational OLTP and Arrow bulk loads;
+* document and graph property records;
+* observability logs, metrics, spans, and events;
+* schema-on-read external files/tables;
+* schema-on-write catalog-first tables;
+* rich datatypes beyond legacy `SqlValue` metadata maps.
+
+Hadoop-era storage systems popularized key/value or file-oriented storage with schema-on-read.
+Relational systems use schema-on-write with catalog enforcement before data is durable. ProximaDB
+must support both modes without letting each protocol or file format define a separate record
+envelope, type system, RLS boundary, WAL semantics, or catalog.
+
+== Decision
+
+All durable ingest and query surfaces converge on:
+
+* `ProximaRecord` as the record envelope;
+* `ProximaType`/`ProximaValue` as the scalar and composite type system;
+* xCatalog as the authority for table/collection schema, schema mode, variations, ownership,
+  external-file mapping, constraints, projection freshness, and policy boundary;
+* WAL/log/manifest as the durable commit and replay boundary;
+* shared logical algebra for SQL, graph, document, vector, observability, and entity operators.
+
+Legacy vector-shaped API contracts and v1 `VectorRecord`/`SqlValue`/metadata-map surfaces are
+deprecated migration artifacts. They may remain only as transitional implementation code while
+surfaces are migrated. They are not acceptable target contracts for new REST, gRPC, Arrow Flight,
+pgwire, SQL lowering, SDK, or embedded work.
+
+== Schema Modes
+
+Schema behavior is a cataloged table/collection capability, not handler-local logic.
+
+[cols="1,2,3,3"]
+|===
+| Mode | Authority | Ingest behavior | Query behavior
+
+| `STRICT_SCHEMA_ON_WRITE`
+| xCatalog declared schema
+| Reject unknown fields; coerce declared fields through `ProximaType`; enforce keys,
+  constraints, defaults, generated columns, indexes, tenant/RLS, and evolution policy before WAL.
+| SQL/pgwire, REST, gRPC, Arrow Flight, and embedded all see the same typed table.
+
+| `FLEXIBLE_SCHEMA_ON_WRITE`
+| xCatalog schema family plus registered variations
+| Accept open fields only after variation registration or policy-approved evolution; store as
+  `ProximaValue` props, refs, edge fields, embeddings, or typed columns.
+| Query planner uses variation metadata, generated path columns, indexes, and projections.
+
+| `SCHEMA_ON_READ_EXTERNAL`
+| External file/table registration in xCatalog
+| Data may remain in Parquet/Arrow/JSON/CSV/ORC/Iceberg/Delta/Hudi/external KV files. Registration
+  declares or infers a `ProximaType` mapping, lossy conversions, snapshot/isolation, RLS boundary,
+  ownership mode, write/refresh mode, and repair source.
+| Reads project external rows into `ProximaRecord`/`ProximaValue` and shared logical algebra.
+
+| `EXTERNAL_AUTHORITY`
+| Explicit xCatalog external-authority entry
+| ProximaDB does not own durable records; it records ownership, policy, type mapping, snapshot,
+  write/refresh, and repair semantics.
+| Query federation returns `ProximaRecord` views and must expose external consistency limits.
+|===
+
+== Surface Contracts
+
+=== REST and gRPC
+
+REST and gRPC should expose record/table APIs first:
+
+* `CreateTable` / `AlterTable` / `RegisterExternalTable`;
+* `InsertRecords` / `UpsertRecords` / `DeleteRecords`;
+* `InsertRecordBatch` / `QueryRecords`;
+* modality commands such as `VectorSearch`, `DocumentQuery`, `GraphQuery`, `ObservabilityQuery`,
+  and `EntityQuery` as facades over records and logical algebra.
+
+Request/response bodies carry `ProximaRecord`, `ProximaValue`, schema references, or logical-plan
+fragments. They must not require vector id/vector/metadata as the universal shape.
+
+=== Arrow Flight
+
+Arrow Flight is the high-throughput columnar exchange surface. Flight schemas are derived from
+xCatalog and `ProximaType`:
+
+* strict schema-on-write loads validate Arrow fields before WAL;
+* flexible loads map Arrow struct/map/list columns into `ProximaValue` props and variation metadata;
+* vector embeddings are typed columns or embedding cells, not the top-level record identity;
+* external-table scans return Arrow batches projected from `ProximaRecord` views.
+
+Arrow batches are an exchange format, not a separate durable authority.
+
+=== SQL and pgwire
+
+SQL and pgwire are relational-first compatibility and query surfaces:
+
+* `CREATE TABLE` and `ALTER TABLE` update xCatalog capabilities;
+* `CREATE EXTERNAL TABLE` registers schema-on-read sources;
+* `INSERT`, `COPY`, prepared statements, and Arrow/Flight SQL loads write `ProximaRecord`s;
+* vector, document, graph, time, and observability features are operators/functions over tables;
+* query lowering produces shared logical algebra with `ProximaValue` expressions.
+
+SQL values must not lower into legacy `SqlValue` as an internal representation.
+
+=== SDK and Embedded
+
+SDKs and embedded mode should accept ergonomic inputs but normalize immediately:
+
+* dict/object/JSON -> `ProximaRecord` and `ProximaValue`;
+* pandas/Polars/Arrow/numpy -> Arrow schema + `ProximaType` mapping + record batch;
+* graph nodes/edges -> node/edge `ProximaRecord`s plus projection updates;
+* vector arrays -> embedding cells inside records;
+* observability logs/metrics/spans/events -> canonical records with time, tenant, labels, and props.
+
+== External File and Table Semantics
+
+External Hadoop/lakehouse-style files are supported through xCatalog registration:
+
+[source,sql]
+----
+CREATE EXTERNAL TABLE raw_events
+STORED AS PARQUET
+LOCATION 's3://bucket/events/'
+WITH (
+  schema_mode = 'read',
+  ownership = 'external',
+  snapshot_isolation = 'manifest',
+  refresh = 'manual'
+);
+----
+
+For key/value or schema-light files:
+
+* the key maps to identity, partition, or an indexed column;
+* the value maps to `Map`, `Json`, `Struct`, `Binary`, or a declared `ProximaType`;
+* inferred schema is recorded as a catalog variation, never hidden inside the reader;
+* lossy conversions are catalog metadata and must appear in explain/inspection surfaces.
+
+== Constraints
+
+1. `VectorRecord`, `SqlValue`, and vector metadata maps are not target API contracts.
+2. New protocol messages, REST JSON shapes, Arrow schemas, SQL lowering structs, SDK DTOs, and embedded
+   APIs must use `ProximaRecord`, `ProximaValue`, `ProximaType`, Arrow schema, or logical-plan types.
+3. All insert/upsert paths validate and coerce through xCatalog before WAL/storage.
+4. All query paths lower into shared logical algebra before execution.
+5. External files/tables must have explicit xCatalog entries for ownership, type mapping,
+   snapshot/isolation, RLS boundary, write/refresh mode, and repair source.
+6. Modality facades must write canonical records and cataloged projections, not hidden durable truth.
+7. Breaking changes are acceptable during this migration if they remove legacy vector-shaped authority
+   and move surfaces closer to the canonical model.
+
+== Consequences
+
+Positive:
+
+* Rich datatypes survive across SQL, REST, gRPC, Arrow, SDK, and embedded mode.
+* Relational, graph, document, vector, and observability loads share validation and WAL semantics.
+* External lake/file integration becomes schema-aware without making file formats semantic authorities.
+* Future features add operators/projections instead of new durable record systems.
+
+Negative / migration cost:
+
+* Existing vector-first clients and tests must migrate.
+* Some protocol compatibility may break until v2 surfaces are complete.
+* Arrow/REST/gRPC/SQL code must be refactored around shared record and catalog contracts.
+
+== Implementation Trajectory
+
+1. Make WAL and storage flush paths `ProximaRecord`-native.
+2. Replace REST/gRPC insert/search payloads with record/table APIs and modality facades over records.
+3. Make Arrow Flight use xCatalog-derived `ProximaType` schemas and record batches.
+4. Make SQL lowering produce `ProximaValue` expressions and `ProximaRecord` writes.
+5. Add `CREATE EXTERNAL TABLE` and external table registration metadata.
+6. Migrate SDK and embedded helpers to accept dict/pandas/Arrow/numpy inputs that normalize to records.
+7. Remove or quarantine v1 vector-shaped APIs as deprecated compatibility code.

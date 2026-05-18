@@ -65,9 +65,10 @@ ProximaDB uses a **Unified Storage Interface** allowing pluggable engines.
 11c. **Sticky Design Pillars:** New code touching records, types, indexes, query, storage, security, or distributed architecture must respect:
     - One record envelope (`ProximaRecord`, spec §3) — no parallel record shapes per modality.
     - One scalar type system (`ProximaType`/`ProximaValue`, spec §4) — Decimal/TimestampTz/Uuid/Json/Jsonb/Vector are first-class wire types; `SqlValue` is legacy.
-    - Canonical internal model first — new foundation, modality, storage, query, and catalog contracts use `ProximaRecord` plus `ProximaType`/`ProximaValue`; v2 protobuf is the protocol/wire alignment; legacy v1 `SqlValue`/`SqlObject` belongs only in compatibility adapters.
+    - Canonical model first across every surface — new foundation, modality, storage, query, catalog, SDK, embedded, REST, gRPC, Arrow Flight, pgwire, and SQL-lowering contracts use `ProximaRecord` plus `ProximaType`/`ProximaValue`; legacy v1 `VectorRecord`, `SqlValue`, `SqlObject`, and vector metadata maps are deprecated migration artifacts, not target API contracts.
     - Protocol adapters are not durable authorities — SQL/pgwire, REST, gRPC, Arrow Flight, Mongo-like document APIs, Gremlin/Cypher/PGQ graph APIs, Neptune/Titan-style compatibility, SDKs, and embedded helpers lower into `ProximaValue`, `ProximaRecord`, xCatalog schema/variation metadata, or the shared logical plan. Do not let protocol request/response types define storage, type, RLS, WAL/recovery, or catalog semantics.
     - Cataloged schema modes — strict relational tables, flexible document/graph/entity collections, schema-on-write variation registration, and schema-on-read projection behavior are xCatalog/table capabilities. Insert/upsert paths across SQL, REST, gRPC, Arrow, and embedded mode share type validation/coercion before WAL/storage.
+    - ADR-009 schema/API convergence — schema-on-read external files/tables, schema-on-write OLTP loads, REST/gRPC, Arrow Flight, pgwire/SQL, SDKs, and embedded mode are surfaces over xCatalog plus `ProximaRecord`; breaking changes are acceptable when they remove vector-only API authority.
     - Typed Semantic Memory (TD-055) — 13 standard categories (`Fact`, `Goal`, `Preference`, `Decision`, etc.) for high-fidelity agent recall and conflict resolution.
     - Three-layer storage (spec §5) — record (PAX) + topology (CSR/COO) + vector index (HNSW relationship table) behind one buffer pool.
     - One logical algebra (spec §7) — `Filter, Project, Sort, Limit, Aggregate, Union, Join, HybridTraverse, PatternMatch, CrossModelJoin, VectorTopK, ModulationOp, MatrixOp, SemanticJoin, ModelConvert`.
@@ -110,8 +111,52 @@ ProximaDB is the **primary memory for agentic systems**. Current research focus:
 - **Memanto (Typed Recall):** High-precision retrieval via 13 standardized semantic categories.
 - **Agentic Hybrid Reference Architecture:** Plan–Retrieve–Evaluate loops with multi-agent orchestration.
 
+## Open Format Interoperability
+
+ProximaDB serves an **Iceberg REST Catalog v1** at `/iceberg/v1` so Spark, Trino, DuckDB, Flink, and PyIceberg can connect without custom connectors.  OLTP backends (PostgreSQL/Neon, MariaDB, SQLite) handle small-collection metadata; lakehouse catalogs handle large ones.
+
+For the full canonical column mapping, ProximaValue→Arrow type table, engine quick-start examples, and OLTP DDL schema, read:
+- `docs/12-design/OPEN_FORMAT_CATALOG_2026_05_17.adoc`
+- `docs/12-design/adr/ADR-007-iceberg-rest-catalog-server.adoc`
+- `docs/12-design/adr/ADR-008-oltp-catalog-backends.adoc`
+
+### Iceberg REST Quick-Start
+
+**Connect from Python (PyIceberg):**
+```python
+from pyiceberg.catalog.rest import RestCatalog
+cat = RestCatalog("proximadb", **{"uri": "http://localhost:5678/iceberg/v1"})
+namespaces = cat.list_namespaces()
+tables = cat.list_tables(("default",))
+tbl = cat.load_table(("default", "my_collection"))
+df = tbl.scan().to_arrow()         # returns Arrow Table with ProximaRecord schema
+```
+
+**Connect from DuckDB:**
+```sql
+INSTALL iceberg; LOAD iceberg;
+-- Use the manifest URL from the load-table response
+```
+
+**Connect from Spark:**
+```
+spark.sql.catalog.proximadb=org.apache.iceberg.spark.SparkCatalog
+spark.sql.catalog.proximadb.type=rest
+spark.sql.catalog.proximadb.uri=http://localhost:5678/iceberg/v1
+```
+
+### ProximaRecord Iceberg Schema (summary)
+
+Canonical columns (full mapping in `docs/12-design/OPEN_FORMAT_CATALOG_2026_05_17.adoc`):
+`id`, `tenant_id`, `created_at`, `updated_at`, `valid_from`, `valid_to`, `actor`, `origin`, `props` (map\<string,binary\>), `labels` (list\<string\>), `embedding_{model_id}` (list\<float\>), `edge_source_id`, `edge_target_id`, `edge_type`, `edge_weight`.
+
+Table properties carry HNSW index metadata: `proximadb.index.{col}.type`, `.dim`, `.ef_construction`, `proximadb.flight.endpoint`.
+
+Use `ProximaValue` (not legacy `SqlValue`) for all typed integrations.  Full Arrow/Parquet type mapping in the design doc above.
+
 ## 🔍 Quick Reference
-- **Default Port:** 5678 (Unified), 5679 (gRPC), 5433 (PostgreSQL wire).
+- **Default Port:** 5678 (Unified), 5679 (gRPC), 5433 (PostgreSQL wire), 5680 (Arrow Flight).
 - **Default Data Path:** `/tmp/proximadb/`.
 - **Health Check:** `curl http://localhost:5678/health`.
 - **Log Levels:** `RUST_LOG=proximadb=debug`.
+- **Iceberg Catalog URI:** `http://localhost:5678/iceberg/v1`.

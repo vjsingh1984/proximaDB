@@ -1,0 +1,349 @@
+= ProximaDB Open Format Catalog Architecture
+:date: 2026-05-17
+:revision: 1.0
+:toc:
+:toclevels: 3
+
+== Overview
+
+This document describes ProximaDB's open-format catalog architecture: the Iceberg REST Catalog server
+(ADR-007), OLTP catalog backends (ADR-008), the canonical ProximaRecord → Iceberg column mapping
+(ADR-ICE-001), and the size-based catalog routing policy (ADR-OLTP-001).
+
+The goal is for ProximaDB to be a first-class catalog authority that any open-format compute engine
+(Spark, Trino, DuckDB, Flink, PyIceberg) can connect to without a custom connector, while supporting
+the full range from embedded SQLite-backed small datasets to petabyte-scale Parquet/Iceberg lakehouse.
+
+== Relation to Stacked Durability Mandate
+
+The open-format catalog layer sits entirely at Layers 2–3 of the stacked durability hierarchy:
+
+----
+Layer 0: WAL / CanonicalOperation journal (always durable, always first)
+Layer 1: ProximaRecord in VIPER/NOVA/HELIX storage engines (canonical record store)
+Layer 2: Rebuildable projections — Iceberg manifests, CSR/COO graph topology, HNSW ANN fragments
+Layer 3: Protocol facades — Iceberg REST, Arrow Flight, REST/gRPC handlers (never own durable state)
+----
+
+* xCatalog (OLTP or lakehouse backend) stores ONLY catalog metadata: namespaces, schemas, statistics, snapshots.
+* Record data always stays in ProximaDB's Layer 1 storage engines.
+* Iceberg manifests are Layer 2 projections, rebuilt on compaction.
+* Iceberg REST and Arrow Flight are Layer 3 protocol facades.
+
+This means:
+
+1. A catalog DB failure does NOT lose records — WAL + storage engines are the authority.
+2. A catalog DB can be rebuilt from WAL replay and storage engine statistics.
+3. External engines that read via Iceberg REST get a consistent view of the catalog without
+   ProximaDB delegating its hot durable core to an external RDBMS.
+
+See: `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` §stacked durability.
+See also: `docs/12-design/adr/ADR-009-schema-modes-and-proximarecord-surfaces.adoc` for the
+schema-on-read/schema-on-write and API-surface convergence mandate.
+
+== Schema-On-Read And Schema-On-Write Positioning
+
+Open file/table formats are supported, but they do not replace the canonical record and catalog
+model.
+
+=== Schema-On-Read External Tables
+
+Schema-on-read is a cataloged projection behavior for external or lake-style data:
+
+[source,sql]
+----
+CREATE EXTERNAL TABLE raw_events
+STORED AS PARQUET
+LOCATION 's3://bucket/events/'
+WITH (
+  schema_mode = 'read',
+  ownership = 'external',
+  snapshot_isolation = 'manifest',
+  refresh = 'manual'
+);
+----
+
+xCatalog must record:
+
+* physical format and location;
+* ownership mode (`external`, `projection`, `proximadb_authoritative`, or explicit external authority);
+* inferred or declared `ProximaType` mapping;
+* lossy conversions and unsupported fields;
+* snapshot/isolation semantics;
+* tenant/RLS enforcement boundary;
+* write/refresh mode;
+* repair/rebuild source.
+
+Reads from Parquet, Arrow IPC, ORC, JSON, CSV, Iceberg, Delta, Hudi, or Hadoop-style key/value files
+project rows into `ProximaRecord`/`ProximaValue` before planning. For key/value sources, the key maps
+to identity, partition, or an indexed column; the value maps to `Map`, `Json`, `Struct`, `Binary`, or
+a declared `ProximaType`.
+
+=== Schema-On-Write Tables
+
+Schema-on-write is the default for OLTP-style relational loads:
+
+[source,sql]
+----
+CREATE TABLE orders (
+  order_id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  amount DECIMAL(18, 2),
+  attrs JSON,
+  embedding VECTOR(768)
+);
+----
+
+SQL/pgwire `INSERT`/`COPY`, REST/gRPC `InsertRecords`, Arrow Flight batches, and embedded
+pandas/Arrow/numpy loads all validate against the same xCatalog schema and write canonical
+`ProximaRecord`s. Relational constraints are enforced below protocol handlers and recovered through
+WAL/log/manifest.
+
+=== Surface Rule
+
+REST, gRPC, Arrow Flight, pgwire/SQL, SDKs, and embedded mode are ingestion/query surfaces over
+xCatalog and `ProximaRecord`. They must not define protocol-specific durable record shapes. Legacy
+vector-shaped payloads (`VectorRecord`, metadata maps, or `SqlValue`-centric DTOs) are deprecated
+migration artifacts, not target contracts for new open-format work.
+
+== Iceberg REST Catalog Server (ADR-007)
+
+=== What It Is
+
+ProximaDB serves a full Apache Iceberg REST Catalog v1 at `/iceberg/v1` (port 5678).
+Any Iceberg-aware engine connects without a custom connector:
+
+----
+catalog URI: http://host:5678/iceberg/v1
+----
+
+=== Hadoop Split Mental Model
+
+External engines apply the Hadoop InputFormat model through ProximaDB's Iceberg REST:
+
+[source]
+----
+Coordinator phase  (cheap, metadata-only):
+  GET /iceberg/v1/namespaces/{ns}/tables/{t}
+  → parse snapshot → manifest entries → one split per ProximaDB storage shard
+
+Worker phase  (actual I/O):
+  exchange Arrow Flight ticket (from manifest data-file descriptor)
+  at grpc://localhost:5680
+  → read Arrow IPC batches of ProximaRecord rows
+----
+
+This is Trino `ConnectorSplitSource` + `ConnectorPageSource` and Spark `DataSource V2
+Scan.planInputPartitions()` with zero custom connector code.
+
+=== Implementation Files
+
+[cols="3,5"]
+|===
+| File | Role
+
+| `src/catalog/iceberg_rest_service.rs` | Service layer; `CatalogTableSchema ↔ IcebergTableMetadata`; synthetic snapshot + manifest generation; Arrow Flight ticket embedding
+| `src/network/rest/v1/iceberg_rest_catalog.rs` | Axum route handlers; `IcebergRestState { service }`;  `create_iceberg_rest_router()` with all 15 endpoints
+| `src/network/rest/v1/handlers.rs` | `create_router()` nests `/iceberg/v1` unconditionally (no feature gate)
+| `src/catalog/iceberg.rs` | Existing Iceberg client types — `IcebergTableMetadata`, `IcebergSchema`, `IcebergSnapshot`; reused by service layer
+|===
+
+=== ProximaRecord → Iceberg Canonical Column Mapping (ADR-ICE-001)
+
+Every ProximaDB collection projected as an Iceberg table exposes this fixed column prefix.
+This mapping is the compatibility contract between ProximaDB and any external compute engine.
+
+[cols="3,3,2,4"]
+|===
+| ProximaRecord field | Iceberg column | Iceberg type | Notes
+
+| `id` / `oid` | `id` | `string` required | partition candidate
+| `tenant_id` | `tenant_id` | `string` required | default partition column; drives RLS pushdown
+| `created_at_ns` | `created_at` | `timestamptz` | nanoseconds ÷ 1000 → microseconds
+| `updated_at_ns` | `updated_at` | `timestamptz` |
+| `valid_from_ns` | `valid_from` | `timestamptz` optional | bi-temporal lower bound
+| `valid_to_ns` | `valid_to` | `timestamptz` optional | bi-temporal upper bound; AS OF queries
+| `actor` | `actor` | `string` optional | write provenance
+| `origin` | `origin` | `string` optional | source system
+| `props` | `props` | `map<string, binary>` | msgpack-encoded `ProximaValue`s; opaque to external engines
+| `labels` | `labels` | `list<string>` | filterable; push `labels` IN predicate through Iceberg
+| `embeddings[i].values` | `embedding_{model_id}` | `list<float>` | one column per registered model; dimension in table properties
+| `edge.source_id` | `edge_source_id` | `string` optional | graph edge; null for non-graph records
+| `edge.target_id` | `edge_target_id` | `string` optional |
+| `edge.edge_type` | `edge_type` | `string` optional |
+| `edge.weight` | `edge_weight` | `float` optional |
+|===
+
+Table properties for HNSW discovery (external engines read these to plan vector operations):
+
+[source,json]
+----
+{
+  "proximadb.collection": "my_collection",
+  "proximadb.flight.endpoint": "grpc://localhost:5680",
+  "proximadb.index.embedding_model_a.type": "hnsw",
+  "proximadb.index.embedding_model_a.dim": "768",
+  "proximadb.index.embedding_model_a.ef_construction": "200",
+  "proximadb.record.envelope": "ProximaRecord/v1"
+}
+----
+
+== OLTP Catalog Backends (ADR-008)
+
+=== Motivation
+
+For collections < 1 GB, lakehouse metadata overhead (transaction logs, manifest files, compaction) is
+disproportionate.  A relational OLTP backend provides:
+
+* Fast ACID point lookups on namespace and table metadata
+* Simple operational model (one Postgres/SQLite database)
+* Strict schema history and statistics tracking with `UNIQUE` constraints
+
+=== Supported Backends and Feature Flags
+
+[source,bash]
+----
+cargo build --features oltp-catalog-postgres   # PostgreSQL / Neon / Supabase / CockroachDB
+cargo build --features oltp-catalog-mysql      # MariaDB / MySQL / TiDB / PlanetScale
+cargo build --features oltp-catalog-sqlite     # SQLite (dev / embedded)
+cargo build --features oltp-catalog-full       # All three
+----
+
+Detection is automatic from connection string prefix (`postgres://`, `mysql://`, `sqlite:///`).
+
+=== Size-Based Routing
+
+[source]
+----
+collection size < 1 GB  →  OLTP catalog  (registered under name "oltp-{backend}")
+collection size ≥ 1 GB  →  lakehouse / native catalog (default catalog)
+----
+
+[source,rust]
+----
+// Insert path (pseudocode)
+let catalog = catalog_manager.catalog_for_size(estimated_bytes, threshold_bytes);
+catalog.create_table(namespace, schema).await?;
+----
+
+=== DDL Tables (prefix `xcatalog_`)
+
+`namespaces`, `tables`, `snapshots`, `schema_history`, `statistics`.
+
+Full DDL in `src/catalog/oltp.rs` `generate_ddl()`.  Auto-migrated on startup when `auto_migrate = true`.
+
+=== Key Source Files
+
+[cols="3,5"]
+|===
+| File | Role
+
+| `src/catalog/oltp.rs` | `OltpCatalog` struct; `Catalog` trait impl; backend-specific DDL; in-memory HashMap fallback
+| `src/catalog/mod.rs` | `create_oltp_catalog()` factory; `catalog_for_size()` routing helper
+| `proto/proximadb/v1/catalog.proto` | `CATALOG_TYPE_OLTP_POSTGRES/MYSQL/SQLITE`; `OltpCatalogConfig` message
+|===
+
+== ProximaValue Type System in the Open Format Layer
+
+When ProximaDB projects records into Iceberg/Parquet or returns Arrow batches via Flight,
+`ProximaValue` scalars are mapped as follows.  Do not use legacy `SqlValue` in any catalog or
+open-format path.
+
+[cols="2,2,2,3"]
+|===
+| ProximaType | Arrow type | Parquet type | Notes
+
+| `Boolean` | `Boolean` | `BOOLEAN` |
+| `Int8`…`Int64` | `Int8`…`Int64` | `INT(8..64)` |
+| `Float32` / `Float64` | `Float32` / `Float64` | `FLOAT` / `DOUBLE` |
+| `Decimal` | `Decimal128(p,s)` | `DECIMAL(p,s)` | precision/scale from catalog schema
+| `String` | `Utf8` | `BYTE_ARRAY (UTF8)` |
+| `Binary` | `LargeBinary` | `BYTE_ARRAY` |
+| `TimestampTz` | `Timestamp(us, UTC)` | `INT64 (TIMESTAMP_MICROS)` |
+| `Uuid` | `FixedSizeBinary(16)` | `FIXED_LEN_BYTE_ARRAY(16)` |
+| `Json` / `Jsonb` | `Utf8` | `BYTE_ARRAY (UTF8)` | structured JSON string
+| `DenseVector` | `FixedSizeList<Float32>` | `LIST (FLOAT)` | dim in schema metadata
+| `SparseVector` | `Map<Int32, Float32>` | `MAP` |
+| `Array` | `List<ProximaValue>` | `LIST` |
+| `Map` | `Map<Utf8, ProximaValue>` | `MAP` |
+| `Null` | `Null` | `NULL` |
+|===
+
+`props` column in Iceberg schema is `map<string, binary>` where values are msgpack-encoded `ProximaValue` blobs.  External engines that cannot decode msgpack treat `props` as opaque binary — this is intentional.
+
+== External Engine Quick-Start
+
+=== PyIceberg
+
+[source,python]
+----
+from pyiceberg.catalog.rest import RestCatalog
+cat = RestCatalog("proximadb", **{"uri": "http://localhost:5678/iceberg/v1"})
+namespaces = cat.list_namespaces()
+tables     = cat.list_tables(("default",))
+tbl        = cat.load_table(("default", "my_collection"))
+arrow_tbl  = tbl.scan().to_arrow()
+----
+
+=== Apache Spark
+
+[source]
+----
+spark.sql.catalog.proximadb=org.apache.iceberg.spark.SparkCatalog
+spark.sql.catalog.proximadb.type=rest
+spark.sql.catalog.proximadb.uri=http://localhost:5678/iceberg/v1
+----
+
+[source,sql]
+----
+SELECT id, tenant_id, labels, embedding_bge_small_en
+FROM proximadb.default.my_collection
+WHERE tenant_id = 'tenant_a'
+LIMIT 100;
+----
+
+=== DuckDB
+
+[source,sql]
+----
+INSTALL iceberg; LOAD iceberg;
+-- load the table metadata URL from the Iceberg REST load-table response
+----
+
+=== curl (manual verification)
+
+[source,bash]
+----
+curl http://localhost:5678/iceberg/v1/config
+curl http://localhost:5678/iceberg/v1/namespaces
+curl http://localhost:5678/iceberg/v1/namespaces/default/tables
+curl http://localhost:5678/iceberg/v1/namespaces/default/tables/my_collection
+----
+
+== Key Research Papers
+
+[cols="2,5,4"]
+|===
+| arXiv ID | Title fragment | Key finding
+
+| 2405.03708 | Delta Tensor Store | Vectors as `list<float>` in Parquet/Delta; HNSW as adjacency table projection
+| 2304.05028 | Empirical Evaluation Columnar Formats | Parquet statistics + bloom filters; predicate pushdown cost model
+| 2603.03705 | GraphLake | CSR/COO graph topology as rebuildable Parquet projection
+| 2401.09621 | XTable in Action | Iceberg ↔ Delta ↔ Hudi format-agnostic catalog translation
+| 2604.13351 | Optimal Predicate Pushdown Synthesis | Vector + filter pushdown soundness and correctness proofs
+|===
+
+Query the arxive corpus:
+
+[source,bash]
+----
+cd ../arxive
+python -m arxive.cli search "iceberg rest catalog spark trino" --top-k 8
+python -m arxive.cli search "predicate pushdown vector search columnar" --top-k 5
+python -m arxive.cli search "oltp lakehouse catalog metadata routing" --top-k 5
+----
+
+== ADR References
+
+* `docs/12-design/adr/ADR-007-iceberg-rest-catalog-server.adoc` — Iceberg REST server decision, endpoint surface, synthetic snapshot design
+* `docs/12-design/adr/ADR-008-oltp-catalog-backends.adoc` — OLTP backend decision, DDL schema, size routing policy

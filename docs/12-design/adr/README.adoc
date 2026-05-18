@@ -41,6 +41,21 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Infrastructure and Platform Decisions
 | Accepted
 | #55, #54, #60, #61, #28, #27, #56
+
+| link:ADR-007-iceberg-rest-catalog-server.adoc[ADR-007]
+| Iceberg REST Catalog Server in xCatalog
+| Accepted
+| Open-format catalog, Arrow Flight split planning
+
+| link:ADR-008-oltp-catalog-backends.adoc[ADR-008]
+| OLTP Catalog Backends in xCatalog
+| Accepted
+| PostgreSQL/MariaDB/SQLite metadata backends
+
+| link:ADR-009-schema-modes-and-proximarecord-surfaces.adoc[ADR-009]
+| Schema Modes and ProximaRecord-Centric API Surfaces
+| Accepted
+| REST/gRPC/Arrow/SQL/SDK schema-on-read and schema-on-write convergence
 |===
 
 == Relationship to Design Resolution Doc

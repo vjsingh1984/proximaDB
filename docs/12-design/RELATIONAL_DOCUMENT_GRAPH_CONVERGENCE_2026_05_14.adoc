@@ -597,6 +597,13 @@ If event replay produces current entity/document/graph state, that state is a ma
     collections, graph property records, schema-on-write variation registration, and
     schema-on-read projection behavior are table/collection capabilities in xCatalog; they
     are not separate type systems or hidden per-protocol insert paths.
+13. Legacy vector-shaped surfaces are deprecated migration artifacts. `VectorRecord`,
+    `SqlValue`, and vector metadata maps must not be used as target contracts for REST,
+    gRPC, Arrow Flight, pgwire, SQL lowering, SDK, embedded, WAL, or storage work. During
+    migration, breaking API changes are acceptable when they remove vector-only authority
+    and move the surface to `ProximaRecord`/`ProximaValue`.
+
+See also: `docs/12-design/adr/ADR-009-schema-modes-and-proximarecord-surfaces.adoc`.
 
 == Target Technical Design
 
@@ -635,8 +642,40 @@ REST/gRPC may expose rich modality commands (`InsertRecords`, `UpsertRecords`,
 `DocumentQuery`, `GraphTraverse`, `VectorSearch`, `ExecuteSql`, `ExecuteLogicalPlan`,
 `InsertArrowBatch`), but those commands are ergonomic facades over the same pipeline.
 SQL/pgwire may expose relational DDL/DML and pgvector-style syntax, but SQL values are
-converted to `ProximaValue` before internal planning/storage. Legacy v1 `SqlValue` and
-`SqlObject` stay at compatibility boundaries only.
+converted to `ProximaValue` before internal planning/storage. Legacy v1 `SqlValue`,
+`SqlObject`, and `VectorRecord` are deprecated migration artifacts, not supported target
+contracts for new public or internal APIs.
+
+=== Schema-On-Read And Schema-On-Write
+
+ProximaDB supports both Hadoop/lake-style schema-on-read and relational/OLTP
+schema-on-write, but both modes flow through xCatalog and `ProximaRecord`.
+
+[cols="1,2,3"]
+|===
+| Mode | Typical ingress | Required catalog behavior
+
+| Strict schema-on-write
+| SQL/pgwire `INSERT`, `COPY`, REST/gRPC `InsertRecords`, Arrow Flight batches, embedded
+  pandas/Arrow/numpy loads
+| Declared schema, keys, constraints, defaults, generated columns, type coercion, RLS, and
+  evolution policy are enforced before WAL/storage.
+
+| Flexible schema-on-write
+| document APIs, graph property APIs, entity APIs, semi-structured REST/gRPC payloads
+| Open fields register catalog variations or follow an approved evolution policy. Fields
+  are stored as `ProximaValue` props, refs, edge fields, embeddings, or typed columns.
+
+| Schema-on-read external
+| `CREATE EXTERNAL TABLE`, Iceberg/Parquet/Arrow/JSON/CSV/ORC/Delta/Hudi/external KV files
+| xCatalog records location, ownership, inferred/declared `ProximaType` mapping, lossy
+  conversions, snapshot/isolation, RLS boundary, refresh/write mode, and repair source.
+|===
+
+For Hadoop-style key/value or file formats, the key maps to identity, partition, or an
+indexed column, and the value maps to `Map`, `Json`, `Struct`, `Binary`, or a declared
+`ProximaType`. Readers project external rows into `ProximaRecord` views before query
+planning; file formats do not define durable semantics.
 
 === Canonical record mapping
 
