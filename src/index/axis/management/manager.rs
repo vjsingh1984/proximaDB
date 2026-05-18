@@ -587,6 +587,19 @@ impl AxisManager {
         Ok(())
     }
 
+    /// Insert a canonical ProximaRecord into the AXIS index.
+    ///
+    /// Converts to the internal VectorRecord representation at this boundary
+    /// until the AXIS internals are fully migrated to ProximaRecord.
+    pub async fn insert_record(
+        &self,
+        collection_id: &str,
+        record: &proximadb_records::ProximaRecord,
+    ) -> Result<()> {
+        let v1 = crate::proto::proximadb_v1::VectorRecord::from(record);
+        self.insert(collection_id, &v1).await
+    }
+
     /// Delete a vector (soft delete with expires_at)
     pub async fn delete(&self, collection_id: &str, vector_id: VectorId) -> Result<()> {
         // For MVCC, we don't actually delete - we set expires_at to now

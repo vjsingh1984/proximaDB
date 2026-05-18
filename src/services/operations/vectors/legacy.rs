@@ -3136,12 +3136,13 @@ impl VectorOperationsService {
             .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
             .await?;
 
-        // Index vectors in AXIS — convert to VectorRecord at the AXIS boundary until
-        // AxisIndexManager::insert accepts ProximaRecord directly.
         let axis_start = std::time::Instant::now();
         for record in vectors.iter() {
-            let v1 = crate::proto::proximadb_v1::VectorRecord::from(record);
-            if let Err(e) = self.axis_index_manager.insert(collection_id, &v1).await {
+            if let Err(e) = self
+                .axis_index_manager
+                .insert_record(collection_id, record)
+                .await
+            {
                 tracing::warn!(
                     "Failed to index vector {} in AXIS: {} (search will use linear scan)",
                     record.oid,
