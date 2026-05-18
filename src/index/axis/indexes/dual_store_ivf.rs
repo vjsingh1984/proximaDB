@@ -36,7 +36,6 @@ use crate::infrastructure::tier_policy_engine::InfrastructureTier;
 use crate::index::axis::clustering::{AxisClusteringEngine, ClusteringAlgorithm, ClusteringConfig};
 use crate::index::axis::eventlog::{ExtractionMode, IndexEvent};
 use crate::index::axis::zero_overhead_vector::{CollectionConfig, ZeroOverheadCollection};
-use crate::proto::proximadb_v1::VectorRecord;
 
 /// Partitioned key for collection-aware storage
 #[derive(Debug, Clone, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -1119,23 +1118,7 @@ impl UnifiedIvfIndex {
                 };
 
                 let engine = AxisClusteringEngine::new(config);
-                // Pass vectors directly to clustering engine
-                // No need for VectorRecord conversion
-                let vector_data: Vec<VectorRecord> = training_vectors
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| VectorRecord {
-                        id: format!("training_{}", i),
-                        vector: v.clone(),
-                        metadata: std::collections::HashMap::new(),
-                        timestamp: Some(0),
-                        updated_at: None,
-                        expires_at: None,
-                        version: None,
-                        source: None,
-                    })
-                    .collect();
-                let model = engine.train_model(&self.collection_id, vector_data).await?;
+                let model = engine.train_model(&self.collection_id, training_vectors.clone()).await?;
                 Arc::new(model.centroids)
             }
         };

@@ -12,7 +12,6 @@ use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb_v1::VectorRecord;
 
 // Export ClusterManager
 pub use super::cluster_manager::ClusterManager;
@@ -181,7 +180,7 @@ pub struct AxisClusteringEngine {
     #[allow(dead_code)]
     models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
     /// Pending vectors for incremental updates
-    pending_vectors: Arc<RwLock<HashMap<String, Vec<VectorRecord>>>>,
+    pending_vectors: Arc<RwLock<HashMap<String, Vec<Vec<f32>>>>>,
     /// Distance computation
     distance_compute: Arc<UnifiedDistanceCompute>,
     /// Statistics
@@ -253,27 +252,24 @@ impl AxisClusteringEngine {
     pub async fn train_model(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vector_data: Vec<Vec<f32>>,
     ) -> Result<ClusteringModel> {
         let start_time = std::time::Instant::now();
 
         tracing::info!(
             "🎯 Training clustering model for collection {} with {} vectors",
             collection_id,
-            vectors.len()
+            vector_data.len()
         );
 
         // Check minimum vectors requirement
-        if vectors.len() < self.config.min_vectors_for_clustering {
+        if vector_data.len() < self.config.min_vectors_for_clustering {
             return Err(anyhow::anyhow!(
                 "Not enough vectors for clustering: {} < {}",
-                vectors.len(),
+                vector_data.len(),
                 self.config.min_vectors_for_clustering
             ));
         }
-
-        // Extract vector data
-        let vector_data: Vec<Vec<f32>> = vectors.iter().map(|v| v.vector.clone()).collect();
 
         // Train based on algorithm
         let model = match &self.config.algorithm {
@@ -388,7 +384,7 @@ impl AxisClusteringEngine {
     pub async fn add_pending_vector(
         &self,
         collection_id: &str,
-        vector: VectorRecord,
+        vector: Vec<f32>,
     ) -> Result<()> {
         let mut pending = self.pending_vectors.write().await;
         pending
@@ -1032,36 +1028,9 @@ mod tests {
 
         // Create test vectors
         let vectors = vec![
-            VectorRecord {
-                id: "1".to_string(),
-                vector: vec![1.0, 0.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            },
-            VectorRecord {
-                id: "2".to_string(),
-                vector: vec![0.0, 1.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            },
-            VectorRecord {
-                id: "3".to_string(),
-                vector: vec![-1.0, 0.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            },
+            vec![1.0_f32, 0.0],
+            vec![0.0, 1.0],
+            vec![-1.0, 0.0],
         ];
 
         let model = engine.train_model("test", vectors).await.unwrap();
