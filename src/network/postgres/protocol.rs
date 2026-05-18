@@ -1962,18 +1962,14 @@ impl PostgresProtocol {
             return Ok(0);
         }
 
-        // Convert Arrow batches → VectorRecord → ProximaRecord at the protocol boundary.
-        let v1_records = match ArrowProtoCodec::batches_to_vector_records(batches) {
+        // Convert Arrow batches directly to canonical ProximaRecord envelopes.
+        let vectors = match ArrowProtoCodec::batches_to_proxima_records(batches) {
             Ok(v) => v,
             Err(e) => {
-                warn!("Failed to convert Arrow data to vectors: {}", e);
+                warn!("Failed to convert Arrow data to ProximaRecords: {}", e);
                 return Err(anyhow::anyhow!("Failed to convert Arrow data: {}", e));
             }
         };
-        let vectors: Vec<proximadb_records::ProximaRecord> = v1_records
-            .into_iter()
-            .map(proximadb_records::ProximaRecord::from)
-            .collect();
 
         let count = vectors.len();
         debug!(
