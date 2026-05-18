@@ -4,7 +4,10 @@
 
 use anyhow::Result;
 
-pub use crate::network::arrow_ipc::multimodel_codec::document_schema;
+pub use crate::network::arrow_ipc::multimodel_codec::{
+    detect_model_from_descriptor, document_schema, edge_schema, log_schema, metric_schema,
+    node_schema, relational_schema, relational_schema_from_catalog, trace_schema,
+};
 
 /// Multi-modal codec configuration
 #[derive(Debug, Clone)]
