@@ -324,11 +324,11 @@ impl OptimizedFlushCoordinator {
 /// Convert optimized result to enhanced result when needed
 impl From<OptimizedFlushResult> for EnhancedFlushResult {
     fn from(optimized: OptimizedFlushResult) -> Self {
-        // Convert Arc<VectorRecord> refs to owned VectorRecord
-        let vector_records: Vec<VectorRecord> = optimized
+        // Convert legacy optimized vector refs to canonical records at this adapter boundary.
+        let vector_records: Vec<proximadb_records::ProximaRecord> = optimized
             .vector_refs
             .iter()
-            .map(|arc_vec| (**arc_vec).clone())
+            .map(|arc_vec| (**arc_vec).clone().into())
             .collect();
 
         EnhancedFlushResult::with_deletions(

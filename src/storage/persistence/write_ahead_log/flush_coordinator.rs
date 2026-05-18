@@ -360,8 +360,8 @@ impl WALFlushCoordinator {
         // Step 3: Create flush parameters with actual vector data + BatchId coordination
         let batch_ids = Vec::new(); // No cycle data needed in this simplified flow
 
-        // Clone vector records for AXIS indexing before moving into flush params
-        let vector_records_for_axis = vector_records.clone();
+        // Clone canonical records for projection indexing before moving into flush params.
+        let vector_records_for_indexing = vector_records.clone();
 
         // Check if optimized flush is enabled and use it
         let storage_result = if let Some(optimized) = &self.optimized_coordinator {
@@ -494,17 +494,10 @@ impl WALFlushCoordinator {
             debug!("📊 Recorded flush metrics for collection {}", collection_id);
         }
 
-        // Return enhanced result with vector data for AXIS indexing
-        // Convert ProximaRecord → VectorRecord for EnhancedFlushResult (AXIS indexing uses VectorRecord)
-        use proximadb_records::conversions::proxima_record_to_vector;
-        let vector_records_for_axis_v1: Vec<crate::proto::proximadb_v1::VectorRecord> =
-            vector_records_for_axis
-                .iter()
-                .map(proxima_record_to_vector)
-                .collect();
+        // Return enhanced result with canonical record data for projection indexing.
         Ok(EnhancedFlushResult::new(
             storage_result,
-            vector_records_for_axis_v1,
+            vector_records_for_indexing,
         ))
     }
 
