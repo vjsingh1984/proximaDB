@@ -17,7 +17,7 @@ use tracing::{debug, info};
 use crate::audit::logger::AuditLogger;
 use crate::core::search::FilterExpression;
 use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 use crate::security::encryption::{EncryptionConfig, FieldEncryption, KeyStore, KeyStoreConfig};
 use crate::security::rbac_service::UnifiedUserContext;
 use crate::security::rls::{CollectionRLS, RLSConfig};
@@ -144,7 +144,7 @@ impl SecureCollectionService {
         &self,
         collection: &str,
         user_context: &UnifiedUserContext,
-        records: &mut Vec<VectorRecord>,
+        records: &mut Vec<ProximaRecord>,
     ) -> Result<()> {
         let security_config = self.get_collection_security(collection).ok_or_else(|| {
             anyhow!(
@@ -170,7 +170,7 @@ impl SecureCollectionService {
     pub async fn decrypt_results(
         &self,
         collection: &str,
-        records: &mut [VectorRecord],
+        records: &mut [ProximaRecord],
     ) -> Result<()> {
         let security_config = self.get_collection_security(collection).ok_or_else(|| {
             anyhow!(
@@ -457,10 +457,8 @@ mod tests {
         );
 
         let user_context = create_test_user_context();
-        let mut records = vec![VectorRecord {
-            id: "rec1".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: HashMap::new(),
+        let mut records = vec![ProximaRecord {
+            oid: "rec1".to_string(),
             ..Default::default()
         }];
 
@@ -469,8 +467,8 @@ mod tests {
             .await
             .unwrap();
 
-        // Should have added owner_id metadata
-        assert!(records[0].metadata.contains_key("owner_id"));
+        // Should have added owner_id to props
+        assert!(records[0].props.contains_key("owner_id"));
     }
 
     #[tokio::test]

@@ -2409,7 +2409,7 @@ impl UnifiedStorageEngine for RaptorEngine {
         collection_id: &str,
         base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         tracing::info!(
             "RAPTOR vector_by_id: START - Looking for vector '{}' in collection '{}', base_path '{}'",
             vector_id,
@@ -2607,7 +2607,9 @@ impl UnifiedStorageEngine for RaptorEngine {
                                             vector_id,
                                             i
                                         );
-                                        return Ok(Some(self.reconstruct_vector_record(batch, i)?));
+                                        return Ok(Some(
+                                            self.reconstruct_vector_record(batch, i)?.into(),
+                                        ));
                                     }
                                 }
                             }

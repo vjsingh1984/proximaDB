@@ -18,7 +18,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
@@ -640,7 +639,7 @@ impl UnifiedStorageEngine for SequoiaEngine {
         _collection_id: &str,
         _base_path: &str,
         _vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         Ok(None) // SEQUOIA stores relational rows, not vectors
     }
 

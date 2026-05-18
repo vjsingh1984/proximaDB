@@ -586,7 +586,7 @@ impl RowBasedBatchOperations {
                             partial_results.push(PartialResult {
                                 index: idx,
                                 success: true,
-                                result: Some(record.clone()),
+                                result: Some(ProximaRecord::from(record)),
                                 error: None,
                                 processing_time_ms: lookup_start.elapsed().as_millis() as u64,
                             });

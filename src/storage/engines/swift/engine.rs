@@ -1423,7 +1423,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         collection_id: &str,
         base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Access global unified cache through CrossCacheOrchestrator
         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
         if let Some(orchestrator) =
@@ -1471,9 +1471,9 @@ impl UnifiedStorageEngine for SwiftEngine {
                         crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
                         && let Some(vector_cache) = orchestrator.get_vector_cache()
                     {
-                        let _ = vector_cache.put(cache_key, record.clone()).await;
+                        let _ = vector_cache.put(cache_key, record.clone().into()).await;
                     }
-                    return Ok(Some(record.clone()));
+                    return Ok(Some(record.clone().into()));
                 }
             }
         }

@@ -218,16 +218,6 @@ where
 pub mod utils {
     use crate::proto::proximadb_v1 as proximadb;
 
-    /// Convert a VectorRecord to JSON-friendly format
-    pub fn vector_record_to_json(record: &proximadb::VectorRecord) -> serde_json::Value {
-        serde_json::json!({
-            "id": record.id,
-            "vector": record.vector,
-            "metadata": crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata),
-            "timestamp": record.timestamp,
-            "version": record.version,
-        })
-    }
 
     /// Convert metadata items to JSON object
     pub fn metadata_to_json(

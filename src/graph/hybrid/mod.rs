@@ -150,9 +150,9 @@ use crate::graph::{
     Edge, EdgeId, GraphMemoryPool, Node, NodeId,
     query::{QueryContext, QueryResult, QueryStats},
 };
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::vector_operations_service::VectorOperationsService;
 use proximadb_kernel::error::{ProximaDBError, QueryError, VectorDBError};
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -437,7 +437,7 @@ pub struct VectorCandidate {
     /// Cosine or distance similarity score from vector search.
     pub similarity: f32,
     /// The underlying vector record for this candidate.
-    pub vector_record: VectorRecord,
+    pub vector_record: ProximaRecord,
 }
 
 /// Graph candidate in debug info before fusion.
@@ -1403,20 +1403,26 @@ impl HybridQueryEngine {
                                 .as_ref()
                                 .map(|arc| (**arc).clone())
                                 .unwrap_or_default();
+                            let now_ms = chrono::Utc::now().timestamp_millis();
+                            let dim = vector.len() as u32;
+                            let props = rec.metadata.iter().map(|(k, v)| {
+                                (k.clone(), ProximaTreeNode::Value(v.clone()))
+                            }).collect();
                             candidates.push(VectorCandidate {
                                 node_id: rec.id.clone(),
                                 similarity,
-                                vector_record: VectorRecord {
-                                    id: rec.id,
-                                    vector,
-                                    metadata: crate::core::search::results::proxima_map_to_sql(
-                                        rec.metadata.clone(),
-                                    ),
-                                    timestamp: Some(rec.timestamp.unwrap_or(0)),
-                                    updated_at: Some(rec.updated_at.unwrap_or(0)),
-                                    expires_at: None,
-                                    version: None,
-                                    source: None,
+                                vector_record: ProximaRecord {
+                                    oid: rec.id,
+                                    created_at_ns: rec.timestamp.unwrap_or(now_ms) * 1_000_000,
+                                    updated_at_ns: rec.updated_at.unwrap_or(now_ms) * 1_000_000,
+                                    props,
+                                    embeddings: vec![EmbeddingCell {
+                                        model_id: "default".to_string(),
+                                        modality: "vector".to_string(),
+                                        values: vector,
+                                        dim,
+                                    }],
+                                    ..Default::default()
                                 },
                             });
                         }
@@ -1461,23 +1467,30 @@ impl HybridQueryEngine {
                 let similarity = self.cosine_similarity(&embedding.vector, &query_vector);
 
                 if similarity >= threshold && candidates.len() < max_results {
+                    let dim = embedding.vector.len() as u32;
+                    let props = self.convert_node_properties_to_metadata(&node.properties)
+                        .into_iter()
+                        .map(|(k, v)| {
+                            (k, ProximaTreeNode::Value(
+                                proximadb_data_model::ProximaValue::String(v)
+                            ))
+                        })
+                        .collect();
                     candidates.push(VectorCandidate {
                         node_id: node.id.clone(),
                         similarity,
-                        vector_record: VectorRecord {
-                            id: node.id.clone(),
-                            vector: embedding.vector.clone(),
-                            metadata: self.convert_node_properties_to_metadata(&node.properties)
-                                .into_iter()
-                                .map(|(k, v)| (k, crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v))
-                                }))
-                                .collect(),
-                            timestamp: Some(node.created_at_ms),
-                            updated_at: Some(node.updated_at_ms),
-                            expires_at: None,
-                            version: None,
-                            source: None,
+                        vector_record: ProximaRecord {
+                            oid: node.id.clone(),
+                            created_at_ns: node.created_at_ms * 1_000_000,
+                            updated_at_ns: node.updated_at_ms * 1_000_000,
+                            props,
+                            embeddings: vec![EmbeddingCell {
+                                model_id: "default".to_string(),
+                                modality: "vector".to_string(),
+                                values: embedding.vector.clone(),
+                                dim,
+                            }],
+                            ..Default::default()
                         },
                     });
                 }

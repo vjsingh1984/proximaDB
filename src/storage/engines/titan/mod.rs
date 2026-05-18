@@ -52,7 +52,6 @@ use crate::storage::traits::{
     StorageQueryContext, UnifiedStorageEngine,
 };
 
-use crate::proto::proximadb_v1::VectorRecord;
 
 // ---------------------------------------------------------------------------
 // TitanEngine -- thin UnifiedStorageEngine wrapper for factory registration
@@ -132,7 +131,7 @@ impl UnifiedStorageEngine for TitanEngine {
         collection_id: &str,
         base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         let _ = (collection_id, base_path, vector_id);
         Ok(None)
     }

@@ -109,7 +109,7 @@ impl UnifiedStorageEngine for SstEngine {
         collection_id: &str,
         _base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         debug!(
             "🔍 SST: Looking up vector {} in collection {}",
             vector_id, collection_id

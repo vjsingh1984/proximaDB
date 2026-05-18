@@ -117,7 +117,7 @@ impl StageResult {
 #[derive(Debug, Clone)]
 pub struct PipelineResult {
     /// Final results
-    pub results: Vec<crate::proto::proximadb_v1::VectorRecord>,
+    pub results: Vec<proximadb_records::ProximaRecord>,
     /// Results from each intermediate stage
     pub stages: Vec<StageResult>,
     /// Total pipeline execution time in milliseconds

@@ -165,11 +165,12 @@ impl VectorSearchEngine {
     /// Add vectors to the index
     pub async fn add_vectors(
         &self,
-        vectors: Vec<(String, Arc<crate::proto::proximadb_v1::VectorRecord>)>,
+        vectors: Vec<(String, Arc<proximadb_records::ProximaRecord>)>,
     ) -> Result<()> {
         if let Some(index) = &self.axis_index {
             for (id, record) in vectors {
-                index.add(id, record.vector.clone()).await?;
+                let values = record.embeddings.first().map(|e| e.values.clone()).unwrap_or_default();
+                index.add(id, values).await?;
             }
             Ok(())
         } else if matches!(self.algorithm, SearchAlgorithm::BruteForce) {

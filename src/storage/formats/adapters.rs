@@ -49,6 +49,7 @@ use arrow_schema::{DataType as ArrowDataType, Field, Schema as ArrowSchema};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream;
+use proximadb_records::ProximaTreeNode;
 use tracing::{debug, warn};
 
 use super::traits::{
@@ -267,24 +268,27 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
             .await?
         {
             Some(record) => {
-                // Convert VectorRecord to VectorBatch
-                let dimension = record.vector.len();
-                let metadata = if record.metadata.is_empty() {
+                // Convert canonical ProximaRecord to the legacy VectorBatch adapter shape.
+                let vector = record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.clone())
+                    .unwrap_or_default();
+                let dimension = vector.len();
+                let metadata = if record.props.is_empty() {
                     None
                 } else {
                     let meta_map: HashMap<String, serde_json::Value> = record
-                        .metadata
+                        .props
                         .iter()
-                        .filter_map(|(k, v)| {
-                            sql_value_to_json(v).map(|json_val| (k.clone(), json_val))
-                        })
+                        .map(|(k, v)| (k.clone(), proxima_tree_node_to_json(v)))
                         .collect();
                     Some(vec![meta_map])
                 };
 
                 Ok(Some(VectorBatch {
-                    ids: vec![record.id],
-                    vectors: record.vector,
+                    ids: vec![record.oid],
+                    vectors: vector,
                     dimension,
                     metadata,
                 }))
@@ -498,6 +502,13 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
         // This would typically use the engine's filesystem factory
         // For now, return empty list - real implementation would enumerate files
         Ok(Vec::new())
+    }
+}
+
+fn proxima_tree_node_to_json(node: &ProximaTreeNode) -> serde_json::Value {
+    match node {
+        ProximaTreeNode::Value(value) => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+        other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
     }
 }
 

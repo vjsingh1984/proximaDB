@@ -1285,7 +1285,7 @@ mod tests {
                 _collection_id: &str,
                 _base_path: &str,
                 _vector_id: &str,
-            ) -> Result<Option<VectorRecord>> {
+            ) -> Result<Option<proximadb_records::ProximaRecord>> {
                 Ok(None)
             }
 

@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::observability::ObservabilityStorageEngine;
-use crate::proto::proximadb_v1::{LogEntry, MetricSample, TraceData, VectorRecord};
+use crate::proto::proximadb_v1::{LogEntry, MetricSample, TraceData};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
@@ -324,7 +324,7 @@ impl UnifiedStorageEngine for ChronoEngine {
         _collection_id: &str,
         _base_path: &str,
         _vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         Ok(None) // CHRONO stores observability data, not vectors
     }
 

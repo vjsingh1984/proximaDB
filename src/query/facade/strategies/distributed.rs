@@ -821,7 +821,7 @@ mod tests {
             _collection_id: &str,
             _base_path: &str,
             _vector_id: &str,
-        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        ) -> Result<Option<proximadb_records::ProximaRecord>> {
             Ok(None)
         }
 

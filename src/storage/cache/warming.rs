@@ -354,7 +354,7 @@ impl CacheWarmer {
         engine: &Arc<dyn UnifiedStorageEngine>,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Deferred: Get base_path from collection metadata service
         // For now, use default path
         let _base_path = "/data/collections";

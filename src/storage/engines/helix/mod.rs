@@ -2083,7 +2083,7 @@ impl UnifiedStorageEngine for HelixEngine {
         collection_id: &str,
         base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Access global unified cache through CrossCacheOrchestrator
         if let Some(orchestrator) =
             crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
@@ -2143,10 +2143,10 @@ impl UnifiedStorageEngine for HelixEngine {
                     {
                         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
                         if let Some(vector_cache) = orchestrator.get_vector_cache() {
-                            let _ = vector_cache.put(cache_key, vector.clone()).await;
+                            let _ = vector_cache.put(cache_key, vector.clone().into()).await;
                         }
                     }
-                    return Ok(Some(vector));
+                    return Ok(Some(vector.into()));
                 }
             }
         }

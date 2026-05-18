@@ -2053,7 +2053,7 @@ mod executor_tests {
                 _: &str,
                 _: &str,
                 _: &str,
-            ) -> anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+            ) -> anyhow::Result<Option<proximadb_records::ProximaRecord>> {
                 Ok(None)
             }
             async fn search_vectors_unified(

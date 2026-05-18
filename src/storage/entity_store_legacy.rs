@@ -1360,7 +1360,7 @@ mod tests {
             _c: &str,
             _b: &str,
             _v: &str,
-        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        ) -> Result<Option<proximadb_records::ProximaRecord>> {
             Ok(None)
         }
         async fn search_vectors_unified(

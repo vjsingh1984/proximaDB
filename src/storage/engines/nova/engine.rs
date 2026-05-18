@@ -1443,7 +1443,7 @@ impl UnifiedStorageEngine for NovaEngine {
         collection_id: &str,
         base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Access global unified cache through CrossCacheOrchestrator
         let cache_key = format!("vector:{}:{}", collection_id, vector_id);
         if let Some(orchestrator) =

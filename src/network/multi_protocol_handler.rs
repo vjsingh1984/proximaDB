@@ -98,7 +98,7 @@ pub enum RequestProtocol {
 }
 
 /// Unified query request that normalizes all protocol-specific requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub enum UnifiedQueryRequest {
     /// Vector similarity search
     VectorSearch(VectorSearchQuery),
@@ -154,25 +154,14 @@ pub struct SearchParams {
 }
 
 /// Vector batch operation (normalized)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct VectorBatchOperation {
     /// Collection ID
     pub collection_id: String,
     /// Vectors to insert/update
-    pub vectors: Vec<VectorRecord>,
+    pub vectors: Vec<proximadb_records::ProximaRecord>,
     /// Source protocol
     pub source: RequestProtocol,
-}
-
-/// Vector record (normalized)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorRecord {
-    /// Unique vector identifier
-    pub id: String,
-    /// Vector embedding values
-    pub vector: Vec<f32>,
-    /// Key-value metadata associated with the vector
-    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// SQL query request (normalized)
@@ -439,17 +428,48 @@ impl UnifiedQueryRequest {
 
     /// Convert from REST VectorBatchRequest proto
     pub fn from_rest_batch(request: &proximadb_v1::VectorBatchRequest) -> Result<Self> {
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let vectors = request
             .vectors
             .iter()
-            .map(|v| VectorRecord {
-                id: v.id.clone(),
-                vector: v.vector.clone(),
-                metadata: v
+            .map(|v| {
+                let dim = v.vector.len() as u32;
+                let props = v
                     .metadata
                     .iter()
-                    .map(|(k, sv)| (k.clone(), sql_value_to_json(sv)))
-                    .collect(),
+                    .map(|(k, sv)| {
+                        use proximadb_data_model::ProximaValue;
+                        let val = match sv.value.as_ref() {
+                            Some(proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                ProximaValue::String(s.clone())
+                            }
+                            Some(proximadb_v1::sql_value::Value::NumberValue(f)) => {
+                                ProximaValue::Float64(*f)
+                            }
+                            Some(proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                                ProximaValue::Int64(*i)
+                            }
+                            Some(proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                                ProximaValue::Boolean(*b)
+                            }
+                            _ => ProximaValue::String(String::new()),
+                        };
+                        (k.clone(), ProximaTreeNode::Value(val))
+                    })
+                    .collect();
+                proximadb_records::ProximaRecord {
+                    oid: v.id.clone(),
+                    created_at_ns: now_ns,
+                    updated_at_ns: now_ns,
+                    props,
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        values: v.vector.clone(),
+                        dim,
+                    }],
+                    ..Default::default()
+                }
             })
             .collect();
 
@@ -1352,42 +1372,17 @@ impl UnifiedQueryHandler {
             "Executing vector batch"
         );
 
-        let vectors: Vec<proximadb_v1::VectorRecord> = batch
-            .vectors
-            .iter()
-            .map(|v| proximadb_v1::VectorRecord {
-                id: v.id.clone(),
-                vector: v.vector.clone(),
-                metadata: v
-                    .metadata
-                    .iter()
-                    .map(|(k, v)| (k.clone(), json_to_sql_value(v)))
-                    .collect(),
-                version: None,
-                timestamp: None,
-                source: None,
-                updated_at: None,
-                expires_at: None,
-            })
-            .collect();
-
-        let request = proximadb_v1::VectorBatchRequest {
-            collection_id: batch.collection_id.clone(),
-            vectors,
-        };
-
         let response = self
             .vector_ops
-            .vector_batch_v1(request)
+            .insert_batch(&batch.collection_id, batch.vectors.clone())
             .await
             .map_err(|e| anyhow!("Vector batch failed: {}", e))?;
 
-        let metrics = response.metrics.as_ref();
-        let inserted = metrics.map_or(0, |m| m.successful_count as u32);
+        let inserted = response.vector_ids.len() as u32;
 
         Ok(UnifiedQueryResponse {
             success: response.success,
-            error: response.error_message.clone(),
+            error: response.errors.first().cloned(),
             data: ResponseData::BatchResult {
                 inserted,
                 updated: 0,

@@ -1097,7 +1097,7 @@ impl StorageReader for TimeSeriesEngine {
         _collection_id: &str,
         _base_path: &str,
         _vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Time-series engine doesn't support individual vector lookups
         // Use query_time_range instead
         Ok(None)
@@ -1345,7 +1345,7 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
         collection_id: &str,
         base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Time-series engine doesn't support individual vector lookups
         // Use query_time_range instead
         let _ = (collection_id, base_path, vector_id);

@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::{AggregationStage, DocumentUpdate, IndexDefinition, VectorRecord};
+use crate::proto::proximadb_v1::{AggregationStage, DocumentUpdate, IndexDefinition};
 use crate::storage::document::{
     AggregateResult, DocumentQueryParams, DocumentQueryResult, DocumentRecord,
     DocumentStorageEngine, FlushToStorageResult,
@@ -425,7 +425,7 @@ impl UnifiedStorageEngine for CedarEngine {
         _collection_id: &str,
         _base_path: &str,
         _vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         Ok(None) // CEDAR stores documents, not vectors
     }
 

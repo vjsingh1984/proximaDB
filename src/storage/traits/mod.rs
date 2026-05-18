@@ -629,7 +629,7 @@ pub trait UnifiedStorageEngine: Send + Sync {
         collection_id: &str,
         base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>>;
+    ) -> Result<Option<proximadb_records::ProximaRecord>>;
 
     /// Engine-specific unified search with optimization capabilities (required)
     /// Each engine implements its own optimizations:
