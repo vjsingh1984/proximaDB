@@ -75,3 +75,120 @@ ProximaDB serves an **Iceberg REST Catalog v1** at `/iceberg/v1` (port 5678) —
 - `docs/12-design/adr/ADR-008-oltp-catalog-backends.adoc` — OLTP decision, DDL schema, size-based routing, backend feature flags
 
 Key source files: `src/catalog/iceberg_rest_service.rs`, `src/network/rest/v1/iceberg_rest_catalog.rs`, `src/catalog/oltp.rs`, `src/catalog/mod.rs` (`catalog_for_size()`), `proto/proximadb/v1/catalog.proto`.
+
+---
+
+## Stacked Durability Layers (ADR-010)
+
+```
+Layer 0: WAL (CanonicalOperation::RecordUpsert)      — durable journal, crash-safe
+Layer 1: ProximaRecord in VIPER/NOVA/HELIX           — canonical record engines
+Layer 2: PAX blocks + PaxSegment files (*.pax)       — rebuildable columnar projections ← NEW
+Layer 3: Iceberg REST / Arrow Flight facades          — external protocol adapters
+```
+
+**Key invariant**: Layers 1-3 are rebuildable from Layer 0.  Never introduce a separate WAL or transaction semantics for a Layer 2/3 projection.
+
+### PAX Block Format (`proximadb-block-format`)
+
+Physical layout (one block):
+```
+[BlockHeader: 64B][RowDirectory: N×32B][ColumnStripes][ColumnMeta × N_cols: 64B each][BlockFooter: 32B]
+```
+
+**Predicate pruning hierarchy** (evaluated without reading full block data):
+1. `BlockHeader.tenant_id_hash` mismatch → skip block  (engine-level RLS skip)
+2. `BlockHeader.min_timestamp_ns / max_timestamp_ns` outside query range → skip block
+3. `ColumnMeta.min_val / max_val` excludes predicate value → skip stripe
+4. `RowEntry.valid_from_ns / valid_to_ns` outside query snapshot → skip row (MVCC)
+
+**Canonical Column IDs (ADR-010, stable — never reuse an ID)**:
+
+| ID | Field | Role |
+|----|-------|------|
+| 0 | `oid` | Record identity |
+| 1 | `tenant_id` | Tenancy / RLS partition key |
+| 2 | `created_at_ns` | Wall-clock insert timestamp |
+| 3 | `updated_at_ns` | Last mutation timestamp |
+| 4 | `valid_from_ns` | Bi-temporal valid-time start |
+| 5 | `valid_to_ns` | Bi-temporal valid-time end |
+| 6 | `actor` | Provenance: who caused the write |
+| 7 | `origin` | Provenance: system/pipeline origin |
+| 8 | `props` | msgpack-encoded property map |
+| 9 | `labels` | string list (tags) |
+| 10 | `edge_src` | Graph edge source OID |
+| 11 | `edge_tgt` | Graph edge target OID |
+| 12 | `edge_type` | Graph edge type string |
+| 13 | `edge_weight` | Graph edge weight (f32) |
+| 20 | `embed_base` | Base of embedding columns (model 0) |
+| 100+ | User-defined | Application-specific columns |
+
+**Block modes**: `Pax` (default — row dir + column stripes), `Oltp` (row dir only), `Olap` (column stripes only).
+Use `SelectionContext::for_pax_stripe()` / `::for_olap_stripe()` / `::for_oltp_row()` to tell the codec the access pattern.
+
+**PaxSegment layer** (`proximadb-storage-common::pax_block`):
+- `PaxSegmentWriter` — file-backed multi-block writer; auto-flushes at threshold; returns `SegmentMeta` with `BlockStats`
+- `PaxSegmentScanner` — reads segment index from file tail, yields `PaxBlockReader` per block passing tenant/time predicates
+- Segment files: `*.pax`, terminated with `b"PAXSEG01"` magic + CRC-verified index
+
+---
+
+## Protocol Surfaces
+
+| Protocol | Default Port | Use |
+|----------|-------------|-----|
+| REST/gRPC unified | 5678 | Primary API, Iceberg REST (`/iceberg/v1`), health |
+| gRPC multi-port | 5679 | Dedicated gRPC when `api.unified_mode = false` |
+| PostgreSQL wire | 5433 | pgvector-compatible SQL queries (`<->` operator) |
+| Arrow Flight | 5680 | High-throughput record streaming, Arrow Flight SQL |
+
+### Querying ProximaDB
+
+**Arrow Flight SQL** (recommended for agents, high-throughput):
+```python
+from pyarrow import flight
+client = flight.connect("grpc://localhost:5680")
+result = client.execute("SELECT * FROM my_collection WHERE tenant_id = 'acme' LIMIT 100")
+table = result.read_all()
+```
+
+**AQL** (ProximaDB native query language):
+```
+SEARCH my_collection
+WHERE labels CONTAINS 'product'
+VECTOR SEARCH embedding NEAR [0.1, 0.2, ...] TOP 10
+RETURN id, props, _score
+```
+
+**Natural Language** (via `/api/v1/query/nl`):
+```json
+{ "query": "Find products similar to the blue running shoe", "collection": "my_collection" }
+```
+
+---
+
+## xCatalog as Single Control Plane
+
+All catalog operations (namespace, schema, stats, partitions, snapshots) go through `CatalogManager` in `src/catalog/mod.rs`.  The `Catalog` trait (`crates/control/proximadb-catalog/src/lib.rs`) is the canonical interface; backends implement it without root dep.
+
+**Size-based routing** (`catalog_for_size(bytes)`):
+- `< 1 GB` → `OltpCatalog` (PostgreSQL/Neon/Supabase, MariaDB, SQLite — fast ACID metadata)
+- `≥ 1 GB` → lakehouse catalog (Iceberg REST, Delta, native)
+
+**Feature flags** (build with `--features oltp-catalog-postgres` etc.):
+```
+oltp-catalog-postgres  — Neon / Supabase / CockroachDB
+oltp-catalog-mysql     — MariaDB / TiDB / PlanetScale
+oltp-catalog-sqlite    — SQLite (embedded/dev, default DSN: sqlite::memory:)
+```
+
+---
+
+## Sticky ADR Reference
+
+| ADR | Title | Decision |
+|-----|-------|----------|
+| ADR-007 | Iceberg REST Catalog Server | Mount at `/iceberg/v1`; synthetic snapshots; Arrow Flight tickets in write-credentials |
+| ADR-008 | OLTP Catalog Backends | Metadata-only (never record data); sqlx; size-threshold routing at 1 GB |
+| ADR-009 | Schema Modes & ProximaRecord Surfaces | All protocol surfaces are xCatalog + ProximaRecord; breaking vector-only API authority is acceptable |
+| ADR-010 | PAX Block Format (Layer 2) | Hybrid row dir + column stripes; 64B BlockHeader; stable canonical column IDs; no tokio in block crate |

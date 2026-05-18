@@ -154,9 +154,45 @@ Table properties carry HNSW index metadata: `proximadb.index.{col}.type`, `.dim`
 
 Use `ProximaValue` (not legacy `SqlValue`) for all typed integrations.  Full Arrow/Parquet type mapping in the design doc above.
 
+## PAX Block Format & Stacked Durability
+
+ProximaDB stores data in stacked layers so any layer can be rebuilt from the layer above it in the stack:
+
+```
+Layer 0: WAL                   — crash-safe durable journal
+Layer 1: ProximaRecord engines — canonical storage (VIPER / NOVA / HELIX)
+Layer 2: PAX blocks (*.pax)   — rebuildable columnar projections
+Layer 3: Protocol facades      — Iceberg REST, Arrow Flight, pgwire
+```
+
+PAX blocks (`proximadb-block-format` crate) combine a MVCC row directory (OLTP fast-path) with Arrow-compatible column stripes (OLAP scan path) in a single block.  `BlockHeader` carries `tenant_id_hash`, `min_timestamp_ns`/`max_timestamp_ns`, and a `schema_fingerprint` so readers can prune at the block level before touching any data.
+
+Use `SelectionContext::for_pax_stripe()` when constructing codec contexts for PAX stripe reads.
+
+**Canonical column IDs** (ADR-010, never reuse): OID=0, TENANT_ID=1, CREATED_AT=2, UPDATED_AT=3, VALID_FROM=4, VALID_TO=5, ACTOR=6, ORIGIN=7, PROPS=8, LABELS=9, EDGE_SRC=10, EDGE_TGT=11, EDGE_TYPE=12, EDGE_WEIGHT=13, EMBED_BASE=20, USER_BASE≥100.
+
+---
+
 ## 🔍 Quick Reference
 - **Default Port:** 5678 (Unified), 5679 (gRPC), 5433 (PostgreSQL wire), 5680 (Arrow Flight).
 - **Default Data Path:** `/tmp/proximadb/`.
 - **Health Check:** `curl http://localhost:5678/health`.
 - **Log Levels:** `RUST_LOG=proximadb=debug`.
+
+### Arrow Flight SQL (high-throughput integration for Gemini pipelines)
+
+```python
+import pyarrow.flight as flight
+
+client = flight.FlightClient("grpc://localhost:5680")
+# Execute SQL query
+descriptor = flight.FlightDescriptor.for_command(
+    b'SELECT id, tenant_id, props, labels FROM my_collection LIMIT 1000'
+)
+info = client.get_flight_info(descriptor)
+reader = client.do_get(info.endpoints[0].ticket)
+table = reader.read_all()  # returns pyarrow.Table with ProximaRecord schema
+```
+
+For multimodal records (text + embedding), project `embedding_{model_id}` columns as Arrow `list<float32>`.  Use the Iceberg table properties `proximadb.index.{col}.dim` and `.type` to discover index configuration before building embedding queries.
 - **Iceberg Catalog URI:** `http://localhost:5678/iceberg/v1`.
