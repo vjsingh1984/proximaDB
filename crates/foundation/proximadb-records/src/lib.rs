@@ -561,4 +561,27 @@ mod tests {
         assert_eq!(back.tenant_id, "acme");
         assert!(back.labels.contains("vector"));
     }
+
+    #[test]
+    fn test_search_response_carries_scored_records() {
+        let record = ProximaRecord {
+            oid: "rec_search".to_string(),
+            ..ProximaRecord::default()
+        };
+        let response = SearchResponse {
+            records: vec![ScoredRecord {
+                record,
+                score: 0.98,
+                rank: 1,
+            }],
+            total_found: 1,
+            collection_id: "docs".to_string(),
+            query_time_us: 42,
+        };
+
+        assert_eq!(response.records[0].record.oid, "rec_search");
+        assert_eq!(response.records[0].rank, 1);
+        assert_eq!(response.total_found, 1);
+        assert_eq!(response.collection_id, "docs");
+    }
 }
