@@ -171,8 +171,11 @@ mod pool_impl {
 
     pub async fn connect(url: &str, max_connections: u32) -> Result<AnyPool> {
         sqlx::any::install_default_drivers();
+        // SQLite in-memory databases are per-connection. Cap to 1 so DDL and DML
+        // always use the same connection and share the same in-memory schema.
+        let effective_max = if url.contains(":memory:") { 1 } else { max_connections };
         let pool = sqlx::pool::PoolOptions::<sqlx::Any>::new()
-            .max_connections(max_connections)
+            .max_connections(effective_max)
             .connect(url)
             .await
             .map_err(|e| anyhow!("OLTP catalog connection failed: {}", e))?;
