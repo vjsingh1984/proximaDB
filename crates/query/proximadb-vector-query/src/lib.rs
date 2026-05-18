@@ -21,16 +21,15 @@ pub struct VectorSearchExpr {
 
 use async_trait::async_trait;
 use proximadb_kernel::error::ProximaDBError;
-use proximadb_proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Canonical vector-query contract result type.
 pub type VectorQueryResult<T> = std::result::Result<T, ProximaDBError>;
 
 /// Core vector search request for stable cross-modal queries.
 ///
-/// This request type uses proto types (`VectorRecord`) for results and stable
-/// primitive types for parameters, making it suitable for trait-based service
-/// contracts without depending on legacy request types.
+/// This request type uses `ProximaRecord` for results and stable primitive types
+/// for parameters, making it suitable for trait-based service contracts.
 #[derive(Debug, Clone)]
 pub struct VectorSearchRequest {
     /// Collection to search.
@@ -47,11 +46,11 @@ pub struct VectorSearchRequest {
     pub filter: Option<String>,
 }
 
-/// Vector search result using proto types for stability.
+/// Vector search result using canonical record format.
 #[derive(Debug, Clone)]
 pub struct VectorSearchResult {
     /// Retrieved vectors with scores.
-    pub results: Vec<VectorRecord>,
+    pub results: Vec<ProximaRecord>,
     /// Total count before limit/threshold was applied.
     pub total_count: usize,
     /// Query execution time in milliseconds.
@@ -67,7 +66,7 @@ pub struct VectorSearchResult {
 ///
 /// Design principles:
 /// - **Narrow**: Only essential search operations to keep the trait focused
-/// - **Stable types**: Uses proto types (`VectorRecord`) for results
+/// - **Stable types**: Uses `ProximaRecord` (canonical envelope) for results
 /// - **Async**: All operations are async to support multiple storage backends
 /// - **Error handling**: Uses `ProximaDBError` for consistent error reporting
 #[async_trait]

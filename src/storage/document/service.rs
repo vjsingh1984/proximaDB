@@ -640,27 +640,27 @@ impl DocumentService {
         let mut props = proximadb_records::ProximaTree::new();
         props.insert(
             "_type".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String("document".to_string()),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "document".to_string(),
+            )),
         );
         props.insert(
             "_collection".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String(collection.to_string()),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                collection.to_string(),
+            )),
         );
         props.insert(
             "_document".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String(doc_json),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                doc_json,
+            )),
         );
         props.insert(
             "_version".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::Int64(doc.version as i64),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Int64(
+                doc.version as i64,
+            )),
         );
 
         Some(proximadb_records::ProximaRecord {

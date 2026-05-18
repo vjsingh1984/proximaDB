@@ -1134,8 +1134,11 @@ Tasks:
 ** `BulkWriteRouter::should_use_direct_write_records` estimates rich canonical record batches without downcasting to legacy `VectorRecord`.
 * [x] Keep vector-only WAL/search compatibility paths from becoming new authority.
 ** WAL/search migration work should use `ProximaRecord` as the canonical in-memory/storage envelope and leave `VectorRecord` only at v1 compatibility edges.
-* [ ] Wire Arrow Flight `GetSchema` to resolve xCatalog table schemas and return catalog-derived Arrow schemas when a relational/table descriptor is supplied.
-** Current live service still falls back to `ArrowProtoCodec::create_vector_schema` for collection descriptors; this is the next Arrow Flight schema task.
+* [x] Add Arrow Flight `GetSchema` catalog resolution for relational/table descriptors.
+** `ProximaFlightService::catalog_arrow_schema_for_descriptor` resolves relational/table descriptors through xCatalog and returns `relational_schema_from_catalog`.
+** Vector collection descriptors still fall back to `ArrowProtoCodec::create_vector_schema`.
+* [ ] Wire server composition to inject the shared xCatalog manager into every `ProximaFlightService` instance.
+** The service now has `with_catalog_manager`; integrated server builders must pass the same catalog manager used by SQL/REST catalog paths.
 * [ ] Wire live Arrow Flight DoPut/DoExchange relational/table ingestion through `CatalogBulkWriteService` so the catalog-validated `ProximaRecord` preparation path is exercised by the protocol handler.
 ** Preserve large-batch behavior by using canonical-record routing decisions, not vector-count-only heuristics.
 * [ ] Replace remaining REST/gRPC/embedded insert and streaming shims with v2 `ProximaRecord`/`ProximaValue` contracts below protocol compatibility adapters.

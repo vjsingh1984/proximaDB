@@ -5,13 +5,13 @@
 //! This is part of Phase 3 of the workspace refactor: extracting modality runtimes.
 
 use async_trait::async_trait;
+use proximadb_data_model::ProximaValue;
 use proximadb_kernel::error::{ProximaDBError, QueryError};
-use proximadb_proto::proximadb_v1::{SqlValue, VectorRecord};
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use proximadb_vector_query::{
     DistanceMetric as ContractDistanceMetric, VectorQueryService, VectorSearchRequest,
     VectorSearchResult,
 };
-use std::collections::HashMap;
 use std::time::Instant;
 use tracing::{debug, info};
 
@@ -79,7 +79,7 @@ impl VectorServiceImpl {
     async fn execute_search(
         &self,
         request: &VectorSearchRequest,
-    ) -> Result<Vec<VectorRecord>, ProximaDBError> {
+    ) -> Result<Vec<ProximaRecord>, ProximaDBError> {
         info!(
             collection = %request.collection_id,
             top_k = request.top_k,
@@ -128,10 +128,9 @@ impl VectorServiceImpl {
         &self,
         request: &VectorSearchRequest,
         metric: &DistanceMetric,
-    ) -> Result<Vec<VectorRecord>, ProximaDBError> {
+    ) -> Result<Vec<ProximaRecord>, ProximaDBError> {
         let mut results = Vec::new();
 
-        // For demonstration, generate synthetic results based on query vector characteristics
         let query_norm: f32 = request
             .query_vector
             .iter()
@@ -139,20 +138,19 @@ impl VectorServiceImpl {
             .sum::<f32>()
             .sqrt();
 
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+
         for i in 0..request.top_k.min(10) {
-            // Generate a mock vector with some similarity to the query
             let mock_vector: Vec<f32> = request
                 .query_vector
                 .iter()
                 .enumerate()
                 .map(|(idx, val)| {
-                    // Add variation based on index to create different "vectors"
                     let variation = (idx as f32 * 0.01) + (i as f32 * 0.02);
                     (val + variation).clamp(-1.0, 1.0)
                 })
                 .collect();
 
-            // Compute similarity score based on metric
             let score = match metric {
                 DistanceMetric::Cosine => {
                     let mock_norm: f32 = mock_vector.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -175,7 +173,7 @@ impl VectorServiceImpl {
                         .zip(mock_vector.iter())
                         .map(|(a, b)| (a - b) * (a - b))
                         .sum();
-                    1.0 / (1.0 + sq_diff.sqrt()) // Convert distance to similarity
+                    1.0 / (1.0 + sq_diff.sqrt())
                 }
                 DistanceMetric::DotProduct => {
                     let dot_product: f32 = request
@@ -193,70 +191,52 @@ impl VectorServiceImpl {
                         .zip(mock_vector.iter())
                         .map(|(a, b)| (a - b).abs())
                         .sum();
-                    1.0 / (1.0 + manhattan) // Convert distance to similarity
+                    1.0 / (1.0 + manhattan)
                 }
                 _ => 0.0,
             };
 
-            // Create metadata with score
-            let mut metadata = HashMap::new();
-            metadata.insert(
+            let dim = mock_vector.len() as u32;
+            let mut props = ProximaTree::new();
+            props.insert(
                 "score".to_string(),
-                SqlValue {
-                    value: Some(
-                        proximadb_proto::proximadb_v1::sql_value::Value::NumberValue(score.into()),
-                    ),
-                },
+                ProximaTreeNode::Value(ProximaValue::Float64(score as f64)),
             );
-            metadata.insert(
+            props.insert(
                 "modality".to_string(),
-                SqlValue {
-                    value: Some(
-                        proximadb_proto::proximadb_v1::sql_value::Value::StringValue(
-                            "vector-runtime".to_string(),
-                        ),
-                    ),
-                },
+                ProximaTreeNode::Value(ProximaValue::String("vector-runtime".to_string())),
             );
 
-            results.push(VectorRecord {
-                id: format!("vec_{}_{}", request.collection_id, i),
-                vector: mock_vector,
-                metadata,
-                timestamp: None,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: Some("modality-runtime".to_string()),
+            results.push(ProximaRecord {
+                oid: format!("vec_{}_{}", request.collection_id, i),
+                record_version: 1,
+                created_at_ns: now_ns,
+                updated_at_ns: now_ns,
+                origin: Some("modality-runtime".to_string()),
+                props,
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: mock_vector,
+                    dim,
+                }],
+                ..Default::default()
             });
         }
 
-        // Sort by score (descending)
+        // Sort by score descending
         results.sort_by(|a, b| {
-            let score_a = a
-                .metadata
-                .get("score")
-                .and_then(|v| v.value.as_ref())
-                .and_then(|v| match v {
-                    proximadb_proto::proximadb_v1::sql_value::Value::NumberValue(f) => Some(f),
-                    _ => None,
-                })
-                .copied()
-                .unwrap_or(0.0);
-
-            let score_b = b
-                .metadata
-                .get("score")
-                .and_then(|v| v.value.as_ref())
-                .and_then(|v| match v {
-                    proximadb_proto::proximadb_v1::sql_value::Value::NumberValue(f) => Some(f),
-                    _ => None,
-                })
-                .copied()
-                .unwrap_or(0.0);
-
-            score_b
-                .partial_cmp(&score_a)
+            let score_of = |r: &ProximaRecord| {
+                r.props
+                    .get("score")
+                    .and_then(|n| match n {
+                        ProximaTreeNode::Value(ProximaValue::Float64(f)) => Some(*f),
+                        _ => None,
+                    })
+                    .unwrap_or(0.0)
+            };
+            score_of(b)
+                .partial_cmp(&score_of(a))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
@@ -302,16 +282,12 @@ impl VectorQueryService for VectorServiceImpl {
                 .into_iter()
                 .filter(|record| {
                     record
-                        .metadata
+                        .props
                         .get("score")
-                        .and_then(|v| v.value.as_ref())
-                        .and_then(|v| match v {
-                            proximadb_proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
-                                Some(f)
-                            }
+                        .and_then(|n| match n {
+                            ProximaTreeNode::Value(ProximaValue::Float64(f)) => Some(*f),
                             _ => None,
                         })
-                        .copied()
                         .map_or(false, |score| score >= threshold as f64)
                 })
                 .collect()
@@ -395,11 +371,10 @@ mod tests {
         // All results should have score >= threshold
         for record in &result.results {
             let score = record
-                .metadata
+                .props
                 .get("score")
-                .and_then(|v| v.value.as_ref())
-                .and_then(|v| match v {
-                    proximadb_proto::proximadb_v1::sql_value::Value::NumberValue(f) => Some(*f),
+                .and_then(|n| match n {
+                    ProximaTreeNode::Value(ProximaValue::Float64(f)) => Some(*f),
                     _ => None,
                 })
                 .unwrap_or(0.0);

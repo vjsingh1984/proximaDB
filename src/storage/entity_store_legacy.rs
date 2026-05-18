@@ -286,7 +286,10 @@ impl ProximaEntityStore {
                 })
                 .collect();
             let _ = vs
-                .handle_vector_batch_proto_vec(collection_id, vectors)
+                .handle_vector_batch_proto_vec(
+                    collection_id,
+                    vectors.into_iter().map(Into::into).collect(),
+                )
                 .await?;
         }
         Ok(())

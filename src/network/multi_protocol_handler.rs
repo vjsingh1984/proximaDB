@@ -70,6 +70,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use proximadb_graph_query::service::GraphQueryService;
+use proximadb_records::ProximaTreeNode;
 use proximadb_vector_query::VectorQueryService;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, instrument};
@@ -568,6 +569,29 @@ fn score_from_metadata(metadata: &HashMap<String, proximadb_v1::SqlValue>) -> f6
             _ => None,
         })
         .unwrap_or(0.0)
+}
+
+fn score_from_props(props: &proximadb_records::ProximaTree) -> f64 {
+    props
+        .get("score")
+        .and_then(|node| match node {
+            ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Float64(value)) => {
+                Some(*value)
+            }
+            ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Float32(value)) => {
+                Some(*value as f64)
+            }
+            _ => None,
+        })
+        .unwrap_or(0.0)
+}
+
+fn proxima_tree_node_to_json(node: &ProximaTreeNode) -> serde_json::Value {
+    match node {
+        ProximaTreeNode::Value(value) => serde_json::to_value(value)
+            .unwrap_or_else(|_| serde_json::json!(format!("{:?}", value))),
+        other => serde_json::json!(format!("{:?}", other)),
+    }
 }
 
 /// Convert JSON value to SqlValue proto
@@ -1168,20 +1192,20 @@ impl UnifiedQueryHandler {
             .results
             .into_iter()
             .map(|record| {
-                let score = score_from_metadata(&record.metadata);
+                let score = score_from_props(&record.props);
+                let vector = record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.clone());
 
                 SearchResult {
-                    id: record.id,
+                    id: record.oid,
                     score,
-                    vector: if record.vector.is_empty() {
-                        None
-                    } else {
-                        Some(record.vector)
-                    },
+                    vector,
                     metadata: record
-                        .metadata
+                        .props
                         .into_iter()
-                        .map(|(k, v)| (k, sql_value_to_json(&v)))
+                        .map(|(k, v)| (k, proxima_tree_node_to_json(&v)))
                         .collect(),
                 }
             })

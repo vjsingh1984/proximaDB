@@ -17,9 +17,12 @@ path = "src/lib.rs"
 anyhow.workspace = true
 arrow.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
+proximadb-data-model = { workspace = true }
 proximadb-hardware = { path = "../../foundation/proximadb-hardware" }
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
+proximadb-records = { workspace = true }
 proximadb-query-filter = { path = "../../query/proximadb-query-filter" }
 proximadb-vector-query = { path = "../../query/proximadb-vector-query" }
 rand.workspace = true

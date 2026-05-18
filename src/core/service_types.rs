@@ -5,16 +5,10 @@
 //! and metrics. These types form the core API for the vector operations service.
 
 use crate::core::search::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::security::EncryptionConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 // SearchResult is now only used from proto layer - not re-exported in core::search
-
-// Avro schema removed - using proto::proximadb_v1::VectorRecord directly
-
-// VectorRecord has been removed - use proto::proximadb_v1::VectorRecord directly
-// The proto type is the single source of truth for vector records
 
 /// Domain search hit (engine-agnostic)
 #[derive(Debug, Clone)]
@@ -206,7 +200,7 @@ pub struct VectorInsertRequest {
     /// Target collection identifier
     pub collection_id: String,
     /// Vector records to insert (supports single or batch)
-    pub vectors: Vec<VectorRecord>,
+    pub vectors: Vec<proximadb_records::ProximaRecord>,
     /// Update if vector ID already exists
     pub upsert_mode: bool,
     /// Optional batch identifier for tracking
@@ -230,7 +224,10 @@ pub struct VectorInsertResponse {
 
 impl VectorInsertRequest {
     /// Create a single vector insert request
-    pub fn single_insert(collection_id: String, vector_record: VectorRecord) -> Self {
+    pub fn single_insert(
+        collection_id: String,
+        vector_record: proximadb_records::ProximaRecord,
+    ) -> Self {
         Self {
             collection_id,
             vectors: vec![vector_record],
@@ -240,7 +237,10 @@ impl VectorInsertRequest {
     }
 
     /// Create a batch vector insert request
-    pub fn batch_insert(collection_id: String, vectors: Vec<VectorRecord>) -> Self {
+    pub fn batch_insert(
+        collection_id: String,
+        vectors: Vec<proximadb_records::ProximaRecord>,
+    ) -> Self {
         Self {
             collection_id,
             vectors,
@@ -250,7 +250,7 @@ impl VectorInsertRequest {
     }
 
     /// Create an upsert request
-    pub fn upsert(collection_id: String, vectors: Vec<VectorRecord>) -> Self {
+    pub fn upsert(collection_id: String, vectors: Vec<proximadb_records::ProximaRecord>) -> Self {
         Self {
             collection_id,
             vectors,
@@ -630,7 +630,7 @@ pub enum VectorOperation {
     /// Insert a new vector
     Insert {
         /// Vector record to insert
-        record: VectorRecord,
+        record: proximadb_records::ProximaRecord,
         /// Whether to update indexes immediately or defer
         index_immediately: bool,
     },
@@ -936,8 +936,6 @@ impl OperationResponse {
     }
 }
 
-/// Backward-compatible alias for VectorRecord
-pub type UnifiedVectorRecord = VectorRecord;
 /// Backward-compatible alias for OptimizedSearchRecord
 pub type UnifiedSearchResult = OptimizedSearchRecord;
 /// Backward-compatible alias for Collection

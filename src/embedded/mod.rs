@@ -2257,11 +2257,11 @@ impl EmbeddedProximaDB {
 
             match results {
                 Ok(Some(record)) => {
-                    // Check if it's a tombstone
-                    if record.vector.is_empty() && record.version.is_none() {
+                    // Tombstones have valid_to_ns = Some(0)
+                    if record.valid_to_ns == Some(0) {
                         Ok(None)
                     } else {
-                        Ok(Some(record.into()))
+                        Ok(Some(record))
                     }
                 }
                 Ok(None) => Ok(None),
@@ -3011,8 +3011,7 @@ impl EmbeddedProximaDB {
                     }
                     "delete" => {
                         if let Some(vector_ids) = entry.vector_ids {
-                            let now_ns =
-                                chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
                             let tombstones: Vec<proximadb_records::ProximaRecord> = vector_ids
                                 .into_iter()
                                 .map(|id| proximadb_records::ProximaRecord {
@@ -4014,11 +4013,11 @@ impl EmbeddedProximaDB {
         let mut records =
             crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(batches)
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                Box::new(std::io::Error::other(format!(
-                    "Failed to convert Arrow batches to ProximaRecords: {}",
-                    e
-                )))
-            })?;
+                    Box::new(std::io::Error::other(format!(
+                        "Failed to convert Arrow batches to ProximaRecords: {}",
+                        e
+                    )))
+                })?;
 
         if let Some(tid) = tenant_id {
             for record in &mut records {

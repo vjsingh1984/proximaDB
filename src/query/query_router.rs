@@ -48,7 +48,6 @@ use tracing::{debug, info, trace};
 use crate::catalog::CatalogManager;
 use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::StorageEngineType;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::query::authority_context::{AuthoritySource, resolve_catalog_authority_context};
 use crate::query::multimodal::plan::{
     MultiModelPlan, PlanContext, PlanStats, ResolvedObjectContext,
@@ -63,7 +62,7 @@ use proximadb_query::{PlanDataSource, PlanExecutionContext, PlanExecutor};
 #[derive(Debug, Clone)]
 pub struct UnifiedQueryResult {
     /// Result records
-    pub records: Vec<VectorRecord>,
+    pub records: Vec<proximadb_records::ProximaRecord>,
     /// Result schema metadata
     pub metadata: ResultMetadata,
     /// Execution statistics
@@ -279,22 +278,18 @@ impl UnifiedQueryRouter {
         let execution_result = PlanExecutor::execute(&plan, &mut ctx)?;
         let row_count = execution_result.rows.len();
 
-        // Convert JSON rows to VectorRecords for compatibility with existing result types
-        let records = execution_result
+        // Convert JSON rows to ProximaRecords
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let records: Vec<proximadb_records::ProximaRecord> = execution_result
             .rows
             .into_iter()
             .filter_map(|row| {
-                // Extract common fields; full schema mapping is Phase 5 work
-                let id = row.get("id").and_then(|v| v.as_str()).map(String::from);
-                id.map(|id| VectorRecord {
-                    id,
-                    vector: Vec::new(), // Empty for non-vector results
-                    metadata: HashMap::new(),
-                    timestamp: None,
-                    updated_at: None,
-                    expires_at: None,
-                    version: None,
-                    source: None,
+                let oid = row.get("id").and_then(|v| v.as_str()).map(String::from)?;
+                Some(proximadb_records::ProximaRecord {
+                    oid,
+                    created_at_ns: now_ns,
+                    updated_at_ns: now_ns,
+                    ..Default::default()
                 })
             })
             .collect();

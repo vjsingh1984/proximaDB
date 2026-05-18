@@ -285,7 +285,7 @@ pub mod catalog;
 // }
 
 // Re-export commonly used types from core
-pub use core::{Config, VectorRecord, error::ProximaDBError as Error};
+pub use core::{Config, error::ProximaDBError as Error};
 
 // Re-export catalog types for unified schema management
 pub use catalog::{

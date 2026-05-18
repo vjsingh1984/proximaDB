@@ -1053,7 +1053,8 @@ impl ArrowProtoCodec {
             }
         }
         let meta_key_array = StringArray::from(meta_keys);
-        let meta_val_array = StringArray::from(meta_vals.iter().map(|v| v.as_deref()).collect::<Vec<_>>());
+        let meta_val_array =
+            StringArray::from(meta_vals.iter().map(|v| v.as_deref()).collect::<Vec<_>>());
         let metadata_array = StructArray::from(vec![
             (
                 Arc::new(Field::new("key", DataType::Utf8, false)),
@@ -1065,8 +1066,12 @@ impl ArrowProtoCodec {
             ),
         ]);
 
-        let timestamp_array =
-            Int64Array::from(results.iter().map(|r| r.timestamp).collect::<Vec<Option<i64>>>());
+        let timestamp_array = Int64Array::from(
+            results
+                .iter()
+                .map(|r| r.timestamp)
+                .collect::<Vec<Option<i64>>>(),
+        );
 
         let score_array = Float32Array::from(
             results

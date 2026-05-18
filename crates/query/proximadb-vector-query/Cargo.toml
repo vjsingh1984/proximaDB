@@ -18,3 +18,4 @@ async-trait.workspace = true
 proximadb-distance-types.workspace = true
 proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
 proximadb-proto = { workspace = true }
+proximadb-records = { workspace = true }

@@ -17,6 +17,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
     flight_service_server::FlightService,
 };
+use arrow_schema::Schema;
 use futures::{Stream, stream};
 use proximadb_records::ProximaRecord;
 use std::collections::HashSet;
@@ -27,6 +28,7 @@ use tracing::{debug, info, warn};
 use crate::api_handlers::{
     RichRecordBatchRequest, RichRecordDeleteBatchRequest, request_handlers::UnifiedHandlers,
 };
+use crate::catalog::CatalogManager;
 use crate::proto::proximadb_v1::VectorSearchRequest;
 use crate::security::{AuthenticationData, ClientCertificateData, SecurityCoordinator};
 use crate::services::operations::BatchOperationResult;
@@ -36,6 +38,7 @@ use super::codec::{ArrowProtoCodec, FlightWriteOperation, WriteMode};
 use super::file_export::{
     ArrowFileExportHandler, ArrowFileRequest, ArrowFileTicket, FlightCompression,
 };
+use super::multimodal_codec::relational_schema_from_catalog;
 
 // Type aliases using tonic from arrow-flight's dependency tree
 // This avoids conflicts with the main codebase's tonic 0.10
@@ -66,6 +69,7 @@ type TonicStream<T> = Pin<Box<dyn Stream<Item = std::result::Result<T, TonicStat
 pub struct ProximaFlightService {
     request_handlers: Arc<UnifiedHandlers>,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
+    catalog_manager: Option<Arc<CatalogManager>>,
     _codec: ArrowProtoCodec,
     file_export_handler: ArrowFileExportHandler,
 }
@@ -88,6 +92,7 @@ impl ProximaFlightService {
         Self {
             request_handlers,
             security_coordinator: None,
+            catalog_manager: None,
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
         }
@@ -99,6 +104,12 @@ impl ProximaFlightService {
         security_coordinator: Option<Arc<SecurityCoordinator>>,
     ) -> Self {
         self.security_coordinator = security_coordinator;
+        self
+    }
+
+    /// Attach xCatalog metadata for relational/table Flight schema resolution.
+    pub fn with_catalog_manager(mut self, catalog_manager: Option<Arc<CatalogManager>>) -> Self {
+        self.catalog_manager = catalog_manager;
         self
     }
 
@@ -148,6 +159,76 @@ impl ProximaFlightService {
         });
 
         serde_json::to_vec(&final_status).map_err(Into::into)
+    }
+
+    fn schema_result_from_arrow_schema(schema: &Arc<Schema>) -> Result<SchemaResult> {
+        use arrow_ipc::writer::IpcWriteOptions;
+
+        let write_options = IpcWriteOptions::default();
+        let mut schema_bytes = Vec::new();
+        {
+            let mut writer = arrow_ipc::writer::FileWriter::try_new_with_options(
+                &mut schema_bytes,
+                schema,
+                write_options,
+            )
+            .map_err(|e| anyhow::anyhow!("Failed to create schema writer: {}", e))?;
+            writer
+                .finish()
+                .map_err(|e| anyhow::anyhow!("Failed to write schema: {}", e))?;
+        }
+
+        Ok(SchemaResult {
+            schema: schema_bytes.into(),
+        })
+    }
+
+    async fn catalog_arrow_schema_for_descriptor(
+        catalog_manager: Option<&Arc<CatalogManager>>,
+        descriptor: &FlightDescriptor,
+    ) -> Result<Option<Arc<Schema>>> {
+        let Some(catalog_manager) = catalog_manager else {
+            return Ok(None);
+        };
+        let Some(table_fqn) = Self::table_fqn_from_descriptor(descriptor)? else {
+            return Ok(None);
+        };
+
+        let (catalog, table_id) = catalog_manager.resolve_table(&table_fqn).await?;
+        let table_schema = catalog.get_table(&table_id).await?;
+        Ok(Some(relational_schema_from_catalog(&table_schema)))
+    }
+
+    fn table_fqn_from_descriptor(descriptor: &FlightDescriptor) -> Result<Option<String>> {
+        let path_model = descriptor.path.first().map(String::as_str);
+        if matches!(path_model, Some("relational" | "table" | "sql")) {
+            return Ok(descriptor.path.get(1).cloned());
+        }
+
+        if descriptor.cmd.is_empty() {
+            return Ok(None);
+        }
+
+        let cmd: serde_json::Value = serde_json::from_slice(&descriptor.cmd)
+            .context("Invalid FlightDescriptor command for schema lookup")?;
+        let model = cmd
+            .get("model_type")
+            .or_else(|| cmd.get("model"))
+            .or_else(|| cmd.get("schema_mode"))
+            .and_then(|value| value.as_str());
+        let is_relational = matches!(model, Some("relational" | "table" | "sql"));
+        if !is_relational {
+            return Ok(None);
+        }
+
+        Ok(cmd
+            .get("table_fqn")
+            .or_else(|| cmd.get("table_name"))
+            .or_else(|| cmd.get("table"))
+            .or_else(|| cmd.get("collection_id"))
+            .or_else(|| cmd.get("collection"))
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned))
     }
 
     fn tenant_id_from_metadata(metadata: &tonic::metadata::MetadataMap) -> Option<String> {
@@ -729,6 +810,18 @@ impl FlightService for ProximaFlightService {
     ) -> TonicResult<SchemaResult> {
         let descriptor = request.into_inner();
 
+        if let Some(schema) =
+            Self::catalog_arrow_schema_for_descriptor(self.catalog_manager.as_ref(), &descriptor)
+                .await
+                .map_err(|e| {
+                    TonicStatus::internal(format!("Failed to resolve catalog schema: {}", e))
+                })?
+        {
+            let result = Self::schema_result_from_arrow_schema(&schema)
+                .map_err(|e| TonicStatus::internal(e.to_string()))?;
+            return Ok(TonicResponse::new(result));
+        }
+
         // Parse collection_id from descriptor
         let metadata = ArrowProtoCodec::parse_descriptor(&descriptor)
             .map_err(|e| TonicStatus::invalid_argument(format!("Invalid descriptor: {}", e)))?;
@@ -750,25 +843,9 @@ impl FlightService for ProximaFlightService {
 
         let schema = ArrowProtoCodec::create_vector_schema(dimension as usize);
 
-        // Convert schema to IPC format
-        use arrow_ipc::writer::IpcWriteOptions;
-        let write_options = IpcWriteOptions::default();
-        let mut schema_bytes = Vec::new();
-        {
-            let mut writer = arrow_ipc::writer::FileWriter::try_new_with_options(
-                &mut schema_bytes,
-                &schema,
-                write_options,
-            )
-            .map_err(|e| TonicStatus::internal(format!("Failed to create schema writer: {}", e)))?;
-            writer
-                .finish()
-                .map_err(|e| TonicStatus::internal(format!("Failed to write schema: {}", e)))?;
-        }
-
-        Ok(TonicResponse::new(SchemaResult {
-            schema: schema_bytes.into(),
-        }))
+        let result = Self::schema_result_from_arrow_schema(&schema)
+            .map_err(|e| TonicStatus::internal(e.to_string()))?;
+        Ok(TonicResponse::new(result))
     }
 
     async fn do_get(&self, request: TonicRequest<Ticket>) -> TonicResult<Self::DoGetStream> {
@@ -1234,10 +1311,7 @@ impl FlightService for ProximaFlightService {
                                 }
                                 _ => proximadb_data_model::ProximaValue::String(val.to_string()),
                             };
-                            props.insert(
-                                k.clone(),
-                                proximadb_records::ProximaTreeNode::Value(pv),
-                            );
+                            props.insert(k.clone(), proximadb_records::ProximaTreeNode::Value(pv));
                         }
                     }
 
@@ -1389,6 +1463,8 @@ impl FlightService for ProximaFlightService {
                         .vector(collection_id, vector_id, include_vectors, include_metadata)
                         .await
                     {
+                        let record =
+                            proximadb_records::conversions::proxima_record_to_vector(&record);
                         found_vectors.push(serde_json::json!({
                             "id": record.id,
                             "vector": if include_vectors { Some(&record.vector) } else { None },
@@ -2149,10 +2225,13 @@ impl ProximaFlightService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::TableIdentifier;
     use crate::network::arrow_ipc::file_export::{
         ArrowFileExportHandler, ArrowFileInfo, ArrowFileRequest, ArrowFileTicket, ExportFileFormat,
     };
     use crate::services::operations::OperationMetrics;
+    use arrow_schema::DataType;
+    use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema};
 
     #[test]
     fn test_batch_result_app_metadata_uses_rich_shape() {
@@ -2177,6 +2256,79 @@ mod tests {
         assert_eq!(value["metrics"]["successful_count"], 1);
         assert!(value.get("operation").is_none());
         assert!(value.get("error_message").is_none());
+    }
+
+    #[test]
+    fn test_table_fqn_from_descriptor_requires_relational_model() {
+        let relational_path =
+            FlightDescriptor::new_path(vec!["relational".to_string(), "events".to_string()]);
+        assert_eq!(
+            ProximaFlightService::table_fqn_from_descriptor(&relational_path).unwrap(),
+            Some("events".to_string())
+        );
+
+        let relational_cmd = FlightDescriptor::new_cmd(
+            serde_json::to_vec(&serde_json::json!({
+                "model_type": "relational",
+                "table_fqn": "analytics.events"
+            }))
+            .unwrap(),
+        );
+        assert_eq!(
+            ProximaFlightService::table_fqn_from_descriptor(&relational_cmd).unwrap(),
+            Some("analytics.events".to_string())
+        );
+
+        let vector_path = FlightDescriptor::new_path(vec!["vectors".to_string()]);
+        assert_eq!(
+            ProximaFlightService::table_fqn_from_descriptor(&vector_path).unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn test_catalog_arrow_schema_for_descriptor_uses_xcatalog_schema() {
+        let manager = Arc::new(CatalogManager::new());
+        let temp_dir = tempfile::tempdir().unwrap();
+        let catalog = manager
+            .create_native_catalog("default", &format!("file://{}", temp_dir.path().display()))
+            .await
+            .unwrap();
+        let _ = catalog
+            .create_namespace(&["default".to_string()], Default::default())
+            .await;
+
+        let table_id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
+        let mut embedding = CatalogColumn::new(3, "embedding", CatalogDataType::Vector);
+        embedding
+            .properties
+            .insert("dimension".to_string(), "3".to_string());
+        let table_schema = CatalogTableSchema::new("events")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "payload", CatalogDataType::Json))
+            .with_column(embedding);
+        catalog.create_table(&table_id, table_schema).await.unwrap();
+
+        let descriptor =
+            FlightDescriptor::new_path(vec!["relational".to_string(), "events".to_string()]);
+        let schema =
+            ProximaFlightService::catalog_arrow_schema_for_descriptor(Some(&manager), &descriptor)
+                .await
+                .unwrap()
+                .expect("catalog schema");
+
+        assert_eq!(schema.fields().len(), 3);
+        assert_eq!(schema.field(0).name(), "id");
+        assert_eq!(*schema.field(0).data_type(), DataType::Int64);
+        assert!(!schema.field(0).is_nullable());
+        assert_eq!(schema.field(1).name(), "payload");
+        assert_eq!(*schema.field(1).data_type(), DataType::Utf8);
+        assert_eq!(
+            *schema.field(2).data_type(),
+            DataType::List(
+                Box::new(arrow_schema::Field::new("item", DataType::Float32, true)).into()
+            )
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::proto::proximadb_v1::LogEntry;
+use crate::proto::proximadb_v1::{LogEntry, SqlValue, sql_value::Value};
 use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
 /// Time-partitioned storage for logs
@@ -568,27 +568,27 @@ impl PartitionedStorage {
 
         props.insert(
             "_type".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String("log".to_string()),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "log".to_string(),
+            )),
         );
         props.insert(
             "_partition".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::Int64(partition_key),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Int64(
+                partition_key,
+            )),
         );
         props.insert(
             "severity".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::Int64(log.severity as i64),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Int64(
+                log.severity as i64,
+            )),
         );
         props.insert(
             "message".to_string(),
-            proximadb_records::ProximaTreeNode::Value(
-                proximadb_data_model::ProximaValue::String(log.message.clone()),
-            ),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                log.message.clone(),
+            )),
         );
 
         if let Some(ref source) = log.source {

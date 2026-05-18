@@ -123,9 +123,10 @@ pub fn apply_pseudo_query_metadata(
             .collect();
         let generated = pseudo_query_generator.generate_metadata(&flat);
         for (key, value) in generated {
-            record.props.entry(key).or_insert_with(|| {
-                proximadb_records::ProximaTreeNode::Value(value)
-            });
+            record
+                .props
+                .entry(key)
+                .or_insert_with(|| proximadb_records::ProximaTreeNode::Value(value));
         }
     }
 }

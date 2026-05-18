@@ -6512,10 +6512,13 @@ dependencies = [
  "anyhow",
  "arrow",
  "async-trait",
+ "chrono",
+ "proximadb-data-model",
  "proximadb-hardware",
  "proximadb-kernel",
  "proximadb-proto",
  "proximadb-query-filter",
+ "proximadb-records",
  "proximadb-vector-query",
  "rand 0.8.6",
  "serde",
@@ -6533,6 +6536,7 @@ dependencies = [
  "proximadb-distance-types",
  "proximadb-kernel",
  "proximadb-proto",
+ "proximadb-records",
 ]
 
 [[package]]

@@ -20,26 +20,58 @@ pub struct SearchResult {
     pub score: f32,
 }
 
-/// Convert proto search results to VectorRecord format.
+/// Convert proto search results to ProximaRecord format.
 pub fn proto_results_to_vector_records(
     search_results: Vec<crate::proto::proximadb_v1::SearchResult>,
-) -> Vec<crate::proto::proximadb_v1::VectorRecord> {
-    let mut vector_records = Vec::new();
+) -> Vec<proximadb_records::ProximaRecord> {
+    let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let mut records = Vec::new();
     for search_result in search_results {
         for result in search_result.results {
-            vector_records.push(crate::proto::proximadb_v1::VectorRecord {
-                id: result.id,
-                vector: result.vector,
-                metadata: result.metadata,
-                timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: Some("search_result".to_string()),
+            let dim = result.vector.len() as u32;
+            records.push(proximadb_records::ProximaRecord {
+                oid: result.id,
+                created_at_ns: now_ns,
+                updated_at_ns: now_ns,
+                origin: Some("search_result".to_string()),
+                embeddings: if !result.vector.is_empty() {
+                    vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        values: result.vector,
+                        dim,
+                    }]
+                } else {
+                    vec![]
+                },
+                props: result
+                    .metadata
+                    .into_iter()
+                    .map(|(k, v)| {
+                        use proximadb_records::ProximaTreeNode;
+                        let node = match v.value {
+                            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
+                                ProximaTreeNode::Value(ProximaValue::String(s))
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
+                                ProximaTreeNode::Value(ProximaValue::Float64(f))
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
+                                ProximaTreeNode::Value(ProximaValue::Int64(i))
+                            }
+                            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
+                                ProximaTreeNode::Value(ProximaValue::Boolean(b))
+                            }
+                            _ => ProximaTreeNode::Value(ProximaValue::String(String::new())),
+                        };
+                        (k, node)
+                    })
+                    .collect(),
+                ..Default::default()
             });
         }
     }
-    vector_records
+    records
 }
 
 /// Calculate candidate counts for progressive search stages.
@@ -125,7 +157,7 @@ mod tests {
         let records = proto_results_to_vector_records(vec![proto_result]);
 
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].id, "vec1");
-        assert_eq!(records[0].source, Some("search_result".to_string()));
+        assert_eq!(records[0].oid, "vec1");
+        assert_eq!(records[0].origin, Some("search_result".to_string()));
     }
 }

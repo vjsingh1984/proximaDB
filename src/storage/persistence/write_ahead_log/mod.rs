@@ -2480,13 +2480,10 @@ impl WriteAheadLogManager {
         &self,
         collection_id: &str,
         vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>> {
-        {
-            let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-            let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            let record = wal_behavior.vector_by_id(collection_id, vector_id).await?;
-            Ok(record.map(|r| proximadb_records::conversions::proxima_record_to_vector(&r)))
-        }
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        wal_behavior.vector_by_id(collection_id, vector_id).await
     }
 
     /// Similarity search for vectors (modern API)

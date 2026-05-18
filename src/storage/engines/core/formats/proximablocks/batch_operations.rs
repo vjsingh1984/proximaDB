@@ -7,10 +7,12 @@ use std::sync::Arc;
 
 use super::block_structures::ProximaDataBlock;
 use super::index_structures::RowBasedIdIndex;
-use crate::core::VectorRecord;
 use proximadb_kernel::uuid::Uuid;
+use proximadb_records::ProximaRecord;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 // Quantization now handled by unified compute module
+
+type VectorRecord = ProximaRecord;
 
 /// Row-based batch operations handler
 pub struct RowBasedBatchOperations {
@@ -586,7 +588,7 @@ impl RowBasedBatchOperations {
                             partial_results.push(PartialResult {
                                 index: idx,
                                 success: true,
-                                result: Some(record.clone()),
+                                result: Some(record.clone().into()),
                                 error: None,
                                 processing_time_ms: lookup_start.elapsed().as_millis() as u64,
                             });

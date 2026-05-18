@@ -57,7 +57,6 @@ use crate::storage::traits::UnifiedStorageEngine;
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::core::search::FilterExpression;
 use crate::proto::proximadb_v1::Collection;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::query::query_optimizer::{
     ExecutionStep, OptimizationGoal, QuantizationStrategy, QuantizationType, UnifiedExecutionPlan,
     UnifiedQueryContext, UnifiedQueryOptimizer,
@@ -374,26 +373,45 @@ fn v1_search_result_to_rich(
     }
 }
 
-fn vector_record_to_rich_result(
-    record: crate::proto::proximadb_v1::VectorRecord,
-) -> RichSearchResult {
+fn vector_record_to_rich_result(record: ProximaRecord) -> RichSearchResult {
+    let vector = record
+        .embeddings
+        .into_iter()
+        .next()
+        .map(|e| e.values)
+        .unwrap_or_default();
+    let props = record
+        .props
+        .into_iter()
+        .filter_map(|(k, node)| {
+            if let proximadb_records::ProximaTreeNode::Value(v) = node {
+                Some((k, v))
+            } else {
+                None
+            }
+        })
+        .collect();
     RichSearchResult {
-        id: if record.id.is_empty() {
+        id: if record.oid.is_empty() {
             "unknown".to_string()
         } else {
-            record.id
+            record.oid
         },
         score: 1.0,
         similarity: None,
-        vector: record.vector,
-        props: record
-            .metadata
-            .iter()
-            .map(|(key, value)| (key.clone(), sql_value_to_proxima(value)))
-            .collect(),
-        version: record.version,
-        timestamp: record.timestamp,
-        source: record.source,
+        vector,
+        props,
+        version: if record.record_version == 0 {
+            None
+        } else {
+            Some(record.record_version as u32)
+        },
+        timestamp: if record.created_at_ns == 0 {
+            None
+        } else {
+            Some(record.created_at_ns / 1_000_000)
+        },
+        source: record.origin,
     }
 }
 
@@ -584,10 +602,7 @@ impl VectorOperationsService {
         Ok(())
     }
 
-    fn tombstone_records_for_ids(
-        record_ids: &[String],
-        now_ns: i64,
-    ) -> Vec<ProximaRecord> {
+    fn tombstone_records_for_ids(record_ids: &[String], now_ns: i64) -> Vec<ProximaRecord> {
         record_ids
             .iter()
             .map(|id| ProximaRecord {
@@ -925,6 +940,7 @@ impl VectorOperationsService {
             .await
         {
             Ok(Some(rec)) => {
+                let rec = proximadb_records::conversions::proxima_record_to_vector(&rec);
                 let v1_rec = crate::proto::proximadb_v1::SearchVectorRecord {
                     id: if rec.id.is_empty() {
                         "unknown".to_string()
@@ -1099,7 +1115,8 @@ impl VectorOperationsService {
         &self,
         records: &[ProximaRecord],
     ) -> crate::services::operations::BulkWriteDecision {
-        self.bulk_write_router.should_use_direct_write_records(records)
+        self.bulk_write_router
+            .should_use_direct_write_records(records)
     }
 
     /// Bulk write operation - bypasses WAL+memtable for large batches
@@ -1126,7 +1143,9 @@ impl VectorOperationsService {
         let start_time = std::time::Instant::now();
         let vector_count = vectors.len();
         let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
-        let decision = self.bulk_write_router.should_use_direct_write_records(&vectors);
+        let decision = self
+            .bulk_write_router
+            .should_use_direct_write_records(&vectors);
 
         info!(
             "📦 Bulk write: collection={}, vectors={}, estimated_size={} bytes, decision={}",
@@ -1452,7 +1471,9 @@ impl VectorOperationsService {
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        let decision = self.bulk_write_router.should_use_direct_write_records(&vectors);
+        let decision = self
+            .bulk_write_router
+            .should_use_direct_write_records(&vectors);
 
         debug!(
             "📦 insert_batch: collection={}, vectors={}, estimated_size={} bytes, path={}",
@@ -1510,7 +1531,7 @@ impl VectorOperationsService {
         k: usize,
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         let search_results = self
             .unified_search_with_tenant_context(
                 collection_id,
@@ -1522,9 +1543,7 @@ impl VectorOperationsService {
             )
             .await?;
 
-        // Convert SearchResult to VectorRecord using extracted utility
-        let vector_records = proto_results_to_vector_records(search_results);
-        Ok(vector_records)
+        Ok(proto_results_to_vector_records(search_results))
     }
 
     /// Execute search with tenant context validation
@@ -3101,7 +3120,10 @@ impl VectorOperationsService {
         let bytes_written = vectors
             .iter()
             .map(|v| {
-                v.embeddings.first().map(|e| e.values.len() * 4).unwrap_or(0)
+                v.embeddings
+                    .first()
+                    .map(|e| e.values.len() * 4)
+                    .unwrap_or(0)
                     + v.oid.len()
                     + 32
             })
@@ -3163,7 +3185,10 @@ impl VectorOperationsService {
         let bytes_written = vectors
             .iter()
             .map(|v| {
-                v.embeddings.first().map(|e| e.values.len() * 4).unwrap_or(0)
+                v.embeddings
+                    .first()
+                    .map(|e| e.values.len() * 4)
+                    .unwrap_or(0)
                     + v.oid.len()
                     + 32
             })
@@ -3219,7 +3244,9 @@ impl VectorOperationsService {
         }
 
         let mut seen_ids = if requires_id {
-            Some(std::collections::HashSet::<&str>::with_capacity(records.len()))
+            Some(std::collections::HashSet::<&str>::with_capacity(
+                records.len(),
+            ))
         } else {
             None
         };
@@ -3230,9 +3257,12 @@ impl VectorOperationsService {
             .unwrap_or(0);
 
         for (i, record) in records.iter().enumerate() {
-            let dim = record.embeddings.first().map(|e| e.values.len()).unwrap_or(0);
-            let is_tombstone = dim == 0
-                && record.valid_to_ns.is_some_and(|v| v <= current_time_ns);
+            let dim = record
+                .embeddings
+                .first()
+                .map(|e| e.values.len())
+                .unwrap_or(0);
+            let is_tombstone = dim == 0 && record.valid_to_ns.is_some_and(|v| v <= current_time_ns);
 
             if !is_tombstone && expected_dimension > 0 && dim != expected_dimension as usize {
                 return Err(anyhow::anyhow!(
@@ -3282,20 +3312,19 @@ impl VectorOperationsService {
         vector_id: &str,
         include_vector: bool,
         include_metadata: bool,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         // First check WAL for unflushed vectors
         if let Some(record) = self
             .wal_manager
             .search_vector_by_id(collection_id, &vector_id.to_string())
             .await?
         {
-            // Apply include flags
-            let mut result = record.clone();
+            let mut result = record;
             if !include_vector {
-                result.vector.clear();
+                result.embeddings.clear();
             }
             if !include_metadata {
-                result.metadata.clear();
+                result.props.clear();
             }
             return Ok(Some(result));
         }
@@ -3312,24 +3341,35 @@ impl VectorOperationsService {
                 self.storage_engine.clone(),
             );
             if let Ok(Some(hit)) = search_ops.point_lookup(&file_paths, vector_id).await {
-                let mut record = crate::proto::proximadb_v1::VectorRecord {
-                    id: hit.id,
-                    vector: hit.vector.as_deref().cloned().unwrap_or_default(),
-                    metadata: if include_metadata {
-                        crate::core::search::results::proxima_map_to_sql(hit.metadata)
-                    } else {
-                        Default::default()
-                    },
-                    timestamp: hit.timestamp,
-                    updated_at: hit.updated_at,
-                    expires_at: hit.expires_at,
-                    version: hit.version,
-                    ..Default::default()
-                };
-                if !include_vector {
-                    record.vector.clear();
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                let vector_values = hit.vector.as_deref().cloned().unwrap_or_default();
+                let dim = vector_values.len() as u32;
+                let mut props = proximadb_records::ProximaTree::new();
+                if include_metadata {
+                    for (k, v) in hit.metadata {
+                        props.insert(k, proximadb_records::ProximaTreeNode::Value(v));
+                    }
                 }
-                return Ok(Some(record));
+                let embeddings = if include_vector && !vector_values.is_empty() {
+                    vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        values: vector_values,
+                        dim,
+                    }]
+                } else {
+                    vec![]
+                };
+                return Ok(Some(ProximaRecord {
+                    oid: hit.id,
+                    record_version: hit.version.map(|v| v as u64).unwrap_or(1),
+                    created_at_ns: hit.timestamp.unwrap_or(now_ns),
+                    updated_at_ns: hit.updated_at.unwrap_or(now_ns),
+                    valid_to_ns: hit.expires_at,
+                    props,
+                    embeddings,
+                    ..Default::default()
+                }));
             }
         }
 
@@ -3346,15 +3386,14 @@ impl VectorOperationsService {
     /// * `vector_id` - The ID of the vector to retrieve
     ///
     /// # Returns
-    /// * `Ok(Some(VectorRecord))` - Vector found
+    /// * `Ok(Some(ProximaRecord))` - Vector found
     /// * `Ok(None)` - Vector not found
     /// * `Err` - Error occurred during lookup
     pub async fn unified_search_by_id(
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
-        // Delegate to the existing vector method with full include flags
+    ) -> Result<Option<ProximaRecord>> {
         self.vector(collection_id, vector_id, true, true).await
     }
 
@@ -3542,10 +3581,7 @@ impl VectorOperationsService {
     }
 
     /// Get unflushed vectors for a collection from the WAL/memtable
-    pub async fn get_unflushed_vectors(
-        &self,
-        collection_id: &str,
-    ) -> Result<Vec<ProximaRecord>> {
+    pub async fn get_unflushed_vectors(&self, collection_id: &str) -> Result<Vec<ProximaRecord>> {
         self.wal_manager
             .read_record_entries(collection_id, 0, None)
             .await
@@ -3562,26 +3598,17 @@ impl VectorOperationsService {
     /// Debug method to list unflushed vectors
     pub async fn debug_list_all_unflushed_vectors(
         &self,
-        _collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
-        // Get all unflushed vectors from WAL
-        // Unflushed vectors: WAL manager tracks in-memory vectors via memtable
-        let unflushed = Vec::new();
-
-        // Already in proto format
-        Ok(unflushed)
+        collection_id: &str,
+    ) -> Result<Vec<ProximaRecord>> {
+        self.get_unflushed_vectors(collection_id).await
     }
 
     /// Debug list of unflushed vectors (v1)
     pub async fn debug_list_all_unflushed_vectors_v1(
         &self,
         collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
-        let legacy = self.debug_list_all_unflushed_vectors(collection_id).await?;
-        Ok(legacy
-            .into_iter()
-            // Vectors are already v1, no conversion needed
-            .collect())
+    ) -> Result<Vec<ProximaRecord>> {
+        self.debug_list_all_unflushed_vectors(collection_id).await
     }
 
     /// v1: Convert OptimizedSearchRecord to proximadb_v1::SearchResult
@@ -3805,9 +3832,8 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        let err =
-            VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
-                .unwrap_err();
+        let err = VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+            .unwrap_err();
 
         assert!(
             err.to_string()
@@ -3837,9 +3863,8 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        let err =
-            VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
-                .unwrap_err();
+        let err = VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+            .unwrap_err();
 
         assert!(
             err.to_string()
@@ -3926,25 +3951,26 @@ mod tenant_tests {
 
     #[test]
     fn vector_record_to_rich_result_preserves_get_record_shape() {
-        let mut metadata = HashMap::new();
-        metadata.insert(
+        let mut props = proximadb_records::ProximaTree::new();
+        props.insert(
             "category".to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "books".to_string(),
-                )),
-            },
+            proximadb_records::ProximaTreeNode::Value(ProximaValue::String("books".to_string())),
         );
 
-        let rich = vector_record_to_rich_result(crate::proto::proximadb_v1::VectorRecord {
-            id: "doc_2".to_string(),
-            vector: vec![0.3, 0.4],
-            metadata,
-            timestamp: Some(456),
-            updated_at: None,
-            expires_at: None,
-            version: Some(8),
-            source: Some("catalog".to_string()),
+        let rich = vector_record_to_rich_result(ProximaRecord {
+            oid: "doc_2".to_string(),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![0.3, 0.4],
+                dim: 2,
+            }],
+            props,
+            created_at_ns: 456_000_000,
+            updated_at_ns: 456_000_000,
+            record_version: 8,
+            origin: Some("catalog".to_string()),
+            ..Default::default()
         });
 
         assert_eq!(rich.id, "doc_2");
@@ -3980,6 +4006,8 @@ mod pseudo_query_tests {
     use crate::services::operations::vectors::validation::{
         PROXIMADB_PSEUDO_QUERY_FIELD, PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD,
     };
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaTreeNode};
 
     fn make_record(id: &str, props: Vec<(&str, &str)>) -> ProximaRecord {
         let mut tree = proximadb_records::ProximaTree::new();
@@ -4027,9 +4055,9 @@ mod pseudo_query_tests {
         let source_fields = get_pseudo_string(&records[0], PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD);
 
         assert!(pseudo_query.is_some());
-        assert!(source_fields
-            .as_deref()
-            .is_some_and(|f| f.contains("title") && f.contains("content") && f.contains("category")));
+        assert!(source_fields.as_deref().is_some_and(|f| f.contains("title")
+            && f.contains("content")
+            && f.contains("category")));
     }
 
     #[test]
@@ -4043,7 +4071,11 @@ mod pseudo_query_tests {
         apply_pseudo_query_metadata(&mut records, &generator);
 
         assert!(!records[0].props.contains_key(PROXIMADB_PSEUDO_QUERY_FIELD));
-        assert!(!records[0].props.contains_key(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD));
+        assert!(
+            !records[0]
+                .props
+                .contains_key(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD)
+        );
     }
 
     #[test]
@@ -4083,7 +4115,7 @@ mod migration_example {
 
     #[allow(dead_code)]
     impl OldVectorOperationsService {
-        async fn old_search_with_filters(&self) -> Result<Vec<VectorRecord>> {
+        async fn old_search_with_filters(&self) -> Result<Vec<ProximaRecord>> {
             // Problem 1: Two separate optimization calls
             // NOTE: This is a conceptual example showing the old way
 
@@ -4140,6 +4172,7 @@ mod index_first_search_tests {
     use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
     use crate::index::axis::management::manager::FilterOperator;
     use anyhow::Result;
+    use proximadb_data_model::ProximaValue;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -4213,12 +4246,12 @@ mod index_first_search_tests {
     #[test]
     fn test_insert_only_duplicate_conflict_result() {
         let vectors = vec![
-            VectorRecord {
-                id: "record-1".to_string(),
+            ProximaRecord {
+                oid: "record-1".to_string(),
                 ..Default::default()
             },
-            VectorRecord {
-                id: "record-1".to_string(),
+            ProximaRecord {
+                oid: "record-1".to_string(),
                 ..Default::default()
             },
         ];
@@ -4499,31 +4532,28 @@ mod index_first_search_tests {
     // Unit tests for vector operations (from services_vector_test.rs)
     #[test]
     fn test_vector_record_creation() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value};
-        use std::collections::HashMap;
-
-        let mut metadata = HashMap::new();
-        metadata.insert(
+        let mut props = proximadb_records::ProximaTree::new();
+        props.insert(
             "test_id".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue("vec1".to_string())),
-            },
+            proximadb_records::ProximaTreeNode::Value(ProximaValue::String("vec1".to_string())),
         );
 
-        let vector = crate::proto::proximadb_v1::VectorRecord {
-            id: "vec1".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata,
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        let record = ProximaRecord {
+            oid: "vec1".to_string(),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![1.0, 2.0, 3.0],
+                dim: 3,
+            }],
+            props,
+            record_version: 1,
+            ..Default::default()
         };
 
-        assert_eq!(vector.id, "vec1");
-        assert_eq!(vector.vector.len(), 3);
-        assert!(vector.metadata.contains_key("test_id"));
+        assert_eq!(record.oid, "vec1");
+        assert_eq!(record.embeddings[0].values.len(), 3);
+        assert!(record.props.contains_key("test_id"));
     }
 
     #[test]
@@ -4624,36 +4654,36 @@ mod index_first_search_tests {
 
     #[tokio::test]
     async fn test_batch_vector_creation() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value};
-        use std::collections::HashMap;
-
         let mut vectors = Vec::new();
 
-        for i in 0..100 {
-            let mut metadata = HashMap::new();
-            metadata.insert(
+        for i in 0..100u32 {
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
                 "test_id".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::StringValue(format!("vec_{}", i))),
-                },
+                proximadb_records::ProximaTreeNode::Value(ProximaValue::String(format!(
+                    "vec_{}",
+                    i
+                ))),
             );
 
-            let vector = crate::proto::proximadb_v1::VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32, (i * 2) as f32, (i * 3) as f32],
-                metadata,
-                timestamp: Some(chrono::Utc::now().timestamp()),
-                updated_at: Some(chrono::Utc::now().timestamp()),
-                expires_at: None,
-                version: Some(1),
-                source: None,
+            let record = ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: vec![i as f32, (i * 2) as f32, (i * 3) as f32],
+                    dim: 3,
+                }],
+                props,
+                record_version: 1,
+                ..Default::default()
             };
-            vectors.push(vector);
+            vectors.push(record);
         }
 
         assert_eq!(vectors.len(), 100);
-        assert_eq!(vectors[0].id, "vec_0");
-        assert_eq!(vectors[99].id, "vec_99");
+        assert_eq!(vectors[0].oid, "vec_0");
+        assert_eq!(vectors[99].oid, "vec_99");
     }
 
     // ========================================================================
@@ -4725,30 +4755,27 @@ impl VectorQueryService for VectorOperationsService {
             .await
             .map_err(|e| proximadb_kernel::error::QueryError::VectorSearch(e.to_string()))?;
 
-        // Convert SearchResult to VectorRecord
-        let vector_records = proto_results_to_vector_records(search_results);
+        let records = proto_results_to_vector_records(search_results);
 
         // Apply threshold filtering if specified
-        let filtered_results = if let Some(threshold) = request.threshold {
-            vector_records
+        let filtered_results: Vec<ProximaRecord> = if let Some(threshold) = request.threshold {
+            records
                 .into_iter()
                 .filter(|record| {
-                    // Check if record has score metadata above threshold
                     record
-                        .metadata
+                        .props
                         .get("score")
-                        .and_then(|v| v.value.as_ref())
-                        .and_then(|v| match v {
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
-                                Some(*f >= threshold as f64)
-                            }
+                        .and_then(|n| match n {
+                            proximadb_records::ProximaTreeNode::Value(
+                                proximadb_data_model::ProximaValue::Float64(f),
+                            ) => Some(*f >= threshold as f64),
                             _ => None,
                         })
                         .unwrap_or(false)
                 })
                 .collect()
         } else {
-            vector_records
+            records
         };
 
         let total_count = filtered_results.len();

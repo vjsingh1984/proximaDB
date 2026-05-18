@@ -1102,6 +1102,8 @@ impl UnifiedHandlers {
             .await
         {
             Ok(Some(vector_record)) => {
+                let vector_record =
+                    proximadb_records::conversions::proxima_record_to_vector(&vector_record);
                 let rec = crate::proto::proximadb_v1::SearchVectorRecord {
                     id: if vector_record.id.is_empty() {
                         "unknown".to_string()

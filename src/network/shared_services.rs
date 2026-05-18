@@ -921,7 +921,10 @@ impl SharedServices {
                         proximadb_records::conversions::proxima_record_to_vector(vector_record);
                     match self
                         .vector_operations_service
-                        .insert_vectors_direct(collection_id, Arc::new(vec![vector_record_v1]))
+                        .insert_vectors_direct(
+                            collection_id,
+                            Arc::new(vec![vector_record_v1.into()]),
+                        )
                         .await
                     {
                         Ok(_) => {

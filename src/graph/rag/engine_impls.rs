@@ -60,7 +60,7 @@ impl NodeRetriever for VectorNodeRetriever {
             .await
             .map_err(|e| ProximaDBError::Storage(StorageError::SstEngine(e.to_string())))?;
 
-        Ok(search_results.into_iter().map(|r| r.id).collect())
+        Ok(search_results.into_iter().map(|r| r.oid).collect())
     }
 }
 

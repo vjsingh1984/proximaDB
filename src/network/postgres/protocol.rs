@@ -2022,9 +2022,7 @@ impl PostgresProtocol {
             }
 
             let dim = vector.len() as u32;
-            let now_ns = chrono::Utc::now()
-                .timestamp_nanos_opt()
-                .unwrap_or(0);
+            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
             records.push(proximadb_records::ProximaRecord {
                 oid: id.to_string(),
                 embeddings: vec![proximadb_records::EmbeddingCell {
@@ -2087,9 +2085,7 @@ impl PostgresProtocol {
 
             if let Some(vector) = vector {
                 let dim = vector.len() as u32;
-                let now_ns = chrono::Utc::now()
-                    .timestamp_nanos_opt()
-                    .unwrap_or(0);
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
                 records.push(proximadb_records::ProximaRecord {
                     oid: id.to_string(),
                     embeddings: vec![proximadb_records::EmbeddingCell {
@@ -2184,9 +2180,7 @@ impl PostgresProtocol {
             let vector: Vec<f32> = (0..num_floats).map(|_| cursor.get_f32()).collect();
 
             let dim = vector.len() as u32;
-            let now_ns = chrono::Utc::now()
-                .timestamp_nanos_opt()
-                .unwrap_or(0);
+            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
             records.push(proximadb_records::ProximaRecord {
                 oid: id,
                 embeddings: vec![proximadb_records::EmbeddingCell {

@@ -6,66 +6,53 @@
 use serde_json::json;
 use std::collections::HashMap;
 
-use proximadb::VectorRecord;
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::search::SearchParams;
-use proximadb::proto::proximadb_v1::SqlValue;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 
 /// Generate test vectors with basic metadata
-fn generate_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
-    let mut vectors = Vec::new();
-    let now = chrono::Utc::now().timestamp();
+fn generate_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
+    let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-    for i in 0..count {
-        let vector = (0..dimension)
-            .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
-            .collect();
+    (0..count)
+        .map(|i| {
+            let values: Vec<f32> = (0..dimension)
+                .map(|j| (i * dimension + j) as f32 / (count * dimension) as f32)
+                .collect();
+            let dim = values.len() as u32;
 
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert(
-            "category".to_string(),
-            SqlValue {
-                value: Some(
-                    proximadb::proto::proximadb_v1::sql_value::Value::StringValue(format!(
-                        "cat_{}",
-                        i % 3
-                    )),
-                ),
-            },
-        );
-        metadata.insert(
-            "score".to_string(),
-            SqlValue {
-                value: Some(
-                    proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
-                        i as f64 / count as f64,
-                    ),
-                ),
-            },
-        );
-        metadata.insert(
-            "active".to_string(),
-            SqlValue {
-                value: Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(
-                    i % 2 == 0,
-                )),
-            },
-        );
+            let mut props = ProximaTree::new();
+            props.insert(
+                "category".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(format!("cat_{}", i % 3))),
+            );
+            props.insert(
+                "score".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Float64(i as f64 / count as f64)),
+            );
+            props.insert(
+                "active".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Boolean(i % 2 == 0)),
+            );
 
-        vectors.push(VectorRecord {
-            id: format!("vec_{}", i),
-            vector,
-            metadata,
-            timestamp: Some(now as i64),
-            updated_at: Some(now as i64),
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        });
-    }
-
-    vectors
+            ProximaRecord {
+                oid: format!("vec_{}", i),
+                created_at_ns: now_ns,
+                updated_at_ns: now_ns,
+                record_version: 1,
+                props,
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values,
+                    dim,
+                }],
+                ..Default::default()
+            }
+        })
+        .collect()
 }
 
 /// Test basic search functionality with SearchParams
@@ -163,50 +150,39 @@ async fn test_distance_metrics() {
     }
 }
 
-/// Test VectorRecord structure and metadata handling
+/// Test ProximaRecord structure and metadata handling
 #[tokio::test]
 async fn test_vector_record_structure() {
-    // Initialize hardware capabilities
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     let test_vectors = generate_test_vectors(5, 64);
 
-    // Test vector record structure
-    for (i, vector) in test_vectors.iter().enumerate() {
-        assert_eq!(vector.id, format!("vec_{}", i));
-        assert_eq!(vector.vector.len(), 64);
-        assert_eq!(vector.metadata.len(), 3);
-        assert!(vector.timestamp.unwrap_or(0) > 0);
+    for (i, record) in test_vectors.iter().enumerate() {
+        assert_eq!(record.oid, format!("vec_{}", i));
+        assert_eq!(record.embeddings[0].values.len(), 64);
+        assert_eq!(record.props.len(), 3);
+        assert!(record.created_at_ns > 0);
 
-        // Test metadata content - metadata is now HashMap<String, SqlValue>
-        let category_value = vector.metadata.get("category").unwrap();
-        if let Some(proximadb::proto::proximadb_v1::sql_value::Value::StringValue(s)) =
-            &category_value.value
-        {
+        let category = record.props.get("category").unwrap();
+        if let ProximaTreeNode::Value(ProximaValue::String(s)) = category {
             assert!(s.starts_with("cat_"));
         } else {
             panic!("Expected string value for category");
         }
 
-        let score_value = vector.metadata.get("score").unwrap();
-        if let Some(proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(n)) =
-            &score_value.value
-        {
+        let score = record.props.get("score").unwrap();
+        if let ProximaTreeNode::Value(ProximaValue::Float64(n)) = score {
             assert!(*n >= 0.0 && *n <= 1.0);
         } else {
-            panic!("Expected number value for score");
+            panic!("Expected float value for score");
         }
 
-        let active_value = vector.metadata.get("active").unwrap();
-        if let Some(proximadb::proto::proximadb_v1::sql_value::Value::BoolValue(b)) =
-            &active_value.value
-        {
+        let active = record.props.get("active").unwrap();
+        if let ProximaTreeNode::Value(ProximaValue::Boolean(b)) = active {
             assert_eq!(*b, i % 2 == 0);
         } else {
             panic!("Expected bool value for active");
         }
     }
-
-    // Test completed
 }
 
 /// Test SearchParams default values and edge cases
