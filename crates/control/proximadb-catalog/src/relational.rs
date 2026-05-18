@@ -235,7 +235,7 @@ fn matches_catalog_type(value: &ProximaValue, data_type: CatalogDataType) -> boo
         CatalogDataType::Timestamp => matches!(value, ProximaValue::Timestamp(_, _)),
         CatalogDataType::TimestampTz => matches!(value, ProximaValue::TimestampTz(_, _)),
         CatalogDataType::Decimal => matches!(value, ProximaValue::Decimal(_)),
-        CatalogDataType::Uuid => matches!(value, ProximaValue::Uuid(_)),
+        CatalogDataType::Uuid => matches!(value, ProximaValue::Uuid(_) | ProximaValue::String(_)),
         CatalogDataType::Json => matches!(
             value,
             ProximaValue::Json(_)
@@ -245,7 +245,12 @@ fn matches_catalog_type(value: &ProximaValue, data_type: CatalogDataType) -> boo
         ),
         CatalogDataType::Vector => matches!(value, ProximaValue::DenseVector(_)),
         CatalogDataType::SparseVector => matches!(value, ProximaValue::SparseVector { .. }),
-        CatalogDataType::BinaryVector => matches!(value, ProximaValue::BinaryVector(_)),
+        CatalogDataType::BinaryVector => {
+            matches!(
+                value,
+                ProximaValue::BinaryVector(_) | ProximaValue::Binary(_)
+            )
+        }
     }
 }
 
