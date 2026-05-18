@@ -86,8 +86,8 @@ use crate::compute::distance_computation::engine::{
 use crate::core::{String, VectorId, VectorRecord};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
+use proximadb_records::ProximaRecord;
 // DIP: CollectionPathResolver is re-exported below via pub use
-use std::collections::HashMap;
 
 // Sub-modules
 pub mod avro_serialization_strategy; // Clean architecture avro implementation
@@ -1722,36 +1722,39 @@ impl WriteAheadLogManager {
         }
     }
 
-    /// Insert single vector record (converted to batch of 1 via WALVectorBatch)
-    pub async fn insert(
+    /// Insert a single canonical record (converted to batch of 1 via WALVectorBatch).
+    pub async fn insert_record(
         &self,
         collection_id: String,
-        vector_id: VectorId,
-        record: &VectorRecord,
+        record_id: VectorId,
+        record: ProximaRecord,
     ) -> Result<u64> {
         let start_time = std::time::Instant::now();
 
         debug!(
-            "📝 [WAL_UPSERT] Starting upsert for collection: {}, vector_id: {}, vector_size: {} dims (using BATCH architecture)",
+            "📝 [WAL_UPSERT] Starting upsert for collection: {}, record_id: {}, embeddings: {} (using BATCH architecture)",
             collection_id,
-            vector_id,
-            record.vector.len()
+            record_id,
+            record.embeddings.len()
         );
 
-        // Create a batch of 1 vector - MODERN ARCHITECTURE
+        // Create a batch of 1 canonical record - MODERN ARCHITECTURE
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
         use crate::storage::persistence::write_ahead_log::BatchId;
 
-        let batch_id = BatchId::new(); // Single vector batch
+        let batch_id = BatchId::new(); // Single record batch
 
-        // Calculate actual size - approximate based on vector dimensions and metadata
-        let total_size_bytes = record.vector.len() * 4 + 256; // 4 bytes per f32 + metadata overhead
+        let total_size_bytes = record
+            .embeddings
+            .iter()
+            .map(|embedding| embedding.values.len() * 4)
+            .sum::<usize>()
+            + (record.props.len() * 50)
+            + 256;
 
-        // Convert to canonical ProximaRecord at the protocol boundary
-        let proxima_record = proximadb_records::ProximaRecord::from(record);
         let batch = WALVectorBatch {
             batch_id,
-            vector_records: Arc::new(vec![proxima_record]),
+            vector_records: Arc::new(vec![record]),
             timestamp: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
@@ -1771,11 +1774,33 @@ impl WriteAheadLogManager {
             .ok_or_else(|| anyhow::anyhow!("No sequence returned from batch write"))?;
 
         debug!(
-            "📝 [WAL_UPSERT] Successfully upserted vector {} in collection {} (sequence: {}) in {:?} using BATCH architecture",
-            vector_id, collection_id, sequence, duration
+            "📝 [WAL_UPSERT] Successfully upserted record {} in collection {} (sequence: {}) in {:?} using BATCH architecture",
+            record_id, collection_id, sequence, duration
         );
 
         Ok(sequence)
+    }
+
+    /// Insert single vector record (compatibility adapter over canonical records).
+    pub async fn insert(
+        &self,
+        collection_id: String,
+        vector_id: VectorId,
+        record: &VectorRecord,
+    ) -> Result<u64> {
+        self.insert_record(collection_id, vector_id, ProximaRecord::from(record))
+            .await
+    }
+
+    /// Insert batch of canonical records using modern batch API.
+    pub async fn insert_record_batch(
+        &self,
+        collection_id: String,
+        records: Vec<(VectorId, ProximaRecord)>,
+    ) -> Result<Vec<u64>> {
+        let vector_records: Vec<ProximaRecord> =
+            records.into_iter().map(|(_, record)| record).collect();
+        self.insert_vectors(collection_id, vector_records).await
     }
 
     /// Insert batch of vector records using modern batch API
@@ -1785,7 +1810,7 @@ impl WriteAheadLogManager {
         records: Vec<(VectorId, VectorRecord)>,
     ) -> Result<Vec<u64>> {
         // Use the modern batch API directly
-        let vector_records: Vec<proximadb_records::ProximaRecord> = records
+        let vector_records: Vec<ProximaRecord> = records
             .into_iter()
             .map(|(_, record)| record.into())
             .collect();
@@ -1801,7 +1826,7 @@ impl WriteAheadLogManager {
         records: Vec<(VectorId, VectorRecord)>,
         _immediate_sync: bool,
     ) -> Result<Vec<u64>> {
-        let vector_records: Vec<proximadb_records::ProximaRecord> = records
+        let vector_records: Vec<ProximaRecord> = records
             .into_iter()
             .map(|(_, record)| record.into())
             .collect();
@@ -1817,93 +1842,113 @@ impl WriteAheadLogManager {
         Ok(())
     }
 
-    /// Update vector record (redirects to upsert for consistency)
+    /// Update canonical record (redirects to upsert for consistency).
+    pub async fn update_record(
+        &self,
+        collection_id: String,
+        record_id: VectorId,
+        mut record: ProximaRecord,
+    ) -> Result<u64> {
+        record.record_version = record.record_version.saturating_add(1).max(1);
+        record.updated_at_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos() as i64)
+            .unwrap_or(record.updated_at_ns);
+
+        self.insert_record(collection_id, record_id, record).await
+    }
+
+    /// Update vector record (compatibility adapter over canonical records).
     pub async fn update(
         &self,
         collection_id: String,
         vector_id: VectorId,
-        mut record: VectorRecord,
+        record: VectorRecord,
     ) -> Result<u64> {
-        // For modern batch strategies, version management is handled internally
-        // Just increment version if not already set
-        // Proto-first: direct field access
-        let current_version = record.version.unwrap_or(0);
-        let new_version = if current_version == 0 {
-            1
-        } else {
-            current_version + 1
-        };
-
-        // Update version directly
-        record.version = Some(new_version);
-
-        // Redirect to insert (which is now upsert)
-        self.insert(collection_id, vector_id, &record).await
+        self.update_record(collection_id, vector_id, ProximaRecord::from(record))
+            .await
     }
 
-    /// Delete vector record (delegated to batch strategy)
-    pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
-        // Deletion is implemented via expires_at field
-        // Create a vector record with expires_at set to current time
-        let record = crate::proto::proximadb_v1::VectorRecord {
-            id: vector_id.clone(),
-            vector: Vec::new(),
-            metadata: HashMap::new(),
-            version: None,
-            timestamp: Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_secs() as i64)
-                    .unwrap_or(0),
-            ),
-            updated_at: None,
-            expires_at: Some(0), // Setting to 0 or past time marks for deletion
-            source: None,        // No source content for deletion record
+    /// Delete canonical record by identity (tombstone record).
+    pub async fn delete_record(&self, collection_id: String, record_id: VectorId) -> Result<u64> {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos() as i64)
+            .unwrap_or(0);
+
+        let record = ProximaRecord {
+            oid: record_id.clone(),
+            updated_at_ns: now_ns,
+            valid_to_ns: Some(0),
+            method: Some("delete".to_string()),
+            ..ProximaRecord::default()
         };
 
-        // Use insert with expired record to mark for deletion
-        self.insert(collection_id, vector_id, &record).await
+        self.insert_record(collection_id, record_id, record).await
+    }
+
+    /// Delete vector record (compatibility adapter over canonical tombstones).
+    pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
+        self.delete_record(collection_id, vector_id).await
     }
 
     // Note: Collection lifecycle operations (create/drop) are handled by CollectionService
     // WAL only handles vector-level operations (insert/update/delete/flush/checkpoint)
 
-    /// Search for vector by ID (returns VectorRecord)
+    /// Search for canonical record by ID.
+    pub async fn search_record(
+        &self,
+        collection_id: &str,
+        record_id: &VectorId,
+    ) -> Result<Option<ProximaRecord>> {
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        wal_behavior.vector_by_id(collection_id, record_id).await
+    }
+
+    /// Search for vector by ID (compatibility adapter returning VectorRecord).
     pub async fn search(
         &self,
         collection_id: &str,
         vector_id: &VectorId,
     ) -> Result<Option<VectorRecord>> {
-        // Use shared WAL behavior to get the vector
-        // Create MemtableConfig from MemTableConfig
-        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        // Convert ProximaRecord back to VectorRecord at the protocol boundary
-        let result = wal_behavior.vector_by_id(collection_id, vector_id).await?;
+        let result = self.search_record(collection_id, vector_id).await?;
         Ok(result.map(|r| VectorRecord::from(r)))
     }
 
-    /// Read vector batches for recovery or replication (modern API)
+    /// Read canonical record batches for recovery or replication.
+    pub async fn read_record_entries(
+        &self,
+        collection_id: &str,
+        from_sequence: u64,
+        limit: Option<usize>,
+    ) -> Result<Vec<ProximaRecord>> {
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        let records = wal_behavior.get_collection_vectors(collection_id).await?;
+
+        let filtered: Vec<ProximaRecord> = records
+            .into_iter()
+            .skip(from_sequence as usize)
+            .take(limit.unwrap_or(usize::MAX))
+            .collect();
+
+        Ok(filtered)
+    }
+
+    /// Read vector batches for recovery or replication (compatibility adapter).
     pub async fn read_entries(
         &self,
         collection_id: &str,
         from_sequence: u64,
         limit: Option<usize>,
     ) -> Result<Vec<VectorRecord>> {
-        // Get vectors from the collection
-        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        let vectors = wal_behavior.get_collection_vectors(collection_id).await?;
-
-        // Apply sequence filtering and limit if needed, converting to legacy VectorRecord
-        let filtered: Vec<VectorRecord> = vectors
+        Ok(self
+            .read_record_entries(collection_id, from_sequence, limit)
+            .await?
             .into_iter()
-            .skip(from_sequence as usize)
-            .take(limit.unwrap_or(usize::MAX))
             .map(VectorRecord::from)
-            .collect();
-
-        Ok(filtered)
+            .collect())
     }
 
     /// Force flush to disk
