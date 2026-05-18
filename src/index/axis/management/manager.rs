@@ -87,7 +87,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error};
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::{String, VectorId, VectorRecord};
+use crate::core::{String, VectorId};
 use crate::index::axis::management::{
     migration_engine::{IndexMigrationEngine, MigrationDecision},
     monitor::PerformanceMonitor,
@@ -103,6 +103,8 @@ use crate::index::axis::{
     types::{AxisConfig, Data, IndexAlgorithm, IndexSelectionStrategy},
 };
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTreeNode};
 // Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::viper::QuantizationMethod;
 
@@ -261,7 +263,7 @@ pub struct AxisManager {
 
     /// Exact vector records tracked per collection for correctness-first filtered search.
     /// This is the source of truth for metadata-aware fallback execution and MVCC timestamps.
-    collection_vectors: Arc<RwLock<HashMap<String, HashMap<String, VectorRecord>>>>,
+    collection_vectors: Arc<RwLock<HashMap<String, HashMap<String, ProximaRecord>>>>,
 
     /// HMGI - Hierarchical Multi-modality Graph Indexing components
     /// Registry for managing per-modality HNSW partitions
@@ -472,87 +474,58 @@ impl AxisManager {
         }
     }
 
-    /// Insert a vector with adaptive indexing and quantization support
-    pub async fn insert(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
+    /// Insert a canonical ProximaRecord into the AXIS index with adaptive indexing.
+    pub async fn insert<R>(&self, collection_id: &str, vector: &R) -> Result<()>
+    where
+        R: Clone + Into<ProximaRecord>,
+    {
+        let vector: ProximaRecord = vector.clone().into();
+
         // Ensure we have a search_strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
 
-        // Check if vector is expired (MVCC support) - direct field access
-        if let Some(expires_at) = vector.expires_at
-            && expires_at <= Utc::now().timestamp()
-        {
-            // Skip inserting already expired vectors
-            return Ok(());
+        // Check if vector is expired (MVCC support)
+        if let Some(valid_to_ns) = vector.valid_to_ns {
+            let now_ns = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            if valid_to_ns <= now_ns {
+                return Ok(());
+            }
         }
 
-        // Get collection config for quantization settings
-        // First try shared cache, then fall back to collection service
-        let collection = if let Some(cache) = &self.shared_collection_cache {
-            cache.get(collection_id).map(|r| r.clone())
-        } else if let Some(collection_service) = &self.collection_service {
-            collection_service
-                .collection(collection_id)
-                .await
-                .ok()
-                .flatten()
-                .map(Arc::new)
-        } else {
-            None
-        };
+        // Quantization is handled internally by the indexes; pass through as-is
+        let processed_vector = vector.clone();
 
-        // Prepare vector for insertion (with potential quantization)
-        let processed_vector = if let Some(collection) = &collection {
-            // Check if quantization is enabled for this collection
-            if let Some(config) = &collection.config {
-                if let Some(quant_config) = &config.quantization {
-                    if quant_config.enabled.unwrap_or(false) {
-                        // Quantize vector for in-memory index using collection settings
-                        // This reuses our existing quantization infrastructure
-                        self.quantize_for_index(vector, quant_config, config)
-                            .await?
-                    } else {
-                        vector.clone()
-                    }
-                } else {
-                    vector.clone()
-                }
-            } else {
-                vector.clone()
-            }
-        } else {
-            vector.clone()
-        };
-
-        if !vector.id.is_empty() {
+        if !vector.oid.is_empty() {
             let mut collection_vectors = self.collection_vectors.write().await;
             collection_vectors
                 .entry(collection_id.to_string())
                 .or_default()
-                .insert(vector.id.clone(), vector.clone());
+                .insert(vector.oid.clone(), vector.clone());
         }
-        let processed_record = proximadb_records::ProximaRecord::from(&processed_vector);
 
         // Insert into appropriate indexes based on current search_strategy
         let search_strategy = self.get_collection_strategy(collection_id).await?;
+        let vec_values = processed_vector
+            .embeddings
+            .first()
+            .map(|e| &e.values[..])
+            .unwrap_or(&[]);
         let has_dense_vector_index = search_strategy
             .indexes
             .iter()
             .any(|index_spec| matches!(index_spec.data_type, Data::DenseVector { .. }));
 
-        if has_dense_vector_index
-            && !processed_vector.id.is_empty()
-            && !processed_vector.vector.is_empty()
-        {
+        if has_dense_vector_index && !processed_vector.oid.is_empty() && !vec_values.is_empty() {
             self.ensure_hmgi_collection_enabled(collection_id).await?;
         }
 
         // Insert into global ID index if ID is present
-        if !processed_vector.id.is_empty() {
+        if !processed_vector.oid.is_empty() {
             self.global_id_index
                 .insert(
-                    processed_vector.id.clone(),
+                    processed_vector.oid.clone(),
                     collection_id,
-                    &processed_record,
+                    &processed_vector,
                 )
                 .await?;
         }
@@ -561,7 +534,7 @@ impl AxisManager {
         for index_spec in &search_strategy.indexes {
             match index_spec.data_type {
                 Data::Metadata => {
-                    self.metadata_index.insert(&processed_record).await?;
+                    self.metadata_index.insert(&processed_vector).await?;
                 }
                 Data::DenseVector { .. } => {
                     self.insert_dense_vector_index(
@@ -572,7 +545,7 @@ impl AxisManager {
                     .await?;
                 }
                 Data::SparseVector { .. } => {
-                    self.sparse_vector_index.insert(&processed_record).await?;
+                    self.sparse_vector_index.insert(&processed_vector).await?;
                 }
                 _ => {} // Handle other data types
             }
@@ -589,16 +562,8 @@ impl AxisManager {
     }
 
     /// Insert a canonical ProximaRecord into the AXIS index.
-    ///
-    /// Converts to the internal VectorRecord representation at this boundary
-    /// until the AXIS internals are fully migrated to ProximaRecord.
-    pub async fn insert_record(
-        &self,
-        collection_id: &str,
-        record: &proximadb_records::ProximaRecord,
-    ) -> Result<()> {
-        let v1 = crate::proto::proximadb_v1::VectorRecord::from(record);
-        self.insert(collection_id, &v1).await
+    pub async fn insert_record(&self, collection_id: &str, record: &ProximaRecord) -> Result<()> {
+        self.insert(collection_id, record).await
     }
 
     /// Delete a vector (soft delete with expires_at)
@@ -722,7 +687,7 @@ impl AxisManager {
     async fn insert_dense_vector_index(
         &self,
         collection_id: &str,
-        vector: &VectorRecord,
+        vector: &ProximaRecord,
         algorithm: &IndexAlgorithm,
     ) -> Result<()> {
         if self.is_hmgi_enabled(collection_id).await {
@@ -771,14 +736,19 @@ impl AxisManager {
     }
 
     /// Insert a vector into the real HNSW index for a collection
-    async fn insert_into_hnsw(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
+    async fn insert_into_hnsw(&self, collection_id: &str, vector: &ProximaRecord) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::index_factory::AxisVectorIndex;
         use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
 
+        let vec_values = vector
+            .embeddings
+            .first()
+            .map(|e| e.values.clone())
+            .unwrap_or_default();
         // Get or create HNSW index for this collection
-        let dimension = vector.vector.len();
-        if dimension == 0 || vector.id.is_empty() {
+        let dimension = vec_values.len();
+        if dimension == 0 || vector.oid.is_empty() {
             return Ok(()); // Skip empty vectors or missing IDs
         }
 
@@ -826,7 +796,7 @@ impl AxisManager {
         // Insert into the index using the AxisVectorIndex trait
         let indexes = self.hnsw_indexes.read().await;
         if let Some(index) = indexes.get(collection_id) {
-            index.add(vector.id.clone(), vector.vector.clone()).await?;
+            index.add(vector.oid.clone(), vec_values).await?;
         }
 
         Ok(())
@@ -871,12 +841,17 @@ impl AxisManager {
     /// 2. Train index with buffered vectors to build centroids
     /// 3. Add all buffered vectors to trained index
     /// 4. Future inserts go directly to trained index
-    async fn insert_into_ivf(&self, collection_id: &str, vector: &VectorRecord) -> Result<()> {
+    async fn insert_into_ivf(&self, collection_id: &str, vector: &ProximaRecord) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
 
-        let dimension = vector.vector.len();
-        if dimension == 0 || vector.id.is_empty() {
+        let vec_values = vector
+            .embeddings
+            .first()
+            .map(|e| e.values.clone())
+            .unwrap_or_default();
+        let dimension = vec_values.len();
+        if dimension == 0 || vector.oid.is_empty() {
             return Ok(()); // Skip empty vectors or missing IDs
         }
 
@@ -898,7 +873,7 @@ impl AxisManager {
             let indexes = self.ivf_indexes.read().await;
             if let Some(index) = indexes.get(collection_id) {
                 let idx = index.read().await;
-                idx.add_vector(vector.id.clone(), vector.vector.clone(), None)
+                idx.add_vector(vector.oid.clone(), vec_values.clone(), None)
                     .await?;
             }
             return Ok(());
@@ -908,7 +883,7 @@ impl AxisManager {
         {
             let mut pending = self.ivf_pending_vectors.write().await;
             let buffer = pending.entry(collection_id.to_string()).or_default();
-            buffer.push((vector.id.clone(), vector.vector.clone()));
+            buffer.push((vector.oid.clone(), vec_values.clone()));
 
             // Check if we have enough vectors to train
             if buffer.len() >= MIN_TRAIN_SIZE {
@@ -1483,7 +1458,7 @@ impl AxisManager {
     pub async fn handle_flushed_vectors(
         &self,
         collection_id: &str,
-        flushed_vectors: Vec<VectorRecord>,
+        flushed_vectors: Vec<ProximaRecord>,
         files_created: Vec<String>,
     ) -> Result<()> {
         if flushed_vectors.is_empty() {
@@ -1557,7 +1532,7 @@ impl AxisManager {
     async fn index_vectors_synchronously(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         _files_created: &[String],
     ) -> Result<()> {
         let batch_size = vectors.len();
@@ -1603,7 +1578,7 @@ impl AxisManager {
     async fn index_vectors_asynchronously(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         files_created: Vec<String>,
     ) -> Result<()> {
         let batch_size = vectors.len();
@@ -1680,7 +1655,7 @@ impl AxisManager {
     async fn train_ivf_for_batch(
         &self,
         collection_id: &str,
-        vectors: &[VectorRecord],
+        vectors: &[ProximaRecord],
     ) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
@@ -1689,7 +1664,7 @@ impl AxisManager {
             return Ok(());
         }
 
-        let dimension = vectors[0].vector.len();
+        let dimension = vectors[0].embeddings.first().map_or(0, |e| e.values.len());
         if dimension == 0 {
             return Ok(());
         }
@@ -1755,10 +1730,23 @@ impl AxisManager {
                 .iter()
                 .step_by(step.max(1))
                 .take(sample_size)
-                .map(|v| v.vector.clone())
+                .map(|v| {
+                    v.embeddings
+                        .first()
+                        .map(|e| e.values.clone())
+                        .unwrap_or_default()
+                })
                 .collect()
         } else {
-            vectors.iter().map(|v| v.vector.clone()).collect()
+            vectors
+                .iter()
+                .map(|v| {
+                    v.embeddings
+                        .first()
+                        .map(|e| e.values.clone())
+                        .unwrap_or_default()
+                })
+                .collect()
         };
 
         index.train(training_vectors).await?;
@@ -1786,13 +1774,17 @@ impl AxisManager {
     }
 
     /// Index vectors using hybrid mode (adaptive based on batch size)
-    pub async fn index_vectors_hybrid(
+    pub async fn index_vectors_hybrid<R>(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<R>,
         files_created: Vec<String>,
         index_config: &crate::index::config::IndexConfig,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        R: Into<ProximaRecord>,
+    {
+        let vectors: Vec<ProximaRecord> = vectors.into_iter().map(Into::into).collect();
         let batch_size_threshold = index_config.async_update_batch_size.unwrap_or(1000);
 
         tracing::info!(
@@ -1863,19 +1855,24 @@ impl AxisManager {
 
     /// Quantize vector for in-memory index using collection's quantization settings
     /// This reuses our existing modular quantization infrastructure
+    #[allow(dead_code)]
     async fn quantize_for_index(
         &self,
-        vector: &VectorRecord,
+        vector: &ProximaRecord,
         quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
         collection_config: &crate::proto::proximadb_v1::CollectionConfig,
-    ) -> Result<VectorRecord> {
+    ) -> Result<ProximaRecord> {
         use crate::compute::distance_computation::conversion::proto_distance_to_internal;
         use crate::compute::quantization::storage_engine::{
             StorageQuantizationConfig, StorageQuantizationEngine,
         };
 
         // Extract the vector data
-        let vector_data = &vector.vector;
+        let vector_data = vector
+            .embeddings
+            .first()
+            .map(|e| &e.values[..])
+            .unwrap_or(&[]);
         if vector_data.is_empty() {
             return Ok(vector.clone());
         }
@@ -2095,7 +2092,7 @@ impl AxisManager {
         let mut results = Vec::new();
 
         for record in records {
-            if !query.id_filters.is_empty() && !query.id_filters.contains(&record.id) {
+            if !query.id_filters.is_empty() && !query.id_filters.contains(&record.oid) {
                 continue;
             }
 
@@ -2111,7 +2108,11 @@ impl AxisManager {
                     vector,
                     similarity_threshold,
                 }) => {
-                    let result = compute.similarity(vector, &record.vector, Some(metric));
+                    let record_vec = match record.embeddings.first() {
+                        Some(e) => &e.values,
+                        None => continue,
+                    };
+                    let result = compute.similarity(vector, record_vec, Some(metric));
                     if result.normalized_score < *similarity_threshold {
                         continue;
                     }
@@ -2121,9 +2122,9 @@ impl AxisManager {
                 None => 1.0,
             };
 
-            let expires_at = record
-                .expires_at
-                .and_then(|timestamp| DateTime::<Utc>::from_timestamp(timestamp, 0));
+            let expires_at = record.valid_to_ns.and_then(|ns| {
+                DateTime::<Utc>::from_timestamp(ns / 1_000_000_000, (ns % 1_000_000_000) as u32)
+            });
 
             if !query.include_expired
                 && let Some(expiration) = expires_at.as_ref()
@@ -2133,7 +2134,7 @@ impl AxisManager {
             }
 
             results.push(ScoredResult {
-                vector_id: record.id,
+                vector_id: record.oid,
                 similarity,
                 expires_at,
             });
@@ -2194,11 +2195,95 @@ impl AxisManager {
         }
     }
 
-    fn record_filter_metadata(&self, record: &VectorRecord) -> HashMap<String, Value> {
-        let mut metadata =
-            crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
-        metadata.insert("id".to_string(), Value::String(record.id.clone()));
+    fn record_filter_metadata(&self, record: &ProximaRecord) -> HashMap<String, Value> {
+        let mut metadata: HashMap<String, Value> = record
+            .props
+            .iter()
+            .map(|(key, value)| (key.clone(), Self::tree_node_to_json(value)))
+            .collect();
+        metadata.insert("id".to_string(), Value::String(record.oid.clone()));
+        metadata.insert("oid".to_string(), Value::String(record.oid.clone()));
+        metadata.insert(
+            "tenant_id".to_string(),
+            Value::String(record.tenant_id.clone()),
+        );
         metadata
+    }
+
+    fn record_dense_vector<'a>(&self, record: &'a ProximaRecord) -> Option<&'a [f32]> {
+        record
+            .embeddings
+            .iter()
+            .find(|embedding| !embedding.values.is_empty())
+            .map(|embedding| embedding.values.as_slice())
+    }
+
+    fn tree_node_to_json(node: &ProximaTreeNode) -> Value {
+        match node {
+            ProximaTreeNode::Value(value) => Self::proxima_value_to_json(value),
+            ProximaTreeNode::Object(tree) => Value::Object(
+                tree.iter()
+                    .map(|(key, value)| (key.clone(), Self::tree_node_to_json(value)))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn proxima_value_to_json(value: &ProximaValue) -> Value {
+        match value {
+            ProximaValue::Boolean(value) => Value::Bool(*value),
+            ProximaValue::Int8(value) => Value::from(*value),
+            ProximaValue::Int16(value) => Value::from(*value),
+            ProximaValue::Int32(value) => Value::from(*value),
+            ProximaValue::Int64(value) => Value::from(*value),
+            ProximaValue::UInt8(value) => Value::from(*value),
+            ProximaValue::UInt16(value) => Value::from(*value),
+            ProximaValue::UInt32(value) => Value::from(*value),
+            ProximaValue::UInt64(value) => Value::from(*value),
+            ProximaValue::Float16(value) => Value::from(*value as f64),
+            ProximaValue::Float32(value) => Value::from(*value as f64),
+            ProximaValue::Float64(value) => Value::from(*value),
+            ProximaValue::Decimal(value)
+            | ProximaValue::String(value)
+            | ProximaValue::Symbol(value) => Value::String(value.clone()),
+            ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => {
+                Value::Array(value.iter().map(|byte| Value::from(*byte)).collect())
+            }
+            ProximaValue::Date(value) => Value::from(*value),
+            ProximaValue::Time(value, _)
+            | ProximaValue::Timestamp(value, _)
+            | ProximaValue::TimestampTz(value, _) => Value::from(*value),
+            ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
+                Value::Array(value.iter().map(|byte| Value::from(*byte)).collect())
+            }
+            ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
+            ProximaValue::Array(values) => {
+                Value::Array(values.iter().map(Self::proxima_value_to_json).collect())
+            }
+            ProximaValue::Map(values) | ProximaValue::Struct(values) => Value::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), Self::proxima_value_to_json(value)))
+                    .collect(),
+            ),
+            ProximaValue::DenseVector(values) => Value::Array(
+                values
+                    .iter()
+                    .map(|value| Value::from(*value as f64))
+                    .collect(),
+            ),
+            ProximaValue::SparseVector { indices, values } => serde_json::json!({
+                "indices": indices,
+                "values": values,
+            }),
+            ProximaValue::Null => Value::Null,
+        }
+    }
+
+    fn datetime_from_timestamp_ns(timestamp_ns: i64) -> Option<DateTime<Utc>> {
+        let seconds = timestamp_ns.div_euclid(1_000_000_000);
+        let nanos = timestamp_ns.rem_euclid(1_000_000_000) as u32;
+        DateTime::<Utc>::from_timestamp(seconds, nanos)
     }
 
     fn lookup_record_expiration(
@@ -2213,8 +2298,8 @@ impl AxisManager {
             .and_then(|vectors| vectors.get(vector_id).cloned())
             .and_then(|record| {
                 record
-                    .expires_at
-                    .and_then(|timestamp| DateTime::<Utc>::from_timestamp(timestamp, 0))
+                    .valid_to_ns
+                    .and_then(Self::datetime_from_timestamp_ns)
             })
     }
 }
@@ -2392,11 +2477,11 @@ impl AxisManager {
     /// ## Returns
     ///
     /// The partition key the vector was inserted into
-    pub async fn insert_hmgi(
-        &self,
-        collection_id: &str,
-        record: VectorRecord,
-    ) -> Result<HmgiPartitionKey> {
+    pub async fn insert_hmgi<R>(&self, collection_id: &str, record: R) -> Result<HmgiPartitionKey>
+    where
+        R: Into<ProximaRecord>,
+    {
+        let record: ProximaRecord = record.into();
         if !self.is_hmgi_enabled(collection_id).await {
             return Err(anyhow::anyhow!(
                 "HMGI not enabled for collection '{}'",
@@ -2422,19 +2507,32 @@ impl AxisManager {
                 .ok_or_else(|| anyhow::anyhow!("No OID found for collection '{}'", collection_id))?
         };
 
-        // Extract modality from metadata
-        let metadata =
-            crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
+        // Extract modality from props (string values only)
+        let metadata: std::collections::HashMap<String, serde_json::Value> = record
+            .props
+            .iter()
+            .filter_map(|(k, v)| {
+                if let ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(s)) = v {
+                    Some((k.clone(), serde_json::Value::String(s.clone())))
+                } else {
+                    None
+                }
+            })
+            .collect();
         let modality_tag = extractor.extract_modality(&metadata);
 
         // Create partition key
         let partition_key = HmgiPartitionKey::new(oid, 1, modality_tag, None);
 
-        // Get vector dimension from the record
-        let dimension = if record.vector.is_empty() {
+        let vec_values = record
+            .embeddings
+            .first()
+            .map(|e| e.values.clone())
+            .unwrap_or_default();
+        let dimension = if vec_values.is_empty() {
             128
         } else {
-            record.vector.len()
+            vec_values.len()
         };
 
         // Get or create partition with default config
@@ -2447,13 +2545,13 @@ impl AxisManager {
             .await;
 
         use crate::index::axis::index_factory::AxisVectorIndex;
-        if !record.id.is_empty() && !record.vector.is_empty() {
-            index.add(record.id.clone(), record.vector.clone()).await?;
+        if !record.oid.is_empty() && !vec_values.is_empty() {
+            index.add(record.oid.clone(), vec_values).await?;
         }
 
         tracing::debug!(
             "Inserting vector '{}' into HMGI partition '{}'",
-            record.id,
+            record.oid,
             partition_key
         );
 
@@ -2606,19 +2704,15 @@ impl AxisManager {
         let mut migrated = 0;
         for record in vectors {
             // Extract modality
-            let metadata =
-                crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
+            let metadata = self.record_filter_metadata(&record);
             let modality_tag = extractor.extract_modality(&metadata);
 
             // Create partition key
             let partition_key = HmgiPartitionKey::new(oid, 1, modality_tag, None);
 
             // Get or create partition with default config
-            let dimension = if record.vector.is_empty() {
-                128
-            } else {
-                record.vector.len()
-            };
+            let record_vector = self.record_dense_vector(&record);
+            let dimension = record_vector.map_or(128, <[f32]>::len);
             let config = crate::index::axis::indexes::hnsw_index::AxisHnswConfig::default();
             let _index = registry
                 .get_or_create_partition(partition_key.clone(), config, dimension)
@@ -2627,8 +2721,12 @@ impl AxisManager {
                 .register_collection_partition(collection_id, partition_key)
                 .await;
             use crate::index::axis::index_factory::AxisVectorIndex;
-            if !record.id.is_empty() && !record.vector.is_empty() {
-                _index.add(record.id.clone(), record.vector.clone()).await?;
+            if let Some(record_vector) = record_vector
+                && !record.oid.is_empty()
+            {
+                _index
+                    .add(record.oid.clone(), record_vector.to_vec())
+                    .await?;
             }
             migrated += 1;
         }
@@ -2644,13 +2742,7 @@ impl AxisManager {
             .map(|records| {
                 records
                     .values()
-                    .map(|record| {
-                        VectorRecordSample::new(
-                            crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(
-                                &record.metadata,
-                            ),
-                        )
-                    })
+                    .map(|record| VectorRecordSample::new(self.record_filter_metadata(record)))
                     .collect()
             })
             .unwrap_or_default()

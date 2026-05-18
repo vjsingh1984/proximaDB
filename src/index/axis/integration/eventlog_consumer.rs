@@ -649,7 +649,7 @@ impl AxisEventLogConsumer {
         extraction_mode: ExtractionMode,
         storage_engine: StorageEngineType,
         collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
         use crate::storage::trait_components::extractor::{
             ExtractionFactory, ExtractionMode as TraitMode, ExtractionRequest,
@@ -729,58 +729,51 @@ impl AxisEventLogConsumer {
             result.stats.duration_ms
         );
 
-        // Convert ExtractedVector to proto::VectorRecord
-        let all_vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = result
+        // Convert ExtractedVector to ProximaRecord
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let all_vectors: Vec<proximadb_records::ProximaRecord> = result
             .vectors
             .into_iter()
             .filter_map(|v| {
-                // Only include vectors with FP32 data for now
-                // (quantized-only extraction would need different handling)
                 v.fp32_vector.map(|fp32_vec| {
-                    crate::proto::proximadb_v1::VectorRecord {
-                        id: v.id,
-                        vector: fp32_vec,
-                        metadata: v
-                            .metadata
-                            .and_then(|m| {
-                                // Convert serde_json::Value to HashMap<String, SqlValue>
-                                if let serde_json::Value::Object(map) = m {
-                                    Some(
-                                        map.into_iter()
-                                            .filter_map(|(k, v)| {
-                                                // Convert JSON value to SqlValue
-                                                use crate::proto::proximadb_v1::sql_value::Value as V;
-                                                let sql_val = match v {
-                                                    serde_json::Value::String(s) => {
-                                                        Some(V::StringValue(s))
-                                                    }
-                                                    serde_json::Value::Number(n) => {
-                                                        Some(V::NumberValue(n.as_f64().unwrap_or(0.0)))
-                                                    }
-                                                    serde_json::Value::Bool(b) => {
-                                                        Some(V::BoolValue(b))
-                                                    }
-                                                    serde_json::Value::Null => {
-                                                        Some(V::NullValue(0))
-                                                    }
-                                                    _ => None,
-                                                };
-                                                sql_val.map(|sv| {
-                                                    (k, crate::proto::proximadb_v1::SqlValue { value: Some(sv) })
-                                                })
-                                            })
-                                            .collect(),
-                                    )
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_default(),
-                        timestamp: None,
-                        updated_at: None,
-                        expires_at: None,
-                        version: None,
-                        source: None,
+                    let dim = fp32_vec.len() as u32;
+                    let props: proximadb_records::ProximaTree = v
+                        .metadata
+                        .and_then(|m| {
+                            if let serde_json::Value::Object(map) = m {
+                                Some(
+                                    map.into_iter()
+                                        .map(|(k, val)| {
+                                            use proximadb_data_model::ProximaValue;
+                                            let pv = match val {
+                                                serde_json::Value::String(s) => ProximaValue::String(s),
+                                                serde_json::Value::Number(n) => {
+                                                    ProximaValue::Float64(n.as_f64().unwrap_or(0.0))
+                                                }
+                                                serde_json::Value::Bool(b) => ProximaValue::Boolean(b),
+                                                _ => ProximaValue::Null,
+                                            };
+                                            (k, proximadb_records::ProximaTreeNode::Value(pv))
+                                        })
+                                        .collect(),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
+                    proximadb_records::ProximaRecord {
+                        oid: v.id,
+                        created_at_ns: now_ns,
+                        updated_at_ns: now_ns,
+                        props,
+                        embeddings: vec![proximadb_records::EmbeddingCell {
+                            model_id: "default".to_string(),
+                            modality: "vector".to_string(),
+                            values: fp32_vec,
+                            dim,
+                        }],
+                        ..Default::default()
                     }
                 })
             })

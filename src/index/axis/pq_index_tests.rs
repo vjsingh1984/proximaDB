@@ -12,20 +12,22 @@ mod tests {
     use crate::compute::distance_computation::DistanceMetric;
     use crate::index::axis::index_factory::IndexFactory;
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
-    use crate::proto::proximadb_v1::VectorRecord;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
     use tracing::debug;
 
     #[allow(dead_code)]
-    fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![0.1; dimension],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: Some("test".to_string()),
+    fn create_test_vector(id: &str, dimension: usize) -> ProximaRecord {
+        let values = vec![0.1_f32; dimension];
+        let dim = dimension as u32;
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values,
+                dim,
+            }],
+            ..Default::default()
         }
     }
 

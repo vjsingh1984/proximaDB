@@ -10,23 +10,18 @@
 #[cfg(test)]
 mod tests {
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::proto::proximadb_v1::VectorRecord;
     use std::collections::HashMap;
     use std::time::Instant;
     use tracing::debug;
 
+    struct TestVector {
+        id: String,
+        vector: Vec<f32>,
+    }
+
     #[allow(dead_code)]
-    fn create_test_vector(id: &str, values: Vec<f32>) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: values,
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: Some("test".to_string()),
-        }
+    fn create_test_vector(id: &str, values: Vec<f32>) -> TestVector {
+        TestVector { id: id.to_string(), vector: values }
     }
 
     fn calculate_distance(v1: &[f32], v2: &[f32], metric: DistanceMetric) -> f32 {
