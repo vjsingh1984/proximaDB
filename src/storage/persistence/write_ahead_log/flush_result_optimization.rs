@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use super::enhanced_flush_result::EnhancedFlushResult;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::FlushResult;
+use proximadb_records::ProximaRecord;
 
 /// Optimized flush result that minimizes memory allocations
 #[derive(Debug)]
@@ -26,7 +26,7 @@ pub struct OptimizedFlushResult {
     pub base: FlushResult,
 
     /// Reference to vectors (avoids cloning large datasets)
-    pub vector_refs: Arc<Vec<Arc<VectorRecord>>>,
+    pub vector_refs: Arc<Vec<Arc<ProximaRecord>>>,
 
     /// Deleted vector IDs (if any)
     pub deleted_vector_ids: Vec<String>,
@@ -81,7 +81,7 @@ pub struct StreamingFlushResult {
     pub base: FlushResult,
 
     /// Channel for streaming vectors
-    pub vector_stream: mpsc::Receiver<Arc<VectorRecord>>,
+    pub vector_stream: mpsc::Receiver<Arc<ProximaRecord>>,
 
     /// Total expected vectors
     pub expected_count: usize,
@@ -113,8 +113,8 @@ impl BatchFlushProcessor {
     /// Process vectors in optimized batches
     pub async fn process_batch(
         &self,
-        vectors: Vec<VectorRecord>,
-    ) -> Result<Vec<Arc<VectorRecord>>> {
+        vectors: Vec<ProximaRecord>,
+    ) -> Result<Vec<Arc<ProximaRecord>>> {
         let chunk_size = vectors.len().div_ceil(self.worker_count);
         let chunks: Vec<_> = vectors
             .chunks(chunk_size)
@@ -236,7 +236,7 @@ impl OptimizedFlushCoordinator {
     pub async fn execute_optimized_flush(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<OptimizedFlushResult> {
         info!(
             "🚀 Optimized flush starting for {} with {} vectors",
@@ -324,11 +324,10 @@ impl OptimizedFlushCoordinator {
 /// Convert optimized result to enhanced result when needed
 impl From<OptimizedFlushResult> for EnhancedFlushResult {
     fn from(optimized: OptimizedFlushResult) -> Self {
-        // Convert legacy optimized vector refs to canonical records at this adapter boundary.
-        let vector_records: Vec<proximadb_records::ProximaRecord> = optimized
+        let vector_records: Vec<ProximaRecord> = optimized
             .vector_refs
             .iter()
-            .map(|arc_vec| (**arc_vec).clone().into())
+            .map(|arc_vec| (**arc_vec).clone())
             .collect();
 
         EnhancedFlushResult::with_deletions(

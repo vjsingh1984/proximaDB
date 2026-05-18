@@ -367,16 +367,9 @@ impl WALFlushCoordinator {
         let storage_result = if let Some(optimized) = &self.optimized_coordinator {
             info!("🚀 Coordinator: Using optimized flush path");
 
-            // Convert ProximaRecord → VectorRecord for the optimized flush coordinator
-            use proximadb_records::conversions::proxima_record_to_vector;
-            let vector_records_v1: Vec<crate::proto::proximadb_v1::VectorRecord> = vector_records
-                .iter()
-                .map(proxima_record_to_vector)
-                .collect();
-
             // Execute optimized flush
             let optimized_result = optimized
-                .execute_optimized_flush(collection_id, vector_records_v1)
+                .execute_optimized_flush(collection_id, vector_records)
                 .await?;
 
             // Convert to standard flush result
