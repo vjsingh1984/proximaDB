@@ -3544,41 +3544,18 @@ impl VectorOperationsService {
     pub async fn get_unflushed_vectors(
         &self,
         collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
-        // Get vectors from WAL that haven't been flushed to storage
-        let wal_entries = self
-            .wal_manager
-            .read_entries(collection_id, 0, None)
-            .await?;
-
-        // Convert WAL entries to VectorRecord proto format
-        let unflushed_vectors = wal_entries
-            .into_iter()
-            .map(|entry| crate::proto::proximadb_v1::VectorRecord {
-                id: entry.id,
-                vector: entry.vector,
-                metadata: entry.metadata,
-                timestamp: entry.timestamp,
-                updated_at: None,
-                expires_at: None,
-                version: entry.version,
-                source: None,
-            })
-            .collect();
-
-        Ok(unflushed_vectors)
+    ) -> Result<Vec<ProximaRecord>> {
+        self.wal_manager
+            .read_record_entries(collection_id, 0, None)
+            .await
     }
 
-    /// Get unflushed vectors and return v1 VectorRecord
+    /// Get unflushed vectors as canonical ProximaRecord envelopes.
     pub async fn get_unflushed_vectors_v1(
         &self,
         collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
-        let legacy = self.get_unflushed_vectors(collection_id).await?;
-        Ok(legacy
-            .into_iter()
-            // Vectors are already v1, no conversion needed
-            .collect())
+    ) -> Result<Vec<ProximaRecord>> {
+        self.get_unflushed_vectors(collection_id).await
     }
 
     /// Debug method to list unflushed vectors

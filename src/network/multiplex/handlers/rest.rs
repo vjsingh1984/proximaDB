@@ -470,16 +470,16 @@ impl RestHandler {
             }
         };
 
-        // Convert to VectorRecord
-        use crate::proto::proximadb_v1::VectorRecord;
-        let mut vectors: Vec<VectorRecord> = Vec::new();
+        // Build canonical ProximaRecord envelopes at the REST protocol boundary.
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let mut records: Vec<proximadb_records::ProximaRecord> = Vec::new();
         for (i, v) in vectors_array.iter().enumerate() {
-            let id = v
+            let oid = v
                 .get("id")
                 .and_then(|x| x.as_str())
                 .unwrap_or("")
                 .to_string();
-            let vector_data = match v.get("vector").and_then(|x| x.as_array()) {
+            let values = match v.get("vector").and_then(|x| x.as_array()) {
                 Some(arr) => arr
                     .iter()
                     .filter_map(|x| x.as_f64().map(|f| f as f32))
@@ -496,47 +496,61 @@ impl RestHandler {
                 }
             };
 
-            let metadata_map: std::collections::HashMap<
-                String,
-                crate::proto::proximadb_v1::SqlValue,
-            > = if let Some(meta) = v.get("metadata").and_then(|m| m.as_object()) {
-                meta.iter()
-                    .map(|(k, v)| {
-                        let sql_value = crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                v.to_string().trim_matches('"').to_string(),
-                            )),
-                        };
-                        (k.clone(), sql_value)
-                    })
-                    .collect()
-            } else {
-                std::collections::HashMap::new()
-            };
+            let mut props = proximadb_records::ProximaTree::new();
+            if let Some(meta) = v.get("metadata").and_then(|m| m.as_object()) {
+                for (k, val) in meta {
+                    let pv = match val {
+                        serde_json::Value::String(s) => {
+                            proximadb_data_model::ProximaValue::String(s.clone())
+                        }
+                        serde_json::Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                proximadb_data_model::ProximaValue::Int64(i)
+                            } else {
+                                proximadb_data_model::ProximaValue::Float64(
+                                    n.as_f64().unwrap_or(0.0),
+                                )
+                            }
+                        }
+                        serde_json::Value::Bool(b) => {
+                            proximadb_data_model::ProximaValue::Boolean(*b)
+                        }
+                        _ => proximadb_data_model::ProximaValue::String(val.to_string()),
+                    };
+                    props.insert(k.clone(), proximadb_records::ProximaTreeNode::Value(pv));
+                }
+            }
 
-            vectors.push(VectorRecord {
-                id,
-                vector: vector_data,
-                metadata: metadata_map,
+            let dim = values.len() as u32;
+            records.push(proximadb_records::ProximaRecord {
+                oid,
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim,
+                    values,
+                }],
+                props,
+                created_at_ns: now_ns,
+                updated_at_ns: now_ns,
                 ..Default::default()
             });
         }
 
         debug!(
             "Inserting {} vectors into collection {}",
-            vectors.len(),
+            records.len(),
             collection_id
         );
 
-        use crate::proto::proximadb_v1::VectorBatchRequest;
-        let batch_request = VectorBatchRequest {
+        let request = crate::api_handlers::RichRecordBatchRequest {
             collection_id: collection_id.to_string(),
-            vectors,
+            records,
         };
 
         match config
             .request_handlers
-            .handle_vector_batch_v1(batch_request)
+            .handle_record_batch_for_tenant(request, None)
             .await
         {
             Ok(result) => match serde_json::to_string(&result) {

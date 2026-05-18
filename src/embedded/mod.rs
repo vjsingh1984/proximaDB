@@ -1456,79 +1456,68 @@ impl EmbeddedProximaDB {
         // Check write access before inserting
         self.check_write_access()?;
 
-        use crate::proto::proximadb_v1::VectorRecord;
-        use std::sync::Arc;
-
         // Start timing for metrics
         let start = std::time::Instant::now();
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        // Convert to VectorRecord format
-        let records: Vec<VectorRecord> = ids
+        let records: Vec<proximadb_records::ProximaRecord> = ids
             .into_iter()
             .zip(vectors)
             .enumerate()
-            .map(|(i, (id, vector))| {
-                let meta: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue> =
-                    metadata
-                        .as_ref()
-                        .and_then(|m| m.get(i))
-                        .map(|m| {
-                            m.iter()
-                                .map(|(k, v)| {
-                                    (
-                                        k.clone(),
-                                        crate::core::search::results::proxima_value_to_sql_value(
-                                            json_to_proxima_value(v.clone()),
-                                        ),
-                                    )
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                VectorRecord {
-                    id,
-                    vector,
-                    metadata: meta,
-                    timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                    updated_at: None,
-                    expires_at: None,
-                    version: Some(0),
-                    source: None,
+            .map(|(i, (oid, values))| {
+                let mut props = proximadb_records::ProximaTree::new();
+                if let Some(meta_slice) = metadata.as_ref().and_then(|m| m.get(i)) {
+                    for (k, v) in meta_slice {
+                        props.insert(
+                            k.clone(),
+                            proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
+                                v.clone(),
+                            )),
+                        );
+                    }
+                }
+                let dim = values.len() as u32;
+                proximadb_records::ProximaRecord {
+                    oid,
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        dim,
+                        values,
+                    }],
+                    props,
+                    created_at_ns: now_ns,
+                    updated_at_ns: now_ns,
+                    record_version: 1,
+                    ..Default::default()
                 }
             })
             .collect();
 
         let count = records.len();
-        let records = Arc::new(records);
 
         let result = self.runtime.block_on(async {
-            let response = self
+            let result = self
                 .shared_services
                 .vector_operations_service
-                .vector_batch_v1(crate::proto::proximadb_v1::VectorBatchRequest {
-                    collection_id: collection.to_string(),
-                    vectors: (*records).clone(),
-                })
+                .insert_batch(collection, records)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
-            if !response.success {
+            if !result.success {
                 return Err(Box::new(std::io::Error::other(
-                    response
-                        .error_message
+                    result
+                        .errors
+                        .first()
+                        .cloned()
                         .unwrap_or_else(|| "Vector batch insert failed".to_string()),
                 ))
                     as Box<dyn std::error::Error + Send + Sync>);
             }
 
-            Ok(response
-                .metrics
-                .as_ref()
-                .map(|m| m.successful_count.max(0) as usize)
-                .unwrap_or(count))
+            Ok(result.metrics.successful_count.max(0) as usize)
         });
 
         // Record insert latency and count
@@ -2330,22 +2319,16 @@ impl EmbeddedProximaDB {
         collection: &str,
         vector_id: &str,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::proto::proximadb_v1::VectorRecord;
         use std::sync::Arc;
 
-        // Create tombstone record: empty vector + expires_at in past marks deletion
-        // expires_at is set to 0 (epoch) to immediately mark as expired/deleted
-        // Compaction will clean up these tombstones after they've been applied
-        let now = chrono::Utc::now();
-        let tombstone = VectorRecord {
-            id: vector_id.to_string(),
-            vector: vec![], // Empty vector = tombstone marker
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(now.timestamp_millis()),
-            updated_at: Some(now.timestamp_millis()),
-            expires_at: Some(0), // Expired at epoch = tombstone marker (always in past)
-            version: None,       // Version may be updated by MVCC later
-            source: None,
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let tombstone = proximadb_records::ProximaRecord {
+            oid: vector_id.to_string(),
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_to_ns: Some(0), // Expired at epoch = tombstone
+            origin: Some("delete".to_string()),
+            ..Default::default()
         };
 
         let records = Arc::new(vec![tombstone]);
@@ -2387,28 +2370,23 @@ impl EmbeddedProximaDB {
         // Check write access before deleting vectors
         self.check_write_access()?;
 
-        use crate::proto::proximadb_v1::VectorRecord;
         use std::sync::Arc;
 
         if vector_ids.is_empty() {
             return Ok(0);
         }
 
-        let now = chrono::Utc::now();
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        // Create tombstone records for all IDs
-        // expires_at is set to 0 (epoch) to immediately mark as expired/deleted
-        let tombstones: Vec<VectorRecord> = vector_ids
+        let tombstones: Vec<proximadb_records::ProximaRecord> = vector_ids
             .iter()
-            .map(|id| VectorRecord {
-                id: id.clone(),
-                vector: vec![], // Empty vector = tombstone marker
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(now.timestamp_millis()),
-                updated_at: Some(now.timestamp_millis()),
-                expires_at: Some(0), // Expired at epoch = tombstone marker (always in past)
-                version: None,       // Version may be updated by MVCC later
-                source: None,
+            .map(|id| proximadb_records::ProximaRecord {
+                oid: id.clone(),
+                created_at_ns: now_ns,
+                updated_at_ns: now_ns,
+                valid_to_ns: Some(0), // Expired at epoch = tombstone
+                origin: Some("delete".to_string()),
+                ..Default::default()
             })
             .collect();
 
@@ -3008,15 +2986,19 @@ impl EmbeddedProximaDB {
                 match entry.operation.as_str() {
                     "upsert" => {
                         if let Some(vector_data) = entry.vector_data {
-                            // Deserialize vector records
-                            let records: Vec<crate::proto::proximadb_v1::VectorRecord> =
+                            // Deserialize legacy VectorRecord delta data and convert to canonical
+                            // ProximaRecord envelopes at this storage migration boundary.
+                            let vr_records: Vec<crate::proto::proximadb_v1::VectorRecord> =
                                 bincode::deserialize(&vector_data).map_err(
                                     |e| -> Box<dyn std::error::Error + Send + Sync> {
                                         Box::new(std::io::Error::other(e.to_string()))
                                     },
                                 )?;
+                            let records: Vec<proximadb_records::ProximaRecord> = vr_records
+                                .into_iter()
+                                .map(proximadb_records::ProximaRecord::from)
+                                .collect();
 
-                            // Insert the records
                             let records = std::sync::Arc::new(records);
                             self.shared_services
                                 .vector_operations_service
@@ -3029,27 +3011,27 @@ impl EmbeddedProximaDB {
                     }
                     "delete" => {
                         if let Some(vector_ids) = entry.vector_ids {
-                            for id in vector_ids {
-                                // Use the existing delete_vector method logic
-                                let tombstone = crate::proto::proximadb_v1::VectorRecord {
-                                    id,
-                                    vector: vec![],
-                                    metadata: std::collections::HashMap::new(),
-                                    timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                                    updated_at: Some(chrono::Utc::now().timestamp_millis()),
-                                    expires_at: Some(0),
-                                    version: None,
-                                    source: None,
-                                };
-                                let records = std::sync::Arc::new(vec![tombstone]);
-                                self.shared_services
-                                    .vector_operations_service
-                                    .insert_vectors_direct(&entry.collection_id, records)
-                                    .await
-                                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                                        Box::new(std::io::Error::other(e.to_string()))
-                                    })?;
-                            }
+                            let now_ns =
+                                chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                            let tombstones: Vec<proximadb_records::ProximaRecord> = vector_ids
+                                .into_iter()
+                                .map(|id| proximadb_records::ProximaRecord {
+                                    oid: id,
+                                    created_at_ns: now_ns,
+                                    updated_at_ns: now_ns,
+                                    valid_to_ns: Some(0),
+                                    origin: Some("delete".to_string()),
+                                    ..Default::default()
+                                })
+                                .collect();
+                            let records = std::sync::Arc::new(tombstones);
+                            self.shared_services
+                                .vector_operations_service
+                                .insert_vectors_direct(&entry.collection_id, records)
+                                .await
+                                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                                    Box::new(std::io::Error::other(e.to_string()))
+                                })?;
                         }
                     }
                     op => {
@@ -4030,23 +4012,19 @@ impl EmbeddedProximaDB {
         }
 
         let mut records =
-            crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_vector_records(batches)
+            crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(batches)
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                 Box::new(std::io::Error::other(format!(
-                    "Failed to convert Arrow batches to VectorRecords: {}",
+                    "Failed to convert Arrow batches to ProximaRecords: {}",
                     e
                 )))
             })?;
 
-        if let Some(tenant_id) = tenant_id {
+        if let Some(tid) = tenant_id {
             for record in &mut records {
-                record.metadata.entry("tenant_id".to_string()).or_insert(
-                    crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                            tenant_id.to_string(),
-                        )),
-                    },
-                );
+                if record.tenant_id.is_empty() {
+                    record.tenant_id = tid.to_string();
+                }
             }
         }
 
@@ -4055,8 +4033,8 @@ impl EmbeddedProximaDB {
         if !insert_only {
             let mut existing_ids = Vec::new();
             for record in &records {
-                if self.vector_exists(collection, &record.id)? {
-                    existing_ids.push(record.id.clone());
+                if self.vector_exists(collection, &record.oid)? {
+                    existing_ids.push(record.oid.clone());
                 }
             }
             if !existing_ids.is_empty() {
@@ -4064,26 +4042,25 @@ impl EmbeddedProximaDB {
             }
         }
 
-        let response = self
+        let result = self
             .runtime
             .block_on(async {
                 self.shared_services
                     .vector_operations_service
-                    .vector_batch_v1(crate::proto::proximadb_v1::VectorBatchRequest {
-                        collection_id: collection.to_string(),
-                        vectors: records,
-                    })
+                    .insert_batch(collection, records)
                     .await
             })
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        if !response.success {
+        if !result.success {
             return Err(Box::new(std::io::Error::other(format!(
                 "Arrow batch insert failed: {}",
-                response
-                    .error_message
+                result
+                    .errors
+                    .first()
+                    .cloned()
                     .unwrap_or_else(|| "unknown error".to_string())
             ))));
         }

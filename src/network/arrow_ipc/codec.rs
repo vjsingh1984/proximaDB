@@ -1011,6 +1011,83 @@ impl ArrowProtoCodec {
         ]))
     }
 
+    /// Convert SearchVectorRecords to Arrow RecordBatch (for search results).
+    ///
+    /// Eliminates the intermediate VectorRecord conversion that previously existed
+    /// in the Arrow Flight search handler.
+    pub fn search_results_to_batch(
+        results: &[crate::proto::proximadb_v1::SearchVectorRecord],
+        dimension: usize,
+    ) -> Result<RecordBatch> {
+        if results.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Cannot create batch from empty search results"
+            ));
+        }
+
+        let schema = Self::create_vector_schema(dimension);
+
+        let id_array = StringArray::from_iter_values(results.iter().map(|r| r.id.as_str()));
+
+        let mut vector_values = Vec::with_capacity(results.len() * dimension);
+        for result in results {
+            vector_values.extend_from_slice(&result.vector);
+        }
+        let flat_array = Arc::new(Float32Array::from(vector_values)) as ArrayRef;
+        let vector_field = Arc::new(Field::new("item", DataType::Float32, false));
+        let vector_array =
+            FixedSizeListArray::new(vector_field, dimension as i32, flat_array, None);
+
+        let mut meta_keys: Vec<Option<&str>> = Vec::new();
+        let mut meta_vals: Vec<Option<String>> = Vec::new();
+        for result in results {
+            if result.metadata.is_empty() {
+                meta_keys.push(None);
+                meta_vals.push(None);
+            } else if let Some((key, value)) = result.metadata.iter().next() {
+                meta_keys.push(Some(key.as_str()));
+                meta_vals.push(Some(Self::sql_value_to_string(value)));
+            } else {
+                meta_keys.push(None);
+                meta_vals.push(None);
+            }
+        }
+        let meta_key_array = StringArray::from(meta_keys);
+        let meta_val_array = StringArray::from(meta_vals.iter().map(|v| v.as_deref()).collect::<Vec<_>>());
+        let metadata_array = StructArray::from(vec![
+            (
+                Arc::new(Field::new("key", DataType::Utf8, false)),
+                Arc::new(meta_key_array) as ArrayRef,
+            ),
+            (
+                Arc::new(Field::new("value", DataType::Utf8, true)),
+                Arc::new(meta_val_array) as ArrayRef,
+            ),
+        ]);
+
+        let timestamp_array =
+            Int64Array::from(results.iter().map(|r| r.timestamp).collect::<Vec<Option<i64>>>());
+
+        let score_array = Float32Array::from(
+            results
+                .iter()
+                .map(|r| Some(r.score as f32))
+                .collect::<Vec<Option<f32>>>(),
+        );
+
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(id_array),
+                Arc::new(vector_array),
+                Arc::new(metadata_array),
+                Arc::new(timestamp_array),
+                Arc::new(score_array),
+            ],
+        )
+        .context("Failed to create RecordBatch from search results")
+    }
+
     /// Convert SqlValue to string
     fn sql_value_to_string(value: &SqlValue) -> String {
         use crate::proto::proximadb_v1::sql_value::Value;

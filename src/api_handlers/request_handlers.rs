@@ -211,7 +211,7 @@ use crate::metrics::query_service::{MetricsQueryOptions, MetricsQueryService};
 
 use crate::observability::ObservabilityService;
 use crate::proto::proximadb_v1::{
-    Collection, CollectionOperation, CollectionRequest, CollectionResponse, VectorRecord,
+    Collection, CollectionOperation, CollectionRequest, CollectionResponse,
 };
 use crate::query::QueryFacadeAdapter;
 use crate::services::collection::manager::CollectionService;
@@ -1174,26 +1174,27 @@ impl UnifiedHandlers {
 
     /// List unflushed vectors for a collection
     /// This queries the global partitioned memtable to get vectors that haven't been flushed yet
-    pub async fn list_unflushed_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn list_unflushed_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         debug!(
-            "📋 UnifiedHandlers: Listing unflushed vectors for collection {}",
+            "UnifiedHandlers: Listing unflushed vectors for collection {}",
             collection_id
         );
 
-        // Access the global partitioned memtable through vector_operations_service
-        // The VectorOperationsService maintains a unified view of both WAL and storage
-        let unflushed_vectors = self
+        let unflushed = self
             .vector_operations_service
             .get_unflushed_vectors(collection_id)
             .await?;
 
         debug!(
             "Found {} unflushed vectors for collection {}",
-            unflushed_vectors.len(),
+            unflushed.len(),
             collection_id
         );
 
-        Ok(unflushed_vectors)
+        Ok(unflushed)
     }
 
     /// Force flush all collections

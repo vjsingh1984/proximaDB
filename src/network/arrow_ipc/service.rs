@@ -559,22 +559,7 @@ impl ProximaFlightService {
 
         let dimension = results[0].vector.len();
 
-        // Convert SearchVectorRecord to VectorRecord for Arrow conversion
-        let vector_records: Vec<crate::proto::proximadb_v1::VectorRecord> = results
-            .iter()
-            .map(|result| crate::proto::proximadb_v1::VectorRecord {
-                id: result.id.clone(),
-                vector: result.vector.clone(),
-                metadata: result.metadata.clone(),
-                timestamp: result.timestamp,
-                updated_at: None,
-                expires_at: None,
-                version: result.version,
-                source: result.source.clone(),
-            })
-            .collect();
-
-        let batch = ArrowProtoCodec::vector_records_to_batch(vector_records, dimension)?;
+        let batch = ArrowProtoCodec::search_results_to_batch(results, dimension)?;
 
         Ok(vec![batch])
     }
@@ -1207,16 +1192,17 @@ impl FlightService for ProximaFlightService {
                     "Arrow Flight: insert_vectors"
                 );
 
-                // Parse vectors from JSON
-                let mut vectors = Vec::with_capacity(vectors_json.len());
+                // Build canonical ProximaRecord envelopes at the protocol boundary.
+                let now_ns = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                let mut records = Vec::with_capacity(vectors_json.len());
                 for v in vectors_json {
-                    let id = v
+                    let oid = v
                         .get("id")
                         .and_then(|x| x.as_str())
                         .unwrap_or("")
                         .to_string();
 
-                    let vector: Vec<f32> = v
+                    let values: Vec<f32> = v
                         .get("vector")
                         .and_then(|x| x.as_array())
                         .map(|arr| {
@@ -1225,51 +1211,72 @@ impl FlightService for ProximaFlightService {
                                 .collect()
                         })
                         .unwrap_or_default();
+                    let dim = values.len() as u32;
 
-                    let metadata: std::collections::HashMap<
-                        String,
-                        crate::proto::proximadb_v1::SqlValue,
-                    > = if let Some(meta) = v.get("metadata").and_then(|x| x.as_object()) {
-                        meta.iter()
-                            .map(|(k, v)| {
-                                let sql_value = Self::json_to_sql_value(v);
-                                (k.clone(), sql_value)
-                            })
-                            .collect()
-                    } else {
-                        std::collections::HashMap::new()
-                    };
+                    let mut props = proximadb_records::ProximaTree::new();
+                    if let Some(meta) = v.get("metadata").and_then(|x| x.as_object()) {
+                        for (k, val) in meta {
+                            let pv = match val {
+                                serde_json::Value::String(s) => {
+                                    proximadb_data_model::ProximaValue::String(s.clone())
+                                }
+                                serde_json::Value::Number(n) => {
+                                    if let Some(i) = n.as_i64() {
+                                        proximadb_data_model::ProximaValue::Int64(i)
+                                    } else {
+                                        proximadb_data_model::ProximaValue::Float64(
+                                            n.as_f64().unwrap_or(0.0),
+                                        )
+                                    }
+                                }
+                                serde_json::Value::Bool(b) => {
+                                    proximadb_data_model::ProximaValue::Boolean(*b)
+                                }
+                                _ => proximadb_data_model::ProximaValue::String(val.to_string()),
+                            };
+                            props.insert(
+                                k.clone(),
+                                proximadb_records::ProximaTreeNode::Value(pv),
+                            );
+                        }
+                    }
 
-                    vectors.push(crate::proto::proximadb_v1::VectorRecord {
-                        id,
-                        vector,
-                        metadata,
-                        timestamp: None,
-                        updated_at: None,
-                        expires_at: None,
-                        version: None,
-                        source: None,
+                    records.push(ProximaRecord {
+                        oid,
+                        embeddings: vec![proximadb_records::EmbeddingCell {
+                            model_id: "default".to_string(),
+                            modality: "vector".to_string(),
+                            dim,
+                            values,
+                        }],
+                        props,
+                        created_at_ns: now_ns,
+                        updated_at_ns: now_ns,
+                        ..Default::default()
                     });
                 }
 
-                // Insert via unified handlers
-                let response = self
+                // Insert via the canonical rich-record handler.
+                let result = self
                     .request_handlers
-                    .handle_vector_batch_v1(crate::proto::proximadb_v1::VectorBatchRequest {
-                        collection_id: collection_id.to_string(),
-                        vectors,
-                    })
+                    .handle_record_batch_for_tenant(
+                        RichRecordBatchRequest {
+                            collection_id: collection_id.to_string(),
+                            records,
+                        },
+                        None,
+                    )
                     .await
                     .map_err(|e| {
                         TonicStatus::internal(format!("Failed to insert vectors: {}", e))
                     })?;
 
                 let result_bytes = serde_json::to_vec(&serde_json::json!({
-                    "success": response.success,
-                    "inserted_count": response.metrics.as_ref().map_or(0, |m| m.successful_count),
-                    "vector_ids": response.vector_ids,
-                    "error_message": response.error_message,
-                    "error_code": response.error_code
+                    "success": result.success,
+                    "inserted_count": result.metrics.successful_count,
+                    "vector_ids": result.vector_ids,
+                    "error_message": result.errors.first(),
+                    "error_code": result.error_code
                 }))
                 .map_err(|e| TonicStatus::internal(format!("Failed to serialize result: {}", e)))?;
 
@@ -1978,8 +1985,8 @@ impl ProximaFlightService {
         let query_batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
             .map_err(|e| TonicStatus::internal(format!("Failed to parse query batches: {}", e)))?;
         for batch in query_batches {
-            // Extract query vectors from batch
-            let query_vectors = match ArrowProtoCodec::batches_to_vector_records(vec![batch]) {
+            // Extract query vectors from batch using canonical ProximaRecord envelopes.
+            let query_records = match ArrowProtoCodec::batches_to_proxima_records(vec![batch]) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("Failed to extract query vectors: {}", e);
@@ -1988,13 +1995,19 @@ impl ProximaFlightService {
             };
 
             // Execute searches for each query vector
-            for query_record in query_vectors {
+            for query_record in query_records {
                 query_count += 1;
+
+                let query_vector = query_record
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.clone())
+                    .unwrap_or_default();
 
                 let search_request = crate::proto::proximadb_v1::VectorSearchRequest {
                     collection_id: collection_id.clone(),
                     queries: vec![crate::proto::proximadb_v1::SearchQuery {
-                        vector: query_record.vector,
+                        vector: query_vector,
                         filters: std::collections::HashMap::new(),
                         advanced_filter: None,
                     }],
@@ -2016,7 +2029,7 @@ impl ProximaFlightService {
                 let search_response = match self.handle_vector_search(search_request).await {
                     Ok(batches) => batches,
                     Err(e) => {
-                        warn!("Search failed for query {}: {}", query_record.id, e);
+                        warn!("Search failed for query {}: {}", query_record.oid, e);
                         continue;
                     }
                 };
