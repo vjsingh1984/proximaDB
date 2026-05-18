@@ -12,13 +12,16 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::core::{String, VectorId, VectorRecord};
+use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::UnifiedStorageEngine;
 
 use super::{WALConfig, WALStats};
 use crate::storage::traits::FlushResult;
+use proximadb_records::{
+    EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
+};
 
 /// Modern batch-oriented Write Buffer strategy trait
 ///
@@ -414,26 +417,46 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 .await?;
 
             // Convert SearchResult objects to the expected format
-            let converted_results: Vec<(VectorId, f32, proximadb_records::ProximaRecord)> = results
+            let converted_results: Vec<(VectorId, f32, ProximaRecord)> = results
                 .into_iter()
                 .map(|search_result| {
-                    // SearchResult is still a vector-shaped protocol edge. Convert immediately
-                    // into the canonical record envelope before returning from the strategy.
-                    let vector_record = VectorRecord {
-                        id: search_result.id.clone(),
-                        vector: search_result.vector.clone(),
-                        metadata: search_result.metadata.clone(),
-                        timestamp: Some(search_result.timestamp.unwrap_or(0)),
-                        updated_at: None,
-                        expires_at: None,
-                        version: search_result.version,
-                        source: None,
+                    let timestamp_ns = search_result
+                        .timestamp
+                        .unwrap_or(0)
+                        .saturating_mul(1_000_000);
+                    let props = search_result
+                        .metadata
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                ProximaTreeNode::Value(sql_value_to_proxima(value)),
+                            )
+                        })
+                        .collect();
+                    let embeddings = if search_result.vector.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![EmbeddingCell {
+                            model_id: "default".to_string(),
+                            modality: "dense_vector".to_string(),
+                            dim: search_result.vector.len() as u32,
+                            values: search_result.vector,
+                        }]
                     };
-                    (
-                        search_result.id,
-                        search_result.score as f32,
-                        vector_record.into(),
-                    )
+
+                    let record = ProximaRecord {
+                        oid: search_result.id.clone(),
+                        record_version: search_result.version.unwrap_or(0) as u64,
+                        created_at_ns: timestamp_ns,
+                        updated_at_ns: timestamp_ns,
+                        props,
+                        embeddings,
+                        method: Some("wal_search".to_string()),
+                        ..ProximaRecord::default()
+                    };
+
+                    (search_result.id, search_result.score as f32, record)
                 })
                 .collect();
 
