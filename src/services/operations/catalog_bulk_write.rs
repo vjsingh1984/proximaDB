@@ -21,8 +21,8 @@ use tracing::{debug, info, warn};
 
 use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::network::arrow_ipc::codec::ArrowProtoCodec;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::operations::BulkWriteRouter;
+use proximadb_records::ProximaRecord;
 
 /// Configuration for catalog-aware bulk writes
 #[derive(Debug, Clone)]
@@ -156,20 +156,20 @@ impl CatalogBulkWriteService {
         Self::new(catalog_manager, CatalogBulkWriteConfig::default())
     }
 
-    /// Convert Arrow RecordBatches to VectorRecords with catalog validation
+    /// Convert Arrow RecordBatches to canonical records with catalog validation.
     ///
     /// This is the main entry point for Spark/Arrow bulk writes.
     /// It handles:
     /// 1. Table resolution in the catalog
     /// 2. Auto-creation of tables if needed
     /// 3. Schema validation
-    /// 4. Batch conversion to VectorRecords
+    /// 4. Batch conversion to `ProximaRecord`
     pub async fn prepare_bulk_write(
         &self,
         table_fqn: &str,
         batches: &[RecordBatch],
         _write_mode: BulkWriteMode,
-    ) -> Result<(Vec<VectorRecord>, CatalogBulkWriteResult)> {
+    ) -> Result<(Vec<ProximaRecord>, CatalogBulkWriteResult)> {
         let start = std::time::Instant::now();
         let mut result = CatalogBulkWriteResult {
             records_written: 0,
@@ -225,10 +225,10 @@ impl CatalogBulkWriteService {
 
         result.catalog_latency_us = catalog_start.elapsed().as_micros() as u64;
 
-        // Convert batches to VectorRecords
+        // Convert batches to canonical ProximaRecord envelopes.
         let write_start = std::time::Instant::now();
         let batches_vec: Vec<RecordBatch> = batches.to_vec();
-        let records = ArrowProtoCodec::batches_to_vector_records(batches_vec)?;
+        let records = ArrowProtoCodec::batches_to_proxima_records(batches_vec)?;
         result.records_written = records.len() as u64;
         result.write_latency_us = write_start.elapsed().as_micros() as u64;
 
@@ -285,15 +285,15 @@ impl CatalogBulkWriteService {
     }
 
     /// Check if the given batch size would trigger direct write path
-    pub fn should_use_direct_write(&self, records: &[VectorRecord]) -> bool {
+    pub fn should_use_direct_write(&self, records: &[ProximaRecord]) -> bool {
         self.router
-            .should_use_direct_write(records)
+            .should_use_direct_write_records(records)
             .use_direct_write
     }
 
     /// Get write routing decision for a batch
-    pub fn get_write_decision(&self, records: &[VectorRecord]) -> super::BulkWriteDecision {
-        self.router.should_use_direct_write(records)
+    pub fn get_write_decision(&self, records: &[ProximaRecord]) -> super::BulkWriteDecision {
+        self.router.should_use_direct_write_records(records)
     }
 
     /// Begin a transactional bulk write session
