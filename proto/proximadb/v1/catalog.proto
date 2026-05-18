@@ -40,7 +40,26 @@ enum CatalogType {
   CATALOG_TYPE_ICEBERG_REST = 6;// Generic Iceberg REST Catalog
   CATALOG_TYPE_ICEBERG_JDBC = 7;// Iceberg JDBC Catalog
   CATALOG_TYPE_ICEBERG_HADOOP = 8; // Iceberg Hadoop Catalog
-  CATALOG_TYPE_DELTA = 9;       // Delta Lake catalog
+  CATALOG_TYPE_DELTA = 9;              // Delta Lake catalog
+  CATALOG_TYPE_OLTP_POSTGRES = 10;     // PostgreSQL / Neon / Supabase / CockroachDB (metadata-only)
+  CATALOG_TYPE_OLTP_MYSQL = 11;        // MariaDB / MySQL / TiDB / PlanetScale (metadata-only)
+  CATALOG_TYPE_OLTP_SQLITE = 12;       // SQLite (embedded / development)
+}
+
+// OLTP catalog configuration — stores catalog metadata only.
+// Record data always stays in ProximaDB's internal engines (stacked durability mandate).
+// Use for collections < size_threshold_bytes (default: 1 GB).
+//
+// Connection string formats:
+//   postgres://user:password@host:5432/dbname   (PostgreSQL, Neon, Supabase, CockroachDB)
+//   mysql://user:password@host:3306/dbname      (MariaDB, MySQL, TiDB, PlanetScale)
+//   sqlite:///path/to/catalog.db                (SQLite, or sqlite::memory: for dev)
+message OltpCatalogConfig {
+  string connection_string = 1;         // Database connection URL
+  uint32 pool_max_connections = 2;      // Connection pool size (default: 10)
+  string table_prefix = 3;             // SQL table prefix (default: "xcatalog_")
+  bool auto_migrate = 4;               // Run DDL migrations on startup (default: true)
+  uint64 size_threshold_bytes = 5;     // Collections above this use lakehouse catalog instead
 }
 
 // Catalog configuration
@@ -56,6 +75,7 @@ message CatalogConfig {
     HiveCatalogConfig hive = 14;
     IcebergCatalogConfig iceberg = 15;
     DeltaCatalogConfig delta = 16;
+    OltpCatalogConfig oltp = 17;      // OLTP backend (postgres/mysql/sqlite)
   }
 
   // Common settings

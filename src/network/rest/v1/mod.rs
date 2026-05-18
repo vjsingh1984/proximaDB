@@ -15,6 +15,8 @@ pub mod graph;
 pub mod handlers;
 /// REST handlers for hybrid (vector + BM25) search
 pub mod hybrid;
+/// Iceberg REST Catalog server (v1 spec) — Spark/Trino/DuckDB/PyIceberg compatible
+pub mod iceberg_rest_catalog;
 /// REST handlers for unified multi-model query execution
 pub mod multimodal_query;
 /// REST handlers for Natural Language query translation (AV-SQL)

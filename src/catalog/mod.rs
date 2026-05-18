@@ -37,6 +37,12 @@ pub mod native;
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
 
+// Iceberg REST catalog server — service layer translating internal ↔ Iceberg REST types
+pub mod iceberg_rest_service;
+
+// OLTP catalog backend (PostgreSQL / Neon / Supabase / MariaDB / SQLite)
+pub mod oltp;
+
 // Catalog federation (unified view across internal and external catalogs)
 pub mod federation;
 
@@ -402,6 +408,57 @@ impl CatalogManager {
             "Delta Lake catalog requires the 'delta-lake' feature flag. \
              Build with: cargo build --features delta-lake"
         ))
+    }
+
+    /// Create and register an OLTP catalog (PostgreSQL / Neon / Supabase / MariaDB / SQLite).
+    ///
+    /// The OLTP catalog stores ONLY catalog metadata — record data always stays in ProximaDB's
+    /// internal engines (stacked durability mandate). Use for collections < 1 GB.
+    ///
+    /// Connection string formats:
+    /// - `postgres://user:pw@host/db` — PostgreSQL, Neon, Supabase, CockroachDB
+    /// - `mysql://user:pw@host/db` — MariaDB, MySQL, TiDB
+    /// - `sqlite:///path/catalog.db` — SQLite
+    pub async fn create_oltp_catalog(
+        &self,
+        name: &str,
+        connection_string: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        let config = oltp::OltpCatalogConfig {
+            connection_string: connection_string.to_string(),
+            ..Default::default()
+        };
+
+        let catalog = oltp::OltpCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+
+        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
+        self.register(catalog.clone()).await?;
+        Ok(catalog)
+    }
+
+    /// Select the appropriate catalog based on estimated table size.
+    ///
+    /// - `size_bytes < threshold` → OLTP catalog (if registered)
+    /// - `size_bytes >= threshold` → default catalog (lakehouse / native)
+    pub async fn catalog_for_size(
+        &self,
+        size_bytes: u64,
+        oltp_threshold_bytes: u64,
+    ) -> Result<Arc<dyn Catalog>> {
+        let oltp_candidate = if size_bytes < oltp_threshold_bytes {
+            let catalogs = self.catalogs.read().await;
+            catalogs
+                .values()
+                .find(|c| c.catalog_type().starts_with("oltp-"))
+                .cloned()
+        } else {
+            None
+        };
+
+        if let Some(cat) = oltp_candidate {
+            return Ok(cat);
+        }
+        self.default_catalog().await
     }
 
     /// Get a catalog by name

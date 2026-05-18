@@ -238,6 +238,7 @@ memmap2 = "0.9"
 lru = "0.12"  # LRU cache for disk-backed graph storage
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tokio-postgres = { version = "0.7", optional = true }  # PostgreSQL client for CDC (experimental-cdc-connectors)
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "json", "chrono", "uuid"], optional = true }  # OLTP catalog backends (oltp-catalog)
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
@@ -580,6 +581,15 @@ unity-catalog = []      # Databricks Unity Catalog integration
 polaris-catalog = []    # Apache Polaris (Iceberg REST Catalog) integration
 delta-lake = []         # Delta Lake table format support
 enterprise-catalogs = ["unity-catalog", "polaris-catalog", "delta-lake"]
+
+# OLTP catalog backends — metadata-only; record data stays in ProximaDB engines.
+# Supports PostgreSQL / Neon / Supabase / CockroachDB (postgres wire),
+# MariaDB / MySQL / TiDB (mysql wire), and embedded SQLite.
+oltp-catalog = ["dep:sqlx"]
+oltp-catalog-postgres = ["oltp-catalog", "sqlx/postgres"]
+oltp-catalog-mysql    = ["oltp-catalog", "sqlx/mysql"]
+oltp-catalog-sqlite   = ["oltp-catalog", "sqlx/sqlite"]
+oltp-catalog-full     = ["oltp-catalog-postgres", "oltp-catalog-mysql", "oltp-catalog-sqlite"]
 
 # TLS/mTLS support (enabled by default)
 tls = []  # Enable TLS/mTLS certificate management and secure connections
