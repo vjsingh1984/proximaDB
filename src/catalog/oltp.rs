@@ -193,9 +193,12 @@ pub struct OltpCatalog {
     backend: OltpBackend,
     config: OltpCatalogConfig,
     cache: Arc<CatalogCache>,
-    /// In-memory fallback when OLTP feature is disabled (or as a read-through cache)
+    /// In-memory write-through cache (populated from DB on startup)
     namespaces: tokio::sync::RwLock<HashMap<String, CatalogNamespace>>,
     tables: tokio::sync::RwLock<HashMap<String, CatalogTableSchema>>,
+    /// Persistent connection pool — present when an oltp-catalog-* feature is enabled
+    #[cfg(feature = "oltp-catalog")]
+    pool: Option<sqlx::AnyPool>,
 }
 
 impl OltpCatalog {
@@ -215,6 +218,21 @@ impl OltpCatalog {
             &config.connection_string[..config.connection_string.find('@').unwrap_or(40).min(40)]
         );
 
+        // Establish the persistent pool (feature-gated).
+        #[cfg(feature = "oltp-catalog")]
+        let pool_opt = {
+            match pool_impl::connect(&config.connection_string, config.pool_max_connections).await {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    warn!(
+                        "OLTP catalog pool connection failed, falling back to in-memory: {}",
+                        e
+                    );
+                    None
+                }
+            }
+        };
+
         let catalog = Self {
             name,
             backend,
@@ -222,15 +240,22 @@ impl OltpCatalog {
             cache,
             namespaces: tokio::sync::RwLock::new(HashMap::new()),
             tables: tokio::sync::RwLock::new(HashMap::new()),
+            #[cfg(feature = "oltp-catalog")]
+            pool: pool_opt,
         };
 
-        // Auto-migrate DDL
+        // Run DDL migrations using the persistent pool, then warm the in-memory cache.
         if catalog.config.auto_migrate {
             if let Err(e) = catalog.run_migrations().await {
                 warn!(
                     "OLTP catalog migration warning (continuing with in-memory): {}",
                     e
                 );
+            } else {
+                #[cfg(feature = "oltp-catalog")]
+                if let Err(e) = catalog.load_from_db().await {
+                    warn!("OLTP catalog load_from_db warning: {}", e);
+                }
             }
         }
 
@@ -242,31 +267,109 @@ impl OltpCatalog {
     }
 
     async fn run_migrations(&self) -> Result<()> {
-        // The DDL is backend-specific. We log the intent here;
-        // actual execution requires the sqlx feature to be enabled.
-        let prefix = self.prefix();
         debug!(
-            "OLTP catalog: would run migrations with prefix '{}' on backend {:?}",
-            prefix, self.backend
+            "OLTP catalog: running migrations with prefix '{}' on backend {:?}",
+            self.prefix(),
+            self.backend
         );
 
         #[cfg(feature = "oltp-catalog")]
         {
-            let pool = pool_impl::connect(
-                &self.config.connection_string,
-                self.config.pool_max_connections,
-            )
-            .await?;
-
+            let pool = self
+                .pool
+                .as_ref()
+                .ok_or_else(|| anyhow!("OLTP pool not connected"))?;
             let ddl = self.generate_ddl();
             for stmt in ddl {
-                sqlx::query(&stmt).execute(&pool).await.map_err(|e| {
+                sqlx::query(&stmt).execute(pool).await.map_err(|e| {
                     anyhow!("DDL error: {} — SQL: {}", e, &stmt[..80.min(stmt.len())])
                 })?;
             }
-            info!("OLTP catalog: migrations completed successfully");
+            info!("OLTP catalog '{}': migrations completed", self.name);
         }
 
+        #[cfg(not(feature = "oltp-catalog"))]
+        debug!("OLTP catalog: no feature enabled, skipping DDL");
+
+        Ok(())
+    }
+
+    /// Load existing namespaces and tables from the DB into the in-memory cache.
+    /// Called once after migrations to warm up so subsequent reads hit the cache.
+    #[cfg(feature = "oltp-catalog")]
+    async fn load_from_db(&self) -> Result<()> {
+        use sqlx::Row as _;
+
+        let pool = match &self.pool {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+        let p = self.prefix();
+
+        // Load namespaces
+        let rows = sqlx::query(&format!(
+            "SELECT namespace_path, properties, owner, location FROM {p}namespaces"
+        ))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| anyhow!("load_from_db namespaces: {}", e))?;
+
+        let mut ns_guard = self.namespaces.write().await;
+        for row in rows {
+            let path_json: String = row.try_get("namespace_path")?;
+            let path: Vec<String> = serde_json::from_str(&path_json)
+                .unwrap_or_else(|_| path_json.split('.').map(String::from).collect());
+            let props_json: String = row
+                .try_get("properties")
+                .unwrap_or_else(|_| "{}".to_string());
+            let properties: HashMap<String, String> =
+                serde_json::from_str(&props_json).unwrap_or_default();
+            let owner: Option<String> = row.try_get("owner").ok().and_then(|v: Option<String>| v);
+            let location: Option<String> =
+                row.try_get("location").ok().and_then(|v: Option<String>| v);
+            let key = path.join(".");
+            ns_guard.insert(
+                key,
+                CatalogNamespace {
+                    levels: path,
+                    properties,
+                    owner,
+                    location,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                },
+            );
+        }
+        let ns_count = ns_guard.len();
+        drop(ns_guard);
+
+        // Load tables
+        let rows = sqlx::query(&format!(
+            "SELECT namespace_path, table_name, schema_json FROM {p}tables"
+        ))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| anyhow!("load_from_db tables: {}", e))?;
+
+        let mut table_guard = self.tables.write().await;
+        for row in rows {
+            let ns_json: String = row.try_get("namespace_path")?;
+            let ns: Vec<String> = serde_json::from_str(&ns_json)
+                .unwrap_or_else(|_| ns_json.split('.').map(String::from).collect());
+            let table_name: String = row.try_get("table_name")?;
+            let schema_json: String = row.try_get("schema_json")?;
+            let schema: CatalogTableSchema = serde_json::from_str(&schema_json)
+                .unwrap_or_else(|_| CatalogTableSchema::new(&table_name));
+            let key = format!("{}.{}", ns.join("."), table_name);
+            table_guard.insert(key, schema);
+        }
+        let table_count = table_guard.len();
+        drop(table_guard);
+
+        info!(
+            "OLTP catalog '{}': loaded {} namespaces, {} tables from DB",
+            self.name, ns_count, table_count
+        );
         Ok(())
     }
 
@@ -278,13 +381,12 @@ impl OltpCatalog {
                 format!(
                     "CREATE TABLE IF NOT EXISTS {p}namespaces (\
                         id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\
-                        namespace_path TEXT[] NOT NULL,\
+                        namespace_path TEXT NOT NULL UNIQUE,\
                         properties JSONB DEFAULT '{{}}',\
                         owner TEXT,\
                         location TEXT,\
                         created_at TIMESTAMPTZ DEFAULT NOW(),\
-                        updated_at TIMESTAMPTZ DEFAULT NOW(),\
-                        UNIQUE(namespace_path)\
+                        updated_at TIMESTAMPTZ DEFAULT NOW()\
                     )"
                 ),
                 format!(
@@ -498,7 +600,22 @@ impl Catalog for OltpCatalog {
         let key = Self::ns_key(namespace);
         let ns = ns_with_properties(CatalogNamespace::new(namespace.to_vec()), properties);
 
-        // Persist to in-memory store (and OLTP DB when feature enabled)
+        // SQL persistence (write-through, before in-memory so conflicts surface from DB).
+        #[cfg(feature = "oltp-catalog")]
+        if let Some(ref pool) = self.pool {
+            let ns_json = serde_json::to_string(namespace).map_err(|e| anyhow!("{}", e))?;
+            let props_json = serde_json::to_string(&ns.properties).map_err(|e| anyhow!("{}", e))?;
+            sqlx::query(&format!(
+                "INSERT INTO {}namespaces (namespace_path, properties) VALUES (?, ?)",
+                self.prefix()
+            ))
+            .bind(&ns_json)
+            .bind(&props_json)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow!("Failed to persist namespace '{}': {}", key, e))?;
+        }
+
         {
             let mut guard = self.namespaces.write().await;
             if guard.contains_key(&key) {
@@ -513,6 +630,20 @@ impl Catalog for OltpCatalog {
 
     async fn drop_namespace(&self, namespace: &[String], _cascade: bool) -> Result<bool> {
         let key = Self::ns_key(namespace);
+
+        #[cfg(feature = "oltp-catalog")]
+        if let Some(ref pool) = self.pool {
+            let ns_json = serde_json::to_string(namespace).map_err(|e| anyhow!("{}", e))?;
+            sqlx::query(&format!(
+                "DELETE FROM {}namespaces WHERE namespace_path = ?",
+                self.prefix()
+            ))
+            .bind(&ns_json)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow!("Failed to drop namespace '{}': {}", key, e))?;
+        }
+
         let mut guard = self.namespaces.write().await;
         Ok(guard.remove(&key).is_some())
     }
@@ -565,13 +696,30 @@ impl Catalog for OltpCatalog {
     ) -> Result<CatalogTableSchema> {
         // Ensure namespace exists (auto-create if missing)
         if !self.namespace_exists(&identifier.namespace).await? {
-            // Auto-create the namespace — ignore error if it already exists (race)
             let _ = self
                 .create_namespace(&identifier.namespace, HashMap::new())
                 .await;
         }
 
         let key = Self::table_key(identifier);
+
+        #[cfg(feature = "oltp-catalog")]
+        if let Some(ref pool) = self.pool {
+            let ns_json =
+                serde_json::to_string(&identifier.namespace).map_err(|e| anyhow!("{}", e))?;
+            let schema_json = serde_json::to_string(&schema).map_err(|e| anyhow!("{}", e))?;
+            sqlx::query(&format!(
+                "INSERT INTO {}tables (namespace_path, table_name, schema_json) VALUES (?, ?, ?)",
+                self.prefix()
+            ))
+            .bind(&ns_json)
+            .bind(&identifier.name)
+            .bind(&schema_json)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow!("Failed to persist table '{}': {}", key, e))?;
+        }
+
         {
             let mut guard = self.tables.write().await;
             if guard.contains_key(&key) {
@@ -586,6 +734,22 @@ impl Catalog for OltpCatalog {
 
     async fn drop_table(&self, identifier: &TableIdentifier, _purge: bool) -> Result<bool> {
         let key = Self::table_key(identifier);
+
+        #[cfg(feature = "oltp-catalog")]
+        if let Some(ref pool) = self.pool {
+            let ns_json =
+                serde_json::to_string(&identifier.namespace).map_err(|e| anyhow!("{}", e))?;
+            sqlx::query(&format!(
+                "DELETE FROM {}tables WHERE namespace_path = ? AND table_name = ?",
+                self.prefix()
+            ))
+            .bind(&ns_json)
+            .bind(&identifier.name)
+            .execute(pool)
+            .await
+            .map_err(|e| anyhow!("Failed to drop table '{}': {}", key, e))?;
+        }
+
         Ok(self.tables.write().await.remove(&key).is_some())
     }
 
@@ -732,12 +896,26 @@ impl Catalog for OltpCatalog {
     }
 
     async fn health_check(&self) -> Result<super::traits::CatalogHealth> {
+        #[cfg(feature = "oltp-catalog")]
+        if let Some(ref pool) = self.pool {
+            // Ping the DB with a trivial query.
+            if let Err(e) = sqlx::query("SELECT 1").execute(pool).await {
+                return Ok(super::traits::CatalogHealth::unhealthy(format!(
+                    "OLTP DB ping failed: {}",
+                    e
+                )));
+            }
+        }
         Ok(super::traits::CatalogHealth::healthy(
             self.tables.read().await.len() as u64,
         ))
     }
 
     async fn close(&self) -> Result<()> {
+        #[cfg(feature = "oltp-catalog")]
+        if let Some(ref pool) = self.pool {
+            pool.close().await;
+        }
         Ok(())
     }
 }
