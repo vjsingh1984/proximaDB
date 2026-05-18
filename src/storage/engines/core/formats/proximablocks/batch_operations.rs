@@ -7,12 +7,10 @@ use std::sync::Arc;
 
 use super::block_structures::ProximaDataBlock;
 use super::index_structures::RowBasedIdIndex;
-use proximadb_kernel::uuid::Uuid;
 use proximadb_records::ProximaRecord;
+use proximadb_kernel::uuid::Uuid;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 // Quantization now handled by unified compute module
-
-type VectorRecord = ProximaRecord;
 
 /// Row-based batch operations handler
 pub struct RowBasedBatchOperations {
@@ -120,7 +118,7 @@ pub struct BatchResult {
 pub struct PartialResult {
     pub index: usize,
     pub success: bool,
-    pub result: Option<VectorRecord>,
+    pub result: Option<ProximaRecord>,
     pub error: Option<String>,
     pub processing_time_ms: u64,
 }
@@ -268,7 +266,7 @@ impl RowBasedBatchOperations {
     /// Batch write operations
     pub async fn batch_write_records(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         blocks: &mut Vec<ProximaDataBlock>,
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
@@ -327,7 +325,7 @@ impl RowBasedBatchOperations {
     /// Batch update operations
     pub async fn batch_update_records(
         &self,
-        updates: Vec<(String, VectorRecord)>,
+        updates: Vec<(String, ProximaRecord)>,
         blocks: &mut [ProximaDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
@@ -489,7 +487,7 @@ impl RowBasedBatchOperations {
     }
 
     /// Split records into batches
-    fn split_records_into_batches(&self, records: Vec<VectorRecord>) -> Vec<Vec<VectorRecord>> {
+    fn split_records_into_batches(&self, records: Vec<ProximaRecord>) -> Vec<Vec<ProximaRecord>> {
         let _batch_size = self.calculate_optimal_batch_size(records.len());
 
         records
@@ -501,8 +499,8 @@ impl RowBasedBatchOperations {
     /// Split updates into batches
     fn split_updates_into_batches(
         &self,
-        updates: Vec<(String, VectorRecord)>,
-    ) -> Vec<Vec<(String, VectorRecord)>> {
+        updates: Vec<(String, ProximaRecord)>,
+    ) -> Vec<Vec<(String, ProximaRecord)>> {
         let _batch_size = self.calculate_optimal_batch_size(updates.len());
 
         updates
@@ -588,7 +586,7 @@ impl RowBasedBatchOperations {
                             partial_results.push(PartialResult {
                                 index: idx,
                                 success: true,
-                                result: Some(record.clone().into()),
+                                result: Some(record.clone()),
                                 error: None,
                                 processing_time_ms: lookup_start.elapsed().as_millis() as u64,
                             });
@@ -648,7 +646,7 @@ impl RowBasedBatchOperations {
     /// Process a single write batch
     async fn process_write_batch(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         _blocks: &mut Vec<ProximaDataBlock>,
         _index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
@@ -674,10 +672,10 @@ impl RowBasedBatchOperations {
     async fn update_single_record(
         &self,
         _id: &str,
-        _updated_record: VectorRecord,
+        _updated_record: ProximaRecord,
         _blocks: &mut [ProximaDataBlock],
         _index: &RowBasedIdIndex,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         // Deferred: Implement actual update logic
         Ok(None)
     }
