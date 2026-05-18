@@ -19,7 +19,7 @@
 //! Extends the WAL system to handle both vector and graph operations,
 //! enabling atomic hybrid transactions across both data types.
 
-use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, VectorRecord};
+use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample};
 use crate::storage::document::DocumentRecord;
 use crate::storage::memtable::implementations::graph_memtable::GraphOperation;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
@@ -80,7 +80,7 @@ pub enum TimeSeriesOperation {
         collection_id: String,
         /// Timestamp in milliseconds since Unix epoch
         timestamp_ms: i64,
-        record: VectorRecord,
+        record: ProximaRecord,
     },
     /// Insert an OHLC bar
     InsertOHLC {
@@ -198,11 +198,11 @@ pub enum ObservabilityOperation {
 pub enum VectorOperation {
     AddVector {
         collection_id: String,
-        vector: VectorRecord,
+        record: ProximaRecord,
     },
     UpdateVector {
         collection_id: String,
-        vector: VectorRecord,
+        record: ProximaRecord,
     },
     DeleteVector {
         collection_id: String,
@@ -210,7 +210,7 @@ pub enum VectorOperation {
     },
     BatchVectors {
         collection_id: String,
-        vectors: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     },
 }
 
@@ -661,6 +661,7 @@ impl UnifiedWALReader {
 mod tests {
     use super::*;
     use crate::graph::Node;
+    use crate::proto::proximadb_v1::VectorRecord;
 
     #[tokio::test]
     async fn test_unified_wal_operations() {
@@ -689,7 +690,7 @@ mod tests {
         // Test vector operation
         let vector_op = UnifiedWALOperation::VectorOp(VectorOperation::AddVector {
             collection_id: "test_collection".to_string(),
-            vector: VectorRecord {
+            record: ProximaRecord::from(VectorRecord {
                 id: "vec1".to_string(),
                 vector: vec![0.1, 0.2, 0.3],
                 metadata: Default::default(),
@@ -698,7 +699,7 @@ mod tests {
                 expires_at: None,
                 version: None,
                 source: None,
-            },
+            }),
         });
 
         let seq2 = writer.append(vector_op).await.unwrap();
@@ -721,7 +722,7 @@ mod tests {
         let hybrid_op = UnifiedWALOperation::HybridOp {
             vector_ops: vec![VectorOperation::AddVector {
                 collection_id: "coll1".to_string(),
-                vector: VectorRecord {
+                record: ProximaRecord::from(VectorRecord {
                     id: "vec1".to_string(),
                     vector: vec![0.1, 0.2],
                     metadata: Default::default(),
@@ -730,7 +731,7 @@ mod tests {
                     expires_at: None,
                     version: None,
                     source: None,
-                },
+                }),
             }],
             graph_ops: vec![GraphOperation::CreateNode {
                 graph_id: "graph1".to_string(),

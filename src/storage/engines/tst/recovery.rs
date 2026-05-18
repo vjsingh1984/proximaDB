@@ -21,6 +21,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::write_ahead_log::wal_operations::{
     TimeSeriesOperation, UnifiedWALOperation, UnifiedWALReader, UnifiedWALWriter,
 };
+use proximadb_records::ProximaRecord;
 
 use super::TimeSeriesEngine;
 
@@ -158,7 +159,7 @@ impl TstWalRecovery {
                     collection_id, timestamp
                 );
                 engine
-                    .insert_record(collection_id, timestamp, record.clone())
+                    .insert_record(collection_id, timestamp, VectorRecord::from(record))
                     .await?;
             }
             TimeSeriesOperation::InsertOHLC {
@@ -266,7 +267,7 @@ impl TstWalWriter {
         let op = UnifiedWALOperation::TimeSeriesOp(TimeSeriesOperation::InsertRecord {
             collection_id: collection_id.to_string(),
             timestamp_ms: timestamp.timestamp_millis(),
-            record: record.clone(),
+            record: ProximaRecord::from(record),
         });
         let mut writer = self.writer.lock().await;
         let seq = writer.append(op).await?;
@@ -441,7 +442,7 @@ mod tests {
             use crate::storage::persistence::write_ahead_log::wal_operations::VectorOperation;
             let vector_op = UnifiedWALOperation::VectorOp(VectorOperation::AddVector {
                 collection_id: "vec_coll".to_string(),
-                vector: VectorRecord {
+                record: ProximaRecord::from(VectorRecord {
                     id: "v1".to_string(),
                     vector: vec![0.1, 0.2],
                     metadata: Default::default(),
@@ -450,7 +451,7 @@ mod tests {
                     expires_at: None,
                     version: None,
                     source: None,
-                },
+                }),
             });
             writer.append(vector_op).await.unwrap();
             writer.flush().await.unwrap();
