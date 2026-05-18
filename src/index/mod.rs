@@ -102,7 +102,8 @@ pub use geo::{
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::{VectorId, VectorRecord};
+use crate::core::VectorId;
+use proximadb_records::ProximaRecord;
 
 /// Global ID Index for cross-collection vector tracking
 ///
@@ -122,13 +123,14 @@ use crate::core::{VectorId, VectorRecord};
 ///
 /// ```rust,ignore
 /// # use proximadb::index::GlobalIdIndex;
-/// # use proximadb::core::{VectorId, VectorRecord};
+/// # use proximadb::core::VectorId;
+/// # use proximadb_records::ProximaRecord;
 /// # async fn example() -> anyhow::Result<()> {
 /// let index = GlobalIdIndex::new().await?;
 ///
 /// // Track vector across collections
 /// let vector_id = VectorId::new();
-/// let record = VectorRecord::default();
+/// let record = ProximaRecord::default();
 /// index.insert(vector_id.clone(), "collection_1", &record).await?;
 ///
 /// // Update storage location
@@ -166,7 +168,7 @@ impl GlobalIdIndex {
         &self,
         _id: VectorId,
         _collection_id: &str,
-        _vector: &VectorRecord,
+        _vector: &ProximaRecord,
     ) -> Result<()> {
         // Deferred: Implement with atomic CAS operation
         Ok(())
@@ -213,7 +215,7 @@ impl MetadataIndex {
     }
 
     /// Inserts a vector's metadata fields into the index.
-    pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
+    pub async fn insert(&self, _vector: &ProximaRecord) -> Result<()> {
         Ok(())
     }
 
@@ -246,7 +248,7 @@ impl DenseVectorIndex {
     }
 
     /// Inserts a dense vector record into the index.
-    pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
+    pub async fn insert(&self, _vector: &ProximaRecord) -> Result<()> {
         Ok(())
     }
 
@@ -279,7 +281,7 @@ impl SparseVectorIndex {
     }
 
     /// Inserts a sparse vector record into the index.
-    pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
+    pub async fn insert(&self, _vector: &ProximaRecord) -> Result<()> {
         Ok(())
     }
 

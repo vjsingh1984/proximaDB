@@ -259,6 +259,8 @@ pub struct GraphQueryComponent {
     pub edge_filters: Vec<EdgeFilter>,
     /// Traversal algorithm
     pub algorithm: TraversalAlgorithm,
+    /// Optional query vector used by semantic traversal algorithms.
+    pub semantic_query_vector: Option<Vec<f32>>,
 }
 
 /// Node filter for graph component
@@ -846,7 +848,11 @@ impl HybridQueryEngine {
 
         // Try to get query vector and similarity threshold from context
         // In a real implementation, this would come from the hybrid query context
-        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        let query_vector = graph_comp
+            .semantic_query_vector
+            .clone()
+            .or_else(|| self.get_query_vector_from_context())
+            .unwrap_or_default();
         let similarity_threshold = self.get_similarity_threshold_from_context().unwrap_or(0.3);
 
         // Initialize with start node
@@ -927,7 +933,11 @@ impl HybridQueryEngine {
         let mut visited = HashSet::new();
 
         // Get query context for semantic guidance
-        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        let query_vector = graph_comp
+            .semantic_query_vector
+            .clone()
+            .or_else(|| self.get_query_vector_from_context())
+            .unwrap_or_default();
         let similarity_threshold = self.get_similarity_threshold_from_context().unwrap_or(0.3);
 
         // Start DFS from the initial node
@@ -1224,10 +1234,10 @@ impl HybridQueryEngine {
 
     /// Get query vector from context (helper method for semantic traversal)
     fn get_query_vector_from_context(&self) -> Option<Vec<f32>> {
-        // Query vector extraction: the HybridQuery carries an optional query_vector
-        // field. When not present, semantic traversal uses a uniform vector as neutral
-        // guidance (all directions equally weighted).
-        Some(vec![0.5; 128]) // Neutral guidance vector; overridden by HybridQuery.query_vector
+        // Query-vector context injection is still being extracted. Callers that
+        // need deterministic semantic traversal should set
+        // GraphQueryComponent::semantic_query_vector.
+        None
     }
 
     /// Get similarity threshold from context
@@ -1369,7 +1379,7 @@ impl HybridQueryEngine {
 
         // Extract query vector from vector component
         // In a real hybrid query, this would come from the query context
-        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        let query_vector = vector_comp.query_vector.clone();
 
         // Configure search with hybrid-specific settings
         let search_config = UnifiedSearchConfig {
@@ -1405,9 +1415,11 @@ impl HybridQueryEngine {
                                 .unwrap_or_default();
                             let now_ms = chrono::Utc::now().timestamp_millis();
                             let dim = vector.len() as u32;
-                            let props = rec.metadata.iter().map(|(k, v)| {
-                                (k.clone(), ProximaTreeNode::Value(v.clone()))
-                            }).collect();
+                            let props = rec
+                                .metadata
+                                .iter()
+                                .map(|(k, v)| (k.clone(), ProximaTreeNode::Value(v.clone())))
+                                .collect();
                             candidates.push(VectorCandidate {
                                 node_id: rec.id.clone(),
                                 similarity,
@@ -1468,12 +1480,16 @@ impl HybridQueryEngine {
 
                 if similarity >= threshold && candidates.len() < max_results {
                     let dim = embedding.vector.len() as u32;
-                    let props = self.convert_node_properties_to_metadata(&node.properties)
+                    let props = self
+                        .convert_node_properties_to_metadata(&node.properties)
                         .into_iter()
                         .map(|(k, v)| {
-                            (k, ProximaTreeNode::Value(
-                                proximadb_data_model::ProximaValue::String(v)
-                            ))
+                            (
+                                k,
+                                ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                                    v,
+                                )),
+                            )
                         })
                         .collect();
                     candidates.push(VectorCandidate {
@@ -1730,6 +1746,7 @@ impl HybridQueryEngine {
                 node_filters: vec![],
                 edge_filters: vec![],
                 algorithm: TraversalAlgorithm::BFS,
+                semantic_query_vector: Some(query_vector.to_vec()),
             }),
             fusion: FusionConfig {
                 strategy: FusionStrategy::Balanced,

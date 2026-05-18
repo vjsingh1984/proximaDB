@@ -530,6 +530,7 @@ impl AxisManager {
                 .or_default()
                 .insert(vector.id.clone(), vector.clone());
         }
+        let processed_record = proximadb_records::ProximaRecord::from(&processed_vector);
 
         // Insert into appropriate indexes based on current search_strategy
         let search_strategy = self.get_collection_strategy(collection_id).await?;
@@ -551,7 +552,7 @@ impl AxisManager {
                 .insert(
                     processed_vector.id.clone(),
                     collection_id,
-                    &processed_vector,
+                    &processed_record,
                 )
                 .await?;
         }
@@ -560,7 +561,7 @@ impl AxisManager {
         for index_spec in &search_strategy.indexes {
             match index_spec.data_type {
                 Data::Metadata => {
-                    self.metadata_index.insert(&processed_vector).await?;
+                    self.metadata_index.insert(&processed_record).await?;
                 }
                 Data::DenseVector { .. } => {
                     self.insert_dense_vector_index(
@@ -571,7 +572,7 @@ impl AxisManager {
                     .await?;
                 }
                 Data::SparseVector { .. } => {
-                    self.sparse_vector_index.insert(&processed_vector).await?;
+                    self.sparse_vector_index.insert(&processed_record).await?;
                 }
                 _ => {} // Handle other data types
             }

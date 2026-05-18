@@ -7,11 +7,13 @@
 use async_trait::async_trait;
 use proximadb_data_model::ProximaValue;
 use proximadb_kernel::error::{ProximaDBError, QueryError};
-use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
+use proximadb_records::{ProximaRecord, ProximaTreeNode};
 use proximadb_vector_query::{
     DistanceMetric as ContractDistanceMetric, VectorQueryService, VectorSearchRequest,
     VectorSearchResult,
 };
+use std::collections::HashMap;
+use std::sync::RwLock;
 use std::time::Instant;
 use tracing::{debug, info};
 
@@ -45,6 +47,8 @@ pub struct VectorServiceImpl {
     index_config: IndexConfig,
     /// Enable progressive search (multi-stage refinement)
     enable_progressive: bool,
+    /// Canonical records supplied to the extracted modality runtime.
+    records: RwLock<HashMap<String, Vec<ProximaRecord>>>,
 }
 
 impl VectorServiceImpl {
@@ -53,6 +57,7 @@ impl VectorServiceImpl {
         Ok(Self {
             index_config: IndexConfig::default(),
             enable_progressive: true,
+            records: RwLock::new(HashMap::new()),
         })
     }
 
@@ -61,6 +66,7 @@ impl VectorServiceImpl {
         Ok(Self {
             index_config: config,
             enable_progressive: true,
+            records: RwLock::new(HashMap::new()),
         })
     }
 
@@ -69,7 +75,29 @@ impl VectorServiceImpl {
         Ok(Self {
             index_config: config,
             enable_progressive: false,
+            records: RwLock::new(HashMap::new()),
         })
+    }
+
+    /// Replace the canonical records available for a collection.
+    ///
+    /// The extracted vector crate is intentionally root-independent, so it
+    /// cannot reach AXIS or storage engines directly. Callers that use this
+    /// service as a standalone modality runtime must supply canonical records
+    /// explicitly. Server production paths continue to use the root
+    /// `VectorOperationsService` bridge until AXIS is exposed behind a narrow
+    /// contract.
+    pub fn upsert_records(
+        &self,
+        collection_id: impl Into<String>,
+        records: Vec<ProximaRecord>,
+    ) -> Result<(), ProximaDBError> {
+        let mut guard = self
+            .records
+            .write()
+            .map_err(|_| ProximaDBError::Internal("vector record store lock poisoned".into()))?;
+        guard.insert(collection_id.into(), records);
+        Ok(())
     }
 
     /// Execute vector similarity search using modality-native components.
@@ -91,17 +119,31 @@ impl VectorServiceImpl {
 
         let start = Instant::now();
 
-        // Phase 3: Use vector modality's own distance computation
         let distance_metric = self.convert_metric(&request.metric);
 
-        // Phase 3: Use vector modality's index and search capabilities
-        // For this demonstration, we'll compute distances directly against a mock index
-        // In production, this would use the actual VectorIndex implementation
+        let records = self
+            .records
+            .read()
+            .map_err(|_| ProximaDBError::Internal("vector record store lock poisoned".into()))?;
+        let Some(collection_records) = records.get(&request.collection_id) else {
+            debug!(
+                collection = %request.collection_id,
+                "No canonical records supplied to extracted vector runtime"
+            );
+            return Ok(Vec::new());
+        };
 
-        // Mock implementation: generate results based on query vector characteristics
-        let results = self
-            .generate_mock_results(request, &distance_metric)
-            .await?;
+        let mut results = collection_records
+            .iter()
+            .filter_map(|record| self.score_record(record, &request.query_vector, &distance_metric))
+            .collect::<Vec<_>>();
+
+        results.sort_by(|a, b| {
+            score_from_record(b)
+                .partial_cmp(&score_from_record(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        results.truncate(request.top_k);
 
         debug!(
             collection = %request.collection_id,
@@ -123,124 +165,79 @@ impl VectorServiceImpl {
         }
     }
 
-    /// Generate mock results for demonstration (Phase 3: will use real index in production).
-    async fn generate_mock_results(
+    fn score_record(
         &self,
-        request: &VectorSearchRequest,
+        record: &ProximaRecord,
+        query_vector: &[f32],
         metric: &DistanceMetric,
-    ) -> Result<Vec<ProximaRecord>, ProximaDBError> {
-        let mut results = Vec::new();
-
-        let query_norm: f32 = request
-            .query_vector
+    ) -> Option<ProximaRecord> {
+        let embedding = record
+            .embeddings
             .iter()
-            .map(|x| x * x)
-            .sum::<f32>()
-            .sqrt();
+            .find(|embedding| embedding.values.len() == query_vector.len())?;
 
-        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let score = match metric {
+            DistanceMetric::Cosine => cosine_similarity(query_vector, &embedding.values),
+            DistanceMetric::Euclidean => {
+                1.0 / (1.0 + euclidean_distance(query_vector, &embedding.values))
+            }
+            DistanceMetric::DotProduct => dot_product(query_vector, &embedding.values),
+            DistanceMetric::Manhattan => {
+                1.0 / (1.0 + manhattan_distance(query_vector, &embedding.values))
+            }
+            _ => 1.0 / (1.0 + euclidean_distance(query_vector, &embedding.values)),
+        };
 
-        for i in 0..request.top_k.min(10) {
-            let mock_vector: Vec<f32> = request
-                .query_vector
-                .iter()
-                .enumerate()
-                .map(|(idx, val)| {
-                    let variation = (idx as f32 * 0.01) + (i as f32 * 0.02);
-                    (val + variation).clamp(-1.0, 1.0)
-                })
-                .collect();
+        let mut scored = record.clone();
+        scored.props.insert(
+            "score".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Float64(score as f64)),
+        );
+        Some(scored)
+    }
+}
 
-            let score = match metric {
-                DistanceMetric::Cosine => {
-                    let mock_norm: f32 = mock_vector.iter().map(|x| x * x).sum::<f32>().sqrt();
-                    let dot_product: f32 = request
-                        .query_vector
-                        .iter()
-                        .zip(mock_vector.iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
-                    if query_norm > 0.0 && mock_norm > 0.0 {
-                        dot_product / (query_norm * mock_norm)
-                    } else {
-                        0.0
-                    }
-                }
-                DistanceMetric::Euclidean => {
-                    let sq_diff: f32 = request
-                        .query_vector
-                        .iter()
-                        .zip(mock_vector.iter())
-                        .map(|(a, b)| (a - b) * (a - b))
-                        .sum();
-                    1.0 / (1.0 + sq_diff.sqrt())
-                }
-                DistanceMetric::DotProduct => {
-                    let dot_product: f32 = request
-                        .query_vector
-                        .iter()
-                        .zip(mock_vector.iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
-                    dot_product / (request.query_vector.len() as f32)
-                }
-                DistanceMetric::Manhattan => {
-                    let manhattan: f32 = request
-                        .query_vector
-                        .iter()
-                        .zip(mock_vector.iter())
-                        .map(|(a, b)| (a - b).abs())
-                        .sum();
-                    1.0 / (1.0 + manhattan)
-                }
-                _ => 0.0,
-            };
+fn score_from_record(record: &ProximaRecord) -> f64 {
+    record
+        .props
+        .get("score")
+        .and_then(|node| match node {
+            ProximaTreeNode::Value(ProximaValue::Float64(score)) => Some(*score),
+            _ => None,
+        })
+        .unwrap_or(f64::NEG_INFINITY)
+}
 
-            let dim = mock_vector.len() as u32;
-            let mut props = ProximaTree::new();
-            props.insert(
-                "score".to_string(),
-                ProximaTreeNode::Value(ProximaValue::Float64(score as f64)),
-            );
-            props.insert(
-                "modality".to_string(),
-                ProximaTreeNode::Value(ProximaValue::String("vector-runtime".to_string())),
-            );
+fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(left, right)| (left - right).powi(2))
+        .sum::<f32>()
+        .sqrt()
+}
 
-            results.push(ProximaRecord {
-                oid: format!("vec_{}_{}", request.collection_id, i),
-                record_version: 1,
-                created_at_ns: now_ns,
-                updated_at_ns: now_ns,
-                origin: Some("modality-runtime".to_string()),
-                props,
-                embeddings: vec![EmbeddingCell {
-                    model_id: "default".to_string(),
-                    modality: "vector".to_string(),
-                    values: mock_vector,
-                    dim,
-                }],
-                ..Default::default()
-            });
-        }
+fn manhattan_distance(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(left, right)| (left - right).abs())
+        .sum()
+}
 
-        // Sort by score descending
-        results.sort_by(|a, b| {
-            let score_of = |r: &ProximaRecord| {
-                r.props
-                    .get("score")
-                    .and_then(|n| match n {
-                        ProximaTreeNode::Value(ProximaValue::Float64(f)) => Some(*f),
-                        _ => None,
-                    })
-                    .unwrap_or(0.0)
-            };
-            score_of(b)
-                .partial_cmp(&score_of(a))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+fn dot_product(a: &[f32], b: &[f32]) -> f32 {
+    a.iter()
+        .zip(b.iter())
+        .map(|(left, right)| left * right)
+        .sum()
+}
 
-        Ok(results)
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let dot = dot_product(a, b);
+    let norm_a = a.iter().map(|value| value * value).sum::<f32>().sqrt();
+    let norm_b = b.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
     }
 }
 
@@ -310,7 +307,36 @@ impl VectorQueryService for VectorServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
     use proximadb_vector_query::{DistanceMetric as ContractMetric, VectorSearchRequest};
+
+    fn vector_record(id: &str, values: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test-model".to_string(),
+                modality: "vector".to_string(),
+                dim: values.len() as u32,
+                values,
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn seed_service(service: &VectorServiceImpl) {
+        service
+            .upsert_records(
+                "test_collection",
+                vec![
+                    vector_record("v1", vec![0.1, 0.2, 0.3]),
+                    vector_record("v2", vec![0.1, 0.2, 0.4]),
+                    vector_record("v3", vec![0.9, 0.0, 0.0]),
+                    vector_record("v4", vec![0.0, 1.0, 0.0]),
+                    vector_record("v5", vec![0.0, 0.0, 1.0]),
+                ],
+            )
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn test_vector_service_creation() {
@@ -336,6 +362,7 @@ mod tests {
     #[tokio::test]
     async fn test_basic_vector_search() {
         let service = VectorServiceImpl::new().unwrap();
+        seed_service(&service);
 
         let request = VectorSearchRequest {
             collection_id: "test_collection".to_string(),
@@ -356,6 +383,7 @@ mod tests {
     #[tokio::test]
     async fn test_vector_search_with_threshold() {
         let service = VectorServiceImpl::new().unwrap();
+        seed_service(&service);
 
         let request = VectorSearchRequest {
             collection_id: "test_collection".to_string(),
@@ -386,13 +414,14 @@ mod tests {
     #[tokio::test]
     async fn test_vector_search_euclidean_metric() {
         let service = VectorServiceImpl::new().unwrap();
+        seed_service(&service);
 
         let request = VectorSearchRequest {
             collection_id: "test_collection".to_string(),
             query_vector: vec![1.0, 0.0, 0.0],
             top_k: 3,
             threshold: None,
-            metric: ContractMetric::Euclidean,
+            metric: ContractMetric::L2,
             filter: None,
         };
 
@@ -400,6 +429,24 @@ mod tests {
 
         assert_eq!(result.results.len(), 3);
         assert!(result.execution_time_ms > 0);
+    }
+
+    #[tokio::test]
+    async fn test_empty_vector_service_does_not_fabricate_results() {
+        let service = VectorServiceImpl::new().unwrap();
+
+        let request = VectorSearchRequest {
+            collection_id: "missing_collection".to_string(),
+            query_vector: vec![0.1, 0.2, 0.3],
+            top_k: 5,
+            threshold: None,
+            metric: ContractMetric::Cosine,
+            filter: None,
+        };
+
+        let result = service.vector_search(request).await.unwrap();
+        assert!(result.results.is_empty());
+        assert_eq!(result.total_count, 0);
     }
 
     #[tokio::test]

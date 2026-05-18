@@ -24,11 +24,11 @@
 //!
 //! ## Phase 3: Modality Runtime Extraction
 //!
-//! As of Phase 3, this crate now provides a complete vector runtime through the `service` module:
+//! As of Phase 3, this crate provides a root-independent vector query runtime through the `service` module:
 //! - `VectorServiceImpl` implements the stable `VectorQueryService` trait
-//! - Uses only vector modality components (distance, index, quantization, search)
-//! - Enables clean separation from legacy VectorOperationsService
-//! - Supports gradual migration through trait object injection
+//! - Scores caller-supplied canonical `ProximaRecord` values without fabricating results
+//! - Keeps the server production path on `VectorOperationsService` until AXIS is exposed behind a narrow contract
+//! - Supports gradual migration through trait object injection without creating a separate durable vector store
 //!
 //! ## Dependencies
 //!
