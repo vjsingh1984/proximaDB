@@ -1350,11 +1350,13 @@ impl ViperEngine {
                 crate::storage::cache::orchestrator::CrossCacheOrchestrator::global()
             && let Some(vector_cache) = orchestrator.get_vector_cache()
         {
-            let _ = vector_cache.put(cache_key, record.clone().into()).await;
+            let _ = vector_cache
+                .put(cache_key, proximadb_records::ProximaRecord::from(record.clone()))
+                .await;
         }
 
         // Return the best match (highest version/newest timestamp)
-        Ok(best_match.map(|(record, _, _)| record.into()))
+        Ok(best_match.map(|(record, _, _)| proximadb_records::ProximaRecord::from(record)))
     }
 
     /// Get engine statistics (creates a snapshot)
