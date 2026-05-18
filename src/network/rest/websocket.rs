@@ -408,10 +408,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                                 let mut props = proximadb_records::ProximaTree::new();
                                 for (k, jv) in v.metadata {
                                     let pv = json_value_to_proxima_value(&jv);
-                                    props.insert(
-                                        k,
-                                        proximadb_records::ProximaTreeNode::Value(pv),
-                                    );
+                                    props.insert(k, proximadb_records::ProximaTreeNode::Value(pv));
                                 }
                                 proximadb_records::ProximaRecord {
                                     oid: v.id,

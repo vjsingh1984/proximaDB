@@ -43,7 +43,7 @@ mod tests {
         let mut props = ProximaTree::new();
         props.insert(
             "category".to_string(),
-            ProximaTreeNode::Value(ProximaValue::Text("test".to_string())),
+            ProximaTreeNode::Value(ProximaValue::String("test".to_string())),
         );
 
         ProximaRecord {

@@ -416,7 +416,7 @@ mod tests {
         let mut props = ProximaTree::new();
         props.insert(
             "category".to_string(),
-            ProximaTreeNode::Value(ProximaValue::Text("test".to_string())),
+            ProximaTreeNode::Value(ProximaValue::String("test".to_string())),
         );
 
         ProximaRecord {
@@ -464,11 +464,11 @@ mod tests {
             let mut props = ProximaTree::new();
             props.insert(
                 "key1".to_string(),
-                ProximaTreeNode::Value(ProximaValue::Text("value1".to_string())),
+                ProximaTreeNode::Value(ProximaValue::String("value1".to_string())),
             );
             props.insert(
                 "key2".to_string(),
-                ProximaTreeNode::Value(ProximaValue::Text("value2".to_string())),
+                ProximaTreeNode::Value(ProximaValue::String("value2".to_string())),
             );
             vector.props = props;
         }
@@ -491,10 +491,10 @@ mod tests {
         let key1_value = deserialized[0].props.get("key1").unwrap();
         let key2_value = deserialized[0].props.get("key2").unwrap();
         assert!(
-            matches!(key1_value, ProximaTreeNode::Value(ProximaValue::Text(s)) if s == "value1")
+            matches!(key1_value, ProximaTreeNode::Value(ProximaValue::String(s)) if s == "value1")
         );
         assert!(
-            matches!(key2_value, ProximaTreeNode::Value(ProximaValue::Text(s)) if s == "value2")
+            matches!(key2_value, ProximaTreeNode::Value(ProximaValue::String(s)) if s == "value2")
         );
     }
 

@@ -332,9 +332,7 @@ impl KafkaVectorConsumer {
                 let ts_ns = v
                     .timestamp
                     .map(|t| (t as i64) * 1_000_000_000)
-                    .unwrap_or_else(|| {
-                        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-                    });
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
                 proximadb_records::ProximaRecord {
                     oid: v.id,
                     embeddings: vec![proximadb_records::EmbeddingCell {
