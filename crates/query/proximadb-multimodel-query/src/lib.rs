@@ -94,6 +94,33 @@ impl MultiModelQuery {
         self.limit = Some(limit);
         self
     }
+
+    /// Validate query-level structure before planning or execution.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.components.is_empty() {
+            return Err("query must contain at least one component");
+        }
+        if matches!(self.limit, Some(0)) {
+            return Err("query limit must be > 0");
+        }
+        self.fusion_strategy.validate()?;
+
+        for (component_index, component) in self.components.iter().enumerate() {
+            component.validate(component_index)?;
+
+            for dependency in &component.dependencies {
+                dependency.validate(component_index)?;
+                if dependency.component_index >= self.components.len() {
+                    return Err("component dependency index out of range");
+                }
+                if dependency.component_index == component_index {
+                    return Err("component cannot depend on itself");
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for MultiModelQuery {
@@ -115,7 +142,236 @@ pub struct QueryComponent {
     pub dependencies: Vec<ComponentDependency>,
 }
 
+/// Named agentic view produced by natural-language or AQL decomposition.
+///
+/// Agentic views are logical-plan fragments over the shared multi-model IR; they
+/// do not own storage, catalog state, or a separate type system. Persisted views
+/// must be registered through xCatalog and replay into this shape.
+#[derive(Debug, Clone)]
+pub struct AgenticView {
+    /// Stable view name within a query decomposition.
+    pub name: String,
+    /// Human-readable objective for explain plans and agent traces.
+    pub objective: String,
+    /// Multi-model subplan executed to materialize this view.
+    pub query: MultiModelQuery,
+    /// Other view names that must be available before this view can run.
+    pub depends_on: Vec<String>,
+    /// Materialization policy for this logical view.
+    pub materialization: ViewMaterialization,
+}
+
+impl AgenticView {
+    /// Create a logical view over a shared multi-model query.
+    pub fn new(
+        name: impl Into<String>,
+        objective: impl Into<String>,
+        query: MultiModelQuery,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            objective: objective.into(),
+            query,
+            depends_on: Vec::new(),
+            materialization: ViewMaterialization::Ephemeral,
+        }
+    }
+
+    /// Declare a dependency on another decomposed view.
+    pub fn depends_on(mut self, view_name: impl Into<String>) -> Self {
+        self.depends_on.push(view_name.into());
+        self
+    }
+
+    /// Mark this view as eligible for xCatalog-managed rebuildable materialization.
+    pub fn materializable(mut self, projection_name: impl Into<String>) -> Self {
+        self.materialization = ViewMaterialization::RebuildableProjection {
+            projection_name: projection_name.into(),
+            freshness: ProjectionFreshness::default(),
+        };
+        self
+    }
+
+    /// Attach freshness metadata to a rebuildable materialized view.
+    pub fn with_freshness(mut self, freshness: ProjectionFreshness) -> Self {
+        if let ViewMaterialization::RebuildableProjection {
+            freshness: current, ..
+        } = &mut self.materialization
+        {
+            *current = freshness;
+        }
+        self
+    }
+}
+
+/// Materialization mode for an agentic view.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ViewMaterialization {
+    /// Per-query logical view only.
+    Ephemeral,
+    /// Rebuildable xCatalog projection. This is never a separate durable truth.
+    RebuildableProjection {
+        /// xCatalog projection name.
+        projection_name: String,
+        /// Freshness/rebuild contract.
+        freshness: ProjectionFreshness,
+    },
+}
+
+impl ViewMaterialization {
+    /// True when the view may be persisted as a rebuildable projection.
+    pub fn is_materializable(&self) -> bool {
+        matches!(self, Self::RebuildableProjection { .. })
+    }
+}
+
+/// Freshness contract for a rebuildable projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionFreshness {
+    /// Maximum acceptable lag behind canonical records.
+    pub max_lag_ms: u64,
+    /// Canonical repair source, usually a record table/collection name.
+    pub repair_source: String,
+}
+
+impl Default for ProjectionFreshness {
+    fn default() -> Self {
+        Self {
+            max_lag_ms: 0,
+            repair_source: String::new(),
+        }
+    }
+}
+
+impl ProjectionFreshness {
+    /// Validate freshness metadata before a view is cataloged.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.repair_source.is_empty() {
+            return Err("projection repair_source must not be empty");
+        }
+        Ok(())
+    }
+}
+
+/// Ordered decomposition of an agentic query into inspectable logical views.
+#[derive(Debug, Clone, Default)]
+pub struct AgenticViewPlan {
+    /// Original user/query text, when available.
+    pub source_query: Option<String>,
+    /// Ordered view definitions.
+    pub views: Vec<AgenticView>,
+    /// Final view returned to the caller.
+    pub output_view: Option<String>,
+}
+
+impl AgenticViewPlan {
+    /// Create an empty view plan.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Attach original query text for explainability.
+    pub fn with_source_query(mut self, source_query: impl Into<String>) -> Self {
+        self.source_query = Some(source_query.into());
+        self
+    }
+
+    /// Add a decomposed view.
+    pub fn add_view(mut self, view: AgenticView) -> Self {
+        self.views.push(view);
+        self
+    }
+
+    /// Set the final output view.
+    pub fn with_output_view(mut self, view_name: impl Into<String>) -> Self {
+        self.output_view = Some(view_name.into());
+        self
+    }
+
+    /// Validate ordering and output references.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let mut seen = std::collections::HashSet::new();
+
+        for view in &self.views {
+            if view.name.is_empty() {
+                return Err("view name must not be empty");
+            }
+            if view.objective.is_empty() {
+                return Err("view objective must not be empty");
+            }
+            if view.query.components.is_empty() {
+                return Err("view query must contain at least one component");
+            }
+            view.query.validate()?;
+            if !seen.insert(view.name.as_str()) {
+                return Err("view names must be unique");
+            }
+            if view
+                .depends_on
+                .iter()
+                .any(|dependency| !seen.contains(dependency.as_str()))
+            {
+                return Err("view dependencies must reference earlier views");
+            }
+            if let ViewMaterialization::RebuildableProjection {
+                projection_name,
+                freshness,
+            } = &view.materialization
+            {
+                if projection_name.is_empty() {
+                    return Err("projection_name must not be empty");
+                }
+                freshness.validate()?;
+            }
+        }
+
+        if let Some(output_view) = &self.output_view
+            && !seen.contains(output_view.as_str())
+        {
+            return Err("output view must reference a declared view");
+        }
+
+        Ok(())
+    }
+}
+
 impl QueryComponent {
+    /// Validate component-local fields.
+    pub fn validate(&self, component_index: usize) -> Result<(), &'static str> {
+        if self.target_collection().is_none_or(str::is_empty) {
+            return Err("component target collection must not be empty");
+        }
+
+        match &self.operation {
+            ModelOperation::VectorSearch(search) => {
+                if search.query_vector.is_empty() {
+                    return Err("vector query_vector must not be empty");
+                }
+                if search.top_k == 0 {
+                    return Err("vector top_k must be > 0");
+                }
+            }
+            ModelOperation::GraphTraversal(traversal) => {
+                if traversal.max_depth == 0 {
+                    return Err("graph traversal max_depth must be > 0");
+                }
+                if traversal.min_depth > traversal.max_depth {
+                    return Err("graph traversal min_depth must be <= max_depth");
+                }
+            }
+            ModelOperation::DocumentQuery(_)
+            | ModelOperation::GraphQuery(_)
+            | ModelOperation::LogQuery(_)
+            | ModelOperation::MetricQuery(_) => {}
+        }
+
+        for dependency in &self.dependencies {
+            dependency.validate(component_index)?;
+        }
+
+        Ok(())
+    }
+
     /// Check if this component can run in parallel with others.
     pub fn is_parallelizable(&self) -> bool {
         self.dependencies.is_empty()
@@ -150,6 +406,19 @@ pub struct ComponentDependency {
     pub join_type: JoinType,
 }
 
+impl ComponentDependency {
+    /// Validate dependency-local fields.
+    pub fn validate(&self, component_index: usize) -> Result<(), &'static str> {
+        if self.component_index == component_index {
+            return Err("component cannot depend on itself");
+        }
+        if self.join_field.is_empty() {
+            return Err("dependency join_field must not be empty");
+        }
+        self.join_type.validate()
+    }
+}
+
 /// Join types for cross-model queries.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JoinType {
@@ -170,6 +439,29 @@ pub enum JoinType {
         /// Matching strategy.
         mode: SemanticJoinMode,
     },
+}
+
+impl JoinType {
+    /// Validate join configuration.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if let Self::Semantic {
+            threshold,
+            top_k,
+            mode,
+        } = self
+        {
+            if !threshold.is_finite() || !(0.0..=1.0).contains(threshold) {
+                return Err("semantic join threshold must be between 0 and 1");
+            }
+            if *top_k == 0 {
+                return Err("semantic join top_k must be > 0");
+            }
+            if let SemanticJoinMode::LlmBlockBatch(config) = mode {
+                config.validate()?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Strategies for evaluating a [`JoinType::Semantic`] join.
@@ -261,6 +553,7 @@ mod tests {
 
         assert_eq!(query.components.len(), 1);
         assert_eq!(query.limit, Some(10));
+        assert!(query.validate().is_ok());
     }
 
     #[test]
@@ -293,6 +586,63 @@ mod tests {
             query.fusion_strategy,
             FusionStrategy::Intersection
         ));
+        assert!(query.validate().is_ok());
+    }
+
+    #[test]
+    fn query_validation_rejects_empty_query_and_zero_limit() {
+        assert_eq!(
+            MultiModelQuery::new().validate(),
+            Err("query must contain at least one component")
+        );
+
+        let query = MultiModelQuery::new()
+            .with_vector_search(VectorSearchExpr {
+                collection: "docs".to_string(),
+                query_vector: vec![0.1],
+                top_k: 1,
+                threshold: None,
+                metric: DistanceMetric::Cosine,
+                params: VectorSearchParams::default(),
+            })
+            .with_limit(0);
+
+        assert_eq!(query.validate(), Err("query limit must be > 0"));
+    }
+
+    #[test]
+    fn query_validation_rejects_bad_dependencies() {
+        let component = QueryComponent {
+            model: DataModel::Graph,
+            operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
+                graph_name: "knowledge".to_string(),
+                start_nodes: StartNodeSpec::FromComponent(0),
+                edge_types: vec!["RELATED".to_string()],
+                direction: TraversalDirection::Outgoing,
+                max_depth: 2,
+                min_depth: 1,
+                node_filters: Vec::<NodeFilter>::new(),
+                edge_filters: Vec::<EdgeFilter>::new(),
+                return_paths: false,
+            }),
+            filters: vec![],
+            dependencies: vec![ComponentDependency {
+                component_index: 0,
+                join_field: "id".to_string(),
+                join_type: JoinType::Inner,
+            }],
+        };
+
+        let query = MultiModelQuery {
+            components: vec![component],
+            fusion_strategy: FusionStrategy::Intersection,
+            limit: None,
+            offset: None,
+            projection: Vec::new(),
+            order_by: None,
+        };
+
+        assert_eq!(query.validate(), Err("component cannot depend on itself"));
     }
 
     #[test]
@@ -338,6 +688,99 @@ mod tests {
     }
 
     #[test]
+    fn agentic_view_plan_validates_ordered_dependencies() {
+        let vector_view = AgenticView::new(
+            "candidate_docs",
+            "Find semantically relevant documents",
+            MultiModelQuery::new().with_vector_search(VectorSearchExpr {
+                collection: "docs".to_string(),
+                query_vector: vec![0.1, 0.2],
+                top_k: 20,
+                threshold: None,
+                metric: DistanceMetric::Cosine,
+                params: VectorSearchParams::default(),
+            }),
+        );
+        let graph_view = AgenticView::new(
+            "expanded_context",
+            "Expand through related graph neighborhoods",
+            MultiModelQuery::new().with_graph_traversal(GraphTraversalExpr {
+                graph_name: "knowledge".to_string(),
+                start_nodes: StartNodeSpec::FromComponent(0),
+                edge_types: vec!["RELATED".to_string()],
+                direction: TraversalDirection::Outgoing,
+                max_depth: 2,
+                min_depth: 1,
+                node_filters: Vec::<NodeFilter>::new(),
+                edge_filters: Vec::<EdgeFilter>::new(),
+                return_paths: false,
+            }),
+        )
+        .depends_on("candidate_docs")
+        .materializable("expanded_context_projection")
+        .with_freshness(ProjectionFreshness {
+            max_lag_ms: 1_000,
+            repair_source: "knowledge".to_string(),
+        });
+
+        let plan = AgenticViewPlan::new()
+            .with_source_query("Find related incident context")
+            .add_view(vector_view)
+            .add_view(graph_view)
+            .with_output_view("expanded_context");
+
+        assert!(plan.validate().is_ok());
+        assert!(plan.views[1].materialization.is_materializable());
+    }
+
+    #[test]
+    fn agentic_view_plan_rejects_forward_dependency() {
+        let view = AgenticView::new(
+            "late",
+            "Invalid dependency",
+            MultiModelQuery::new().with_vector_search(VectorSearchExpr {
+                collection: "docs".to_string(),
+                query_vector: vec![0.1],
+                top_k: 1,
+                threshold: None,
+                metric: DistanceMetric::Cosine,
+                params: VectorSearchParams::default(),
+            }),
+        )
+        .depends_on("future");
+        let plan = AgenticViewPlan::new().add_view(view);
+
+        assert_eq!(
+            plan.validate(),
+            Err("view dependencies must reference earlier views")
+        );
+    }
+
+    #[test]
+    fn agentic_view_plan_rejects_uncataloged_materialization() {
+        let view = AgenticView::new(
+            "candidate_docs",
+            "Find semantically relevant documents",
+            MultiModelQuery::new().with_vector_search(VectorSearchExpr {
+                collection: "docs".to_string(),
+                query_vector: vec![0.1],
+                top_k: 1,
+                threshold: None,
+                metric: DistanceMetric::Cosine,
+                params: VectorSearchParams::default(),
+            }),
+        )
+        .materializable("candidate_docs_projection");
+
+        let plan = AgenticViewPlan::new().add_view(view);
+
+        assert_eq!(
+            plan.validate(),
+            Err("projection repair_source must not be empty")
+        );
+    }
+
+    #[test]
     fn semantic_join_mode_defaults_to_cosine() {
         let mode: SemanticJoinMode = Default::default();
         assert_eq!(mode, SemanticJoinMode::Cosine);
@@ -363,6 +806,21 @@ mod tests {
             mode: SemanticJoinMode::LlmBlockBatch(BlockBatchConfig::default()),
         };
         assert_ne!(a, c);
+        assert!(a.validate().is_ok());
+    }
+
+    #[test]
+    fn semantic_join_rejects_invalid_bounds() {
+        let join = JoinType::Semantic {
+            threshold: 1.5,
+            top_k: 0,
+            mode: SemanticJoinMode::Cosine,
+        };
+
+        assert_eq!(
+            join.validate(),
+            Err("semantic join threshold must be between 0 and 1")
+        );
     }
 
     #[test]

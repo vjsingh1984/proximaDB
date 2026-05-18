@@ -28,6 +28,7 @@ pub mod compaction;
 pub mod core;
 pub mod cypher_functions;
 pub mod cypher_parser;
+pub mod graphwalk;
 pub mod parser;
 pub mod projection;
 pub mod query;
@@ -38,6 +39,7 @@ pub mod traversal;
 
 // Re-export core types
 pub use core::{DirectedGraph, Edge, EdgeId, Graph, GraphId, Node, NodeId, UndirectedGraph};
+pub use graphwalk::{GraphWalkRequest, GraphWalkResult, GraphWalkStep, GraphWalkTool};
 
 pub use traversal::{
     BreadthFirst, DepthFirst, ShortestPath, Traversal, TraversalOrder, TraversalResult,
@@ -73,7 +75,7 @@ pub trait QueryParser {
 }
 
 /// Graph direction
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum EdgeDirection {
     Outgoing,
     Incoming,

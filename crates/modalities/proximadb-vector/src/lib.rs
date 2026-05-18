@@ -43,6 +43,7 @@ pub mod index;
 pub mod quantization;
 pub mod search;
 pub mod service;
+pub mod transform_index;
 
 // Re-export common types for convenience
 pub use distance::{
@@ -66,6 +67,8 @@ pub use search::{
 
 // Re-export Phase 3 service implementation
 pub use service::VectorServiceImpl;
+
+pub use transform_index::{DisentangledVectorProjection, TransformProjectionSpec};
 
 #[cfg(test)]
 mod tests {

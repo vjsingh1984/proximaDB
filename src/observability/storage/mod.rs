@@ -134,14 +134,14 @@ impl ObservabilityStorage {
                                     &format!("{}/logs", namespace_path),
                                     &namespace,
                                 )?,
-                                metrics: metrics::MetricStorage::new(&format!(
-                                    "{}/metrics",
-                                    namespace_path
-                                ))?,
-                                traces: traces::TraceStorage::new(&format!(
-                                    "{}/traces",
-                                    namespace_path
-                                ))?,
+                                metrics: metrics::MetricStorage::new_for_namespace(
+                                    &format!("{}/metrics", namespace_path),
+                                    &namespace,
+                                )?,
+                                traces: traces::TraceStorage::new_for_namespace(
+                                    &format!("{}/traces", namespace_path),
+                                    &namespace,
+                                )?,
                             };
                             let mut namespaces = self.namespaces.write().await;
                             namespaces.insert(namespace, namespace_storage);
@@ -250,8 +250,14 @@ impl ObservabilityStorage {
                 &format!("{}/logs", namespace_path),
                 name,
             )?,
-            metrics: metrics::MetricStorage::new(&format!("{}/metrics", namespace_path))?,
-            traces: traces::TraceStorage::new(&format!("{}/traces", namespace_path))?,
+            metrics: metrics::MetricStorage::new_for_namespace(
+                &format!("{}/metrics", namespace_path),
+                name,
+            )?,
+            traces: traces::TraceStorage::new_for_namespace(
+                &format!("{}/traces", namespace_path),
+                name,
+            )?,
         };
 
         let mut namespaces = self.namespaces.write().await;

@@ -43,6 +43,9 @@ Current state:
 * Extracted `proximadb-vector` must stay dependency-light and must not fabricate search results.
 * AXIS has a predicate-aware HNSW primitive, but metadata lookup and result materialization are
   still incomplete at the manager layer.
+* Hybrid search has several fusion implementations, including an existing projection-style engine
+  under root search code, but projection-aware fusion is not yet a shared cross-model query runtime
+  default.
 
 Required trajectory:
 
@@ -51,6 +54,11 @@ Required trajectory:
   `crates/modalities/proximadb-vector`.
 * Replace `VectorRecord` internals one engine at a time, starting with the lowest-risk engine
   selected by current benchmark/test coverage.
+* Add context-disentangled chunk representations as rebuildable vector projections: centroid
+  embedding plus residual/topic embeddings, with xCatalog metadata for model, freshness, and
+  repair source.
+* Promote projection-aware fusion only after it is implemented in the shared query runtime and
+  benchmarked against RRF/weighted fusion for latency, recall, and diversity.
 
 Touchpoints:
 
@@ -59,12 +67,20 @@ Touchpoints:
 * `src/index/axis/management/filtered_search.rs`
 * `src/index/axis/indexes/hnsw_index.rs`
 * `src/storage/engines/{sst,swift,viper,nova,raptor}/`
+* `src/core/search/hybrid/fusion.rs`
+* `crates/query/proximadb-query-fusion/src/lib.rs`
+* `crates/modalities/proximadb-vector/src/transform_index.rs`
 
 Done criteria:
 
 * v1 protocol conversion happens only at REST/gRPC/SDK edges.
 * `search_vectors_unified` consumes rich predicates with tenant/RLS pushdown.
 * Filtered ANN returns materialized records, not placeholder candidate counts.
+* Projection fusion has shared-runtime execution, explain output, and benchmark evidence before it
+  is exposed as a default.
+* Centroid/residual embeddings are cataloged projections, not a second document/vector truth store.
+* Transform projections carry repair source, freshness lag, projection epoch, and source record
+  version before they can be registered or refreshed.
 
 === Document
 
@@ -111,6 +127,8 @@ Required trajectory:
   retained aggregates.
 * Route Cypher/PGQ pattern matching through shared logical operators and projection-aware
   planning.
+* Expose bounded graph traversal as an agent tool contract (`GraphWalkTool`) so agents navigate
+  graph neighborhoods iteratively instead of receiving large prompt-sized subgraphs.
 
 Touchpoints:
 
@@ -120,12 +138,15 @@ Touchpoints:
 * `src/graph/adjacency_projection.rs`
 * `src/graph/engines/orion/`
 * `src/query/graph_lowering.rs`
+* `crates/modalities/proximadb-graph/src/graphwalk.rs`
 
 Done criteria:
 
 * Graph CRUD writes are canonical by default.
 * Endpoint-bound queries prefer fresh CSR/projection and can rebuild from canonical edge records.
 * Legacy graph WAL does not define durable graph truth.
+* GraphWalk responses include canonical records plus projection freshness metadata and always carry
+  tenant/RLS context.
 
 === Observability
 
@@ -136,6 +157,8 @@ Current state:
 * CHRONO is an `ObservabilityStorageEngine`, now wired when configured.
 * `proximadb-observability` now defines canonical `ProximaRecord` mapping for logs, metric samples,
   and trace spans.
+* Partitioned log storage, metric storage, and trace storage expose namespace-aware canonical
+  projection helpers for replay into shared record/PAX storage.
 * Root storage still writes legacy log/metric/span shapes before those records are replayed through
   shared canonical record storage.
 
@@ -193,6 +216,24 @@ Shared logical operators must become the convergence point for:
 
 Every operator must carry tenant/RLS predicates and xCatalog table/collection identity.
 
+Research-backed additions must land as shared query/runtime contracts:
+
+* AV-SQL style agentic view decomposition becomes a logical-plan rewrite that emits named,
+  inspectable subviews over vector/document/graph/observability sources.
+* Evolutionary planning is an optimizer mode that samples physical alternatives against catalog
+  statistics and bounded execution probes; it is not a language-specific execution path.
+* Projection fusion is a `FusionStrategy` contract first, then a runtime implementation with
+  benchmarks and explain output.
+* GraphWalk is a graph operator/tool surface over canonical edge/node records and fresh topology
+  projections.
+* Agentic views are either ephemeral logical views or xCatalog-managed rebuildable projections.
+  Materialized agentic views must declare projection name, repair source, and freshness contract;
+  they cannot define durable authority.
+* All SQL/UQL/AQL/AV-SQL lowering must call shared `MultiModelQuery::validate()` or
+  `AgenticViewPlan::validate()` before execution, optimization, or materialization. Invalid
+  component dependencies, empty targets, malformed semantic joins, zero limits, and invalid fusion
+  parameters must fail at the shared IR boundary rather than in protocol handlers.
+
 === xCatalog
 
 xCatalog must own:
@@ -217,6 +258,47 @@ Supported-surface documents must distinguish:
 No release note, README, or API doc should imply production parity with Milvus, Neo4j, MongoDB,
 Splunk, Datadog, Loki, Elastic, or Tempo until the corresponding benchmark and recovery tests
 exist.
+
+== Research-Backed Trajectory Gates
+
+The arXiv/research corpus should shape the roadmap, but each idea must pass through ProximaDB's
+canonical architecture before it becomes a product claim.
+
+[cols="1,2,2,2",options="header"]
+|===
+|Theme
+|Architectural interpretation
+|Code touchpoints
+|Gate before supported claim
+
+|Context disentanglement
+|Centroid plus residual/topic embeddings are AXIS projections over canonical document records.
+|`src/index/axis/`, `crates/modalities/proximadb-vector/src/transform_index.rs`, xCatalog projection descriptors
+|Recall/diversity benchmarks and rebuild tests from canonical records
+
+|Projection Fusion / B5
+|Shared `FusionStrategy::ProjectionFusion` plus runtime execution and explainability.
+|`crates/query/proximadb-query-fusion/src/lib.rs`, `crates/query/proximadb-query/src/fusion.rs`,
+`src/core/search/hybrid/fusion.rs`
+|Latency/recall/diversity benchmark evidence against RRF and weighted fusion
+
+|GraphWalk
+|Agent tool for bounded graph navigation over canonical records and fresh topology projections.
+|`crates/modalities/proximadb-graph/src/graphwalk.rs`, `src/graph/service.rs`,
+`src/query/graph_lowering.rs`
+|Service implementation with tenant/RLS pushdown and projection freshness tests
+
+|AV-SQL / agentic views
+|Logical view decomposition over shared multi-model operators.
+|`crates/query/proximadb-uql/src/decomposition.rs`, `src/query/unified/`,
+`crates/query/proximadb-multimodel-query/src/lib.rs`
+|Inspectable subplans, replayable view definitions, and cross-surface tests
+
+|DBOS-style agent state
+|Agent state, checkpoints, and memory categories are canonical records with deterministic replay.
+|TD-055/Memanto docs, `proximadb-records`, xCatalog, WAL/recovery
+|Crash-recovery tests that replay agent state and projections without hidden side effects
+|===
 
 == Best-in-Class Alignment
 

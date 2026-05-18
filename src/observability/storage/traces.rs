@@ -10,8 +10,14 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
+use proximadb_observability::trace_data_to_proxima_record;
+use proximadb_records::ProximaRecord;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+
+use crate::proto::proximadb_v1::{
+    SpanKind, SpanStatus, SpanStatusCode, SqlValue, TraceData as ProtoTraceData, sql_value,
+};
 
 /// Trace span for distributed tracing
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +48,8 @@ pub struct TraceSpan {
 pub struct TraceStorage {
     /// Base path for storage
     _base_path: String,
+    /// Observability namespace used as the canonical tenant id.
+    namespace: String,
     /// Traces indexed by trace ID
     traces: RwLock<HashMap<String, TraceData>>,
     /// Spans indexed by time
@@ -73,14 +81,61 @@ struct TraceData {
 impl TraceStorage {
     /// Create a new trace storage
     pub fn new(base_path: &str) -> Result<Self> {
+        Self::new_for_namespace(base_path, "default")
+    }
+
+    /// Create trace storage for a specific observability namespace.
+    pub fn new_for_namespace(base_path: &str, namespace: &str) -> Result<Self> {
         Ok(Self {
             _base_path: base_path.to_string(),
+            namespace: namespace.to_string(),
             traces: RwLock::new(HashMap::new()),
             spans_by_time: RwLock::new(BTreeMap::new()),
             service_index: RwLock::new(HashMap::new()),
             span_count: AtomicU64::new(0),
             total_bytes: AtomicU64::new(0),
         })
+    }
+
+    /// Project a trace span onto the canonical observability record shape.
+    ///
+    /// TraceStorage currently assembles spans in memory for query ergonomics;
+    /// this projection is the shared bridge for WAL replay into canonical
+    /// ProximaRecord/PAX storage without a second trace-specific envelope.
+    pub fn span_projection_record(&self, span: &TraceSpan) -> ProximaRecord {
+        let trace_data = ProtoTraceData {
+            trace_id: span.trace_id.clone(),
+            span_id: span.span_id.clone(),
+            parent_span_id: (!span.parent_span_id.is_empty()).then(|| span.parent_span_id.clone()),
+            name: span.name.clone(),
+            kind: SpanKind::Unspecified as i32,
+            start_time_ns: span.start_time_ns,
+            end_time_ns: span.end_time_ns,
+            status: Some(SpanStatus {
+                code: if span.status == 0 {
+                    SpanStatusCode::Ok as i32
+                } else {
+                    SpanStatusCode::Error as i32
+                },
+                message: (!span.status_message.is_empty()).then(|| span.status_message.clone()),
+            }),
+            attributes: span
+                .attributes
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        SqlValue {
+                            value: Some(sql_value::Value::StringValue(value.clone())),
+                        },
+                    )
+                })
+                .collect(),
+            events: Vec::new(),
+            links: Vec::new(),
+        };
+
+        trace_data_to_proxima_record(&self.namespace, &trace_data)
     }
 
     /// Write a trace span
@@ -378,6 +433,7 @@ pub struct ServiceDependency {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_observability::SPAN_LABEL;
 
     fn make_span(
         trace_id: &str,
@@ -400,6 +456,26 @@ mod tests {
             status: 0,
             status_message: String::new(),
         }
+    }
+
+    #[test]
+    fn projection_record_uses_observability_canonical_shape() {
+        let storage = TraceStorage::new_for_namespace("/tmp/test_trace_projection", "tenant-a")
+            .expect("Failed to create TraceStorage");
+        let mut span = make_span("trace1", "span1", "", "svc-a", "op1", 100, 250);
+        span.attributes
+            .insert("http.method".to_string(), "GET".to_string());
+
+        let record = storage.span_projection_record(&span);
+
+        assert_eq!(record.oid, "obs://tenant-a/span/trace1:span1");
+        assert_eq!(record.tenant_id, "tenant-a");
+        assert!(record.labels.iter().any(|label| label == SPAN_LABEL));
+        assert_eq!(record.created_at_ns, 100);
+        assert_eq!(record.updated_at_ns, 100);
+        assert_eq!(record.valid_from_ns, Some(100));
+        assert_eq!(record.valid_to_ns, Some(250));
+        assert!(record.props.contains_key("attributes"));
     }
 
     #[tokio::test]

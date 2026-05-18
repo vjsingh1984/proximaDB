@@ -31,6 +31,10 @@ impl ResultFuser {
         sub_results: Vec<SubQueryResult>,
         strategy: &FusionStrategy,
     ) -> Result<QueryResult> {
+        strategy
+            .validate()
+            .map_err(|message| anyhow!("Invalid fusion strategy: {}", message))?;
+
         if sub_results.is_empty() {
             return Ok(QueryResult {
                 records: Vec::new(),
@@ -55,6 +59,11 @@ impl ResultFuser {
                 self.fuse_ranked(&sub_results, weights, *normalize)?
             }
             FusionStrategy::ReciprocalRankFusion { k } => self.fuse_rrf(&sub_results, *k)?,
+            FusionStrategy::ProjectionFusion { .. } => {
+                return Err(anyhow!(
+                    "Projection fusion is a planner contract; runtime implementation and benchmarks are not complete"
+                ));
+            }
             FusionStrategy::Custom(name) => {
                 return Err(anyhow!("Custom fusion '{}' not implemented", name));
             }

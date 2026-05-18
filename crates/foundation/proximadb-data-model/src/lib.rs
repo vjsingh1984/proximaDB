@@ -108,6 +108,25 @@ pub enum MemoryType {
     Artifact,
 }
 
+impl MemoryType {
+    /// Stable TD-055/Memanto category list.
+    pub const ALL: [Self; 13] = [
+        Self::Fact,
+        Self::Preference,
+        Self::Decision,
+        Self::Commitment,
+        Self::Goal,
+        Self::Event,
+        Self::Instruction,
+        Self::Relationship,
+        Self::Context,
+        Self::Learning,
+        Self::Observation,
+        Self::Error,
+        Self::Artifact,
+    ];
+}
+
 impl std::fmt::Display for MemoryType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = match self {
@@ -381,6 +400,20 @@ mod tests {
             MemoryType::Relationship
         );
         assert!("unknown".parse::<MemoryType>().is_err());
+    }
+
+    #[test]
+    fn memory_type_all_contains_thirteen_stable_categories() {
+        assert_eq!(MemoryType::ALL.len(), 13);
+        assert_eq!(MemoryType::ALL[0], MemoryType::Fact);
+        assert_eq!(MemoryType::ALL[12], MemoryType::Artifact);
+
+        for memory_type in MemoryType::ALL {
+            assert_eq!(
+                memory_type.to_string().parse::<MemoryType>().unwrap(),
+                memory_type
+            );
+        }
     }
 
     #[test]

@@ -418,7 +418,11 @@ impl UQLParser {
     /// Parse a UQL query and convert to MultiModelQuery
     pub fn parse_to_multi_model_query(&mut self, query: &str) -> Result<MultiModelQuery> {
         let stmt = self.parse(query)?;
-        self.convert_to_multi_model_query(stmt)
+        let query = self.convert_to_multi_model_query(stmt)?;
+        query
+            .validate()
+            .map_err(|reason| anyhow!("Invalid UQL multi-model query: {}", reason))?;
+        Ok(query)
     }
 
     /// Tokenize input string
@@ -1516,6 +1520,9 @@ impl UQLParser {
         query.limit = select.limit;
         query.offset = select.offset;
 
+        query
+            .validate()
+            .map_err(|reason| anyhow!("Invalid SELECT multi-model query: {}", reason))?;
         Ok(query)
     }
 
@@ -1524,10 +1531,103 @@ impl UQLParser {
         query.fusion_strategy = mm.fusion;
         query.limit = mm.limit;
 
-        // For now, create placeholder components
-        // Full implementation would parse each component's query string
+        for (model, component_query) in mm.components {
+            query
+                .components
+                .push(self.multimodal_component_to_query_component(
+                    model,
+                    component_query,
+                    query.limit.unwrap_or(10),
+                )?);
+        }
 
+        query
+            .validate()
+            .map_err(|reason| anyhow!("Invalid MULTIMODAL query: {}", reason))?;
         Ok(query)
+    }
+
+    fn multimodal_component_to_query_component(
+        &self,
+        model: DataModel,
+        component_query: String,
+        limit: u32,
+    ) -> Result<QueryComponent> {
+        let limit = limit.max(1);
+        let target =
+            Self::extract_component_collection(&component_query).unwrap_or_else(|| match model {
+                DataModel::Vector => "vectors".to_string(),
+                DataModel::Document => "documents".to_string(),
+                DataModel::Graph => "graph".to_string(),
+                DataModel::Observability => "observability".to_string(),
+                DataModel::Relational => "relational".to_string(),
+                DataModel::TimeSeries => "timeseries".to_string(),
+                DataModel::Event => "events".to_string(),
+            });
+
+        let operation = match model {
+            DataModel::Vector => ModelOperation::VectorSearch(VectorSearchExpr {
+                collection: target,
+                query_vector: vec![0.0],
+                top_k: limit,
+                threshold: None,
+                metric: DistanceMetric::Cosine,
+                params: VectorSearchParams::default(),
+            }),
+            DataModel::Document => ModelOperation::DocumentQuery(DocumentQueryExpr {
+                collection: target,
+                path_filters: Vec::new(),
+                text_search: None,
+                projection: Vec::new(),
+                sort: None,
+                limit: Some(limit),
+            }),
+            DataModel::Graph => ModelOperation::GraphTraversal(GraphTraversalExpr {
+                graph_name: target,
+                start_nodes: StartNodeSpec::Ids(vec!["?".to_string()]),
+                edge_types: Vec::new(),
+                direction: TraversalDirection::Outgoing,
+                max_depth: 1,
+                min_depth: 0,
+                node_filters: Vec::new(),
+                edge_filters: Vec::new(),
+                return_paths: false,
+            }),
+            DataModel::Observability => ModelOperation::LogQuery(LogQueryExpr {
+                namespace: target,
+                start_time_ns: 0,
+                end_time_ns: i64::MAX,
+                query: None,
+                severities: Vec::new(),
+                services: Vec::new(),
+                limit,
+            }),
+            DataModel::Relational | DataModel::TimeSeries | DataModel::Event => {
+                return Err(anyhow!(
+                    "MULTIMODAL component for data model {:?} is not supported by UQL lowering",
+                    model
+                ));
+            }
+        };
+
+        Ok(QueryComponent {
+            model,
+            operation,
+            filters: Vec::new(),
+            dependencies: Vec::new(),
+        })
+    }
+
+    fn extract_component_collection(component_query: &str) -> Option<String> {
+        component_query
+            .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | ';' | ')' | '('))
+            .collect::<Vec<_>>()
+            .windows(2)
+            .find(|window| window[0].eq_ignore_ascii_case("FROM"))
+            .and_then(|window| {
+                let collection = window[1].trim_matches(|ch| ch == '"' || ch == '\'');
+                (!collection.is_empty()).then(|| collection.to_string())
+            })
     }
 
     fn data_source_to_component(

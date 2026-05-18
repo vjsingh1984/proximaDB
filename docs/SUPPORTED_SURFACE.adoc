@@ -76,7 +76,7 @@ This matrix is the support contract.
 | Hybrid retrieval
 | Beta
 | tantivy BM25 integration, RRF/weighted fusion, `/api/v1/hybrid/search` API (TD-008 resolved).
-| Backend integration improved; gRPC path parity still in progress.
+| Backend integration improved; gRPC path parity still in progress. Projection Fusion is a shared planner contract only until runtime implementation, explain output, and benchmarks are complete.
 
 | PULSAR and QUASAR graph engines
 | Experimental

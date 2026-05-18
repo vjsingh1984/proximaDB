@@ -149,7 +149,17 @@ impl QueryDecomposer {
             multi_query.fusion_strategy
         );
 
+        multi_query
+            .validate()
+            .map_err(|reason| anyhow!("Invalid decomposed multi-model query: {}", reason))?;
+
         Ok(multi_query)
+    }
+
+    /// Placeholder vector used when a UQL query references a bound vector
+    /// parameter (`?`). Protocol handlers must replace this before execution.
+    fn bound_parameter_vector_placeholder(&self) -> Vec<f32> {
+        vec![0.0]
     }
 
     /// Extract vector search component from query
@@ -175,7 +185,7 @@ impl QueryDecomposer {
                 model: DataModel::Vector,
                 operation: ModelOperation::VectorSearch(VectorSearchExpr {
                     collection,
-                    query_vector: vec![], // Will be filled from parameters
+                    query_vector: self.bound_parameter_vector_placeholder(),
                     top_k,
                     threshold,
                     metric: self.infer_distance_metric(query),
@@ -204,7 +214,7 @@ impl QueryDecomposer {
                 model: DataModel::Vector,
                 operation: ModelOperation::VectorSearch(VectorSearchExpr {
                     collection,
-                    query_vector: vec![],
+                    query_vector: self.bound_parameter_vector_placeholder(),
                     top_k,
                     threshold: None,
                     metric: self.infer_distance_metric(query),
