@@ -479,8 +479,11 @@ impl IcebergErrorResponse {
 ///
 /// Wraps `CatalogManager` and handles all translation between ProximaDB's internal
 /// catalog types and the Iceberg REST spec JSON responses.
+#[derive(Clone)]
 pub struct IcebergRestService {
     catalog_manager: Arc<CatalogManager>,
+    /// PAX segment registry: provides real row counts and file sizes for snapshots.
+    segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
     /// Warehouse identifier returned in GET /v1/config
     pub warehouse: String,
     /// Arrow Flight endpoint embedded in table write-credentials
@@ -498,10 +501,17 @@ impl IcebergRestService {
     ) -> Self {
         Self {
             catalog_manager,
+            segment_registry: None,
             warehouse: warehouse.into(),
             flight_endpoint: flight_endpoint.into(),
             server_base_url: server_base_url.into(),
         }
+    }
+
+    /// Attach a shared segment registry so snapshot summaries reflect real PAX stats.
+    pub fn with_segment_registry(mut self, registry: Arc<crate::catalog::SegmentRegistry>) -> Self {
+        self.segment_registry = Some(registry);
+        self
     }
 
     // ---- Config ----
@@ -902,6 +912,12 @@ impl IcebergRestService {
             snapshot_id
         );
 
+        // Build snapshot summary: use real PAX segment stats when available.
+        let seg_stats = self
+            .segment_registry
+            .as_ref()
+            .and_then(|r| r.stats(&schema.name));
+
         let snapshot = IcebergSnapshot {
             snapshot_id,
             parent_snapshot_id: None,
@@ -918,6 +934,11 @@ impl IcebergRestService {
                             schema.name, snapshot_id
                         ),
                     );
+                    if let Some(ref s) = seg_stats {
+                        m.insert("total-records".to_string(), s.row_count.to_string());
+                        m.insert("total-data-files".to_string(), s.segment_count.to_string());
+                        m.insert("total-files-size".to_string(), s.size_bytes.to_string());
+                    }
                     m
                 },
             },

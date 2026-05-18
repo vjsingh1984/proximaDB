@@ -376,7 +376,8 @@ impl MultiServer {
             let proxima_record_service_impl =
                 crate::network::grpc::v2::ProximaRecordServiceImpl::new(
                     services.request_handlers.clone(),
-                );
+                )
+                .with_segment_registry(services.segment_registry.clone());
             let proxima_record_service = proxima_record_service_impl.into_server();
 
             // Build server with all services
@@ -681,6 +682,7 @@ impl MultiServer {
                 query_adapter,
                 llm_engine,
                 Some(rest_ports),
+                Some(services.segment_registry.clone()),
             );
 
             info!(

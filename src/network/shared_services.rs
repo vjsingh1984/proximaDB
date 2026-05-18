@@ -40,6 +40,9 @@ use proximadb_kernel::uuid::Uuid;
 /// Responsibilities: business logic, metadata configuration, service coordination
 #[derive(Clone)]
 pub struct SharedServices {
+    /// PAX segment registry — bridges write path with Iceberg REST snapshot stats.
+    /// Shared with `AppState::segment_registry` via `Arc` clone in `build_router_for_unified`.
+    pub segment_registry: Arc<crate::catalog::SegmentRegistry>,
     /// Collection lifecycle management service
     pub collection_service: Arc<CollectionService>,
     /// Vector CRUD and search operations service
@@ -814,6 +817,7 @@ impl SharedServices {
 
         Ok((
             Self {
+                segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
                 collection_service: collection_service.clone(),
                 vector_operations_service,
                 graph_service,

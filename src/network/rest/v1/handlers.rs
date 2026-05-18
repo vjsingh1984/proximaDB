@@ -52,6 +52,9 @@ pub struct AppState {
     pub fulltext_indexes: Option<FullTextIndexMap>,
     /// Catalog manager for external catalog integration
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
+    /// PAX segment registry shared with the write path (gRPC v2, Arrow Flight).
+    /// Enables Iceberg REST snapshot summaries to reflect real PAX segment stats.
+    pub segment_registry: Arc<crate::catalog::SegmentRegistry>,
     /// LLM engine for semantic operations
     pub llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     /// Port-based document service (from proximadb-api migration)
@@ -91,6 +94,7 @@ impl AppState {
                 std::collections::HashMap::new(),
             ))),
             catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
+            segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
             llm_engine,
             doc_port: None,
             graph_port: None,
@@ -98,6 +102,12 @@ impl AppState {
             unified_query_port: None,
             api_handlers: None,
         }
+    }
+
+    /// Inject a shared segment registry (same `Arc` as in `SharedServices`).
+    pub fn with_segment_registry(mut self, registry: Arc<crate::catalog::SegmentRegistry>) -> Self {
+        self.segment_registry = registry;
+        self
     }
 
     /// Inject port-based service objects for API-crate-backed routes.
@@ -736,7 +746,8 @@ pub fn create_router(state: AppState) -> axum::Router {
         use crate::network::rest::v1::iceberg_rest_catalog::{
             IcebergRestState, create_iceberg_rest_router,
         };
-        let iceberg_state = IcebergRestState::with_defaults(state.catalog_manager.clone());
+        let iceberg_state = IcebergRestState::with_defaults(state.catalog_manager.clone())
+            .with_segment_registry(state.segment_registry.clone());
         router = router.nest(
             "/iceberg/v1",
             create_iceberg_rest_router().with_state(iceberg_state),

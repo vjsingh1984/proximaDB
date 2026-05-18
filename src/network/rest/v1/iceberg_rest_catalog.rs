@@ -57,6 +57,7 @@ use crate::catalog::iceberg_rest_service::{
 #[derive(Clone)]
 pub struct IcebergRestState {
     pub service: Arc<IcebergRestService>,
+    pub segment_registry: Arc<crate::catalog::SegmentRegistry>,
 }
 
 impl IcebergRestState {
@@ -73,6 +74,7 @@ impl IcebergRestState {
                 flight_endpoint,
                 server_base_url,
             )),
+            segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
         }
     }
 
@@ -83,6 +85,17 @@ impl IcebergRestState {
             "grpc://localhost:5680",
             "http://localhost:5678/iceberg/v1",
         )
+    }
+
+    /// Replace the default registry with the shared one from `SharedServices`.
+    pub fn with_segment_registry(mut self, registry: Arc<crate::catalog::SegmentRegistry>) -> Self {
+        // Rebuild the service with the registry wired in.
+        let inner = Arc::try_unwrap(self.service)
+            .unwrap_or_else(|arc| (*arc).clone())
+            .with_segment_registry(registry.clone());
+        self.service = Arc::new(inner);
+        self.segment_registry = registry;
+        self
     }
 }
 

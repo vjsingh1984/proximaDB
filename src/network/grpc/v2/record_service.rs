@@ -49,6 +49,10 @@ use proximadb_records::proto_v2::{
 /// - Typed filtering with range, equality, and CONTAINS operators
 pub struct ProximaRecordServiceImpl {
     request_handlers: Arc<UnifiedHandlers>,
+    /// Shared segment registry — after each successful batch write, records are
+    /// flushed to a `.pax` file and the resulting `SegmentMeta` is registered here
+    /// so the Iceberg REST server can serve accurate snapshot stats.
+    segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
 }
 
 /// Streaming response type for SearchStream
@@ -361,7 +365,16 @@ impl FlowControlState {
 impl ProximaRecordServiceImpl {
     /// Create a new ProximaRecordServiceImpl
     pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { request_handlers }
+        Self {
+            request_handlers,
+            segment_registry: None,
+        }
+    }
+
+    /// Attach a shared segment registry to enable PAX write-through on batch inserts.
+    pub fn with_segment_registry(mut self, registry: Arc<crate::catalog::SegmentRegistry>) -> Self {
+        self.segment_registry = Some(registry);
+        self
     }
 
     /// Convert to a tonic server
@@ -375,6 +388,64 @@ impl ProximaRecordServiceImpl {
             .get("x-tenant-id")
             .and_then(|value| value.to_str().ok())
             .map(|value| value.to_string())
+    }
+
+    /// Spawn a background PAX write for the given records and register the resulting
+    /// `SegmentMeta` with the shared `SegmentRegistry`.
+    ///
+    /// This is fire-and-forget: the gRPC response is sent immediately after the
+    /// canonical engine write succeeds; the PAX file is written asynchronously.
+    fn spawn_pax_write(
+        registry: Arc<crate::catalog::SegmentRegistry>,
+        collection_id: String,
+        records: Vec<proximadb_records::ProximaRecord>,
+    ) {
+        use proximadb_block_format::{BlockCompression, BlockMode};
+        use proximadb_storage_common::collection_path::slug_for;
+        use proximadb_storage_common::pax_block::PaxSegmentWriter;
+
+        tokio::task::spawn_blocking(move || {
+            let slug = slug_for(&collection_id);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let path =
+                std::path::PathBuf::from(format!("/tmp/proximadb/pax/{}/{}.pax", slug, now_ms));
+
+            let mut writer = PaxSegmentWriter::new(
+                &path,
+                BlockMode::Pax,
+                BlockCompression::None,
+                &collection_id,
+                0, // schema_fingerprint: 0 until catalog integration
+                0, // embedding_count: 0 for now (metadata-only projection)
+                None,
+            );
+
+            for record in &records {
+                if let Err(e) = writer.add_record(record) {
+                    warn!(
+                        "PAX write: add_record failed for collection '{}': {}",
+                        collection_id, e
+                    );
+                    return;
+                }
+            }
+
+            match writer.finish() {
+                Ok(meta) => {
+                    debug!(
+                        "PAX write: {} rows, {} bytes → {:?}",
+                        meta.row_count, meta.size_bytes, meta.path
+                    );
+                    registry.register(collection_id, meta);
+                }
+                Err(e) => {
+                    warn!("PAX write: finish failed: {}", e);
+                }
+            }
+        });
     }
 
     /// Convert ProximaRecordBatch to the canonical internal rich-record request.
@@ -612,17 +683,32 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .map(|record| record.id.clone())
             .collect();
         let rich_batch = self.convert_to_rich_batch(&batch)?;
+        // Clone records before moving rich_batch into the handler
+        let pax_records = if self.segment_registry.is_some() {
+            rich_batch.records.clone()
+        } else {
+            Vec::new()
+        };
+        let collection_id = rich_batch.collection_id.clone();
 
         match self
             .request_handlers
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
-            Ok(result) => Ok(Response::new(Self::batch_result_to_response(
-                result,
-                &record_ids,
-                "WRITE_FAILED",
-            ))),
+            Ok(result) => {
+                // Fire-and-forget PAX projection write after successful engine insert
+                if let Some(registry) = &self.segment_registry {
+                    if !pax_records.is_empty() {
+                        Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
+                    }
+                }
+                Ok(Response::new(Self::batch_result_to_response(
+                    result,
+                    &record_ids,
+                    "WRITE_FAILED",
+                )))
+            }
             Err(e) => {
                 error!("V2 gRPC: InsertRecords failed: {}", e);
                 Err(Status::internal(format!("Insert failed: {}", e)))
@@ -649,17 +735,30 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .map(|record| record.id.clone())
             .collect();
         let rich_batch = self.convert_to_rich_batch(&batch)?;
+        let pax_records = if self.segment_registry.is_some() {
+            rich_batch.records.clone()
+        } else {
+            Vec::new()
+        };
+        let collection_id = rich_batch.collection_id.clone();
 
         match self
             .request_handlers
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
-            Ok(result) => Ok(Response::new(Self::batch_result_to_response(
-                result,
-                &record_ids,
-                "WRITE_FAILED",
-            ))),
+            Ok(result) => {
+                if let Some(registry) = &self.segment_registry {
+                    if !pax_records.is_empty() {
+                        Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
+                    }
+                }
+                Ok(Response::new(Self::batch_result_to_response(
+                    result,
+                    &record_ids,
+                    "WRITE_FAILED",
+                )))
+            }
             Err(e) => {
                 error!("V2 gRPC: UpsertRecords failed: {}", e);
                 Err(Status::internal(format!("Upsert failed: {}", e)))
