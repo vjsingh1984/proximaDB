@@ -135,6 +135,8 @@ pub use management::{
     VectorQuery,
 };
 
+pub use proximadb_vector::{DisentangledVectorProjection, TransformProjectionSpec};
+
 pub use indexes::{
     AnnoyStats,
     // Annoy

@@ -22,12 +22,12 @@ mod tests {
     use std::collections::HashMap;
 
     struct TestRecord {
-        id: String,
         vector: Vec<f32>,
     }
 
     fn create_test_record(id: String, vector: Vec<f32>, _metadata: ()) -> TestRecord {
-        TestRecord { id, vector }
+        let _ = id;
+        TestRecord { vector }
     }
 
     fn create_test_vectors(n: usize, dim: usize) -> Vec<(String, Vec<f32>)> {
@@ -55,7 +55,7 @@ mod tests {
         // Add vectors
         let vectors = create_test_vectors(20, 8);
         for (id, vec) in &vectors {
-            let record = create_test_record(\1, ());
+            let record = create_test_record(id.clone(), vec.clone(), ());
             index.add(id.clone(), record.vector.clone()).await.unwrap();
         }
 
@@ -100,7 +100,7 @@ mod tests {
         ];
 
         for (id, vec) in &vectors {
-            let record = create_test_record(\1, ());
+            let record = create_test_record(id.to_string(), vec.clone(), ());
             index
                 .add(id.to_string(), record.vector.clone())
                 .await
@@ -163,8 +163,8 @@ mod tests {
         let config = AxisAnnoyConfig::default();
         let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
-        let record1 = create_test_record(\1, ());
-        let record2 = create_test_record(\1, ());
+        let record1 = create_test_record("v1".to_string(), vec![1.0, 0.0, 0.0, 0.0], ());
+        let record2 = create_test_record("v2".to_string(), vec![0.0, 1.0, 0.0, 0.0], ());
 
         // Add before build - should work
         index
@@ -217,7 +217,7 @@ mod tests {
         // Add vectors
         let vectors = create_test_vectors(50, 8);
         for (id, vec) in &vectors {
-            let record = create_test_record(\1, ());
+            let record = create_test_record(id.clone(), vec.clone(), ());
             index1.add(id.clone(), record.vector.clone()).await.unwrap();
         }
 
@@ -228,7 +228,7 @@ mod tests {
         let index2 = AxisAnnoyIndex::new(config, 8).unwrap();
 
         for (id, vec) in &vectors {
-            let record = create_test_record(\1, ());
+            let record = create_test_record(id.clone(), vec.clone(), ());
             index2.add(id.clone(), record.vector.clone()).await.unwrap();
         }
 
@@ -269,7 +269,7 @@ mod tests {
             let mut vec = vec![0.0; 4];
             vec[i % 4] = 1.0;
 
-            let record = create_test_record(\1, ());
+            let record = create_test_record(format!("vec_{}", i), vec, ());
             index
                 .add(format!("vec_{}", i), record.vector.clone())
                 .await
@@ -305,14 +305,14 @@ mod tests {
         let index = AxisAnnoyIndex::new(config, 4).unwrap();
 
         // Try to add vector with wrong dimension
-        let record = create_test_record(\1, ()); // Wrong dimension
+        let record = create_test_record("v1".to_string(), vec![1.0, 0.0], ()); // Wrong dimension
 
         let result = index.add("v1".to_string(), record.vector.clone()).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("dimension"));
 
         // Add correct vector
-        let record = create_test_record(\1, ());
+        let record = create_test_record("v1".to_string(), vec![1.0, 0.0, 0.0, 0.0], ());
         index
             .add("v1".to_string(), record.vector.clone())
             .await
@@ -349,7 +349,7 @@ mod tests {
         // Add vectors
         let vectors = create_test_vectors(20, 4);
         for (id, vec) in &vectors {
-            let record = create_test_record(\1, ());
+            let record = create_test_record(id.clone(), vec.clone(), ());
             index.add(id.clone(), record.vector.clone()).await.unwrap();
         }
 
