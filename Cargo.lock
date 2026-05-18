@@ -5980,6 +5980,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-block-format"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "crc32fast",
+ "proptest",
+ "proximadb-codec",
+ "proximadb-data-model",
+ "proximadb-records",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "proximadb-catalog"
 version = "0.2.0"
 dependencies = [

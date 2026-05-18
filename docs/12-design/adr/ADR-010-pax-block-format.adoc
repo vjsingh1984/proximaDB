@@ -1,0 +1,174 @@
+// Copyright (C) 2025 ProximaDB
+// SPDX-License-Identifier: Apache-2.0
+= ADR-010: PAX Block Format for Internal Storage
+
+[cols="1,3"]
+|===
+|Status|Accepted
+|Date|2026-05-18
+|Deciders|Vijaykumar Singh
+|Relates to|ADR-007 (Iceberg REST), ADR-008 (OLTP Backends), ADR-009 (Schema Modes)
+|Supersedes|—
+|===
+
+== Context
+
+ProximaDB needs a single internal storage block format that serves both OLTP (point lookups,
+transactional inserts) and OLAP (vectorised column scans, Iceberg manifest entries) access
+patterns without maintaining two separate physical layouts. The format must:
+
+* Be the unit of WAL durability, Arrow Flight tickets, and Iceberg manifest data-file descriptors.
+* Support block-level and column-level predicate pruning without decompressing stripe data.
+* Store MVCC bounds per row for bi-temporal snapshot reads.
+* Encode the full `ProximaRecord` field set in a canonical, stable column ID mapping.
+* Be compilable without `tokio`, `axum`, `tonic`, or any root crate dependency (workspace isolation).
+
+== Decision
+
+Implement **PAX (Partition Attributes Across)** blocks as the exclusive internal block format.
+PAX interleaves a sorted row directory (OLTP path) with column stripes (OLAP path) in a single
+fixed-layout block. Three modes control which sections are present:
+
+[cols="1,2,2,2"]
+|===
+|Mode|Row Directory|Column Stripes|Use Case
+|`Oltp`|✓|✗|Small collections (< 1 GB), point lookups
+|`Olap`|✗|✓|Bulk scan, Iceberg / Parquet projection
+|`Pax`|✓|✓|Default — both OLTP and OLAP access patterns
+|===
+
+== Block Physical Layout
+
+[source]
+----
+[BlockHeader: 64B]              ← magic, mode, compression, flags, counts, checksum,
+                                  collection_id_hash, schema_fingerprint,
+                                  min/max_timestamp_ns (time-range pruning),
+                                  tenant_id_hash (engine-level RLS skip)
+[RowDirectory: N_rows × 32B]    ← OLTP / PAX only
+  RowEntry[0..N_rows] sorted by row_id_hash (fnv1a of oid)
+  Each entry: row_id_hash u64, valid_from_ns i64, valid_to_ns i64,
+               flags u32 (DELETED | UPDATED | TOMBSTONE), row_index u32
+[Stripe(id), Stripe(tenant_id), ...]    ← filter columns first (PAX co-location for HNSW)
+[Stripe(embedding_0), ...]              ← vector columns after filter columns
+[Stripe(props), Stripe(labels), ...]    ← opaque blobs last
+[ColumnMeta × N_cols: each 64B]         ← stats, offsets, bloom filter refs
+  Each: column_id i32, role ColumnRole, type_id u8, encoding_id u8,
+        stripe_offset u32, stripe_len u32, null_count u32,
+        min_val [u8;16], max_val [u8;16], bloom_offset u32, bloom_len u32
+[BlockFooter: 32B]              ← col_footer_offset, row_dir_offset, stripe_start,
+                                  n_columns u16, n_rows u32, crc32c u32
+----
+
+== Canonical Column ID Mapping (ADR-ICE-001)
+
+These IDs are stable and must not change between format versions.
+
+[cols="1,2,2,2"]
+|===
+|Column ID|Field|Encoding|Notes
+|0|`id` (oid)|string (len-prefixed)|Identity; partition candidate
+|1|`tenant_id`|string|Engine-level RLS; block header also carries hash
+|2|`created_at_ns`|i64 LE|Nanoseconds UTC
+|3|`updated_at_ns`|i64 LE|Nanoseconds UTC
+|4|`valid_from_ns`|i64 LE, nullable|Bi-temporal lower bound
+|5|`valid_to_ns`|i64 LE, nullable|Bi-temporal upper bound
+|6|`actor`|string, nullable|Provenance
+|7|`origin`|string, nullable|Provenance
+|8|`props`|msgpack bytes, nullable|User props map (ProximaValue tree)
+|9|`labels`|msgpack bytes, nullable|Label list
+|10|`edge_source_id`|string, nullable|Graph edges
+|11|`edge_target_id`|string, nullable|Graph edges
+|12|`edge_type`|string, nullable|Graph edges
+|13|`edge_weight`|f64 LE, nullable|Graph edges
+|20+|`embedding_{n}`|f32 LE array (dim-prefixed), nullable|One stripe per embedding model
+|100+|user-defined|per column schema|From `CatalogTableSchema`
+|===
+
+== Predicate Pruning Hierarchy
+
+Block readers skip data at the coarsest possible level before deserialising:
+
+[source]
+----
+1. Block-level:  tenant_id_hash mismatch     → skip entire block  (O(1))
+2. Block-level:  time range outside min/max   → skip entire block  (O(1))
+3. Column-level: column stats exclude value   → skip stripe        (O(n_cols))
+4. Row-level:    MVCC row directory bounds    → skip row           (O(log n_rows))
+----
+
+Only rows passing all four levels are decoded from column stripes.
+
+== Workspace Isolation
+
+The crate `proximadb-block-format` resides in `crates/storage/proximadb-block-format/` and
+depends **only** on:
+
+* `proximadb-codec` (encoding schemes — horizontal layer)
+* `proximadb-data-model` (ProximaValue, ProximaType — foundation layer)
+* `proximadb-records` (ProximaRecord — foundation layer)
+* `anyhow`, `serde`, `crc32fast`, `rmp-serde` (external)
+
+It has **no dependency** on the root `proximadb` crate, `tokio`, `axum`, `tonic`, or any
+platform/runtime crate. This enables:
+
+* Block format tests to run without spinning up a server
+* Incremental rebuilds that do not pull in the root crate's full dependency tree
+* Reuse from Iceberg manifest writers and Arrow Flight ticket handlers without coupling
+
+== Stacked Durability Alignment
+
+The PAX block is **Layer 2 (rebuildable projection)** in the stacked durability model:
+
+[source]
+----
+Layer 0: WAL (CanonicalOperation::RecordUpsert)              — durable journal
+Layer 1: ProximaRecord in VIPER/NOVA/HELIX engines           — canonical records
+Layer 2: PAX blocks (this ADR) + Iceberg manifests           — rebuildable projections
+Layer 3: Iceberg REST / Arrow Flight / pgwire facades        — protocol adapters
+----
+
+PAX blocks are rebuilt from Layer 1 records on compaction. They are NOT a new WAL path.
+Block corruption triggers rebuild from Layer 0/1.
+
+== Iceberg / Arrow Flight Integration
+
+* Each PAX block maps to one Iceberg manifest **data-file descriptor** (file path + row count +
+  column stats + record count). `BlockStats` (from `stripe.rs`) carries the fields for this.
+* Arrow Flight workers receive a ticket encoding `(shard_id, block_offset, col_filter)`;
+  `PaxBlockReader` decodes the block and projects the requested columns.
+* The Iceberg REST catalog server (ADR-007) returns synthetic snapshots whose manifest entries
+  point to PAX block locations.
+
+== Consequences
+
+=== Positive
+* Single physical format for both transactional and analytical workloads.
+* Block-level pruning avoids most I/O for tenant-filtered or time-bounded queries.
+* Iceberg/Parquet compatibility: `BlockStats` maps directly to `DataFile` fields.
+* No tokio/axum dependency keeps rebuild times for block-format tests minimal.
+
+=== Negative / Trade-offs
+* PAX blocks are larger than pure row-store or pure columnar blocks for very small record sets
+  (< 100 rows) where the row directory overhead is significant.
+* MVCC row directory requires a sort-on-flush step; write amplification for tiny blocks.
+* `ColumnMeta.min_val`/`max_val` are fixed-width 16-byte buffers; large-string predicate pruning
+  falls back to bloom filter only.
+
+=== Mitigations
+* Minimum block size enforced at 2 MB (`engine_constants.rs`) — small record sets are buffered
+  in-memory until the threshold is crossed.
+* Bloom filter support (`HAS_BLOOM` flag + `bloom_offset`/`bloom_len` in `ColumnMeta`) added as
+  a future refinement path for string-column pruning (not yet populated in writer v1).
+
+== Implementation
+
+|===
+|File|Purpose
+|`crates/storage/proximadb-block-format/src/header.rs`|BlockHeader (64B), BlockMode, BlockCompression, flags, fnv1a_hash
+|`crates/storage/proximadb-block-format/src/stripe.rs`|ColumnMeta (64B), ColumnRole, ColumnStripe, BlockStats
+|`crates/storage/proximadb-block-format/src/row_dir.rs`|RowEntry (32B), RowDirectory with MVCC binary search
+|`crates/storage/proximadb-block-format/src/record.rs`|Canonical column IDs, FlatRow, ProximaRecord ↔ PAX projection, encode helpers
+|`crates/storage/proximadb-block-format/src/writer.rs`|PaxBlockWriter, BlockFooter (32B), flush() with crc32 checksum
+|`crates/storage/proximadb-block-format/src/reader.rs`|PaxBlockReader, block-level pruning, stripe decode helpers
+|===

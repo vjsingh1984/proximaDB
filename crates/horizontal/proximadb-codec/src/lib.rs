@@ -17,10 +17,10 @@ pub mod strategy;
 pub mod types;
 
 // Top-level re-exports
-pub use types::{Decodable, Encodable, ProximaScheme, TypeId};
+pub use baseline::functions;
+pub use simd_analysis::{simd_min_max_f32, simd_zero_count_f32};
 pub use strategy::{
-    CodecSelectionStrategy, DataAnalysis, DataDomain, IntegerAnalysisStrategy,
+    BlockContext, CodecSelectionStrategy, DataAnalysis, DataDomain, IntegerAnalysisStrategy,
     MlEmbeddingStrategy, SelectionContext, SparseDataStrategy, TimeSeriesStrategy,
 };
-pub use simd_analysis::{simd_min_max_f32, simd_zero_count_f32};
-pub use baseline::functions;
+pub use types::{Decodable, Encodable, ProximaScheme, TypeId};

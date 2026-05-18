@@ -46,6 +46,7 @@ members = [
     "crates/modalities/proximadb-document",
     "crates/modalities/proximadb-observability",
     "crates/storage/proximadb-storage-common",
+    "crates/storage/proximadb-block-format",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
     "crates/query/proximadb-graph-query",
@@ -120,6 +121,9 @@ proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+crc32fast = "1.4"
+rmp-serde = "1.1"
 tonic-prost = "0.14"
 # Compression libraries (workspace-inheritable for modality/horizontal crates)
 brotli = "6.0"

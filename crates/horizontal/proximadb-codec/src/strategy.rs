@@ -29,6 +29,22 @@
 
 use super::types::{ProximaScheme, TypeId};
 
+/// Block access pattern for PAX stripe encoding decisions.
+///
+/// Tells the codec whether a column value is being written for a single-row
+/// OLTP path, a full column stripe in an OLAP block, or the combined PAX layout
+/// where both row directory and column stripes are present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BlockContext {
+    /// Single-row OLTP point write — optimise for fast encode/decode latency.
+    OltpRow,
+    /// Full column stripe in an OLAP-only block — optimise for compression ratio.
+    OlapStripe,
+    /// Column stripe in a PAX block — balance latency and compression.
+    #[default]
+    PaxStripe,
+}
+
 /// Data domain identifier for context-aware selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DataDomain {
@@ -60,6 +76,9 @@ pub struct SelectionContext {
     pub expected_range: Option<(i64, i64)>,
     /// Whether data is already sorted
     pub is_sorted: bool,
+    /// PAX block access pattern — drives latency-vs-compression trade-off.
+    /// `None` means the codec is used outside a PAX block context.
+    pub block_context: Option<BlockContext>,
 }
 
 impl SelectionContext {
@@ -72,6 +91,7 @@ impl SelectionContext {
             allow_lossy: false,
             expected_range: None,
             is_sorted: false,
+            block_context: None,
         }
     }
 
@@ -84,6 +104,7 @@ impl SelectionContext {
             allow_lossy: false,
             expected_range: None,
             is_sorted: true, // Time series is typically sorted by time
+            block_context: None,
         }
     }
 
@@ -96,6 +117,7 @@ impl SelectionContext {
             allow_lossy: false,
             expected_range: None,
             is_sorted: false,
+            block_context: None,
         }
     }
 
@@ -108,6 +130,7 @@ impl SelectionContext {
             allow_lossy: false,
             expected_range: None,
             is_sorted: false,
+            block_context: None,
         }
     }
 
@@ -120,6 +143,52 @@ impl SelectionContext {
             allow_lossy: false,
             expected_range: None,
             is_sorted: false,
+            block_context: None,
+        }
+    }
+
+    /// Create context for a PAX column stripe.
+    ///
+    /// Balances latency and compression. Use for the default `Pax` block mode.
+    pub fn for_pax_stripe(data_type: TypeId, domain: DataDomain) -> Self {
+        Self {
+            data_type,
+            domain,
+            target_compression: Some(3.0),
+            allow_lossy: false,
+            expected_range: None,
+            is_sorted: false,
+            block_context: Some(BlockContext::PaxStripe),
+        }
+    }
+
+    /// Create context for a pure OLAP column stripe.
+    ///
+    /// Maximises compression — latency is less critical for batch scan paths.
+    pub fn for_olap_stripe(data_type: TypeId, domain: DataDomain) -> Self {
+        Self {
+            data_type,
+            domain,
+            target_compression: Some(6.0),
+            allow_lossy: false,
+            expected_range: None,
+            is_sorted: false,
+            block_context: Some(BlockContext::OlapStripe),
+        }
+    }
+
+    /// Create context for a single OLTP row value.
+    ///
+    /// Minimises encode/decode latency; compression ratio is not a priority.
+    pub fn for_oltp_row(data_type: TypeId) -> Self {
+        Self {
+            data_type,
+            domain: DataDomain::General,
+            target_compression: None,
+            allow_lossy: false,
+            expected_range: None,
+            is_sorted: false,
+            block_context: Some(BlockContext::OltpRow),
         }
     }
 
