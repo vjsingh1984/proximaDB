@@ -348,6 +348,7 @@ impl RestServer {
             query_adapter,
             llm_engine,
             None,
+            None,
         )
     }
 
@@ -368,8 +369,9 @@ impl RestServer {
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
         ports: Option<RestServerPorts>,
+        catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
     ) -> Self {
-        let base_state = AppState::new(
+        let mut base_state = AppState::new(
             request_handlers,
             graph_execution_service,
             security_coordinator.clone(),
@@ -377,6 +379,9 @@ impl RestServer {
             query_adapter.clone(),
             llm_engine,
         );
+        if let Some(manager) = catalog_manager {
+            base_state = base_state.with_catalog_manager(manager);
+        }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
             s.with_api_handlers(p.api_handlers)
@@ -592,6 +597,7 @@ impl RestServer {
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
         ports: Option<RestServerPorts>,
         segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
+        catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
     ) -> Router {
         let mut base_state = AppState::new(
             request_handlers,
@@ -603,6 +609,9 @@ impl RestServer {
         );
         if let Some(reg) = segment_registry {
             base_state = base_state.with_segment_registry(reg);
+        }
+        if let Some(manager) = catalog_manager {
+            base_state = base_state.with_catalog_manager(manager);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);

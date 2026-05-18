@@ -110,6 +110,12 @@ impl AppState {
         self
     }
 
+    /// Inject the shared xCatalog manager from the server composition root.
+    pub fn with_catalog_manager(mut self, manager: Arc<crate::catalog::CatalogManager>) -> Self {
+        self.catalog_manager = manager;
+        self
+    }
+
     /// Inject port-based service objects for API-crate-backed routes.
     pub fn with_ports(
         mut self,

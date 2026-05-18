@@ -1137,8 +1137,8 @@ Tasks:
 * [x] Add Arrow Flight `GetSchema` catalog resolution for relational/table descriptors.
 ** `ProximaFlightService::catalog_arrow_schema_for_descriptor` resolves relational/table descriptors through xCatalog and returns `relational_schema_from_catalog`.
 ** Vector collection descriptors still fall back to `ArrowProtoCodec::create_vector_schema`.
-* [ ] Wire server composition to inject the shared xCatalog manager into every `ProximaFlightService` instance.
-** The service now has `with_catalog_manager`; integrated server builders must pass the same catalog manager used by SQL/REST catalog paths.
+* [x] Wire server composition to inject the shared xCatalog manager into every `ProximaFlightService` instance.
+** `SharedServices` now owns the shared `CatalogManager`; REST app state, standalone Arrow Flight servers, and unified-mode internal Flight services receive that same manager.
 * [ ] Wire live Arrow Flight DoPut/DoExchange relational/table ingestion through `CatalogBulkWriteService` so the catalog-validated `ProximaRecord` preparation path is exercised by the protocol handler.
 ** Preserve large-batch behavior by using canonical-record routing decisions, not vector-count-only heuristics.
 * [ ] Replace remaining REST/gRPC/embedded insert and streaming shims with v2 `ProximaRecord`/`ProximaValue` contracts below protocol compatibility adapters.

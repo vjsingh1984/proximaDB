@@ -190,7 +190,8 @@ Negative / migration cost:
    Completed: catalog-backed relational Arrow schema derivation and multimodal schema facade exports.
    Completed: catalog-aware bulk write preparation now returns `ProximaRecord` and uses canonical-record batch sizing.
    Completed: Flight `GetSchema` can resolve relational/table descriptors through xCatalog when a catalog manager is supplied.
-   Pending: server composition must inject the shared xCatalog manager, and DoPut/DoExchange handlers must call the catalog-aware record path.
+   Completed: server composition injects the shared `SharedServices` xCatalog manager into REST state and Arrow Flight service instances.
+   Pending: DoPut/DoExchange handlers must call the catalog-aware record path.
 4. [x] Make SQL lowering produce `ProximaValue` expressions and `ProximaRecord` writes for cataloged inserts.
    `CatalogRow` validates against `CatalogTableSchema`, stores rich `ProximaValue` props, extracts vector embeddings, and projects inserts to canonical `ProximaRecord`.
 5. [ ] Add `CREATE EXTERNAL TABLE` and external table registration metadata.
@@ -204,3 +205,4 @@ Progress ledger:
 * 2026-05-18: Arrow multimodal facade now exposes relational, document, graph, and observability schema builders through one surface.
 * 2026-05-18: Catalog-aware Arrow bulk write preparation now emits `ProximaRecord` and uses canonical-record direct-write routing.
 * 2026-05-18: Arrow Flight `GetSchema` gained xCatalog relational/table descriptor resolution with vector-schema fallback.
+* 2026-05-18: Shared server composition now injects one xCatalog manager into REST app state, standalone Arrow Flight servers, and unified-mode internal Flight services.

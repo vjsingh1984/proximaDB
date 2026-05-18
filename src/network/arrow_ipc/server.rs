@@ -15,6 +15,7 @@ use tonic::transport::Server;
 use tracing::info;
 
 use crate::api_handlers::request_handlers::UnifiedHandlers;
+use crate::catalog::CatalogManager;
 use crate::security::SecurityCoordinator;
 
 use super::service::ProximaFlightService;
@@ -24,6 +25,7 @@ pub struct ArrowFlightServer {
     bind_addr: SocketAddr,
     request_handlers: Arc<UnifiedHandlers>,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
+    catalog_manager: Option<Arc<CatalogManager>>,
     max_message_size: usize,
 }
 
@@ -34,6 +36,7 @@ impl ArrowFlightServer {
             bind_addr,
             request_handlers,
             security_coordinator: None,
+            catalog_manager: None,
             max_message_size: 512 * 1024 * 1024, // 512MB default
         }
     }
@@ -44,6 +47,12 @@ impl ArrowFlightServer {
         security_coordinator: Option<Arc<SecurityCoordinator>>,
     ) -> Self {
         self.security_coordinator = security_coordinator;
+        self
+    }
+
+    /// Attach the shared xCatalog manager for catalog-derived Flight schemas.
+    pub fn with_catalog_manager(mut self, catalog_manager: Option<Arc<CatalogManager>>) -> Self {
+        self.catalog_manager = catalog_manager;
         self
     }
 
@@ -66,7 +75,8 @@ impl ArrowFlightServer {
 
         // Create Flight service
         let flight_service = ProximaFlightService::new(self.request_handlers.clone())
-            .with_security_coordinator(self.security_coordinator.clone());
+            .with_security_coordinator(self.security_coordinator.clone())
+            .with_catalog_manager(self.catalog_manager.clone());
 
         // Wrap in FlightServiceServer with size limits
         let flight_server = FlightServiceServer::new(flight_service)

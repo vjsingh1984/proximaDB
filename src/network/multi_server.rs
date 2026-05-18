@@ -433,6 +433,7 @@ impl MultiServer {
 
             let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
             let request_handlers = services.request_handlers.clone();
+            let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
                 self.security_coordinator.clone()
             } else {
@@ -445,6 +446,7 @@ impl MultiServer {
 
                 match ArrowFlightServer::new(arrow_bind_addr, request_handlers)
                     .with_security_coordinator(security_coordinator)
+                    .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
                     .start()
                     .await
@@ -468,6 +470,7 @@ impl MultiServer {
 
             let rest_bind_addr = self.config.http_bind_address();
             let request_handlers = services.request_handlers.clone();
+            let catalog_manager = services.catalog_manager.clone();
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
@@ -502,6 +505,7 @@ impl MultiServer {
                     query_adapter,
                     llm_engine,
                     rest_ports_opt,
+                    Some(catalog_manager),
                 )
                 .start()
                 .await
@@ -683,6 +687,7 @@ impl MultiServer {
                 llm_engine,
                 Some(rest_ports),
                 Some(services.segment_registry.clone()),
+                Some(services.catalog_manager.clone()),
             );
 
             info!(
@@ -752,7 +757,8 @@ impl MultiServer {
                 self.security_coordinator.clone()
             } else {
                 None
-            });
+            })
+            .with_catalog_manager(Some(services.catalog_manager.clone()));
             let flight_server =
                 arrow_flight::flight_service_server::FlightServiceServer::new(flight_service)
                     .max_encoding_message_size(512 * 1024 * 1024)
@@ -1117,6 +1123,7 @@ impl MultiServer {
 
             let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
             let request_handlers = services.request_handlers.clone();
+            let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
                 self.security_coordinator.clone()
             } else {
@@ -1129,6 +1136,7 @@ impl MultiServer {
 
                 match ArrowFlightServer::new(arrow_bind_addr, request_handlers)
                     .with_security_coordinator(security_coordinator)
+                    .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
                     .start()
                     .await
