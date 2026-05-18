@@ -26,6 +26,7 @@ arrow-schema = { workspace = true, default-features = false }
 async-trait.workspace = true
 parking_lot.workspace = true
 proximadb-data-model = { workspace = true }
+proximadb-records = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, optional = true }

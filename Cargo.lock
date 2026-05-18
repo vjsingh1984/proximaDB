@@ -6004,6 +6004,7 @@ dependencies = [
  "async-trait",
  "parking_lot",
  "proximadb-data-model",
+ "proximadb-records",
  "serde",
  "serde_json",
  "sqlx",

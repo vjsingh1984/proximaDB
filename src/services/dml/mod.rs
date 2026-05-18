@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use proximadb_catalog::{
     CatalogDataType, CatalogTableSchema,
-    relational::{CatalogRow, RelationalWriteProfile},
+    relational::{CatalogRow, RelationalRecordOptions, RelationalWriteProfile},
 };
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
@@ -584,15 +584,7 @@ impl DmlService {
 
         self.validate_insert_columns(columns, values, table_schema)?;
 
-        let vector_column = table_schema
-            .columns
-            .iter()
-            .find(|column| matches!(column.data_type, CatalogDataType::Vector))
-            .map(|column| (column.name.clone(), column.properties.clone()));
-
         let mut row_values = HashMap::new();
-        let mut props = HashMap::new();
-        let mut embeddings = Vec::new();
         let mut created_at_ns = None;
 
         for (col, val) in columns.iter().zip(values.iter()) {
@@ -601,39 +593,6 @@ impl DmlService {
                 self.literal_to_proxima_value_for_column(col, &effective_value, table_schema)?;
 
             row_values.insert(col.clone(), proxima_value.clone());
-            props.insert(col.clone(), ProximaTreeNode::Value(proxima_value.clone()));
-
-            if vector_column.as_ref().is_some_and(|(name, _)| name == col) {
-                let vector = match proxima_value {
-                    ProximaValue::DenseVector(vector) => vector,
-                    ProximaValue::Null => Vec::new(),
-                    _ => self.literal_to_vector(&effective_value)?,
-                };
-                if let Some((_, properties)) = &vector_column {
-                    if let Some(expected) = properties
-                        .get("dimension")
-                        .and_then(|dimension| dimension.parse::<usize>().ok())
-                    {
-                        if vector.len() != expected {
-                            return Err(anyhow!(
-                                "Vector column '{}' expects dimension {}, got {}",
-                                col,
-                                expected,
-                                vector.len()
-                            ));
-                        }
-                    }
-                }
-                if !vector.is_empty() {
-                    embeddings.push(EmbeddingCell {
-                        model_id: "default".to_string(),
-                        modality: "vector".to_string(),
-                        dim: vector.len() as u32,
-                        values: vector,
-                    });
-                }
-                continue;
-            }
 
             if col == "timestamp" {
                 created_at_ns = self
@@ -657,50 +616,18 @@ impl DmlService {
                 table_schema,
             )?;
             row_values.insert(column.name.clone(), proxima_value.clone());
-            props.insert(
-                column.name.clone(),
-                ProximaTreeNode::Value(proxima_value.clone()),
-            );
-
-            if vector_column
-                .as_ref()
-                .is_some_and(|(name, _)| name == &column.name)
-            {
-                let vector = match proxima_value {
-                    ProximaValue::DenseVector(vector) => vector,
-                    ProximaValue::Null => Vec::new(),
-                    _ => self.literal_to_vector(&default_literal)?,
-                };
-                if !vector.is_empty() {
-                    embeddings.push(EmbeddingCell {
-                        model_id: "default".to_string(),
-                        modality: "vector".to_string(),
-                        dim: vector.len() as u32,
-                        values: vector,
-                    });
-                }
-                continue;
-            }
         }
 
         let catalog_row =
             CatalogRow::validate(table_schema, row_values, &RelationalWriteProfile::oltp())?;
-        let record_id = catalog_row
-            .primary_key_string(table_schema)?
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        let mut record = ProximaRecord {
-            oid: record_id.clone(),
-            local_id: Some(record_id),
-            props,
-            embeddings,
-            method: Some("sql_dml".to_string()),
-            variation_id: Some(table_schema.name.clone()),
-            ..ProximaRecord::default()
-        };
-        if let Some(created_at_ns) = created_at_ns {
-            record.created_at_ns = created_at_ns;
-            record.updated_at_ns = created_at_ns;
-        }
+        let record = catalog_row.to_proxima_record(
+            table_schema,
+            &RelationalRecordOptions {
+                method: Some("sql_dml".to_string()),
+                created_at_ns,
+                ..RelationalRecordOptions::default()
+            },
+        )?;
         Ok(record)
     }
 

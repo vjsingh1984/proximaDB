@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, anyhow};
 use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
 
 use crate::{CatalogColumn, CatalogDataType, CatalogTableSchema};
@@ -71,6 +72,39 @@ pub struct CatalogRow {
     pub table: String,
     /// Values for cataloged columns.
     pub values: HashMap<String, ProximaValue>,
+}
+
+/// Options used when projecting a validated catalog row into a canonical record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RelationalRecordOptions {
+    /// Ingestion method to store in `ProximaRecord::method`.
+    pub method: Option<String>,
+    /// Tenant to store in `ProximaRecord::tenant_id`.
+    pub tenant_id: Option<String>,
+    /// Source/origin system.
+    pub origin: Option<String>,
+    /// Principal or actor that produced the row.
+    pub actor: Option<String>,
+    /// Override created timestamp in nanoseconds.
+    pub created_at_ns: Option<i64>,
+    /// Override updated timestamp in nanoseconds.
+    pub updated_at_ns: Option<i64>,
+    /// Also project vector columns into `EmbeddingCell`s.
+    pub include_vector_embeddings: bool,
+}
+
+impl Default for RelationalRecordOptions {
+    fn default() -> Self {
+        Self {
+            method: Some("relational_row".to_string()),
+            tenant_id: None,
+            origin: None,
+            actor: None,
+            created_at_ns: None,
+            updated_at_ns: None,
+            include_vector_embeddings: true,
+        }
+    }
 }
 
 impl CatalogRow {
@@ -158,6 +192,105 @@ impl CatalogRow {
             parts.push(stable_value_string(&value)?);
         }
         Ok(Some(parts.join("\u{1f}")))
+    }
+
+    /// Project this validated row into the canonical durable record envelope.
+    ///
+    /// The record keeps all relational column values in `props`. Vector columns
+    /// are additionally projected into `embeddings` when requested, making ANN
+    /// structures rebuildable sidecars rather than durable authority.
+    pub fn to_proxima_record(
+        &self,
+        schema: &CatalogTableSchema,
+        options: &RelationalRecordOptions,
+    ) -> Result<ProximaRecord> {
+        let record_id = self
+            .primary_key_string(schema)?
+            .unwrap_or_else(|| new_local_record_id(schema));
+
+        let props = self
+            .values
+            .iter()
+            .map(|(key, value)| (key.clone(), ProximaTreeNode::Value(value.clone())))
+            .collect();
+
+        let embeddings = if options.include_vector_embeddings {
+            self.vector_embeddings(schema)?
+        } else {
+            Vec::new()
+        };
+
+        let mut record = ProximaRecord {
+            oid: record_id.clone(),
+            local_id: Some(record_id),
+            variation_id: Some(schema.name.clone()),
+            tenant_id: options.tenant_id.clone().unwrap_or_default(),
+            origin: options.origin.clone(),
+            actor: options.actor.clone(),
+            method: options.method.clone(),
+            props,
+            embeddings,
+            ..ProximaRecord::default()
+        };
+
+        if let Some(created_at_ns) = options.created_at_ns {
+            record.created_at_ns = created_at_ns;
+        }
+        if let Some(updated_at_ns) = options.updated_at_ns.or(options.created_at_ns) {
+            record.updated_at_ns = updated_at_ns;
+        }
+
+        Ok(record)
+    }
+
+    fn vector_embeddings(&self, schema: &CatalogTableSchema) -> Result<Vec<EmbeddingCell>> {
+        let mut embeddings = Vec::new();
+        for column in schema
+            .columns
+            .iter()
+            .filter(|column| matches!(column.data_type, CatalogDataType::Vector))
+        {
+            let Some(value) = self.values.get(&column.name) else {
+                continue;
+            };
+            let ProximaValue::DenseVector(vector) = value else {
+                continue;
+            };
+            if vector.is_empty() {
+                continue;
+            }
+
+            if let Some(expected) = column
+                .properties
+                .get("dimension")
+                .and_then(|dimension| dimension.parse::<usize>().ok())
+                && vector.len() != expected
+            {
+                return Err(anyhow!(
+                    "Vector column '{}' expects dimension {}, got {}",
+                    column.name,
+                    expected,
+                    vector.len()
+                ));
+            }
+
+            embeddings.push(EmbeddingCell {
+                model_id: column
+                    .properties
+                    .get("model_id")
+                    .cloned()
+                    .unwrap_or_else(|| "default".to_string()),
+                modality: column
+                    .properties
+                    .get("modality")
+                    .cloned()
+                    .unwrap_or_else(|| "dense_vector".to_string()),
+                dim: vector.len() as u32,
+                values: vector.clone(),
+            });
+        }
+
+        Ok(embeddings)
     }
 }
 
@@ -258,6 +391,14 @@ fn stable_value_string(value: &ProximaValue) -> Result<String> {
     serde_json::to_string(value).map_err(|e| anyhow!("Failed to encode primary key value: {}", e))
 }
 
+fn new_local_record_id(schema: &CatalogTableSchema) -> String {
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{}:row:{}", schema.name, now_ns)
+}
+
 fn proxima_value_type_name(value: &ProximaValue) -> &'static str {
     match value {
         ProximaValue::Boolean(_) => "boolean",
@@ -331,6 +472,42 @@ mod tests {
             row.primary_key_string(&users_schema()).unwrap(),
             Some("{\"Int64\":42}".to_string())
         );
+    }
+
+    #[test]
+    fn projects_validated_row_to_canonical_record() {
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert(
+            "email".to_string(),
+            ProximaValue::String("a@example.com".to_string()),
+        );
+        values.insert(
+            "embedding".to_string(),
+            ProximaValue::DenseVector(vec![0.1, 0.2]),
+        );
+
+        let row = CatalogRow::validate(&users_schema(), values, &RelationalWriteProfile::oltp())
+            .expect("row should validate");
+        let record = row
+            .to_proxima_record(
+                &users_schema(),
+                &RelationalRecordOptions {
+                    method: Some("sql_dml".to_string()),
+                    created_at_ns: Some(123),
+                    ..Default::default()
+                },
+            )
+            .expect("row should project to record");
+
+        assert_eq!(record.oid, "{\"Int64\":42}");
+        assert_eq!(record.variation_id.as_deref(), Some("users"));
+        assert_eq!(record.method.as_deref(), Some("sql_dml"));
+        assert_eq!(record.created_at_ns, 123);
+        assert_eq!(record.updated_at_ns, 123);
+        assert_eq!(record.embeddings.len(), 1);
+        assert_eq!(record.embeddings[0].dim, 2);
+        assert!(record.props.contains_key("email"));
     }
 
     #[test]
