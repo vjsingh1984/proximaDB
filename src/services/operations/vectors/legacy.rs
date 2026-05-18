@@ -43,9 +43,7 @@
 
 use anyhow::Result;
 use proximadb_records::ProximaRecord;
-use proximadb_records::conversions::{
-    proxima_record_to_vector, proxima_to_sql_value, sql_value_to_proxima,
-};
+use proximadb_records::conversions::{proxima_to_sql_value, sql_value_to_proxima};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -571,79 +569,34 @@ impl VectorOperationsService {
         Ok(())
     }
 
-    fn ensure_tenant_metadata(vectors: &mut [VectorRecord], tenant_id: &str) -> Result<()> {
-        use crate::proto::proximadb_v1::sql_value::Value as SqlValueVariant;
-
-        for vector in vectors.iter_mut() {
-            match vector
-                .metadata
-                .get("tenant_id")
-                .and_then(|value| value.value.as_ref())
-            {
-                Some(SqlValueVariant::StringValue(existing_tenant))
-                    if existing_tenant == tenant_id => {}
-                Some(SqlValueVariant::StringValue(existing_tenant)) => {
-                    return Err(anyhow::anyhow!(
-                        "Vector '{}' has tenant_id '{}' but request is scoped to tenant '{}'",
-                        vector.id,
-                        existing_tenant,
-                        tenant_id
-                    ));
-                }
-                Some(other) => {
-                    return Err(anyhow::anyhow!(
-                        "Vector '{}' has non-string tenant_id metadata: {:?}",
-                        vector.id,
-                        other
-                    ));
-                }
-                None => {
-                    vector.metadata.insert(
-                        "tenant_id".to_string(),
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(SqlValueVariant::StringValue(tenant_id.to_string())),
-                        },
-                    );
-                }
+    fn ensure_tenant_on_records(records: &mut [ProximaRecord], tenant_id: &str) -> Result<()> {
+        for record in records.iter_mut() {
+            if !record.tenant_id.is_empty() && record.tenant_id != tenant_id {
+                return Err(anyhow::anyhow!(
+                    "Record '{}' has tenant_id '{}' but request is scoped to tenant '{}'",
+                    record.oid,
+                    record.tenant_id,
+                    tenant_id
+                ));
             }
+            record.tenant_id = tenant_id.to_string();
         }
-
         Ok(())
     }
 
-    fn rich_records_to_vectors(
-        mut records: Vec<ProximaRecord>,
-        tenant_id: Option<&str>,
-    ) -> Result<Vec<VectorRecord>> {
-        if let Some(tenant_id) = tenant_id {
-            for record in records.iter_mut() {
-                if !record.tenant_id.is_empty() && record.tenant_id != tenant_id {
-                    return Err(anyhow::anyhow!(
-                        "Record '{}' has tenant_id '{}' but request is scoped to tenant '{}'",
-                        record.oid,
-                        record.tenant_id,
-                        tenant_id
-                    ));
-                }
-                record.tenant_id = tenant_id.to_string();
-            }
-        }
-
-        Ok(records.iter().map(proxima_record_to_vector).collect())
-    }
-
-    fn tombstone_vectors_for_ids(record_ids: &[String], now_millis: i64) -> Vec<VectorRecord> {
+    fn tombstone_records_for_ids(
+        record_ids: &[String],
+        now_ns: i64,
+    ) -> Vec<ProximaRecord> {
         record_ids
             .iter()
-            .map(|id| VectorRecord {
-                id: id.clone(),
-                vector: Vec::new(),
-                metadata: HashMap::new(),
-                timestamp: Some(now_millis),
-                updated_at: Some(now_millis),
-                expires_at: Some(0),
-                version: None,
-                source: Some("delete".to_string()),
+            .map(|id| ProximaRecord {
+                oid: id.clone(),
+                created_at_ns: now_ns,
+                updated_at_ns: now_ns,
+                valid_to_ns: Some(0),
+                origin: Some("delete".to_string()),
+                ..Default::default()
             })
             .collect()
     }
@@ -753,10 +706,10 @@ impl VectorOperationsService {
         }
 
         let start = std::time::Instant::now();
-        let now_millis = chrono::Utc::now().timestamp_millis();
-        let mut tombstones = Self::tombstone_vectors_for_ids(&record_ids, now_millis);
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let mut tombstones = Self::tombstone_records_for_ids(&record_ids, now_ns);
         if let Some(tenant_context) = tenant_context {
-            Self::ensure_tenant_metadata(&mut tombstones, &tenant_context.tenant_id)?;
+            Self::ensure_tenant_on_records(&mut tombstones, &tenant_context.tenant_id)?;
         }
 
         let result = self
@@ -888,20 +841,11 @@ impl VectorOperationsService {
         let start_time = std::time::Instant::now();
         let collection_id = req.collection_id.clone();
 
-        // Convert v1 vectors to native core::VectorRecord
-        let native_vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = req
+        // Convert v1 wire VectorRecord → ProximaRecord at the protocol boundary.
+        let native_vectors: Vec<proximadb_records::ProximaRecord> = req
             .vectors
             .into_iter()
-            .map(|v| crate::proto::proximadb_v1::VectorRecord {
-                id: v.id,
-                vector: v.vector,
-                metadata: v.metadata,
-                timestamp: v.timestamp,
-                updated_at: v.updated_at,
-                expires_at: v.expires_at,
-                version: v.version,
-                source: v.source,
-            })
+            .map(proximadb_records::ProximaRecord::from)
             .collect();
 
         match self
@@ -1153,9 +1097,9 @@ impl VectorOperationsService {
     /// - OR estimated size >= size threshold (default: 2MB)
     pub fn should_use_bulk_write(
         &self,
-        vectors: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> crate::services::operations::BulkWriteDecision {
-        self.bulk_write_router.should_use_direct_write(vectors)
+        self.bulk_write_router.should_use_direct_write_records(records)
     }
 
     /// Bulk write operation - bypasses WAL+memtable for large batches
@@ -1177,12 +1121,12 @@ impl VectorOperationsService {
     pub async fn bulk_write(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
         let start_time = std::time::Instant::now();
         let vector_count = vectors.len();
-        let vector_ids: Vec<String> = vectors.iter().map(|v| v.id.clone()).collect();
-        let decision = self.bulk_write_router.should_use_direct_write(&vectors);
+        let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
+        let decision = self.bulk_write_router.should_use_direct_write_records(&vectors);
 
         info!(
             "📦 Bulk write: collection={}, vectors={}, estimated_size={} bytes, decision={}",
@@ -1254,11 +1198,11 @@ impl VectorOperationsService {
         }
     }
 
-    /// Internal helper: insert vectors via standard WAL path
+    /// Internal helper: insert records via standard WAL path
     async fn insert_vectors_via_wal(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
         self.insert_vectors_via_wal_with_mode(collection_id, vectors, false)
             .await
@@ -1267,7 +1211,7 @@ impl VectorOperationsService {
     async fn insert_vectors_via_wal_insert_only(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
         self.insert_vectors_via_wal_with_mode(collection_id, vectors, true)
             .await
@@ -1276,7 +1220,7 @@ impl VectorOperationsService {
     async fn insert_vectors_via_wal_with_mode(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         insert_only: bool,
     ) -> Result<BatchOperationResult> {
         let mut vectors = vectors;
@@ -1284,7 +1228,7 @@ impl VectorOperationsService {
 
         let start_time = std::time::Instant::now();
         let vector_count = vectors.len();
-        let vector_ids: Vec<String> = vectors.iter().map(|v| v.id.clone()).collect();
+        let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
 
         // Write vectors via WAL manager
         let vectors_arc = Arc::new(vectors);
@@ -1342,89 +1286,63 @@ impl VectorOperationsService {
         }
     }
 
-    /// Insert a batch of vectors with smart routing
-    ///
-    /// This is the main API entry point for batch inserts. It automatically
-    /// decides whether to use:
-    /// - **Direct write path** (bulk_write): For large batches (≥500 vectors OR ≥2MB)
-    /// - **WAL path**: For small streaming batches (durability preserved)
-    ///
-    /// The routing decision is made by `BulkWriteRouter` which analyzes:
-    /// - Vector count vs threshold (default: 500)
-    /// - Estimated batch size vs size threshold (default: 2MB)
-    ///
-    /// ## Example
-    /// ```ignore
-    /// let result = service.insert_batch("my_collection", vectors).await?;
-    /// // Returns BatchOperationResult with success/failure info and metrics
-    /// ```
+    /// Insert a batch of canonical records with smart routing.
     pub async fn insert_batch(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_vectors_via_wal_insert_only(collection_id, vectors)
+        self.insert_vectors_via_wal_insert_only(collection_id, records)
             .await
     }
 
-    /// Insert a batch of vectors after validating tenant access and injecting tenant metadata.
+    /// Insert canonical records after validating tenant access and injecting tenant_id.
     pub async fn insert_batch_with_tenant_context(
         &self,
         collection_id: &str,
-        mut vectors: Vec<VectorRecord>,
+        mut records: Vec<ProximaRecord>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
         self.validate_tenant_collection_access(collection_id, tenant_context)
             .await?;
 
         if let Some(tenant_ctx) = tenant_context {
-            Self::ensure_tenant_metadata(&mut vectors, &tenant_ctx.tenant_id)?;
+            Self::ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
         }
 
-        self.insert_batch_internal(collection_id, vectors).await
+        self.insert_batch_internal(collection_id, records).await
     }
 
-    /// Insert canonical ProximaRecord envelopes through the vector write path.
-    ///
-    /// This is the rich internal/private API for v2 and multimodal callers
-    /// (MULTIMODAL_OVERHAUL_SPEC §3, §4.2, ADR-001/ADR-002). The remaining
-    /// VectorRecord conversion is kept here until WAL/storage accept envelopes.
+    /// Alias kept for callers already using ProximaRecord envelopes.
     pub async fn insert_records_with_tenant_context(
         &self,
         collection_id: &str,
         records: Vec<ProximaRecord>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
-        let tenant_id = tenant_context.map(|tenant| tenant.tenant_id.as_str());
-        let vectors = Self::rich_records_to_vectors(records, tenant_id)?;
-        self.insert_batch_with_tenant_context(collection_id, vectors, tenant_context)
+        self.insert_batch_with_tenant_context(collection_id, records, tenant_context)
             .await
     }
 
-    /// Insert canonical ProximaRecord envelopes with insert-only semantics.
-    ///
-    /// This method keeps the duplicate/existence check and WAL append under a
-    /// per tenant+collection guard so concurrent insert-only callers in this
-    /// process cannot both pass preflight for the same record id.
+    /// Insert canonical records with insert-only semantics (no upsert).
     pub async fn insert_records_only_with_tenant_context(
         &self,
         collection_id: &str,
-        records: Vec<ProximaRecord>,
+        mut records: Vec<ProximaRecord>,
         tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
     ) -> Result<BatchOperationResult> {
         self.validate_tenant_collection_access(collection_id, tenant_context)
             .await?;
 
-        let tenant_id = tenant_context.map(|tenant| tenant.tenant_id.as_str());
-        let mut vectors = Self::rich_records_to_vectors(records, tenant_id)?;
-        if let Some(tenant_id) = tenant_id {
-            Self::ensure_tenant_metadata(&mut vectors, tenant_id)?;
+        if let Some(tenant_ctx) = tenant_context {
+            Self::ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
         }
 
-        if let Some(conflict) = Self::duplicate_insert_conflict_result(collection_id, &vectors) {
+        if let Some(conflict) = Self::duplicate_insert_conflict_result(collection_id, &records) {
             return Ok(conflict);
         }
 
+        let tenant_id = tenant_context.map(|t| t.tenant_id.as_str());
         let lock_key = Self::insert_only_lock_key(collection_id, tenant_id);
         let lock = self
             .insert_only_locks
@@ -1433,19 +1351,19 @@ impl VectorOperationsService {
             .clone();
         let _guard = lock.lock().await;
 
-        for vector in &vectors {
+        for record in &records {
             if self
-                .record_exists_unchecked(collection_id, &vector.id)
+                .record_exists_unchecked(collection_id, &record.oid)
                 .await?
             {
                 return Ok(Self::insert_existing_record_conflict_result(
                     collection_id,
-                    &vector.id,
+                    &record.oid,
                 ));
             }
         }
 
-        self.insert_batch_internal(collection_id, vectors).await
+        self.insert_batch_internal(collection_id, records).await
     }
 
     /// Check whether a rich record ID already exists in WAL or the collection's
@@ -1488,15 +1406,15 @@ impl VectorOperationsService {
 
     fn duplicate_insert_conflict_result(
         collection_id: &str,
-        vectors: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> Option<BatchOperationResult> {
         let mut seen_ids = HashSet::new();
-        for vector in vectors {
-            if !seen_ids.insert(vector.id.as_str()) {
+        for record in records {
+            if !seen_ids.insert(record.oid.as_str()) {
                 return Some(BatchOperationResult::failure(
                     format!(
                         "Record '{}' appears more than once in insert request for collection '{}'",
-                        vector.id, collection_id
+                        record.oid, collection_id
                     ),
                     "INSERT_CONFLICT".to_string(),
                 ));
@@ -1529,12 +1447,12 @@ impl VectorOperationsService {
     async fn insert_batch_internal(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        let decision = self.bulk_write_router.should_use_direct_write(&vectors);
+        let decision = self.bulk_write_router.should_use_direct_write_records(&vectors);
 
         debug!(
             "📦 insert_batch: collection={}, vectors={}, estimated_size={} bytes, path={}",
@@ -3118,14 +3036,14 @@ impl VectorOperationsService {
 
     // Additional service methods
 
-    /// Validate and insert a batch of vectors, returning the response serialized as a protobuf
+    /// Validate and insert a batch of records, returning the response serialized as a protobuf
     /// byte vector.
     pub async fn handle_vector_batch_proto_vec(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<Vec<u8>> {
-        let vector_ids: Vec<String> = vectors.iter().map(|v| v.id.clone()).collect();
+        let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
         let insert_result = self
             .insert_vectors_via_batch_pipeline(collection_id, vectors)
             .await?;
@@ -3166,26 +3084,27 @@ impl VectorOperationsService {
         Ok(serde_json::to_vec(&response)?)
     }
 
-    /// Insert a vector batch through the same WAL-first pipeline used by the server batch APIs.
-    ///
-    /// This preserves the production write behavior for embedded callers without forcing
-    /// synchronous per-vector AXIS indexing during the insert call.
+    /// Insert a record batch through the same WAL-first pipeline used by the server batch APIs.
     pub async fn insert_vectors_via_batch_pipeline(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<crate::storage::engines::InsertResult> {
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        self.validate_vectors_for_insert(collection_id, &vectors)
+        self.validate_records_for_insert(collection_id, &vectors)
             .await?;
 
         let start = std::time::Instant::now();
         let entries_written = vectors.len() as i64;
         let bytes_written = vectors
             .iter()
-            .map(|v| v.vector.len() * 4 + v.id.len() + 32)
+            .map(|v| {
+                v.embeddings.first().map(|e| e.values.len() * 4).unwrap_or(0)
+                    + v.oid.len()
+                    + 32
+            })
             .sum::<usize>() as i64;
 
         self.wal_manager
@@ -3199,37 +3118,33 @@ impl VectorOperationsService {
         })
     }
 
-    /// Insert vectors directly into the storage engine without going through the batch pipeline.
-    ///
-    /// Validates the vectors and writes them to the WAL before forwarding to the engine.
+    /// Insert records directly into the storage engine without going through the batch pipeline.
     pub async fn insert_vectors_direct(
         &self,
         collection_id: &str,
-        vectors: Arc<Vec<VectorRecord>>,
+        vectors: Arc<Vec<ProximaRecord>>,
     ) -> Result<crate::storage::engines::InsertResult> {
-        let mut vectors: Vec<VectorRecord> = (*vectors).clone();
+        let mut vectors: Vec<ProximaRecord> = (*vectors).clone();
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        // Validate vectors before insertion
-        self.validate_vectors_for_insert(collection_id, &vectors)
+        self.validate_records_for_insert(collection_id, &vectors)
             .await?;
 
-        // Write vectors to WAL
         let start = std::time::Instant::now();
         let _batch_result = self
             .wal_manager
             .write_vector_batch_native_arc(collection_id, Arc::new(vectors.clone()))
             .await?;
 
-        // Index vectors in AXIS for fast in-memory search (HNSW/IVF)
-        // This is critical for competitive search latency - without it, search falls back to linear scan
+        // Index vectors in AXIS — convert to VectorRecord at the AXIS boundary until
+        // AxisIndexManager::insert accepts ProximaRecord directly.
         let axis_start = std::time::Instant::now();
-        for vector in vectors.iter() {
-            if let Err(e) = self.axis_index_manager.insert(collection_id, vector).await {
-                // Log but don't fail - WAL already written, index can be rebuilt
+        for record in vectors.iter() {
+            let v1 = crate::proto::proximadb_v1::VectorRecord::from(record);
+            if let Err(e) = self.axis_index_manager.insert(collection_id, &v1).await {
                 tracing::warn!(
                     "Failed to index vector {} in AXIS: {} (search will use linear scan)",
-                    vector.id,
+                    record.oid,
                     e
                 );
             }
@@ -3246,11 +3161,15 @@ impl VectorOperationsService {
         let duration_micros = start.elapsed().as_micros() as i64;
         let bytes_written = vectors
             .iter()
-            .map(|v| v.vector.len() * 4 + v.id.len() + 32) // Approximate size
+            .map(|v| {
+                v.embeddings.first().map(|e| e.values.len() * 4).unwrap_or(0)
+                    + v.oid.len()
+                    + 32
+            })
             .sum::<usize>() as i64;
 
         debug!(
-            "✅ Direct insert: wrote {} vectors to WAL for collection {} in {}μs (AXIS: {:?})",
+            "✅ Direct insert: wrote {} records to WAL for collection {} in {}μs (AXIS: {:?})",
             vectors.len(),
             collection_id,
             duration_micros,
@@ -3264,21 +3183,13 @@ impl VectorOperationsService {
         })
     }
 
-    /// Validate vectors for insertion based on collection requirements
-    /// OPTIMIZED: Purely in-memory validation with inline operations
-    ///
-    /// Validation includes:
-    /// - Collection name validation (SQL injection prevention)
-    /// - Metadata field validation (SQL injection, length limits)
-    /// - Dimension validation
-    /// - ID validation and uniqueness
+    /// Validate canonical records for insertion based on collection requirements.
     #[inline(always)]
-    async fn validate_vectors_for_insert(
+    async fn validate_records_for_insert(
         &self,
         collection_id: &str,
-        vectors: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> Result<()> {
-        // SECURITY: Validate collection name to prevent SQL injection
         if let Err(e) = self.collection_name_validator.validate(collection_id) {
             warn!(
                 "Collection name validation failed for '{}': {:?}",
@@ -3291,114 +3202,67 @@ impl VectorOperationsService {
             ));
         }
 
-        // SECURITY: Validate metadata for all vectors
-        let metadata_errors = self.metadata_validator.validate_batch(vectors);
-        if !metadata_errors.is_empty() {
-            let error_count = metadata_errors.len();
-            let first_error = metadata_errors.iter().next();
-            if let Some((vector_id, errors)) = first_error {
-                let first_field_error = errors.first();
-                if let Some((field_name, err)) = first_field_error {
-                    warn!(
-                        "Metadata validation failed for {} vectors. First error: vector '{}', field '{}': {:?}",
-                        error_count, vector_id, field_name, err
-                    );
-                    return Err(anyhow::anyhow!(
-                        "Metadata validation failed for vector '{}', field '{}': {}. Total {} vectors with errors.",
-                        vector_id,
-                        field_name,
-                        err,
-                        error_count
-                    ));
-                }
-            }
-            return Err(anyhow::anyhow!(
-                "Metadata validation failed for {} vectors",
-                error_count
-            ));
-        }
-
-        // Get collection configuration - this is cached after first load
         let collection = self.get_or_load_collection(collection_id).await?;
 
-        // Fast path: extract config once
         let config = match &collection.config {
             Some(c) => c,
-            None => return Ok(()), // No config, no validation needed
+            None => return Ok(()),
         };
 
-        // INLINE: Check if IDs are required (pure computation, no I/O)
         let has_indexes = !config.index_configs.is_empty();
-        // RAPTOR engine: deprecated, not in proto StorageEngine enum
-        let requires_id = has_indexes; // For now, only require IDs when indexes are configured
-
+        let requires_id = has_indexes;
         let expected_dimension = config.dimension;
 
-        // Fast path: no validation needed
         if !requires_id && expected_dimension == 0 {
             return Ok(());
         }
 
-        // Pre-allocate HashSet with capacity hint for better performance
-        // Use &str references to avoid cloning strings
         let mut seen_ids = if requires_id {
-            Some(std::collections::HashSet::<&str>::with_capacity(
-                vectors.len(),
-            ))
+            Some(std::collections::HashSet::<&str>::with_capacity(records.len()))
         } else {
             None
         };
 
-        // Get current time for tombstone detection
-        let current_time_secs = std::time::SystemTime::now()
+        let current_time_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
 
-        // Single pass validation loop - check everything at once
-        for (i, vector) in vectors.iter().enumerate() {
-            // INLINE: Dimension check (simple integer comparison)
-            // Skip dimension check for tombstones (empty vector + expires_at in past indicates deletion)
-            let is_tombstone = vector.vector.is_empty()
-                && vector.expires_at.is_some_and(|e| e <= current_time_secs);
-            if !is_tombstone
-                && expected_dimension > 0
-                && vector.vector.len() != expected_dimension as usize
-            {
+        for (i, record) in records.iter().enumerate() {
+            let dim = record.embeddings.first().map(|e| e.values.len()).unwrap_or(0);
+            let is_tombstone = dim == 0
+                && record.valid_to_ns.is_some_and(|v| v <= current_time_ns);
+
+            if !is_tombstone && expected_dimension > 0 && dim != expected_dimension as usize {
                 return Err(anyhow::anyhow!(
-                    "Vector at index {} has dimension {} but collection '{}' expects dimension {}",
+                    "Record at index {} has dimension {} but collection '{}' expects dimension {}",
                     i,
-                    vector.vector.len(),
+                    dim,
                     collection_id,
                     expected_dimension
                 ));
             }
 
-            // INLINE: ID validation (only if required)
             if let Some(ref mut seen) = seen_ids {
-                // Check ID exists and is not empty (single byte check)
-                if vector.id.is_empty() {
+                if record.oid.is_empty() {
                     return Err(anyhow::anyhow!(
-                        "Vector at index {} has empty ID. Collection '{}' requires valid IDs (has indexing or uses RAPTOR engine)",
+                        "Record at index {} has empty ID. Collection '{}' requires valid IDs",
                         i,
                         collection_id
                     ));
                 }
 
-                // Check ID length (simple length comparison)
-                if vector.id.len() > 256 {
+                if record.oid.len() > 256 {
                     return Err(anyhow::anyhow!(
-                        "Vector ID '{}' exceeds maximum length of 256 characters",
-                        vector.id
+                        "Record ID '{}' exceeds maximum length of 256 characters",
+                        record.oid
                     ));
                 }
 
-                // Check for duplicate IDs (HashSet O(1) operation)
-                // Use string slice reference to avoid any allocation
-                if !seen.insert(vector.id.as_str()) {
+                if !seen.insert(record.oid.as_str()) {
                     return Err(anyhow::anyhow!(
                         "Duplicate ID '{}' found in batch. All IDs must be unique",
-                        vector.id
+                        record.oid
                     ));
                 }
             }
@@ -3943,53 +3807,29 @@ mod tenant_tests {
     use proximadb_data_model::ProximaValue;
     use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
-    fn make_vector(id: &str) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: HashMap::new(),
-            timestamp: None,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
-        }
+    #[test]
+    fn ensure_tenant_on_records_adds_missing_tenant_id() {
+        let mut records = vec![ProximaRecord {
+            oid: "rec-1".to_string(),
+            ..Default::default()
+        }];
+
+        VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a").unwrap();
+
+        assert_eq!(records[0].tenant_id, "tenant_a");
     }
 
     #[test]
-    fn ensure_tenant_metadata_adds_missing_tenant_id() {
-        let mut vectors = vec![make_vector("vec-1")];
+    fn ensure_tenant_on_records_rejects_mismatched_tenant_id() {
+        let mut records = vec![ProximaRecord {
+            oid: "rec-1".to_string(),
+            tenant_id: "tenant_b".to_string(),
+            ..Default::default()
+        }];
 
-        VectorOperationsService::ensure_tenant_metadata(&mut vectors, "tenant_a").unwrap();
-
-        let tenant_value = vectors[0]
-            .metadata
-            .get("tenant_id")
-            .and_then(|value| value.value.as_ref());
-        assert!(matches!(
-            tenant_value,
-            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value))
-                if value == "tenant_a"
-        ));
-    }
-
-    #[test]
-    fn ensure_tenant_metadata_rejects_mismatched_tenant_id() {
-        let mut vector = make_vector("vec-1");
-        vector.metadata.insert(
-            "tenant_id".to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "tenant_b".to_string(),
-                )),
-            },
-        );
-
-        let err = VectorOperationsService::ensure_tenant_metadata(
-            std::slice::from_mut(&mut vector),
-            "tenant_a",
-        )
-        .unwrap_err();
+        let err =
+            VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+                .unwrap_err();
 
         assert!(
             err.to_string()
@@ -3998,42 +3838,30 @@ mod tenant_tests {
     }
 
     #[test]
-    fn rich_records_to_vectors_preserves_embedding_and_props() {
-        let mut record = ProximaRecord {
+    fn ensure_tenant_on_records_preserves_correct_tenant_id() {
+        let mut records = vec![ProximaRecord {
             oid: "rec-1".to_string(),
-            embeddings: vec![EmbeddingCell {
-                model_id: "default".to_string(),
-                modality: "dense_vector".to_string(),
-                values: vec![0.1, 0.2, 0.3],
-                dim: 3,
-            }],
-            ..ProximaRecord::default()
-        };
-        record.props.insert(
-            "category".to_string(),
-            ProximaTreeNode::Value(ProximaValue::String("docs".to_string())),
-        );
+            tenant_id: "tenant_a".to_string(),
+            ..Default::default()
+        }];
 
-        let vectors =
-            VectorOperationsService::rich_records_to_vectors(vec![record], Some("tenant_a"))
-                .expect("rich record conversion should succeed");
+        VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+            .expect("matching tenant_id should succeed");
 
-        assert_eq!(vectors.len(), 1);
-        assert_eq!(vectors[0].id, "rec-1");
-        assert_eq!(vectors[0].vector, vec![0.1, 0.2, 0.3]);
-        assert!(vectors[0].metadata.contains_key("category"));
+        assert_eq!(records[0].tenant_id, "tenant_a");
     }
 
     #[test]
-    fn rich_records_to_vectors_rejects_mismatched_tenant_id() {
-        let record = ProximaRecord {
+    fn ensure_tenant_on_records_rejects_mismatched_tenant_id_on_record() {
+        let mut records = vec![ProximaRecord {
             oid: "rec-1".to_string(),
             tenant_id: "tenant_b".to_string(),
-            ..ProximaRecord::default()
-        };
+            ..Default::default()
+        }];
 
-        let err = VectorOperationsService::rich_records_to_vectors(vec![record], Some("tenant_a"))
-            .unwrap_err();
+        let err =
+            VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+                .unwrap_err();
 
         assert!(
             err.to_string()
@@ -4153,17 +3981,18 @@ mod tenant_tests {
     }
 
     #[test]
-    fn tombstone_vectors_for_ids_use_delete_shape() {
+    fn tombstone_records_for_ids_use_delete_shape() {
+        let now_ns = 1_234_000_000i64;
         let tombstones =
-            VectorOperationsService::tombstone_vectors_for_ids(&["doc_3".to_string()], 1234);
+            VectorOperationsService::tombstone_records_for_ids(&["doc_3".to_string()], now_ns);
 
         assert_eq!(tombstones.len(), 1);
-        assert_eq!(tombstones[0].id, "doc_3");
-        assert!(tombstones[0].vector.is_empty());
-        assert_eq!(tombstones[0].timestamp, Some(1234));
-        assert_eq!(tombstones[0].updated_at, Some(1234));
-        assert_eq!(tombstones[0].expires_at, Some(0));
-        assert_eq!(tombstones[0].source.as_deref(), Some("delete"));
+        assert_eq!(tombstones[0].oid, "doc_3");
+        assert!(tombstones[0].embeddings.is_empty());
+        assert_eq!(tombstones[0].created_at_ns, now_ns);
+        assert_eq!(tombstones[0].updated_at_ns, now_ns);
+        assert_eq!(tombstones[0].valid_to_ns, Some(0));
+        assert_eq!(tombstones[0].origin.as_deref(), Some("delete"));
     }
 }
 
@@ -4174,34 +4003,37 @@ mod pseudo_query_tests {
         PROXIMADB_PSEUDO_QUERY_FIELD, PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD,
     };
 
-    fn make_vector(id: &str, metadata: Vec<(&str, &str)>) -> VectorRecord {
-        let mut vector_metadata = HashMap::new();
-        for (key, value) in metadata {
-            vector_metadata.insert(
+    fn make_record(id: &str, props: Vec<(&str, &str)>) -> ProximaRecord {
+        let mut tree = proximadb_records::ProximaTree::new();
+        for (key, value) in props {
+            tree.insert(
                 key.to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        value.to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(value.to_string())),
             );
         }
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: vec![1.0, 2.0, 3.0],
+                dim: 3,
+            }],
+            props: tree,
+            ..Default::default()
+        }
+    }
 
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: vector_metadata,
-            timestamp: None,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+    fn get_pseudo_string(record: &ProximaRecord, key: &str) -> Option<String> {
+        match record.props.get(key) {
+            Some(ProximaTreeNode::Value(ProximaValue::String(s))) => Some(s.clone()),
+            _ => None,
         }
     }
 
     #[test]
     fn test_default_pseudo_query_generator_appends_metadata() {
-        let mut vectors = vec![make_vector(
+        let mut records = vec![make_record(
             "vec-1",
             vec![
                 ("title", "Rust Vector Search"),
@@ -4211,77 +4043,46 @@ mod pseudo_query_tests {
         )];
 
         let generator = DefaultPseudoQueryGenerator;
-        apply_pseudo_query_metadata(&mut vectors, &generator);
+        apply_pseudo_query_metadata(&mut records, &generator);
 
-        let pseudo_query = vectors[0]
-            .metadata
-            .get(PROXIMADB_PSEUDO_QUERY_FIELD)
-            .and_then(|value| value.value.as_ref());
-        let source_fields = vectors[0]
-            .metadata
-            .get(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD)
-            .and_then(|value| value.value.as_ref());
+        let pseudo_query = get_pseudo_string(&records[0], PROXIMADB_PSEUDO_QUERY_FIELD);
+        let source_fields = get_pseudo_string(&records[0], PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD);
 
-        assert!(matches!(
-            pseudo_query,
-            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(_))
-        ));
-        assert!(matches!(
-            source_fields,
-            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(fields))
-            if fields.contains("title") && fields.contains("content") && fields.contains("category")
-        ));
+        assert!(pseudo_query.is_some());
+        assert!(source_fields
+            .as_deref()
+            .is_some_and(|f| f.contains("title") && f.contains("content") && f.contains("category")));
     }
 
     #[test]
     fn test_default_pseudo_query_generator_no_candidate_fields() {
-        let mut vectors = vec![make_vector(
+        let mut records = vec![make_record(
             "vec-2",
             vec![("noisy", "value"), ("count", "1")],
         )];
         let generator = DefaultPseudoQueryGenerator;
 
-        apply_pseudo_query_metadata(&mut vectors, &generator);
+        apply_pseudo_query_metadata(&mut records, &generator);
 
-        assert!(
-            !vectors[0]
-                .metadata
-                .contains_key(PROXIMADB_PSEUDO_QUERY_FIELD)
-        );
-        assert!(
-            !vectors[0]
-                .metadata
-                .contains_key(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD)
-        );
+        assert!(!records[0].props.contains_key(PROXIMADB_PSEUDO_QUERY_FIELD));
+        assert!(!records[0].props.contains_key(PROXIMADB_PSEUDO_QUERY_SOURCE_FIELD));
     }
 
     #[test]
     fn test_default_pseudo_query_generator_preserves_existing_pseudo_query() {
-        let mut vectors = make_vector("vec-3", vec![("title", "Original Title")]);
-        vectors.metadata.insert(
+        let mut record = make_record("vec-3", vec![("title", "Original Title")]);
+        record.props.insert(
             PROXIMADB_PSEUDO_QUERY_FIELD.to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "custom pseudo".to_string(),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::String("custom pseudo".to_string())),
         );
 
-        let existing = vectors
-            .metadata
-            .get(PROXIMADB_PSEUDO_QUERY_FIELD)
-            .and_then(|value| value.value.as_ref())
-            .cloned();
+        let existing = get_pseudo_string(&record, PROXIMADB_PSEUDO_QUERY_FIELD);
 
-        let mut vectors = vec![vectors];
+        let mut records = vec![record];
         let generator = DefaultPseudoQueryGenerator;
-        apply_pseudo_query_metadata(&mut vectors, &generator);
+        apply_pseudo_query_metadata(&mut records, &generator);
 
-        let after = vectors[0]
-            .metadata
-            .get(PROXIMADB_PSEUDO_QUERY_FIELD)
-            .and_then(|value| value.value.as_ref())
-            .cloned();
+        let after = get_pseudo_string(&records[0], PROXIMADB_PSEUDO_QUERY_FIELD);
 
         assert_eq!(existing, after);
     }

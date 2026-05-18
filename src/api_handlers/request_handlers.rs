@@ -962,32 +962,19 @@ impl UnifiedHandlers {
             }
         };
 
-        // Convert v1 vectors to core VectorRecord (expected by vector service)
-        // Apply defaults at API boundary for all incoming records
-        let vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = request
+        // Convert v1 wire VectorRecord → ProximaRecord at the protocol boundary.
+        let records: Vec<proximadb_records::ProximaRecord> = request
             .vectors
             .into_iter()
             .map(|mut v| {
-                // Apply smart defaults for optional fields
                 crate::proto::defaults::apply_vector_record_defaults(&mut v);
-
-                crate::proto::proximadb_v1::VectorRecord {
-                    id: v.id,
-                    vector: v.vector,
-                    metadata: v.metadata,
-                    timestamp: v.timestamp,
-                    updated_at: v.updated_at,
-                    expires_at: v.expires_at,
-                    version: v.version,
-                    source: v.source,
-                }
+                proximadb_records::ProximaRecord::from(v)
             })
             .collect();
 
-        // Call the clean typed service method
         match self
             .vector_operations_service
-            .insert_batch_with_tenant_context(&collection_id, vectors, tenant_context)
+            .insert_batch_with_tenant_context(&collection_id, records, tenant_context)
             .await
         {
             Ok(result) => {

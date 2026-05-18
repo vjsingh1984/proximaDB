@@ -2139,22 +2139,21 @@ impl WriteAheadLogManager {
 
     // 🎯 MODERN BATCH API (Recommended)
 
-    /// PROTO-FIRST ZERO-COPY: Write native VectorRecord with Arc
-    /// This is the optimal method for proto-first architecture
+    /// Write a batch of canonical ProximaRecord envelopes to WAL.
     pub async fn write_vector_batch_native_arc(
         &self,
         collection_id: &str,
-        native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
+        native_vectors: Arc<Vec<proximadb_records::ProximaRecord>>,
     ) -> Result<Vec<u64>> {
         self.write_vector_batch_native_arc_with_mode(collection_id, native_vectors, false)
             .await
     }
 
-    /// Write native VectorRecord batch with insert-only WAL/memtable semantics.
+    /// Write canonical ProximaRecord batch with insert-only WAL/memtable semantics.
     pub async fn write_vector_batch_native_arc_insert_only(
         &self,
         collection_id: &str,
-        native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
+        native_vectors: Arc<Vec<proximadb_records::ProximaRecord>>,
     ) -> Result<Vec<u64>> {
         self.write_vector_batch_native_arc_with_mode(collection_id, native_vectors, true)
             .await
@@ -2163,7 +2162,7 @@ impl WriteAheadLogManager {
     async fn write_vector_batch_native_arc_with_mode(
         &self,
         collection_id: &str,
-        native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
+        native_vectors: Arc<Vec<proximadb_records::ProximaRecord>>,
         insert_only: bool,
     ) -> Result<Vec<u64>> {
         debug!(
@@ -2175,13 +2174,9 @@ impl WriteAheadLogManager {
         // Create native WALVectorBatch with Arc (zero-copy)
         let batch_id = crate::storage::persistence::write_ahead_log::BatchId::new();
 
-        let proxima_vectors: Vec<proximadb_records::ProximaRecord> = native_vectors
-            .iter()
-            .map(proximadb_records::ProximaRecord::from)
-            .collect();
         let native_batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
             batch_id,
-            vector_records: Arc::new(proxima_vectors),
+            vector_records: native_vectors,
             timestamp: std::time::SystemTime::now(),
             total_size_bytes: 0, // Will be calculated by strategy
             is_flushed: false,

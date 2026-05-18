@@ -508,8 +508,8 @@ impl StorageEngine {
             collection_id
         );
 
-        // Use modern WAL API with Arc for zero-copy
-        let vectors = Arc::new(vec![record.clone()]);
+        // Convert VectorRecord → ProximaRecord at the storage boundary before WAL.
+        let vectors = Arc::new(vec![proximadb_records::ProximaRecord::from(record)]);
 
         // Write to WAL (which handles memtable insertion)
         self.write_ahead_log_manager

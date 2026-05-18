@@ -1962,14 +1962,18 @@ impl PostgresProtocol {
             return Ok(0);
         }
 
-        // Convert Arrow batches to VectorRecords
-        let vectors = match ArrowProtoCodec::batches_to_vector_records(batches) {
+        // Convert Arrow batches → VectorRecord → ProximaRecord at the protocol boundary.
+        let v1_records = match ArrowProtoCodec::batches_to_vector_records(batches) {
             Ok(v) => v,
             Err(e) => {
                 warn!("Failed to convert Arrow data to vectors: {}", e);
                 return Err(anyhow::anyhow!("Failed to convert Arrow data: {}", e));
             }
         };
+        let vectors: Vec<proximadb_records::ProximaRecord> = v1_records
+            .into_iter()
+            .map(proximadb_records::ProximaRecord::from)
+            .collect();
 
         let count = vectors.len();
         debug!(
@@ -1977,7 +1981,6 @@ impl PostgresProtocol {
             count, table_name
         );
 
-        // Bulk insert via vector operations service (bypasses per-row overhead)
         match self.vector_ops.insert_batch(table_name, vectors).await {
             Ok(_) => {
                 info!(
@@ -2017,22 +2020,27 @@ impl PostgresProtocol {
             let id = parts[0].trim().trim_matches('"');
             let vector_str = parts[1].trim();
 
-            // Parse vector from CSV (e.g., "[0.1,0.2,0.3]" or "0.1,0.2,0.3")
             let vector = self.parse_csv_vector(vector_str);
             if vector.is_empty() {
                 continue;
             }
 
-            use crate::proto::proximadb_v1::VectorRecord;
-            records.push(VectorRecord {
-                id: id.to_string(),
-                vector,
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                version: Some(1),
-                updated_at: None,
-                expires_at: None,
-                source: None,
+            let dim = vector.len() as u32;
+            let now_ns = chrono::Utc::now()
+                .timestamp_nanos_opt()
+                .unwrap_or(0);
+            records.push(proximadb_records::ProximaRecord {
+                oid: id.to_string(),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim,
+                    values: vector,
+                }],
+                created_at_ns: now_ns,
+                updated_at_ns: now_ns,
+                record_version: 1,
+                ..Default::default()
             });
         }
 
@@ -2082,16 +2090,22 @@ impl PostgresProtocol {
             let vector = self.extract_vector_from_query(parts[1]);
 
             if let Some(vector) = vector {
-                use crate::proto::proximadb_v1::VectorRecord;
-                records.push(VectorRecord {
-                    id: id.to_string(),
-                    vector,
-                    metadata: std::collections::HashMap::new(),
-                    timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                    version: Some(1),
-                    updated_at: None,
-                    expires_at: None,
-                    source: None,
+                let dim = vector.len() as u32;
+                let now_ns = chrono::Utc::now()
+                    .timestamp_nanos_opt()
+                    .unwrap_or(0);
+                records.push(proximadb_records::ProximaRecord {
+                    oid: id.to_string(),
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        dim,
+                        values: vector,
+                    }],
+                    created_at_ns: now_ns,
+                    updated_at_ns: now_ns,
+                    record_version: 1,
+                    ..Default::default()
                 });
             }
         }
@@ -2173,16 +2187,22 @@ impl PostgresProtocol {
             let num_floats = vec_len / 4;
             let vector: Vec<f32> = (0..num_floats).map(|_| cursor.get_f32()).collect();
 
-            use crate::proto::proximadb_v1::VectorRecord;
-            records.push(VectorRecord {
-                id,
-                vector,
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                version: Some(1),
-                updated_at: None,
-                expires_at: None,
-                source: None,
+            let dim = vector.len() as u32;
+            let now_ns = chrono::Utc::now()
+                .timestamp_nanos_opt()
+                .unwrap_or(0);
+            records.push(proximadb_records::ProximaRecord {
+                oid: id,
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim,
+                    values: vector,
+                }],
+                created_at_ns: now_ns,
+                updated_at_ns: now_ns,
+                record_version: 1,
+                ..Default::default()
             });
         }
 

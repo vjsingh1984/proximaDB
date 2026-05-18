@@ -104,19 +104,28 @@ impl PseudoQueryGenerator for DefaultPseudoQueryGenerator {
     }
 }
 
-/// Apply pseudo query metadata to a batch of vector records.
+/// Apply pseudo query metadata to a batch of canonical ProximaRecord envelopes.
 pub fn apply_pseudo_query_metadata(
-    vectors: &mut [crate::proto::proximadb_v1::VectorRecord],
+    records: &mut [proximadb_records::ProximaRecord],
     pseudo_query_generator: &dyn PseudoQueryGenerator,
 ) {
-    for vector in vectors.iter_mut() {
-        let metadata = crate::core::search::results::sql_map_to_proxima(vector.metadata.clone());
-        let generated = pseudo_query_generator.generate_metadata(&metadata);
+    for record in records.iter_mut() {
+        let flat: HashMap<String, ProximaValue> = record
+            .props
+            .iter()
+            .filter_map(|(k, node)| {
+                if let proximadb_records::ProximaTreeNode::Value(v) = node {
+                    Some((k.clone(), v.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let generated = pseudo_query_generator.generate_metadata(&flat);
         for (key, value) in generated {
-            vector
-                .metadata
-                .entry(key)
-                .or_insert_with(|| crate::core::search::results::proxima_value_to_sql_value(value));
+            record.props.entry(key).or_insert_with(|| {
+                proximadb_records::ProximaTreeNode::Value(value)
+            });
         }
     }
 }
