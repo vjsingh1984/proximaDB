@@ -50,7 +50,61 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use tracing::debug;
 
-use crate::core::search::FilterExpression;
+use crate::core::search::{ComparisonOperator, FilterExpression};
+
+/// Configurable fallback selectivity heuristics for normalized filters.
+///
+/// These values are used only when the filter contract has no catalog/statistics
+/// context. Defaults preserve the historical planner behavior.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FilterSelectivityPolicy {
+    /// Equality predicates such as `field = value`.
+    pub equals: f64,
+    /// Inequality predicates such as `field != value`.
+    pub not_equals: f64,
+    /// Open-ended range predicates such as `<`, `<=`, `>`, `>=`.
+    pub range: f64,
+    /// Membership predicates such as `field IN (...)`.
+    pub in_list: f64,
+    /// Closed range predicates such as `BETWEEN`.
+    pub between: f64,
+    /// Fallback for unsupported or unknown predicates.
+    pub unknown: f64,
+}
+
+impl Default for FilterSelectivityPolicy {
+    fn default() -> Self {
+        Self {
+            equals: 0.1,
+            not_equals: 0.9,
+            range: 0.5,
+            in_list: 0.2,
+            between: 0.3,
+            unknown: 0.5,
+        }
+    }
+}
+
+impl FilterSelectivityPolicy {
+    /// Validate policy values as finite probabilities.
+    pub fn validate(&self) -> Result<()> {
+        for (name, value) in [
+            ("equals", self.equals),
+            ("not_equals", self.not_equals),
+            ("range", self.range),
+            ("in_list", self.in_list),
+            ("between", self.between),
+            ("unknown", self.unknown),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                anyhow::bail!(
+                    "filter selectivity policy {name} must be finite and between 0.0 and 1.0, got {value}"
+                );
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Normalized filter contract for hybrid search
 ///
@@ -229,8 +283,21 @@ pub struct NormalizedFilter {
 impl NormalizedFilter {
     /// Create a new normalized filter from a FilterExpression
     pub fn new(expression: FilterExpression) -> Self {
+        Self::new_with_policy(expression, &FilterSelectivityPolicy::default())
+    }
+
+    /// Create a normalized filter with explicit selectivity policy.
+    pub fn try_new_with_policy(
+        expression: FilterExpression,
+        policy: FilterSelectivityPolicy,
+    ) -> Result<Self> {
+        policy.validate()?;
+        Ok(Self::new_with_policy(expression, &policy))
+    }
+
+    fn new_with_policy(expression: FilterExpression, policy: &FilterSelectivityPolicy) -> Self {
         let required_fields = Self::extract_fields(&expression);
-        let selectivity = Self::estimate_selectivity(&expression);
+        let selectivity = Self::estimate_selectivity(&expression, policy);
 
         Self {
             expression,
@@ -259,25 +326,27 @@ impl NormalizedFilter {
     /// Estimate filter selectivity
     ///
     /// Returns a value between 0.0 (very selective) and 1.0 (not selective).
-    fn estimate_selectivity(expression: &FilterExpression) -> Option<f64> {
+    fn estimate_selectivity(
+        expression: &FilterExpression,
+        policy: &FilterSelectivityPolicy,
+    ) -> Option<f64> {
         match expression {
-            FilterExpression::Comparison { operator, .. } => {
-                // Heuristic selectivity estimates
-                match operator {
-                    crate::core::search::ComparisonOperator::Equals => Some(0.1), // 10% selectivity
-                    crate::core::search::ComparisonOperator::NotEquals => Some(0.9),
-                    crate::core::search::ComparisonOperator::GreaterThan => Some(0.5),
-                    crate::core::search::ComparisonOperator::LessThan => Some(0.5),
-                    crate::core::search::ComparisonOperator::In => Some(0.2),
-                    crate::core::search::ComparisonOperator::Between => Some(0.3),
-                    _ => None, // Unknown selectivity
-                }
-            }
+            FilterExpression::Comparison { operator, .. } => match operator {
+                ComparisonOperator::Equals => Some(policy.equals),
+                ComparisonOperator::NotEquals => Some(policy.not_equals),
+                ComparisonOperator::GreaterThan
+                | ComparisonOperator::GreaterThanOrEqual
+                | ComparisonOperator::LessThan
+                | ComparisonOperator::LessThanOrEqual => Some(policy.range),
+                ComparisonOperator::In => Some(policy.in_list),
+                ComparisonOperator::Between => Some(policy.between),
+                _ => Some(policy.unknown),
+            },
             FilterExpression::And(exprs) => {
                 // AND filters are more selective (multiply selectivities)
                 let selectivities: Vec<_> = exprs
                     .iter()
-                    .filter_map(Self::estimate_selectivity)
+                    .filter_map(|expr| Self::estimate_selectivity(expr, policy))
                     .collect();
 
                 if selectivities.is_empty() {
@@ -290,7 +359,7 @@ impl NormalizedFilter {
                 // OR filters are less selective (combine with inclusion-exclusion)
                 let selectivities: Vec<_> = exprs
                     .iter()
-                    .filter_map(Self::estimate_selectivity)
+                    .filter_map(|expr| Self::estimate_selectivity(expr, policy))
                     .collect();
 
                 if selectivities.is_empty() {
@@ -303,7 +372,7 @@ impl NormalizedFilter {
             }
             FilterExpression::Not(expr) => {
                 // NOT inverts selectivity
-                Self::estimate_selectivity(expr).map(|s| 1.0 - s)
+                Self::estimate_selectivity(expr, policy).map(|s| 1.0 - s)
             }
         }
     }
@@ -563,6 +632,16 @@ pub fn normalize_filter(expression: FilterExpression) -> Box<dyn FilterContract>
     Box::new(NormalizedFilter::new(expression))
 }
 
+/// Convenience function to create a normalized filter with explicit heuristics.
+pub fn normalize_filter_with_policy(
+    expression: FilterExpression,
+    policy: FilterSelectivityPolicy,
+) -> Result<Box<dyn FilterContract>> {
+    Ok(Box::new(NormalizedFilter::try_new_with_policy(
+        expression, policy,
+    )?))
+}
+
 /// Convenience function to create an empty candidate set
 pub fn create_candidate_set() -> Box<dyn CandidateSet> {
     Box::new(MemoryCandidateSet::new())
@@ -604,6 +683,45 @@ mod tests {
             value: serde_json::json!(100),
         });
         assert_eq!(range_filter.estimated_selectivity(), 0.5);
+    }
+
+    #[test]
+    fn test_filter_selectivity_policy_validation() {
+        let mut policy = FilterSelectivityPolicy::default();
+        assert!(policy.validate().is_ok());
+
+        policy.equals = 1.2;
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn test_normalized_filter_uses_configured_selectivity_policy() {
+        let policy = FilterSelectivityPolicy {
+            equals: 0.25,
+            range: 0.75,
+            ..Default::default()
+        };
+        let eq_filter = NormalizedFilter::try_new_with_policy(
+            FilterExpression::Comparison {
+                field: "status".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::json!("active"),
+            },
+            policy.clone(),
+        )
+        .unwrap();
+        assert_eq!(eq_filter.estimated_selectivity(), 0.25);
+
+        let range_filter = normalize_filter_with_policy(
+            FilterExpression::Comparison {
+                field: "price".to_string(),
+                operator: ComparisonOperator::GreaterThan,
+                value: serde_json::json!(100),
+            },
+            policy,
+        )
+        .unwrap();
+        assert_eq!(range_filter.estimated_selectivity(), 0.75);
     }
 
     #[test]
