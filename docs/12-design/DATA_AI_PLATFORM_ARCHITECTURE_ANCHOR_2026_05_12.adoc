@@ -688,13 +688,23 @@ Pgwire is the common SQL contract, not the only API.
 
 Purpose: the catalog is the platform.
 
+xCatalog is the durable metadata authority. Collection, document, graph, vector, relational,
+observability, stream, feature, model, agent, and open-table services are facades over cataloged
+assets; they do not own parallel metadata truth. A "collection" is the API word for a cataloged
+asset with a modality profile and storage/index policy. A "table", "graph", "stream",
+"feature table", or "model registry entry" is the same control-plane shape with different
+capabilities.
+
 xCatalog must store:
 
 * namespace/database/schema/table/collection/index/stream/branch;
 * logical schema: ProximaType, constraints, schema variations, JSONB paths, vector dimensions;
 * physical layout: engine, layout, file format, partitioning, clustering, compaction, cache,
   tiering, index placement;
-* external catalog references: Hive/Glue/Unity/Polaris/Iceberg REST/Delta metadata;
+* storage stack metadata: canonical WAL/log/manifest ranges, row/record layouts, LSM levels, PAX
+  segment descriptors, columnar segments, open table publications, and projection repair sources;
+* external catalog references: Hive/Glue/Unity/Polaris/Iceberg REST/Delta metadata and explicit
+  external-authority/federation contracts;
 * query stats: cardinality, histograms, vector distributions, graph degrees, event lag,
   feature freshness;
 * governance: RLS, ACL, tenant isolation, masking, retention, legal hold, audit;
@@ -706,6 +716,8 @@ xCatalog must store:
   queues, exactly-once/idempotency metadata;
 * branch metadata: parent, snapshot timestamp, WAL range, schema mode, masking policy, TTL,
   merge status.
+* schema registry metadata: subject/name, version, compatibility mode, canonical `ProximaType`
+  mapping, wire format, fingerprint, owner, lifecycle state, and references to assets that use it.
 
 Expose catalog through:
 
@@ -714,6 +726,107 @@ Expose catalog through:
 * REST/gRPC lifecycle APIs;
 * Arrow schema metadata;
 * Iceberg REST/Polaris-compatible facade for analytic tables where viable.
+
+==== Collection Service Position
+
+`CollectionService` should be kept as a compatibility and lifecycle facade while the product still
+has vector/document collection APIs. It should create, alter, drop, describe, and list cataloged
+assets by calling xCatalog and the DDL/lifecycle services. It may coordinate default storage
+placement, index initialization, and projection bootstrap, but xCatalog remains authoritative for
+the resulting metadata.
+
+Do not add new durable metadata fields to `CollectionService` unless they are persisted in
+xCatalog in the same transaction or have a clear migration issue attached. Long term, the service
+should become either:
+
+* a thin alias over record/table lifecycle APIs for backwards compatibility; or
+* a generalized `AssetLifecycleService` / `CatalogLifecycleService` if the name becomes misleading.
+
+==== Naming Strategy
+
+Use a single catalog naming strategy across all modalities:
+
+[source,text]
+----
+catalog.namespace.asset_name
+catalog.namespace.asset_name@branch
+catalog.namespace.asset_name#snapshot
+----
+
+The canonical internal key is `TableIdentifier`-style namespace plus asset name, backed by a
+stable catalog asset id. Surface-specific names are aliases:
+
+* vector/document `collection` -> catalog asset with vector/document capability;
+* graph -> catalog asset with node/edge profile and graph projections;
+* observability dataset -> catalog asset with log/metric/trace/profile profiles;
+* stream/topic -> catalog asset with append-only/event profile and offsets;
+* feature table -> catalog asset with feature freshness and serving metadata;
+* MLflow experiment/model -> catalog asset under `mlops.*`;
+* Iceberg/Delta/Hudi table -> publication, import, projection, or external-authority asset.
+
+Renames update catalog aliases and history. They must not rewrite record identity, WAL lineage,
+branch ancestry, model lineage, or projection ownership.
+
+==== Required xCatalog Expansions
+
+The current catalog shape must grow in these directions before it can be the single metadata plane:
+
+* `assets`: stable asset id, namespace/name, modality capabilities, lifecycle state, owner, aliases,
+  branch/snapshot visibility, and supported-surface status.
+* `schemas` and `schema_versions`: `ProximaType` fields, constraints, defaults, generated columns,
+  compatibility policy, fingerprints, and source registry references.
+* `schema_variations`: document/entity/open-shape structural variations, JSON paths, observed
+  optionality, promotion policy, and validation status.
+* `storage_layouts`: authority mode, layout kind, engine, physical format, PAX/row/columnar
+  options, partitioning, clustering, tiering, compaction, retention, and repair source.
+* `pax_segments` / `segment_stats`: segment location, block stats, tenant/time min-max,
+  column stats, MVCC bounds, checksum, freshness, and projection lineage.
+* `indexes` and `projections`: HNSW/IVF/PQ, JSON path, full-text, graph topology, time-series,
+  rollup, materialized view, rebuild policy, invalidation policy, and benchmark/support status.
+* `external_mappings`: Iceberg/Delta/Hudi/Hive/Glue/Unity/Polaris references, snapshot semantics,
+  ownership mode, type mapping, policy boundary, write/refresh mode, and consistency limits.
+* `streams`: topics, partitions/shards, offsets, watermarks, consumer groups, schema subjects,
+  idempotency keys, dead-letter policy, lag, and CDC publication state.
+* `mlops_assets`: experiments, runs, model versions, artifacts, signatures, aliases/stages,
+  deployments, evaluations, drift monitors, feature freshness, predictions, labels, and feedback.
+* `lineage_policy_audit`: source/transform/model/agent lineage, tenant/RLS policy, masking,
+  retention, legal hold, audit events, and branch ancestry.
+
+==== Schema Registry Interoperability
+
+Confluent Schema Registry, AWS Glue Schema Registry, and similar registries are compatibility
+adapters around xCatalog schema objects, not separate authorities inside ProximaDB.
+
+Required behavior:
+
+* Avro, JSON Schema, and Protobuf subjects map to xCatalog schema objects with version history and
+  canonical `ProximaType` mappings.
+* Compatibility modes (`BACKWARD`, `FORWARD`, `FULL`, transitive variants, and `NONE`) map to
+  xCatalog schema evolution policies.
+* Kafka/Flink/Kinesis connectors record subject, version, fingerprint, source topic, target asset,
+  cursor/offset, watermark, and dead-letter policy in xCatalog.
+* Glue-style databases, tables, partitions, classifiers, crawlers, and schema registry entries map
+  to external catalog references or imported schema variations with explicit ownership.
+* Schema inference may propose variations, but committed schema changes are catalog mutations and
+  must pass the same policy/evolution checks as SQL, REST, gRPC, Arrow Flight, SDK, and embedded
+  writes.
+
+==== MLOps And MLflow Catalog Objects
+
+MLflow compatibility should be implemented as an MLOps facade over xCatalog objects plus canonical
+records/artifacts:
+
+* experiments, runs, params, metrics, tags, artifacts, model versions, aliases/stages, signatures,
+  environments, prompts, evaluations, deployments, labels, feedback, and drift monitors are
+  cataloged assets or child metadata under `mlops.*`;
+* metric time series, prediction logs, evaluation rows, feature values, and feedback are canonical
+  records with retention and lineage metadata;
+* large artifacts live in object storage or external artifact repositories with xCatalog location,
+  checksum, policy, and lineage references;
+* model registry transitions are catalog transactions with policy checks, audit entries, and branch
+  awareness;
+* MLflow REST/API compatibility is an adapter. It must not create a second model registry or
+  experiment metadata store that bypasses xCatalog.
 
 === 3. Storage Plane
 

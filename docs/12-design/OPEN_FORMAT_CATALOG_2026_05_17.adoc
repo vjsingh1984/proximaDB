@@ -14,6 +14,13 @@ The goal is for ProximaDB to be a first-class catalog authority that any open-fo
 (Spark, Trino, DuckDB, Flink, PyIceberg) can connect to without a custom connector, while supporting
 the full range from embedded SQLite-backed small datasets to petabyte-scale Parquet/Iceberg lakehouse.
 
+Open-format catalog support is a facade over the broader xCatalog control plane. xCatalog is not
+only an Iceberg/Hive-style table catalog. It is the metadata authority for relational tables,
+vector/document collections, graphs, observability datasets, streams, features, model registry
+objects, agent state, projections, branches, and external authority mappings. Iceberg REST, Glue,
+Hive, Unity, Polaris, Delta, and Hudi compatibility expose the subset of this metadata that those
+systems can represent.
+
 == Relation to Stacked Durability Mandate
 
 The open-format catalog layer sits entirely at Layers 2–3 of the stacked durability hierarchy:
@@ -21,14 +28,16 @@ The open-format catalog layer sits entirely at Layers 2–3 of the stacked durab
 ----
 Layer 0: WAL / CanonicalOperation journal (always durable, always first)
 Layer 1: ProximaRecord in VIPER/NOVA/HELIX storage engines (canonical record store)
-Layer 2: Rebuildable projections — Iceberg manifests, CSR/COO graph topology, HNSW ANN fragments
+Layer 2: Rebuildable projections — PAX segments, Iceberg manifests, CSR/COO graph topology,
+         HNSW ANN fragments, time-series blocks, schema-registry publications
 Layer 3: Protocol facades — Iceberg REST, Arrow Flight, REST/gRPC handlers (never own durable state)
 ----
 
-* xCatalog (OLTP or lakehouse backend) stores ONLY catalog metadata: namespaces, schemas, statistics, snapshots.
+* xCatalog (OLTP or lakehouse backend) stores ONLY catalog metadata: namespaces, schemas, statistics, snapshots, layouts, projections, policies, and external mappings.
 * Record data always stays in ProximaDB's Layer 1 storage engines.
-* Iceberg manifests are Layer 2 projections, rebuilt on compaction.
-* Iceberg REST and Arrow Flight are Layer 3 protocol facades.
+* PAX segments, Iceberg manifests, ANN fragments, graph topology, and time-series blocks are Layer
+  2 layout/projection families with explicit freshness and repair metadata.
+* Iceberg REST, Arrow Flight, Glue/Hive/Unity/Polaris adapters, and REST/gRPC handlers are Layer 3 protocol facades.
 
 This means:
 
@@ -40,6 +49,39 @@ This means:
 See: `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` §stacked durability.
 See also: `docs/12-design/adr/ADR-009-schema-modes-and-proximarecord-surfaces.adoc` for the
 schema-on-read/schema-on-write and API-surface convergence mandate.
+
+== Catalog Asset Model
+
+Every open-format object maps to a cataloged asset:
+
+[cols="2,3,3"]
+|===
+| External shape | xCatalog asset role | Authority mode
+
+| Iceberg/Delta/Hudi table
+| analytical publication, imported snapshot, federated external table, or explicit external authority
+| `ExportedPublication`, `ImportedSnapshot`, `RebuildableProjection`, or `ExternalAuthoritative`
+
+| Hive/Glue database and table
+| namespace plus table/asset metadata, partition metadata, classifier/source mapping
+| usually external reference or imported schema; external authority only when declared
+
+| Glue/Confluent schema subject
+| schema object with version history and `ProximaType` mapping
+| catalog schema authority for ProximaDB-owned assets; external reference for externally-owned streams
+
+| Kafka/Flink/Kinesis topic
+| stream asset with schema, offsets, watermarks, consumer groups, and lineage
+| append-only canonical when written through ProximaDB; external authority when topic owns truth
+
+| MLflow experiment/model
+| MLOps asset under `mlops.*` with lineage, artifact references, metrics, aliases/stages
+| catalog metadata authority; artifacts may live in external stores
+|===
+
+The same asset can have multiple names or protocol views. For example, a vector collection can
+appear as a REST collection, a pgwire table, an Arrow Flight dataset, and an Iceberg table
+publication. Those are aliases/views over one catalog asset id, not separate metadata objects.
 
 == Schema-On-Read And Schema-On-Write Positioning
 
@@ -73,6 +115,8 @@ xCatalog must record:
 * tenant/RLS enforcement boundary;
 * write/refresh mode;
 * repair/rebuild source.
+* schema registry subject/version/fingerprint when the external data uses Avro, JSON Schema,
+  Protobuf, or a Glue/Confluent-compatible schema registry.
 
 Reads from Parquet, Arrow IPC, ORC, JSON, CSV, Iceberg, Delta, Hudi, or Hadoop-style key/value files
 project rows into `ProximaRecord`/`ProximaValue` before planning. For key/value sources, the key maps
@@ -270,6 +314,23 @@ open-format path.
 |===
 
 `props` column in Iceberg schema is `map<string, binary>` where values are msgpack-encoded `ProximaValue` blobs.  External engines that cannot decode msgpack treat `props` as opaque binary — this is intentional.
+
+== Schema Registry Facades
+
+ProximaDB should expose Confluent- and Glue-style schema registry compatibility as adapters over
+xCatalog schema objects:
+
+* Subjects map to catalog schema names under a namespace.
+* Schema versions map to xCatalog schema history entries.
+* Compatibility levels map to xCatalog schema evolution policies.
+* Avro, JSON Schema, and Protobuf fields map into `ProximaType`; unsupported or lossy mappings are
+  recorded and surfaced in inspection/EXPLAIN paths.
+* Stream connectors bind `(topic, subject, version, fingerprint)` to a catalog stream/table asset,
+  offset/watermark state, and lineage entry.
+
+The registry facade may cache decoded schemas, but committed schema state lives in xCatalog. A
+connector, REST handler, or stream processor must not infer and persist schema changes outside the
+catalog transaction path.
 
 == External Engine Quick-Start
 

@@ -256,6 +256,72 @@ Logical surfaces:
 This keeps ProximaDB competitive with specialized databases without inheriting their worst
 maintenance property: separate durable semantics for every modality.
 
+=== xCatalog And CollectionService Boundary
+
+Collection metadata and catalog metadata are not separate sources of truth. A collection, table,
+graph, stream, observability dataset, feature table, model registry object, or open-format
+publication is a cataloged asset. xCatalog MUST own the durable metadata for those assets:
+
+* logical name, namespace, aliases, ownership, and lifecycle state;
+* schema mode, `ProximaType` fields, structural variations, constraints, keys, and generated
+  columns;
+* modality profile: vector, document, graph, relational, observability, event, feature, model,
+  agent, or mixed;
+* physical layout and format stack: WAL/log range, row/record, LSM, PAX, columnar, ANN, graph
+  topology, time-series blocks, Iceberg/Delta/Hudi/Parquet/Arrow publication, and external
+  authority mapping;
+* index and projection metadata, including freshness, rebuild source, invalidation policy,
+  retention impact, and support status;
+* policy, tenant/RLS, masking, audit, retention, legal hold, branch/snapshot, and lineage metadata.
+
+`CollectionService` remains valid only as a service facade and lifecycle orchestrator. Its job is
+to preserve existing collection APIs, coordinate create/drop/alter flows, allocate default layouts,
+initialize indexes/projections, and call storage/query services. It MUST delegate durable metadata
+reads and writes to xCatalog. It MUST NOT keep an independent metadata registry, invent collection
+schema rules, or become the authority for file paths, engine choices, index definitions, stats,
+policy, or recovery state.
+
+The target implementation direction is:
+
+[source,text]
+----
+REST/gRPC collection APIs, SDK helpers, legacy vector APIs
+  -> CollectionService facade
+  -> DDL/Catalog lifecycle service
+  -> xCatalog metadata transaction
+  -> WAL/log/manifest + storage/projection initialization
+----
+
+As record-native table APIs mature, `CollectionService` should either become a thin compatibility
+alias over catalog lifecycle APIs or be renamed to an asset/table lifecycle service. It should not
+be expanded as a parallel catalog.
+
+=== Asset Naming Strategy
+
+Use one canonical identifier model for all cataloged assets:
+
+[source,text]
+----
+catalog.namespace.asset_name[@branch_or_snapshot]
+----
+
+Rules:
+
+* `TableIdentifier` style namespace plus name is canonical internally. Do not create separate name
+  types for vector collections, document collections, graphs, streams, feature tables, model
+  registries, or observability datasets unless they wrap the same identifier.
+* The user-visible word may vary by surface (`collection`, `table`, `graph`, `stream`, `model`,
+  `feature_table`), but the catalog identity remains one asset id plus namespace.
+* Names are stable logical references. Renames create catalog alias/history entries and do not
+  change record identity, WAL lineage, branch ancestry, or projection ownership.
+* Reserved namespaces should be explicit: `xcatalog`, `information_schema`, `pg_catalog`, `mlops`,
+  `agent`, `stream`, `observability`, and other system schemas.
+* Case folding, quoting, Unicode policy, and maximum length must follow the SQL/pgwire identifier
+  contract for SQL-visible objects. SDK and REST aliases may preserve display names, but they must
+  normalize to the catalog identifier before storage or planning.
+* Modality-specific naming such as `collection_id`, `graph_id`, `stream_id`, or `model_id` is a
+  typed view over the catalog asset id, not a second identity plane.
+
 === Format Fungibility Rule
 
 Stacked durability is not a mandate to force all data into one physical layout. It is a mandate to
@@ -1144,7 +1210,30 @@ Tasks:
 ** Preserve large-batch behavior by using canonical-record routing decisions, not vector-count-only heuristics.
 * [ ] Replace remaining REST/gRPC/embedded insert and streaming shims with v2 `ProximaRecord`/`ProximaValue` contracts below protocol compatibility adapters.
 ** Legacy v1 `VectorRecord`, metadata maps, `SqlValue`, and `SqlObject` may remain only as adapter inputs/outputs until the v1 compatibility surface is retired.
+** Direction: do not maintain dual write APIs. Build the record-native v2 implementation as the only target, keep v1 names only as migration aliases, then remove old v1 vector-shaped routes/clients and promote/rename the record-native API as the stable v1 surface.
+** [x] Centralize v1 `VectorRecord` -> `ProximaRecord` defaulting/conversion in the proto compatibility adapter and route REST batch, service-level v1 batch, and gRPC streaming ingestion through that canonical adapter.
+** [x] Replace Python REST SDK insert payload construction with the record batch shape; `insert_records` posts to the v2 record endpoint and `insert_vector` / `insert_vectors` are temporary aliases over that path rather than `/api/v1/vectors/batch` writers.
+** [x] Replace Python REST SDK delete aliases with the v2 record delete endpoint; SDK writes no longer call `/api/v1/vectors/batch`.
+** [x] Keep SDK adapters as transport adapters only. Their canonical write contract is now `insert_records` / `upsert_records` typed around `ProximaRecord` or record-shaped dictionaries; `VectorRecord` appears only on vector-named compatibility aliases.
+** [x] Make the Python unified client expose native `insert_records` / `upsert_records` and route `insert_vectors` / `upsert_vectors` through those record methods instead of calling adapter vector writers directly.
+** [x] Generate Python v2 `ProximaRecordService` gRPC stubs and wire Python sync gRPC `insert_records` / `upsert_records` to `InsertRecords` / `UpsertRecords` instead of lowering through the v1 vector RPC.
+** [x] Replace the Python embedded HTTP wrapper's `_insert_vectors` v1 batch writer with `_insert_records` targeting `/api/v2/collections/{collection}/records/batch`; `_insert_vectors` is now only a compatibility alias.
+** [x] Add Python batching `batch_insert_records` as the native helper, export it through the SDK, and make `batch_insert_vectors` delegate to it as a compatibility alias.
+** [x] Convert the Python `InsertBuilder` to store and build record-shaped dictionaries natively; vector-named builder methods now populate records and `build_vectors` is a compatibility shim.
+** [x] Add Python chunking `create_records`, `prepare_records`, and `chunk_and_embed_records` helpers that return record-shaped dictionaries; vector-named chunking helpers now wrap those native functions for compatibility.
+** [x] Convert common Python optional integration write paths (LangChain, LlamaIndex, Haystack, CrewAI, AutoGen, Agentic IO) to build record-shaped payloads and call `insert_records` when available, with vector writes only as compatibility fallback.
+** [x] Convert remaining Python optional integration write paths for Victor, Victor multi-model indexing, dual-use embeddings, and agentic store vector memory to record-shaped payloads and `insert_records`.
+** [x] Convert Python embedded multi-model code indexing vector writes to record-shaped payloads and `insert_records`.
+** [x] Add record-native write methods to the legacy Python unified client facade and make its vector insert/upsert prefer `insert_records` / `upsert_records` before compatibility fallback.
+** [x] Convert Python CLI and code-knowledge indexing write helpers to build record-shaped payloads and call `insert_records` / `insert_records`-capable collections.
+** [x] Convert Python `client_v1` insert compatibility to use the record batch API; REST posts to `/api/v2/collections/{collection}/records/batch` and gRPC uses generated v2 record stubs when available.
+** [x] Convert Rust SDK insert builders to send `ProximaRecord` batches to `/api/v2/collections/{collection}/records/batch`; `VectorRecord` is now a deprecated compatibility alias.
+** [x] Convert Node embedded insert builders to send record batches to `/api/v2/collections/{collection}/records/batch`; `VectorRecord` is now a deprecated alias over `ProximaRecord`.
+** [x] Convert Go REST adapter inserts/upserts to send canonical record batches to `/api/v2/collections/{collection}/records/batch`; public `ProximaRecord` is available while `VectorRecord` remains compatibility input.
 * [ ] Add pandas/numpy/Arrow embedded normalization tests that prove dict/object, DataFrame, ndarray/vector, graph, document, and observability inputs normalize to xCatalog-validated canonical records.
+** [x] Add embedded Python `ProximaRecord` normalization helpers and coverage for mapping/dict, NumPy matrix, pandas DataFrame, pyarrow Table, document, graph node, and observability event inputs.
+** [x] Add embedded Python `insert_records` / `upsert_records` helpers that accept the modern record shape and route through the normalizer before reaching the current native batch boundary.
+** [x] Add embedded Python `ProximaRecord` / `ProximaValue` public types plus `insert_proxima_records` / `upsert_proxima_records`; legacy `metadata` lowers immediately into canonical `props`, and text/source/schema fields are preserved at the current native batch boundary.
 * [ ] Add cross-surface parity tests for SQL/pgwire `INSERT`, REST/gRPC record insert, Arrow Flight batch insert, and embedded batch insert against one cataloged relational/vector table.
 
 Acceptance:

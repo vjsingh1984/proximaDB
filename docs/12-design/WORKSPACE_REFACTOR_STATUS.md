@@ -364,6 +364,7 @@ The workspace refactor has achieved **60-65% completion** with:
 - ✅ Platform runtime crates extracted (`proximadb-api`, `proximadb-runtime`)
 - ✅ All Phase 9 REST handler migration waves complete (9.1–9.14)
 - ✅ All Phase 9 port traits + root-crate impls wired in production server
+- ✅ ProximaRecord-native storage-format migration completed for ProximaBlocks/columnar and primary vector-bearing engines (SST/NOVA/SWIFT/VIPER/HELIX), with v1 `VectorRecord` use confined to compatibility helpers and remaining protocol/WAL migration work
 - ⚠️ Root crate still owning most concrete service, storage, embedded, query, and modality bodies
 
 The refactor has achieved the boundary skeleton and many protocol-port goals, but root thinning

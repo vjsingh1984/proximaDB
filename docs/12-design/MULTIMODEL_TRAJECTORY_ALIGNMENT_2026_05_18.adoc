@@ -52,8 +52,48 @@ Required trajectory:
 * Keep `VectorQueryService` returning canonical `ProximaRecord`.
 * Expose AXIS/search behind a narrow root-independent trait before moving production search into
   `crates/modalities/proximadb-vector`.
-* Replace `VectorRecord` internals one engine at a time, starting with the lowest-risk engine
-  selected by current benchmark/test coverage.
+* Retire `VectorRecord` as an SDK, embedded, server, WAL, and storage target. During migration it
+  may exist only as a quarantined import adapter for old generated v1 clients; no new server,
+  SDK, embedded, WAL, storage, query, or projection code should accept it as the durable or
+  internal contract.
+* Do not maintain parallel v1 and v2 write APIs as product surfaces. The working strategy is:
+  build the record-native v2 implementation as the sole target, route old v1 names through that
+  implementation only while migration is active, then remove the old vector-shaped v1 surface and
+  rename/promote the record-native API as the stable v1 surface at finalization.
+* Python SDK and embedded mode now follow this trajectory natively: `insert_records` /
+  `upsert_records` are typed around `ProximaRecord` or record-shaped dictionaries. SDK adapters
+  remain only transport adapters, while vector-named methods are compatibility aliases over the
+  record boundary rather than independent writers.
+* Python embedded exposes explicit `ProximaRecord` / `ProximaValue` public types plus
+  `insert_proxima_records` / `upsert_proxima_records`; legacy metadata maps lower immediately into
+  canonical `props`.
+* Python sync gRPC uses generated v2 `ProximaRecordService` stubs for record writes; v1 vector
+  gRPC remains only for vector-named compatibility methods and read/search migration surfaces.
+* Python embedded HTTP writes use the v2 record batch endpoint; vector-named embedded helpers
+  delegate to record writes and are not maintained as a separate API surface.
+* Python batching exposes `batch_insert_records` as the native helper; vector-named batching
+  delegates to it for migration compatibility.
+* Python insert builders build record-shaped dictionaries natively; vector-named builder helpers
+  are retained only as compatibility conveniences.
+* Python chunking pipelines expose record-native helpers (`create_records`, `prepare_records`,
+  `chunk_and_embed_records`); vector-named helpers wrap those outputs for compatibility.
+* Python optional integrations, including LangChain/LlamaIndex/Haystack/CrewAI/AutoGen/Agentic IO,
+  Victor, dual-use embeddings, and agentic vector memory, build record-shaped payloads and prefer
+  `insert_records`; vector insert calls are compatibility fallbacks for older clients only.
+* Python embedded multi-model code indexing writes vector-bearing chunks through record-shaped
+  payloads and `insert_records`.
+* Python legacy unified client insert/upsert, CLI, and code-knowledge ingestion helpers now prefer
+  record-native write methods; vector-named CLI commands remain compatibility entry points over
+  record payloads.
+* Python `client_v1` remains a compatibility facade, but its insert path now writes through the
+  record batch API rather than REST `/api/v1/vectors/batch`.
+* Rust SDK and Node embedded write builders now target the record batch API and expose
+  `ProximaRecord` as the canonical record shape, with `VectorRecord` retained only as a
+  compatibility alias.
+* Go REST adapter writes now target the record batch API and expose `ProximaRecord` for new code,
+  while `VectorRecord` remains accepted as compatibility input.
+* Replace `VectorRecord` internals one engine and one protocol surface at a time, starting with
+  paths that already have benchmark/test coverage.
 * Add context-disentangled chunk representations as rebuildable vector projections: centroid
   embedding plus residual/topic embeddings, with xCatalog metadata for model, freshness, and
   repair source.
@@ -74,6 +114,11 @@ Touchpoints:
 Done criteria:
 
 * v1 protocol conversion happens only at REST/gRPC/SDK edges.
+* SDKs and embedded libraries expose `ProximaRecord`/`ProximaValue`-style records as the primary
+  shape; vector-only helpers are deprecated wrappers over the record normalizer.
+* There is one maintained write contract: xCatalog-validated `ProximaRecord`/`ProximaValue`.
+  `/api/v1/vectors/*` and v1 generated clients are temporary aliases during migration, not
+  independent API products.
 * `search_vectors_unified` consumes rich predicates with tenant/RLS pushdown.
 * Filtered ANN returns materialized records, not placeholder candidate counts.
 * Projection fusion has shared-runtime execution, explain output, and benchmark evidence before it
@@ -198,7 +243,11 @@ Required work:
 
 * Select one storage engine for first full `ProximaRecord` conversion.
 * Add conversion parity tests before replacing internals.
-* Preserve existing v1 protocol compatibility through edge adapters.
+* Quarantine existing v1 protocol compatibility in edge adapters with explicit retirement tasks;
+  do not add new behavior or tests that make v1/vector-shaped payloads a maintained target.
+* Keep PAX blocks/segments as ADR-010 Layer 2 rebuildable projections over canonical records.
+  OLTP row directories, OLAP stripes, Iceberg/Arrow/OpenTable facades, and catalog manifests must
+  derive from xCatalog + WAL/record authority rather than defining separate durability.
 
 === Query Plane
 

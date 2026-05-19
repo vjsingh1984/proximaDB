@@ -889,6 +889,60 @@ Delta, and Hudi are external table/snapshot interoperability formats. None of th
 `ProximaRecord`/`ProximaType` as the internal semantic model unless xCatalog marks an external table
 as authoritative with explicit policy and snapshot semantics.
 
+==== 5.6.1 Catalog Asset And Collection Service Boundary
+
+The catalog asset is the durable metadata primitive. "Collection" is a compatibility/API term for
+a cataloged asset with one or more modality capabilities. Vector collections, document collections,
+graphs, relational tables, observability datasets, streams, feature tables, model registry objects,
+agent stores, projections, and open-format publications share the same xCatalog identity model.
+
+The canonical name is:
+
+[source,text]
+----
+catalog.namespace.asset_name[@branch_or_snapshot]
+----
+
+`TableIdentifier`-style namespace plus asset name is the internal logical key, backed by a stable
+catalog asset id. Modality-specific ids such as `collection_id`, `graph_id`, `stream_id`, or
+`model_id` are typed views or aliases over that asset id. Renames update catalog alias/history
+metadata and must not rewrite record identity, WAL lineage, branch ancestry, or projection
+ownership.
+
+`CollectionService` may remain as a lifecycle facade for legacy vector/document collection APIs. It
+must delegate durable metadata reads and writes to xCatalog and must not own a separate metadata
+registry, schema model, path authority, index definition store, stats store, or recovery state.
+Create/alter/drop flows should be:
+
+[source,text]
+----
+surface API -> CollectionService or DDL facade -> xCatalog metadata transaction
+            -> WAL/log/manifest record -> storage/projection/index initialization
+----
+
+As record-native table APIs become stable, the service should become a thin compatibility alias or
+a generalized catalog asset lifecycle service rather than a second catalog.
+
+==== 5.6.2 Schema Registry And AI Asset Metadata
+
+xCatalog is also the schema registry and AI asset metadata authority:
+
+* Avro, JSON Schema, Protobuf, Confluent Schema Registry, and AWS Glue Schema Registry subjects map
+  to xCatalog schema objects with version history, compatibility/evolution policy, fingerprints,
+  and canonical `ProximaType` mappings.
+* Hive/Glue/Unity/Polaris/Iceberg/Delta/Hudi catalog entries map to external references,
+  imported snapshots, exported publications, rebuildable projections, or explicit external
+  authority assets.
+* MLflow-compatible experiments, runs, params, metrics, artifacts, model versions, aliases/stages,
+  signatures, deployments, evaluations, drift monitors, labels, feedback, and prompts are cataloged
+  under the MLOps asset model. Large artifacts may live outside ProximaDB, but their location,
+  checksum, lineage, policy, and lifecycle state are xCatalog metadata.
+* Kafka/Flink/Kinesis stream schemas, topics, partitions, offsets, watermarks, consumer groups, and
+  dead-letter policies are stream asset metadata tied to schema and lineage entries.
+
+No schema registry, model registry, stream connector, or open-format adapter may become a hidden
+source of metadata truth.
+
 === 5.7 Optional Relational Capability Model
 
 Relational correctness features are table/profile capabilities. They are optional by workload, but

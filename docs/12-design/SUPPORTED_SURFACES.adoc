@@ -104,7 +104,7 @@ _Retirement condition_: remove or demote when Phase 6 benchmarks show that ORION
 | Projection | Status | Notes
 | HNSW index | ✅ Retained (rebuildable) | `ProjectionDirective::HnswIndex`. Rebuilt from canonical `ProximaRecord::embeddings` fields. Predicate-aware ACORN construction per spec §6.1.
 | IVF / PQ quantized index | ✅ Retained (rebuildable) | Quantization lives in `proximadb-vector` modality crate. Foundation types from `proximadb-quantization-types`.
-| Storage engine vector layouts (SST/HELIX/VIPER/NOVA) | ✅ Retained | Use foundation types (`proximadb-quantization-types`, `proximadb-distance-types`) — no engine-local duplicates since Phase 3 refactor.
+| Storage engine vector layouts (SST/HELIX/VIPER/NOVA/SWIFT) | ✅ Retained (canonical record layouts/access methods) | Flush, compaction, ProximaBlocks/columnar serialization, filtering, and search result shaping are migrating to `ProximaRecord::embeddings` + `props`. Legacy `VectorRecord` is allowed only in explicit v1 compatibility helpers while client/proto migration completes.
 |===
 
 ---
@@ -177,6 +177,7 @@ Use this checklist when retiring a durable path or demoting an engine to project
 
 * [ ] ADR accepted that proves canonical records + projection cannot meet correctness or performance needs.
 * [ ] All writes migrated to `CanonicalOperation::RecordUpsert` / `RecordDelete`.
+  _Progress_: storage format flush/compaction/search paths are now `ProximaRecord`-native for the primary vector-bearing engines; remaining work is protocol/WAL compatibility quarantine.
 * [ ] Legacy WAL entries drained (no entries older than the migration LSN in production logs).
 * [ ] `ProjectionDirective` added so recovery rebuilds the equivalent projection.
 * [ ] Benchmark evidence attached to the ADR showing the retained projection meets the speedup threshold.
