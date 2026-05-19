@@ -28,6 +28,90 @@ pub struct MetadataFilterPushdown {
     /// Filter selectivity estimator
     #[allow(dead_code)]
     selectivity_estimator: SelectivityEstimator,
+
+    /// Runtime policy for metadata pushdown decisions.
+    config: MetadataFilterPushdownConfig,
+}
+
+/// Configuration for metadata filter pushdown heuristics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataFilterPushdownConfig {
+    /// Build per-column bloom filters only below this distinct-value count.
+    pub bloom_distinct_value_limit: usize,
+    /// Bits per key for generated metadata bloom filters.
+    pub bloom_bits_per_key: u32,
+    /// False-positive rate for generated metadata bloom filters.
+    pub bloom_false_positive_rate: f64,
+    /// Selectivity below this threshold uses indexed filtering first.
+    pub indexed_selectivity_threshold: f64,
+    /// Selectivity below this threshold uses bloom filtering before direct evaluation.
+    pub bloom_selectivity_threshold: f64,
+    /// Fallback selectivity for columns without statistics.
+    pub unknown_column_selectivity: f64,
+    /// Fallback selectivity for malformed `IN` predicates.
+    pub invalid_in_selectivity: f64,
+    /// Fallback selectivity for range-like predicates.
+    pub range_selectivity: f64,
+    /// Minimum distinct/total ratio required before building an index.
+    pub min_index_selectivity: f64,
+    /// Maximum distinct values allowed before skipping an index.
+    pub max_index_distinct_values: usize,
+}
+
+impl Default for MetadataFilterPushdownConfig {
+    fn default() -> Self {
+        Self {
+            bloom_distinct_value_limit: 1000,
+            bloom_bits_per_key: 10,
+            bloom_false_positive_rate: 0.01,
+            indexed_selectivity_threshold: 0.01,
+            bloom_selectivity_threshold: 0.1,
+            unknown_column_selectivity: 0.5,
+            invalid_in_selectivity: 0.5,
+            range_selectivity: 0.3,
+            min_index_selectivity: 0.01,
+            max_index_distinct_values: 10_000,
+        }
+    }
+}
+
+impl MetadataFilterPushdownConfig {
+    /// Validate selectivity and bloom policy values.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        for (name, value) in [
+            ("bloom_false_positive_rate", self.bloom_false_positive_rate),
+            (
+                "indexed_selectivity_threshold",
+                self.indexed_selectivity_threshold,
+            ),
+            (
+                "bloom_selectivity_threshold",
+                self.bloom_selectivity_threshold,
+            ),
+            (
+                "unknown_column_selectivity",
+                self.unknown_column_selectivity,
+            ),
+            ("invalid_in_selectivity", self.invalid_in_selectivity),
+            ("range_selectivity", self.range_selectivity),
+            ("min_index_selectivity", self.min_index_selectivity),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(format!(
+                    "metadata pushdown config {name} must be finite and between 0.0 and 1.0, got {value}"
+                ));
+            }
+        }
+        if self.bloom_selectivity_threshold < self.indexed_selectivity_threshold {
+            return Err(
+                "bloom_selectivity_threshold must be >= indexed_selectivity_threshold".to_string(),
+            );
+        }
+        if self.bloom_bits_per_key == 0 {
+            return Err("bloom_bits_per_key must be greater than zero".to_string());
+        }
+        Ok(())
+    }
 }
 
 /// Statistics for a metadata column
@@ -94,11 +178,22 @@ struct SelectivityEstimator {
 impl MetadataFilterPushdown {
     /// Create a new metadata filter pushdown optimizer
     pub fn new() -> Self {
+        Self::with_config(MetadataFilterPushdownConfig::default())
+    }
+
+    /// Create a metadata filter pushdown optimizer with explicit policy.
+    pub fn with_config(config: MetadataFilterPushdownConfig) -> Self {
+        debug_assert!(
+            config.validate().is_ok(),
+            "invalid metadata filter pushdown config: {:?}",
+            config.validate().err()
+        );
         Self {
             bloom_filters: HashMap::new(),
             column_stats: HashMap::new(),
             column_indexes: HashMap::new(),
             selectivity_estimator: SelectivityEstimator::new(),
+            config,
         }
     }
 
@@ -123,12 +218,12 @@ impl MetadataFilterPushdown {
             let stats = self.compute_column_stats(&column_name, &values);
 
             // Build bloom filter for the column
-            if stats.distinct_values < 1000 {
+            if stats.distinct_values < self.config.bloom_distinct_value_limit {
                 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
                 let config = BloomFilterConfig {
                     strategy: BloomStrategy::BitPacked,
-                    bits_per_key: 10,
-                    false_positive_rate: Some(0.01),
+                    bits_per_key: self.config.bloom_bits_per_key,
+                    false_positive_rate: Some(self.config.bloom_false_positive_rate),
                     expected_items: stats.distinct_values,
                     enabled: true,
                     hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
@@ -169,10 +264,10 @@ impl MetadataFilterPushdown {
         );
 
         // Use different strategies based on selectivity
-        if selectivity < 0.01 {
+        if selectivity < self.config.indexed_selectivity_threshold {
             // Very selective - use index if available
             self.apply_indexed_filter(records, filter)
-        } else if selectivity < 0.1 {
+        } else if selectivity < self.config.bloom_selectivity_threshold {
             // Moderately selective - use bloom filter first
             self.apply_bloom_then_filter(records, filter)
         } else {
@@ -295,7 +390,7 @@ impl MetadataFilterPushdown {
                 if let Some(stats) = self.column_stats.get(field) {
                     self.estimate_comparison_selectivity(stats, operator, value)
                 } else {
-                    0.5 // Default selectivity for unknown columns
+                    self.config.unknown_column_selectivity
                 }
             }
             FilterExpression::And(exprs) => {
@@ -359,10 +454,10 @@ impl MetadataFilterPushdown {
                         .sum::<f64>()
                         .min(1.0)
                 } else {
-                    0.5
+                    self.config.invalid_in_selectivity
                 }
             }
-            _ => 0.3, // Default for range queries
+            _ => self.config.range_selectivity,
         }
     }
 
@@ -442,7 +537,8 @@ impl MetadataFilterPushdown {
     fn should_build_index(&self, stats: &ColumnStatistics) -> bool {
         // Build index if column is selective and frequently used
         let selectivity = stats.distinct_values as f64 / stats.total_count as f64;
-        selectivity > 0.01 && stats.distinct_values < 10000
+        selectivity > self.config.min_index_selectivity
+            && stats.distinct_values < self.config.max_index_distinct_values
     }
 
     /// Build column index
@@ -567,16 +663,58 @@ impl SelectivityEstimator {
 pub struct MetadataBloomBuilder {
     builders: HashMap<String, BloomFilterBuilder>,
     expected_items: usize,
-    false_positive_rate: f64,
+    config: MetadataBloomBuilderConfig,
+}
+
+/// Configuration for standalone metadata bloom construction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataBloomBuilderConfig {
+    pub false_positive_rate: f64,
+    pub bits_per_key: u32,
+}
+
+impl Default for MetadataBloomBuilderConfig {
+    fn default() -> Self {
+        Self {
+            false_positive_rate: 0.01,
+            bits_per_key: 10,
+        }
+    }
+}
+
+impl MetadataBloomBuilderConfig {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if !self.false_positive_rate.is_finite() || !(0.0..=1.0).contains(&self.false_positive_rate)
+        {
+            return Err(format!(
+                "metadata bloom false_positive_rate must be finite and between 0.0 and 1.0, got {}",
+                self.false_positive_rate
+            ));
+        }
+        if self.bits_per_key == 0 {
+            return Err("metadata bloom bits_per_key must be greater than zero".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl MetadataBloomBuilder {
     /// Create a new metadata bloom filter builder for the expected number of items
     pub fn new(expected_items: usize) -> Self {
+        Self::with_config(expected_items, MetadataBloomBuilderConfig::default())
+    }
+
+    /// Create a metadata bloom filter builder with explicit policy.
+    pub fn with_config(expected_items: usize, config: MetadataBloomBuilderConfig) -> Self {
+        debug_assert!(
+            config.validate().is_ok(),
+            "invalid metadata bloom builder config: {:?}",
+            config.validate().err()
+        );
         Self {
             builders: HashMap::new(),
             expected_items,
-            false_positive_rate: 0.01,
+            config,
         }
     }
 
@@ -588,8 +726,8 @@ impl MetadataBloomBuilder {
         for (key, value) in proxima_tree_to_json_map(&record.props) {
             let config = BloomFilterConfig {
                 strategy: BloomStrategy::BitPacked,
-                bits_per_key: 10,
-                false_positive_rate: Some(self.false_positive_rate),
+                bits_per_key: self.config.bits_per_key,
+                false_positive_rate: Some(self.config.false_positive_rate),
                 expected_items: self.expected_items,
                 enabled: true,
                 hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
@@ -616,6 +754,94 @@ impl MetadataBloomBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn column_stats(distinct_values: usize, total_count: usize) -> ColumnStatistics {
+        ColumnStatistics {
+            column_name: "category".to_string(),
+            distinct_values,
+            null_count: 0,
+            total_count,
+            min_value: None,
+            max_value: None,
+            value_histogram: HashMap::new(),
+            bloom_filter: None,
+        }
+    }
+
+    #[test]
+    fn test_metadata_pushdown_config_validation() {
+        let mut config = MetadataFilterPushdownConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.bloom_selectivity_threshold = 0.001;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_metadata_pushdown_uses_configured_selectivity_policy() {
+        let mut pushdown = MetadataFilterPushdown::with_config(MetadataFilterPushdownConfig {
+            unknown_column_selectivity: 0.72,
+            invalid_in_selectivity: 0.61,
+            range_selectivity: 0.41,
+            ..Default::default()
+        });
+        pushdown
+            .column_stats
+            .insert("known".to_string(), column_stats(10, 100));
+
+        let unknown = FilterExpression::Comparison {
+            field: "missing".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: Value::String("electronics".to_string()),
+        };
+        assert_eq!(pushdown.estimate_selectivity(&unknown), 0.72);
+
+        let malformed_in = FilterExpression::Comparison {
+            field: "known".to_string(),
+            operator: ComparisonOperator::In,
+            value: Value::String("not-an-array".to_string()),
+        };
+        assert_eq!(pushdown.estimate_selectivity(&malformed_in), 0.61);
+
+        let range = FilterExpression::Comparison {
+            field: "known".to_string(),
+            operator: ComparisonOperator::GreaterThan,
+            value: Value::Number(serde_json::Number::from(100)),
+        };
+        assert_eq!(pushdown.estimate_selectivity(&range), 0.41);
+    }
+
+    #[test]
+    fn test_metadata_pushdown_uses_configured_index_policy() {
+        let pushdown = MetadataFilterPushdown::with_config(MetadataFilterPushdownConfig {
+            min_index_selectivity: 0.2,
+            max_index_distinct_values: 50,
+            ..Default::default()
+        });
+
+        assert!(pushdown.should_build_index(&column_stats(25, 100)));
+        assert!(!pushdown.should_build_index(&column_stats(10, 100)));
+        assert!(!pushdown.should_build_index(&column_stats(60, 100)));
+    }
+
+    #[test]
+    fn test_metadata_bloom_builder_config_validation() {
+        let mut config = MetadataBloomBuilderConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.bits_per_key = 0;
+        assert!(config.validate().is_err());
+
+        let builder = MetadataBloomBuilder::with_config(
+            128,
+            MetadataBloomBuilderConfig {
+                false_positive_rate: 0.05,
+                bits_per_key: 12,
+            },
+        );
+        assert_eq!(builder.config.false_positive_rate, 0.05);
+        assert_eq!(builder.config.bits_per_key, 12);
+    }
 
     #[test]
     fn test_selectivity_estimation() {
