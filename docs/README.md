@@ -128,6 +128,14 @@ JOIN LATERAL DOCUMENT_QUERY('reviews', 'product_id = "' || v.product_id || '"') 
 
 ---
 
+## Layout
+
+Release-facing documentation lives in the numbered tree above. Supporting images and logos live in `docs/assets/`; internal planning lives in `docs/_internal/`; retained historical reports live in `docs/_archive/`.
+
+Do not add new one-off reports to the repository root or directly under `docs/`. Put current docs in the matching numbered section and move historical status reports into `docs/_archive/`.
+
+---
+
 ## Key Features
 
 ### ✅ Unified API

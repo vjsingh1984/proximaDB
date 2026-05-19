@@ -165,7 +165,7 @@ and operational simplicity.
 === M7: Backup and Restore v1 (S12)
 
 *Owner modules:* `src/services/events/persistence.rs`,
-`src/storage/engines/core/formats/proximablocks/*`, `docs/operations/*`
+`src/storage/engines/core/formats/proximablocks/*`, `docs/04-operations/*`
 
 *Sprint plan:*
 

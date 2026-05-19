@@ -116,9 +116,9 @@ ProximaDB has transitioned from a concept to a **production-ready, enterprise-gr
 #### 1. pip install proximadb quickstart (20 KB)
 
 **Files**:
-- `docs/quickstart/QUICKSTART.adoc` (13,255 bytes)
-- `docs/quickstart/verify_installation.py` (5,714 bytes)
-- `docs/quickstart/README.adoc` (1,719 bytes)
+- `docs/01-quick-start/legacy/QUICKSTART.adoc` (13,255 bytes)
+- `docs/01-quick-start/legacy/verify_installation.py` (5,714 bytes)
+- `docs/01-quick-start/legacy/README.adoc` (1,719 bytes)
 
 **Achievement**: 5-minute time to first query
 **Verification**: 5/5 tests passing (100%)
@@ -126,7 +126,7 @@ ProximaDB has transitioned from a concept to a **production-ready, enterprise-gr
 #### 2. Cloud-hosted managed service design (28 KB)
 
 **File**:
-- `docs/infrastructure/CLOUD_HOSTED_SERVICE_DESIGN.adoc` (755 lines)
+- `docs/12-design/platform/CLOUD_HOSTED_SERVICE_DESIGN.adoc` (755 lines)
 
 **Features**:
 - 4-tier pricing ($49-$999/month)
@@ -149,7 +149,7 @@ ProximaDB has transitioned from a concept to a **production-ready, enterprise-gr
 #### 4. Conference presence and developer advocacy (40 KB)
 
 **File**:
-- `docs/marketing/CONFERENCE_PRESENCE_STRATEGY.adoc` (1,087 lines)
+- `docs/00-product/marketing/CONFERENCE_PRESENCE_STRATEGY.adoc` (1,087 lines)
 
 **Features**:
 - 8 target conferences

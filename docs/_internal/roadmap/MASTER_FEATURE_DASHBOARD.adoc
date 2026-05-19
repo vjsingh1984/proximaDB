@@ -16,7 +16,7 @@ For strategic context and phase alignment, see link:STRATEGIC_ROADMAP.adoc[Strat
 
 [IMPORTANT]
 ====
-Use link:../../SUPPORTED_SURFACE.adoc[Supported Surface Matrix] for the current support contract and link:../../TECHNICAL_DEBT.md[Technical Debt Register] for the live backlog.
+Use link:../../SUPPORTED_SURFACE.adoc[Supported Surface Matrix] for the current support contract and link:../../10-quality/TECHNICAL_DEBT.md[Technical Debt Register] for the live backlog.
 
 This dashboard remains useful as an implementation inventory, but several surfaces are still beta
 or experimental even when code exists. Treat the maturity summary below as the current truth layer.

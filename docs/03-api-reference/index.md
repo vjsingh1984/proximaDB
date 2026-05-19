@@ -72,7 +72,7 @@ curl -X POST http://localhost:5678/api/v1/collections/products/vectors/search \
   }'
 ```
 
-**Full docs**: [REST API Reference](./rest.md)
+**Full docs**: [REST API Reference](./rest.adoc)
 
 ---
 
@@ -104,7 +104,7 @@ request = collection_pb2.CreateCollectionRequest(
 response = stub.CreateCollection(request)
 ```
 
-**Full docs**: [gRPC API Reference](./grpc.md)
+**Full docs**: gRPC API details are generated from `proto/`.
 
 ---
 
@@ -133,7 +133,7 @@ CREATE TABLE items (
 );
 ```
 
-**Full docs**: [SQL Reference](./sql.md)
+**Full docs**: SQL and PostgreSQL wire coverage is tracked in [Supported Surface](../SUPPORTED_SURFACE.adoc).
 
 ---
 
@@ -283,7 +283,7 @@ client = ProximaDB(
 
 ## Next Steps
 
-- [REST API](./rest.md) - Complete REST reference
+- [REST API](./rest.adoc) - Complete REST reference
 - [SQL Extensions](./sql-extensions.md) - Custom SQL functions
 - [Python SDK](../02-guides/sdk-python-guide.md) - Python client guide
 - [Configuration](./configuration.md) - All config options

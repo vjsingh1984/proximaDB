@@ -429,7 +429,7 @@ Criteria evolve based on:
 == Related Documentation
 
 * link:SUPPORTED_SURFACE.md[Supported Surface Matrix] - Feature status matrix
-* link:feature_toggles.md[Feature Toggles] - Feature flag documentation
+* link:../10-quality/feature_toggles.md[Feature Toggles] - Feature flag documentation
 * link:../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] - Known gaps and limitations
 * link:../_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap] - Feature roadmap
 

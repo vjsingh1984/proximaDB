@@ -88,7 +88,7 @@ Each workstream is designed to be independent and can be executed by separate ta
 1.2 Label RAPTOR engine as experimental
     - File: src/storage/engines/impls/raptor/mod.rs
     - Add warning comment at top: "EXPERIMENTAL - Not production ready"
-    - File: docs/concepts/storage-engines.adoc
+    - File: docs/05-concepts/storage-engines.adoc
     - Update RAPTOR description to indicate experimental status
     - File: src/storage/engines/factory.rs
     - Add log::warn! when RAPTOR is selected
@@ -96,7 +96,7 @@ Each workstream is designed to be independent and can be executed by separate ta
 1.3 Label SWIFT engine as incomplete
     - File: src/storage/engines/impls/swift/mod.rs
     - Add warning comment: "INCOMPLETE - Missing critical features"
-    - File: docs/concepts/storage-engines.adoc
+    - File: docs/05-concepts/storage-engines.adoc
     - Update SWIFT description
 
 1.4 Fix remaining proto issues (if any)
@@ -420,12 +420,12 @@ Target state: Single unified path through UnifiedQueryOptimizer
     - Add experimental engine warnings
 
 8.2 Update storage engine docs
-    - File: docs/concepts/storage-engines.adoc
+    - File: docs/05-concepts/storage-engines.adoc
     - Mark RAPTOR/SWIFT as experimental
     - Update performance claims to reality
 
 8.3 Update graph engine docs
-    - File: docs/concepts/graph-engines.adoc
+    - File: docs/05-concepts/graph-engines.adoc
     - Focus on ORION + Hybrid Query
     - Mark PULSAR/QUASAR as future
 

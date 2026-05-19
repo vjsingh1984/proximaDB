@@ -568,7 +568,7 @@ pip install --force-reinstall proximadb-python
 
 * **Documentation**: https://github.com/vjsingh1984/proximadb/blob/main/clients/python/README.adoc
 * **Examples**: https://github.com/vjsingh1984/proximadb/tree/main/clients/python/examples
-* **API Reference**: https://github.com/vjsingh1984/proximadb/blob/main/docs/api/python.md
+* **API Reference**: https://github.com/vjsingh1984/proximadb/blob/main/docs/03-api-reference/python.md
 * **Performance Guide**: https://github.com/vjsingh1984/proximadb/blob/main/docs/performance/optimization.adoc
 * **Contributing**: https://github.com/vjsingh1984/proximadb/blob/main/CONTRIBUTING.adoc
 

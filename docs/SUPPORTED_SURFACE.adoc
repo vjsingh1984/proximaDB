@@ -11,7 +11,7 @@ Current support contract for the ProximaDB working tree. This document separates
 ====
 This matrix is the support contract.
 
-* Use link:./TECHNICAL_DEBT.md[Technical Debt Register] for the active backlog.
+* Use link:./10-quality/TECHNICAL_DEBT.md[Technical Debt Register] for the active backlog.
 * Use link:./_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap] for sequencing and investment direction.
 * Do not infer support level from code presence alone.
 ====

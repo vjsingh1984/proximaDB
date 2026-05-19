@@ -143,7 +143,7 @@ Primary objective:
 | 2026-03-02
 | WS-0 graph deprecation docs + drift enforcement
 | Added explicit legacy-route migration examples with concrete old->new mappings and redirect headers in graph API docs; converted graph engine guide examples to canonical `/api/v1/graph/graphs/:graph_id/...` routes; extended capability-matrix validator with required/forbidden multi-document drift assertions to prevent regression to legacy route messaging.
-| `docs/api/graph.adoc`, `docs/06-internals/GRAPH_ENGINES_GUIDE.adoc`, `docs/_internal/roadmap/CAPABILITY_MATRIX.toml`, `scripts/validate_capability_matrix.py`
+| `docs/03-api-reference/graph.adoc`, `docs/06-internals/GRAPH_ENGINES_GUIDE.adoc`, `docs/_internal/roadmap/CAPABILITY_MATRIX.toml`, `scripts/validate_capability_matrix.py`
 | Expand drift assertions to additional high-risk API surfaces (distributed graph engine messaging, security auth claims) and keep examples synchronized with router changes.
 
 | 2026-03-02

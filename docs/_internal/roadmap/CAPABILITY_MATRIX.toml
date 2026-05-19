@@ -70,7 +70,7 @@ notes = "Legacy graph compatibility routes now issue 308 redirects with deprecat
 evidence = [
   "src/network/rest/v1/graph.rs:1610",
   "src/network/rest/v1/handlers.rs:1958",
-  "docs/api/graph.adoc:32",
+  "docs/03-api-reference/graph.adoc:32",
   "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc:78",
 ]
 

@@ -12,9 +12,9 @@ Developer-first documentation for building multi-model applications on ProximaDB
 | Goal | Doc | Time
 
 | **Run locally** | link:../README.adoc[README] | 5 min
-| **REST API usage** | link:api/rest.adoc[REST API] | 15 min
+| **REST API usage** | link:03-api-reference/rest.adoc[REST API] | 15 min
 | **Python SDK** | link:../clients/python/SDK_DOCUMENTATION.adoc[Python SDK] | 10 min
-| **Architecture overview** | link:concepts/architecture.adoc[Architecture] | 15 min
+| **Architecture overview** | link:05-concepts/architecture.adoc[Architecture] | 15 min
 |===
 
 ---
@@ -49,9 +49,9 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | Topic | Doc | Why it matters
 
-| Multi-model design | link:concepts/architecture.adoc[Architecture] | How 8 models share the data plane
-| Storage engine selection | link:concepts/storage-engines.adoc[Storage Engines] | Pick the right engine for your workload
-| Graph engines | link:concepts/graph-engines.adoc[Graph Engines] | Choose traversal performance vs scale
+| Multi-model design | link:05-concepts/architecture.adoc[Architecture] | How 8 models share the data plane
+| Storage engine selection | link:05-concepts/storage-engines.adoc[Storage Engines] | Pick the right engine for your workload
+| Graph engines | link:05-concepts/graph-engines.adoc[Graph Engines] | Choose traversal performance vs scale
 | Design patterns | link:12-design/DESIGN_PATTERNS.adoc[Design Patterns] | Storage, consensus, caching, query optimization patterns
 |===
 
@@ -62,9 +62,9 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | API | Doc | Notes
 
-| REST | link:api/rest.adoc[REST API] | Primary builder interface
-| Graph | link:api/graph.adoc[Graph API] | Nodes, edges, traversal
-| Configuration | link:api/configuration.adoc[Configuration] | Local and production settings
+| REST | link:03-api-reference/rest.adoc[REST API] | Primary builder interface
+| Graph | link:03-api-reference/graph.adoc[Graph API] | Nodes, edges, traversal
+| Configuration | link:03-api-reference/configuration.adoc[Configuration] | Local and production settings
 |===
 
 ---
@@ -74,9 +74,9 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | Topic | Doc | Focus
 
-| Deployment | link:operations/deployment.adoc[Deployment] | Local and production setup
-| Monitoring | link:operations/monitoring.adoc[Monitoring] | Metrics + health checks
-| Security | link:operations/security.adoc[Security] | Auth, TLS, RBAC
+| Deployment | link:04-operations/deployment.adoc[Deployment] | Local and production setup
+| Monitoring | link:04-operations/monitoring.adoc[Monitoring] | Metrics + health checks
+| Security | link:04-operations/security.adoc[Security] | Auth, TLS, RBAC
 |===
 
 ---
@@ -109,9 +109,9 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | Topic | Doc
 
-| Storage internals | link:internals/columnar-storage-architecture.adoc[Columnar Storage Architecture]
-| SST engine | link:internals/sst-engine-deep-dive.adoc[SST Deep Dive]
-| Graph internals | link:internals/graph-engines-deep-dive.adoc[Graph Engines Deep Dive]
+| Storage internals | link:06-internals/deep-dives/columnar-storage-architecture.adoc[Columnar Storage Architecture]
+| SST engine | link:06-internals/deep-dives/sst-engine-deep-dive.adoc[SST Deep Dive]
+| Graph internals | link:06-internals/deep-dives/graph-engines-deep-dive.adoc[Graph Engines Deep Dive]
 |===
 
 ---

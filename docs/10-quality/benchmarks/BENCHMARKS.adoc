@@ -289,7 +289,7 @@ All benchmarks are run with:
 Full benchmark scripts and raw data are available in:
 * `benches/` - Criterion benchmark suite
 * `tools/benchmarks/` - Custom benchmark tools
-* `docs/benchmarks/` - Detailed technical reports
+* `docs/10-quality/benchmarks/` - Detailed technical reports
 
 == Notes
 

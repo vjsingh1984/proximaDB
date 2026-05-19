@@ -378,4 +378,4 @@ This architecture serves as a solid foundation for future development while main
 - Storage Engine Consolidation: `docs/_internal/architecture/STORAGE_ENGINE_CONSOLIDATION_COMPLETE.md`
 - Low-Latency Query Engine: `docs/_internal/architecture/LOW_LATENCY_QUERY_ENGINE_COMPLETE.md`
 - Phase 1 Engine Consolidation: `docs/_internal/architecture/PHASE1_ENGINE_CONSOLIDATION.md`
-- Module Architecture: `docs/architecture/NEW_MODULE_ARCHITECTURE.md`
+- Module Architecture: `docs/12-design/NEW_MODULE_ARCHITECTURE.md`

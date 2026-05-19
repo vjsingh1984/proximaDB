@@ -22,7 +22,7 @@
 - **TD entry**: `TD-044` (MEDIUM).
 - **Implementation**:
   - `src/core/search/hybrid/fusion.rs` — `Projection` strategy implemented.
-  - `docs/concepts/hybrid-fusion.adoc` — Updated with RRF vs. Projection positioning.
+  - `docs/05-concepts/hybrid-fusion.adoc` — Updated with RRF vs. Projection positioning.
   - `benches/bench_21_hybrid_search_fusion.rs` — Benchmarked: RRF (248µs) wins relevance; Projection (255µs) wins diversity.
 - **Outcome**: RRF remains default; Projection available as opt-in for diversity-focused workloads.
 

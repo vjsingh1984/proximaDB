@@ -103,7 +103,7 @@ Highest-value work:
 
 | Technical Debt
 | Debt is concentrated in storage, distributed execution, metadata/ops, and documentation drift.
-| `docs/TECHNICAL_DEBT.md`, `src/storage/metadata/*`, `src/cluster/rpc/grpc_client.rs`, `src/embedded/mod.rs`
+| `docs/10-quality/TECHNICAL_DEBT.md`, `src/storage/metadata/*`, `src/cluster/rpc/grpc_client.rs`, `src/embedded/mod.rs`
 | Re-baseline debt around truth-layer drift, stats/metrics placeholders, cluster transport stubs, TST/Event parity, and AutoML maturity.
 | P0
 

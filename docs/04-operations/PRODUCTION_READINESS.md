@@ -297,16 +297,16 @@
 
 ### Documentation
 
-- **Architecture**: `/docs/concepts/architecture.adoc`
-- **Storage Engines**: `/docs/storage/engines/`
-- **Graph**: `/docs/graph/`
-- **Query**: `/docs/query/`
-- **API**: `/docs/api/`
+- **Architecture**: `/docs/05-concepts/architecture.adoc`
+- **Storage Engines**: `/docs/06-internals/storage/`
+- **Graph**: `/docs/06-internals/graph/`
+- **Query**: `/docs/05-concepts/query-planner.md`
+- **API**: `/docs/03-api-reference/`
 
 ### Status Documents
 
-- **Experimental Engines**: `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
-- **PULSAR Status**: `/docs/graph/PULSAR_STATUS.md`
+- **Experimental Engines**: `/docs/06-internals/storage/EXPERIMENTAL_ENGINES_STATUS.md`
+- **PULSAR Status**: `/docs/06-internals/graph/PULSAR_STATUS.md`
 - **Technical Debt**: `/docs/10-quality/TECHNICAL_DEBT.adoc`
 - **Code Coverage**: `/docs/10-quality/code-coverage-report.adoc`
 

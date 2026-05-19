@@ -883,7 +883,7 @@ curl -X POST http://localhost:5678/api/v1/query \
 
 === Step 3.2: API Documentation
 
-**File**: `docs/api/operational-queries-api.adoc`
+**File**: `docs/03-api-reference/operational-queries-api.adoc`
 
 ```asciidoc
 = Operational Queries API Reference

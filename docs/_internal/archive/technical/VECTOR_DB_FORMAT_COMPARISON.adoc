@@ -488,4 +488,4 @@ pub enum MetadataFormat {
 - Lance Format: https://arxiv.org/html/2504.15247v1
 - Nimble (Meta): https://github.com/facebookincubator/nimble
 - LanceDB: https://lancedb.com/docs/overview/lance/
-- ProximaDB Engines: `docs/storage/` directory
+- ProximaDB Engines: `docs/06-internals/storage/` directory

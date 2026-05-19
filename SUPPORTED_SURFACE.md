@@ -662,7 +662,7 @@ Legend: ✅ Production Ready, ⚠️ Experimental, ❌ Not Supported
 - New Cypher features (UNWIND, REDUCE, comprehensions)
 - Filtered ANN now production-ready
 
-**Migration Guide**: See `/docs/storage/EXPERIMENTAL_ENGINES_STATUS.md`
+**Migration Guide**: See `/docs/06-internals/storage/EXPERIMENTAL_ENGINES_STATUS.md`
 
 ---
 

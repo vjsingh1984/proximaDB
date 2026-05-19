@@ -240,7 +240,7 @@ async fn transfer_data(from: &str, to: &str, data: &Data) -> Result<()> {
 
 ## Support & Resources
 
-- **Documentation**: `/docs/graph/pulsar/`
+- **Documentation**: `/docs/06-internals/graph/PULSAR_STATUS.md`
 - **Examples**: `/examples/graph/pulsar/`
 - **Tests**: `src/graph/engines/pulsar/tests/`
 - **Issues**: https://github.com/vijaysingh1992/proximadb/issues

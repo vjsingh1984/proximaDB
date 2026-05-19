@@ -345,7 +345,7 @@ Action required before next upgrade.
 ## Related Documentation
 
 - **SUPPORTED_SURFACE.md** - Feature status and production readiness matrix
-- **production-readiness.adoc** - Detailed production readiness criteria
+- **../04-operations/production-readiness.adoc** - Detailed production readiness criteria
 - **ADR-006** - Infrastructure and platform decisions (including test binary fix)
 - **TECHNICAL_DEBT.adoc** - Known gaps and limitations
 

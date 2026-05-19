@@ -139,9 +139,9 @@ Quick start directory navigation guide with:
 
 | File | Size | Purpose |
 |------|------|---------|
-| `docs/quickstart/QUICKSTART.adoc` | 13,255 bytes | Complete quick start guide |
-| `docs/quickstart/verify_installation.py` | 5,714 bytes | Installation verification |
-| `docs/quickstart/README.adoc` | 1,719 bytes | Directory navigation |
+| `docs/01-quick-start/legacy/QUICKSTART.adoc` | 13,255 bytes | Complete quick start guide |
+| `docs/01-quick-start/legacy/verify_installation.py` | 5,714 bytes | Installation verification |
+| `docs/01-quick-start/legacy/README.adoc` | 1,719 bytes | Directory navigation |
 
 **Total**: 20,688 bytes of documentation
 
@@ -152,7 +152,7 @@ Quick start directory navigation guide with:
 $ python3 -m venv /tmp/proximadb-venv
 $ source /tmp/proximadb-venv/bin/activate
 $ pip install -e /path/to/proximadb/clients/python
-$ python docs/quickstart/verify_installation.py
+$ python docs/01-quick-start/legacy/verify_installation.py
 
 ======================================================================
 ProximaDB Python SDK Installation Verification
@@ -210,7 +210,7 @@ pip install proximadb-python
 +
 [source,bash]
 ----
-python docs/quickstart/verify_installation.py
+python docs/01-quick-start/legacy/verify_installation.py
 ----
 Output: `🎉 Installation verified successfully!`
 
@@ -254,9 +254,9 @@ results = client.search(
 
 **Links To**:
 - Python SDK examples: `clients/python/examples/`
-- API reference: `docs/api/python.md`
+- API reference: `docs/03-api-reference/python.md`
 - Performance guide: `docs/performance/optimization.adoc`
-- Architecture docs: `docs/concepts/architecture.adoc`
+- Architecture docs: `docs/05-concepts/architecture.adoc`
 
 == Phase 3 Alignment
 

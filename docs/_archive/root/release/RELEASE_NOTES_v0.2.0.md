@@ -118,8 +118,8 @@ cargo install proximadb
 ## 📚 Documentation
 
 - [Configuration Guide](../config/README.md)
-- [API Documentation](../docs/api/README.md)
-- [Architecture](../docs/concepts/architecture.adoc)
+- [API Documentation](../docs/03-api-reference/README.md)
+- [Architecture](../docs/05-concepts/architecture.adoc)
 
 ## 🐛 Known Limitations
 

@@ -99,8 +99,8 @@ REST + gRPC + Arrow Flight]
 |Hybrid search|8.1ms (vector + BM25)
 |===**
 
-* link:docs/BENCHMARKS.adoc[View detailed benchmarks] - ANN-benchmark results, competitor comparisons, scaling characteristics
-* link:docs/benchmarks/ENGINE_PERFORMANCE_BENCHMARK.adoc[Engine performance] - Storage engine benchmarks
+* link:docs/10-quality/benchmarks/BENCHMARKS.adoc[View detailed benchmarks] - ANN-benchmark results, competitor comparisons, scaling characteristics
+* link:docs/10-quality/benchmarks/ENGINE_PERFORMANCE_BENCHMARK.adoc[Engine performance] - Storage engine benchmarks
 * link:scripts/run_benchmarks.sh[Run benchmarks yourself] - Benchmark execution script
 
 ---

@@ -335,7 +335,7 @@ cargo bench --bench competitive_comparison -- --save-baseline main
 
 3. **Run competitive benchmarks**
    - Generate comparison report vs Milvus/Weaviate/Pinecone
-   - Publish to `docs/benchmarks/`
+   - Publish to `docs/10-quality/benchmarks/`
 
 === Short-term (Week 3-4)
 4. **pip install proximadb** quickstart

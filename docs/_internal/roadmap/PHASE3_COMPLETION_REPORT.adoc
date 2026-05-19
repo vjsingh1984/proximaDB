@@ -30,9 +30,9 @@ Phase 3: Market Entry is now **100% complete**. All four deliverables have been 
 ### What Was Delivered
 
 **Files Created**:
-1. `docs/quickstart/QUICKSTART.adoc` (13,255 bytes)
-2. `docs/quickstart/verify_installation.py` (5,714 bytes)
-3. `docs/quickstart/README.adoc` (1,719 bytes)
+1. `docs/01-quick-start/legacy/QUICKSTART.adoc` (13,255 bytes)
+2. `docs/01-quick-start/legacy/verify_installation.py` (5,714 bytes)
+3. `docs/01-quick-start/legacy/README.adoc` (1,719 bytes)
 4. `docs/_internal/roadmap/PHASE3_QUICKSTART_COMPLETION.adoc` (332 lines)
 
 ### Key Features
@@ -89,7 +89,7 @@ Total: 5/5 tests passed
 ### What Was Delivered
 
 **File Created**:
-1. `docs/infrastructure/CLOUD_HOSTED_SERVICE_DESIGN.adoc` (755 lines)
+1. `docs/12-design/platform/CLOUD_HOSTED_SERVICE_DESIGN.adoc` (755 lines)
 
 ### Key Features
 
@@ -236,7 +236,7 @@ Breakdown:
 ### What Was Delivered
 
 **File Created**:
-1. `docs/marketing/CONFERENCE_PRESENCE_STRATEGY.adoc` (1,087 lines)
+1. `docs/00-product/marketing/CONFERENCE_PRESENCE_STRATEGY.adoc` (1,087 lines)
 
 ### Key Features
 

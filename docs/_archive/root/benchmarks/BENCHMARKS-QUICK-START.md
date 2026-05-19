@@ -308,7 +308,7 @@ curl http://localhost:5678/health
 - [YCSB GitHub](https://github.com/brianfrankcooper/YCSB)
 
 ### ProximaDB-Specific
-- `docs/benchmarks/` - Detailed benchmarking guide
+- `docs/10-quality/benchmarks/` - Detailed benchmarking guide
 - `docs/performance/` - Performance tuning guide
 - `CLAUDE.md` - Development instructions
 
@@ -369,7 +369,7 @@ curl http://localhost:5678/health
 
 For issues or questions:
 - GitHub Issues: [ProximaDB/issues](https://github.com/your-org/proximadb/issues)
-- Documentation: `docs/benchmarks/`
+- Documentation: `docs/10-quality/benchmarks/`
 - Troubleshooting: See Troubleshooting section above
 
 ---

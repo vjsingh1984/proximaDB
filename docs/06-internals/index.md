@@ -414,7 +414,7 @@ pub fn new(data: Vec<f32>) -> Result<Self, Error> {
 ### Resources
 
 - **CLAUDE.md**: Project instructions
-- **Architecture**: `docs/concepts/architecture.adoc`
+- **Architecture**: `docs/05-concepts/architecture.adoc`
 - **Design Patterns**: `docs/12-design/DESIGN_PATTERNS.adoc`
 
 ### Communication

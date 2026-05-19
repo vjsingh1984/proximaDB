@@ -23,7 +23,7 @@ pip install proximadb-python
 +
 [source,bash]
 ----
-python docs/quickstart/verify_installation.py
+python docs/01-quick-start/legacy/verify_installation.py
 ----
 
 Expected output:

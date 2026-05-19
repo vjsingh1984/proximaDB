@@ -183,7 +183,7 @@ def main():
         print("\nNext steps:")
         print("  1. Start ProximaDB server: cargo run --bin proximadb-server")
         print("  2. Run examples: python clients/python/examples/basic_usage.py")
-        print("  3. Read docs: docs/quickstart/QUICKSTART.adoc")
+        print("  3. Read docs: docs/01-quick-start/legacy/QUICKSTART.adoc")
         return 0
     else:
         print("\n⚠️  Installation verification failed!")

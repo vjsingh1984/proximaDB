@@ -472,4 +472,4 @@ organization-wide adoption.
 
 _Last Updated_: March 2026
 
-_Supersedes_: `docs/concepts/vision.adoc`
+_Supersedes_: `docs/05-concepts/vision.adoc`

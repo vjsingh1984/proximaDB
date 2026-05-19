@@ -207,11 +207,11 @@ Total: 5/5 tests passed (100% success rate)
 
 ### Documentation Created This Session
 
-1. `docs/quickstart/QUICKSTART.adoc` (13,255 bytes)
-2. `docs/quickstart/verify_installation.py` (5,714 bytes)
-3. `docs/quickstart/README.adoc` (1,719 bytes)
+1. `docs/01-quick-start/legacy/QUICKSTART.adoc` (13,255 bytes)
+2. `docs/01-quick-start/legacy/verify_installation.py` (5,714 bytes)
+3. `docs/01-quick-start/legacy/README.adoc` (1,719 bytes)
 4. `docs/_internal/roadmap/PHASE3_QUICKSTART_COMPLETION.adoc` (332 lines)
-5. `docs/infrastructure/CLOUD_HOSTED_SERVICE_DESIGN.adoc` (755 lines)
+5. `docs/12-design/platform/CLOUD_HOSTED_SERVICE_DESIGN.adoc` (755 lines)
 6. `docs/_internal/roadmap/SESSION_SUMMARY_2026_03_31.adoc` (this file)
 
 **Total**: ~25 KB of new documentation

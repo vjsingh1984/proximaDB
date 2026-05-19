@@ -45,7 +45,7 @@ Use for **external-facing** content:
 * ✅ **Performance Benchmarks**: Results, comparisons, tuning guides
 * ✅ **Business Case**: Competitive advantages, use cases
 
-**Example**: `docs/storage/engine_selection.adoc`
+**Example**: `docs/06-internals/storage/engine_selection.adoc`
 
 * Compares SST vs VIPER vs NOVA for different workloads
 * References `src/storage/engines/impls/sst/README.adoc` for implementation
@@ -65,7 +65,7 @@ Use for **implementation details**:
 **Example**: `src/storage/engines/impls/sst/README.adoc`
 
 * Explains SST internals: flush strategy, block structure, filtering
-* Referenced by `docs/storage/engine_selection.adoc`
+* Referenced by `docs/06-internals/storage/engine_selection.adoc`
 
 == Example: Event Modules Documentation
 
